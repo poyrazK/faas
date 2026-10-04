@@ -10577,6 +10577,28 @@ CREATE TABLE public.project_environment_clone_postgres_bindings (
 
 
 --
+-- Name: project_environment_clone_postgres_checkpoint_selections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_checkpoint_selections (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    maintenance_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    ciphertext bytea NOT NULL,
+    retained_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres_chec_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_checkpoint__ciphertext_check CHECK (((octet_length(ciphertext) > 0) AND (octet_length(ciphertext) <= 4276224))),
+    CONSTRAINT project_environment_clone_postgres_checkpoint_fingerprint_check CHECK ((fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_checkpoint_sele_key_id_check CHECK (((key_id <> ''::text) AND (length(key_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres_checkpoint_selec_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text))
+);
+
+
+--
 -- Name: project_environment_clone_postgres_contents; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16118,6 +16140,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
     ADD CONSTRAINT project_environment_clone_postgres_bindings_pkey PRIMARY KEY (operation_id, source_binding_id);
+
+
+--
+-- Name: project_environment_clone_postgres_checkpoint_selections project_environment_clone_postgres_checkpoint_selections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_checkpoint_selections
+    ADD CONSTRAINT project_environment_clone_postgres_checkpoint_selections_pkey PRIMARY KEY (operation_id, source_database_id);
 
 
 --
@@ -26882,6 +26912,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_deb
 
 
 --
+-- Name: project_environment_clone_postgres_checkpoint_selections project_environment_clone_po_operation_id_source_databas_fkey25; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_checkpoint_selections
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey25 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_write_fences(operation_id, source_database_id) ON DELETE RESTRICT;
+
+
+--
 -- Name: project_environment_clone_postgres_copy_targets project_environment_clone_po_operation_id_source_database_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26991,6 +27029,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
     ADD CONSTRAINT project_environment_clone_postgres_bindings_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_postgres_checkpoint_selections project_environment_clone_postgres_checkpoi_maintenance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_checkpoint_selections
+    ADD CONSTRAINT project_environment_clone_postgres_checkpoi_maintenance_id_fkey FOREIGN KEY (maintenance_id) REFERENCES public.managed_postgres_checkpoint_maintenance(id) ON DELETE RESTRICT;
 
 
 --

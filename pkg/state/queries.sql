@@ -8041,6 +8041,19 @@ WHERE f.operation_id=sqlc.arg(operation_id)::uuid AND f.source_database_id=sqlc.
   WHERE o.id=f.operation_id AND o.status='compensating' AND o.revision=sqlc.arg(expected_revision)::bigint
    AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING f.*;
 
+-- ADR-375: private original selection precedes a coordinated capture point.
+-- name: ReadClonePostgresCheckpointSelection :one
+SELECT * FROM project_environment_clone_postgres_checkpoint_selections
+WHERE operation_id=sqlc.arg(operation_id)::uuid AND source_database_id=sqlc.arg(source_database_id)::uuid FOR UPDATE;
+
+-- name: InsertClonePostgresCheckpointSelection :one
+INSERT INTO project_environment_clone_postgres_checkpoint_selections(operation_id,source_database_id,maintenance_id,scope,fingerprint,key_id,ciphertext_sha256,ciphertext)
+SELECT o.id,sqlc.arg(source_database_id)::uuid,sqlc.arg(maintenance_id)::uuid,sqlc.arg(scope)::jsonb,sqlc.arg(fingerprint)::text,
+ sqlc.arg(key_id)::text,sqlc.arg(ciphertext_sha256)::text,sqlc.arg(ciphertext)::bytea
+FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='capturing'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text
+ AND o.lease_until>clock_timestamp() RETURNING *;
+
 -- ADR-375: resource ownership is separate from an operation's writer barrier.
 -- name: ReadClonePostgresMaintenance :one
 SELECT * FROM managed_postgres_checkpoint_maintenance WHERE source_database_id=$1 FOR UPDATE;

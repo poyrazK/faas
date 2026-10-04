@@ -6585,3 +6585,75 @@ an installation refusal before dispatch on that run. Its isolated rerun and the
 complete native package rerun passed. That transient refusal was not reproduced;
 these local checks do not qualify deployed provider availability, a common
 checkpoint, full repository acceptance or native Linux worker enforcement.
+
+
+### Retained original PostgreSQL selection before checkpoint (2026-10-04)
+
+`checkpointselection` now seals an immutable original database-name set before
+a coordinated capture point exists. Its scope binds the operation, account,
+project, frozen database definition hash, source database/backend/dataset,
+PostgreSQL major and ready private maintenance UUID/OIDs. Names are canonical,
+bounded by `api.PostgresCheckpointDatabasesMax`, and exclude the maintenance
+database so its recovery connection stays accessible. A random HMAC key and
+the names remain inside a namespaced age envelope. The public fingerprint is
+keyed; ordinary JSON and formatting redact the selection. Recovery accepts
+retained previous fleet keys but never substitutes a new selection/key after
+damage, missing decryption keys or worker takeover.
+
+The private control-plane receipt is write once under the original source
+recovery hold. Its SQLC transactions derive scope from the authenticated frozen
+capture and locked live source/ready maintenance receipt. Current worker token,
+revision, phase and lease expiry are checked after lock waits and before commit.
+An exact replay returns the original ciphertext/time; a replacement conflicts.
+Foreign-key restrictions preserve its original fence and maintenance recovery
+parents. Compensation can read the original while the source is abandoning,
+but cannot rewrite it. The schema registry classifies this table as operational
+recovery intent. It is not stage configuration or successful capture evidence.
+
+The private APID selection helper recovers the original receipt before invoking
+a producer. New reads require usable fleet keys, worker admission and a lease
+deadline. Cancelled reads cannot retain a new selection. The connection-closure
+worker accepts only that retained original and recomputes the supplied frozen
+definition hash before remote IO. It reuses and independently authenticates the
+ready maintenance owner, checks admission before maintenance/close/observation,
+and separately observes the exact closure. Original database OIDs, owner OIDs,
+connection flags and closure time must agree, while current session counts may
+change. A final control-plane read checks current lease, placement, scope and
+retained ciphertext identity. Lost replies, changed pins, cancellation, failed
+admission or lease handoff return zero evidence and retain source recovery
+authority, including after remote closure committed.
+
+These helpers are private and are not installed in the capture coordinator.
+The inventory producer still needs complete provider/native database coverage
+and all application/external/background writer barriers. Neither a retained
+selection nor closure/drainage establishes the common configuration/database/
+object point, source retention, successful barrier release or stage readiness.
+Original receipt retirement/account deletion, complete PostgreSQL authority and
+schema/data fidelity, object/configuration coverage, admission/usage, paid
+provider and native Linux qualification, and production-preserving promotion/
+rollback remain part of the full clone contract. The data-bearing gate remains
+closed.
+
+Verification: 42 original top-level contracts passed (five encryption, 21 state,
+16 APID), without skips. State/APID use test-only focused overlays preserving
+43/149 original declarations respectively, with zero production replacements.
+Real isolated PostgreSQL control-plane persistence qualifies write-once replay,
+lost committed replies, key rotation, stale workers, ready owner/live placement,
+source-lock lease expiry, independent pin comparison, post-closure admission/
+cancellation/handoff and preservation of the held source without target
+reservation or publication. Provider closure observations in these new APID
+contracts are synthetic; native SQL/provider acceptance remains the separately
+qualified preceding layer. The normal production APID build passed and 1,025
+actual production files were pinned and checked. The real migrated schema
+matches the live dump after normalizing trailing whitespace, replaying the new
+migration against existing shape succeeds, and SQLC regeneration matches.
+
+Initial local verification found an unsupported registry field and a test that
+set the live major to its existing value. Both tests were repaired and the
+focused suites passed. The first owned schema dump populated the test root;
+only that empty owned schema was retained in a separate fixture database and
+the owned test root was recreated from template0 before successful integration
+checks. This did not alter another process or database. Exact owned test
+databases, PostgreSQL process, RAM fixture and generated binary are retired
+after qualification. Full repository, deployed provider and native Linux
+acceptance are still outstanding.

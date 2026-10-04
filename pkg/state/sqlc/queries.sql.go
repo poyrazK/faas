@@ -8737,6 +8737,56 @@ func (q *Queries) InsertAppErrorRequest(ctx context.Context, db DBTX, arg Insert
 	return err
 }
 
+const insertClonePostgresCheckpointSelection = `-- name: InsertClonePostgresCheckpointSelection :one
+INSERT INTO project_environment_clone_postgres_checkpoint_selections(operation_id,source_database_id,maintenance_id,scope,fingerprint,key_id,ciphertext_sha256,ciphertext)
+SELECT o.id,$1::uuid,$2::uuid,$3::jsonb,$4::text,
+ $5::text,$6::text,$7::bytea
+FROM project_environment_clone_operations o WHERE o.id=$8::uuid AND o.status='capturing'
+ AND o.revision=$9::bigint AND o.lease_token::text=$10::text
+ AND o.lease_until>clock_timestamp() RETURNING operation_id, source_database_id, maintenance_id, scope, fingerprint, key_id, ciphertext_sha256, ciphertext, retained_at
+`
+
+type InsertClonePostgresCheckpointSelectionParams struct {
+	SourceDatabaseID pgtype.UUID
+	MaintenanceID    pgtype.UUID
+	Scope            []byte
+	Fingerprint      string
+	KeyID            string
+	CiphertextSha256 string
+	Ciphertext       []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) InsertClonePostgresCheckpointSelection(ctx context.Context, db DBTX, arg InsertClonePostgresCheckpointSelectionParams) (ProjectEnvironmentClonePostgresCheckpointSelection, error) {
+	row := db.QueryRow(ctx, insertClonePostgresCheckpointSelection,
+		arg.SourceDatabaseID,
+		arg.MaintenanceID,
+		arg.Scope,
+		arg.Fingerprint,
+		arg.KeyID,
+		arg.CiphertextSha256,
+		arg.Ciphertext,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresCheckpointSelection
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.MaintenanceID,
+		&i.Scope,
+		&i.Fingerprint,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.Ciphertext,
+		&i.RetainedAt,
+	)
+	return i, err
+}
+
 const insertClonePostgresMaintenance = `-- name: InsertClonePostgresMaintenance :one
 INSERT INTO managed_postgres_checkpoint_maintenance(source_database_id,reserved_by_operation_id,
  backend_id,backend_fingerprint,source_provider_resource_id,source_data_resource_id)
@@ -23736,6 +23786,34 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	row := db.QueryRow(ctx, readAccountCreditConsumption, arg.Provider, arg.AccountID, arg.ProviderInvoiceID)
 	var i ReadAccountCreditConsumptionRow
 	err := row.Scan(&i.ConsumedCents, &i.HasPrior, &i.HasUnqualified)
+	return i, err
+}
+
+const readClonePostgresCheckpointSelection = `-- name: ReadClonePostgresCheckpointSelection :one
+SELECT operation_id, source_database_id, maintenance_id, scope, fingerprint, key_id, ciphertext_sha256, ciphertext, retained_at FROM project_environment_clone_postgres_checkpoint_selections
+WHERE operation_id=$1::uuid AND source_database_id=$2::uuid FOR UPDATE
+`
+
+type ReadClonePostgresCheckpointSelectionParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+// ADR-375: private original selection precedes a coordinated capture point.
+func (q *Queries) ReadClonePostgresCheckpointSelection(ctx context.Context, db DBTX, arg ReadClonePostgresCheckpointSelectionParams) (ProjectEnvironmentClonePostgresCheckpointSelection, error) {
+	row := db.QueryRow(ctx, readClonePostgresCheckpointSelection, arg.OperationID, arg.SourceDatabaseID)
+	var i ProjectEnvironmentClonePostgresCheckpointSelection
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.MaintenanceID,
+		&i.Scope,
+		&i.Fingerprint,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.Ciphertext,
+		&i.RetainedAt,
+	)
 	return i, err
 }
 

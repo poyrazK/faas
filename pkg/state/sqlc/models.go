@@ -3824,6 +3824,18 @@ type ProjectEnvironmentClonePostgresBinding struct {
 	Preparation     []byte
 }
 
+type ProjectEnvironmentClonePostgresCheckpointSelection struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	MaintenanceID    pgtype.UUID
+	Scope            []byte
+	Fingerprint      string
+	KeyID            string
+	CiphertextSha256 string
+	Ciphertext       []byte
+	RetainedAt       pgtype.Timestamptz
+}
+
 type ProjectEnvironmentClonePostgresContent struct {
 	OperationID               pgtype.UUID
 	SourceDatabaseID          pgtype.UUID

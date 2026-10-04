@@ -494,6 +494,7 @@ type Querier interface {
 	// on app_errors is bumped on the paired IncrementAppError
 	// call; the read path derives the joined total at query time.
 	InsertAppErrorRequest(ctx context.Context, db DBTX, arg InsertAppErrorRequestParams) error
+	InsertClonePostgresCheckpointSelection(ctx context.Context, db DBTX, arg InsertClonePostgresCheckpointSelectionParams) (ProjectEnvironmentClonePostgresCheckpointSelection, error)
 	InsertClonePostgresMaintenance(ctx context.Context, db DBTX, arg InsertClonePostgresMaintenanceParams) (ManagedPostgresCheckpointMaintenance, error)
 	InsertClonePostgresWriteFence(ctx context.Context, db DBTX, arg InsertClonePostgresWriteFenceParams) (ProjectEnvironmentClonePostgresWriteFence, error)
 	// CP-1 (operator observability): append one row to the heartbeat
@@ -1320,6 +1321,8 @@ type Querier interface {
 	PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg PutTCPListenerTLSObservationParams) (int64, error)
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
+	// ADR-375: private original selection precedes a coordinated capture point.
+	ReadClonePostgresCheckpointSelection(ctx context.Context, db DBTX, arg ReadClonePostgresCheckpointSelectionParams) (ProjectEnvironmentClonePostgresCheckpointSelection, error)
 	// ADR-375: resource ownership is separate from an operation's writer barrier.
 	ReadClonePostgresMaintenance(ctx context.Context, db DBTX, sourceDatabaseID pgtype.UUID) (ManagedPostgresCheckpointMaintenance, error)
 	// ADR-375: source recovery holds precede any remote PostgreSQL closure.
