@@ -1775,3 +1775,31 @@ never advances observed revision or acknowledges a rollout wave.
 Public exception and other activation mutations remain unavailable. Dedicated
 Linux amd64 root/KVM scanner, consumed-byte, restore/promotion and consumer ACK
 acceptance remains required before public activation.
+
+
+## Public preview and inspection checkpoint (2026-10-04)
+
+Public routes now save a non-activating assignment preview and inspect saved
+reviews, operation targets, live application enrollment and historical exception
+approval/revocation. Preview requires write scope, an active owner/admin and
+completed session MFA; reads require read scope and current organization
+membership. History does not establish fresh approval authority. Explicit
+`active`, `expected_revision`, version and batch size are required in review JSON;
+duplicate fields, null scalars, unknown fields and trailing JSON are refused.
+
+Public DTOs omit account attribution, original base settings, artifact bodies,
+private binding backups and leases. The installed projection's contributing
+exception deadline is visible separately from server-timed history status.
+Revocation takes precedence over expiry; an active historical approval need not
+contribute to the current adoption. Reads never manufacture an observed revision.
+
+The Go leaf module, generated Node/Python clients and CLI share these routes.
+The published Go SDK wire vocabulary has a contract check against the daemon;
+the Node package exports its generated organization service. Both generators
+produced identical trees across two runs. Portable checks cover non-activation,
+current role/scope/MFA boundaries, foreign/deleted applications, desired versus
+persisted/observed progress, exception history and deadline visibility. These
+checks do not establish native execution or real consumer acknowledgements.
+Public approval, assignment/local/exception/operator mutations, complete
+multi-service onboarding and recovery, and dedicated Linux amd64 root/KVM
+scanner/boot/restore/promotion/leakcheck acceptance remain required.

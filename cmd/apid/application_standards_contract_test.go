@@ -46,3 +46,34 @@ func TestApplicationStandardSpecContracts(t *testing.T) {
 		t.Fatalf("definition vocabulary differs: %v %v", definitionFields, properties)
 	}
 }
+
+func TestApplicationStandardPublishedGoSDKContracts(t *testing.T) {
+	root, err := findRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	authoritative, err := scanDTOs([]string{filepath.Join(root, "pkg/api/application_standards.go"), filepath.Join(root, "pkg/api/application_standard_resources.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, err := scanDTOs([]string{filepath.Join(root, "sdk/go/internal/api/application_standards.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, fields := range authoritative {
+		if !reflect.DeepEqual(fields, published[name]) {
+			t.Fatalf("published Go SDK %s wire fields differ: %v %v", name, fields, published[name])
+		}
+	}
+	for name, wire := range map[string]reflect.Type{
+		"ApplicationStandardAdoption":  reflect.TypeOf(appstandards.Adoption{}),
+		"ApplicationStandardSource":    reflect.TypeOf(appstandards.Source{}),
+		"ApplicationStandardViolation": reflect.TypeOf(appstandards.Violation{}),
+		"ApplicationStandardEffective": reflect.TypeOf(appstandards.Effective{}),
+		"ApplicationStandardRule":      reflect.TypeOf(appstandards.Rule{}),
+	} {
+		if !reflect.DeepEqual(flagJSONFields(wire), published[name]) {
+			t.Fatalf("published Go SDK %s differs from authoritative wire type", name)
+		}
+	}
+}

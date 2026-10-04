@@ -251,6 +251,64 @@ credentials, original private control backups and worker leases are excluded.
 Public assignment activation, override writes and exception management remain
 under development.
 
+## Preview and history
+
+Owners and administrators can save a non-activating preview. It captures the
+assignment revision, affected applications, proposed effective values, field
+provenance and blockers. It never changes assignments, enrollments or app
+controls. Read-scoped organization members can inspect saved previews and
+operations; cookie sessions still require MFA.
+
+```bash
+gregale orgs standards reviews preview --org acme --file review.json
+gregale orgs standards reviews show --org acme --id REVIEW_UUID
+gregale orgs standards operation --org acme --id OPERATION_UUID
+gregale orgs standards exceptions --org acme --app APPLICATION_UUID --limit 100
+```
+
+A new organization assignment preview uses this request. IDs are UUIDs read
+from the organization and published standard. Every scalar shown is required,
+including `active` and `expected_revision`; an update also supplies the existing
+`assignment_id` and its current revision.
+
+```json
+{
+  "scope": "organization",
+  "scope_id": "ORGANIZATION_UUID",
+  "standard_id": "STANDARD_UUID",
+  "admission_version": 1,
+  "expected_revision": 0,
+  "active": true,
+  "batch_size": 10
+}
+```
+
+`POST /v1/orgs/{slug}/application-standard-reviews` saves the preview with an
+approval hash and expiry. `GET .../application-standard-reviews/{review}` reads
+it. Saved history can be inspected after expiry; historical inspection does
+not prove that the review is still approvable. A later approval must revalidate
+all authoritative inputs. Public approval remains gated on runtime acceptance.
+
+`GET .../application-standard-operations/{operation}` returns saved target
+progress and its approved application view. Queued targets have no installed
+desired revision yet. A persisted target still needs actual consumer evidence;
+reading progress never creates that evidence.
+
+`GET .../application-standard-enrollments/{app}/exceptions` lists historical
+approvals in ascending UUID order. The response includes the server's `as_of`
+time and `active`, `expired` or `revoked` status; revocation takes precedence.
+An active historical approval applies only when its standard version is still
+adopted. `after` is exclusive and `limit` is 1–100. A full page returns
+`next_page_after`; the final follow-up page can be empty. Records retain the
+reason, approving identity, expiry and revocation identity/time.
+
+Enrollment responses also expose `installed_exception_expires_at` when the last
+persisted projection used an exception. The deadline can already be expired
+while replacement is pending; it does not assert observation. These public
+responses exclude original base settings, artifact proof bodies and worker
+leases. The Go, Node and Python SDKs expose the same preview and inspection
+routes. Assignment activation and exception mutation APIs remain unavailable.
+
 ## Private rollout materialization
 
 Implementation now includes a private control-plane materializer for approved

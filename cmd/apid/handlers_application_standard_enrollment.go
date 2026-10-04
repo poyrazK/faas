@@ -16,18 +16,8 @@ func (s *server) getApplicationStandardEnrollment(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(r.PathValue("app"))
-	if err != nil || id == uuid.Nil {
-		api.WriteProblem(w, api.ErrValidation("app must be an application UUID"))
-		return
-	}
-	app, err := s.store.AppByID(r.Context(), id.String())
-	if errors.Is(err, state.ErrNotFound) || err == nil && (app.OrgID != orgID || app.Status == state.AppDeleted) {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Application not found", "No live application exists in this organization with that ID."))
-		return
-	}
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("application standards enrollment is unavailable"))
+	app, ok := s.applicationStandardLiveApp(w, r, orgID)
+	if !ok {
 		return
 	}
 	store, ok := s.store.(state.ApplicationStandardEnrollmentStore)
@@ -55,6 +45,33 @@ func applicationStandardEnrollmentResponse(e state.ApplicationStandardEnrollment
 		State: e.State, ErrorCode: e.ErrorCode, UpdatedAt: e.UpdatedAt}
 	if e.PersistedRevision > 0 && e.EffectiveHash != "" {
 		result.InstalledEffective, result.InstalledEffectiveHash = &e.Effective, e.EffectiveHash
+		result.InstalledExceptionExpiresAt = e.ExceptionExpiresAt
 	}
 	return result
+}
+
+func standardPathUUID(w http.ResponseWriter, r *http.Request, key string) (string, bool) {
+	id, err := uuid.Parse(r.PathValue(key))
+	if err != nil || id == uuid.Nil {
+		api.WriteProblem(w, api.ErrValidation(key+" must be a nonzero UUID"))
+		return "", false
+	}
+	return id.String(), true
+}
+
+func (s *server) applicationStandardLiveApp(w http.ResponseWriter, r *http.Request, orgID string) (state.App, bool) {
+	id, ok := standardPathUUID(w, r, "app")
+	if !ok {
+		return state.App{}, false
+	}
+	app, err := s.store.AppByID(r.Context(), id)
+	if errors.Is(err, state.ErrNotFound) || err == nil && (app.OrgID != orgID || app.Status == state.AppDeleted) {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Application not found", "No live application exists in this organization with that ID."))
+		return state.App{}, false
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("application standards enrollment is unavailable"))
+		return state.App{}, false
+	}
+	return app, true
 }

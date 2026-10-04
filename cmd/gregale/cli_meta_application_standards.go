@@ -17,3 +17,29 @@ func standardResourceCLIHelp() []cliSub {
 		}},
 	}
 }
+
+func standardReviewCLIHelp() []cliSub {
+	return []cliSub{
+		{Name: "preview", Short: "Save affected applications and blockers without activating a change", Flags: []cliFlag{
+			{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+			{Name: "file", Short: "assignment review JSON file", Value: "PATH", Req: true},
+		}},
+		{Name: "show", Short: "Inspect a saved review and its expiry", Flags: standardInspectionCLIHelp("review UUID")},
+	}
+}
+
+func standardInspectionCLIHelp(label string) []cliFlag {
+	return []cliFlag{
+		{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+		{Name: "id", Short: label, Value: "UUID", Req: true},
+	}
+}
+
+func standardExceptionCLIHelp() []cliFlag {
+	return []cliFlag{
+		{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+		{Name: "app", Short: "application UUID", Value: "UUID", Req: true},
+		{Name: "after", Short: "last exception UUID from the previous page", Value: "UUID"},
+		{Name: "limit", Short: "page size (1..100)", Value: "N"},
+	}
+}

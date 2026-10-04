@@ -2057,6 +2057,9 @@ var cliCommands = []cliCommand{
 		Short:   "Manage orgs, members, and workspace activity",
 		Subcommands: []cliSub{
 			{Name: "standards", Short: "Manage versioned application standards", Subcommands: []cliSub{
+				{Name: "reviews", Short: "Preview assignment changes and inspect saved reviews", Subcommands: standardReviewCLIHelp()},
+				{Name: "operation", Short: "Inspect rollout targets and saved progress", Flags: standardInspectionCLIHelp("operation UUID")},
+				{Name: "exceptions", Short: "Inspect approval, revocation and expiry history", Flags: standardExceptionCLIHelp()},
 				{Name: "application", Short: "Inspect application adoption and installed standards", Flags: []cliFlag{
 					{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
 					{Name: "app", Short: "application UUID", Value: "UUID", Req: true},

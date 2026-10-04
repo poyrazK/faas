@@ -4115,6 +4115,36 @@ Manage orgs, members, and workspace activity
 
 Manage versioned application standards
 
+#### orgs standards reviews
+
+Preview assignment changes and inspect saved reviews
+
+`gregale orgs standards reviews`
+
+#### orgs standards operation
+
+Inspect rollout targets and saved progress
+
+`gregale orgs standards operation --org <SLUG> --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | operation UUID | required |
+
+#### orgs standards exceptions
+
+Inspect approval, revocation and expiry history
+
+`gregale orgs standards exceptions --org <SLUG> --app <UUID> [--after <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--app <UUID>` | application UUID | required |
+| `--after <UUID>` | last exception UUID from the previous page |  |
+| `--limit <N>` | page size (1..100) |  |
+
 #### orgs standards application
 
 Inspect application adoption and installed standards

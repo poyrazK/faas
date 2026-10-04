@@ -235,10 +235,23 @@ from .app_webhook_response_event_filter_item import AppWebhookResponseEventFilte
 from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
+from .application_standard_adoption import ApplicationStandardAdoption
 from .application_standard_cidr_rule import ApplicationStandardCIDRRule
 from .application_standard_cidr_rule_mode import ApplicationStandardCIDRRuleMode
 from .application_standard_cidr_rule_override import ApplicationStandardCIDRRuleOverride
 from .application_standard_definition import ApplicationStandardDefinition
+from .application_standard_effective import ApplicationStandardEffective
+from .application_standard_effective_sources import ApplicationStandardEffectiveSources
+from .application_standard_enrollment import ApplicationStandardEnrollment
+from .application_standard_enrollment_materialized_fields_item import (
+    ApplicationStandardEnrollmentMaterializedFieldsItem,
+)
+from .application_standard_enrollment_state import ApplicationStandardEnrollmentState
+from .application_standard_exception import ApplicationStandardException
+from .application_standard_exception_field import ApplicationStandardExceptionField
+from .application_standard_exception_list import ApplicationStandardExceptionList
+from .application_standard_exception_status import ApplicationStandardExceptionStatus
+from .application_standard_exception_value_type_1 import ApplicationStandardExceptionValueType1
 from .application_standard_extra_port_rule import ApplicationStandardExtraPortRule
 from .application_standard_extra_port_rule_mode import ApplicationStandardExtraPortRuleMode
 from .application_standard_extra_port_rule_override import ApplicationStandardExtraPortRuleOverride
@@ -249,19 +262,38 @@ from .application_standard_log_destination_list import ApplicationStandardLogDes
 from .application_standard_log_destination_rule import ApplicationStandardLogDestinationRule
 from .application_standard_log_destination_rule_mode import ApplicationStandardLogDestinationRuleMode
 from .application_standard_log_destination_rule_override import ApplicationStandardLogDestinationRuleOverride
+from .application_standard_operation import ApplicationStandardOperation
+from .application_standard_operation_state import ApplicationStandardOperationState
+from .application_standard_operation_target import ApplicationStandardOperationTarget
+from .application_standard_operation_target_state import ApplicationStandardOperationTargetState
 from .application_standard_publisher import ApplicationStandardPublisher
 from .application_standard_publisher_list import ApplicationStandardPublisherList
 from .application_standard_publisher_rule import ApplicationStandardPublisherRule
 from .application_standard_publisher_rule_mode import ApplicationStandardPublisherRuleMode
 from .application_standard_publisher_rule_override import ApplicationStandardPublisherRuleOverride
+from .application_standard_review import ApplicationStandardReview
+from .application_standard_review_blocker import ApplicationStandardReviewBlocker
+from .application_standard_review_blocker_field import ApplicationStandardReviewBlockerField
+from .application_standard_review_blocker_scope import ApplicationStandardReviewBlockerScope
+from .application_standard_review_request import ApplicationStandardReviewRequest
+from .application_standard_review_request_scope import ApplicationStandardReviewRequestScope
+from .application_standard_reviewed_app import ApplicationStandardReviewedApp
+from .application_standard_reviewed_app_changed_fields_item import ApplicationStandardReviewedAppChangedFieldsItem
 from .application_standard_security_policy_rule import ApplicationStandardSecurityPolicyRule
 from .application_standard_security_policy_rule_mode import ApplicationStandardSecurityPolicyRuleMode
 from .application_standard_security_policy_rule_override import ApplicationStandardSecurityPolicyRuleOverride
 from .application_standard_security_policy_rule_value import ApplicationStandardSecurityPolicyRuleValue
+from .application_standard_settings import ApplicationStandardSettings
+from .application_standard_settings_security_policy import ApplicationStandardSettingsSecurityPolicy
 from .application_standard_signature_rule import ApplicationStandardSignatureRule
 from .application_standard_signature_rule_mode import ApplicationStandardSignatureRuleMode
 from .application_standard_signature_rule_override import ApplicationStandardSignatureRuleOverride
+from .application_standard_source import ApplicationStandardSource
+from .application_standard_source_mode import ApplicationStandardSourceMode
+from .application_standard_source_override import ApplicationStandardSourceOverride
+from .application_standard_source_scope import ApplicationStandardSourceScope
 from .application_standard_version import ApplicationStandardVersion
+from .application_standard_violation import ApplicationStandardViolation
 from .applied_build import AppliedBuild
 from .apply_app_open_api_policy_request import ApplyAppOpenAPIPolicyRequest
 from .apply_platform_tenant_consumer_request import ApplyPlatformTenantConsumerRequest
@@ -2404,10 +2436,21 @@ __all__ = (
     "AppErrorsSummaryResponse",
     "AppErrorSummaryItem",
     "AppErrorSummaryItemErrorClass",
+    "ApplicationStandardAdoption",
     "ApplicationStandardCIDRRule",
     "ApplicationStandardCIDRRuleMode",
     "ApplicationStandardCIDRRuleOverride",
     "ApplicationStandardDefinition",
+    "ApplicationStandardEffective",
+    "ApplicationStandardEffectiveSources",
+    "ApplicationStandardEnrollment",
+    "ApplicationStandardEnrollmentMaterializedFieldsItem",
+    "ApplicationStandardEnrollmentState",
+    "ApplicationStandardException",
+    "ApplicationStandardExceptionField",
+    "ApplicationStandardExceptionList",
+    "ApplicationStandardExceptionStatus",
+    "ApplicationStandardExceptionValueType1",
     "ApplicationStandardExtraPortRule",
     "ApplicationStandardExtraPortRuleMode",
     "ApplicationStandardExtraPortRuleOverride",
@@ -2418,19 +2461,38 @@ __all__ = (
     "ApplicationStandardLogDestinationRule",
     "ApplicationStandardLogDestinationRuleMode",
     "ApplicationStandardLogDestinationRuleOverride",
+    "ApplicationStandardOperation",
+    "ApplicationStandardOperationState",
+    "ApplicationStandardOperationTarget",
+    "ApplicationStandardOperationTargetState",
     "ApplicationStandardPublisher",
     "ApplicationStandardPublisherList",
     "ApplicationStandardPublisherRule",
     "ApplicationStandardPublisherRuleMode",
     "ApplicationStandardPublisherRuleOverride",
+    "ApplicationStandardReview",
+    "ApplicationStandardReviewBlocker",
+    "ApplicationStandardReviewBlockerField",
+    "ApplicationStandardReviewBlockerScope",
+    "ApplicationStandardReviewedApp",
+    "ApplicationStandardReviewedAppChangedFieldsItem",
+    "ApplicationStandardReviewRequest",
+    "ApplicationStandardReviewRequestScope",
     "ApplicationStandardSecurityPolicyRule",
     "ApplicationStandardSecurityPolicyRuleMode",
     "ApplicationStandardSecurityPolicyRuleOverride",
     "ApplicationStandardSecurityPolicyRuleValue",
+    "ApplicationStandardSettings",
+    "ApplicationStandardSettingsSecurityPolicy",
     "ApplicationStandardSignatureRule",
     "ApplicationStandardSignatureRuleMode",
     "ApplicationStandardSignatureRuleOverride",
+    "ApplicationStandardSource",
+    "ApplicationStandardSourceMode",
+    "ApplicationStandardSourceOverride",
+    "ApplicationStandardSourceScope",
     "ApplicationStandardVersion",
+    "ApplicationStandardViolation",
     "AppliedBuild",
     "AppLogDrainAnalyticsBucket",
     "AppLogDrainAnalyticsResponse",

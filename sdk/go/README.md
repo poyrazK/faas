@@ -285,3 +285,24 @@ home for the wire DTOs.
 - OpenAPI spec: `../../api/openapi.yaml` (canonical), `../../pkg/apid/openapi.yaml` (embedded).
 - ADR-038 (issue #266): documents the split contract between the SDK and the daemon.
 - PR plan: `/.claude/plans/lets-create-imp-plan-bubbly-engelbart.md` (the 14-PR sequence).
+
+
+### Application standards
+
+`PreviewApplicationStandardAssignment` saves affected applications, effective
+settings and blockers without activating a change. `GetApplicationStandardReview`
+reads that saved preview; its expiry and hash do not replace fresh approval
+validation. `GetApplicationStandardOperation` returns queued/persisted/observed
+progress. `GetApplicationStandardEnrollment` separates desired, persisted and
+observed revisions and includes the installed exception deadline when present.
+`ListApplicationStandardExceptions` returns UUID-ordered approval, revocation
+and expiry history, including the server's `AsOf` time and an exclusive cursor.
+
+Request and response types are exported from the SDK package, including
+`ApplicationStandardReviewRequest`, `ApplicationStandardReview`,
+`ApplicationStandardOperation`, and `ApplicationStandardExceptionList`.
+`ApplicationStandardSettings` stores normalized `json.RawMessage` values by
+field; `ApplicationStandardDefinition` stores typed rules with a JSON value.
+Read routes require read scope and active organization membership; preview
+requires write scope and owner/admin authority. Activation and exception
+mutation APIs remain gated pending runtime acceptance.
