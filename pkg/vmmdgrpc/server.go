@@ -1247,8 +1247,9 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
 
 	resp := &vmmdpb.StatsResponse{
-		LiveCount:   int32(s.vmm.LiveCount()),
-		LeasedCount: int32(s.vmm.LeasedCount()),
+		LiveCount:                int32(s.vmm.LiveCount()),
+		LeasedCount:              int32(s.vmm.LeasedCount()),
+		RegionalRuntimeHostEpoch: s.regionalRuntimeHostEpoch(),
 	}
 
 	resident, ok := leakcheck.ResidentBytes()

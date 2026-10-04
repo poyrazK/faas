@@ -70,6 +70,17 @@ func validID(id string) bool {
 
 func (j *Journal) Identity() Identity { return j.identity }
 
+// RuntimeHostEpoch exposes only a healthy owner's current incarnation. A
+// closed or poisoned journal must not advertise a usable permit destination.
+func (j *Journal) RuntimeHostEpoch() (runtimequota.HostEpoch, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if err := j.ready(); err != nil {
+		return runtimequota.HostEpoch{}, err
+	}
+	return runtimequota.HostEpoch{NodeID: j.identity.NodeID, HostEpochID: j.identity.EpochID}, nil
+}
+
 func attemptKey(p runtimequota.CapacityPermit) string {
 	// Lifecycle RPCs address instance IDs. Rebinding the same instance on this
 	// epoch would let a delayed resume address a different physical attempt.

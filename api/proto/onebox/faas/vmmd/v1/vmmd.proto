@@ -1170,6 +1170,9 @@ message StatsResponse {
   // Optional so unset != 0 (Int64Value = 0 vs absent differs in prom metrics).
   google.protobuf.Int64Value total_resident_bytes = 3;
   repeated InstanceStats instances = 4;
+  // ADR-494: current healthy host journal incarnation. Absent on older,
+  // independent or unhealthy hosts. Bookkeeping, never execution authority.
+  RegionalRuntimeHostEpoch regional_runtime_host_epoch = 5;
 }
 
 message InstanceStats {
@@ -2338,4 +2341,10 @@ message ForwardUDPResponse {
     ForwardUDPResponseInit init = 1;
     bytes datagram = 2;
   }
+}
+
+// ADR-494: journal identity only; kernel boot identity stays host-private.
+message RegionalRuntimeHostEpoch {
+  string node_id = 1;
+  string host_epoch_id = 2;
 }

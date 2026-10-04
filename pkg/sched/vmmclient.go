@@ -322,11 +322,12 @@ type PingOutcome struct {
 // {app,node}-rolled-up Prometheus series until two valid samples
 // are observed.
 type StatsSnapshot struct {
-	LiveCount          int32
-	LeasedCount        int32
-	TotalResidentBytes *int64
-	Instances          []VMInstanceStat
-	SampledAt          time.Time
+	RegionalRuntimeHostEpoch *runtimequota.HostEpoch
+	LiveCount                int32
+	LeasedCount              int32
+	TotalResidentBytes       *int64
+	Instances                []VMInstanceStat
+	SampledAt                time.Time
 }
 
 // VMInstanceStat is the sched-side view of vmmdpb.InstanceStats —
@@ -1481,6 +1482,13 @@ func (c *VMMClient) Stats(ctx context.Context) (*StatsSnapshot, error) {
 	out := &StatsSnapshot{
 		LiveCount:   resp.GetLiveCount(),
 		LeasedCount: resp.GetLeasedCount(),
+	}
+	if epoch := resp.GetRegionalRuntimeHostEpoch(); epoch != nil {
+		h := runtimequota.HostEpoch{NodeID: epoch.GetNodeId(), HostEpochID: epoch.GetHostEpochId()}
+		if err := h.Validate(); err != nil {
+			return nil, fmt.Errorf("vmmd stats regional host epoch: %w", err)
+		}
+		out.RegionalRuntimeHostEpoch = &h
 	}
 	if v := resp.GetTotalResidentBytes(); v != nil {
 		b := v.GetValue()

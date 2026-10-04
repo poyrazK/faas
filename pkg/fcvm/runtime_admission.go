@@ -55,6 +55,15 @@ func (m *Manager) WithRuntimeHostJournal(journal *runtimequotahost.Journal) *Man
 	return m
 }
 
+// RegionalRuntimeHostEpoch is discovery only. The cell authorizer and host
+// journal still enforce every execution boundary independently of this sample.
+func (m *Manager) RegionalRuntimeHostEpoch() (runtimequota.HostEpoch, error) {
+	if m.runtimeHostJournal == nil {
+		return runtimequota.HostEpoch{}, runtimequotahost.ErrStorage
+	}
+	return m.runtimeHostJournal.RuntimeHostEpoch()
+}
+
 func cloneRuntimePlacement(p *runtimequota.Placement) *runtimequota.Placement {
 	if p == nil {
 		return nil
