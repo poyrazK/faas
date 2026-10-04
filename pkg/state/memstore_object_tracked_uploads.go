@@ -27,7 +27,7 @@ func (m *MemStore) BeginTrackedObjectUpload(_ context.Context, c ObjectUploadCom
 	if !ok || route.AccountID != c.AccountID || route.AppID != c.AppID || route.BucketID != c.BucketID || !route.Enabled {
 		return c, false, ErrNotFound
 	}
-	if c.Bytes > route.MaxBytes {
+	if c.Bytes > route.MaxBytes || !c.Encryption.Equal(route.Encryption) {
 		return c, false, ErrConflict
 	}
 	c.Origin = "route"

@@ -21,6 +21,7 @@ type ObjectUploadRoute struct {
 	MaxBytes            int64
 	AllowedContentTypes []string
 	Enabled             bool
+	Encryption          ObjectEncryptionSnapshot `json:"-"`
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 }

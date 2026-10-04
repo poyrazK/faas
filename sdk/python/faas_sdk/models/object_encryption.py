@@ -13,8 +13,8 @@ T = TypeVar("T", bound="ObjectEncryption")
 
 @_attrs_define
 class ObjectEncryption:
-    """PUT-only owned encryption selection. KMS requires an enrolled Gregale key reference; bucket keys apply only to
-    aws:kms. Context is canonical base64 of a bounded JSON object with unique string entries.
+    """Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key reference;
+    bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique string entries.
 
     """
 

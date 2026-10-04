@@ -25,7 +25,12 @@ func (s *server) WithObjectStorage(registry *objectstorage.Registry) *server {
 }
 
 func viewObjectUploadRoute(route state.ObjectUploadRoute) api.ObjectUploadRoute {
-	return api.ObjectUploadRoute{ID: route.ID, Name: route.Name, BucketID: route.BucketID, KeyPrefix: route.KeyPrefix, MaxBytes: route.MaxBytes, AllowedContentTypes: append([]string(nil), route.AllowedContentTypes...), Enabled: route.Enabled, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt}
+	out := api.ObjectUploadRoute{ID: route.ID, Name: route.Name, BucketID: route.BucketID, KeyPrefix: route.KeyPrefix, MaxBytes: route.MaxBytes, AllowedContentTypes: append([]string(nil), route.AllowedContentTypes...), Enabled: route.Enabled, CreatedAt: route.CreatedAt, UpdatedAt: route.UpdatedAt}
+	if !route.Encryption.Empty() {
+		selection := route.Encryption.Clone().Selection
+		out.Encryption = &selection
+	}
+	return out
 }
 
 func (s *server) uploadRouteStore(w http.ResponseWriter) (state.ObjectUploadRouteStore, bool) {
@@ -74,63 +79,27 @@ func (s *server) createObjectUploadRoute(w http.ResponseWriter, r *http.Request,
 	if !decodeBucketRequest(w, r, &req) {
 		return
 	}
-	req.Name = strings.TrimSpace(strings.ToLower(req.Name))
-	req.KeyPrefix = strings.Trim(strings.TrimSpace(req.KeyPrefix), "/")
-	if !validObjectUploadRouteName(req.Name) || !validObjectUploadPrefix(req.KeyPrefix) || req.BucketID == "" {
-		bucketProblem(w, objectstorage.ErrInvalid)
-		return
-	}
-	maxBytes := req.MaxBytes
-	if maxBytes == 0 {
-		maxBytes = s.objectStorage.MaxUploadBytes
-	}
-	if maxBytes < 1 || maxBytes > s.objectStorage.MaxUploadBytes {
-		bucketProblem(w, objectstorage.ErrInvalid)
-		return
-	}
-	if len(req.AllowedContentTypes) > 32 {
-		bucketProblem(w, objectstorage.ErrInvalid)
-		return
-	}
-	for _, contentType := range req.AllowedContentTypes {
-		if !validUploadContentType(contentType) {
-			bucketProblem(w, objectstorage.ErrInvalid)
-			return
-		}
-	}
-	bucketStore, ok := s.store.(state.ObjectBucketStore)
+	buckets, ok := s.store.(state.ObjectBucketStore)
 	if !ok {
 		bucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
-	bucket, err := bucketStore.GetObjectBucket(r.Context(), acct.ID, app.ID, req.BucketID)
-	if err != nil || bucket.State != "ready" {
+	if req.BucketID == "" {
+		bucketProblem(w, objectstorage.ErrInvalid)
+		return
+	}
+	b, err := buckets.GetObjectBucket(r.Context(), acct.ID, app.ID, req.BucketID)
+	if err != nil || b.State != "ready" {
 		bucketProblem(w, state.ErrNotFound)
 		return
 	}
-	for i, contentType := range req.AllowedContentTypes {
-		req.AllowedContentTypes[i] = strings.ToLower(strings.TrimSpace(contentType))
-	}
-	created := false
-	route, err := store.GetObjectUploadRoute(r.Context(), acct.ID, app.ID, req.Name)
-	if errors.Is(err, state.ErrNotFound) {
-		route = state.ObjectUploadRoute{ID: uuid.NewString(), AccountID: acct.ID, AppID: app.ID, Name: req.Name}
-		created = true
-	} else if err != nil {
-		bucketProblem(w, err)
+	if !s.authorizeBucketData(w, r, b, state.ObjectBucketPermissionWrite) {
 		return
 	}
-	route.BucketID, route.KeyPrefix, route.MaxBytes = bucket.ID, req.KeyPrefix, maxBytes
-	route.AllowedContentTypes = append([]string(nil), req.AllowedContentTypes...)
-	route.Enabled = req.Enabled == nil || *req.Enabled
-	route, err = store.UpsertObjectUploadRoute(r.Context(), route)
+	route, status, err := s.configureObjectUploadRoute(r.Context(), b, store, req)
 	if err != nil {
 		bucketProblem(w, err)
 		return
-	}
-	status := http.StatusOK
-	if created {
-		status = http.StatusCreated
 	}
 	writeJSON(w, status, viewObjectUploadRoute(route))
 }

@@ -44,8 +44,9 @@ class ObjectSignRequest:
     tags: ObjectSignRequestTags | Unset = UNSET
     """PUT-only S3 object tags."""
     encryption: ObjectEncryption | Unset = UNSET
-    """PUT-only owned encryption selection. KMS requires an enrolled Gregale key reference; bucket keys apply only
-    to aws:kms. Context is canonical base64 of a bounded JSON object with unique string entries."""
+    """Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key
+    reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique
+    string entries."""
 
     def to_dict(self) -> dict[str, Any]:
         method: str = self.method

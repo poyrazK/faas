@@ -1709,7 +1709,33 @@ multipart upload can recover its identity without a new enabled-key probe.
 
 Do not send cipher directives on reads, individual parts or completion. SSE-C,
 native key references and encryption query directives are unsupported. Bucket
-defaults, upload-route encryption, GCS and
+defaults, GCS and
 cross-bucket encrypted copy remain acceptance work in
 `docs/s3-implementation-gaps.md`. See [ADR-414](adr/414-customer-s3-encryption.md)
 and [ADR-415](adr/415-branded-object-url-capabilities.md).
+
+### Encryption on application upload routes
+
+Route creation/update accepts an optional `encryption` object with the same
+owned selection as control multipart creation. Non-admin API keys need
+`storage:manage`, `storage:write` and a bucket write grant for route management.
+The route must use a ready owned
+bucket and a tracked encryption-capable provider. Encrypted route size limits
+also respect the configured single-PUT ceiling. Route listing returns the
+public selection; private native key identity stays internal.
+
+An authenticated `POST /uploads/{route}` uses the route policy. Cipher headers
+on the upload are rejected. Each accepted write freezes the current selection
+in its durable receipt; a policy change affects later admissions. Omitting
+`encryption` on a full route update clears the explicit policy. A stale edge
+cannot admit a write using the previous selection.
+
+Each new KMS write checks the enrolled enabled key before object dispatch.
+Provider request accounting includes the key probe, even on rejection. A lost
+or mismatched encryption acknowledgment leaves the receipt pending for exact
+proof recovery. Recovery can confirm the original write with KMS disabled and
+never resends its body. Idempotent retries return the original receipt after
+route policy changes without another key check or write. Successful upload and
+receipt responses include the owned `encryption` selection. Go, Node and Python
+clients expose the route policy and bucket write receipt selection. See
+[ADR-417](adr/417-owned-encryption-on-upload-routes.md).

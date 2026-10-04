@@ -29,7 +29,12 @@ func ViewObjectWriteReceipt(c ObjectUploadCompletion) api.ObjectWriteReceipt {
 	if validTrackedUploadRetry(c.ErrorCode) || c.Status == "failed" && validTrackedUploadFinish(c) {
 		code = c.ErrorCode
 	}
-	return api.ObjectWriteReceipt{ID: c.ID, BucketID: c.BucketID, Key: c.Key, Operation: operation, Bytes: c.Bytes, ContentType: c.ContentType, ETag: c.ETag, Status: c.Status, ErrorCode: code, CreatedAt: c.CreatedAt}
+	out := api.ObjectWriteReceipt{ID: c.ID, BucketID: c.BucketID, Key: c.Key, Operation: operation, Bytes: c.Bytes, ContentType: c.ContentType, ETag: c.ETag, Status: c.Status, ErrorCode: code, CreatedAt: c.CreatedAt}
+	if !c.Encryption.Empty() {
+		selection := c.Encryption.Clone().Selection
+		out.Encryption = &selection
+	}
+	return out
 }
 
 type objectWriteReceiptCursor struct {

@@ -11,6 +11,7 @@ var _ ObjectUploadRouteStore = (*MemStore)(nil)
 
 func cloneObjectUploadRoute(route ObjectUploadRoute) ObjectUploadRoute {
 	route.AllowedContentTypes = slices.Clone(route.AllowedContentTypes)
+	route.Encryption = route.Encryption.Clone()
 	return route
 }
 
@@ -39,11 +40,17 @@ func (m *MemStore) GetObjectUploadRoute(_ context.Context, accountID, appID, nam
 }
 
 func (m *MemStore) UpsertObjectUploadRoute(_ context.Context, route ObjectUploadRoute) (ObjectUploadRoute, error) {
-	if route.ID == "" || route.AccountID == "" || route.AppID == "" || route.Name == "" || route.BucketID == "" || route.MaxBytes <= 0 {
+	if route.ID == "" || route.AccountID == "" || route.AppID == "" || route.Name == "" || route.BucketID == "" || route.MaxBytes <= 0 || !route.Encryption.ValidFor(route.AccountID) {
 		return ObjectUploadRoute{}, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !route.Encryption.Empty() {
+		b := m.objectBuckets[route.BucketID]
+		if b.AccountID != route.AccountID || b.AppID != route.AppID || b.State != "ready" {
+			return ObjectUploadRoute{}, ErrNotFound
+		}
+	}
 	now := time.Now().UTC()
 	for id, existing := range m.objectUploadRoutes {
 		if id != route.ID && existing.AppID == route.AppID && existing.Name == route.Name {
@@ -51,6 +58,9 @@ func (m *MemStore) UpsertObjectUploadRoute(_ context.Context, route ObjectUpload
 		}
 	}
 	if old, ok := m.objectUploadRoutes[route.ID]; ok {
+		if old.AccountID != route.AccountID || old.AppID != route.AppID || old.Name != route.Name {
+			return ObjectUploadRoute{}, ErrConflict
+		}
 		route.CreatedAt = old.CreatedAt
 	} else if route.CreatedAt.IsZero() {
 		route.CreatedAt = now
@@ -84,6 +94,9 @@ func (m *MemStore) RecordObjectUploadCompletion(_ context.Context, completion Ob
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.objectUploadRoutes[completion.RouteID].Encryption.Empty() && completion.Status != "rejected" {
+		return ObjectUploadCompletion{}, ErrConflict
+	}
 	if _, exists := m.objectUploadCompletions[completion.ID]; exists {
 		return ObjectUploadCompletion{}, ErrConflict
 	}
@@ -100,6 +113,9 @@ func (m *MemStore) CreateObjectUploadIntent(_ context.Context, intent ObjectUplo
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.objectUploadRoutes[intent.RouteID].Encryption.Empty() {
+		return ObjectUploadCompletion{}, ErrConflict
+	}
 	if _, exists := m.objectUploadCompletions[intent.ID]; exists {
 		return ObjectUploadCompletion{}, ErrConflict
 	}

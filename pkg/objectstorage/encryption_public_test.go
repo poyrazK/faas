@@ -99,3 +99,34 @@ func TestEncryptedCopyDispatchRecorderFailure(t *testing.T) {
 		t.Fatal("write escaped failed dispatch", err, writes)
 	}
 }
+
+// adr: 417
+func TestEncryptedPutDispatchRecorderFailure(t *testing.T) {
+	for _, algorithm := range []string{"AES256", "aws:kms", "aws:kms:dsse"} {
+		t.Run(algorithm, func(t *testing.T) {
+			var writes, keyChecks, fences int
+			p, b := encryptionS3Fixture(t, func(w http.ResponseWriter, r *http.Request) {
+				writes++
+				w.WriteHeader(http.StatusInternalServerError)
+			}, encryptionKeyResponse())
+			e := encryptionSelection(t, b, algorithm)
+			blocked := errors.New("dispatch fence unavailable")
+			ctx := WithEncryptionRequestRecorder(t.Context(), func(context.Context) error {
+				keyChecks++
+				return nil
+			})
+			ctx = WithEncryptionWriteRecorder(ctx, func(context.Context) error {
+				fences++
+				return blocked
+			})
+			_, err := p.WriteEncryptedObject(ctx, "physical", "key", uuid.NewString(), strings.NewReader("abc"), 3, ObjectMetadata{}, e)
+			wantChecks := 1
+			if algorithm == "AES256" {
+				wantChecks = 0
+			}
+			if !errors.Is(err, blocked) || !errors.Is(err, ErrWriteRejected) || writes != 0 || fences != 1 || keyChecks != wantChecks {
+				t.Fatal("PUT escaped failed dispatch or skipped key validation", err, writes, fences, keyChecks)
+			}
+		})
+	}
+}

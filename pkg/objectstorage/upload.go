@@ -113,6 +113,10 @@ func (h *uploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.performTrackedUpload(w, r, st, tracked, bucket, completion)
 		return
 	}
+	if !completion.Encryption.Empty() {
+		uploadProblem(w, http.StatusNotImplemented, "the selected storage provider does not support tracked encrypted uploads")
+		return
+	}
 	h.performLegacyUpload(w, r, writer, bucket, completion)
 }
 
@@ -172,16 +176,27 @@ func (h *uploadHandler) prepareUpload(w http.ResponseWriter, r *http.Request, ap
 			return c, false
 		}
 	}
+	c.Encryption = route.Encryption.Clone()
 	return c, true
 }
 func (h *uploadHandler) validateUpload(w http.ResponseWriter, r *http.Request, route state.ObjectUploadRoute, c state.ObjectUploadCompletion) bool {
+	for name := range r.Header {
+		if strings.HasPrefix(strings.ToLower(name), "x-amz-server-side-encryption") {
+			uploadProblem(w, http.StatusBadRequest, "upload encryption is selected by the route policy")
+			return false
+		}
+	}
+	limit := min(route.MaxBytes, h.registry.MaxUploadBytes)
+	if !route.Encryption.Empty() {
+		limit = min(limit, h.registry.MaxSinglePutBytes)
+	}
 	status, code, detail := 0, "", ""
 	switch {
 	case !allowedUploadContentType(route.AllowedContentTypes, c.ContentType) || ValidateContentType(c.ContentType) != nil:
 		status, code, detail = http.StatusUnsupportedMediaType, "content_type_not_allowed", "content type is not allowed by this upload route"
 	case r.ContentLength < 0:
 		status, code, detail = http.StatusLengthRequired, "content_length_required", "Content-Length is required for bounded uploads"
-	case r.ContentLength > route.MaxBytes || r.ContentLength > h.registry.MaxUploadBytes:
+	case r.ContentLength > limit:
 		status, code, detail = http.StatusRequestEntityTooLarge, "size_limit_exceeded", "upload exceeds the route byte limit"
 	}
 	if status == 0 {
@@ -212,6 +227,17 @@ func (h *uploadHandler) uploadDestination(w http.ResponseWriter, r *http.Request
 	if !ok {
 		uploadProblem(w, http.StatusNotImplemented, "the selected storage provider does not support streaming uploads")
 		return bucket, nil, false
+	}
+	if !route.Encryption.Empty() {
+		owner, err := uuid.Parse(app.AccountID)
+		if err != nil || backend.Encryption.VerifySnapshot(owner.String(), route.Encryption) != nil {
+			uploadProblem(w, http.StatusServiceUnavailable, "upload encryption is temporarily unavailable")
+			return bucket, nil, false
+		}
+		if _, ok := writer.(ObjectEncryptionProvider); !ok {
+			uploadProblem(w, http.StatusNotImplemented, "the selected storage provider does not support encrypted uploads")
+			return bucket, nil, false
+		}
 	}
 	return bucket, writer, true
 }
@@ -395,7 +421,11 @@ func uploadMaterialMAC(key []byte, material string) string {
 }
 
 func uploadResponse(completion state.ObjectUploadCompletion) map[string]any {
-	return map[string]any{"id": completion.ID, "bucket_id": completion.BucketID, "key": completion.Key, "bytes": completion.Bytes, "content_type": completion.ContentType, "etag": completion.ETag, "status": completion.Status}
+	out := map[string]any{"id": completion.ID, "bucket_id": completion.BucketID, "key": completion.Key, "bytes": completion.Bytes, "content_type": completion.ContentType, "etag": completion.ETag, "status": completion.Status}
+	if !completion.Encryption.Empty() {
+		out["encryption"] = completion.Encryption.Clone().Selection
+	}
+	return out
 }
 
 func uploadRouteName(path string) (string, bool) {

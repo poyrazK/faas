@@ -38,8 +38,9 @@ class ObjectMultipartUpload:
     version_id: str | Unset = UNSET
     """Owned public version ID when completion is confirmed; null denotes a mutable provider version."""
     encryption: ObjectEncryption | Unset = UNSET
-    """PUT-only owned encryption selection. KMS requires an enrolled Gregale key reference; bucket keys apply only
-    to aws:kms. Context is canonical base64 of a bounded JSON object with unique string entries."""
+    """Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key
+    reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique
+    string entries."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

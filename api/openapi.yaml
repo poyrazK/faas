@@ -24584,6 +24584,7 @@ components:
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        encryption: { $ref: '#/components/schemas/ObjectEncryption' }
     ObjectUploadRouteList:
       description: Policy-controlled edge upload routes for one app.
       type: object
@@ -24591,7 +24592,7 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ObjectUploadRoute' } }
     CreateObjectUploadRouteRequest:
-      description: Upload policy declaration for POST /uploads/{name}.
+      description: Upload policy declaration for POST /uploads/{name}. Optional owned encryption is captured per receipt; encrypted routes require a tracked capable provider and use the configured single PUT limit.
       type: object
       additionalProperties: false
       required: [name, bucket_id]
@@ -24602,6 +24603,7 @@ components:
         max_bytes: { type: integer, format: int64, minimum: 1 }
         allowed_content_types: { type: array, items: { type: string }, maxItems: 32 }
         enabled: { type: boolean, default: true }
+        encryption: { $ref: '#/components/schemas/ObjectEncryption' }
     ObjectBucketAccessGrant:
       description: Provider-independent access binding between one Gregale API key and one logical bucket.
       type: object
@@ -24785,7 +24787,7 @@ components:
       type: object
       additionalProperties: false
       required: [algorithm]
-      description: PUT-only owned encryption selection. KMS requires an enrolled Gregale key reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique string entries.
+      description: Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique string entries.
       properties:
         algorithm: { type: string, enum: [AES256, 'aws:kms', 'aws:kms:dsse'] }
         key_id: { type: string, maxLength: 512, description: Owned arn:gregale:kms reference; required for KMS and forbidden for AES256. }
@@ -25003,6 +25005,7 @@ components:
           type: string
           enum: [preparation_expired, usage_unavailable, dispatch_failed, provider_write_rejected, provider_write_uncertain, configuration]
         created_at: { type: string, format: date-time }
+        encryption: { $ref: '#/components/schemas/ObjectEncryption' }
 
     ObjectWriteReceiptList:
       type: object

@@ -15631,6 +15631,53 @@ func (q *Queries) ObjectURLMultipartCredential(ctx context.Context, db DBTX, id 
 	return i, err
 }
 
+const objectUploadIntentGet = `-- name: ObjectUploadIntentGet :one
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3
+`
+
+type ObjectUploadIntentGetParams struct {
+	RouteID        pgtype.UUID
+	SubjectID      string
+	IdempotencyKey string
+}
+
+func (q *Queries) ObjectUploadIntentGet(ctx context.Context, db DBTX, arg ObjectUploadIntentGetParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectUploadIntentGet, arg.RouteID, arg.SubjectID, arg.IdempotencyKey)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
+		&i.RecoveryCursor,
+		&i.RecoveryVersionsObserved,
+		&i.VersionID,
+		&i.EncryptionSnapshot,
+		&i.EncryptionDispatched,
+		&i.EncryptionVerified,
+	)
+	return i, err
+}
+
 const objectUploadReceiptGet = `-- name: ObjectUploadReceiptGet :one
 SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND route_id IS NOT DISTINCT FROM $4 AND subject_id=$5
 `
@@ -15686,8 +15733,26 @@ func (q *Queries) ObjectUploadReceiptGet(ctx context.Context, db DBTX, arg Objec
 	return i, err
 }
 
+const objectUploadRouteDelete = `-- name: ObjectUploadRouteDelete :execrows
+DELETE FROM object_upload_routes WHERE account_id=$1 AND app_id=$2 AND name=$3
+`
+
+type ObjectUploadRouteDeleteParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Name      string
+}
+
+func (q *Queries) ObjectUploadRouteDelete(ctx context.Context, db DBTX, arg ObjectUploadRouteDeleteParams) (int64, error) {
+	result, err := db.Exec(ctx, objectUploadRouteDelete, arg.AccountID, arg.AppID, arg.Name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectUploadRouteForWrite = `-- name: ObjectUploadRouteForWrite :one
-SELECT id, account_id, app_id, name, bucket_id, key_prefix, max_bytes, allowed_content_types, enabled, created_at, updated_at FROM object_upload_routes WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND enabled FOR SHARE
+SELECT id, account_id, app_id, name, bucket_id, key_prefix, max_bytes, allowed_content_types, enabled, created_at, updated_at, encryption_snapshot FROM object_upload_routes WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND enabled FOR SHARE
 `
 
 type ObjectUploadRouteForWriteParams struct {
@@ -15717,8 +15782,135 @@ func (q *Queries) ObjectUploadRouteForWrite(ctx context.Context, db DBTX, arg Ob
 		&i.Enabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.EncryptionSnapshot,
 	)
 	return i, err
+}
+
+const objectUploadRouteGet = `-- name: ObjectUploadRouteGet :one
+SELECT id, account_id, app_id, name, bucket_id, key_prefix, max_bytes, allowed_content_types, enabled, created_at, updated_at, encryption_snapshot FROM object_upload_routes WHERE account_id=$1 AND app_id=$2 AND name=$3
+`
+
+type ObjectUploadRouteGetParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Name      string
+}
+
+func (q *Queries) ObjectUploadRouteGet(ctx context.Context, db DBTX, arg ObjectUploadRouteGetParams) (ObjectUploadRoute, error) {
+	row := db.QueryRow(ctx, objectUploadRouteGet, arg.AccountID, arg.AppID, arg.Name)
+	var i ObjectUploadRoute
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.BucketID,
+		&i.KeyPrefix,
+		&i.MaxBytes,
+		&i.AllowedContentTypes,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EncryptionSnapshot,
+	)
+	return i, err
+}
+
+const objectUploadRouteUpsert = `-- name: ObjectUploadRouteUpsert :one
+INSERT INTO object_upload_routes(id,account_id,app_id,name,bucket_id,key_prefix,max_bytes,allowed_content_types,enabled,encryption_snapshot)
+SELECT $1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid,$6::text,$7::bigint,COALESCE($8::text[],ARRAY[]::text[]),$9::boolean,$10::jsonb
+WHERE EXISTS(SELECT 1 FROM object_buckets WHERE id=$5 AND account_id=$2 AND app_id=$3 AND state='ready')
+ON CONFLICT(app_id,name) DO UPDATE SET bucket_id=EXCLUDED.bucket_id,key_prefix=EXCLUDED.key_prefix,max_bytes=EXCLUDED.max_bytes,
+allowed_content_types=EXCLUDED.allowed_content_types,enabled=EXCLUDED.enabled,encryption_snapshot=EXCLUDED.encryption_snapshot,updated_at=now()
+WHERE object_upload_routes.account_id=EXCLUDED.account_id AND object_upload_routes.id=EXCLUDED.id
+RETURNING id, account_id, app_id, name, bucket_id, key_prefix, max_bytes, allowed_content_types, enabled, created_at, updated_at, encryption_snapshot
+`
+
+type ObjectUploadRouteUpsertParams struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	Name                string
+	BucketID            pgtype.UUID
+	KeyPrefix           string
+	MaxBytes            int64
+	AllowedContentTypes []string
+	Enabled             bool
+	EncryptionSnapshot  []byte
+}
+
+func (q *Queries) ObjectUploadRouteUpsert(ctx context.Context, db DBTX, arg ObjectUploadRouteUpsertParams) (ObjectUploadRoute, error) {
+	row := db.QueryRow(ctx, objectUploadRouteUpsert,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Name,
+		arg.BucketID,
+		arg.KeyPrefix,
+		arg.MaxBytes,
+		arg.AllowedContentTypes,
+		arg.Enabled,
+		arg.EncryptionSnapshot,
+	)
+	var i ObjectUploadRoute
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.BucketID,
+		&i.KeyPrefix,
+		&i.MaxBytes,
+		&i.AllowedContentTypes,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EncryptionSnapshot,
+	)
+	return i, err
+}
+
+const objectUploadRoutesList = `-- name: ObjectUploadRoutesList :many
+SELECT id, account_id, app_id, name, bucket_id, key_prefix, max_bytes, allowed_content_types, enabled, created_at, updated_at, encryption_snapshot FROM object_upload_routes WHERE account_id=$1 AND app_id=$2 ORDER BY name
+`
+
+type ObjectUploadRoutesListParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ObjectUploadRoutesList(ctx context.Context, db DBTX, arg ObjectUploadRoutesListParams) ([]ObjectUploadRoute, error) {
+	rows, err := db.Query(ctx, objectUploadRoutesList, arg.AccountID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectUploadRoute{}
+	for rows.Next() {
+		var i ObjectUploadRoute
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.BucketID,
+			&i.KeyPrefix,
+			&i.MaxBytes,
+			&i.AllowedContentTypes,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EncryptionSnapshot,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one

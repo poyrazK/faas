@@ -22,8 +22,9 @@ class CreateObjectMultipartUploadRequest:
     size_bytes: int
     content_type: str | Unset = UNSET
     encryption: ObjectEncryption | Unset = UNSET
-    """PUT-only owned encryption selection. KMS requires an enrolled Gregale key reference; bucket keys apply only
-    to aws:kms. Context is canonical base64 of a bounded JSON object with unique string entries."""
+    """Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key
+    reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique
+    string entries."""
 
     def to_dict(self) -> dict[str, Any]:
         key = self.key

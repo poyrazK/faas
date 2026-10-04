@@ -17,7 +17,7 @@ func (h *uploadHandler) performTrackedUpload(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.registry.TransferTimeout())
-	result, err := writer.WriteTrackedObject(ctx, bucket.PhysicalName, c.Key, c.ID, io.LimitReader(r.Body, c.Bytes), c.Bytes, ObjectMetadata{ContentType: c.ContentType})
+	result, err := h.writeCapturedRouteUpload(ctx, st, writer, bucket, &c, io.LimitReader(r.Body, c.Bytes))
 	cancel()
 	if err != nil && !errors.Is(err, ErrWriteRejected) || err == nil && !validUploadETag(result.ETag) {
 		w.Header().Set("X-Gregale-Upload-ID", c.ID)
@@ -26,12 +26,14 @@ func (h *uploadHandler) performTrackedUpload(w http.ResponseWriter, r *http.Requ
 	}
 	c.Status = "completed"
 	c.ETag = result.ETag
+	c.VerifiedEncryption = result.Encryption
 	c.ProviderVersionID = result.ProviderVersionID
 	c.RecoveryVersionsObserved = result.ProviderVersionID != "" && result.ProviderVersionID != "null"
 	if err != nil {
 		c.Status = "failed"
 		c.ETag = ""
 		c.ProviderVersionID = ""
+		c.VerifiedEncryption = api.ObjectEncryption{}
 		c.ErrorCode = "provider_write_rejected"
 	}
 	done, finishErr := h.finishTrackedUpload(r.Context(), st, c)
@@ -57,6 +59,9 @@ func (h *uploadHandler) beginTrackedUpload(w http.ResponseWriter, r *http.Reques
 	}
 	c = intent
 	w.Header().Set("X-Gregale-Upload-ID", c.ID)
+	if !c.Encryption.Empty() {
+		return c, true
+	}
 	if !h.recordUploadAttempt(w, r, bucket.ID) {
 		c.Status = "failed"
 		c.ErrorCode = "usage_unavailable"

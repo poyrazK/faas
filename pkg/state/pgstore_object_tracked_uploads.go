@@ -57,7 +57,11 @@ func (s *PgStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCo
 	if err != nil {
 		return c, false, mapErr(err)
 	}
-	if c.Bytes > route.MaxBytes {
+	routeEncryption, err := encryptionSnapshotFromJSON(route.EncryptionSnapshot, c.AccountID)
+	if err != nil {
+		return c, false, err
+	}
+	if c.Bytes > route.MaxBytes || !c.Encryption.Equal(routeEncryption) {
 		return c, false, ErrConflict
 	}
 	if err = admitObjectURLTx(ctx, tx, c.AccountID, c.BucketID, c.Key, c.Bytes, true, p, c.ID, true); err != nil {

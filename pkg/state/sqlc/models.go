@@ -3037,6 +3037,7 @@ type ObjectUploadRoute struct {
 	Enabled             bool
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
+	EncryptionSnapshot  []byte
 }
 
 type ObjectVersionReference struct {

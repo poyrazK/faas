@@ -5,16 +5,17 @@ import "time"
 // ObjectWriteReceipt is a customer projection of a tracked write. Completion
 // proves that this attempt committed; it does not assert the current key value.
 type ObjectWriteReceipt struct {
-	ID          string    `json:"id"`
-	BucketID    string    `json:"bucket_id"`
-	Key         string    `json:"key"`
-	Operation   string    `json:"operation"`
-	Bytes       int64     `json:"bytes"`
-	ContentType string    `json:"content_type"`
-	ETag        string    `json:"etag"`
-	Status      string    `json:"status"`
-	ErrorCode   string    `json:"error_code,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string            `json:"id"`
+	BucketID    string            `json:"bucket_id"`
+	Key         string            `json:"key"`
+	Operation   string            `json:"operation"`
+	Bytes       int64             `json:"bytes"`
+	ContentType string            `json:"content_type"`
+	ETag        string            `json:"etag"`
+	Status      string            `json:"status"`
+	ErrorCode   string            `json:"error_code,omitempty"`
+	Encryption  *ObjectEncryption `json:"encryption,omitempty"`
+	CreatedAt   time.Time         `json:"created_at"`
 }
 
 type ObjectWriteReceiptList struct {

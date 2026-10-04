@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * PUT-only owned encryption selection. KMS requires an enrolled Gregale key reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique string entries.
+ * Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique string entries.
  */
 export type ObjectEncryption = {
   algorithm: 'AES256' | 'aws:kms' | 'aws:kms:dsse';

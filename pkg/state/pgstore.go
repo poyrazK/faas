@@ -25487,7 +25487,7 @@ func mapErr(err error) error {
 				pgErr.ConstraintName == "invocation_platform_tenant_source" {
 				return ErrInvalidArgument
 			}
-			if pgErr.ConstraintName == "object_url_capability_fenced" || pgErr.ConstraintName == "object_deletion_fenced" || pgErr.ConstraintName == "object_capacity_write_fenced" ||
+			if pgErr.ConstraintName == "object_upload_route_encryption_fenced" || pgErr.ConstraintName == "object_url_capability_fenced" || pgErr.ConstraintName == "object_deletion_fenced" || pgErr.ConstraintName == "object_capacity_write_fenced" ||
 				pgErr.ConstraintName == "app_has_object_buckets" ||
 				pgErr.ConstraintName == "app_secret_managed_postgres_owner" {
 				return ErrConflict

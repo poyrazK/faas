@@ -5469,3 +5469,24 @@ DELETE FROM object_storage_s3_credentials WHERE id IN (
 INSERT INTO object_storage_s3_credentials
 (id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,url_request,url_api_key_id,url_expires_at,url_receipt_id)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,sqlc.arg(url_request)::jsonb,sqlc.narg(url_api_key_id)::uuid,sqlc.arg(url_expires_at)::timestamptz,sqlc.narg(url_receipt_id)::uuid) RETURNING *;
+
+-- name: ObjectUploadRoutesList :many
+SELECT * FROM object_upload_routes WHERE account_id=$1 AND app_id=$2 ORDER BY name;
+
+-- name: ObjectUploadRouteGet :one
+SELECT * FROM object_upload_routes WHERE account_id=$1 AND app_id=$2 AND name=$3;
+
+-- name: ObjectUploadRouteUpsert :one
+INSERT INTO object_upload_routes(id,account_id,app_id,name,bucket_id,key_prefix,max_bytes,allowed_content_types,enabled,encryption_snapshot)
+SELECT sqlc.arg(id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(name)::text,sqlc.arg(bucket_id)::uuid,sqlc.arg(key_prefix)::text,sqlc.arg(max_bytes)::bigint,COALESCE(sqlc.arg(allowed_content_types)::text[],ARRAY[]::text[]),sqlc.arg(enabled)::boolean,sqlc.arg(encryption_snapshot)::jsonb
+WHERE EXISTS(SELECT 1 FROM object_buckets WHERE id=sqlc.arg(bucket_id) AND account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND state='ready')
+ON CONFLICT(app_id,name) DO UPDATE SET bucket_id=EXCLUDED.bucket_id,key_prefix=EXCLUDED.key_prefix,max_bytes=EXCLUDED.max_bytes,
+allowed_content_types=EXCLUDED.allowed_content_types,enabled=EXCLUDED.enabled,encryption_snapshot=EXCLUDED.encryption_snapshot,updated_at=now()
+WHERE object_upload_routes.account_id=EXCLUDED.account_id AND object_upload_routes.id=EXCLUDED.id
+RETURNING *;
+
+-- name: ObjectUploadRouteDelete :execrows
+DELETE FROM object_upload_routes WHERE account_id=$1 AND app_id=$2 AND name=$3;
+
+-- name: ObjectUploadIntentGet :one
+SELECT * FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3;

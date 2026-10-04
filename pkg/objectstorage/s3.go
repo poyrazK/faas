@@ -302,6 +302,11 @@ func (p *S3) writeObjectEncrypted(ctx context.Context, bucket, key string, body 
 		in.Tagging = aws.String(tagging)
 	}
 	applyPutEncryption(in, encryption)
+	if encryption != nil {
+		if err := beforeEncryptionWrite(ctx); err != nil {
+			return UploadResult{}, errors.Join(ErrWriteRejected, err)
+		}
+	}
 	out, err := p.client.PutObject(ctx, in, func(o *s3.Options) {
 		o.APIOptions = append(o.APIOptions, v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware)
 		p.boundStreamClient(ctx, o)

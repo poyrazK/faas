@@ -3539,6 +3539,28 @@ END $$;
 
 
 --
+-- Name: protect_object_route_encryption_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_route_encryption_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE r object_upload_routes;
+BEGIN
+ IF NEW.route_id IS NULL THEN RETURN NEW; END IF;
+ SELECT * INTO r FROM object_upload_routes WHERE id=NEW.route_id FOR SHARE;
+ IF NOT FOUND THEN RETURN NEW; END IF;
+ IF (NEW.write_phase='prepared' AND NEW.encryption_snapshot IS DISTINCT FROM r.encryption_snapshot) OR
+  (r.encryption_snapshot<>'{}' AND NEW.status<>'rejected' AND
+   ((NEW.account_id,NEW.app_id,NEW.bucket_id) IS DISTINCT FROM (r.account_id,r.app_id,r.bucket_id) OR
+    NEW.encryption_snapshot IS DISTINCT FROM r.encryption_snapshot OR NEW.write_phase<>'prepared' OR NEW.status<>'pending')) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_route_encryption_fenced',MESSAGE='Route writes require the current captured encryption policy';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: protect_object_upload_encryption(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9422,6 +9444,8 @@ CREATE TABLE public.object_upload_routes (
     enabled boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    encryption_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT object_upload_routes_check CHECK (public.valid_object_encryption_snapshot(encryption_snapshot, account_id)),
     CONSTRAINT object_upload_routes_key_prefix_check CHECK ((length(key_prefix) <= 256)),
     CONSTRAINT object_upload_routes_max_bytes_check CHECK ((max_bytes > 0)),
     CONSTRAINT object_upload_routes_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text))
@@ -20936,6 +20960,13 @@ CREATE TRIGGER object_native_version_key_grant_fence BEFORE INSERT OR UPDATE ON 
 --
 
 CREATE TRIGGER object_native_version_write_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_object_native_version_admission();
+
+
+--
+-- Name: object_upload_completions object_route_encryption_receipt_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_route_encryption_receipt_bound BEFORE INSERT ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.protect_object_route_encryption_receipt();
 
 
 --
