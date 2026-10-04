@@ -99,9 +99,9 @@ func New(scraper PromScraper, windowSize int, bucketSize time.Duration) *RecentL
 		bucketSize = time.Second
 	}
 	return &RecentLoad{
-		windowSize: windowSize,
-		bucketSize: bucketSize,
-		scraper:    scraper,
+		windowSize:    windowSize,
+		bucketSize:    bucketSize,
+		scraper:       scraper,
 		byApp:         map[string]*appWindow{},
 		rateByApp:     map[string]*rateWindow{},
 		inflightByApp: map[string]*rateWindow{},
