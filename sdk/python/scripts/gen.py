@@ -121,8 +121,18 @@ def pre_normalize_spec(spec: Path) -> Path:
         if schema is not None:
             for keyword in ("oneOf", "anyOf", "not"):
                 schema.pop(keyword, None)
-    tmp = Path(tempfile.mkstemp(suffix=".json", prefix="openapi-")[1])
-    with tmp.open("w") as fh:
+    # The pinned generator discards object properties when a oneOf contains
+    # only required-field constraints, producing body: Any instead of the
+    # existing typed request model. Keep its wire shape in generated clients;
+    # apid and the canonical spec still enforce exactly one mutation.
+    update = fixed["components"]["schemas"]["UpdateTCPListenerRequest"]
+    constraints = update.get("oneOf")
+    if constraints is not None:
+        if constraints != [{"required": ["enabled"]}, {"required": ["tls"]}]:
+            raise ValueError("UpdateTCPListenerRequest generator adaptation needs review")
+        del update["oneOf"]
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", prefix="openapi-", delete=False) as fh:
+        tmp = Path(fh.name)
         json.dump(fixed, fh, indent=2, sort_keys=False, default=str)
     return tmp
 
@@ -149,7 +159,8 @@ def regen(overwrite: bool = True) -> None:
     # `_transport.py`, `idempotency.py`, `release_context.py`, `webhook.py`,
     # `pre_auth_target.py`) lives INSIDE `faas_sdk/`
     # because it imports the generated service classes, but the
-    # regen deletes the whole tree. We copy them to a temp dir,
+    # regen deletes the whole tree. This includes the runtime flags client;
+    # copy every hand-written wrapper to a temp dir,
     # rmtree, run the generator, then copy them back so the
     # wrapper imports keep working.
     import tempfile
@@ -168,6 +179,8 @@ def regen(overwrite: bool = True) -> None:
             "webhook.py",
             "pre_auth_target.py",
             "issues.py",
+            "flags.py",
+            "commit.py",
         ]
         target = OUT / "faas_sdk"
         if target.exists():
@@ -344,7 +357,7 @@ def regen(overwrite: bool = True) -> None:
                     "--quiet",
                     str(sdk_root),
                     "--exclude",
-                    "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,dev_bridge.py,webhook.py,__init__.py",
+                    "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,dev_bridge.py,webhook.py,flags.py,__init__.py",
                 ],
                 check=False,
                 capture_output=True,
@@ -487,7 +500,7 @@ def _fix_docstrings(text: str) -> str:
 def _patch_generator_bugs(sdk_root: Path) -> None:
     """Fix known bugs in the openapi-python-client 0.29.0 generator output.
 
-    Four cleanups:
+    Five cleanups:
 
     1. `from ...types import UNSET, Response` is missing `Unset` even
        though generated service files reference `Unset` in type
@@ -524,6 +537,9 @@ def _patch_generator_bugs(sdk_root: Path) -> None:
        Fix 4 extends the rule to opener/closer lines of multi-
        line blocks, which leaves the body lines untouched (their
        inner whitespace is semantically meaningful).
+    5. Binary File responses can be generated as BytesIO(response.text) when
+       a route also offers text/csv. BytesIO requires bytes; response.content
+       preserves ZIP and UTF-8 artifacts without decoding or corruption.
     """
     import re
 
@@ -555,6 +571,8 @@ def _patch_generator_bugs(sdk_root: Path) -> None:
     for path in sdk_root.rglob("*.py"):
         text = path.read_text()
         original = text
+        # Fix 5: downloads must preserve bytes, including invalid UTF-8 in ZIPs.
+        text = text.replace("BytesIO(response.text)", "BytesIO(response.content)")
         # Fix 1: add `Unset` to the types import when referenced in
         # the file but not yet imported. The check matches the
         # import line ONLY (single-line `from ... import ...`); we
@@ -631,6 +649,7 @@ Public surface:
   and return the stable delivery ID for receiver-side deduplication.
 * `pre_auth_target_digest` - opaque login-target signal for selected failed
   responses on opt-in pre-auth routes.
+* Runtime flags client, ASGI middleware and HTTPX transport for Python apps.
 """
 
 from ._rfc7807 import (
@@ -648,6 +667,22 @@ from ._rfc7807 import (
 )
 from ._sse import SseEvent, aiter_sse, iter_sse
 from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
+from .flags import (
+    GREGALE_FLAG_CONTEXT_HEADER,
+    GREGALE_FLAG_EVIDENCE_HEADER,
+    GREGALE_FLAG_PROPAGATION_HEADER,
+    AsyncGregaleFlagsTransport,
+    FlagDecision,
+    GregaleFlags,
+    GregaleFlagsMiddleware,
+    evaluate_flag,
+    evaluate_variant,
+    flag_bucket,
+    flag_subject_bucket,
+    flag_subject_variant_bucket,
+    flag_variant_bucket,
+    validate_bundle,
+)
 from .dev_bridge import (
     DEV_BRIDGE_CONTEXT_HEADER,
     AsyncDevBridgeTransport,
@@ -659,6 +694,7 @@ from .dev_bridge import (
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
+from .commit import insert_commit_event
 from .idempotency import (
     IdempotencyKey,
     current_idempotency_key,
@@ -703,6 +739,20 @@ __all__ = (
     "current_idempotency_key",
     "GREGALE_RELEASE_HEADER",
     "GREGALE_REVISION_HEADER",
+    "GREGALE_FLAG_CONTEXT_HEADER",
+    "GREGALE_FLAG_EVIDENCE_HEADER",
+    "GREGALE_FLAG_PROPAGATION_HEADER",
+    "GregaleFlags",
+    "GregaleFlagsMiddleware",
+    "AsyncGregaleFlagsTransport",
+    "FlagDecision",
+    "evaluate_flag",
+    "evaluate_variant",
+    "flag_bucket",
+    "flag_subject_bucket",
+    "flag_subject_variant_bucket",
+    "flag_variant_bucket",
+    "validate_bundle",
     "GregaleReleaseMiddleware",
     "GregaleReleaseTransport",
     "AsyncGregaleReleaseTransport",
@@ -743,6 +793,7 @@ __all__ = (
     "DevBridgeTransport",
     "current_dev_bridge_context",
     "with_dev_bridge_context",
+    "insert_commit_event",
 )
 '''
 
@@ -752,7 +803,7 @@ def _rewrite_init_py(init_path: Path) -> None:
     barrel. The generated stub only re-exports `Client` and
     `AuthenticatedClient`; the wrapper adds the chain
     (`FaaSClient`), the four sentinels, idempotency helpers, SSE,
-    release context, and webhook verification.
+    release context, runtime flags, and webhook verification.
     """
     init_path.write_text(_INIT_PY_TEMPLATE)
 

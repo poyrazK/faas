@@ -63,6 +63,9 @@ const (
 	managedPostgresFile           = "managed_postgres.go"
 	openapiContractFile           = "openapi_contract.go"
 	executionsFile                = "executions.go"                  // ADR-171 — disposable one-shot execution DTOs
+	executionWorkflowManagedFile  = "execution_workflow_managed.go"  // ADR-171 — server-managed sequential workflow DTOs
+	executionCapabilitiesFile     = "execution_capabilities.go"      // ADR-171 — Runs preflight capability DTOs
+	executionArtifactGrantsFile   = "execution_artifact_grants.go"   // ADR-171 — one-time cross-agent artifact capabilities
 	appTasksFile                  = "app_tasks.go"                   // ADR-230 — deployment-attached one-off command DTOs
 	projectsFile                  = "projects.go"                    // issue #2201 — durable project lifecycle and recovery DTOs
 	devSyncFile                   = "dev_sync.go"                    // developer edit-to-live history
@@ -83,7 +86,9 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions": true, // scoped HTML/CSRF adapter for the public issue action API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":  true, // scoped HTML/CSRF adapter for the public issue action API
+	"POST /dashboard/apps/{slug}/issues/impact-alert-policy": true, // scoped HTML/CSRF adapter for issue impact alert policy updates
+	"POST /dashboard/apps/{slug}/issues/ownership-rules":     true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
 
 	"GET /v1/dev/bridges/{id}/connect":           true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
 	"GET /v1/dev/bridges/{id}/status":            true, // attachment-authenticated CLI readiness protocol
@@ -308,29 +313,32 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
-	// ADR-421 native adapter primitives. Customer per-version lock management
-	// is not part of the ADR-422 bucket API capability.
+	// ADR-563 native adapter primitives. Customer per-version lock management
+	// is not part of the ADR-564 bucket API capability.
 	"ObjectVersionRetention": true,
 	"ObjectVersionLegalHold": true,
 	// Parsed ARN routing helper; notification wire requests carry a string destination.
-	"ObjectNotificationTarget":        true,
-	"ObjectWriteConditions":           true, // internal S3 protocol validators, not a JSON wire DTO
-	"ApplyResponseApp":                true, // inline {slug,id} row in ApplyResponse.apis schema
-	"CliAuthCodeResponse":             true, // POST /v1/cli-auth/code (anonymous)
-	"CliAuthExchangeRequest":          true, // POST /v1/cli-auth/exchange
-	"CliAuthExchangeResponse":         true, // POST /v1/cli-auth/exchange
-	"CliAuthStatus":                   true, // enum used by CLI auth
-	"ComputeNodeEnrollmentRequest":    true, // authenticated operator-only compute-node mutation payload
-	"ComputeNodeOperatorResponse":     true, // authenticated operator-only compute-node projection
-	"StatusPage":                      true, // GET /status/slo.json (public status)
-	"SessionsRevokeRequest":           true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
-	"ManagedPostgresPlanLimits":       true, // internal plan policy, not a wire DTO
-	"RealtimeLimits":                  true, // internal plan policy, not a wire DTO
-	"ExecutionSnapshotShape":          true, // internal snapshot compatibility key, not a wire DTO
-	"ResolvedExecutionRequest":        true, // sealed scheduler intent, not a public DTO
-	"ResolvedCreateAppTaskRequest":    true, // validated state admission input, not a public DTO
-	"RecoverDeploymentRolloutRequest": true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
-	"AlertRuleRow":                    true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
+	"ObjectNotificationTarget":          true,
+	"ObjectWriteConditions":             true, // internal S3 protocol validators, not a JSON wire DTO
+	"ApplyResponseApp":                  true, // inline {slug,id} row in ApplyResponse.apis schema
+	"CliAuthCodeResponse":               true, // POST /v1/cli-auth/code (anonymous)
+	"CliAuthExchangeRequest":            true, // POST /v1/cli-auth/exchange
+	"CliAuthExchangeResponse":           true, // POST /v1/cli-auth/exchange
+	"CliAuthStatus":                     true, // enum used by CLI auth
+	"ComputeNodeEnrollmentRequest":      true, // authenticated operator-only compute-node mutation payload
+	"ComputeNodeOperatorResponse":       true, // authenticated operator-only compute-node projection
+	"StatusPage":                        true, // GET /status/slo.json (public status)
+	"SessionsRevokeRequest":             true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
+	"ManagedPostgresPlanLimits":         true, // internal plan policy, not a wire DTO
+	"RealtimeLimits":                    true, // internal plan policy, not a wire DTO
+	"ExecutionSnapshotShape":            true, // internal snapshot compatibility key, not a wire DTO
+	"ResolvedExecutionRequest":          true, // sealed scheduler intent, not a public DTO
+	"ResolvedCreateAppTaskRequest":      true, // validated state admission input, not a public DTO
+	"RecoverDeploymentRolloutRequest":   true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
+	"AlertRuleRow":                      true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
+	"RouteCapturedOperation":            true, // ADR-446: internal inventory rows are excluded from reports with json:"-".
+	"CanaryRouteHealthRecoveryRequest":  true, // loopback-only fresh check and recovery contract
+	"CanaryRouteHealthRecoveryResponse": true, // loopback-only worker result
 	// Canary and smoke reports are emitted through app-task stdout for the CLI
 	// to decode; these structs are not standalone HTTP request/response DTOs.
 	"ServiceBindingProbeCheck":  true,
@@ -466,9 +474,11 @@ var dtoExclude = map[string]bool{
 	"ObsCapacityProfile":  true,
 	"ObsCapacityResponse": true,
 	"ObsCapacitySummary":  true,
-	"ObsDeploymentRow":    true,
-	"ObsInstanceRow":      true,
-	"ObsInvocationRow":    true,
+	// ADR-422: this aggregate belongs to the same operator capacity response.
+	"ServiceCapacityProtection": true,
+	"ObsDeploymentRow":          true,
+	"ObsInstanceRow":            true,
+	"ObsInvocationRow":          true,
 	// ObsInvoiceSummary: PR #1099 P3 follow-on (post-PR #1111);
 	// admin-only billing summary shape.
 	"ObsInvoiceSummary":       true,
@@ -538,11 +548,12 @@ var schemaSpecOnly = map[string]bool{
 	// DTOs in handlers_feature_flags.go and handlers_feature_flag_evidence.go.
 	// TestFeatureFlagsSpecContracts checks these actual encoded shapes,
 	// including their flattened embedded fields, against the OpenAPI schemas.
-	"FlagRule": true, "FlagVariant": true, "FeatureFlag": true, "FlagsConfig": true,
+	"FlagRule": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
 	"FlagsBundle": true, "FeatureFlagVersion": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,
-	"InspectFeatureFlagRequest": true, "FlagRequestEvidence": true, "FlagEvidencePage": true,
+	"InspectFeatureFlagRequest": true, "FlagRolloutPromotionRequest": true, "FlagRolloutPromotion": true,
+	"FlagRequestEvidence": true, "FlagEvidencePage": true,
 	"FlagOutcome": true, "FlagOutcomesResponse": true,
 	// Migration preflight verdict level is a typed string, not a struct, so
 	// the DTO scanner does not surface it. Same pattern as TriggerKind and
@@ -993,6 +1004,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 
 	files := []string{
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
@@ -1045,12 +1057,17 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
 		filepath.Join(root, "pkg", "api", openapiContractFile),
 		filepath.Join(root, "pkg", "api", executionsFile),
+		filepath.Join(root, "pkg", "api", executionWorkflowManagedFile),
+		filepath.Join(root, "pkg", "api", executionCapabilitiesFile),
+		filepath.Join(root, "pkg", "api", executionArtifactGrantsFile),
 		filepath.Join(root, "pkg", "api", appTasksFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", "dev_bridge.go"),
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
+		filepath.Join(root, "pkg", "api", "binding_inventory.go"),
+		filepath.Join(root, "pkg", "api", "binding_application_adoption.go"),
 		filepath.Join(root, "pkg", "api", outboundBindingsFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
@@ -1058,7 +1075,21 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
+		filepath.Join(root, "pkg", "api", "tcp_listener_tls.go"),
+		filepath.Join(root, "pkg", "api", "udp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "preflight.go"),
+		filepath.Join(root, "pkg", "api", "exclusive_operations.go"),
+		filepath.Join(root, "pkg", "api", "route_policy.go"),
+		filepath.Join(root, "pkg", "api", "route_check_history.go"),
+		filepath.Join(root, "pkg", "api", "route_gate.go"),
+		filepath.Join(root, "pkg", "api", "route_health.go"),
+		filepath.Join(root, "pkg", "api", "route_monitor.go"),
+		filepath.Join(root, "pkg", "api", "route_client_errors.go"),
+		filepath.Join(root, "pkg", "api", "route_investigation.go"),
+		filepath.Join(root, "pkg", "api", "route_customers.go"),
+		filepath.Join(root, "pkg", "api", "route_customer_health.go"),
+		filepath.Join(root, "pkg", "api", "route_health_history.go"),
+		filepath.Join(root, "pkg", "api", "route_health_notifications.go"),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

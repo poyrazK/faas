@@ -5,19 +5,94 @@
 import type { CreateOutboundIntegrationRequest } from '../models/CreateOutboundIntegrationRequest.js';
 import type { OutboundAppBinding } from '../models/OutboundAppBinding.js';
 import type { OutboundAppBindingList } from '../models/OutboundAppBindingList.js';
+import type { OutboundBindingProbePolicy } from '../models/OutboundBindingProbePolicy.js';
 import type { OutboundBindingUsageResponse } from '../models/OutboundBindingUsageResponse.js';
 import type { OutboundIntegrationOffer } from '../models/OutboundIntegrationOffer.js';
 import type { OutboundIntegrationOfferList } from '../models/OutboundIntegrationOfferList.js';
 import type { OutboundIntegrationUsageResponse } from '../models/OutboundIntegrationUsageResponse.js';
+import type { Problem } from '../models/Problem.js';
 import type { PutOutboundBindingDailyRequestBudgetRequest } from '../models/PutOutboundBindingDailyRequestBudgetRequest.js';
 import type { PutOutboundCredentialRequest } from '../models/PutOutboundCredentialRequest.js';
 import type { PutOutboundDailyRequestBudgetRequest } from '../models/PutOutboundDailyRequestBudgetRequest.js';
 import type { PutOutboundRequestPolicyRequest } from '../models/PutOutboundRequestPolicyRequest.js';
+import type { PutOutboundRunsBindingRequest } from '../models/PutOutboundRunsBindingRequest.js';
 import type { UpdateOutboundBindingPolicyRequest } from '../models/UpdateOutboundBindingPolicyRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class OutboundService {
+  /**
+   * Read an explicitly configured outbound probe policy
+   * Read a customer-owned integration's safe-method probe configuration. This does not send traffic to a provider.
+   * @returns OutboundBindingProbePolicy Probe policy
+   * @returns Problem Probe policy lookup was rejected or the catalog is unavailable
+   * @throws ApiError
+   */
+  public static getOutboundBindingProbePolicy({
+    integration,
+  }: {
+    /**
+     * Customer-owned outbound integration identifier.
+     */
+    integration: string,
+  }): CancelablePromise<OutboundBindingProbePolicy | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/probe-policy',
+      path: {
+        'integration': integration,
+      },
+    });
+  }
+  /**
+   * Configure an outbound binding probe
+   * Declare a GET or HEAD path safe to probe and its expected 2xx status. The path must fit the customer-owned integration's route policy. Configuration sends no provider requests. Requires deploy-write access and MFA.
+   * @returns OutboundBindingProbePolicy Confirmed probe policy
+   * @returns Problem Probe policy update was rejected or could not be persisted
+   * @throws ApiError
+   */
+  public static setOutboundBindingProbePolicy({
+    integration,
+    requestBody,
+  }: {
+    /**
+     * Customer-owned outbound integration identifier.
+     */
+    integration: string,
+    requestBody: OutboundBindingProbePolicy,
+  }): CancelablePromise<OutboundBindingProbePolicy | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/outbound/integrations/{integration}/probe-policy',
+      path: {
+        'integration': integration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Remove an outbound binding probe configuration
+   * Remove a customer-owned integration's probe policy, invalidating prior evidence. Requires deploy-write access and MFA. This does not revoke provider credentials.
+   * @returns Problem Probe policy removal was rejected or could not be persisted
+   * @throws ApiError
+   */
+  public static deleteOutboundBindingProbePolicy({
+    integration,
+  }: {
+    /**
+     * Customer-owned outbound integration identifier.
+     */
+    integration: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/outbound/integrations/{integration}/probe-policy',
+      path: {
+        'integration': integration,
+      },
+    });
+  }
   /**
    * List managed outbound integrations available to this account.
    * Provider credentials and gateway tokens are never returned.
@@ -194,6 +269,42 @@ export class OutboundService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Grant or revoke use of a managed integration by stateless Runs.
+   * Requires MFA and deploy-write scope. Grants are separate from app bindings and require an enabled integration with a configured managed credential and at least one allowed route. Run tool calls are available only after the Runs broker is enabled for the deployment.
+   * @returns void
+   * @throws ApiError
+   */
+  public static setOutboundIntegrationRunsBinding({
+    integration,
+    requestBody,
+  }: {
+    /**
+     * UUID of the account-owned integration whose Runs access is changing.
+     */
+    integration: string,
+    requestBody: PutOutboundRunsBindingRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/outbound/integrations/{integration}/runs',
+      path: {
+        'integration': integration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `Integration is missing a managed credential or allowed route.`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).

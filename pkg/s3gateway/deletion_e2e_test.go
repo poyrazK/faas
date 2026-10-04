@@ -133,7 +133,7 @@ func (p *mutableDeleteFixture) serve(t *testing.T, w http.ResponseWriter, r *htt
 	w.WriteHeader(204)
 }
 
-// adr: 405
+// adr: 547
 func TestMutableDeletionHistoryLimitE2E(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		t.Run(fmt.Sprint("postgres=", pg), func(t *testing.T) {
@@ -305,7 +305,7 @@ func prepareDeletionVersioning(t *testing.T, st multipartCopyIntegrationStore, b
 	}
 }
 
-// adr: 405
+// adr: 547
 func TestMutableDeletionSDKE2E(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		t.Run(fmt.Sprint("postgres=", pg), func(t *testing.T) {

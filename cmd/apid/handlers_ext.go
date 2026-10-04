@@ -1474,7 +1474,11 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not update app"))
+		if problem := state.ServiceCapacityProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("could not update app"))
+		}
 		return
 	}
 	if req.BeforeCheckpoint != nil {
@@ -2533,6 +2537,19 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, problem)
 		return
 	}
+	// schedd makes a wake idempotent when a routable instance is running,
+	// so a queued wake for a warm app was never stamped on any instance and
+	// `gregale wake --wait` waited out its whole timeout. Report the
+	// running instance instead of queueing a wake that cannot complete.
+	if running, err := s.store.RunningInstanceForApp(r.Context(), app.ID); err == nil {
+		writeJSON(w, http.StatusOK, api.AppWakeResponse{
+			WakeID: running.WakeID, AlreadyRunning: true, InstanceID: running.ID,
+		})
+		return
+	} else if !errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.ErrCapacity("could not read the app's running instances"))
+		return
+	}
 	wakeID, err := s.enqueueExplicitAppWake(r.Context(), acct, app)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not queue app wake"))
@@ -3260,6 +3277,13 @@ func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomai
 	}
 	cert, err := dialCert(ctx, dialDomain)
 	if err != nil {
+		if !errors.Is(err, errCDNCert) && withinOnDemandIssuanceGrace(d, time.Now()) {
+			// ADR-520: this handshake may be the one that makes the edge
+			// obtain the certificate; report it as pending, not failed.
+			resp.CertStatus = certStatusPending
+			resp.CertLastError = ""
+			return resp, nil
+		}
 		resp.CertStatus = classifyCertError(err)
 		if resp.CertLastError == "" {
 			resp.CertLastError = err.Error()
@@ -3461,7 +3485,7 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 	if !obs.PointsToGregale {
 		ptsStatus = probeFail
 		report.Healthy = false
-		expected := strings.TrimSuffix(strings.TrimSpace(appsDomainFunc()), ".")
+		expected := customDomainTarget()
 		if ptsObs != "" {
 			ptsDetail = "CNAME does not point at Gregale (observed: " + ptsObs + ")"
 		} else {
@@ -3471,7 +3495,7 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 		// remediation target. Using it here previously produced self-CNAME
 		// instructions when the customer's record pointed back to itself.
 		if expected != "" && !strings.EqualFold(expected, d.Domain) {
-			ptsRem = "Set CNAME " + d.Domain + " → " + expected
+			ptsRem = routingRemediation(d.Domain, expected)
 		} else {
 			ptsRem = "Ask Gregale support for the configured application CNAME target"
 		}
@@ -3663,10 +3687,6 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrValidation("retry options require a deployment command cron"))
 		return
 	}
-	if len(cronCommand) == 0 && (req.SchedulePolicy != nil || req.FailureRules != nil) {
-		api.WriteProblem(w, api.ErrValidation("schedule policies and failure rules require a deployment command cron"))
-		return
-	}
 	// Plan-tier gate (spec §4.4 / paid-only event-shaped primitives).
 	// Fires BEFORE AppByID so a Free customer gets a clean 402 rather
 	// than a 404 (no app can be theirs anyway, but the wire shape
@@ -3806,10 +3826,6 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	}
 	if req.Path != nil && len(c.Command) > 0 {
 		api.WriteProblem(w, api.ErrValidation("command crons do not have an HTTP path; delete and recreate the cron to change its kind"))
-		return
-	}
-	if len(c.Command) == 0 && (req.SchedulePolicy != nil || req.FailureRules != nil) {
-		api.WriteProblem(w, api.ErrValidation("schedule policies and failure rules require a deployment command cron"))
 		return
 	}
 	var retryOptions []state.CronOptions
@@ -4195,6 +4211,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not create key"))
 		return
 	}
+	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"created","account":"`+acct.ID+`"}`)
 	s.log.Info("key created", "key", k.ID, "account", acct.ID)
 	// IAM-4 (ADR-035): record the key mint. subject = account_id (the
@@ -4252,10 +4269,11 @@ func (s *server) listKeys(w http.ResponseWriter, r *http.Request, acct state.Acc
 		return
 	}
 	out := make([]api.APIKeyResponse, 0, len(keys))
+	prefixes := s.listedKeyPrefixes(r.Context(), keys)
 	for _, k := range keys {
 		resp := api.APIKeyResponse{
 			ID:        k.ID,
-			Prefix:    keyPrefixFromHash(k.Hash),
+			Prefix:    prefixes[k.ID],
 			Label:     k.Label,
 			Scopes:    k.Scopes,
 			CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339),
@@ -4438,6 +4456,7 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 
+	s.recordKeyDisplayPrefix(r.Context(), newKey.ID, plaintext)
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"rotated","account":"`+acct.ID+`"}`)
 	auditPayload := map[string]any{
 		"old_key_id":         oldKey.ID,
@@ -5006,6 +5025,7 @@ func normalizeStripeWebhook(ev stripeWebhookEnvelope, raw []byte) billing.Event 
 			}
 		}
 		normalized.Invoice = &billing.InvoiceData{
+			Details:           stripe.InvoiceDetailsFromWebhook(raw),
 			ProviderInvoiceID: obj.ID,
 			ProviderChargeID:  stripeExpandableID(obj.Charge),
 			Number:            obj.Number,
@@ -5013,7 +5033,7 @@ func normalizeStripeWebhook(ev stripeWebhookEnvelope, raw []byte) billing.Event 
 			PeriodStart:       stripeUnixTime(obj.PeriodStart),
 			PeriodEnd:         stripeUnixTime(obj.PeriodEnd),
 			SubtotalCents:     obj.Subtotal,
-			TaxCents:          obj.Tax,
+			TaxCents:          stripe.InvoiceTaxCentsFromWebhook(raw, obj.Tax),
 			TotalCents:        obj.Total,
 			AmountPaidCents:   amountPaid,
 			Currency:          strings.ToLower(obj.Currency),
@@ -5202,6 +5222,7 @@ func (s *server) persistBillingInvoice(ctx context.Context, provider string, acc
 		plan = acct.Plan
 	}
 	return s.store.UpsertInvoice(ctx, state.Invoice{
+		Details:           data.Details,
 		AccountID:         acct.ID,
 		Provider:          provider,
 		ProviderInvoiceID: data.ProviderInvoiceID,
@@ -5947,6 +5968,7 @@ func domainResponse(d state.CustomDomain) api.CustomDomainResponse {
 	if d.ChallengeToken != "" {
 		r.TXTRecord = state.CustomDomainChallengeName(d.Domain) + `  TXT  "` + d.ChallengeToken + `"`
 	}
+	r.DNSRecords = customDomainDNSRecords(d)
 	if !d.CertExpiresAt.IsZero() {
 		r.CertExpiresAt = d.CertExpiresAt.UTC().Format(time.RFC3339)
 		// CertNotAfter is the pre-F1 name retained for existing clients.
@@ -6734,6 +6756,44 @@ func keyPrefix(plaintext string) string {
 		return plaintext
 	}
 	return plaintext[:16]
+}
+
+// recordKeyDisplayPrefix stores the prefix shown at mint so key listings show
+// the same value. Best-effort: on failure the listing falls back to the
+// hash-derived identifier, which is what every key showed before.
+func (s *server) recordKeyDisplayPrefix(ctx context.Context, keyID, plaintext string) {
+	store, ok := s.store.(state.APIKeyDisplayPrefixStore)
+	if !ok {
+		return
+	}
+	if err := store.SetAPIKeyDisplayPrefix(ctx, keyID, keyPrefix(plaintext)); err != nil {
+		s.log.WarnContext(ctx, "record api key display prefix", slog.String("key", keyID), slog.String("err", err.Error()))
+	}
+}
+
+// listedKeyPrefixes maps each key to the prefix a listing shows: the prefix
+// printed when the key was minted, or the hash-derived identifier for keys
+// minted before display prefixes were recorded.
+func (s *server) listedKeyPrefixes(ctx context.Context, keys []state.APIKey) map[string]string {
+	out := make(map[string]string, len(keys))
+	ids := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out[k.ID] = keyPrefixFromHash(k.Hash)
+		ids = append(ids, k.ID)
+	}
+	store, ok := s.store.(state.APIKeyDisplayPrefixStore)
+	if !ok {
+		return out
+	}
+	recorded, err := store.APIKeyDisplayPrefixes(ctx, ids)
+	if err != nil {
+		s.log.WarnContext(ctx, "read api key display prefixes", slog.String("err", err.Error()))
+		return out
+	}
+	for id, prefix := range recorded {
+		out[id] = prefix
+	}
+	return out
 }
 
 // keyPrefixFromHash derives the display prefix from the stored hash. The hash

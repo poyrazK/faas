@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 402
+// adr: 544
 func TestObjectMultipartResultsMem(t *testing.T) { multipartResultsSuite(t, state.NewMemStore()) }
 func TestObjectMultipartResultsPG(t *testing.T)  { st, _ := pgStore(t); multipartResultsSuite(t, st) }
 
@@ -196,7 +196,7 @@ func TestObjectMultipartResultRecoveryRestartPG(t *testing.T) {
 func TestObjectMultipartResultMigrationPG(t *testing.T) {
 	st, pool, ctx := pgStoreWithPool(t)
 	_, u := preparedMultipartResult(t, st, "rollout")
-	raw, err := migrations.FS.ReadFile("20261002150000001_object_multipart_completion_results.sql")
+	raw, err := migrations.FS.ReadFile("20261004090600346_object_multipart_completion_results.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

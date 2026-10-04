@@ -277,7 +277,7 @@ func selectedCopySource(key, id string) *string {
 	return aws.String("assets/" + url.PathEscape(key) + "?versionId=" + url.QueryEscape(id))
 }
 
-// adr: 401
+// adr: 543
 func TestSelectedCopyRestoreEndToEndMem(t *testing.T) {
 	selectedCopyRestoreEndToEnd(t, state.NewMemStore())
 }

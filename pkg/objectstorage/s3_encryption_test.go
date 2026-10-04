@@ -83,7 +83,7 @@ func encryptionFixtureHeaders(e ResolvedObjectEncryption) http.Header {
 	return h
 }
 
-// adr: 412
+// adr: 554
 func TestS3EncryptedPutPresignAndExactRecovery(t *testing.T) {
 	for _, algorithm := range []string{"AES256", "aws:kms", "aws:kms:dsse"} {
 		t.Run(algorithm, func(t *testing.T) {

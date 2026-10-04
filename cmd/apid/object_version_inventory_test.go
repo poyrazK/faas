@@ -18,8 +18,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 398
-// adr: 405
+// adr: 540
+// adr: 547
 func TestGatewayVersionInventoryEndToEndPG(t *testing.T) {
 	var mu sync.Mutex
 	writes, lists, failedPages, deletes := 0, 0, 0, 0

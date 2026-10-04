@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 408
+// adr: 550
 func TestObjectMultipartPartURLFenceMem(t *testing.T) {
 	m := state.NewMemStore()
 	objectMultipartPartURLFence(t, m, func(id string, deadline time.Time) {
@@ -20,12 +20,12 @@ func TestObjectMultipartPartURLFenceMem(t *testing.T) {
 	}, func() multipartPartURLStore { return m })
 }
 
-// adr: 408
+// adr: 550
 func TestObjectMultipartPartURLAdmissionRaceMem(t *testing.T) {
 	objectMultipartPartURLAdmissionRace(t, state.NewMemStore())
 }
 
-// adr: 408
+// adr: 550
 func TestObjectMultipartPartURLAdmissionRacePG(t *testing.T) {
 	s, _, _ := pgStoreWithPool(t)
 	objectMultipartPartURLAdmissionRace(t, s)
@@ -89,7 +89,7 @@ func objectMultipartPartURLAdmissionRace(t *testing.T, st accountingStore) {
 	}
 }
 
-// adr: 408
+// adr: 550
 func TestObjectMultipartPartURLFencePG(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	objectMultipartPartURLFence(t, s, func(id string, deadline time.Time) {

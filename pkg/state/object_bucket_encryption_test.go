@@ -16,7 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 419
+// adr: 561
 func TestObjectBucketEncryptionMem(t *testing.T) {
 	m := state.NewMemStore()
 	now := time.Now().UTC()
@@ -271,7 +271,7 @@ func assertBucketDefaultSQLFences(t *testing.T, pool *pgxpool.Pool, b state.Obje
 	if _, err := pool.Exec(t.Context(), `UPDATE object_upload_completions SET encryption_default_revision=2 WHERE id=$1`, c.ID); err == nil {
 		t.Fatal("database accepted changed provenance")
 	}
-	body, err := migrations.FS.ReadFile("20261004020613138_object_bucket_encryption_defaults.sql")
+	body, err := migrations.FS.ReadFile("20261004090600531_object_bucket_encryption_defaults.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestObjectBucketEncryptionPGAccountLockAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	readyBucketDefault(t, defaults, b, state.ObjectEncryptionSnapshot{})
-	body, err := migrations.FS.ReadFile("20261004020613138_object_bucket_encryption_defaults.sql")
+	body, err := migrations.FS.ReadFile("20261004090600531_object_bucket_encryption_defaults.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

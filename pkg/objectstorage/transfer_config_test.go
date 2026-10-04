@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 411
+// adr: 553
 func TestObjectTransferConfigurationBoundaries(t *testing.T) {
 	base := Config{DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "external-a"}, MaxUploadBytes: 5 << 40, Backends: []BackendConfig{testBackend()}}
 	for _, tc := range []struct {

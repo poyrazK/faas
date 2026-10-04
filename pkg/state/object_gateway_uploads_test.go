@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// adr: 393
+// adr: 535
 func TestGatewayUploadReceiptsMem(t *testing.T) { gatewayUploadReceiptsSuite(t, state.NewMemStore()) }
 func TestGatewayUploadReceiptsPG(t *testing.T) {
 	st, _ := pgStore(t)

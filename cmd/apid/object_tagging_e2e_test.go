@@ -20,7 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 407
+// adr: 549
 func TestObjectTaggingControlEndToEndPG(t *testing.T) {
 	const key = "目录 /+%.txt"
 	const native = "private-version/+%?"

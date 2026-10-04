@@ -25,7 +25,10 @@
 //     them by name rather than hard-coding strings.
 package apid
 
-import "strings"
+import (
+	"net"
+	"strings"
+)
 
 // Anchored root paths used by IsApidPath. Each entry is matched as
 // exact + "/" subtree (see hasApidPrefix). Order is not significant;
@@ -110,4 +113,38 @@ func hasApidPrefix(p, prefix string) bool {
 		return true
 	}
 	return strings.HasPrefix(p, prefix+"/")
+}
+
+// IsPlatformHost reports whether a request Host is a platform-owned origin:
+// the apps-domain apex, its api. and operations. hosts, or a direct
+// loopback/IP probe. Every other Host is an app subdomain, preview host or
+// customer domain that runs tenant code (ADR-480).
+//
+// IsApidPath decides WHICH paths are platform paths; IsPlatformHost decides
+// on WHICH hosts they are reserved. Routers consult both, so a customer app
+// can serve /v1, /status, /docs, /login and /oauth/* on its own host.
+//
+// An empty appsDomain (dev single-box, the e2e harness) cannot tell an app
+// host from a platform host, so every host is treated as a platform host —
+// the pre-ADR-480 behaviour.
+func IsPlatformHost(rawHost, appsDomain string) bool {
+	domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(appsDomain)), ".")
+	if domain == "" {
+		return true
+	}
+	host := HostWithoutPort(rawHost)
+	if host == "localhost" || net.ParseIP(host) != nil {
+		return true
+	}
+	return host == domain || host == "api."+domain || host == "operations."+domain
+}
+
+// HostWithoutPort lower-cases a Host header value and strips its port, IPv6
+// brackets and trailing dot.
+func HostWithoutPort(rawHost string) string {
+	rawHost = strings.TrimSpace(rawHost)
+	if host, _, err := net.SplitHostPort(rawHost); err == nil {
+		return strings.TrimSuffix(strings.ToLower(host), ".")
+	}
+	return strings.TrimSuffix(strings.ToLower(strings.Trim(rawHost, "[]")), ".")
 }

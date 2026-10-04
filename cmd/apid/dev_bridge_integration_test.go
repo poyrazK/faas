@@ -102,7 +102,19 @@ func TestDevBridgeAPIToLaptopAndDurableRevocation(t *testing.T) {
 	}
 	// adr: 379 — prove account control reads observe the actual proxied
 	// laptop upgrade and request, without needing an attachment credential.
-	activity, err := client.GetDevBridgeActivity(ctx, session.Session.ID)
+	// The response can reach the client before the reverse proxy closes its
+	// upstream body and records completion. Wait for that server-side event.
+	activityCtx, activityCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer activityCancel()
+	activity, err := client.GetDevBridgeActivity(activityCtx, session.Session.ID)
+	for err == nil && len(activity.Requests) == 1 && !activity.Requests[0].Complete {
+		select {
+		case <-activityCtx.Done():
+			t.Fatalf("activity completion timed out: %+v err=%v", activity, activityCtx.Err())
+		case <-time.After(time.Millisecond):
+		}
+		activity, err = client.GetDevBridgeActivity(activityCtx, session.Session.ID)
+	}
 	if err != nil || activity.ConnectionState != "connected" || len(activity.Requests) != 1 || !activity.Requests[0].Complete || activity.Requests[0].Path != "/charge" {
 		t.Fatalf("activity did not observe live traffic: %+v err=%v", activity, err)
 	}

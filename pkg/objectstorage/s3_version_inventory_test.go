@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 398
+// adr: 540
 func TestS3VersionInventoryPagination(t *testing.T) {
 	key := "目录 /+%.txt"
 	var requests atomic.Int32

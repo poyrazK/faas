@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 420
+// adr: 562
 func TestObjectS3CopySourcesMem(t *testing.T) { objectS3CopySourceSuite(t, state.NewMemStore(), nil) }
 func TestObjectS3CopySourcesPG(t *testing.T) {
 	st, pool, _ := pgStoreWithPool(t)

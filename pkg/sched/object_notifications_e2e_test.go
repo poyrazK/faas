@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 410
+// adr: 552
 func objectNotificationsSDKEndToEnd(t *testing.T, st objectEventIntegrationStore, restart func() objectEventIntegrationStore, account state.Account, b state.ObjectBucket, c *awss3.Client, qapp, fapp state.App) {
 	t.Helper()
 	ctx := t.Context()

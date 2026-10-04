@@ -108,7 +108,7 @@ func (o *historicalGatewayObject) serve(t *testing.T, w http.ResponseWriter, r *
 	}
 }
 
-// adr: 397
+// adr: 539
 func TestGatewayHistoricalWriteRecoveryPG(t *testing.T) {
 	for _, copyOrigin := range []bool{false, true} {
 		for _, mode := range []string{"overwritten", "deleted", "absent"} {

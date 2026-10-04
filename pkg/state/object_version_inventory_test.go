@@ -39,7 +39,7 @@ func settleNativeVersion(t *testing.T, st state.ObjectTrackedGatewayUploadStore,
 	}
 }
 
-// adr: 398
+// adr: 540
 func TestObjectVersionInventoryMem(t *testing.T) {
 	objectVersionInventorySuite(t, state.NewMemStore(), nil)
 }

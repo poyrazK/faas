@@ -390,6 +390,48 @@ func (s *server) acceptInboundWebhook(w http.ResponseWriter, r *http.Request, en
 		"content-type": r.Header.Get("Content-Type"), "x-gregale-webhook-endpoint-id": endpoint.ID,
 		"x-gregale-webhook-event-id": providerEventID, "x-gregale-webhook-provider": string(endpoint.Provider),
 	})
+	if bindings, ok := s.store.(state.ExclusiveTriggerBindingStore); ok {
+		binding, bindingErr := bindings.ExclusiveTriggerBinding(r.Context(), endpoint.AccountID, "inbound_webhook", endpoint.ID)
+		if bindingErr == nil {
+			owners, ok := s.store.(state.ExclusiveWorkStore)
+			if !ok {
+				api.WriteProblem(w, api.ErrCapacity("managed operation store unavailable"))
+				return
+			}
+			if binding.AppID != endpoint.AppID {
+				api.WriteProblem(w, api.ErrCapacity("inbound webhook operation binding is inconsistent"))
+				return
+			}
+			request, err := json.Marshal(api.InvokeRequest{Method: http.MethodPost, Path: endpoint.DeliveryPath, Payload: body, Headers: headers})
+			if err != nil {
+				api.WriteProblem(w, api.ErrCapacity("could not encode inbound webhook operation"))
+				return
+			}
+			op, joined, err := owners.AdmitExclusiveOperation(r.Context(), state.ExclusiveAdmission{
+				AccountID: endpoint.AccountID, AppID: endpoint.AppID, PlatformTenantID: binding.PlatformTenantID,
+				PolicyName: binding.PolicyName, Key: binding.Key, Request: request,
+				EquivalenceKey: binding.EquivalenceKey, IdempotencyKey: receiptID,
+			})
+			s.observeExclusiveAdmission("inbound_webhook", err, joined, op.Replayed)
+			if err != nil {
+				writeExclusiveError(w, err)
+				return
+			}
+			acceptedAt := op.CreatedAt
+			if acceptedAt.IsZero() {
+				acceptedAt = now
+			}
+			writeJSON(w, http.StatusAccepted, api.InboundWebhookReceiptResponse{
+				ReceiptID: op.ID, Status: "accepted", Duplicate: op.Replayed,
+				AcceptedAt: acceptedAt.UTC().Format(time.RFC3339),
+			})
+			return
+		}
+		if !errors.Is(bindingErr, state.ErrNotFound) {
+			api.WriteProblem(w, api.ErrCapacity("could not load inbound webhook operation binding"))
+			return
+		}
+	}
 	invocation, err := s.store.EnqueueInvocation(r.Context(), state.Invocation{
 		ID: receiptID, AppID: endpoint.AppID, AccountID: endpoint.AccountID,
 		Source: state.InvocationInboundWebhook, State: state.InvocationPending,

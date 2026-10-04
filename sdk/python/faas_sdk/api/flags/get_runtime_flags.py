@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -7,20 +7,29 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.flags_bundle import FlagsBundle
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
-def _get_kwargs() -> dict[str, Any]:
+def _get_kwargs(
+    *,
+    x_faas_flags_capabilities: str | Unset = UNSET,
+) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_faas_flags_capabilities, Unset):
+        headers["X-Faas-Flags-Capabilities"] = x_faas_flags_capabilities
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/runtime/flags",
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> FlagsBundle | Problem | None:
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Any | FlagsBundle | Problem | None:
     if response.status_code == 200:
         response_200 = FlagsBundle.from_dict(response.json())
 
@@ -46,6 +55,10 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_422
 
+    if response.status_code == 426:
+        response_426 = cast(Any, None)
+        return response_426
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -59,7 +72,7 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[FlagsBundle | Problem]:
+) -> Response[Any | FlagsBundle | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -71,22 +84,29 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient,
-) -> Response[FlagsBundle | Problem]:
+    x_faas_flags_capabilities: str | Unset = UNSET,
+) -> Response[Any | FlagsBundle | Problem]:
     """Read the live workload’s project-environment flag bundle.
 
      Requires an RS256 workload identity token with audience gregale:flags from an active app instance.
     Project and environment are derived from the deployment; query parameters cannot select another
-    scope.
+    scope. Clients advertise runtime evaluation capabilities; a bundle using a capability is withheld
+    from older clients that do not advertise it.
+
+    Args:
+        x_faas_flags_capabilities (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[FlagsBundle | Problem]
+        Response[Any | FlagsBundle | Problem]
     """
 
-    kwargs = _get_kwargs()
+    kwargs = _get_kwargs(
+        x_faas_flags_capabilities=x_faas_flags_capabilities,
+    )
 
     response = client.get_httpx_client().request(
         **kwargs,
@@ -98,45 +118,58 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient,
-) -> FlagsBundle | Problem | None:
+    x_faas_flags_capabilities: str | Unset = UNSET,
+) -> Any | FlagsBundle | Problem | None:
     """Read the live workload’s project-environment flag bundle.
 
      Requires an RS256 workload identity token with audience gregale:flags from an active app instance.
     Project and environment are derived from the deployment; query parameters cannot select another
-    scope.
+    scope. Clients advertise runtime evaluation capabilities; a bundle using a capability is withheld
+    from older clients that do not advertise it.
+
+    Args:
+        x_faas_flags_capabilities (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        FlagsBundle | Problem
+        Any | FlagsBundle | Problem
     """
 
     return sync_detailed(
         client=client,
+        x_faas_flags_capabilities=x_faas_flags_capabilities,
     ).parsed
 
 
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
-) -> Response[FlagsBundle | Problem]:
+    x_faas_flags_capabilities: str | Unset = UNSET,
+) -> Response[Any | FlagsBundle | Problem]:
     """Read the live workload’s project-environment flag bundle.
 
      Requires an RS256 workload identity token with audience gregale:flags from an active app instance.
     Project and environment are derived from the deployment; query parameters cannot select another
-    scope.
+    scope. Clients advertise runtime evaluation capabilities; a bundle using a capability is withheld
+    from older clients that do not advertise it.
+
+    Args:
+        x_faas_flags_capabilities (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[FlagsBundle | Problem]
+        Response[Any | FlagsBundle | Problem]
     """
 
-    kwargs = _get_kwargs()
+    kwargs = _get_kwargs(
+        x_faas_flags_capabilities=x_faas_flags_capabilities,
+    )
 
     response = await client.get_async_httpx_client().request(**kwargs)
 
@@ -146,23 +179,29 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient,
-) -> FlagsBundle | Problem | None:
+    x_faas_flags_capabilities: str | Unset = UNSET,
+) -> Any | FlagsBundle | Problem | None:
     """Read the live workload’s project-environment flag bundle.
 
      Requires an RS256 workload identity token with audience gregale:flags from an active app instance.
     Project and environment are derived from the deployment; query parameters cannot select another
-    scope.
+    scope. Clients advertise runtime evaluation capabilities; a bundle using a capability is withheld
+    from older clients that do not advertise it.
+
+    Args:
+        x_faas_flags_capabilities (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        FlagsBundle | Problem
+        Any | FlagsBundle | Problem
     """
 
     return (
         await asyncio_detailed(
             client=client,
+            x_faas_flags_capabilities=x_faas_flags_capabilities,
         )
     ).parsed

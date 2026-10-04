@@ -71,12 +71,12 @@ func (s *PgStore) RequestObjectCapacityReconciliation(ctx context.Context, accou
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	// Exclude multipart reservation and bucket deletion without blocking FK
-	// KEY SHARE locks held by an account-locked write admission.
-	if _, err = q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account), AppID: mustPgUUID(app)}); err != nil {
+	// Admissions hold the account before the bucket's Object Lock SHARE fence.
+	// Keep that order when excluding multipart reservation and bucket deletion.
+	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
 		return ObjectCapacityReconciliation{}, mapErr(err)
 	}
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
+	if _, err = q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account), AppID: mustPgUUID(app)}); err != nil {
 		return ObjectCapacityReconciliation{}, mapErr(err)
 	}
 	deleting, e := q.ObjectDeletionActive(ctx, tx, mustPgUUID(bucket))

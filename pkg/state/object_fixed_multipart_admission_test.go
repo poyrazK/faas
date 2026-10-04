@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 418
+// adr: 560
 func TestObjectFixedMultipartAdmissionMem(t *testing.T) {
 	for _, versions := range []bool{false, true} {
 		t.Run(fixedMultipartProfile(versions), func(t *testing.T) {
@@ -208,7 +208,7 @@ func fixedMultipartAdmissionSuite(t *testing.T, st accountingStore, versions boo
 	fixedMultipartUsage(t, st, b, p, wantBytes, wantKeys, 2)
 }
 
-// adr: 418
+// adr: 560
 func TestObjectFixedMultipartAdmissionOldWriterPG(t *testing.T) {
 	st, pool, ctx := pgStoreWithPool(t)
 	b, _ := seedAccounting(t, st)
@@ -237,7 +237,7 @@ func TestObjectFixedMultipartAdmissionOldWriterPG(t *testing.T) {
 		t.Fatal("restart lost admission", replay, err)
 	}
 	fixedMultipartUsage(t, reopened, b, accountingPolicy(), 5, 1, 1)
-	raw, err := migrations.FS.ReadFile("20261004010532443_object_fixed_multipart_admission.sql")
+	raw, err := migrations.FS.ReadFile("20261004090600520_object_fixed_multipart_admission.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestObjectFixedMultipartAdmissionOldWriterPG(t *testing.T) {
 	}
 }
 
-// adr: 418
+// adr: 560
 func TestObjectFixedMultipartLegacyReplayMem(t *testing.T) {
 	fixedMultipartLegacyReplay(t, state.NewMemStore())
 }
@@ -274,7 +274,7 @@ func fixedMultipartLegacyReplay(t *testing.T, st accountingStore) {
 	fixedMultipartUsage(t, st, b, accountingPolicy(), 0, 0, 0)
 }
 
-// adr: 418
+// adr: 560
 func TestObjectFixedMultipartAbortReconciliationMem(t *testing.T) {
 	fixedMultipartAbortReconciliation(t, state.NewMemStore())
 }

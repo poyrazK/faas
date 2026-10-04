@@ -189,7 +189,7 @@ func assertPublicCipher(t *testing.T, metadata middleware.Metadata, algorithm, k
 	}
 }
 
-// adr: 414
+// adr: 556
 func TestPublicEncryptionMem(t *testing.T) { publicEncryptionE2E(t, state.NewMemStore()) }
 func TestPublicEncryptionPG(t *testing.T) {
 	st, _ := multipartCopyPGStore(t)

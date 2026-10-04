@@ -425,17 +425,20 @@ func (s *server) getMirrorRuleSummary(w http.ResponseWriter, r *http.Request, ac
 		changedPercent = float64(summary.ChangedResponseCount) * 100 / float64(comparableInvocations)
 	}
 	writeJSON(w, http.StatusOK, api.MirrorSummaryResponse{
-		TotalInvocations:          int64(summary.TotalInvocations),
-		ChangedResponseCount:      int64(summary.ChangedResponseCount),
-		ChangedResponsePct:        changedPercent,
-		StatusDiffCount:           int64(summary.StatusDiffCount),
-		SchemaDiffCount:           int64(summary.SchemaDiffCount),
-		BodyDiffCount:             int64(summary.BodyDiffCount),
-		MeanLatencyDiffMs:         int64(summary.MeanLatencyDiffMs),
-		P99LatencyDiffMs:          int64(summary.P99LatencyDiffMs),
-		CrashCount:                int64(summary.CrashCount),
-		IncompleteComparisonCount: int64(summary.IncompleteComparisonCount),
-		WindowSeconds:             int(window),
+		TotalInvocations:                int64(summary.TotalInvocations),
+		ChangedResponseCount:            int64(summary.ChangedResponseCount),
+		ChangedResponsePct:              changedPercent,
+		StatusDiffCount:                 int64(summary.StatusDiffCount),
+		SchemaDiffCount:                 int64(summary.SchemaDiffCount),
+		BodyDiffCount:                   int64(summary.BodyDiffCount),
+		MeanLatencyDiffMs:               int64(summary.MeanLatencyDiffMs),
+		P99LatencyDiffMs:                int64(summary.P99LatencyDiffMs),
+		CrashCount:                      int64(summary.CrashCount),
+		IncompleteComparisonCount:       int64(summary.IncompleteComparisonCount),
+		SchedulerAdmissionTimeoutCount:  int64(summary.SchedulerAdmissionTimeoutCount),
+		SchedulerAdmissionRejectedCount: int64(summary.SchedulerAdmissionRejectedCount),
+		SchedulerAdmissionErrorCount:    int64(summary.SchedulerAdmissionErrorCount),
+		WindowSeconds:                   int(window),
 	})
 }
 

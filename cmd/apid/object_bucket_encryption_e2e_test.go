@@ -20,7 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 419
+// adr: 561
 func TestBucketDefaultEncryptionControlE2EMem(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	var offset atomic.Int64

@@ -30,8 +30,8 @@ type Notification struct {
 	Channel string
 	Payload string
 	// OutboxID is non-zero when this delivery came from the durable handoff
-	// queue. Consumers acknowledge it after handing the payload to their
-	// idempotent handler; legacy/direct notifications leave it zero.
+	// queue. Renewable consumers claim the row before handling it and complete
+	// their claim afterward; legacy/direct notifications leave it zero.
 	OutboxID int64
 }
 
@@ -453,6 +453,12 @@ type PoolNotifier struct {
 // Notify forwards to the package-level Notify helper.
 func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error {
 	return Notify(ctx, p.Pool, channel, payload)
+}
+
+// RuntimeConfigRestartStatus returns the durable status projection used by
+// the customer-facing restart-status endpoint.
+func (p PoolNotifier) RuntimeConfigRestartStatus(ctx context.Context, appID, wakeID string) (RuntimeConfigRestartStatus, error) {
+	return GetRuntimeConfigRestartStatus(ctx, p.Pool, appID, wakeID)
 }
 
 // NotifyChannels are the pg_notify channel names used across the platform.

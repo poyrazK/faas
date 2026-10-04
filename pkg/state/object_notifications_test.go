@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 410
+// adr: 552
 func TestObjectNotificationConfigurationAndAdmissionMem(t *testing.T) {
 	objectNotificationConfigurationAndAdmission(t, state.NewMemStore())
 }

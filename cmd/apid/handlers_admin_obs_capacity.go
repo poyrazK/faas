@@ -36,8 +36,14 @@ func (s *server) obsCapacity(w http.ResponseWriter, r *http.Request, acct state.
 		api.WriteProblem(w, api.ErrCapacity("could not load instance resource profiles"))
 		return
 	}
+	protection, err := s.store.ServiceCapacityProtection(r.Context())
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not read service recovery capacity"))
+		return
+	}
 	response := api.ObsCapacityResponse{
-		GeneratedAt: time.Now().UTC(),
+		GeneratedAt:       time.Now().UTC(),
+		ServiceProtection: protection,
 		Summary: api.ObsCapacitySummary{
 			TotalNodes:       len(snapshot.Nodes),
 			AppsTotal:        snapshot.AppsTotal,

@@ -90,7 +90,7 @@ func cmdWebhooks(args []string) int {
 	case "account":
 		return cmdAccountReleaseWebhooks(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown webhooks subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown webhooks subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1

@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { FailureRule } from './FailureRule.js';
 /**
- * Versioned explicit classification policy for failed partition attempts.
+ * Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron outcome codes. HTTP status is not a business outcome matcher.
  */
 export type FailureRules = {
   version: 1;

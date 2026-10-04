@@ -20,7 +20,7 @@ type writeReceiptStore interface {
 	state.ObjectUploadRouteStore
 }
 
-// adr: 395
+// adr: 537
 func TestObjectWriteReceiptsMem(t *testing.T) { writeReceiptsSuite(t, state.NewMemStore()) }
 func TestObjectWriteReceiptsPG(t *testing.T)  { st, _ := pgStore(t); writeReceiptsSuite(t, st) }
 

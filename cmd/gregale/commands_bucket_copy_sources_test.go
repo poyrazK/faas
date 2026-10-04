@@ -32,7 +32,7 @@ func (c *copySourcesCLIClient) DeleteObjectS3CopySource(_ context.Context, app, 
 	return nil
 }
 
-// adr: 420
+// adr: 562
 func TestBucketCopySourcesCLI(t *testing.T) {
 	bucket, credential, source := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	for _, tc := range []struct{ op, method, prefix string }{{"list", "GET", ""}, {"grant", "PUT", "allowed/"}, {"revoke", "DELETE", ""}} {

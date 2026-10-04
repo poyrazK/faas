@@ -292,6 +292,9 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 				}
 			}
 		}
+		if !p.routeHealthRecoveryReady(ctx, row, &stats) {
+			continue
+		}
 		if currentStage.MirrorClean != nil && !p.mirrorCleanReady(ctx, row, currentStage.MirrorClean, now, &stats) {
 			continue
 		}
@@ -310,6 +313,11 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 		// derives nextStage.Percent from the persisted preset, so the
 		// runtime cannot apply a stale or caller-invented traffic value.
 		if _, err := p.APID.AdvanceCanary(ctx, row.ID, row.CanaryStep); err != nil {
+			var problem *api.Problem
+			if errors.As(err, &problem) && (problem.Code == api.CodeRouteGateBlocked || problem.Code == api.CodeRouteHealthBlocked) {
+				stats.SkippedRouteGate++
+				continue
+			}
 			p.Log.Warn("canary: advance failed",
 				"deployment_id", row.ID, "to_percent", nextStage.Percent, "err", err)
 			stats.Errors++
@@ -603,4 +611,5 @@ type Stats struct {
 	SkippedNotElapsed      int
 	SkippedMirrorNotReady  int
 	SkippedHealthGate      int
+	SkippedRouteGate       int
 }

@@ -35,6 +35,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -43,20 +44,23 @@ import (
 type workKind string
 
 const (
-	workPrime               workKind = "prime"
-	workRestart             workKind = "restart"
-	workAppReconcile        workKind = "app_reconcile"
-	workDeploymentReconcile workKind = "deployment_reconcile"
-	workJobCancel           workKind = "job_cancel"
-	workJobDispatch         workKind = "job_dispatch"
-	workPrimeRecovery       workKind = "prime_recovery"
-	workWorkflowDispatch    workKind = "workflow_dispatch"
-	workTriggerDispatch     workKind = "trigger_dispatch"
-	workEventFanout         workKind = "event_fanout"
+	workServiceRecovery      workKind = "service_recovery"
+	workServiceRecoverySweep workKind = "service_recovery_sweep"
+	workPrime                workKind = "prime"
+	workRestart              workKind = "restart"
+	workAppReconcile         workKind = "app_reconcile"
+	workDeploymentReconcile  workKind = "deployment_reconcile"
+	workJobCancel            workKind = "job_cancel"
+	workJobDispatch          workKind = "job_dispatch"
+	workPrimeRecovery        workKind = "prime_recovery"
+	workWorkflowDispatch     workKind = "workflow_dispatch"
+	workTriggerDispatch      workKind = "trigger_dispatch"
+	workEventFanout          workKind = "event_fanout"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
 var workKinds = []workKind{
+	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
 	workWorkflowDispatch, workTriggerDispatch, workEventFanout,
 }
@@ -96,16 +100,18 @@ type workSpec struct {
 // fanout get one slot each because their tick work is already bounded and
 // durable state makes the next tick a safe retry.
 var workSpecs = map[workKind]workSpec{
-	workPrime:               {slots: maxConcurrentPrimes, overflow: overflowInline},
-	workRestart:             {slots: 8, overflow: overflowDrop},
-	workAppReconcile:        {slots: 8, overflow: overflowDrop},
-	workDeploymentReconcile: {slots: 8, overflow: overflowDrop},
-	workJobCancel:           {slots: 8, overflow: overflowDrop},
-	workJobDispatch:         {slots: 1, overflow: overflowDrop},
-	workPrimeRecovery:       {slots: 1, overflow: overflowDrop},
-	workWorkflowDispatch:    {slots: 4, overflow: overflowDrop},
-	workTriggerDispatch:     {slots: 1, overflow: overflowDrop},
-	workEventFanout:         {slots: 1, overflow: overflowDrop},
+	workServiceRecovery:      {slots: api.ServiceRecoveryConcurrentApps, overflow: overflowDrop},
+	workServiceRecoverySweep: {slots: 1, overflow: overflowDrop},
+	workPrime:                {slots: maxConcurrentPrimes, overflow: overflowInline},
+	workRestart:              {slots: 8, overflow: overflowDrop},
+	workAppReconcile:         {slots: 8, overflow: overflowDrop},
+	workDeploymentReconcile:  {slots: 8, overflow: overflowDrop},
+	workJobCancel:            {slots: 8, overflow: overflowDrop},
+	workJobDispatch:          {slots: 1, overflow: overflowDrop},
+	workPrimeRecovery:        {slots: 1, overflow: overflowDrop},
+	workWorkflowDispatch:     {slots: 4, overflow: overflowDrop},
+	workTriggerDispatch:      {slots: 1, overflow: overflowDrop},
+	workEventFanout:          {slots: 1, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.
@@ -119,6 +125,7 @@ type workPool struct {
 
 	mu       sync.Mutex
 	inFlight map[workKind]map[string]struct{}
+	closing  bool
 
 	// wg tracks dispatched workers so drain can wait for them. Tests
 	// need this because submit moves work off the caller's goroutine.
@@ -154,8 +161,13 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 		fn()
 		return "inline"
 	}
+	p.mu.Lock()
+	if p.closing {
+		p.mu.Unlock()
+		p.observe(kind, "dropped")
+		return "dropped"
+	}
 	if key != "" {
-		p.mu.Lock()
 		if _, exists := p.inFlight[kind][key]; exists {
 			p.mu.Unlock()
 			p.observe(kind, "coalesced")
@@ -165,7 +177,21 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 			return "coalesced"
 		}
 		p.inFlight[kind][key] = struct{}{}
-		p.mu.Unlock()
+	}
+	p.mu.Unlock()
+	begin := func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.closing {
+			if key != "" {
+				delete(p.inFlight[kind], key)
+			}
+			return false
+		}
+		// Keep Add under mu so drainFor can close the pool and start Wait
+		// without racing a later positive Add.
+		p.wg.Add(1)
+		return true
 	}
 
 	run := func() {
@@ -186,6 +212,7 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 				}
 			}
 			p.observeDuration(kind, time.Since(started))
+			p.wg.Done()
 		}()
 		fn()
 	}
@@ -193,9 +220,12 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 	slots := p.slots[kind]
 	select {
 	case slots <- struct{}{}:
-		p.wg.Add(1)
+		if !begin() {
+			<-slots
+			p.observe(kind, "dropped")
+			return "dropped"
+		}
 		go func() {
-			defer p.wg.Done()
 			defer func() { <-slots }()
 			run()
 		}()
@@ -205,6 +235,10 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 	}
 
 	if workSpecs[kind].overflow == overflowInline {
+		if !begin() {
+			p.observe(kind, "dropped")
+			return "dropped"
+		}
 		if p.log != nil {
 			p.log.Warn("sched: loop work slots saturated; running inline",
 				"kind", string(kind), "key", key, "slots", workSpecs[kind].slots)
@@ -236,6 +270,31 @@ func (p *workPool) drain() {
 		return
 	}
 	p.wg.Wait()
+}
+
+// drainFor stops accepting new work and waits up to timeout for accepted
+// tasks to finish. The scheduler calls this after daemon cancellation so
+// Prime's bounded VM cleanup can use the still-open database connection.
+func (p *workPool) drainFor(timeout time.Duration) bool {
+	if p == nil {
+		return true
+	}
+	p.mu.Lock()
+	p.closing = true
+	p.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 func (p *workPool) observe(kind workKind, outcome string) {

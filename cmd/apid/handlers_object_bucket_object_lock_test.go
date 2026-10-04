@@ -16,7 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 422
+// adr: 564
 func TestBucketObjectLockAuthorityMem(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	bucketObjectLockAuthority(t, e.s, e.store, e.acct)

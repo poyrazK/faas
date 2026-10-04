@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 422
+// adr: 564
 func TestBucketObjectLockRequestExactJSON(t *testing.T) {
 	for _, body := range []string{
 		`{"configuration":{"enabled":true}}`,

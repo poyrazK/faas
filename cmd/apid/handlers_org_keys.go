@@ -99,8 +99,11 @@ func (s *server) listOrgAPIKeys(w http.ResponseWriter, r *http.Request, _ state.
 		return
 	}
 	out := make([]api.APIKeyResponse, 0, len(keys))
+	prefixes := s.listedKeyPrefixes(r.Context(), keys)
 	for _, k := range keys {
-		out = append(out, orgAPIKeyResponse(k))
+		resp := orgAPIKeyResponse(k)
+		resp.Prefix = prefixes[k.ID]
+		out = append(out, resp)
 	}
 	writeJSON(w, http.StatusOK, api.ListOrgAPIKeysResponse{Keys: out})
 }
@@ -187,6 +190,7 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrCapacity("could not create key"))
 		return
 	}
+	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"created","org":"`+mem.OrgID+`"}`)
 	s.log.Info("api key created", "key", k.ID, "account", acct.ID, "org", mem.OrgID)
 	auditPayload := map[string]any{
@@ -201,6 +205,7 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	}
 	s.audit.Emit(r.Context(), "api_key.created", &acct.ID, auditPayload)
 	resp := orgAPIKeyResponse(k)
+	resp.Prefix = keyPrefix(plaintext)
 	resp.Plaintext = plaintext
 	writeJSON(w, http.StatusCreated, resp)
 }
@@ -238,7 +243,9 @@ func (s *server) getOrgAPIKey(w http.ResponseWriter, r *http.Request, _ state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not load key"))
 		return
 	}
-	writeJSON(w, http.StatusOK, orgAPIKeyResponse(k))
+	resp := orgAPIKeyResponse(k)
+	resp.Prefix = s.listedKeyPrefixes(r.Context(), []state.APIKey{k})[k.ID]
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // revokeOrgAPIKey serves DELETE /v1/orgs/{slug}/keys/{id}. The
@@ -375,6 +382,7 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrCapacity("could not rotate key"))
 		return
 	}
+	s.recordKeyDisplayPrefix(r.Context(), newKey.ID, plaintext)
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"rotated","org":"`+mem.OrgID+`"}`)
 	// Audit payload mirrors the legacy key.rotated shape plus
 	// org_id. The legacy event does NOT fire on this path (the
@@ -403,6 +411,7 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		OldKeyID:     oldKey.ID,
 	}
 	resp.Key.RotatedFromID = oldKey.ID
+	resp.Key.Prefix = keyPrefix(plaintext)
 	if oldKey.ExpiresAt != nil {
 		resp.OldKeyExpiresAt = oldKey.ExpiresAt.UTC().Format(time.RFC3339)
 	}

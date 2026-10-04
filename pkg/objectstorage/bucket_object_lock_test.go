@@ -16,7 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 422
+// adr: 564
 func TestBucketObjectLockNativeDurableRecovery(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		t.Run(fmt.Sprint(pg), func(t *testing.T) {

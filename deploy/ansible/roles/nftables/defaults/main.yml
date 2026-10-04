@@ -85,3 +85,11 @@ faas_tcpd_allowed_cidrs: []
 faas_cloudflare_origin_only: false
 faas_cloudflare_ipv4_cidrs: []
 faas_cloudflare_ipv6_cidrs: []
+# ADR-520: customer domains reach the public edge directly, so 80/443 open to
+# every source even on a Cloudflare origin. The platform site keeps answering
+# Cloudflare only at Caddy (public_edge role).
+faas_custom_domain_tls: false
+
+# UDP public app ports use the same explicit IPv4 source list as udpd.
+faas_udpd_enabled: false
+faas_udpd_allowed_cidrs: []

@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// adr: 421
+// adr: 563
 // Account deletion and quota admissions take the account lock first. A waiting
 // cutover must leave the bucket lock available to that existing owner.
 func TestObjectVersioningAccountBeforeBucketPG(t *testing.T) {

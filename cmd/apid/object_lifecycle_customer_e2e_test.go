@@ -35,7 +35,7 @@ func lifecycleCustomerClient(t *testing.T, f gatewayRecoveryFixture) (*server, *
 	return s, api.NewClient(srv.URL, token)
 }
 
-// adr: 408
+// adr: 550
 func TestObjectLifecycleCustomerConfigurationPG(t *testing.T) {
 	var requests atomic.Int32
 	f := newGatewayRecoveryFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

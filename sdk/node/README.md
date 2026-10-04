@@ -52,6 +52,46 @@ cd /path/to/your/project
 npm install /tmp/gregale-sdk-node-0.1.0.tgz
 ```
 
+## Container listeners
+
+UDP ingress requires an operator-enabled public edge and source-CIDR/firewall
+rollout. The app must declare the guest UDP port. Reserving a listener creates a
+disabled endpoint; enable it explicitly after deployment and rollout checks:
+
+```ts
+import { FaaSClient, AppsService } from '@gregale/sdk-node';
+
+new FaaSClient('https://api.example.com', { token: process.env.FAAS_TOKEN! });
+const udp = await AppsService.createAppUdpListener({
+  slug: 'app', requestBody: { name: 'dns', guest_port: 5353 },
+});
+await AppsService.updateAppUdpListener({
+  slug: 'app', name: udp.name, requestBody: { enabled: true },
+});
+```
+
+An existing TCP listener can terminate TLS using a verified app-owned hostname.
+The operator provisions its certificate bundle on the serving edge. Updating TLS
+policy disables the listener; send a separate enable mutation after provisioning:
+
+```ts
+await AppsService.updateAppTcpListener({
+  slug: 'app', name: 'echo',
+  requestBody: { tls: { mode: 'terminate', hostname: 'echo.example.com' } },
+});
+await AppsService.updateAppTcpListener({
+  slug: 'app', name: 'echo', requestBody: { enabled: true },
+});
+const status = await AppsService.appTcpListenerTlsStatus({ slug: 'app', name: 'echo' });
+console.log(status.observations);
+```
+
+Supply exactly one of `enabled` or `tls` in each TCP update. Status covers observed
+edges only: empty observations or `unknown` do not establish readiness. Certificate
+readiness does not prove fleet coverage, client trust or guest availability.
+Native listener qualification remains pending; see the
+[qualification procedure](../../docs/container-qualification.md).
+
 ## Quick start
 
 ```ts

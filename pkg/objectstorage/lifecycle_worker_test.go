@@ -40,7 +40,7 @@ func lifecycleWorkerDue(t *testing.T, f lifecycleServiceFixture) {
 	}
 }
 
-// adr: 408
+// adr: 550
 func TestLifecycleWorkerHTTP(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		for _, scenario := range []string{"restart", "lost checkpoint", "lost acknowledgment", "page failure", "competing workers", "overlapping tags"} {
@@ -243,7 +243,7 @@ func TestLifecycleWorkerHTTP(t *testing.T) {
 	}
 }
 
-// adr: 408
+// adr: 550
 func TestLifecycleWorkerActionBudgetAndFailedReplayHTTP(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pg=%t", pg), func(t *testing.T) {
@@ -329,7 +329,7 @@ func TestLifecycleWorkerActionBudgetAndFailedReplayHTTP(t *testing.T) {
 	}
 }
 
-// adr: 408
+// adr: 550
 func TestLifecycleWorkerCancelledDiscoveryHTTP(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pg=%t", pg), func(t *testing.T) {

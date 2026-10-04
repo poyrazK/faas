@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// adr: 419
+// adr: 561
 func TestObjectBucketEncryptionRequest(t *testing.T) {
 	key := "arn:gregale:kms:aws:11111111-1111-4111-8111-111111111111:key/22222222-2222-4222-8222-222222222222"
 	for _, body := range []string{

@@ -16,7 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 408
+// adr: 550
 func TestObjectLifecycleMultipartEndToEndPG(t *testing.T) {
 	for _, lostACK := range []bool{false, true} {
 		name := "acknowledged"

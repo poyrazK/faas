@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 405
+// adr: 547
 func TestObjectDeletionRecoveryOrderMem(t *testing.T) {
 	m := state.NewMemStore()
 	now := time.Now().UTC()
@@ -43,7 +43,7 @@ func TestObjectDeletionRecoveryOrderMem(t *testing.T) {
 	}
 }
 
-// adr: 405
+// adr: 547
 func TestObjectDeletionMem(t *testing.T) {
 	m := state.NewMemStore()
 	now := time.Now().UTC()

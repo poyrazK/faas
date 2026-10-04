@@ -387,7 +387,7 @@ has an immutable native version and the bucket has an all-version accounting
 baseline. A customer If-Match combined only with If-Unmodified-Since can use
 a mutable source because S3 gives that ETag predicate precedence. Other
 independently restrictive dates on mutable/null sources return 501. See
-[ADR-399](adr/399-immutable-s3-copy-sources-and-date-conditions.md).
+[ADR-541](adr/541-immutable-s3-copy-sources-and-date-conditions.md).
 Cross-bucket copies use an explicit copy-only source grant on the destination
 S3 credential. Both buckets must belong to the same account and be ready on the
 same native S3 placement. Source bucket UUIDs remain unambiguous across apps
@@ -477,13 +477,13 @@ Pause branded multipart writes and drain all nonterminal branded sessions before
 applying either part-ledger or transfer-fencing migrations; both refuse unsafe
 upgrades. Deploy every gateway and API replica before reopening writes. Rollback
 refuses to discard unsettled transfer tokens. Keep abort and ListParts provider
-permissions available. See [ADR-388](adr/388-s3-compatibility-and-multipart-capacity.md)
-and [ADR-389](adr/389-s3-multipart-transfer-fencing-and-cleanup.md).
+permissions available. See [ADR-530](adr/530-s3-compatibility-and-multipart-capacity.md)
+and [ADR-531](adr/531-s3-multipart-transfer-fencing-and-cleanup.md).
 For conditional completion, apply its additive migration first, upgrade every
 API replica before gateways, and retain HEAD permissions for lost-response
 proof. Older workers cannot replay a conditional intent unconditionally.
 Rollback requires conditional completion or cleanup to be terminal. See
-[ADR-390](adr/390-conditional-s3-multipart-completion.md).
+[ADR-532](adr/532-conditional-s3-multipart-completion.md).
 
 Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
@@ -551,7 +551,7 @@ deletion receipts and multipart session status for admitted work. Removing rules
 cancels unclaimed discovery while admitted cleanup continues through restart and
 disabled ingress. Legacy reservations and inventory baselines remain conservative;
 verified capacity reconciliation reclaims them. See
-[ADR-408](adr/408-durable-object-lifecycle.md).
+[ADR-550](adr/550-durable-object-lifecycle.md).
 
 ## Reading retained S3 versions
 
@@ -580,7 +580,7 @@ accounting. New writes wait for capacity reconciliation to establish an inventor
 of all retained data versions and delete markers. A current-only inventory cannot
 refund this history. Listing does not change provider configuration or create
 markers. Configuration and immutable version deletion are described below.
-See [ADR-400](adr/400-customer-s3-version-identities-and-reads.md).
+See [ADR-542](adr/542-customer-s3-version-identities-and-reads.md).
 
 Copy a retained version with the standard SDK `CopySource` value
 `assets/hello.txt?versionId=ID`. URL-encode the key and query value separately;
@@ -601,7 +601,7 @@ quota for an older version. Explicit `null` copies keep `versionId=null` on both
 provider requests and retain the measured ETag fence; `null` is mutable and is
 not an immutable restore point. Selected delete markers cannot be copied.
 Uncertain responses retain write receipts or part transfer fences and do not
-automatically replay the copy. See [ADR-401](adr/401-customer-selected-s3-copy-sources.md).
+automatically replay the copy. See [ADR-543](adr/543-customer-selected-s3-copy-sources.md).
 
 ```sh
 aws --endpoint-url "$S3_ENDPOINT" s3api copy-object \
@@ -662,7 +662,7 @@ replication. Enable versioning through the managed cutover below. Bucket Object
 Lock configuration is available through the enrolled API/SDK/CLI capability
 described below. The UI does not manage historical versions or retention locks.
 
-ADR-412 adds an internal native S3 encryption foundation. An operator can
+ADR-554 adds an internal native S3 encryption foundation. An operator can
 declare backend `encryption.algorithms` (`AES256`, `aws:kms`, `aws:kms:dsse`)
 and enroll `encryption.keys` with a Gregale key UUID, owning account UUID and
 same-region native key ARN. Native key resources must have one unambiguous
@@ -672,11 +672,11 @@ create a KMS key or manage its policies. Optional `encryption.kms_endpoint`
 selects the operator's KMS origin and follows the registry's HTTPS policy.
 KMS identity/type validation uses DescribeKey; actual S3 operations enforce
 GenerateDataKey/Decrypt permission. Bounds and strict context validation live
-in `pkg/api/limits.go`. ADR-414 enables explicit customer encryption on the branded S3 gateway with
+in `pkg/api/limits.go`. ADR-556 enables explicit customer encryption on the branded S3 gateway with
 durable admission, metering and owned response mapping. Native encrypted URLs
 remain private. Bucket defaults and encrypted control API upload URLs remain
 in progress.
-See [ADR-412](adr/412-owned-key-bindings-and-native-s3-encryption.md) for the
+See [ADR-554](adr/554-owned-key-bindings-and-native-s3-encryption.md) for the
 implemented provider contract and completion boundary.
 
 Bucket names in Gregale are logical and app/scope-local. Physical names are
@@ -767,7 +767,7 @@ version separately, and completion reuses that reservation. Capacity remains
 charged through lost acknowledgments and restart recovery; verified abort and
 fenced provider inventory are required before reclamation. Existing legacy
 sessions retain their original accounting contract. See
-[ADR-418](adr/418-fixed-multipart-admission.md).
+[ADR-560](adr/560-fixed-multipart-admission.md).
 
 Capacity is **conservative**, not a bill: the first inventory baseline plus
 per-key grants, or the latest observed bytes/keys, whichever is larger. An
@@ -1001,7 +1001,7 @@ The worker processes up to ten intents per sweep with one-minute leases,
 ten-second probes and thirty-second retry intervals; receipt settlement has a
 five-second deadline. It runs with uploads disabled or budgets exhausted.
 Route deletion preserves recovery records until the owning bucket is removed.
-See [ADR-392](adr/392-recoverable-application-object-uploads.md).
+See [ADR-534](adr/534-recoverable-application-object-uploads.md).
 
 GCS and third-party writers without the tracked capability retain conservative
 admissions and the previous failure-receipt behavior. Historical/direct signed
@@ -1083,7 +1083,7 @@ a lost acknowledgment retains its receipt until exact provider proof support
 is available. Fixed multipart part URLs now use the branded endpoint too. The
 URL binds the owned session, exact part and length; it stops admitting writes
 when the session starts completion or abort. Native upload IDs stay private.
-URLs issued before ADR-415/416 retain their native provider expiry; changing
+URLs issued before ADR-557/558 retain their native provider expiry; changing
 permissions cannot revoke those older capabilities.
 
 Control multipart creation accepts the same optional owned `encryption`
@@ -1102,7 +1102,7 @@ version ID are committed atomically with successful completion. An uncertain
 S3 completion can recover an exact session receipt from retained versions after
 an overwrite or delete marker, with bounded pages and persisted continuation.
 A missing upload or history proof keeps its reservations; it cannot establish
-failure. See [ADR-402](adr/402-durable-s3-multipart-completion-identities.md).
+failure. See [ADR-544](adr/544-durable-s3-multipart-completion-identities.md).
 Sessions expire after
 24 hours; the recovery worker aborts expired upstream parts even while new
 object-storage operations are disabled. The upstream lifecycle rule is still
@@ -1117,7 +1117,7 @@ completion admitted during signing prevents publication. Cleanup drains actual
 transfers and legacy URL deadlines, then checks a bounded part listing before reporting
 `aborted`. Elapsed time and provider acknowledgment alone do not refund legacy
 key reservations or change the inventory baseline. See
-[ADR-408](adr/408-durable-object-lifecycle.md).
+[ADR-550](adr/550-durable-object-lifecycle.md).
 
 Key rotation copies bucket grants to the successor so applications can switch
 credentials during the normal grace window. For compute workloads, prefer the
@@ -1202,7 +1202,7 @@ authorizations or billing. The shared limits are ten receipts per sweep, a
 one-minute preparation timeout and recovery lease, ten-second probes,
 thirty-second retries, five-second detached settlement, and thirty-minute
 transfers. Gateway-owned provider PUT URLs expire after one minute and stay
-private. See [ADR-393](adr/393-recoverable-s3-gateway-puts.md).
+private. See [ADR-535](adr/535-recoverable-s3-gateway-puts.md).
 
 ## Recoverable branded copies
 
@@ -1229,7 +1229,7 @@ the customer did not supply one, preserving standalone date semantics. Date
 headers must contain one valid HTTP date of at most 128 bytes. Independently
 restrictive dates on absent/null native versions remain unsupported; a customer
 If-Match can accompany If-Unmodified-Since using S3's ETag precedence. See
-[ADR-399](adr/399-immutable-s3-copy-sources-and-date-conditions.md).
+[ADR-541](adr/541-immutable-s3-copy-sources-and-date-conditions.md).
 
 The source probe passes read admission before HEAD. A successful tracked copy
 consumes two monthly safety authorizations (probe and destination admission);
@@ -1247,7 +1247,7 @@ refunding monthly authorizations or billing. Existing upload recovery and
 transfer limits apply. GCS, older copies, environment-clone/cross-bucket copies
 and providers without the capability remain conservative.
 Apply the additive migration before upgrading gateways and API workers.
-See [ADR-394](adr/394-recoverable-s3-gateway-copies.md).
+See [ADR-536](adr/536-recoverable-s3-gateway-copies.md).
 
 ## Multipart server-side copy
 
@@ -1274,7 +1274,7 @@ suffix and multiple ranges are invalid. Every completed part except the last
 must meet the 5 MiB multipart minimum. Native source versions use the same
 immutable-source and `all_versions` baseline requirements as CopyObject, with
 the same source date predicates. Append `?versionId=ID` to the URL-encoded
-`--copy-source` value to select a customer version ID (ADR-401).
+`--copy-source` value to select a customer version ID (ADR-543).
 
 Gregale measures the source, reserves only the copied bytes and atomically
 requires the measured ETag at the provider. Customer source ETag conditions
@@ -1285,7 +1285,7 @@ overwrite/completion/abort races. It does not automatically replay the copy or
 refund capacity. Definitive rejections settle the fence; verified abort cleanup
 reclaims tracked part grants. Providers without the optional part-copy
 capability return 501. See
-[ADR-396](adr/396-s3-multipart-copy-and-source-etag-conditions.md) and the
+[ADR-538](adr/538-s3-multipart-copy-and-source-etag-conditions.md) and the
 [remaining implementation scope](s3-implementation-gaps.md).
 
 ## Inspect write receipts
@@ -1333,12 +1333,12 @@ confirm an older version after overwrite or a delete marker. Each probe lists
 at most ten entries, inspects exact versions and persists pagination progress
 across worker restarts. Missing history still leaves the receipt pending.
 This read-only recovery does not enable bucket versioning or retain proof on
-unversioned backends. See [ADR-397](adr/397-historical-s3-write-receipt-recovery.md).
+unversioned backends. See [ADR-539](adr/539-historical-s3-write-receipt-recovery.md).
 These reads cannot force completion or refund capacity. Legacy/untracked writes,
 direct signed uploads and multipart sessions are outside this list; use the
 multipart status API for multipart uploads. Pending-write lists help diagnose
 `waiting/unsettled_writes` capacity jobs. Apply the listing index migration
-before rollout. See [ADR-395](adr/395-customer-object-write-receipts.md).
+before rollout. See [ADR-537](adr/537-customer-object-write-receipts.md).
 
 ## Reclaim reserved capacity
 
@@ -1390,12 +1390,12 @@ its full size and one additional entry even when overwriting the same key.
 Direct signed PUTs and legacy untracked writes/completion return a conflict or
 NotImplemented in this mode until their replay admission is implemented.
 Current-object single/bulk DELETE and mutable null deletion use durable intents
-with marker admission (ADR-405). Public bucket versioning configuration and
+with marker admission (ADR-547). Public bucket versioning configuration and
 immutable version deletion are implemented. Customer IDs, version listing,
 exact reads and restoration by same-key selected-version copy are implemented
-(ADRs 400–401).
-See [ADR-398](adr/398-native-s3-version-capacity-inventory.md).
-See [ADR-391](adr/391-safe-object-capacity-reconciliation.md) for recovery and
+(ADRs 542–543).
+See [ADR-540](adr/540-native-s3-version-capacity-inventory.md).
+See [ADR-533](adr/533-safe-object-capacity-reconciliation.md) for recovery and
 rolling-upgrade guarantees.
 
 
@@ -1431,9 +1431,9 @@ requires a bucket write credential. Discovery of provider versioning also fences
 an empty bucket until adoption is verified. Unresolved legacy direct-write grants
 block configuration; URL expiry alone cannot make them safe. MFA Delete changes,
 GCS configuration and unsupported provider endpoints return NotImplemented.
-See [ADR-403](adr/403-durable-bucket-versioning-configuration.md). Delete-marker
+See [ADR-545](adr/545-durable-bucket-versioning-configuration.md). Delete-marker
 admission and mutable null deletion are implemented in
-[ADR-405](adr/405-durable-s3-mutable-deletion.md). Replay-safe direct writes and
+[ADR-547](adr/547-durable-s3-mutable-deletion.md). Replay-safe direct writes and
 recovery proof for uncertain mutable deletions remain gaps.
 
 
@@ -1480,7 +1480,7 @@ its tags, or explicitly repeat the desired replacement/clear. Concurrent tag
 requests follow provider last-writer behavior; selectors do not serialize tag
 changes. Local SDK/gateway/control/PostgreSQL tests cover selector ownership,
 acknowledgment loss, store reconstruction, permissions and conservative capacity.
-See [ADR-407](adr/407-version-specific-object-tagging.md).
+See [ADR-549](adr/549-version-specific-object-tagging.md).
 
 ## Permanently deleting retained versions
 
@@ -1515,8 +1515,8 @@ admission/recovery implementation, including coordination with versioning change
 
 Acknowledged deletion leaves capacity reserved. Run `gregale bucket reconcile
 start <app> <bucket-id>` to reclaim it through a verified all-version inventory.
-See [ADR-404](adr/404-immutable-s3-version-deletion.md) and
-[ADR-406](adr/406-immutable-deletion-inventory-coordination.md).
+See [ADR-546](adr/546-immutable-s3-version-deletion.md) and
+[ADR-548](adr/548-immutable-deletion-inventory-coordination.md).
 
 Durable ordinary, null and immutable deletion uses `POST
 /v1/apps/{slug}/buckets/{bucket}/objects/deletions` with an `id` UUID, `key`, and
@@ -1682,7 +1682,7 @@ invocation without taking another queue slot. Application execution retains
 normal retries, queue consumers, account concurrency and dead-letter handling.
 Direct URL and provider-external mutations still have no authoritative event
 proof; no historical mutation backfill occurs. See
-[ADR-410](adr/410-owned-s3-notification-destinations.md).
+[ADR-552](adr/552-owned-s3-notification-destinations.md).
 
 Roll out notification-capable scheduler consumers before updating mutation
 producers and exposing configuration to customers. Older scheduler consumers
@@ -1725,7 +1725,7 @@ origin, use the direct registry example and configure spool/account budgets.
 The role preserves signed Host/path/query bytes and derives origin transport
 timeouts from the registry; it does not change DNS. See
 [the deployment role](../deploy/ansible/roles/s3_gateway_service/README.md) and
-[ADR-411](adr/411-bounded-production-object-transfers.md).
+[ADR-553](adr/553-bounded-production-object-transfers.md).
 
 Local AWS SDK → gateway → S3 adapter fixtures qualify a 65 MiB streamed PUT/GET,
 multipart part/list/completion/read without whole-part staging,
@@ -1737,7 +1737,7 @@ live provider or production network qualification.
 
 ### Durable encryption journals
 
-ADR-413 persists each private encryption selection with the tracked write or
+ADR-555 persists each private encryption selection with the tracked write or
 multipart session. The snapshot captures canonical owned identity, native key
 resource and enrollment fingerprint, and is bounded to 16 KiB. Cipher-aware
 multipart claims use bounded 128-byte lease tokens. State and database guards
@@ -1775,8 +1775,8 @@ multipart upload can recover its identity without a new enabled-key probe.
 Do not send cipher directives on reads, individual parts or completion. SSE-C,
 native key references and encryption query directives are unsupported. GCS and
 cross-bucket encrypted copy remain acceptance work in
-`docs/s3-implementation-gaps.md`. See [ADR-414](adr/414-customer-s3-encryption.md)
-and [ADR-415](adr/415-branded-object-url-capabilities.md).
+`docs/s3-implementation-gaps.md`. See [ADR-556](adr/556-customer-s3-encryption.md)
+and [ADR-557](adr/557-branded-object-url-capabilities.md).
 
 ### Bucket default encryption
 
@@ -1807,7 +1807,7 @@ Pending configuration blocks new implicit writes. Existing writes still finish.
 GET and DELETE configuration and background recovery remain available when
 new ingress is disabled. Clearing preserves unrelated native encryption blocking
 settings and permits the provider's baseline encryption; it does not request
-plaintext storage. See [ADR-419](adr/419-bucket-default-encryption.md).
+plaintext storage. See [ADR-561](adr/561-bucket-default-encryption.md).
 
 ### Encryption on application upload routes
 
@@ -1833,11 +1833,11 @@ never resends its body. Idempotent retries return the original receipt after
 route policy changes without another key check or write. Successful upload and
 receipt responses include the owned `encryption` selection. Go, Node and Python
 clients expose the route policy and bucket write receipt selection. See
-[ADR-417](adr/417-owned-encryption-on-upload-routes.md).
+[ADR-559](adr/559-owned-encryption-on-upload-routes.md).
 
 ## Bucket Object Lock configuration
 
-ADR-422 adds permanent bucket enablement and native retention defaults. The
+ADR-564 adds permanent bucket enablement and native retention defaults. The
 operator must explicitly enroll an S3 backend with
 `"object_lock":{"enabled":true,"event_holds":true}`. Event holds are separately
 optional; `event_holds:true` requires `enabled:true`. The provider must implement

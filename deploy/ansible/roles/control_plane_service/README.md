@@ -18,3 +18,9 @@ On public-beta `control-plane` hosts, the role also installs
 contract preview; the matching compute-only drop-in enables the promotion gate
 so both paths evaluate the same stored production baseline. The default remains
 off on single-box and local installs.
+
+## Signed VM inventory recovery
+
+`faas_node_inventory_reconcile_enforce` defaults to false. This role renders
+`FAAS_SCHEDD_NODE_INVENTORY_ENFORCE` for schedd; set the host variable to true
+only after canary qualification. See [the recovery runbook](../../../../docs/ops/vm-inventory-recovery.md).

@@ -594,6 +594,12 @@ enqueued, its handler retry and dead-letter lifecycle applies independently.
 Published and inbox envelopes use CloudEvents `datacontenttype` and the
 `accountid` extension. The API accepts the older `data_content_type` and
 `account_id` request spellings for existing clients.
+Sources must be URI references, such as `urn:example:billing`,
+`https://example.com/events`, or `billing.service`; percent-encode spaces.
+CloudEvents webhook delivery also uses `accountid`. Receivers of the opt-in
+CloudEvents format must read that extension instead of the previous invalid
+`account_id` extension; the legacy Gregale JSON format keeps its existing shape.
+
 
 An API key with `events:publish` can publish and send to an app inbox;
 `queues:send` permits queue sends. Existing `deploy:write` keys continue to

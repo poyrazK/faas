@@ -10,7 +10,7 @@ import (
 
 func lifecycleInt(v int32) *int32 { return &v }
 
-// adr: 408
+// adr: 550
 func TestLifecycleExpirationSelection(t *testing.T) {
 	modified := time.Date(2026, 9, 29, 13, 0, 0, 0, time.UTC)
 	deadline := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
@@ -68,7 +68,7 @@ func TestLifecycleExpirationSelection(t *testing.T) {
 	}
 }
 
-// adr: 408
+// adr: 550
 func TestLifecycleNoncurrentAgeAndRetention(t *testing.T) {
 	now := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
 	r := api.ObjectLifecycleRule{ID: "history", Status: "Enabled", NoncurrentVersionExpiration: &api.ObjectLifecycleNoncurrentExpiration{NoncurrentDays: 3, NewerNoncurrentVersions: lifecycleInt(2)}}
@@ -109,7 +109,7 @@ func TestLifecycleNoncurrentAgeAndRetention(t *testing.T) {
 	}
 }
 
-// adr: 408
+// adr: 550
 func TestLifecycleDayDeadlineAndMultipart(t *testing.T) {
 	for _, tc := range []struct {
 		base string

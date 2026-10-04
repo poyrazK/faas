@@ -51,7 +51,7 @@ func (f *bucketEncryptionNativeHTTP) serve(t *testing.T, w http.ResponseWriter, 
 	}
 }
 
-// adr: 419
+// adr: 561
 func TestBucketEncryptionSDKEndToEndMem(t *testing.T) { bucketEncryptionSDKE2E(t, state.NewMemStore()) }
 func TestBucketEncryptionSDKEndToEndPG(t *testing.T) {
 	st, _ := multipartCopyPGStore(t)

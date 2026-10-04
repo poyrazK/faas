@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -88,6 +89,49 @@ func TestObjectCapacityDatabaseFencesAndRecovery(t *testing.T) {
 }
 
 func TestObjectCapacityRequestDoesNotDeadlockAdmission(t *testing.T) {
+	objectMutationDoesNotDeadlockAdmission(t, func(ctx context.Context, st *state.PgStore, b state.ObjectBucket) error {
+		_, err := st.RequestObjectCapacityReconciliation(ctx, b.AccountID, b.AppID, b.ID)
+		return err
+	})
+}
+
+// adr: 564 — every bucket mutation follows admission's account/SHARE order.
+func TestObjectBucketMutationRequestsDoNotDeadlockAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(context.Context, *state.PgStore, state.ObjectBucket) error
+	}{
+		{"encryption", func(ctx context.Context, st *state.PgStore, b state.ObjectBucket) error {
+			_, err := st.RequestObjectBucketEncryption(ctx, b.AccountID, b.AppID, b.ID, state.ObjectEncryptionSnapshot{})
+			return err
+		}},
+		{"lifecycle", func(ctx context.Context, st *state.PgStore, b state.ObjectBucket) error {
+			_, err := st.SetObjectBucketLifecycle(ctx, b.AccountID, b.AppID, b.ID, nil)
+			return err
+		}},
+		{"notifications", func(ctx context.Context, st *state.PgStore, b state.ObjectBucket) error {
+			_, err := st.SetObjectBucketNotifications(ctx, b.AccountID, b.AppID, b.ID, nil)
+			return err
+		}},
+		{"deletion", func(ctx context.Context, st *state.PgStore, b state.ObjectBucket) error {
+			_, _, err := st.BeginObjectDeletion(ctx, state.ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: uuid.NewString(), BucketID: b.ID, Key: "tracked"}, AccountID: b.AccountID, AppID: b.AppID, Token: "contention"}, accountingPolicy())
+			return err
+		}},
+		{"versioning", func(ctx context.Context, st *state.PgStore, b state.ObjectBucket) error {
+			_, err := st.RequestObjectBucketVersioning(ctx, b.AccountID, b.AppID, b.ID, "Enabled")
+			return err
+		}},
+		{"object lock", func(ctx context.Context, st *state.PgStore, b state.ObjectBucket) error {
+			_, err := st.RequestObjectBucketObjectLock(ctx, b.AccountID, b.AppID, b.ID, api.ObjectBucketObjectLockConfiguration{Enabled: true})
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { objectMutationDoesNotDeadlockAdmission(t, tc.run) })
+	}
+}
+
+func objectMutationDoesNotDeadlockAdmission(t *testing.T, request func(context.Context, *state.PgStore, state.ObjectBucket) error) {
+	t.Helper()
 	st, pool, ctx := pgStoreWithPool(t)
 	b, _ := seedAccounting(t, st)
 	tx, err := pool.Begin(ctx)
@@ -102,11 +146,10 @@ func TestObjectCapacityRequestDoesNotDeadlockAdmission(t *testing.T) {
 	defer cancel()
 	result := make(chan error, 1)
 	go func() {
-		_, e := st.RequestObjectCapacityReconciliation(requestCtx, b.AccountID, b.AppID, b.ID)
-		result <- e
+		result <- request(requestCtx, st, b)
 	}()
-	// The private test database has no other blocked sessions. Wait until the
-	// request holds its bucket lock and waits for our account lock.
+	// The request must wait for our account before locking the bucket. The
+	// Object Lock admission trigger needs SHARE, beyond the FK's KEY SHARE.
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		var blocked bool
@@ -121,8 +164,7 @@ func TestObjectCapacityRequestDoesNotDeadlockAdmission(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	// The FK takes KEY SHARE on the bucket. A FOR UPDATE bucket lock here
-	// would deadlock against our account lock; NO KEY UPDATE permits progress.
+	// Admission must obtain its bucket SHARE fence while owning the account.
 	if _, err = tx.Exec(requestCtx, `INSERT INTO object_storage_key_grants(bucket_id,key_hash,max_bytes) VALUES($1,repeat('d',64),1)`, b.ID); err != nil {
 		t.Fatal("admission deadlocked with reconciliation", err)
 	}

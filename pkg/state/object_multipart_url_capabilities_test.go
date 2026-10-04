@@ -23,7 +23,7 @@ type multipartURLTestStore interface {
 	state.ObjectMultipartTransferStore
 }
 
-// adr: 416
+// adr: 558
 func TestObjectMultipartURLCapabilitiesMem(t *testing.T) {
 	multipartURLCapabilitySuite(t, state.NewMemStore(), nil)
 }
@@ -193,7 +193,7 @@ func assertMultipartURLDatabaseFences(t *testing.T, pool *pgxpool.Pool, u state.
 	if !errors.As(err, &pe) || pe.ConstraintName != "object_url_capability_fenced" {
 		t.Fatal("part URL descriptor was mutable", err)
 	}
-	body, err := migrations.FS.ReadFile("20261003231334858_object_multipart_url_capabilities.sql")
+	body, err := migrations.FS.ReadFile("20261004090600504_object_multipart_url_capabilities.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

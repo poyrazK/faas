@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 395
+// adr: 537
 func TestObjectWriteReceiptAPI(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	provider := &fakeObjectProvider{}

@@ -50,15 +50,15 @@ func (s *PgStore) SetObjectBucketNotifications(ctx context.Context, account, app
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
+	plan, err := q.ObjectNotificationLockAccount(ctx, tx, mustPgUUID(account))
+	if err != nil {
+		return api.ObjectBucketNotifications{}, mapErr(err)
+	}
 	raw, err := q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account), AppID: mustPgUUID(app)})
 	if err != nil {
 		return api.ObjectBucketNotifications{}, mapErr(err)
 	}
 	b := objectBucketFromSQL(raw)
-	plan, err := q.ObjectNotificationLockAccount(ctx, tx, mustPgUUID(account))
-	if err != nil {
-		return api.ObjectBucketNotifications{}, mapErr(err)
-	}
 	p, err := readObjectNotifications(ctx, tx, b)
 	if err != nil {
 		return p, err

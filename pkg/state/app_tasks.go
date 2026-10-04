@@ -54,44 +54,47 @@ func (s AppTaskStatus) Terminal() bool {
 // to an immutable deployment artifact. Environment and secret values are
 // resolved only by the scheduler immediately before the fresh VM boots.
 type AppTask struct {
-	WorkDecision        *workpolicy.Decision
-	OutcomeCode         string
-	FailureRules        *workpolicy.FailureRules
-	OccurrenceID        string
-	StartDeadlineAt     *time.Time
-	ID                  string
-	AccountID           string
-	AppID               string
-	DeploymentID        string
-	CronID              string
-	ScheduledFor        *time.Time
-	Kind                AppTaskKind
-	Command             []string
-	CommandShell        bool
-	DeploymentScope     string
-	ArtifactKey         string
-	ImageDigest         string
-	Status              AppTaskStatus
-	TimeoutSeconds      int
-	MaxOutputBytes      int
-	RetryMax            int
-	RetryBackoffSeconds int
-	AttemptCount        int
-	RetryAt             *time.Time
-	LeaseToken          *string
-	LeaseOwner          *string
-	LeaseExpiresAt      *time.Time
-	CancelRequested     *time.Time
-	StdoutTail          string
-	StderrTail          string
-	OutputTruncated     bool
-	ExitCode            *int
-	FailureCode         *string
-	FailureMessage      *string
-	StartedAt           *time.Time
-	FinishedAt          *time.Time
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	BindingVerification  *BindingVerificationPin
+	WorkDecision         *workpolicy.Decision
+	OutcomeCode          string
+	FailureRules         *workpolicy.FailureRules
+	OccurrenceID         string
+	StartDeadlineAt      *time.Time
+	ID                   string
+	AccountID            string
+	AppID                string
+	ExclusiveOperationID string
+	ExclusiveGeneration  int64
+	DeploymentID         string
+	CronID               string
+	ScheduledFor         *time.Time
+	Kind                 AppTaskKind
+	Command              []string
+	CommandShell         bool
+	DeploymentScope      string
+	ArtifactKey          string
+	ImageDigest          string
+	Status               AppTaskStatus
+	TimeoutSeconds       int
+	MaxOutputBytes       int
+	RetryMax             int
+	RetryBackoffSeconds  int
+	AttemptCount         int
+	RetryAt              *time.Time
+	LeaseToken           *string
+	LeaseOwner           *string
+	LeaseExpiresAt       *time.Time
+	CancelRequested      *time.Time
+	StdoutTail           string
+	StderrTail           string
+	OutputTruncated      bool
+	ExitCode             *int
+	FailureCode          *string
+	FailureMessage       *string
+	StartedAt            *time.Time
+	FinishedAt           *time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 const (
@@ -105,22 +108,26 @@ const (
 // CreateAppTaskParams is already-resolved app-task intent. Scope, artifact
 // key, and image digest are copied atomically from DeploymentID by the store.
 type CreateAppTaskParams struct {
-	FailureRules        *workpolicy.FailureRules
-	OccurrenceID        string
-	StartDeadlineAt     *time.Time
-	AccountID           string
-	AppID               string
-	DeploymentID        string
-	CronID              string
-	ScheduledFor        *time.Time
-	Kind                AppTaskKind
-	Command             []string
-	CommandShell        bool
-	TimeoutSeconds      int
-	MaxOutputBytes      int
-	RetryMax            int
-	RetryBackoffSeconds int
-	CreatedAt           time.Time
+	RequireLiveDeployment bool                    // Explicit binding probes must remain live at atomic admission.
+	BindingVerification   *BindingVerificationPin // Internal admission metadata, never caller-selected.
+	FailureRules          *workpolicy.FailureRules
+	OccurrenceID          string
+	StartDeadlineAt       *time.Time
+	AccountID             string
+	AppID                 string
+	ExclusiveOperationID  string
+	ExclusiveGeneration   int64
+	DeploymentID          string
+	CronID                string
+	ScheduledFor          *time.Time
+	Kind                  AppTaskKind
+	Command               []string
+	CommandShell          bool
+	TimeoutSeconds        int
+	MaxOutputBytes        int
+	RetryMax              int
+	RetryBackoffSeconds   int
+	CreatedAt             time.Time
 }
 
 // CompleteAppTaskParams is the scheduler-owned terminal compare-and-swap.
@@ -182,6 +189,7 @@ type AppTaskStore interface {
 	CreateManualCronAppTaskForFireNow(ctx context.Context, requestID string, firedAt time.Time) (AppTask, error)
 	CountActiveCronAppTasks(ctx context.Context, cronID string) (int, error)
 	ListCronAppTaskRuns(ctx context.Context, cronID string, limit int, before string) ([]AppTask, error)
+	ListAppTasksByExclusiveOperation(ctx context.Context, accountID, operationID string) ([]AppTask, error)
 }
 
 // ScheduledCronOccurrenceStore creates one command-cron occurrence and its
@@ -190,9 +198,41 @@ type ScheduledCronOccurrenceStore interface {
 	CreateScheduledCronAppTaskOccurrence(ctx context.Context, cronID string, expectedLastFiredAt *time.Time, evaluatedAt time.Time, options CronScheduledOccurrenceOptions) (AppTask, ScheduleOccurrence, bool, error)
 }
 
+// ExclusiveCommandCronTaskStore materializes the command task only after the
+// operation worker has acquired its current fencing generation.
+type ExclusiveCommandCronTaskStore interface {
+	CreateExclusiveCommandCronAppTask(ctx context.Context, accountID, appID, operationID string, generation int64, cronID string, createdAt time.Time) (AppTask, error)
+}
+
+// ExclusiveCommandCronFireNowStore atomically admits a command fire-now into
+// its operation lane and stamps the durable request receipt with that operation.
+type ExclusiveCommandCronFireNowStore interface {
+	AdmitExclusiveCommandCronFireNow(ctx context.Context, requestID string, firedAt time.Time, admission ExclusiveAdmission) (ExclusiveOperation, bool, error)
+}
+
+func validateExclusiveCommandCronAdmission(admission ExclusiveAdmission, accountID, appID, cronID string) error {
+	if admission.AccountID != accountID || admission.AppID != appID || admission.JobID != "" || cronID == "" {
+		return ErrInvalidArgument
+	}
+	var request struct {
+		Kind   string `json:"kind"`
+		CronID string `json:"cron_id"`
+	}
+	if json.Unmarshal(admission.Request, &request) != nil || request.Kind != "command_cron" || request.CronID != cronID {
+		return ErrInvalidArgument
+	}
+	return nil
+}
+
 func resolveCreateAppTask(params CreateAppTaskParams) (CreateAppTaskParams, error) {
+	if err := validateBindingVerificationPin(params); err != nil {
+		return CreateAppTaskParams{}, err
+	}
 	if params.AccountID == "" || params.AppID == "" || params.DeploymentID == "" {
 		return CreateAppTaskParams{}, fmt.Errorf("%w: account, app, and deployment are required", ErrAppTaskInvalid)
+	}
+	if (params.ExclusiveOperationID == "") != (params.ExclusiveGeneration == 0) || params.ExclusiveGeneration < 0 {
+		return CreateAppTaskParams{}, fmt.Errorf("%w: exclusive task ownership is incomplete", ErrAppTaskInvalid)
 	}
 	if !params.Kind.Valid() {
 		return CreateAppTaskParams{}, fmt.Errorf("%w: unsupported kind %q", ErrAppTaskInvalid, params.Kind)
@@ -245,6 +285,7 @@ func resolveCreateAppTask(params CreateAppTaskParams) (CreateAppTaskParams, erro
 	} else {
 		params.CreatedAt = params.CreatedAt.UTC()
 	}
+	params.BindingVerification = cloneBindingVerificationPin(params.BindingVerification)
 	params.Command = append([]string(nil), params.Command...)
 	params.FailureRules = workpolicy.Clone(params.FailureRules)
 	params.StartDeadlineAt = cloneAppTaskTimePtr(params.StartDeadlineAt)
@@ -381,6 +422,7 @@ func normalizeAppTaskPage(limit, offset int) (int, int) {
 }
 
 func cloneAppTask(task AppTask) AppTask {
+	task.BindingVerification = cloneBindingVerificationPin(task.BindingVerification)
 	task.FailureRules = workpolicy.Clone(task.FailureRules)
 	task.WorkDecision = workpolicy.Clone(task.WorkDecision)
 	task.StartDeadlineAt = cloneAppTaskTimePtr(task.StartDeadlineAt)

@@ -29,7 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 420
+// adr: 562
 type crossCopyNative struct {
 	mu                                        sync.Mutex
 	requests, sourceHeads, copies, partCopies int

@@ -56,8 +56,7 @@ func saveObjectBucketEncryption(ctx context.Context, db sqlc.DBTX, j ObjectBucke
 	return mapErr(err)
 }
 
-// Configuration never waits for an account lock. Admissions may hold that
-// lock while sharing the policy row, so bucket/account inversion is avoided.
+// Configuration follows admission's account then bucket/policy lock order.
 func (s *PgStore) mutateObjectBucketEncryption(ctx context.Context, account, app, bucket string, fn func(ObjectBucketEncryption, time.Time) (ObjectBucketEncryption, error)) (ObjectBucketEncryption, error) {
 	if account == "" {
 		j, err := readObjectBucketEncryption(ctx, s.pool, bucket)
@@ -72,6 +71,9 @@ func (s *PgStore) mutateObjectBucketEncryption(ctx context.Context, account, app
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
+	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
+		return ObjectBucketEncryption{}, mapErr(err)
+	}
 	b, err := q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account), AppID: mustPgUUID(app)})
 	if err != nil {
 		return ObjectBucketEncryption{}, mapErr(err)

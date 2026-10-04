@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// adr: 404
+// adr: 546
 func TestS3VersionDeleteSingleAttemptAndIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name, responseVersion, marker, code string

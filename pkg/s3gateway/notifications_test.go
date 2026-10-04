@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 410
+// adr: 552
 func TestGatewayNotificationsValidationAndPermissions(t *testing.T) {
 	for _, permission := range []string{state.ObjectBucketPermissionReadWrite, state.ObjectBucketPermissionRead, state.ObjectBucketPermissionWrite} {
 		t.Run(permission, func(t *testing.T) {

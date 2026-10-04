@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // ErrInvalidTCPListener identifies a listener that cannot be exposed by the
@@ -38,6 +40,11 @@ func normalizeTCPListener(in TCPListener) (TCPListener, error) {
 	if in.Protocol != "tcp" {
 		return TCPListener{}, fmt.Errorf("%w: protocol %q is not tcp", ErrInvalidTCPListener, in.Protocol)
 	}
+	tlsConfig, err := (api.TCPListenerTLSConfig{Mode: in.TLSMode, Hostname: in.TLSHostname}).Normalize()
+	if err != nil {
+		return TCPListener{}, fmt.Errorf("%w: %w", ErrInvalidTCPListener, err)
+	}
+	in.TLSMode, in.TLSHostname = tlsConfig.Mode, tlsConfig.Hostname
 	return in, nil
 }
 
@@ -64,6 +71,7 @@ func scanTCPListener(row tcpListenerScanner) (TCPListener, error) {
 		&listener.ID, &listener.AppID, &listener.AccountID,
 		&listener.ListenerName, &listener.GuestPort, &listener.PublicPort,
 		&listener.Protocol, &listener.Enabled, &listener.CreatedAt, &listener.UpdatedAt,
+		&listener.TLSMode, &listener.TLSHostname,
 	); err != nil {
 		return TCPListener{}, err
 	}
@@ -72,7 +80,7 @@ func scanTCPListener(row tcpListenerScanner) (TCPListener, error) {
 
 const tcpListenerColumns = `
     id, app_id, account_id, listener_name, guest_port, public_port,
-    protocol, enabled, created_at, updated_at`
+    protocol, enabled, created_at, updated_at, tls_mode, tls_hostname`
 
 func (s *PgStore) CreateTCPListener(ctx context.Context, in TCPListener) (TCPListener, error) {
 	in, err := normalizeTCPListener(in)
@@ -105,11 +113,11 @@ func (s *PgStore) CreateTCPListener(ctx context.Context, in TCPListener) (TCPLis
 	}
 	row := tx.QueryRow(ctx, `
 		insert into app_tcp_listeners
-			(id, app_id, account_id, listener_name, guest_port, public_port, protocol, enabled)
-		values ($1, $2, $3, $4, $5, $6, $7, $8)
+			(id, app_id, account_id, listener_name, guest_port, public_port, protocol, enabled, tls_mode, tls_hostname)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		returning `+tcpListenerColumns,
 		in.ID, in.AppID, in.AccountID, in.ListenerName, in.GuestPort,
-		in.PublicPort, in.Protocol, in.Enabled)
+		in.PublicPort, in.Protocol, in.Enabled, in.TLSMode, in.TLSHostname)
 	listener, err := scanTCPListener(row)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -153,19 +161,21 @@ func (s *PgStore) TCPListenerByAppAndName(ctx context.Context, appID, listenerNa
 	return listener, nil
 }
 
+func tcpListenerFromSQL(row sqlc.AppTcpListener) TCPListener {
+	return TCPListener{ID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID), ListenerName: row.ListenerName, GuestPort: int(row.GuestPort), PublicPort: int(row.PublicPort), Protocol: row.Protocol, Enabled: row.Enabled, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt), TLSMode: api.TCPListenerTLSMode(row.TlsMode), TLSHostname: row.TlsHostname}
+}
 func (s *PgStore) TCPListenerByPublicPort(ctx context.Context, publicPort int) (TCPListener, error) {
-	row := s.pool.QueryRow(ctx, `
-		select `+tcpListenerColumns+` from app_tcp_listeners
-		 where public_port = $1 and enabled
-	`, publicPort)
-	listener, err := scanTCPListener(row)
+	if publicPort < TCPListenerPublicPortMin || publicPort > TCPListenerPublicPortMax {
+		return TCPListener{}, ErrNotFound
+	}
+	row, err := sqlc.New().ActiveTCPListenerByPublicPort(ctx, s.pool, int32(publicPort))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TCPListener{}, ErrNotFound
 	}
 	if err != nil {
-		return TCPListener{}, fmt.Errorf("state: read TCP listener by public port: %w", err)
+		return TCPListener{}, fmt.Errorf("state: read active TCP listener by public port: %w", err)
 	}
-	return listener, nil
+	return tcpListenerFromSQL(row), nil
 }
 
 func (s *PgStore) ListTCPListenersForApp(ctx context.Context, appID string) ([]TCPListener, error) {
@@ -196,24 +206,13 @@ func (s *PgStore) ListTCPListenersForApp(ctx context.Context, appID string) ([]T
 // TCPListenerStore so existing narrow store adapters do not need to grow a
 // fleet-wide listing method just to adopt tcpd.
 func (s *PgStore) ListEnabledTCPListeners(ctx context.Context) ([]TCPListener, error) {
-	rows, err := s.pool.Query(ctx, `
-		select `+tcpListenerColumns+` from app_tcp_listeners
-		 where enabled order by public_port asc
-	`)
+	rows, err := sqlc.New().ListActiveTCPListeners(ctx, s.pool)
 	if err != nil {
-		return nil, fmt.Errorf("state: list enabled TCP listeners: %w", err)
+		return nil, fmt.Errorf("state: list active TCP listeners: %w", err)
 	}
-	defer rows.Close()
-	listeners := make([]TCPListener, 0)
-	for rows.Next() {
-		listener, err := scanTCPListener(rows)
-		if err != nil {
-			return nil, fmt.Errorf("state: scan enabled TCP listener: %w", err)
-		}
-		listeners = append(listeners, listener)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("state: iterate enabled TCP listeners: %w", err)
+	listeners := make([]TCPListener, 0, len(rows))
+	for _, row := range rows {
+		listeners = append(listeners, tcpListenerFromSQL(row))
 	}
 	return listeners, nil
 }

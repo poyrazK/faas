@@ -37,7 +37,7 @@ func (p blockedMultipartURLStore) IssueObjectMultipartURLCredential(ctx context.
 	}
 }
 
-// adr: 408
+// adr: 550
 func TestObjectMultipartSignedURLWithheldAfterMutation(t *testing.T) {
 	_, teardown := withTestIdentities(t)
 	defer teardown()
@@ -91,7 +91,7 @@ func TestObjectMultipartSignedURLWithheldAfterMutation(t *testing.T) {
 	}
 }
 
-// adr: 408
+// adr: 550
 func TestObjectMultipartSignedURLAbortEndToEndPG(t *testing.T) {
 	for _, lostACK := range []bool{false, true} {
 		name := "acknowledged"

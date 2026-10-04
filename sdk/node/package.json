@@ -46,13 +46,14 @@
     "test:build": "tsc -p tsconfig.test.json",
     "test": "npm run test:build && node --test --test-concurrency=1 'dist-test/test/**/*.test.js' && node --test --test-concurrency=1 test/post-process.test.mjs",
     "test:smoke": "npm run test:build && node --test --test-concurrency=1 dist-test/test/smoke.test.js",
-    "test:unit": "npm run test:build && node --test --test-concurrency=1 dist-test/test/issues.test.js dist-test/test/flags.test.js dist-test/test/dev-bridge.test.js dist-test/test/sse.test.js dist-test/test/release-context.test.js dist-test/test/browser-release.test.js dist-test/test/pre-auth-target.test.js dist-test/test/browser-realtime.test.js dist-test/test/realtime-resume.test.js && node --test --test-concurrency=1 test/post-process.test.mjs && npm run build && node --test ../../tests/dev-bridge-acceptance/app/server.test.mjs",
-    "prepublishOnly": "npm run build"
+    "test:unit": "npm run test:build && node --test --test-concurrency=1 dist-test/test/container-listeners.test.js dist-test/test/route-customers.test.js dist-test/test/route-customer-health.test.js dist-test/test/route-client-errors.test.js dist-test/test/route-investigation.test.js dist-test/test/route-monitor.test.js dist-test/test/tcp-listener-tls.test.js dist-test/test/outbound-binding-probe.test.js dist-test/test/binding-application-adoption.test.js dist-test/test/issues.test.js dist-test/test/flags.test.js dist-test/test/focus.test.js dist-test/test/dev-bridge.test.js dist-test/test/sse.test.js dist-test/test/release-context.test.js dist-test/test/browser-release.test.js dist-test/test/pre-auth-target.test.js dist-test/test/browser-realtime.test.js dist-test/test/realtime-resume.test.js && node --test --test-concurrency=1 test/post-process.test.mjs && npm run build && node --test ../../tests/dev-bridge-acceptance/app/server.test.mjs",
+    "prepublishOnly": "npm run build",
+    "test:commit": "npm run build && node --test test/commit-postgres.test.mjs"
   },
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "22.10.0",
     "openapi-typescript-codegen": "0.31.0",
+    "pg": "8.16.3",
     "typescript": "5.6.3"
   }
 }

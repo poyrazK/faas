@@ -42,7 +42,7 @@ func TestVersionDeletionRejectsEmptyAndDuplicateSelector(t *testing.T) {
 	}
 }
 
-// adr: 406
+// adr: 548
 func TestImmutableDeletionInventorySDKE2E(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		t.Run(fmt.Sprint("postgres=", pg), func(t *testing.T) {

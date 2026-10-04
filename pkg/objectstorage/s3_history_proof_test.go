@@ -35,7 +35,7 @@ func historyTestProvider(t *testing.T, handler http.Handler) HistoricalObjectWri
 	return p.(HistoricalObjectWriteConfirmer)
 }
 
-// adr: 397
+// adr: 539
 func TestS3HistoricalReceiptPagination(t *testing.T) {
 	key, receipt, version := "key /+%.txt", uuid.NewString(), "private/+?%version"
 	var authorized, requests atomic.Int32

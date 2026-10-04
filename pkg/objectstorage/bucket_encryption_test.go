@@ -18,7 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 419
+// adr: 561
 func TestBucketEncryptionNativeRecoveryAndWrite(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		t.Run(fmt.Sprint(pg), func(t *testing.T) {

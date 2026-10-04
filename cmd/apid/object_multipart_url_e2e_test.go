@@ -20,7 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 416
+// adr: 558
 func TestControlMultipartURLE2EMem(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, nil, false)
@@ -30,7 +30,7 @@ func TestControlMultipartURLE2EPG(t *testing.T) {
 	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, e.pool, false)
 }
 
-// adr: 418
+// adr: 560
 func TestControlMultipartURLVersionQuotaE2EMem(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, nil, true)
@@ -40,7 +40,7 @@ func TestControlMultipartURLVersionQuotaE2EPG(t *testing.T) {
 	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, e.pool, true)
 }
 
-// adr: 419
+// adr: 561
 func TestBucketDefaultEncryptionControlMultipartMem(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, nil, false, true)

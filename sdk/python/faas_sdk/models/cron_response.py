@@ -52,9 +52,12 @@ class CronResponse:
     """Why an enabled schedule is paused. Redeploy the app successfully to clear no_live_deployment."""
     last_fired_at: datetime.datetime | None | Unset = UNSET
     schedule_policy: SchedulePolicy | Unset = UNSET
-    """Versioned recurring-work scheduling policy."""
+    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
+    delivered to the app."""
     failure_rules: FailureRules | Unset = UNSET
-    """Versioned explicit classification policy for failed partition attempts."""
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

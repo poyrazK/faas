@@ -11,10 +11,12 @@ import (
 
 func scheduleOccurrenceResponse(o state.ScheduleOccurrence) api.ScheduleOccurrenceResponse {
 	return api.ScheduleOccurrenceResponse{
-		SchedulePolicy: &o.SchedulePolicy, ID: o.ID, ScheduleRevision: o.ScheduleRevision,
+		SchedulePolicy: &o.SchedulePolicy, WorkDecision: o.WorkDecision, OutcomeCode: o.OutcomeCode,
+		ID: o.ID, ScheduleRevision: o.ScheduleRevision,
 		ScheduledFor: o.ScheduledFor.UTC(), StartDeadlineAt: o.StartDeadlineAt,
 		Status: o.Status, Reason: o.Reason, BlockingOccurrenceID: o.BlockingOccurrenceID,
-		JobRunID: o.JobRunID, InvocationID: o.InvocationID, AppTaskID: o.AppTaskID,
+		ExclusiveOperationID: o.ExclusiveOperationID,
+		JobRunID:             o.JobRunID, InvocationID: o.InvocationID, AppTaskID: o.AppTaskID,
 		StartedAt: o.StartedAt, FinishedAt: o.FinishedAt, CreatedAt: o.CreatedAt.UTC(),
 	}
 }

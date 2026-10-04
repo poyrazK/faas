@@ -68,10 +68,10 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	if _, e = q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(j.BucketID), AccountID: mustPgUUID(j.AccountID), AppID: mustPgUUID(j.AppID)}); e != nil {
+	if _, e = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(j.AccountID)); e != nil {
 		return ObjectDeletion{}, false, mapErr(e)
 	}
-	if _, e = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(j.AccountID)); e != nil {
+	if _, e = q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(j.BucketID), AccountID: mustPgUUID(j.AccountID), AppID: mustPgUUID(j.AppID)}); e != nil {
 		return ObjectDeletion{}, false, mapErr(e)
 	}
 	old, e := readDeletion(ctx, tx, j.ID)
@@ -180,13 +180,13 @@ func (s *PgStore) mutateDeletion(ctx context.Context, id string, fn func(pgx.Tx,
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
+	if _, e = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(j.AccountID)); e != nil {
+		return j, mapErr(e)
+	}
 	if j.Lifecycle != nil {
 		if _, e = q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(j.BucketID), AccountID: mustPgUUID(j.AccountID), AppID: mustPgUUID(j.AppID)}); e != nil {
 			return j, mapErr(e)
 		}
-	}
-	if _, e = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(j.AccountID)); e != nil {
-		return j, mapErr(e)
 	}
 	j, e = readDeletion(ctx, tx, id)
 	if e != nil {

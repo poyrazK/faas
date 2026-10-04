@@ -16,7 +16,7 @@ import (
 	"google.golang.org/api/option"
 )
 
-// adr: 411
+// adr: 553
 func TestGCSNativeTransferUsesStreamBudget(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer local-fixture" {

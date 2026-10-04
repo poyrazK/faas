@@ -20,7 +20,7 @@ func journalEncryption(account string) state.ObjectEncryptionSnapshot {
 	return state.ObjectEncryptionSnapshot{AccountID: account, Selection: api.ObjectEncryption{Algorithm: "aws:kms", KeyID: "arn:gregale:kms:us-east-1:" + account + ":key/" + uuid.NewString(), BucketKeyEnabled: &disabled, Context: base64.StdEncoding.EncodeToString([]byte(`{"purpose":"journal"}`))}, ProviderKeyID: "provider-private-key", KeyIdentity: strings.Repeat("a", 64)}
 }
 
-// adr: 413
+// adr: 555
 func TestObjectEncryptionJournalMem(t *testing.T) { encryptionJournalSuite(t, state.NewMemStore()) }
 func TestObjectEncryptionJournalPG(t *testing.T)  { st, _ := pgStore(t); encryptionJournalSuite(t, st) }
 

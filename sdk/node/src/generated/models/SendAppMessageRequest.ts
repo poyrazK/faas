@@ -27,6 +27,10 @@ export type SendAppMessageRequest = {
    * Any valid JSON value delivered inside the CloudEvents envelope.
    */
   data: any;
+  /**
+   * Optional bounded Gregale Flags context. The platform validates the envelope, binds it to its active customer, and restores it on the queued request.
+   */
+  flag_context?: string;
   queue_name?: string;
   retry_policy?: RetryPolicyDTO;
   /**

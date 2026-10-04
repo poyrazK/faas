@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// adr: 410
+// adr: 552
 func TestObjectNotificationsFiltersAndEventNames(t *testing.T) {
 	arn := "arn:gregale:lambda:us-east-1:11111111-1111-4111-8111-111111111111:function:22222222-2222-4222-8222-222222222222"
 	r := ObjectNotificationRule{ID: "put", Destination: arn, Events: []string{"s3:ObjectCreated:*"}, Prefix: "images/", Suffix: ".jpg"}

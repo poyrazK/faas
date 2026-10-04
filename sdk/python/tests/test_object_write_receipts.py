@@ -37,13 +37,17 @@ def test_receipt_status_and_pending_page() -> None:
         return httpx.Response(200, json={"items": [value], "next_cursor": "another"})
 
     with httpx.Client(base_url="https://api.example.test", transport=httpx.MockTransport(handle)) as transport:
-        client = AuthenticatedClient(base_url="https://api.example.test", token="test-token").set_httpx_client(transport)
+        client = AuthenticatedClient(base_url="https://api.example.test", token="test-token").set_httpx_client(
+            transport
+        )
         result = get_object_write_receipt.sync_detailed("demo", bucket, receipt, client=client)
         assert isinstance(result.parsed, ObjectWriteReceipt)
         assert result.parsed.status == "pending"
         assert result.parsed.error_code == "provider_write_uncertain"
         assert result.headers["Retry-After"] == "30"
-        page = list_object_write_receipts.sync("demo", bucket, client=client, status="pending", limit=2, cursor="next+cursor")
+        page = list_object_write_receipts.sync(
+            "demo", bucket, client=client, status="pending", limit=2, cursor="next+cursor"
+        )
         assert isinstance(page, ObjectWriteReceiptList)
         assert page.next_cursor == "another"
         assert page.items[0].to_dict()["id"] == str(receipt)

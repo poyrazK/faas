@@ -53,10 +53,14 @@ func effectiveCronSchedulePolicy(cron Cron) *workpolicy.SchedulePolicy {
 }
 
 func validateCronPolicyKind(opts CronOptions, commandCron bool) error {
-	if commandCron || (opts.SchedulePolicy == nil && opts.FailureRules == nil) {
-		return nil
+	if !commandCron && opts.FailureRules != nil {
+		for _, rule := range opts.FailureRules.Rules {
+			if len(rule.ExitCodes) > 0 {
+				return fmt.Errorf("%w: HTTP cron failure rules support outcome_codes only", ErrInvalidArgument)
+			}
+		}
 	}
-	return fmt.Errorf("%w: schedule policies and failure rules require a deployment command cron", ErrInvalidArgument)
+	return nil
 }
 
 // JobTaskCompletion carries the fenced observed result and policy decision in

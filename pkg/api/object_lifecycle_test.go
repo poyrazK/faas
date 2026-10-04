@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// adr: 408
+// adr: 550
 func TestObjectLifecycleRulesValidation(t *testing.T) {
 	ptr := func(v int32) *int32 { return &v }
 	marker := true
@@ -81,7 +81,7 @@ func TestObjectLifecycleRulesValidation(t *testing.T) {
 	}
 }
 
-// adr: 408
+// adr: 550
 func TestObjectLifecycleRulesNormalizationDetachedAndBounded(t *testing.T) {
 	days, keep, abort, marker := int32(3), int32(2), int32(5), true
 	date := time.Date(2026, 10, 3, 3, 0, 0, 0, time.FixedZone("local", 3*60*60))

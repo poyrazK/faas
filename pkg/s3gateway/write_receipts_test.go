@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 395
+// adr: 537
 func TestGatewayWriteReceiptPolling(t *testing.T) {
 	h, st, provider := newGatewayReceiptHandler(t, func(*http.Request) (*http.Response, error) {
 		t.Error("receipt read contacted provider")

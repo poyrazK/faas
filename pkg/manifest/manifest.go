@@ -123,6 +123,10 @@ type Manifest struct {
 	// another bare-metal provider does not require changing daemon URLs.
 	PrivateDNS PrivateDNS `yaml:"private_dns,omitempty"`
 
+	// PublicEdge configures what the public HTTPS edge serves beyond the
+	// platform zone. Today that is customer custom domains (ADR-520).
+	PublicEdge PublicEdge `yaml:"public_edge,omitempty"`
+
 	// PostgreSQL is the database cluster configuration. The renderer
 	// needs the role names, the database name, and the migration
 	// policy (the manifest validator checks the migration scope is
@@ -474,6 +478,13 @@ type DaemonConfig struct {
 	RouteMetricsEnabled *bool `yaml:"route_metrics_enabled,omitempty"`
 	StreamingEnabled    *bool `yaml:"streaming_enabled,omitempty"`
 
+	// RateLimitMode is gatewayd-internal's [ratelimit] mode. Omitted
+	// renders "central" (ADR-104 amendment 5): every gateway replica
+	// consumes app, account, and edge-rule tokens from the shared
+	// Postgres counters, so a limit holds across nodes instead of once
+	// per node. "local" keeps one in-process bucket per gateway.
+	RateLimitMode string `yaml:"ratelimit_mode,omitempty"`
+
 	// GatewaySynthTarget is schedd's optional remote gatewayd-internal
 	// synthesis endpoint. It is separate from Outbound because schedd has
 	// two remote peers in a split-box fleet: vmmd for placement and
@@ -573,6 +584,72 @@ type DNS struct {
 	// Mode is the DNS provider ("cloudflare", "manual", "nip_io").
 	// The validator rejects values outside the supported set.
 	Mode string `yaml:"mode"`
+}
+
+// PublicEdge is the public HTTPS edge contract beyond the platform zone.
+type PublicEdge struct {
+	CustomDomains CustomDomainsEdge `yaml:"custom_domains,omitempty"`
+}
+
+// CustomDomainsEdgeModeOnDemand selects ADR-520's self-hosted customer
+// certificates.
+const CustomDomainsEdgeModeOnDemand = "on_demand"
+
+// CustomDomainsEdge configures customer custom domains at the public edge
+// (ADR-520). With mode on_demand the control plane's Caddy obtains and
+// renews a certificate per customer hostname after gatewayd-public confirms
+// the hostname is a verified custom domain, and customers connect to the
+// edge directly.
+type CustomDomainsEdge struct {
+	// Mode is "on_demand" or empty (disabled).
+	Mode string `yaml:"mode,omitempty"`
+	// Target is the hostname customers CNAME their domain to. It must
+	// resolve straight to the control plane's public address; a record
+	// proxied by a CDN cannot complete ACME validation for the customer
+	// name.
+	Target string `yaml:"target,omitempty"`
+	// Addresses are the edge's public IPs offered for zone-apex A/AAAA
+	// records, where a CNAME is not allowed.
+	Addresses []string `yaml:"addresses,omitempty"`
+	// ACMEEmail is the ACME account contact for expiry and policy notices.
+	ACMEEmail string `yaml:"acme_email,omitempty"`
+}
+
+// Enabled reports whether on-demand customer certificates are configured.
+func (c CustomDomainsEdge) Enabled() bool { return c.Mode == CustomDomainsEdgeModeOnDemand }
+
+func (c *CustomDomainsEdge) validate(dns DNS) Errors {
+	if c.Mode == "" {
+		if c.Target != "" || len(c.Addresses) > 0 || c.ACMEEmail != "" {
+			return Errors{{"public_edge.custom_domains.mode", "is required when other custom_domains fields are set (allowed: on_demand)"}}
+		}
+		return nil
+	}
+	var errs Errors
+	if c.Mode != CustomDomainsEdgeModeOnDemand {
+		errs = append(errs, Error{"public_edge.custom_domains.mode",
+			fmt.Sprintf("unsupported %q (allowed: on_demand)", c.Mode)})
+	}
+	switch {
+	case c.Target == "":
+		errs = append(errs, Error{"public_edge.custom_domains.target", "is required"})
+	case !looksLikeHostname(c.Target):
+		errs = append(errs, Error{"public_edge.custom_domains.target",
+			fmt.Sprintf("target %q must be a valid hostname (e.g. edge.gregale.dev)", c.Target)})
+	case dns.Mode == "cloudflare" && strings.EqualFold(c.Target, dns.AppsDomain):
+		errs = append(errs, Error{"public_edge.custom_domains.target",
+			"the apps-domain apex is proxied by Cloudflare; use a DNS-only record such as edge." + dns.AppsDomain})
+	}
+	for i, raw := range c.Addresses {
+		if _, err := netip.ParseAddr(raw); err != nil {
+			errs = append(errs, Error{fmt.Sprintf("public_edge.custom_domains.addresses[%d]", i),
+				fmt.Sprintf("%q is not an IP address", raw)})
+		}
+	}
+	if !strings.Contains(c.ACMEEmail, "@") {
+		errs = append(errs, Error{"public_edge.custom_domains.acme_email", "is required (ACME account contact)"})
+	}
+	return errs
 }
 
 // PrivateDNS is the private transport-name resolution contract. The
@@ -825,6 +902,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.Overlay.validate()...)
 	errs = append(errs, m.DNS.validate()...)
 	errs = append(errs, m.PrivateDNS.validate()...)
+	errs = append(errs, m.PublicEdge.CustomDomains.validate(m.DNS)...)
 	errs = append(errs, m.validatePrivateResolution()...)
 	errs = append(errs, m.PostgreSQL.validate()...)
 	errs = append(errs, m.Release.validate()...)
@@ -1176,9 +1254,26 @@ func (d *Daemons) validate() Errors {
 		if dc.Outbound != nil {
 			errs = append(errs, dc.Outbound.validate(path+".outbound")...)
 		}
+		if dc.RateLimitMode != "" {
+			if name != "gatewayd_internal" {
+				errs = append(errs, Error{path + ".ratelimit_mode", "is only valid for gatewayd_internal"})
+			} else if !contains(RateLimitModes, dc.RateLimitMode) {
+				errs = append(errs, Error{path + ".ratelimit_mode",
+					fmt.Sprintf("unsupported %q (allowed: %s)", dc.RateLimitMode, strings.Join(RateLimitModes, "|"))})
+			}
+		}
 	}
 	return errs
 }
+
+// RateLimitModes are the gatewayd-internal [ratelimit] modes. The daemon
+// arms the shared backend only for "central" and treats anything else as
+// local, so the manifest rejects a typo instead of rendering it.
+var RateLimitModes = []string{"central", "local"}
+
+// DefaultRateLimitMode is the mode rendered when a manifest omits
+// daemons.gatewayd_internal.ratelimit_mode.
+const DefaultRateLimitMode = "central"
 
 func (t *TLSMaterial) validate(path string) Errors {
 	var errs Errors

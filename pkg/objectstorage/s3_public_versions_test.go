@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// adr: 400
+// adr: 542
 func TestS3PublicVersionsPairedPagination(t *testing.T) {
 	key, version := "目录 /+%.txt", "native/+%version"
 	var calls atomic.Int32

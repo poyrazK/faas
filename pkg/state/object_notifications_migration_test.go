@@ -14,10 +14,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 410
+// adr: 552
 func TestObjectNotificationMigrationPG(t *testing.T) {
 	st, pool, ctx := pgStoreWithPool(t)
-	raw, err := migrations.FS.ReadFile("20261003140309424_object_bucket_notifications.sql")
+	raw, err := migrations.FS.ReadFile("20261004090600471_object_bucket_notifications.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

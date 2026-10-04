@@ -387,6 +387,9 @@ func cmdMirrorSummary(args []string) int {
 	_, _ = fmt.Fprintf(os.Stdout, "Mean latency Δ: %d ms\n", resp.MeanLatencyDiffMs)
 	_, _ = fmt.Fprintf(os.Stdout, "p99 latency Δ:  %d ms\n", resp.P99LatencyDiffMs)
 	_, _ = fmt.Fprintf(os.Stdout, "Crashes:        %d\n", resp.CrashCount)
+	_, _ = fmt.Fprintf(os.Stdout, "Admission timeout:  %d\n", resp.SchedulerAdmissionTimeoutCount)
+	_, _ = fmt.Fprintf(os.Stdout, "Admission rejected: %d\n", resp.SchedulerAdmissionRejectedCount)
+	_, _ = fmt.Fprintf(os.Stdout, "Admission errors:   %d\n", resp.SchedulerAdmissionErrorCount)
 	return 0
 }
 

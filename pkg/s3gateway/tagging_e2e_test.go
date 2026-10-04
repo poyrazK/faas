@@ -93,7 +93,7 @@ func (p *versionTaggingHTTPFixture) serve(t *testing.T, w http.ResponseWriter, r
 	}
 }
 
-// adr: 407
+// adr: 549
 func TestVersionTaggingEndToEndMem(t *testing.T) {
 	versionTaggingEndToEnd(t, state.NewMemStore(), nil)
 }

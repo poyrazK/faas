@@ -162,7 +162,7 @@ func validateDecision(decision Decision, allowInherited bool) error {
 
 func validDecisionReason(reason string) bool {
 	switch reason {
-	case "flag_missing", "default", "disabled", "customer_missing", "rule_match", "configuration_stale", "type_mismatch":
+	case "flag_missing", "default", "disabled", "customer_missing", "subject_missing", "rule_match", "configuration_stale", "type_mismatch":
 		return true
 	default:
 		return false

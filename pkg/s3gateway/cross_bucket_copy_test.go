@@ -27,7 +27,7 @@ func (s *selectorCopySources) ResolveObjectS3CopySource(_ context.Context, accou
 	return s.grant, s.source, nil
 }
 
-// adr: 420
+// adr: 562
 func TestCopySourceUUIDPrecedence(t *testing.T) {
 	account, destination, source, credential := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	for _, tc := range []struct {

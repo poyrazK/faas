@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 408
+// adr: 550
 func TestObjectLifecycleMem(t *testing.T) {
 	m := state.NewMemStore()
 	now := time.Now().UTC()
@@ -20,7 +20,7 @@ func TestObjectLifecycleMem(t *testing.T) {
 	objectLifecycleSuite(t, m, func(string) { now = now.Add(api.ObjectLifecycleLease + api.ObjectLifecycleRetry + time.Second) }, func() state.ObjectLifecycleStore { return m })
 }
 
-// adr: 408
+// adr: 550
 func TestObjectLifecyclePG(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	objectLifecycleSuite(t, s, func(id string) {
@@ -31,7 +31,7 @@ func TestObjectLifecyclePG(t *testing.T) {
 	}, func() state.ObjectLifecycleStore { return state.NewPgStore(pool) })
 }
 
-// adr: 408
+// adr: 550
 func TestObjectLifecycleRetryFairnessMem(t *testing.T) {
 	m := state.NewMemStore()
 	now := time.Now().UTC()
@@ -41,7 +41,7 @@ func TestObjectLifecycleRetryFairnessMem(t *testing.T) {
 	})
 }
 
-// adr: 408
+// adr: 550
 func TestObjectLifecycleRetryFairnessPG(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	objectLifecycleRetryFairness(t, s, func(old, next, scan string) {

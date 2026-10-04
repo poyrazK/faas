@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// adr: 412
+// adr: 554
 func TestObjectEncryptionValidation(t *testing.T) {
 	reference := "arn:gregale:kms:us-east-1:2fffa69f-b206-47db-8d82-8d8d394a630d:key/0f8a8987-12d6-45ad-a4bc-d384c10d9149"
 	yes := true

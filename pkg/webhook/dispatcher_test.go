@@ -448,7 +448,7 @@ func TestDispatcher_CloudEventsDeliveryFormat(t *testing.T) {
 		Type        string          `json:"type"`
 		Subject     string          `json:"subject"`
 		Data        json.RawMessage `json:"data"`
-		AccountID   string          `json:"account_id"`
+		AccountID   string          `json:"accountid"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		t.Fatalf("decode CloudEvents body: %v", err)

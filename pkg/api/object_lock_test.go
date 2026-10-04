@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// adr: 421
+// adr: 563
 func TestObjectLockPolicyValidation(t *testing.T) {
 	day, year, zero, negative, tooMany := int32(1), int32(100), int32(0), int32(-1), MaxObjectLockRetentionDays+1
 	for _, tc := range []struct {
@@ -79,7 +79,7 @@ func TestObjectLockPolicyValidation(t *testing.T) {
 	}
 }
 
-// adr: 421
+// adr: 563
 func TestObjectLockPoliciesClonePrivatePointers(t *testing.T) {
 	day, year := int32(1), int32(2)
 	c := ObjectBucketObjectLockConfiguration{Enabled: true, DefaultRetention: &ObjectLockDefaultRetention{Mode: "COMPLIANCE", Days: &day, DefaultEventHold: &ObjectRetentionPeriod{Years: &year}}}
@@ -98,7 +98,7 @@ func TestObjectLockPoliciesClonePrivatePointers(t *testing.T) {
 	}
 }
 
-// adr: 421
+// adr: 563
 func TestObjectLockWriteDateNeverShortens(t *testing.T) {
 	for _, nanos := range []int{0, 1, 1000000, 123456789, 999999999} {
 		d := time.Date(2028, 1, 1, 0, 0, 0, nanos, time.FixedZone("offset", 3600))
@@ -114,7 +114,7 @@ func TestObjectLockWriteDateNeverShortens(t *testing.T) {
 	}
 }
 
-// adr: 421
+// adr: 563
 func TestObjectLockReleaseCannotChangeDuration(t *testing.T) {
 	day := int32(1)
 	date := time.Date(2028, 1, 1, 0, 0, 0, 0, time.UTC)

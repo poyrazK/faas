@@ -51,6 +51,9 @@ func UnitVmmd() daemonunit.Unit {
 		StartLimitBurst:       "5",
 
 		Type: "notify",
+		// ADR-471/399: private failure reports and resource intent survive restart.
+		StateDirectory:     "faas/vmmd-failures faas/vmmd-resources",
+		StateDirectoryMode: "0700",
 		// No User=/Group=: vmmd is root by design.
 		ExecStart: `/opt/faas/current/bin/vmmd --config /etc/faas/vmmd.toml`,
 		ExecStartPre: []string{

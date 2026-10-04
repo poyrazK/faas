@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 408
+// adr: 550
 func TestGatewayLifecycleValidationAndPermissions(t *testing.T) {
 	for _, permission := range []string{state.ObjectBucketPermissionReadWrite, state.ObjectBucketPermissionRead, state.ObjectBucketPermissionWrite} {
 		t.Run(permission, func(t *testing.T) {

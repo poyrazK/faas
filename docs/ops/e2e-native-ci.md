@@ -22,8 +22,11 @@ on metal; this workflow proves the product does — customer source upload →
 `apid` → `builderd` → builder microVM → OCI image → `imaged` → snapshot →
 park → gateway wake → invoke, plus the §11 jail fences (`memory.max`, seccomp).
 
-It runs nightly at 04:43 UTC and can be dispatched manually from `main`. The
-04:43 slot sits after `builder-native.yml`'s 03:17 nightly; both share the
+It is manually dispatched from `main`; the scheduled run is currently disabled
+while the hardware gate is being stabilized. Select `exclusive-operations-only`
+to run just `TestExclusiveOperationFencesRestoredKVMOwnerMetal` with a blocking
+test verdict and the runner's normal service restoration and final leakcheck.
+Use `full` or `qualify` for the complete platform matrix. Runs share the
 `e2e-native-faas-acceptance-1` concurrency group and the
 `/var/lock/faas-builder-acceptance.lock` host lock, so an overrun waits instead
 of colliding.
@@ -126,9 +129,9 @@ stopped. `scripts/ci/run-native-e2e.sh` then:
    recording each one. `vmmd`, jailer, cgroups, netns and the tenant IP leases
    are host-global; a production daemon left running would fight the test VMs
    and make the closing leak check meaningless. Postgres is never stopped;
-4. derives the metal-tagged test set, refuses an empty set, checks every
-   required test is in it, then runs `make PKGS=./cmd/e2e/...` with that set as
-   the `-run` filter;
+4. derives the metal-tagged test set, refuses an empty set, and checks every
+   selected phase or lane test belongs to it before applying the generated
+   `-run` filter;
 5. restarts every service it stopped, removes staging, and runs a final leak
    check — on every exit path, including a failed or interrupted run.
 
@@ -144,18 +147,29 @@ Two mechanisms, because the tally alone is not enough:
 - **A required-test contract.** `TestDeployWakeMetal`,
   `TestSourceDeployWakeMetal`, `TestBuildMetal`, `TestWakeTimelineMetal`,
   `TestDeployHealthcheckMetal`, `TestCatalogRuntimeParityMetal`,
+  `TestFeatureFlagsNativeParkRestoreMetal`,
   `TestSec11_MemoryMaxFenceEnforced_CrossProcess` and
   `TestSec11_SeccompFilterEnforced_CrossProcess` must actually execute. If any
-  of them *skips*, the gate fails and names it. A tally cannot distinguish "the
-  suite grew" from "the build path stopped running"; this can.
+  of them *skips*, the gate fails and names it. The Flags test publishes a new
+  config while a real Node app is parked, waits beyond the SDK freshness bound,
+  then verifies a restored VM fetches the new signed bundle and records the
+  updated customer decision. A tally cannot distinguish "the suite grew" from
+  "the build path stopped running"; this can.
 
-The `-run` filter is generated from the build tag, never hand-written, and
+The `-run` filter is generated from the build tag and checked phase/lane
+definitions, never hand-written, and
 `scripts/ci/run-native-e2e_test.sh` — wired into the `checks` job in `ci.yml`, so
 it runs on every PR — re-derives it and fails if the set is empty, if it drops
 below 15 tests, if the derivation stops keying on `//go:build metal`, if the
 required-test list shrinks, if a required test name stops existing in
 `cmd/e2e`, if the Postgres hard-fail is removed, or if the wrapper stops
 restoring services.
+
+The `exclusive-operations-only` dispatch lane uses the same dedicated-host
+runner but selects only `TestExclusiveOperationFencesRestoredKVMOwnerMetal`.
+Its lane verdict requires that exact top-level test to PASS; a skip, failure,
+or missing test fails the workflow. The runner's preflight and final leakcheck
+still apply.
 
 ## Disabling it
 

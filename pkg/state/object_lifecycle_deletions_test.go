@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 408
+// adr: 550
 func TestObjectLifecycleDeletionBindingMem(t *testing.T) {
 	m := state.NewMemStore()
 	now := time.Now().UTC()
@@ -20,7 +20,7 @@ func TestObjectLifecycleDeletionBindingMem(t *testing.T) {
 	objectLifecycleDeletionSuite(t, m, func(string) { now = now.Add(api.ObjectLifecycleLease + time.Second) }, func() state.ObjectDeletionStore { return m })
 }
 
-// adr: 408
+// adr: 550
 func TestObjectLifecycleDeletionBindingPG(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	objectLifecycleDeletionSuite(t, s, func(id string) {

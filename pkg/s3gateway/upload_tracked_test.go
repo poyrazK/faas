@@ -122,7 +122,7 @@ func newGatewayReceiptHandler(t *testing.T, roundTrip roundTripFunc) (*Handler, 
 	return h, st, p
 }
 
-// adr: 393
+// adr: 535
 func TestGatewayTrackedPutOutcomes(t *testing.T) {
 	for _, tc := range []struct {
 		name                                       string
@@ -193,7 +193,7 @@ func TestGatewayTrackedPutOutcomes(t *testing.T) {
 	}
 }
 
-// adr: 393
+// adr: 535
 func TestGatewayTrackedConcurrentOverwrites(t *testing.T) {
 	entered := make(chan string, 2)
 	release := make(chan struct{})

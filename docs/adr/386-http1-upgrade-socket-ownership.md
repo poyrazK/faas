@@ -45,4 +45,4 @@ reverse proxy and Cloudflare, including ping/pong, fragmentation, and close.
 
 This changes gateway transport ownership. Guest init, Firecracker, the VM state
 machine, and snapshot lifecycle are unchanged. Native OCI lifecycle qualification
-remains a separate release requirement under ADR-387.
+remains a separate release requirement under ADR-393.

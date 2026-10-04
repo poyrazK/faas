@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 409
+// adr: 551
 func TestObjectMutationEventsMem(t *testing.T) { objectMutationEvents(t, state.NewMemStore()) }
 func TestObjectMutationEventsPG(t *testing.T)  { s, _ := pgStore(t); objectMutationEvents(t, s) }
 
@@ -390,7 +390,7 @@ func configureObjectEventVersioning(t *testing.T, st accountingStore, b state.Ob
 
 func TestObjectMutationVersionMigrationPG(t *testing.T) {
 	st, pool, ctx := pgStoreWithPool(t)
-	raw, err := migrations.FS.ReadFile("20261003130527920_object_mutation_events.sql")
+	raw, err := migrations.FS.ReadFile("20261004090600457_object_mutation_events.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

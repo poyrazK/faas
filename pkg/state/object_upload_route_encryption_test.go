@@ -21,7 +21,7 @@ type encryptedRouteStore interface {
 	state.ObjectTrackedUploadStore
 }
 
-// adr: 417
+// adr: 559
 func TestObjectUploadRouteEncryptionMem(t *testing.T) {
 	routeEncryptionSuite(t, state.NewMemStore(), nil)
 }
@@ -139,7 +139,7 @@ func assertRouteEncryptionDatabaseFences(t *testing.T, pool *pgxpool.Pool, c sta
 			t.Fatal("older SQL writer bypassed route policy", err)
 		}
 	}
-	body, err := migrations.FS.ReadFile("20261004001511402_object_upload_route_encryption.sql")
+	body, err := migrations.FS.ReadFile("20261004090600511_object_upload_route_encryption.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

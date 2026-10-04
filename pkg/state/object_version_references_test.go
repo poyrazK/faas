@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 400
+// adr: 542
 func TestObjectVersionReferencesMem(t *testing.T) {
 	objectVersionReferencesSuite(t, state.NewMemStore())
 }
@@ -179,7 +179,7 @@ func TestObjectVersionReferenceRestartAndGuardsPG(t *testing.T) {
 
 func TestObjectVersionReferenceMigrationRoundTripPG(t *testing.T) {
 	st, pool, ctx := pgStoreWithPool(t)
-	raw, err := migrations.FS.ReadFile("20261002120000001_object_version_references.sql")
+	raw, err := migrations.FS.ReadFile("20261004090600328_object_version_references.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

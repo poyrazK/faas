@@ -91,8 +91,8 @@ func (o *acceptedGatewayCopy) serve(t *testing.T, w http.ResponseWriter, r *http
 	}
 }
 
-// adr: 394
-// adr: 405
+// adr: 536
+// adr: 547
 func TestGatewayCopyRecoveryPG(t *testing.T) {
 	for _, changed := range []bool{false, true} {
 		t.Run(strconv.FormatBool(changed), func(t *testing.T) {

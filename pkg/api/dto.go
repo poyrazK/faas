@@ -169,9 +169,13 @@ type SendAppMessageRequest struct {
 	Time            *time.Time      `json:"time,omitempty"`
 	DataContentType string          `json:"datacontenttype,omitempty"`
 	Data            json.RawMessage `json:"data"`
-	QueueName       string          `json:"queue_name,omitempty"`
-	RetryPolicy     *RetryPolicyDTO `json:"retry_policy,omitempty"`
-	Work            *InvokeWork     `json:"work,omitempty"`
+	// FlagContext carries a bounded Gregale Flags context from the producer
+	// request into the queued synthetic request. It is validated and bound to
+	// an active platform tenant before admission.
+	FlagContext string          `json:"flag_context,omitempty"`
+	QueueName   string          `json:"queue_name,omitempty"`
+	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	Work        *InvokeWork     `json:"work,omitempty"`
 }
 
 func (r *SendAppMessageRequest) UnmarshalJSON(data []byte) error {
@@ -686,6 +690,30 @@ type RegisterScenarioTestRequest struct {
 type ScenarioTestWorkload struct {
 	Workload string `json:"workload"`
 	AppSlug  string `json:"app_slug"`
+}
+
+// InjectScenarioTestChaosRequest installs bounded request faults on service
+// calls within one registered scenario run. The server supplies the expiry;
+// callers cannot choose an absolute timestamp or target an unregistered app.
+type InjectScenarioTestChaosRequest struct {
+	DurationMS int64                   `json:"duration_ms"`
+	Rules      []ScenarioTestChaosRule `json:"rules"`
+}
+
+// ScenarioTestChaosRule describes one bounded fault for scenario service calls.
+type ScenarioTestChaosRule struct {
+	From       string `json:"from,omitempty"`
+	To         string `json:"to"`
+	Kind       string `json:"kind"`
+	Percent    int    `json:"percent"`
+	LatencyMS  int64  `json:"latency_ms,omitempty"`
+	StatusCode int    `json:"status_code,omitempty"`
+	Seed       uint64 `json:"seed"`
+}
+
+type InjectScenarioTestChaosResponse struct {
+	ExpiresAt      time.Time `json:"expires_at"`
+	RulesInstalled int       `json:"rules_installed"`
 }
 
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
@@ -1829,10 +1857,28 @@ type AppRestartResponse struct {
 	WakeID string `json:"wake_id"`
 }
 
+// RuntimeConfigRestartStatusResponse reports the durable outbox outcome for
+// an accepted fresh app restart. FailureReason is a stable actionable code,
+// not the scheduler's internal error string.
+type RuntimeConfigRestartStatusResponse struct {
+	WakeID        string     `json:"wake_id"`
+	Status        string     `json:"status"`
+	Attempts      int        `json:"attempts"`
+	FailureReason string     `json:"failure_reason,omitempty"`
+	RequestedAt   time.Time  `json:"requested_at"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+}
+
 // AppWakeResponse is returned when an explicit pre-warm request has been
-// durably queued for the scheduler.
+// durably queued for the scheduler (202), or when the app already has a
+// routable running instance (200, AlreadyRunning). schedd treats a wake for
+// a running app as satisfied and stamps no new instance, so the 200 form
+// carries the running instance's own wake id: a client polling for an
+// instance with that wake id finds it running immediately.
 type AppWakeResponse struct {
-	WakeID string `json:"wake_id"`
+	WakeID         string `json:"wake_id"`
+	AlreadyRunning bool   `json:"already_running,omitempty"`
+	InstanceID     string `json:"instance_id,omitempty"`
 }
 
 // ParkedDeploymentRef is the reference shape returned in
@@ -2445,6 +2491,10 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 			return NewProblem(http.StatusBadRequest, CodeValidation,
 				"Invalid override",
 				fmt.Sprintf("healthcheck.grpc.service must be at most %d characters.", GRPCHealthcheckServiceMaxLength))
+		}
+		if o.Healthcheck.StartPeriodS < 0 || int64(o.Healthcheck.StartPeriodS) > OCIHealthcheckDurationMaxSeconds {
+			return NewProblem(http.StatusBadRequest, CodeValidation, "Invalid healthcheck",
+				fmt.Sprintf("healthcheck.start_period_s must be between 0 and %d.", OCIHealthcheckDurationMaxSeconds))
 		}
 		if o.Healthcheck.IntervalS < 0 {
 			return NewProblem(http.StatusBadRequest, CodeValidation,
@@ -3203,8 +3253,10 @@ type AdvanceCanaryRequest struct {
 // CanaryAdvanceResponse carries the atomically advanced deployment and the
 // deployment_audit row id written in the same transaction.
 type CanaryAdvanceResponse struct {
-	Deployment DeploymentResponse `json:"deployment"`
-	AuditID    string             `json:"audit_id"`
+	Deployment  DeploymentResponse   `json:"deployment"`
+	AuditID     string               `json:"audit_id"`
+	RouteGate   *RouteGateDecision   `json:"route_gate,omitempty"`
+	RouteHealth *RouteHealthDecision `json:"route_health,omitempty"`
 }
 
 // CreateMirrorRuleRequest is the body for
@@ -3290,23 +3342,26 @@ type MirrorRuleListResponse struct {
 // server-side via SQL aggregates (COUNT / SUM / p99_cont) — the
 // client never iterates the ledger. MeanLatencyDiffMs /
 // P99LatencyDiffMs are *signed* (mirror_ms − source_ms; positive
-// = mirror is slower). CrashCount counts the rows where the
-// mirror VM exited abnormally before producing a response (the
-// customer's source request still succeeded). WindowSeconds is
-// the parsed window in seconds so the CLI can render "last 1h"
-// without parsing the query string.
+// = mirror is slower). CrashCount counts missing or 5xx responses
+// after admission; scheduler admission failures are incomplete
+// comparisons and are exposed through their own reason counts.
+// WindowSeconds is the parsed window in seconds so the CLI can
+// render "last 1h" without parsing the query string.
 type MirrorSummaryResponse struct {
-	TotalInvocations          int64   `json:"total_invocations"`
-	ChangedResponseCount      int64   `json:"changed_response_count"`
-	ChangedResponsePct        float64 `json:"changed_response_percent"`
-	StatusDiffCount           int64   `json:"status_diff_count"`
-	SchemaDiffCount           int64   `json:"schema_diff_count"`
-	BodyDiffCount             int64   `json:"body_diff_count"`
-	MeanLatencyDiffMs         int64   `json:"mean_latency_diff_ms"`
-	P99LatencyDiffMs          int64   `json:"p99_latency_diff_ms"`
-	CrashCount                int64   `json:"crash_count"`
-	IncompleteComparisonCount int64   `json:"incomplete_comparison_count"`
-	WindowSeconds             int     `json:"window_seconds"`
+	TotalInvocations                int64   `json:"total_invocations"`
+	ChangedResponseCount            int64   `json:"changed_response_count"`
+	ChangedResponsePct              float64 `json:"changed_response_percent"`
+	StatusDiffCount                 int64   `json:"status_diff_count"`
+	SchemaDiffCount                 int64   `json:"schema_diff_count"`
+	BodyDiffCount                   int64   `json:"body_diff_count"`
+	MeanLatencyDiffMs               int64   `json:"mean_latency_diff_ms"`
+	P99LatencyDiffMs                int64   `json:"p99_latency_diff_ms"`
+	CrashCount                      int64   `json:"crash_count"`
+	IncompleteComparisonCount       int64   `json:"incomplete_comparison_count"`
+	SchedulerAdmissionTimeoutCount  int64   `json:"scheduler_admission_timeout_count"`
+	SchedulerAdmissionRejectedCount int64   `json:"scheduler_admission_rejected_count"`
+	SchedulerAdmissionErrorCount    int64   `json:"scheduler_admission_error_count"`
+	WindowSeconds                   int     `json:"window_seconds"`
 }
 
 // MirrorReplayBatchRequest is an explicitly sanitized historical request
@@ -3458,6 +3513,10 @@ type CapabilityStatus struct {
 	DocsURL     string             `json:"docs_url"`
 	Acceptance  string             `json:"acceptance"`
 	Enabled     bool               `json:"enabled"`
+	// UnavailableReason is a stable code for automation. Both explanation
+	// fields are omitted when enabled; older servers may omit them entirely.
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+	UnavailableDetail string `json:"unavailable_detail,omitempty"`
 }
 
 // CapabilitiesResponse is the account-scoped response from
@@ -3783,6 +3842,26 @@ type CustomDomainResponse struct {
 	// failed, or dns_drifted). The per-domain show endpoint may temporarily override it with
 	// a live "dial_failed:<reason>" probe result; list/status remain durable.
 	CertStatus string `json:"cert_status,omitempty"`
+	// DNSRecords lists the records the customer publishes (ADR-520): the
+	// TXT ownership proof and where to route traffic.
+	DNSRecords []DNSRecordInstruction `json:"dns_records,omitempty"`
+}
+
+// DNS record purposes for DNSRecordInstruction.Purpose.
+const (
+	DNSRecordPurposeVerification = "verification"
+	DNSRecordPurposeRouting      = "routing"
+)
+
+// DNSRecordInstruction is one DNS record a customer publishes for a custom
+// domain. Alternative marks an A/AAAA routing record that replaces the CNAME
+// where a CNAME is not allowed, such as at a zone apex.
+type DNSRecordInstruction struct {
+	Type        string `json:"type"`
+	Name        string `json:"name"`
+	Value       string `json:"value"`
+	Purpose     string `json:"purpose"`
+	Alternative bool   `json:"alternative,omitempty"`
 }
 
 // CreateCustomDomainRequest accepts a domain to bind.
@@ -5248,7 +5327,10 @@ func (p *RetryPolicyDTO) Validate() *Problem {
 // QueueSendRequest is the body for POST /v1/apps/{slug}/queues/send.
 // Cap-checked against MaxQueueDepth at the handler.
 type QueueSendRequest struct {
-	Payload     json.RawMessage `json:"payload,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
+	// FlagContext carries decisions explicitly marked used by the producer.
+	// The queue handler validates it and retains the customer attribution.
+	FlagContext string          `json:"flag_context,omitempty"`
 	QueueName   string          `json:"queue_name,omitempty"`
 	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	Work        *InvokeWork     `json:"work,omitempty"`
@@ -5354,6 +5436,9 @@ const (
 	CronRunDeadLetter CronRunOutcome = "dead_letter"
 	// CronRunCancelled — a deployment-attached command was cancelled.
 	CronRunCancelled CronRunOutcome = "cancelled"
+	// CronRunUncertain — delivery may have reached the app, but no
+	// completion receipt arrived and the policy held the result.
+	CronRunUncertain CronRunOutcome = "uncertain"
 	// CronRunRunning — the fire is still in flight (the underlying
 	// invocation row is non-terminal and carries no outcome).
 	CronRunRunning CronRunOutcome = "running"
@@ -5405,7 +5490,8 @@ type ListCronRunsResponse struct {
 // poll the row's status (future GET /v1/cron-fire-now-requests/{id})
 // or to correlate the audit-event stream (`cron.fired.manually`)
 // back to their request. Status starts at "pending" — terminal
-// values are "succeeded" or "failed".
+// values are "succeeded" or "failed". Managed exclusive command crons set
+// OperationID on acceptance and TaskID once their owned AppTask is created.
 type FireCronResponse struct {
 	RequestID string `json:"request_id"`
 	CronID    string `json:"cron_id"`
@@ -5420,8 +5506,8 @@ type FireCronResponse struct {
 //
 // Polling contract: clients should poll until Status is one of the
 // terminal values {succeeded, failed, cancelled}. The schedd fire-now
-// consumer populates FinishedAt + Error and either InvocationID (HTTP
-// crons) or TaskID (command crons) at terminal stamp.
+// consumer populates FinishedAt + Error and either InvocationID (legacy HTTP
+// crons), OperationID (managed exclusive HTTP or command crons), or TaskID.
 type FireCronRequestResponse struct {
 	RequestID    string  `json:"request_id"`
 	CronID       string  `json:"cron_id"`
@@ -5429,6 +5515,7 @@ type FireCronRequestResponse struct {
 	RequestedAt  string  `json:"requested_at"`          // RFC3339Nano UTC
 	FinishedAt   *string `json:"finished_at,omitempty"` // RFC3339Nano UTC or null
 	InvocationID *string `json:"invocation_id,omitempty"`
+	OperationID  *string `json:"operation_id,omitempty"`
 	TaskID       *string `json:"task_id,omitempty"`
 	Error        *string `json:"error,omitempty"`
 	AccountID    string  `json:"account_id"`
@@ -6436,14 +6523,15 @@ type SourceRefDeployRequest struct {
 	// defaults to ${{ github.event.pull_request.number }} on the
 	// Action side. All four are optional; the apid handler stamps
 	// them onto the deployment row + the audit data{} payload.
-	Reason                 string            `json:"reason,omitempty"`
-	Tag                    string            `json:"tag,omitempty"`
-	DeployedBy             string            `json:"deployed_by,omitempty"`
-	PRNumber               int               `json:"pr_number,omitempty"`
-	TrafficPercent         *int              `json:"traffic_percent,omitempty"`
-	Canary                 *CanaryPresetSpec `json:"canary,omitempty"`
-	RollbackOn5xx          *bool             `json:"rollback_on_5xx,omitempty"`
-	DisableStartupCPUBoost *bool             `json:"disable_startup_cpu_boost,omitempty"`
+	Reason                 string                 `json:"reason,omitempty"`
+	Tag                    string                 `json:"tag,omitempty"`
+	DeployedBy             string                 `json:"deployed_by,omitempty"`
+	PRNumber               int                    `json:"pr_number,omitempty"`
+	TrafficPercent         *int                   `json:"traffic_percent,omitempty"`
+	Canary                 *CanaryPresetSpec      `json:"canary,omitempty"`
+	RollbackOn5xx          *bool                  `json:"rollback_on_5xx,omitempty"`
+	DisableStartupCPUBoost *bool                  `json:"disable_startup_cpu_boost,omitempty"`
+	Healthcheck            *DeploymentHealthcheck `json:"healthcheck,omitempty"`
 }
 
 // SourceTarballDeployRequest is the CLI-uploaded tarball sidecar for
@@ -6465,14 +6553,15 @@ type SourceTarballDeployRequest struct {
 	// come from --reason / --tag; PRNumber is not normally
 	// supplied on a tarball deploy (it would be inferred from
 	// a paired GitHub Action, not the tarball CLI).
-	Reason                 string            `json:"reason,omitempty"`
-	Tag                    string            `json:"tag,omitempty"`
-	DeployedBy             string            `json:"deployed_by,omitempty"`
-	PRNumber               int               `json:"pr_number,omitempty"`
-	TrafficPercent         *int              `json:"traffic_percent,omitempty"`
-	Canary                 *CanaryPresetSpec `json:"canary,omitempty"`
-	RollbackOn5xx          *bool             `json:"rollback_on_5xx,omitempty"`
-	DisableStartupCPUBoost *bool             `json:"disable_startup_cpu_boost,omitempty"`
+	Reason                 string                 `json:"reason,omitempty"`
+	Tag                    string                 `json:"tag,omitempty"`
+	DeployedBy             string                 `json:"deployed_by,omitempty"`
+	PRNumber               int                    `json:"pr_number,omitempty"`
+	TrafficPercent         *int                   `json:"traffic_percent,omitempty"`
+	Canary                 *CanaryPresetSpec      `json:"canary,omitempty"`
+	RollbackOn5xx          *bool                  `json:"rollback_on_5xx,omitempty"`
+	DisableStartupCPUBoost *bool                  `json:"disable_startup_cpu_boost,omitempty"`
+	Healthcheck            *DeploymentHealthcheck `json:"healthcheck,omitempty"`
 }
 
 // PlanWorkload mirrors reposcan.Workload (Phase 3 wire shape).
@@ -7442,6 +7531,9 @@ func validateSidecarProbe(name, field string, probe *SidecarProbe) *Problem {
 		return NewProblem(http.StatusBadRequest, CodeValidation,
 			"Invalid sidecar probe",
 			fmt.Sprintf("sidecar[%q].%s %s", name, field, detail))
+	}
+	if probe.ImageTiming != nil {
+		return invalid("image_timing is reserved for image metadata; use second-based probe timing overrides.")
 	}
 	actions := 0
 	if len(probe.Test) > 0 {
@@ -11396,6 +11488,8 @@ type ListJobRunsResponse struct {
 // coalesced, late, or replaced occurrence.
 type ScheduleOccurrenceResponse struct {
 	SchedulePolicy       *workpolicy.SchedulePolicy `json:"schedule_policy"`
+	WorkDecision         *workpolicy.Decision       `json:"work_decision,omitempty"`
+	OutcomeCode          string                     `json:"outcome_code,omitempty"`
 	ID                   string                     `json:"id"`
 	ScheduleRevision     int64                      `json:"schedule_revision"`
 	ScheduledFor         time.Time                  `json:"scheduled_for"`
@@ -11403,6 +11497,7 @@ type ScheduleOccurrenceResponse struct {
 	Status               string                     `json:"status"`
 	Reason               string                     `json:"reason,omitempty"`
 	BlockingOccurrenceID string                     `json:"blocking_occurrence_id,omitempty"`
+	ExclusiveOperationID string                     `json:"exclusive_operation_id,omitempty"`
 	JobRunID             string                     `json:"job_run_id,omitempty"`
 	InvocationID         string                     `json:"invocation_id,omitempty"`
 	AppTaskID            string                     `json:"app_task_id,omitempty"`

@@ -82,7 +82,7 @@ func saveLifecycleScan(ctx context.Context, db sqlc.DBTX, j ObjectLifecycleScan)
 	return mapErr(sqlc.New().ObjectLifecycleScanSave(ctx, db, sqlc.ObjectLifecycleScanSaveParams{ID: mustPgUUID(j.ID), State: j.State, Phase: j.Phase, LastKey: j.LastKey, ScannedKeys: j.ScannedKeys, LastUploadID: mustPgUUID(j.LastUploadID), ScannedUploads: j.ScannedUploads, LeaseToken: j.Token, LeaseUntil: lease, RetryAt: objectUsageTime(j.RetryAt), UpdatedAt: objectUsageTime(j.UpdatedAt), FinishedAt: finished}))
 }
 
-// Bucket then account locks follow the existing storage mutation lock order.
+// Account then bucket locks follow admission's Object Lock fence order.
 // Read policy and scan again after locking; pre-lock reads only select owners.
 func (s *PgStore) withLifecyclePolicy(ctx context.Context, account, app, bucket string, fn func(pgx.Tx, ObjectLifecyclePolicy, time.Time) (ObjectLifecyclePolicy, error)) (ObjectLifecyclePolicy, error) {
 	tx, err := s.pool.Begin(ctx)
@@ -91,11 +91,11 @@ func (s *PgStore) withLifecyclePolicy(ctx context.Context, account, app, bucket 
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	b, err := q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account), AppID: mustPgUUID(app)})
-	if err != nil {
+	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
 		return ObjectLifecyclePolicy{}, mapErr(err)
 	}
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
+	b, err := q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account), AppID: mustPgUUID(app)})
+	if err != nil {
 		return ObjectLifecyclePolicy{}, mapErr(err)
 	}
 	now, err := q.ObjectVersioningNow(ctx, tx)

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// adr: 405
+// adr: 547
 func TestS3MutableDeleteReceipt(t *testing.T) {
 	for _, tc := range []struct {
 		name, selector, version, marker, code string

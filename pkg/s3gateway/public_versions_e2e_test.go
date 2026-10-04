@@ -183,7 +183,7 @@ func (p *publicVersionHTTPFixture) list(t *testing.T, w http.ResponseWriter, r *
 	_, _ = fmt.Fprintf(w, `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated><NextKeyMarker>%s</NextKeyMarker><NextVersionIdMarker>not-returned/+%%?</NextVersionIdMarker><Version><Key>%s</Key><VersionId>%s</VersionId><IsLatest>false</IsLatest><Size>8</Size><ETag>&quot;old&quot;</ETag><LastModified>2026-10-02T09:00:00Z</LastModified></Version><Version><Key>%s</Key><VersionId>%s</VersionId><IsLatest>true</IsLatest><Size>8</Size><ETag>&quot;new&quot;</ETag><LastModified>2026-10-02T10:00:00Z</LastModified></Version><DeleteMarker><Key>deleted</Key><VersionId>provider-marker</VersionId><IsLatest>true</IsLatest><LastModified>2026-10-02T10:00:00Z</LastModified></DeleteMarker></ListVersionsResult>`, key, key, publicVersionNativeOld, key, publicVersionNativeNew)
 }
 
-// adr: 400
+// adr: 542
 func TestPublicVersionsEndToEndMem(t *testing.T) { publicVersionsEndToEnd(t, state.NewMemStore()) }
 func TestPublicVersionsEndToEndPG(t *testing.T) {
 	st, _ := multipartCopyPGStore(t)

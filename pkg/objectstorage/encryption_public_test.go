@@ -60,7 +60,7 @@ func TestEncryptionPublicMetadata(t *testing.T) {
 	}
 }
 
-// adr: 414
+// adr: 556
 func TestEncryptedMultipartAdoptionWithDisabledKey(t *testing.T) {
 	var lists, creates int
 	p, b := encryptionS3Fixture(t, func(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +100,7 @@ func TestEncryptedCopyDispatchRecorderFailure(t *testing.T) {
 	}
 }
 
-// adr: 417
+// adr: 559
 func TestEncryptedPutDispatchRecorderFailure(t *testing.T) {
 	for _, algorithm := range []string{"AES256", "aws:kms", "aws:kms:dsse"} {
 		t.Run(algorithm, func(t *testing.T) {

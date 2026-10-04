@@ -168,7 +168,7 @@ func newGatewayRecoveryFixture(t *testing.T, handler http.Handler, sourceBytes i
 	return gatewayRecoveryFixture{enabled: enabled, pool: pool, st: st, account: acct, app: app, bucket: b, credential: credential, registry: registry, policy: policy, report: report, client: client}
 }
 
-// adr: 393
+// adr: 535
 func TestGatewayPUTLostAcknowledgmentRecoveryPG(t *testing.T) {
 	object := &acceptedGatewayObject{}
 	f := newGatewayRecoveryFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { object.serve(t, w, r) }), 0)

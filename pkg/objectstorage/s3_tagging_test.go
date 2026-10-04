@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 407
+// adr: 549
 func TestS3VersionTaggingSelectors(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
 		for _, version := range []string{"", "null", "native/+%?"} {

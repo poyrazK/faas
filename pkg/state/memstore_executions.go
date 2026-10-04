@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"sort"
 	"strings"
@@ -13,6 +14,8 @@ import (
 )
 
 var _ ExecutionStore = (*MemStore)(nil)
+var _ ExecutionPrincipalListStore = (*MemStore)(nil)
+var _ ExecutionWorkflowStore = (*MemStore)(nil)
 
 type executionPayload struct {
 	sealed    []byte
@@ -37,6 +40,10 @@ type executionUsageLedgerRow struct {
 func cloneExecution(row Execution) Execution {
 	row.Result = append([]byte(nil), row.Result...)
 	row.Artifacts = api.CloneExecutionArtifacts(row.Artifacts)
+	if row.RunsPrincipalID != nil {
+		value := *row.RunsPrincipalID
+		row.RunsPrincipalID = &value
+	}
 	if row.LeaseToken != nil {
 		value := *row.LeaseToken
 		row.LeaseToken = &value
@@ -77,6 +84,11 @@ func cloneExecution(row Execution) Execution {
 }
 
 func (m *MemStore) CreateExecution(_ context.Context, params CreateExecutionParams) (Execution, error) {
+	normalizedIntegrationIDs, err := api.NormalizeExecutionIntegrationIDs(params.OutboundIntegrationIDs)
+	if err != nil {
+		return Execution{}, fmt.Errorf("%w: %w", ErrExecutionInvalid, err)
+	}
+	params.OutboundIntegrationIDs = normalizedIntegrationIDs
 	if err := validateCreateExecution(params); err != nil {
 		return Execution{}, err
 	}
@@ -93,6 +105,24 @@ func (m *MemStore) CreateExecution(_ context.Context, params CreateExecutionPara
 	if err := validateExecutionPlan(params, planLimits); err != nil {
 		return Execution{}, err
 	}
+	if isAgentWorkflowStep(params) {
+		for _, existing := range m.executions {
+			if existing.AccountID == params.AccountID && existing.WorkflowID == params.WorkflowID &&
+				existing.StepLabel == params.StepLabel && existing.RunsPrincipalID != nil &&
+				*existing.RunsPrincipalID == *params.RunsPrincipalID {
+				return Execution{}, ErrExecutionWorkflowStepExists
+			}
+		}
+	}
+	for _, integrationID := range params.OutboundIntegrationIDs {
+		offer, exists := m.outboundIntegrationOffers[integrationID]
+		credential := m.outboundCredentials[integrationID]
+		if !exists || offer.AccountID != params.AccountID || offer.OwnerKind != "customer" ||
+			offer.CredentialSource != "customer_sealed" || !offer.Enabled || !offer.RunsEnabled ||
+			!offer.CredentialConfigured || len(offer.AllowedMethods) == 0 || len(offer.AllowedPathPrefixes) == 0 || len(credential) == 0 {
+			return Execution{}, ErrExecutionOutboundIntegrationUnavailable
+		}
+	}
 	active := 0
 	for _, row := range m.executions {
 		if row.AccountID == params.AccountID && !row.Status.Terminal() {
@@ -102,24 +132,47 @@ func (m *MemStore) CreateExecution(_ context.Context, params CreateExecutionPara
 	if active >= planLimits.MaxConcurrent {
 		return Execution{}, &ExecutionQuotaError{Limit: planLimits.MaxConcurrent, Observed: active + 1}
 	}
+	seenGrants := make(map[string]struct{}, len(params.ArtifactGrantRedemptions))
+	for _, redemption := range params.ArtifactGrantRedemptions {
+		if _, duplicate := seenGrants[redemption.GrantID]; duplicate {
+			return Execution{}, ErrExecutionArtifactGrantUnavailable
+		}
+		seenGrants[redemption.GrantID] = struct{}{}
+		grant, ok := m.executionArtifactGrants[redemption.GrantID]
+		if !ok || grant.AccountID != params.AccountID || grant.RevokedAt != nil || grant.RedeemedAt != nil ||
+			!grant.ExpiresAt.After(params.AdmittedAt) || subtle.ConstantTimeCompare(grant.TokenHash, redemption.TokenHash) != 1 {
+			return Execution{}, ErrExecutionArtifactGrantUnavailable
+		}
+	}
 	row := Execution{
-		Profile:     params.Request.Profile.Normalized(),
-		ID:          uuid.NewString(),
-		AccountID:   params.AccountID,
-		Runtime:     params.Request.Runtime,
-		Status:      api.ExecutionStatusQueued,
-		NetworkMode: params.Request.Network.Mode,
-		Limits:      params.Request.Limits,
-		SourceBytes: params.SourceBytes,
-		InputBytes:  params.InputBytes,
-		DeadlineAt:  params.DeadlineAt.UTC(),
-		CreatedAt:   params.AdmittedAt.UTC(),
-		UpdatedAt:   params.AdmittedAt.UTC(),
+		Profile:         params.Request.Profile.Normalized(),
+		ID:              uuid.NewString(),
+		AccountID:       params.AccountID,
+		WorkflowID:      params.WorkflowID,
+		StepLabel:       params.StepLabel,
+		RunsPrincipalID: cloneStringPtr(params.RunsPrincipalID),
+		Runtime:         params.Request.Runtime,
+		Status:          api.ExecutionStatusQueued,
+		NetworkMode:     params.Request.Network.Mode,
+		Limits:          params.Request.Limits,
+		SourceBytes:     params.SourceBytes,
+		InputBytes:      params.InputBytes,
+		DeadlineAt:      params.DeadlineAt.UTC(),
+		CreatedAt:       params.AdmittedAt.UTC(),
+		UpdatedAt:       params.AdmittedAt.UTC(),
 	}
 	m.executions[row.ID] = row
+	m.executionOutboundIntegrationIDs[row.ID] = append([]string(nil), params.OutboundIntegrationIDs...)
 	m.executionPayloads[row.ID] = executionPayload{
 		sealed: append([]byte(nil), params.SealedPayload...), kid: params.PayloadKID,
 		createdAt: params.AdmittedAt.UTC(),
+	}
+	for _, redemption := range params.ArtifactGrantRedemptions {
+		grant := m.executionArtifactGrants[redemption.GrantID]
+		redeemedAt, executionID := params.AdmittedAt.UTC(), row.ID
+		grant.RedeemedAt = &redeemedAt
+		grant.RedeemedExecutionID = &executionID
+		m.executionArtifactGrants[grant.ID] = grant
 	}
 	m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventStatus, executionStatusPayload(row.Status), params.AdmittedAt)
 	return cloneExecution(row), nil
@@ -141,6 +194,140 @@ func (m *MemStore) ListExecutions(_ context.Context, accountID string, limit, of
 
 func (m *MemStore) ListExecutionsByStatus(_ context.Context, accountID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
 	return m.listExecutions(accountID, status, limit, offset)
+}
+
+func (m *MemStore) ListExecutionsByPrincipal(_ context.Context, accountID, principalID string, limit, offset int) ([]Execution, error) {
+	return m.listExecutionsByPrincipal(accountID, principalID, "", limit, offset)
+}
+
+func (m *MemStore) ListExecutionsByPrincipalStatus(_ context.Context, accountID, principalID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
+	return m.listExecutionsByPrincipal(accountID, principalID, status, limit, offset)
+}
+
+func (m *MemStore) ListExecutionsByWorkflow(_ context.Context, accountID, workflowID string, principalID *string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
+	limit, offset = normalizeExecutionPage(limit, offset)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rows := make([]Execution, 0)
+	for _, row := range m.executions {
+		if row.AccountID != accountID || row.WorkflowID != workflowID || (status != "" && row.Status != status) {
+			continue
+		}
+		if principalID != nil && (row.RunsPrincipalID == nil || *row.RunsPrincipalID != *principalID) {
+			continue
+		}
+		rows = append(rows, cloneExecution(row))
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].CreatedAt.Equal(rows[j].CreatedAt) {
+			return rows[i].ID > rows[j].ID
+		}
+		return rows[i].CreatedAt.After(rows[j].CreatedAt)
+	})
+	if offset >= len(rows) {
+		return nil, nil
+	}
+	rows = rows[offset:]
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, nil
+}
+
+func (m *MemStore) ExecutionWorkflowStepByLabel(_ context.Context, accountID, workflowID string, principalID *string, stepLabel string) (Execution, error) {
+	if accountID == "" || principalID == nil || stepLabel == "" || api.ValidateExecutionWorkflowMetadata(workflowID, stepLabel) != nil || !strings.HasPrefix(stepLabel, "gwf:") {
+		return Execution{}, ErrExecutionInvalid
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var selected *Execution
+	for _, row := range m.executions {
+		if row.AccountID != accountID || row.WorkflowID != workflowID || row.StepLabel != stepLabel {
+			continue
+		}
+		if row.RunsPrincipalID == nil || *row.RunsPrincipalID != *principalID {
+			continue
+		}
+		copy := cloneExecution(row)
+		if selected == nil || copy.CreatedAt.After(selected.CreatedAt) {
+			selected = &copy
+		}
+	}
+	if selected == nil {
+		return Execution{}, ErrNotFound
+	}
+	return *selected, nil
+}
+
+func (m *MemStore) ExecutionWorkflowSummary(_ context.Context, accountID, workflowID string, principalID *string) (ExecutionWorkflowResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	summary := ExecutionWorkflowResponse{}
+	for _, row := range m.executions {
+		if row.AccountID != accountID || row.WorkflowID != workflowID {
+			continue
+		}
+		if principalID != nil && (row.RunsPrincipalID == nil || *row.RunsPrincipalID != *principalID) {
+			continue
+		}
+		summary.RunCount++
+		switch row.Status {
+		case api.ExecutionStatusQueued:
+			summary.StatusCounts.Queued++
+		case api.ExecutionStatusRestoring:
+			summary.StatusCounts.Restoring++
+		case api.ExecutionStatusRunning:
+			summary.StatusCounts.Running++
+		case api.ExecutionStatusSucceeded:
+			summary.StatusCounts.Succeeded++
+		case api.ExecutionStatusFailed:
+			summary.StatusCounts.Failed++
+		case api.ExecutionStatusTimedOut:
+			summary.StatusCounts.TimedOut++
+		case api.ExecutionStatusOutOfMemory:
+			summary.StatusCounts.OutOfMemory++
+		case api.ExecutionStatusCancelled:
+			summary.StatusCounts.Cancelled++
+		}
+		if row.Status.Terminal() {
+			summary.Usage.WallTimeMS += row.Usage.WallTimeMS
+			summary.Usage.CPUTimeMS += row.Usage.CPUTimeMS
+			if row.Usage.PeakMemoryMB > summary.Usage.PeakMemoryMB {
+				summary.Usage.PeakMemoryMB = row.Usage.PeakMemoryMB
+			}
+			summary.Usage.OutputBytes += int64(len(row.Result) + len(row.Stdout) + len(row.Stderr) + api.ExecutionArtifactsOutputBytes(row.Artifacts))
+		}
+	}
+	if summary.RunCount == 0 {
+		return ExecutionWorkflowResponse{}, ErrNotFound
+	}
+	return summary, nil
+}
+
+func (m *MemStore) listExecutionsByPrincipal(accountID, principalID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
+	limit, offset = normalizeExecutionPage(limit, offset)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rows := make([]Execution, 0)
+	for _, row := range m.executions {
+		if row.AccountID == accountID && row.RunsPrincipalID != nil && *row.RunsPrincipalID == principalID && (status == "" || row.Status == status) {
+			rows = append(rows, cloneExecution(row))
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].CreatedAt.Equal(rows[j].CreatedAt) {
+			return rows[i].ID > rows[j].ID
+		}
+		return rows[i].CreatedAt.After(rows[j].CreatedAt)
+	})
+	if offset >= len(rows) {
+		return nil, nil
+	}
+	rows = rows[offset:]
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, nil
 }
 
 func (m *MemStore) listExecutions(accountID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
@@ -284,6 +471,7 @@ func (m *MemStore) claimExecution(owner, accountID string, claimedAt time.Time, 
 	m.appendExecutionEventLocked(candidate.AccountID, candidate.ID, ExecutionEventStatus, executionStatusPayload(candidate.Status), claimedAt)
 	return ExecutionClaim{
 		Execution: cloneExecution(*candidate), SealedPayload: append([]byte(nil), payload.sealed...), PayloadKID: payload.kid,
+		OutboundIntegrationIDs: append([]string(nil), m.executionOutboundIntegrationIDs[candidate.ID]...),
 	}, nil
 }
 

@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 421
+// adr: 563
 func TestS3ObjectLockStrictConfigurationRead(t *testing.T) {
 	const enabled = `<ObjectLockEnabled>Enabled</ObjectLockEnabled>`
 	for _, tc := range []struct {
@@ -61,7 +61,7 @@ func TestS3ObjectLockStrictConfigurationRead(t *testing.T) {
 	}
 }
 
-// adr: 421
+// adr: 563
 func TestS3ObjectLockStrictVersionPolicies(t *testing.T) {
 	for _, tc := range []struct {
 		name, subresource, body string
@@ -108,7 +108,7 @@ func TestS3ObjectLockStrictVersionPolicies(t *testing.T) {
 	}
 }
 
-// adr: 421
+// adr: 563
 func TestS3ObjectLockMalformedErrorsCannotEstablishAbsence(t *testing.T) {
 	for _, body := range []string{
 		`<Error><Code>AccessDenied</Code><Code>ObjectLockConfigurationNotFoundError</Code></Error>`,
@@ -125,7 +125,7 @@ func TestS3ObjectLockMalformedErrorsCannotEstablishAbsence(t *testing.T) {
 	}
 }
 
-// adr: 421
+// adr: 563
 func TestS3ObjectLockResponseBoundsAndAcknowledgments(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -184,7 +184,7 @@ type objectLockTestBody struct {
 
 func (b *objectLockTestBody) Close() error { b.closed = true; return nil }
 
-// adr: 421
+// adr: 563
 func TestS3ObjectLockResponseResources(t *testing.T) {
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://example.test", nil)
 	if err != nil {

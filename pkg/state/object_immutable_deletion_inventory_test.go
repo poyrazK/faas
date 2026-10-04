@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 406
+// adr: 548
 func TestImmutableDeletionInventoryMem(t *testing.T) {
 	immutableDeletionInventory(t, state.NewMemStore(), nil)
 }

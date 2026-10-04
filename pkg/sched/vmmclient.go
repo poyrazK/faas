@@ -22,12 +22,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/overlay"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -200,6 +202,19 @@ type ExecutionRestoreOutcome struct {
 // lifecycle identity. The caller must subsequently use ExecuteExecution for
 // source/input delivery; this RPC never carries either field.
 func (c *VMMClient) RestoreExecution(ctx context.Context, req ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error) {
+	integrationIDs, err := api.NormalizeExecutionIntegrationIDs(req.OutboundIntegrationIDs)
+	if err != nil {
+		return nil, fmt.Errorf("sched: invalid execution outbound integration grants")
+	}
+	if len(integrationIDs) > 0 {
+		leaseID, err := uuid.Parse(req.LeaseToken)
+		if err != nil {
+			return nil, fmt.Errorf("sched: execution outbound grants require a valid lease fence")
+		}
+		req.LeaseToken = leaseID.String()
+	} else if req.LeaseToken != "" {
+		return nil, fmt.Errorf("sched: execution lease fence requires outbound integration grants")
+	}
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	wireReq := &vmmdpb.RestoreExecutionRequest{
@@ -207,6 +222,10 @@ func (c *VMMClient) RestoreExecution(ctx context.Context, req ExecutionRestoreRe
 		Runtime: string(req.Runtime), KernelKey: req.KernelKey, BaseKey: req.BaseKey,
 		LayerKey: req.LayerKey, VcpuCount: int32(req.VcpuCount),
 		MemSizeMib: int32(req.MemSizeMiB), CpuMillicores: int32(req.CPUMillicores),
+	}
+	if len(integrationIDs) > 0 {
+		wireReq.LeaseToken = req.LeaseToken
+		wireReq.OutboundIntegrationIds = integrationIDs
 	}
 	if req.Snapshot.StorageKey != "" || req.Snapshot.VMStateStorageKey != "" || req.Snapshot.VMStatePath != "" {
 		wireReq.Snapshot = &vmmdpb.SnapshotRef{
@@ -710,19 +729,20 @@ func (c *VMMClient) ExecuteExecution(ctx context.Context, instance string, req e
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.ExecuteExecution(ctx, &vmmdpb.ExecuteExecutionRequest{
-		Profile:        string(req.Profile),
-		Instance:       instance,
-		Version:        uint32(req.Version),
-		ExecutionId:    req.ExecutionID,
-		Runtime:        string(req.Runtime),
-		Source:         req.Source,
-		Entrypoint:     req.Entrypoint,
-		Files:          executionFilesToProto(req.Files),
-		OutputFiles:    append([]string(nil), req.OutputFiles...),
-		Input:          append([]byte(nil), req.Input...),
-		TimeoutMs:      int32(req.TimeoutMS),
-		MaxOutputBytes: int32(req.MaxOutput),
-		NetworkMode:    string(req.NetworkMode),
+		Profile:         string(req.Profile),
+		Instance:        instance,
+		Version:         uint32(req.Version),
+		ExecutionId:     req.ExecutionID,
+		Runtime:         string(req.Runtime),
+		Source:          req.Source,
+		Entrypoint:      req.Entrypoint,
+		Files:           executionFilesToProto(req.Files),
+		OutputFiles:     append([]string(nil), req.OutputFiles...),
+		Input:           append([]byte(nil), req.Input...),
+		TimeoutMs:       int32(req.TimeoutMS),
+		MaxOutputBytes:  int32(req.MaxOutput),
+		NetworkMode:     string(req.NetworkMode),
+		OutboundEnabled: req.OutboundEnabled,
 	}, grpc.MaxCallRecvMsgSize(executionproto.MaxFrameBytes))
 	if err != nil {
 		return zero, liftErr(err)
@@ -742,19 +762,20 @@ func (c *VMMClient) ExecuteExecutionWithOutput(ctx context.Context, instance str
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	stream, err := c.cli.ExecuteExecutionStream(ctx, &vmmdpb.ExecuteExecutionRequest{
-		Profile:        string(req.Profile),
-		Instance:       instance,
-		Version:        uint32(req.Version),
-		ExecutionId:    req.ExecutionID,
-		Runtime:        string(req.Runtime),
-		Source:         req.Source,
-		Entrypoint:     req.Entrypoint,
-		Files:          executionFilesToProto(req.Files),
-		OutputFiles:    append([]string(nil), req.OutputFiles...),
-		Input:          append([]byte(nil), req.Input...),
-		TimeoutMs:      int32(req.TimeoutMS),
-		MaxOutputBytes: int32(req.MaxOutput),
-		NetworkMode:    string(req.NetworkMode),
+		Profile:         string(req.Profile),
+		Instance:        instance,
+		Version:         uint32(req.Version),
+		ExecutionId:     req.ExecutionID,
+		Runtime:         string(req.Runtime),
+		Source:          req.Source,
+		Entrypoint:      req.Entrypoint,
+		Files:           executionFilesToProto(req.Files),
+		OutputFiles:     append([]string(nil), req.OutputFiles...),
+		Input:           append([]byte(nil), req.Input...),
+		TimeoutMs:       int32(req.TimeoutMS),
+		MaxOutputBytes:  int32(req.MaxOutput),
+		NetworkMode:     string(req.NetworkMode),
+		OutboundEnabled: req.OutboundEnabled,
 	}, grpc.MaxCallRecvMsgSize(executionproto.MaxFrameBytes))
 	if err != nil {
 		return zero, liftErr(err)
@@ -800,6 +821,109 @@ func (c *VMMClient) ExecuteExecutionWithOutput(ctx context.Context, instance str
 			return result, nil
 		}
 		return zero, errors.New("sched: execution stream returned an empty event")
+	}
+}
+
+// ExecuteExecutionWithBroker uses vmmd's full-duplex Runs stream. Assertions
+// are passed directly to the configured host relay and never copied into the
+// execution response or guest protocol.
+func (c *VMMClient) ExecuteExecutionWithBroker(ctx context.Context, instance string, req executionproto.Request, receive executionproto.OutputReceiver, relay ExecutionOutboundRelay) (executionproto.Result, error) {
+	var zero executionproto.Result
+	if c == nil || c.cli == nil {
+		return zero, errors.New("sched: nil vmmd execution client")
+	}
+	if !req.OutboundEnabled {
+		return zero, errors.New("sched: outbound broker stream requires an explicit Runs integration grant")
+	}
+	fields, _ := wire.FromContext(ctx)
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
+	stream, err := c.cli.ExecuteExecutionBrokerStream(ctx, grpc.MaxCallRecvMsgSize(executionproto.MaxFrameBytes), grpc.MaxCallSendMsgSize(executionproto.MaxFrameBytes))
+	if err != nil {
+		return zero, liftErr(err)
+	}
+	defer func() { _ = stream.CloseSend() }()
+	start := &vmmdpb.ExecuteExecutionRequest{
+		Profile: string(req.Profile), Instance: instance, Version: uint32(req.Version),
+		ExecutionId: req.ExecutionID, Runtime: string(req.Runtime), Source: req.Source,
+		Entrypoint: req.Entrypoint, Files: executionFilesToProto(req.Files),
+		OutputFiles: append([]string(nil), req.OutputFiles...), Input: append([]byte(nil), req.Input...),
+		TimeoutMs: int32(req.TimeoutMS), MaxOutputBytes: int32(req.MaxOutput), NetworkMode: string(req.NetworkMode),
+		OutboundEnabled: req.OutboundEnabled,
+	}
+	if err := stream.Send(&vmmdpb.ExecuteExecutionBrokerRequest{Frame: &vmmdpb.ExecuteExecutionBrokerRequest_Start{Start: start}}); err != nil {
+		return zero, liftErr(err)
+	}
+	var result executionproto.Result
+	for {
+		event, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			return zero, errors.New("sched: execution broker stream ended before terminal result")
+		}
+		if recvErr != nil {
+			return zero, liftErr(recvErr)
+		}
+		if event == nil {
+			return zero, errors.New("sched: execution broker stream returned a nil event")
+		}
+		switch frame := event.GetFrame().(type) {
+		case *vmmdpb.ExecuteExecutionBrokerEvent_Output:
+			output := frame.Output
+			streamName := output.GetStream()
+			if streamName != "stdout" && streamName != "stderr" {
+				return zero, errors.New("sched: execution broker stream returned an invalid output stream")
+			}
+			chunk := output.GetChunk()
+			if len(result.Stdout)+len(result.Stderr)+len(chunk) > req.MaxOutput {
+				return zero, executionproto.ErrOutputLimitExceeded
+			}
+			if streamName == "stdout" {
+				result.Stdout = append(result.Stdout, chunk...)
+			} else {
+				result.Stderr = append(result.Stderr, chunk...)
+			}
+			if receive != nil {
+				if err := receive(ctx, streamName, chunk); err != nil {
+					return zero, err
+				}
+			}
+		case *vmmdpb.ExecuteExecutionBrokerEvent_OutboundCall:
+			call := frame.OutboundCall
+			if relay == nil || call.GetExecutionIdentity() == "" {
+				return zero, errors.New("sched: execution outbound relay is not configured")
+			}
+			request := executionproto.OutboundRequest{
+				ID: call.GetId(), IntegrationID: call.GetIntegrationId(), Method: call.GetMethod(),
+				Path: call.GetPath(), Body: append([]byte(nil), call.GetBody()...),
+			}
+			if err := request.Validate(); err != nil {
+				return zero, errors.New("sched: vmmd sent an invalid outbound call")
+			}
+			response, callErr := relay.Call(ctx, request, call.GetExecutionIdentity())
+			if callErr != nil {
+				return zero, callErr
+			}
+			if response.ID == 0 {
+				response.ID = request.ID
+			}
+			if response.ID != request.ID || response.Validate() != nil {
+				return zero, errors.New("sched: outbound relay returned an invalid response")
+			}
+			if err := stream.Send(&vmmdpb.ExecuteExecutionBrokerRequest{Frame: &vmmdpb.ExecuteExecutionBrokerRequest_OutboundResponse{
+				OutboundResponse: &vmmdpb.ExecuteExecutionOutboundResponse{
+					Id: response.ID, Status: int32(response.Status), Headers: cloneOutboundHeaders(response.Headers), Body: append([]byte(nil), response.Body...),
+				},
+			}}); err != nil {
+				return zero, liftErr(err)
+			}
+		case *vmmdpb.ExecuteExecutionBrokerEvent_Terminal:
+			result = mergeExecutionResponse(result, frame.Terminal)
+			if err := result.Validate(req.MaxOutput); err != nil {
+				return zero, err
+			}
+			return result, nil
+		default:
+			return zero, errors.New("sched: execution broker stream returned an empty event")
+		}
 	}
 }
 
@@ -1675,6 +1799,9 @@ func characterizationFromStruct(s *structpb.Struct) api.CharacterizationReport {
 // status-shaped (e.g. a dial failure) pass through unchanged.
 func liftErr(err error) error {
 	if p, ok := grpcerr.FromStatus(err); ok && p != nil {
+		if p.Code == api.CodeDatabaseCutoverFenced {
+			return errors.Join(p, state.ErrManagedPostgresAdmissionFenced)
+		}
 		return p
 	}
 	return err

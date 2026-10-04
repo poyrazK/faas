@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 408
+// adr: 550
 func TestObjectMultipartResultsBucketBeforeAccountPG(t *testing.T) {
 	st, pool, _ := pgStoreWithPool(t)
 	for _, operation := range []string{"dispatch", "finish", "retry", "reject"} {

@@ -84,7 +84,12 @@ class DeploymentResponse:
     created_at: datetime.datetime
     stage_state: DeploymentResponseStageState | Unset = UNSET
     """Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be
-    rebuilt."""
+    rebuilt. Optional hosting_verification records started_at, deadline_at, attempts, last_error_code,
+    retry_not_before and completed_at during unavailable candidate verification recovery (ADR-481, ADR-482).
+    last_error_code distinguishes publication, gateway, transport and candidate-evidence failures; a transport
+    failure does not attribute blame to the app or platform. retry_not_before is an eligibility floor, not a
+    promised delivery time; completed_at means the attempt finished, while the hosting receipt records its verdict.
+   """
     revision: int | Unset = UNSET
     """Per-app deployment revision (ADR-198), rendered as `v42`. Accepted in place of a deployment id wherever this
     API takes one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the

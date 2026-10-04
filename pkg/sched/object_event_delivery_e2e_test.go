@@ -63,7 +63,7 @@ func (s *objectDeliveryFaultStore) RecordPublishedEventRecipientProgress(ctx con
 	return s.PublishedEventRecipientProgressStore.RecordPublishedEventRecipientProgress(ctx, id, token, recipient, p)
 }
 
-// adr: 409
+// adr: 551
 func TestObjectEventDeliveryEndToEndMem(t *testing.T) {
 	st := state.NewMemStore()
 	objectEventDeliveryEndToEnd(t, st, func() objectEventIntegrationStore { return st })

@@ -7,11 +7,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,6 +21,103 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestPgStoreManagedExecutionWorkflowLeaseAndPayloadRetention(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	account, err := store.CreateAccount(ctx, "managed-workflow-"+uuid.NewString()+"@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := uuid.NewString()
+	base := time.Now().UTC().Truncate(time.Millisecond)
+	params := state.CreateExecutionWorkflowJobParams{
+		AccountID: account.ID, RunsPrincipalID: &principal, WorkflowID: "managed-chain",
+		PlanID: "0123456789abcdef01234567", StepCount: 2,
+		SealedPlan: []byte("encrypted-plan"), PayloadKID: "age1recipient", CreatedAt: base,
+	}
+	row, err := store.CreateExecutionWorkflowJob(ctx, params)
+	if err != nil {
+		t.Fatalf("CreateExecutionWorkflowJob: %v", err)
+	}
+	if _, err := store.CreateExecutionWorkflowJob(ctx, params); !errors.Is(err, state.ErrExecutionWorkflowJobExists) {
+		t.Fatalf("duplicate error = %v", err)
+	}
+	claim, err := store.ClaimExecutionWorkflowJob(ctx, "pg-worker-a", base.Add(time.Second), time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimExecutionWorkflowJob: %v", err)
+	}
+	if _, err := store.ClaimExecutionWorkflowJob(ctx, "pg-worker-b", base.Add(2*time.Second), time.Minute); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("concurrent claim error = %v", err)
+	}
+	releaseAt := base.Add(3 * time.Second)
+	if err := store.UpdateExecutionWorkflowJob(ctx, row.ID, claim.ClaimToken, state.ExecutionWorkflowJobUpdate{
+		Status: api.ManagedExecutionWorkflowQueued, NextStep: 1, ScheduledFor: releaseAt, UpdatedAt: releaseAt,
+	}); err != nil {
+		t.Fatalf("release workflow claim: %v", err)
+	}
+	claim, err = store.ClaimExecutionWorkflowJob(ctx, "pg-worker-b", releaseAt, time.Minute)
+	if err != nil {
+		t.Fatalf("reclaim workflow: %v", err)
+	}
+	finishAt := releaseAt.Add(time.Second)
+	if err := store.UpdateExecutionWorkflowJob(ctx, row.ID, claim.ClaimToken, state.ExecutionWorkflowJobUpdate{
+		Status: api.ManagedExecutionWorkflowSucceeded, NextStep: 2, ScheduledFor: finishAt, UpdatedAt: finishAt,
+	}); err != nil {
+		t.Fatalf("complete workflow: %v", err)
+	}
+	terminal, err := store.ExecutionWorkflowJobByKey(ctx, account.ID, params.WorkflowID, &principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if terminal.Status != api.ManagedExecutionWorkflowSucceeded || terminal.NextStep != 2 || len(terminal.SealedPlan) != 0 || terminal.PayloadKID != "" {
+		t.Fatalf("terminal workflow payload/progress = %+v", terminal)
+	}
+}
+
+func TestPgStoreManagedExecutionWorkflowQueueLimit(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	account, err := store.CreateAccount(ctx, "managed-workflow-limit-"+uuid.NewString()+"@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := uuid.NewString()
+	base := time.Now().UTC().Truncate(time.Millisecond)
+	params := make([]state.CreateExecutionWorkflowJobParams, 0, state.ExecutionWorkflowManagedMaxActivePerAccount)
+	for i := 0; i < state.ExecutionWorkflowManagedMaxActivePerAccount; i++ {
+		job := state.CreateExecutionWorkflowJobParams{
+			AccountID: account.ID, RunsPrincipalID: &principal,
+			WorkflowID: "managed-queue-" + strconv.Itoa(i), PlanID: "0123456789abcdef01234567",
+			StepCount: 1, SealedPlan: []byte("sealed"), PayloadKID: "kid",
+			CreatedAt: base.Add(time.Duration(i) * time.Second),
+		}
+		if _, err := store.CreateExecutionWorkflowJob(ctx, job); err != nil {
+			t.Fatalf("create workflow %d: %v", i, err)
+		}
+		params = append(params, job)
+	}
+	if _, err := store.CreateExecutionWorkflowJob(ctx, params[0]); !errors.Is(err, state.ErrExecutionWorkflowJobExists) {
+		t.Fatalf("duplicate in full queue error = %v", err)
+	}
+	overflow := params[0]
+	overflow.WorkflowID = "managed-queue-overflow"
+	if _, err := store.CreateExecutionWorkflowJob(ctx, overflow); !errors.Is(err, state.ErrExecutionWorkflowQueueFull) {
+		t.Fatalf("full queue error = %v, want ErrExecutionWorkflowQueueFull", err)
+	}
+	claimAt := base.Add(time.Duration(state.ExecutionWorkflowManagedMaxActivePerAccount+1) * time.Second)
+	claim, err := store.ClaimExecutionWorkflowJob(ctx, "pg-queue-test", claimAt, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishedAt := claimAt.Add(time.Second)
+	if err := store.UpdateExecutionWorkflowJob(ctx, claim.ID, claim.ClaimToken, state.ExecutionWorkflowJobUpdate{
+		Status: api.ManagedExecutionWorkflowSucceeded, NextStep: 1, ScheduledFor: finishedAt, UpdatedAt: finishedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateExecutionWorkflowJob(ctx, overflow); err != nil {
+		t.Fatalf("terminal workflow did not release queue slot: %v", err)
+	}
+}
 
 func TestPgStoreExecutionProfilePinsImageBeforeRunning(t *testing.T) {
 	store, pool, ctx := pgStoreWithPool(t)
@@ -250,6 +349,210 @@ func TestPgStoreExecutionLifecycleAndAtomicAdmission(t *testing.T) {
 	}
 	if createdCount != 1 || quotaCount != callers-1 {
 		t.Fatalf("parallel admission created=%d quota=%d", createdCount, quotaCount)
+	}
+}
+
+func TestPgStoreExecutionOutboundIntegrationsAreGrantedAndClaimed(t *testing.T) {
+	store, ctx := pgStore(t)
+	account := pgExecutionAccount(t, store, ctx, "outbound-integration")
+	offer := pgCustomerOutboundOffer(account.ID, "agent-api")
+	createdOffer, err := store.CreateOutboundIntegration(ctx, offer)
+	if err != nil {
+		t.Fatalf("CreateOutboundIntegration: %v", err)
+	}
+	if err := store.SetOutboundCredential(ctx, account.ID, createdOffer.ID, []byte("sealed-provider-credential")); err != nil {
+		t.Fatalf("SetOutboundCredential: %v", err)
+	}
+	base := time.Now().UTC().Add(time.Second)
+	params := pgExecutionParams(t, account.ID, base, 0, "sealed-run")
+	params.OutboundIntegrationIDs = []string{createdOffer.ID}
+	if _, err := store.CreateExecution(ctx, params); !errors.Is(err, state.ErrExecutionOutboundIntegrationUnavailable) {
+		t.Fatalf("CreateExecution without Runs grant = %v, want unavailable", err)
+	}
+	if err := store.SetOutboundIntegrationRunsEnabled(ctx, account.ID, createdOffer.ID, true); err != nil {
+		t.Fatalf("SetOutboundIntegrationRunsEnabled: %v", err)
+	}
+	created, err := store.CreateExecution(ctx, params)
+	if err != nil {
+		t.Fatalf("CreateExecution with granted integration: %v", err)
+	}
+	claim, err := store.ClaimExecution(ctx, "integration-claim", base.Add(time.Millisecond), time.Minute)
+	if err != nil || claim.ID != created.ID {
+		t.Fatalf("ClaimExecution = %q, %v; want %q", claim.ID, err, created.ID)
+	}
+	if len(claim.OutboundIntegrationIDs) != 1 || claim.OutboundIntegrationIDs[0] != createdOffer.ID {
+		t.Fatalf("claim integration IDs = %v, want [%s]", claim.OutboundIntegrationIDs, createdOffer.ID)
+	}
+
+	if err := store.SetOutboundIntegrationRunsEnabled(ctx, account.ID, createdOffer.ID, false); err != nil {
+		t.Fatalf("revoke Runs grant: %v", err)
+	}
+	params = pgExecutionParams(t, account.ID, base.Add(2*time.Millisecond), 0, "sealed-run-2")
+	params.OutboundIntegrationIDs = []string{createdOffer.ID}
+	if _, err := store.CreateExecution(ctx, params); !errors.Is(err, state.ErrExecutionOutboundIntegrationUnavailable) {
+		t.Fatalf("CreateExecution after grant revocation = %v, want unavailable", err)
+	}
+}
+
+func TestPgStoreExecutionWorkflowQueriesKeepPrincipalScope(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	account := pgExecutionAccount(t, store, ctx, "workflow-scope")
+	principalA := "11111111-1111-4111-8111-111111111111"
+	principalB := "22222222-2222-4222-8222-222222222222"
+	workflowID := "pg-agent-workflow"
+	base := time.Now().UTC().Add(time.Second)
+	create := func(admittedAt time.Time, principalID, flowID string) state.Execution {
+		params := pgExecutionParams(t, account.ID, admittedAt, 0, "sealed-workflow")
+		params.RunsPrincipalID = &principalID
+		params.WorkflowID = flowID
+		row, err := store.CreateExecution(ctx, params)
+		if err != nil {
+			t.Fatalf("CreateExecution(%s): %v", flowID, err)
+		}
+		return row
+	}
+	first := create(base, principalA, workflowID)
+	create(base.Add(time.Millisecond), principalB, workflowID)
+	create(base.Add(2*time.Millisecond), principalA, "private-agent-flow")
+
+	claim, err := store.ClaimExecution(ctx, "workflow-test", base.Add(3*time.Millisecond), time.Second)
+	if err != nil || claim.ID != first.ID {
+		t.Fatalf("ClaimExecution = %q, %v; want %q", claim.ID, err, first.ID)
+	}
+	if _, err := store.MarkExecutionRunning(ctx, first.ID, *claim.LeaseToken, base.Add(4*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CompleteExecution(ctx, state.CompleteExecutionParams{
+		ID: first.ID, LeaseToken: *claim.LeaseToken, Status: api.ExecutionStatusSucceeded,
+		Result: []byte("null"), Usage: api.ExecutionUsage{WallTimeMS: 5, CPUTimeMS: 3, PeakMemoryMB: 64},
+		FinishedAt: base.Add(5 * time.Millisecond),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, check := range []struct {
+		principal *string
+		wantRuns  int
+		wantState api.ExecutionStatus
+	}{{&principalA, 1, api.ExecutionStatusSucceeded}, {&principalB, 1, api.ExecutionStatusQueued}, {nil, 2, ""}} {
+		rows, err := store.ListExecutionsByWorkflow(ctx, account.ID, workflowID, check.principal, "", 10, 0)
+		if err != nil || len(rows) != check.wantRuns {
+			t.Fatalf("workflow list principal=%v: rows=%#v err=%v", check.principal, rows, err)
+		}
+		summary, err := store.ExecutionWorkflowSummary(ctx, account.ID, workflowID, check.principal)
+		if err != nil || summary.RunCount != int64(check.wantRuns) {
+			t.Fatalf("workflow summary principal=%v: summary=%+v err=%v", check.principal, summary, err)
+		}
+		if check.wantState != "" && rows[0].Status != check.wantState {
+			t.Fatalf("workflow receipt status=%s, want %s", rows[0].Status, check.wantState)
+		}
+		if check.principal != nil && *check.principal == principalA && (summary.Usage.WallTimeMS != 5 || summary.Usage.CPUTimeMS != 3 || summary.Usage.PeakMemoryMB != 64) {
+			t.Fatalf("agent A workflow usage = %+v", summary.Usage)
+		}
+	}
+	if _, err := store.ExecutionWorkflowSummary(ctx, account.ID, "private-agent-flow", &principalB); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-principal workflow lookup = %v, want ErrNotFound", err)
+	}
+}
+
+func TestPgStoreAgentWorkflowStepAdmissionIsUniquePerPrincipal(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	account := pgExecutionAccount(t, store, ctx, "workflow-step-unique")
+	principalA := "11111111-1111-4111-8111-111111111111"
+	principalB := "22222222-2222-4222-8222-222222222222"
+	base := time.Now().UTC().Add(time.Second)
+	params := pgExecutionParams(t, account.ID, base, 0, "sealed-agent-step")
+	params.WorkflowID = "pg-workflow-step-unique"
+	params.StepLabel = "gwf:0123456789abcdef01234567:inspect"
+	params.RunsPrincipalID = &principalA
+	first, err := store.CreateExecution(ctx, params)
+	if err != nil {
+		t.Fatalf("CreateExecution(first step): %v", err)
+	}
+	receipt, err := store.ExecutionWorkflowStepByLabel(ctx, account.ID, params.WorkflowID, &principalA, params.StepLabel)
+	if err != nil || receipt.ID != first.ID || receipt.StepLabel != params.StepLabel {
+		t.Fatalf("ExecutionWorkflowStepByLabel() = %+v, %v", receipt, err)
+	}
+	if _, err := store.ExecutionWorkflowStepByLabel(ctx, account.ID, params.WorkflowID, &principalB, params.StepLabel); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-principal step receipt lookup = %v, want ErrNotFound", err)
+	}
+	duplicate := pgExecutionParams(t, account.ID, base.Add(time.Millisecond), 0, "sealed-agent-step-again")
+	duplicate.WorkflowID = params.WorkflowID
+	duplicate.StepLabel = params.StepLabel
+	duplicate.RunsPrincipalID = &principalA
+	if _, err := store.CreateExecution(ctx, duplicate); !errors.Is(err, state.ErrExecutionWorkflowStepExists) {
+		t.Fatalf("CreateExecution(duplicate step) = %v, want workflow step conflict", err)
+	}
+	otherPrincipal := pgExecutionParams(t, account.ID, base.Add(2*time.Millisecond), 0, "sealed-other-agent-step")
+	otherPrincipal.WorkflowID = params.WorkflowID
+	otherPrincipal.StepLabel = params.StepLabel
+	otherPrincipal.RunsPrincipalID = &principalB
+	if _, err := store.CreateExecution(ctx, otherPrincipal); err != nil {
+		t.Fatalf("CreateExecution(other key family): %v", err)
+	}
+}
+
+func TestPgStoreExecutionArtifactGrantRedemptionIsAtomic(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	account := pgExecutionAccount(t, store, ctx, "artifact-grant")
+	base := time.Now().UTC().Add(time.Second)
+	source, err := store.CreateExecution(ctx, pgExecutionParams(t, account.ID, base, 0, "source-payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimExecution(ctx, "artifact-grant-pg", base.Add(time.Millisecond), time.Minute)
+	if err != nil || claim.ID != source.ID {
+		t.Fatalf("claim source = %q, %v", claim.ID, err)
+	}
+	if _, err := store.MarkExecutionRunning(ctx, source.ID, *claim.LeaseToken, base.Add(2*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("dataset\n1\n")
+	digest := sha256.Sum256(content)
+	if _, err := store.CompleteExecution(ctx, state.CompleteExecutionParams{
+		ID: source.ID, LeaseToken: *claim.LeaseToken, Status: api.ExecutionStatusSucceeded,
+		Result: []byte("null"), Artifacts: []api.ExecutionArtifact{{Name: "dataset.csv", Content: content, SizeBytes: len(content), SHA256: "sha256:" + hex.EncodeToString(digest[:])}},
+		FinishedAt: base.Add(3 * time.Millisecond),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	principal := "a1fb8f25-f2e1-4e44-901a-5111c449ce39"
+	secret := []byte("rag_single-use-capability-test")
+	tokenHash := sha256.Sum256(secret)
+	grant, err := store.CreateExecutionArtifactGrant(ctx, state.CreateExecutionArtifactGrantParams{
+		ID: "e78003cd-46c3-49ab-a1b1-dc4a503ea019", AccountID: account.ID,
+		SourceExecutionID: source.ID, ArtifactName: "dataset.csv", CreatorPrincipalID: &principal,
+		TokenHash: tokenHash[:], ExpiresAt: base.Add(5 * time.Minute), CreatedAt: base,
+	})
+	if err != nil {
+		t.Fatalf("create grant: %v", err)
+	}
+	loaded, err := store.ExecutionArtifactGrantByToken(ctx, account.ID, tokenHash[:], base.Add(time.Second))
+	if err != nil || loaded.ID != grant.ID {
+		t.Fatalf("load grant: %#v, %v", loaded, err)
+	}
+
+	params := pgExecutionParams(t, account.ID, base.Add(10*time.Millisecond), 0, "consumer-payload")
+	consumerPrincipal := "50a9b1e6-1b81-46e0-a447-12c6c69fb0b1"
+	params.RunsPrincipalID = &consumerPrincipal
+	params.ArtifactGrantRedemptions = []state.ExecutionArtifactGrantRedemption{{GrantID: grant.ID, TokenHash: tokenHash[:]}}
+	consumer, err := store.CreateExecution(ctx, params)
+	if err != nil {
+		t.Fatalf("create consumer execution: %v", err)
+	}
+	var redeemedAt time.Time
+	var redeemedExecutionID string
+	if err := pool.QueryRow(ctx, `select redeemed_at, redeemed_execution_id::text from execution_artifact_grants where id=$1::uuid`, grant.ID).Scan(&redeemedAt, &redeemedExecutionID); err != nil {
+		t.Fatalf("read grant redemption: %v", err)
+	}
+	if redeemedAt.IsZero() || redeemedExecutionID != consumer.ID {
+		t.Fatalf("grant redemption = %v / %s, want consumer %s", redeemedAt, redeemedExecutionID, consumer.ID)
+	}
+	replay := pgExecutionParams(t, account.ID, base.Add(20*time.Millisecond), 0, "second-consumer")
+	replay.ArtifactGrantRedemptions = params.ArtifactGrantRedemptions
+	if _, err := store.CreateExecution(ctx, replay); !errors.Is(err, state.ErrExecutionArtifactGrantUnavailable) {
+		t.Fatalf("second grant redemption = %v, want unavailable", err)
 	}
 }
 

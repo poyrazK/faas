@@ -21,7 +21,7 @@ type objectURLTestStore interface {
 	state.ObjectBucketAccessStore
 }
 
-// adr: 415
+// adr: 557
 func TestObjectURLCapabilitiesMem(t *testing.T) { objectURLCapabilitySuite(t, state.NewMemStore()) }
 func TestObjectURLCapabilitiesPG(t *testing.T)  { st, _ := pgStore(t); objectURLCapabilitySuite(t, st) }
 

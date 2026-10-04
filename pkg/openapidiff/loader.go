@@ -118,6 +118,9 @@ type SchemaBreak struct {
 // ContentTypes → normalisedSchema. The Components map is held
 // alongside for $ref resolution by the differ.
 type Spec struct {
+	// Raw retains the immutable document for bounded local request references
+	// and root security metadata. It is never serialized in comparison results.
+	Raw map[string]any `json:"-"`
 	// Paths is keyed by the path string from the embedded spec.
 	Paths map[string]*PathItem
 	// Components is the resolved-by-name schema map. Populated by
@@ -246,6 +249,7 @@ func LoadBytes(data []byte) (*Spec, error) {
 		return nil, errors.New("openapidiff: empty spec")
 	}
 	spec := &Spec{
+		Raw:        cloneOpenAPIMap(doc),
 		Paths:      map[string]*PathItem{},
 		Components: map[string]*Schema{},
 	}

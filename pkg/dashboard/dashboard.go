@@ -814,17 +814,20 @@ type MirrorPageItem struct {
 // MirrorSummaryPageItem mirrors api.MirrorSummaryResponse without exposing
 // API package types to dashboard templates.
 type MirrorSummaryPageItem struct {
-	TotalInvocations          int64
-	ChangedResponseCount      int64
-	ChangedResponsePct        float64
-	StatusDiffCount           int64
-	SchemaDiffCount           int64
-	BodyDiffCount             int64
-	MeanLatencyDiffMs         int64
-	P99LatencyDiffMs          int64
-	CrashCount                int64
-	IncompleteComparisonCount int64
-	WindowLabel               string
+	TotalInvocations                int64
+	ChangedResponseCount            int64
+	ChangedResponsePct              float64
+	StatusDiffCount                 int64
+	SchemaDiffCount                 int64
+	BodyDiffCount                   int64
+	MeanLatencyDiffMs               int64
+	P99LatencyDiffMs                int64
+	CrashCount                      int64
+	IncompleteComparisonCount       int64
+	SchedulerAdmissionTimeoutCount  int64
+	SchedulerAdmissionRejectedCount int64
+	SchedulerAdmissionErrorCount    int64
+	WindowLabel                     string
 }
 
 // StorageData is the customer-facing projection for the per-app object
@@ -1053,6 +1056,7 @@ type ScheduleOccurrencePageItem struct {
 	Reason       string
 	RunID        string
 	TaskID       string
+	InvocationID string
 	BlockingID   string
 }
 
@@ -1210,6 +1214,7 @@ type CronItem struct {
 	// the form.
 	FireNowConfirmToken   string
 	SchedulePolicyEnabled bool
+	IsCommandCron         bool
 	OverlapPolicy         string
 	DeadlineSeconds       int
 	MissedRunsPolicy      string
@@ -2329,18 +2334,20 @@ type DebugCompareRouteView struct {
 // comparison envelope; raw request payloads and customer headers are never
 // rendered here.
 type DebugReplayView struct {
-	ID               string
-	State            string
-	LastError        string
-	CreatedAt        string
-	CompletedAt      string
-	HasResult        bool
-	SourceStatusCode int
-	MirrorStatusCode int
-	SourceLatencyMS  int
-	MirrorLatencyMS  int
-	StatusDiff       bool
-	Crashed          bool
+	ID                 string
+	State              string
+	LastError          string
+	CreatedAt          string
+	CompletedAt        string
+	HasResult          bool
+	SourceDeploymentID string
+	MirrorDeploymentID string
+	SourceStatusCode   int
+	MirrorStatusCode   int
+	SourceLatencyMS    int
+	MirrorLatencyMS    int
+	StatusDiff         bool
+	Crashed            bool
 }
 
 // DebugRegressionView carries the bounded regression observation plus a

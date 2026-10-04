@@ -137,7 +137,10 @@ func (s *server) applyManifestWorkloads(
 		}
 	}
 	if len(dependencies) > 0 {
-		req.Overrides = &api.CreateDeploymentOverrides{MainDependsOn: dependencies}
+		if req.Overrides == nil {
+			req.Overrides = &api.CreateDeploymentOverrides{}
+		}
+		req.Overrides.MainDependsOn = dependencies
 	}
 	overrides, problem := validateOverrides(req, limits, acct.Plan)
 	if problem != nil {

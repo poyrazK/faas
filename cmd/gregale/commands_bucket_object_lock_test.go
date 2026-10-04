@@ -26,7 +26,7 @@ func (c *objectLockCLIClient) PutObjectBucketObjectLock(_ context.Context, _, _ 
 	return api.ObjectBucketObjectLock{EnabledRequired: true}, nil
 }
 
-// adr: 422
+// adr: 564
 func TestBucketObjectLockCLI(t *testing.T) {
 	for _, tc := range []struct {
 		args         []string

@@ -33,7 +33,7 @@ func encryptionTestRegistry(t *testing.T, b BackendConfig) (*Registry, Backend) 
 	return r, placement
 }
 
-// adr: 412
+// adr: 554
 func TestOwnedEncryptionBindingAndReconstruction(t *testing.T) {
 	b := encryptionTestBackend()
 	r, placement := encryptionTestRegistry(t, b)

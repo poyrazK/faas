@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 )
 
-// adr: 411
+// adr: 553
 func TestObjectBucketCatalogTransferProfile(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	setS3Flag(t, e, true)

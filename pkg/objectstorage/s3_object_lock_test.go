@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 421
+// adr: 563
 func TestS3ObjectLockNativeProtocol(t *testing.T) {
 	key, version := "目录/a +?%.txt", "private/+?%version"
 	date := time.Date(2028, 1, 1, 0, 0, 0, 123456789, time.FixedZone("offset", 3600))
@@ -146,7 +146,7 @@ func equalObjectLockPeriod(a, b api.ObjectRetentionPeriod) bool {
 	return (a.Days == nil && b.Days == nil || a.Days != nil && b.Days != nil && *a.Days == *b.Days) && (a.Years == nil && b.Years == nil || a.Years != nil && b.Years != nil && *a.Years == *b.Years)
 }
 
-// adr: 421
+// adr: 563
 func TestS3ObjectLockExactTargetsAndExplicitBypass(t *testing.T) {
 	var requests atomic.Int32
 	p := historyTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +190,7 @@ func TestS3ObjectLockExactTargetsAndExplicitBypass(t *testing.T) {
 	}
 }
 
-// adr: 421
+// adr: 563
 func TestS3ObjectLockMissingConfigurationIsExact(t *testing.T) {
 	for _, tc := range []struct {
 		code   string
@@ -216,7 +216,7 @@ func TestS3ObjectLockMissingConfigurationIsExact(t *testing.T) {
 	}
 }
 
-// adr: 421
+// adr: 563
 func TestS3ObjectLockMutationsNeverRetry(t *testing.T) {
 	for _, action := range []string{"config", "retention", "hold"} {
 		t.Run(action, func(t *testing.T) {
@@ -242,7 +242,7 @@ func TestS3ObjectLockMutationsNeverRetry(t *testing.T) {
 	}
 }
 
-// adr: 421
+// adr: 563
 func TestS3ObjectLockReadAfterLostAcknowledgment(t *testing.T) {
 	for _, disconnect := range []bool{false, true} {
 		for _, action := range []string{"config", "retention", "hold"} {
@@ -326,7 +326,7 @@ func TestS3ObjectLockReadAfterLostAcknowledgment(t *testing.T) {
 	}
 }
 
-// adr: 421
+// adr: 563
 func TestS3ObjectLockInvalidPoliciesDoNotDispatch(t *testing.T) {
 	var requests atomic.Int32
 	p := historyTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1) }))

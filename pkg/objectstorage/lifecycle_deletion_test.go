@@ -147,7 +147,7 @@ func (f lifecycleServiceFixture) enableVersioning(t *testing.T) {
 	}
 }
 
-// adr: 408
+// adr: 550
 func TestLifecycleDeletionImmutableHTTP(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		for _, scenario := range []string{"noncurrent", "restored current", "sole marker", "marker with history", "immutable lost acknowledgment"} {
@@ -287,7 +287,7 @@ func (f lifecycleServiceFixture) scan(t *testing.T, rules []api.ObjectLifecycleR
 	return j
 }
 
-// adr: 408
+// adr: 550
 func TestLifecycleDeletionCurrentHTTP(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		for _, scenario := range []string{"expire", "unversioned tagged expire", "new current", "tag removed", "cancelled scan", "lost acknowledgment", "page limit", "request budget"} {
@@ -460,7 +460,7 @@ func TestLifecycleDeletionCurrentHTTP(t *testing.T) {
 	}
 }
 
-// adr: 408
+// adr: 550
 func TestLifecycleHistorySuccessorsAndTies(t *testing.T) {
 	now := time.Now().UTC()
 	base := now.AddDate(0, 0, -10).Truncate(time.Millisecond)

@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 404
+// adr: 546
 func TestObjectVersionDeleteControlEndToEndPG(t *testing.T) {
 	var calls atomic.Int32
 	var deleted atomic.Bool

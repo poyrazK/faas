@@ -154,6 +154,12 @@ func appTaskHandler(log *slog.Logger) apptaskproto.Handler {
 }
 
 func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manifest api.AppManifest, secrets, apiEnv map[string]string, stdout, stderr io.Writer) (apptaskproto.Result, error) {
+	if isOutboundBindingProbeCommand(req) {
+		return executeOutboundBindingProbeCommand(ctx, req, stdout)
+	}
+	if isObjectStorageBindingProbeCommand(req) {
+		return executeObjectStorageBindingProbeCommand(ctx, req, manifest, secrets, apiEnv, stdout)
+	}
 	if isPostgresBindingProbeCommand(req) {
 		return executePostgresBindingProbeCommand(ctx, req, manifest, secrets, apiEnv, stdout)
 	}
@@ -180,9 +186,11 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if uid := lookupUID(manifest.EffectiveUser()); uid > 0 {
-		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)}
+	credential, err := processCredential("", manifest.EffectiveUser())
+	if err != nil {
+		return appTaskInfraFailure("command_identity_invalid", "command identity could not be resolved", 126), nil //nolint:nilerr // identity errors are terminal protocol results
 	}
+	cmd.SysProcAttr.Credential = execProcessCredential(credential)
 	if err := cmd.Start(); err != nil {
 		exitCode := 126
 		failureCode := "command_start_failed"

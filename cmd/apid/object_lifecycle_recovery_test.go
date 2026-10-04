@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 408
+// adr: 550
 func TestObjectLifecycleRecoveryEndToEndPG(t *testing.T) {
 	var deleted atomic.Bool
 	var requests, deletes atomic.Int32

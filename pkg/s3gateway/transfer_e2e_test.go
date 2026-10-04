@@ -102,7 +102,7 @@ func transferIntegrationConfig(timeout int64) objectstorage.Config {
 	return objectstorage.Config{Accounting: &policy, MaxUploadBytes: 512 << 20, MaxSinglePutBytes: 96 << 20, MaxPartBytes: 96 << 20, Transfer: objectstorage.ObjectTransferConfig{Profile: "direct", TimeoutSeconds: timeout, MaxConcurrentUploads: 2, MaxSpoolBytes: 96 << 20, MinSpoolFreeBytes: 1}}
 }
 
-// adr: 411
+// adr: 553
 func TestProductionTransferEndToEndMem(t *testing.T) {
 	productionTransferEndToEnd(t, state.NewMemStore())
 }

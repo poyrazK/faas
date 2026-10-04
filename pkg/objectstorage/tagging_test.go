@@ -39,7 +39,7 @@ func (s taggingReferenceStub) ResolveObjectVersion(context.Context, string, stri
 	return s.native, nil
 }
 
-// adr: 407
+// adr: 549
 func TestObjectTaggingCapabilityAndAdmission(t *testing.T) {
 	f := newUploadFixture(t)
 	b, err := f.store.GetObjectBucket(t.Context(), f.account.ID, f.app.ID, f.route.BucketID)

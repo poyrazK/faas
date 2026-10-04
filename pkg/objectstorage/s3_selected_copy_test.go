@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// adr: 401
+// adr: 543
 func TestS3SelectedCopySnapshot(t *testing.T) {
 	for _, part := range []bool{false, true} {
 		for _, tc := range []struct {

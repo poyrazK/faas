@@ -1936,7 +1936,9 @@ func TestRestore_MaterializesBaseViaStorage(t *testing.T) {
 	// Asserting on its result here would couple to the kill semantics;
 	// instead, exercise sweepMaterialised directly so the test is
 	// focused on the storage seam.
-	v.sweepMaterialised("i-base")
+	if err := v.sweepMaterialised("i-base"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(tmp); !os.IsNotExist(err) {
 		t.Errorf("sweepMaterialised did not remove tmp %q: stat err=%v (trackMaterialised/sweepMaterialised must keep tmp files accounted for)", tmp, err)
 	}
@@ -2020,7 +2022,9 @@ func TestRestoreMemSource_OCIUsesStorageKey(t *testing.T) {
 	if timing.Bytes != int64(len(mem)) {
 		t.Errorf("bytes = %d, want %d", timing.Bytes, len(mem))
 	}
-	v.sweepMaterialised("i-oci")
+	if err := v.sweepMaterialised("i-oci"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestBoot_MaterializesKernelViaStorage pins the cold-boot leg

@@ -149,7 +149,7 @@ func (p *versionDeleteHTTPFixture) serve(t *testing.T, w http.ResponseWriter, r 
 	}
 }
 
-// adr: 404
+// adr: 546
 func TestVersionDeletionEndToEndMem(t *testing.T) {
 	m := state.NewMemStore()
 	now := time.Now().UTC()

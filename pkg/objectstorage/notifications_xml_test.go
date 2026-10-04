@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 410
+// adr: 552
 func TestObjectNotificationsXMLStrictAndRoundTrip(t *testing.T) {
 	arn := "arn:gregale:sqs:us-east-1:11111111-1111-4111-8111-111111111111:22222222-2222-4222-8222-222222222222/storage"
 	good := []api.ObjectNotificationRule{{ID: "queue", Destination: arn, Events: []string{"s3:ObjectCreated:Put"}, Prefix: "images/red +%/", Suffix: ".jpg"}}

@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 422
+// adr: 564
 func TestObjectBucketObjectLockMem(t *testing.T) {
 	m := state.NewMemStore()
 	now := time.Now().UTC()
@@ -273,7 +273,7 @@ func assertObjectLockSQLFences(t *testing.T, pool *pgxpool.Pool, b state.ObjectB
 			t.Fatal("raw SQL bypass", sql)
 		}
 	}
-	body, err := migrations.FS.ReadFile("20261004063034690_object_bucket_object_lock.sql")
+	body, err := migrations.FS.ReadFile("20261004090600544_object_bucket_object_lock.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -562,7 +562,7 @@ func TestObjectLockEmptyRollbackPG(t *testing.T) {
 	if _, err := st.ObserveObjectBucketObjectLock(t.Context(), b.AccountID, b.AppID, b.ID, 0, api.ObjectBucketObjectLockConfiguration{}, true); err != nil {
 		t.Fatal(err)
 	}
-	body, err := migrations.FS.ReadFile("20261004063034690_object_bucket_object_lock.sql")
+	body, err := migrations.FS.ReadFile("20261004090600544_object_bucket_object_lock.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

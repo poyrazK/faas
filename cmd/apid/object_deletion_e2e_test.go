@@ -18,7 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 405
+// adr: 547
 func TestObjectDeletionRecoveryMissingPlacementPG(t *testing.T) {
 	for _, phase := range []string{"prepared", "dispatched"} {
 		t.Run(phase, func(t *testing.T) {
@@ -60,7 +60,7 @@ func TestObjectDeletionRecoveryMissingPlacementPG(t *testing.T) {
 	}
 }
 
-// adr: 405
+// adr: 547
 func TestObjectDeletionControlRecoveryPG(t *testing.T) {
 	var mu sync.Mutex
 	deleted := false

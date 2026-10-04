@@ -353,7 +353,14 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	data, err := readBoundedResponse(resp, maxResponseBodyBytes)
+	limit := maxResponseBodyBytes
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		switch out.(type) {
+		case *RouteCheckHistoryEntry, *AutomaticRouteCheck:
+			limit = RouteCheckHistoryEntryMaxBytes
+		}
+	}
+	data, err := readBoundedResponse(resp, limit)
 	if err != nil {
 		return err
 	}
@@ -898,6 +905,12 @@ func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req Reg
 	return c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID, req, nil)
 }
 
+// InjectScenarioTestChaos installs bounded request faults for one isolated run.
+func (c *Client) InjectScenarioTestChaos(ctx context.Context, runID string, req InjectScenarioTestChaosRequest) (InjectScenarioTestChaosResponse, error) {
+	var out InjectScenarioTestChaosResponse
+	return out, c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID+"/chaos", req, &out)
+}
+
 func (c *Client) DeleteScenarioTest(ctx context.Context, runID string) error {
 	return c.do(ctx, "DELETE", "/v1/dev/test-runs/"+runID, nil, nil)
 }
@@ -1334,7 +1347,7 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 	// sidecar: optional JSON. Empty repo+ref → omit the part entirely
 	// (the server treats missing sidecar as zero provenance).
 	if sidecar.Repo != "" || sidecar.Ref != "" || sidecar.Environment != "" || sidecar.Reason != "" || sidecar.Tag != "" ||
-		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil || sidecar.RollbackOn5xx != nil || sidecar.DisableStartupCPUBoost != nil || sidecar.NoTriggers {
+		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil || sidecar.RollbackOn5xx != nil || sidecar.DisableStartupCPUBoost != nil || sidecar.Healthcheck != nil || sidecar.NoTriggers {
 		sidecarJSON, err := json.Marshal(sidecar)
 		if err != nil {
 			return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)
@@ -2279,6 +2292,13 @@ func (c *Client) RestartAppFresh(ctx context.Context, slug string) (AppRestartRe
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/restart?fresh=true", nil, &out)
 }
 
+// GetRuntimeConfigRestartStatus returns the durable status of an accepted
+// fresh restart, including retry progress and its stable failure category.
+func (c *Client) GetRuntimeConfigRestartStatus(ctx context.Context, slug, wakeID string) (RuntimeConfigRestartStatusResponse, error) {
+	var out RuntimeConfigRestartStatusResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/runtime-config-restarts/"+wakeID, nil, &out)
+}
+
 // PurgeAppCache asks the gateways to evict cached responses for an app. An
 // empty pathGlob purges the complete app cache; otherwise it is sent as the
 // optional path glob accepted by the API.
@@ -2612,6 +2632,14 @@ func (c *Client) DeleteJob(ctx context.Context, name string) (JobDeletedResponse
 func (c *Client) CreateJobRun(ctx context.Context, name string, req CreateJobRunRequest) (JobRunResponse, error) {
 	var out JobRunResponse
 	return out, c.do(ctx, "POST", "/v1/jobs/"+name+"/runs", req, &out)
+}
+
+// SubmitExclusiveJobOperation admits a JobRun to an account-scoped policy.
+// Idempotency-Key makes retries safe when the response is lost.
+func (c *Client) SubmitExclusiveJobOperation(ctx context.Context, name string, request ExclusiveJobOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/jobs/" + url.PathEscape(name) + "/operations"
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
 }
 
 // ListJobRuns returns a page of the job's run history
@@ -3566,6 +3594,83 @@ func (c *Client) ListInvocations(ctx context.Context, before string, limit int) 
 func (c *Client) GetInvocation(ctx context.Context, id string) (Invocation, error) {
 	var out Invocation
 	return out, c.do(ctx, "GET", "/v1/invocations/"+id, nil, &out)
+}
+
+func (c *Client) ListExclusiveWorkPolicies(ctx context.Context) (ExclusiveWorkPolicyList, error) {
+	var out ExclusiveWorkPolicyList
+	return out, c.do(ctx, http.MethodGet, "/v1/account/operation-policies", nil, &out)
+}
+
+func (c *Client) UpsertExclusiveWorkPolicy(ctx context.Context, name string, policy ExclusivePolicyRequest) (ExclusiveWorkPolicyRecord, error) {
+	var out ExclusiveWorkPolicyRecord
+	return out, c.do(ctx, http.MethodPut, "/v1/account/operation-policies/"+url.PathEscape(name), policy, &out)
+}
+
+func (c *Client) RetireExclusiveWorkPolicy(ctx context.Context, name string) (ExclusiveWorkPolicyRecord, error) {
+	var out ExclusiveWorkPolicyRecord
+	err := c.do(ctx, http.MethodDelete, "/v1/account/operation-policies/"+url.PathEscape(name), nil, &out)
+	return out, err
+}
+
+func (c *Client) UpsertExclusiveTriggerBinding(ctx context.Context, source, triggerID string, binding ExclusiveTriggerBindingRequest) (ExclusiveTriggerBindingRecord, error) {
+	var out ExclusiveTriggerBindingRecord
+	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
+	return out, c.do(ctx, http.MethodPut, path, binding, &out)
+}
+
+func (c *Client) GetExclusiveTriggerBinding(ctx context.Context, source, triggerID string) (ExclusiveTriggerBindingRecord, error) {
+	var out ExclusiveTriggerBindingRecord
+	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+func (c *Client) DeleteExclusiveTriggerBinding(ctx context.Context, source, triggerID string) error {
+	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// SubmitExclusiveOperation uses an account-authorized tenant selection when
+// tenantID is set. A downstream tenant credential should use
+// SubmitPlatformTenantExclusiveOperation so identity comes from that token.
+func (c *Client) SubmitExclusiveOperation(ctx context.Context, slug, tenantID string, request ExclusiveOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/apps/" + url.PathEscape(slug) + "/operations"
+	if tenantID != "" {
+		path = "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/apps/" + url.PathEscape(slug) + "/operations"
+	}
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
+}
+
+// SubmitExclusiveAppTaskOperation admits a deployment-attached command to an
+// app's account-scoped exclusive-operation lane.
+func (c *Client) SubmitExclusiveAppTaskOperation(ctx context.Context, slug string, request ExclusiveAppTaskOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/apps/" + url.PathEscape(slug) + "/operations/tasks"
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
+}
+
+func (c *Client) SubmitPlatformTenantExclusiveOperation(ctx context.Context, slug string, request ExclusiveOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/platform-tenant-self/apps/" + url.PathEscape(slug) + "/operations"
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
+}
+
+func (c *Client) GetExclusiveOperation(ctx context.Context, id string) (ExclusiveOperationRecord, error) {
+	var out ExclusiveOperationRecord
+	return out, c.do(ctx, http.MethodGet, "/v1/operations/"+url.PathEscape(id), nil, &out)
+}
+
+func (c *Client) CancelExclusiveOperation(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/v1/operations/"+url.PathEscape(id)+"/cancel", nil, nil)
+}
+
+func (c *Client) GetPlatformTenantExclusiveOperation(ctx context.Context, id string) (ExclusiveOperationRecord, error) {
+	var out ExclusiveOperationRecord
+	return out, c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/operations/"+url.PathEscape(id), nil, &out)
+}
+
+func (c *Client) CancelPlatformTenantExclusiveOperation(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/operations/"+url.PathEscape(id)+"/cancel", nil, nil)
 }
 
 // ReplayInvocation re-issues a failed invocation. The server

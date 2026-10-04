@@ -19,7 +19,10 @@ T = TypeVar("T", bound="FailureRules")
 
 @_attrs_define
 class FailureRules:
-    """Versioned explicit classification policy for failed partition attempts."""
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron outcome
+    codes. HTTP status is not a business outcome matcher.
+
+    """
 
     version: FailureRulesVersion
     rules: list[FailureRule]

@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 408
+// adr: 550
 func TestObjectLifecycleMultipartMem(t *testing.T) {
 	m := state.NewMemStore()
 	var offset time.Duration
@@ -20,7 +20,7 @@ func TestObjectLifecycleMultipartMem(t *testing.T) {
 	objectLifecycleMultipartSuite(t, m, func(string) { offset += 4 * 24 * time.Hour }, func() state.ObjectLifecycleStore { return m })
 }
 
-// adr: 408
+// adr: 550
 func TestObjectLifecycleMultipartPG(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	objectLifecycleMultipartSuite(t, s, func(id string) {
@@ -144,7 +144,7 @@ func objectLifecycleMultipartSuite(t *testing.T, st accountingStore, age func(st
 	assertReserved(0)
 }
 
-// adr: 408
+// adr: 550
 func TestObjectLifecycleMultipartBoundsPG(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	b, first := activeTrackedUpload(t, s, "old")
@@ -212,7 +212,7 @@ func TestObjectLifecycleMultipartBoundsPG(t *testing.T) {
 	}
 }
 
-// adr: 408
+// adr: 550
 func TestObjectLifecycleMultipartPhaseTransition(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pg=%t", pg), func(t *testing.T) {

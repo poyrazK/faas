@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 410
+// adr: 552
 func TestObjectNotificationControlOwnershipAndValidation(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
