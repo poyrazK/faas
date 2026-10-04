@@ -7292,6 +7292,7 @@ $$;
 
 CREATE FUNCTION public.service_capacity_snapshot() RETURNS jsonb
     LANGUAGE sql
+    SET jit TO 'off'
     AS $$
 WITH policy AS (SELECT * FROM service_capacity_policy WHERE singleton),
 eligible AS (
