@@ -492,6 +492,16 @@ so they do not reserve pool connections while waiting. This is the
 serialization boundary for aggregate validation, not an
 account-wide byte quota. The ordinary owned host check uses this boundary.
 
+Environment clones retain the repeatable-read policy snapshot and source/app
+lock order. A source writer that commits after that snapshot can produce a
+PostgreSQL serialization failure. The clone rolls back the complete attempt,
+releases its session locks and pool connection, then retries a fresh guarded
+transaction at the existing mutation retry cadence within the caller context.
+Only SQLSTATE 40001 retries; quota, projection, ownership and other write
+refusals remain terminal. An expired retry leaves no target catalog, copied
+values/references or runtime stamp; successful recovery still checks every
+projection before committing.
+
 Owned host aggregates are validated in the same account-locked transaction as
 the mutation. The store compares skinny before/after projections of enabled
 rule groups and referenced presets, without transferring their action bodies.

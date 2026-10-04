@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import pathlib
+import re
 import tempfile
 import unittest
 
@@ -12,6 +13,16 @@ spec.loader.exec_module(checks)
 
 
 class TrafficEvidenceTest(unittest.TestCase):
+    def test_committed_selector_runs_all_required_postgres_tests(self):
+        scope = json.loads(pathlib.Path(__file__).with_name("traffic-platform-scope.json").read_text())
+        module = pathlib.Path(__file__).resolve().parents[2].joinpath("go.mod").read_text().splitlines()[0].split()[1]
+        packages = {module + package[1:] for package in scope["packages"]}
+        selector = re.compile(scope["postgres_selector"])
+        for fixture in scope["required_postgres_tests"]:
+            with self.subTest(fixture=fixture):
+                self.assertIn(fixture["package"], packages)
+                self.assertRegex(fixture["test"], selector)
+
     def judge(self, events, required=(("gateway", "TestPG"),)):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "tests.jsonl"

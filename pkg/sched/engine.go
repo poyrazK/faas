@@ -1772,7 +1772,7 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 			}
 		} else {
 			e.log.Warn("sched: wake: live deployment lookup for port/deployment_id failed; falling through with caller hint (or empty)",
-				"app", logsanitize.Field(appID), "caller_deployment_id", deploymentID, "scope", scope, "err", depErr)
+				"app", logsanitize.Field(appID), "caller_deployment_id", deploymentID, "scope", logsanitize.Field(scope), "err", depErr)
 		}
 		release()
 		// Surface the existing row's wake_id so a Phase-1 fast-path
@@ -3864,9 +3864,9 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// treatment from snapshotAndPark).
 	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		if err := e.store.MarkSnapshotStale(ctx, bootInput.snapID); err != nil {
-			e.log.Warn("wake: mark snapshot stale", "snapshot", bootInput.snapID, "wake_id", bootInput.wakeID, "err", err)
+			e.log.Warn("wake: mark snapshot stale", "snapshot", bootInput.snapID, "wake_id", logsanitize.Field(bootInput.wakeID), "err", err)
 		}
-		e.log.Info("wake: restore fell back to cold boot", "app", logsanitize.Field(bootInput.appID), "instance", bootInput.insID, "wake_id", bootInput.wakeID)
+		e.log.Info("wake: restore fell back to cold boot", "app", logsanitize.Field(bootInput.appID), "instance", bootInput.insID, "wake_id", logsanitize.Field(bootInput.wakeID))
 	}
 
 	// ── Phase 4: re-acquire the lock for the post-vmmd commit ────
@@ -3897,7 +3897,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			actual = current.State
 		}
 		e.log.Warn("wake: state stolen during boot, aborting",
-			"app", logsanitize.Field(bootInput.appID), "instance", bootInput.insID, "wake_id", bootInput.wakeID,
+			"app", logsanitize.Field(bootInput.appID), "instance", bootInput.insID, "wake_id", logsanitize.Field(bootInput.wakeID),
 			"expected", bootInput.initState, "got", actual)
 		return WakeResult{}, fmt.Errorf("sched: wake: state stolen by another transition: was %s, now %s", bootInput.initState, actual)
 	}
@@ -4305,7 +4305,7 @@ func (e *Engine) cleanupFailedMirrorAdmission(ctx context.Context, input bootInp
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*DestroyTimeout)
 	if err := e.timedDestroy(cleanupCtx, input.nodeID, input.insID, DestroyTimeout); err != nil {
 		e.log.Error("mirror: destroy instance after failed admission", "app_id", logsanitize.Field(input.appID),
-			"instance_id", input.insID, "wake_id", input.wakeID, "err", err)
+			"instance_id", input.insID, "wake_id", logsanitize.Field(input.wakeID), "err", err)
 	}
 	return cleanupCtx, cancel
 }
@@ -7987,7 +7987,7 @@ func (e *Engine) recordAppSecretDelivery(ctx context.Context, boot bootInput, st
 		Status: status, ErrorCode: errorCode, AttemptedAt: attemptedAt, Candidates: boot.secretDeliveries,
 	})
 	if err != nil {
-		e.log.Warn("sched: record app secret delivery", "app", logsanitize.Field(boot.appID), "wake_id", boot.wakeID, "status", status, "err", err)
+		e.log.Warn("sched: record app secret delivery", "app", logsanitize.Field(boot.appID), "wake_id", logsanitize.Field(boot.wakeID), "status", status, "err", err)
 		return
 	}
 	refs := make([]string, 0, len(boot.secretDeliveries))
@@ -9297,7 +9297,7 @@ func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID stri
 	}
 	payload, _ := json.Marshal(payloadFields)
 	if err := e.notif.Notify(ctx, db.NotifyInstanceChanged, string(payload)); err != nil {
-		e.log.Warn("emit instance_changed", "instance", instanceID, "wake_id", wakeID, "err", err)
+		e.log.Warn("emit instance_changed", "instance", instanceID, "wake_id", logsanitize.Field(wakeID), "err", err)
 	}
 }
 

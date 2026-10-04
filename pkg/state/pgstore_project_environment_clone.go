@@ -4,13 +4,42 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvironmentClone, limits api.Limits) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
+	for {
+		created, result, err := s.tryCloneProjectEnvironment(ctx, clone, limits)
+		if err == nil {
+			return created, result, nil
+		}
+		if ctx.Err() != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ctx.Err()
+		}
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.SerializationFailure {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		// A source/runtime writer can commit after the policy snapshot starts.
+		// The failed attempt has rolled back and released its session and pool
+		// connection. Retry the complete clone with a fresh guarded snapshot.
+		timer := time.NewTimer(api.TrafficPolicyMutationLockRetry)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (s *PgStore) tryCloneProjectEnvironment(ctx context.Context, clone ProjectEnvironmentClone, limits api.Limits) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
 	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(clone.AccountID))
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, fmt.Errorf("state: begin project environment clone: %w", err)
