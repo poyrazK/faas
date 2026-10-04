@@ -216,6 +216,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_DUNNING_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_E2E_API_HOSTING_SMOKE", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_E2E_BIN_DIR", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "test-harness only; directory of pre-built daemon binaries shared across native e2e phases so each phase does not re-link them (the Go build cache does not cover the final link); must never be set on a production host"},
+	{Name: "FAAS_E2E_SERVICE_TCP", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "test-harness only; adds the gatewayd-internal private service TCP listener and service-address DNS (ADR-530) to the metal bridge config; must never be set on a production host"},
 	{Name: "FAAS_E2E_VMMD_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host"},
 	{Name: "FAAS_EGRESS_ALLOW_LOOPBACK", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_EGRESS_CIRCUIT_BREAKER", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "ADR-201 §3; off by default — an open circuit rejects a tenant's connections to their own upstream"},
