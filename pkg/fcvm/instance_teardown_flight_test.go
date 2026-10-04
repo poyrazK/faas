@@ -1,4 +1,4 @@
-// adr: 532 — a duplicate stop must not acknowledge unfinished physical cleanup.
+// adr: 567 — a duplicate stop must not acknowledge unfinished physical cleanup.
 package fcvm
 
 import (

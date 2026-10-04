@@ -1,4 +1,4 @@
--- ADR-532: retained queue retirement changes the reviewed binding inventory.
+-- ADR-567: retained queue retirement changes the reviewed binding inventory.
 -- +goose Up
 -- +goose StatementBegin
 DROP TRIGGER IF EXISTS binding_promotion_revision ON queue_bindings;

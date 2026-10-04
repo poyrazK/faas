@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 532 — descriptor handoff and cleanup cannot borrow another VM incarnation.
+// adr: 567 — descriptor handoff and cleanup cannot borrow another VM incarnation.
 package fcvm
 
 import (

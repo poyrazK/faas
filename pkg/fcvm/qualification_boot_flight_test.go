@@ -1,4 +1,4 @@
-// adr: 532 — qualification retirement must join an unfinished boot or restore.
+// adr: 567 — qualification retirement must join an unfinished boot or restore.
 package fcvm
 
 import (

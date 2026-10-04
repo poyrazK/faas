@@ -1,6 +1,6 @@
 //go:build linux
 
-// adr: 532 — private drives have no unowned named materialisation window.
+// adr: 567 — private drives have no unowned named materialisation window.
 package fcvm
 
 import (

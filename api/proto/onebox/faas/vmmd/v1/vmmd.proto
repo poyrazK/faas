@@ -26,7 +26,7 @@ service Vmmd {
   // first-boot path (M2). Equivalent to Wake with Snapshot == nil.
   rpc CreateColdBoot(CreateColdBootRequest) returns (WakeResponse);
 
-  // ADR-532: these methods carry one immutable private qualification attempt.
+  // ADR-567: these methods carry one immutable private qualification attempt.
   // Generic boot/destroy never substitutes for either operation. Host journal
   // ownership must be configured before creation or retirement is available.
   rpc CreateEnvironmentQualification(CreateEnvironmentQualificationRequest) returns (CreateEnvironmentQualificationResponse);

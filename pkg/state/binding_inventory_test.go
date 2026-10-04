@@ -1,4 +1,4 @@
-// adr: 532 — inventory retains missing-consumer evidence until the queue owner repairs it.
+// adr: 567 — inventory retains missing-consumer evidence until the queue owner repairs it.
 package state_test
 
 import (

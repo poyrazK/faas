@@ -87,7 +87,7 @@ type VmmdClient interface {
 	// CreateColdBoot primes an instance with no snapshot — the deploy-pipeline
 	// first-boot path (M2). Equivalent to Wake with Snapshot == nil.
 	CreateColdBoot(ctx context.Context, in *CreateColdBootRequest, opts ...grpc.CallOption) (*WakeResponse, error)
-	// ADR-532: these methods carry one immutable private qualification attempt.
+	// ADR-567: these methods carry one immutable private qualification attempt.
 	// Generic boot/destroy never substitutes for either operation. Host journal
 	// ownership must be configured before creation or retirement is available.
 	CreateEnvironmentQualification(ctx context.Context, in *CreateEnvironmentQualificationRequest, opts ...grpc.CallOption) (*CreateEnvironmentQualificationResponse, error)
@@ -1053,7 +1053,7 @@ type VmmdServer interface {
 	// CreateColdBoot primes an instance with no snapshot — the deploy-pipeline
 	// first-boot path (M2). Equivalent to Wake with Snapshot == nil.
 	CreateColdBoot(context.Context, *CreateColdBootRequest) (*WakeResponse, error)
-	// ADR-532: these methods carry one immutable private qualification attempt.
+	// ADR-567: these methods carry one immutable private qualification attempt.
 	// Generic boot/destroy never substitutes for either operation. Host journal
 	// ownership must be configured before creation or retirement is available.
 	CreateEnvironmentQualification(context.Context, *CreateEnvironmentQualificationRequest) (*CreateEnvironmentQualificationResponse, error)

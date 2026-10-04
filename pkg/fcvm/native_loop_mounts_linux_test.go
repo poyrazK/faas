@@ -1,6 +1,6 @@
 //go:build linux
 
-// adr: 532 — mount proofs must exclude replaced, unsafe and nested resources.
+// adr: 567 — mount proofs must exclude replaced, unsafe and nested resources.
 package fcvm
 
 import (

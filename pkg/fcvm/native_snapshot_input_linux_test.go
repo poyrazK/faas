@@ -1,6 +1,6 @@
 //go:build linux
 
-// adr: 532 — pinned input capability rejects substituted kernel placement.
+// adr: 567 — pinned input capability rejects substituted kernel placement.
 package fcvm
 
 import (

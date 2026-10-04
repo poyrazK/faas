@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-// adr: 532 — incoming authority must bind the original physical producer.
+// adr: 567 — incoming authority must bind the original physical producer.
 package fcvm
 
 import (

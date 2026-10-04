@@ -1,4 +1,4 @@
-// adr: 532 — accepted catalog names work through intent, queue and runtime receipts.
+// adr: 567 — accepted catalog names work through intent, queue and runtime receipts.
 package pgintegration_test
 
 import (

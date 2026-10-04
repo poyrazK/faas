@@ -1,4 +1,4 @@
-// adr: 532 — recover ownership before vmmd exposes admission.
+// adr: 567 — recover ownership before vmmd exposes admission.
 package main
 
 import (

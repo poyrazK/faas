@@ -23,7 +23,9 @@ class JobArtifactDownloadResponse:
     sha256: str
     verified_at: datetime.datetime
     download: ObjectSignedRequest
-    """Temporary bearer capability for a direct provider request. Do not log or persist it."""
+    """Temporary bearer capability. Bucket object GET/HEAD/PUT URLs use the branded S3 gateway; a PUT URL
+    dispatches at most one write. Multipart part URLs retain their separate contract. Do not log or persist URLs.
+   """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

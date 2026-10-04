@@ -1,4 +1,4 @@
-// adr: 532 — queue owner mutations invalidate promotion evidence without changing traffic.
+// adr: 567 — queue owner mutations invalidate promotion evidence without changing traffic.
 package state_test
 
 import (

@@ -1,4 +1,4 @@
-// adr: 532 — continuous reports retain intent and effects through outage and restart.
+// adr: 567 — continuous reports retain intent and effects through outage and restart.
 package main
 
 import (

@@ -7,6 +7,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
+| [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
 | [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
@@ -43,7 +44,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`preview`](#preview) | Manage preview environments for pull requests |
 | [`flags`](#flags) | Release application behavior to selected customers |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
-| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|rm --app &lt;slug&gt;) |
+| [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update --app &lt;slug&gt;; edge-rules rm &lt;id&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`routes`](#routes) | Analyze source changes and plan or apply route policies |
 | [`env`](#env) | Clone project environments or manage app runtime env/secrets |
@@ -369,6 +370,284 @@ Provision or attach object storage and inject sealed S3 settings
 | `--label <LABEL>` | bucket-scoped compute credential label |  |
 | `--prefix <PREFIX>` | injected storage secret prefix |  |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
+
+
+## bucket
+
+Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity
+
+`gregale bucket [<subcommand>]`
+
+### bucket copy-sources
+
+Manage copy-only owned source grants
+
+#### bucket copy-sources list
+
+List source grants for a destination credential
+
+`gregale bucket copy-sources list <app> <bucket-id> <credential-id>`
+
+#### bucket copy-sources grant
+
+Allow copying an owned source bucket or prefix
+
+`gregale bucket copy-sources grant <app> <bucket-id> <credential-id> <source-bucket-id> [prefix]`
+
+#### bucket copy-sources revoke
+
+Prevent new copy dispatch from a source
+
+`gregale bucket copy-sources revoke <app> <bucket-id> <credential-id> <source-bucket-id>`
+
+### bucket encryption-keys
+
+List owned encryption capabilities and key references
+
+`gregale bucket encryption-keys <app> <bucket-id>`
+
+### bucket encryption
+
+Inspect or configure verified bucket encryption defaults
+
+#### bucket encryption status
+
+Show durable encryption progress
+
+`gregale bucket encryption status <app> <bucket-id>`
+
+#### bucket encryption clear
+
+Remove the default for new writes
+
+`gregale bucket encryption clear <app> <bucket-id>`
+
+#### bucket encryption AES256
+
+Set provider AES256 encryption
+
+`gregale bucket encryption AES256 <app> <bucket-id>`
+
+#### bucket encryption aws:kms
+
+Set owned KMS encryption
+
+`gregale bucket encryption aws:kms <app> <bucket-id> <owned-key-ref> [bucket-key-enabled]`
+
+#### bucket encryption aws:kms:dsse
+
+Set owned dual-layer KMS encryption
+
+`gregale bucket encryption aws:kms:dsse <app> <bucket-id> <owned-key-ref>`
+
+### bucket object-lock
+
+Inspect permanent Object Lock and configure retention defaults
+
+#### bucket object-lock status
+
+Show durable Object Lock progress
+
+`gregale bucket object-lock status <app> <bucket-id>`
+
+#### bucket object-lock capabilities
+
+Show enrolled bucket lock capabilities
+
+`gregale bucket object-lock capabilities <app> <bucket-id>`
+
+#### bucket object-lock enable
+
+Permanently enable Object Lock without defaults
+
+`gregale bucket object-lock enable <app> <bucket-id>`
+
+#### bucket object-lock clear-default
+
+Clear future defaults while keeping Object Lock enabled
+
+`gregale bucket object-lock clear-default <app> <bucket-id>`
+
+#### bucket object-lock GOVERNANCE
+
+Set governance defaults
+
+`gregale bucket object-lock GOVERNANCE [--days <N>] [--years <N>] [--event-days <N>] [--event-years <N>] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--days <N>` | fixed retention in days |  |
+| `--years <N>` | fixed retention in years |  |
+| `--event-days <N>` | event hold duration in days |  |
+| `--event-years <N>` | event hold duration in years |  |
+
+#### bucket object-lock COMPLIANCE
+
+Set compliance defaults
+
+`gregale bucket object-lock COMPLIANCE [--days <N>] [--years <N>] [--event-days <N>] [--event-years <N>] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--days <N>` | fixed retention in days |  |
+| `--years <N>` | fixed retention in years |  |
+| `--event-days <N>` | event hold duration in days |  |
+| `--event-years <N>` | event hold duration in years |  |
+
+### bucket reconcile
+
+Start, inspect or cancel a fenced capacity inventory
+
+#### bucket reconcile start
+
+Pause writes and request capacity reconciliation
+
+`gregale bucket reconcile start <app> <bucket-id>`
+
+#### bucket reconcile status
+
+Show reconciliation progress and reclaimed capacity
+
+`gregale bucket reconcile status <app> <bucket-id> <job-id>`
+
+#### bucket reconcile cancel
+
+Cancel reconciliation and resume writes
+
+`gregale bucket reconcile cancel <app> <bucket-id> <job-id>`
+
+### bucket writes
+
+Inspect tracked writes and await recovery
+
+#### bucket writes list
+
+List pending writes or recent completed and failed receipts
+
+`gregale bucket writes list [--status <STATUS>] [--limit <N>] [--cursor <TOKEN>] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--status <STATUS>` | pending (default), completed, failed or all |  |
+| `--limit <N>` | page size (default 50, maximum 100) |  |
+| `--cursor <TOKEN>` | next page cursor |  |
+
+#### bucket writes status
+
+Read a tracked write receipt
+
+`gregale bucket writes status <app> <bucket-id> <receipt-id>`
+
+#### bucket writes wait
+
+Poll until completed or failed; pending timeout retains the receipt
+
+`gregale bucket writes wait [--timeout <DURATION>] [--poll-interval <DURATION>] <app> <bucket-id> <receipt-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <DURATION>` | maximum wait (default 5m) |  |
+| `--poll-interval <DURATION>` | time between reads (default 5s, minimum 1s) |  |
+
+### bucket tags
+
+Read, replace or clear tags on current or selected data
+
+#### bucket tags get
+
+Read object tags
+
+`gregale bucket tags get <app> <bucket-id> <key> [version-id|null]`
+
+#### bucket tags set
+
+Replace the complete tag set
+
+`gregale bucket tags set <app> <bucket-id> <key> <URL-encoded-tags> [version-id|null]`
+
+#### bucket tags clear
+
+Remove all object tags
+
+`gregale bucket tags clear <app> <bucket-id> <key> [version-id|null]`
+
+### bucket deletions
+
+Create or inspect durable object deletions
+
+#### bucket deletions start
+
+Delete current data or an owned version with a retry identity
+
+`gregale bucket deletions start <app> <bucket-id> <key> <request-id> [version-id|null]`
+
+#### bucket deletions status
+
+Show a persisted deletion receipt
+
+`gregale bucket deletions status <app> <bucket-id> <request-id>`
+
+### bucket version-delete
+
+Permanently delete an owned immutable version or marker
+
+`gregale bucket version-delete <app> <bucket-id> <key> <version-id>`
+
+### bucket lifecycle
+
+Manage lifecycle rules and discovery progress
+
+#### bucket lifecycle get
+
+Read the complete lifecycle policy
+
+`gregale bucket lifecycle get <app> <bucket-id>`
+
+#### bucket lifecycle set
+
+Replace rules from a JSON file or stdin
+
+`gregale bucket lifecycle set <app> <bucket-id> <JSON-file|->`
+
+#### bucket lifecycle clear
+
+Remove rules; admitted cleanup continues
+
+`gregale bucket lifecycle clear <app> <bucket-id>`
+
+#### bucket lifecycle scan
+
+Start or resume due discovery
+
+`gregale bucket lifecycle scan <app> <bucket-id>`
+
+#### bucket lifecycle status
+
+Read discovery progress
+
+`gregale bucket lifecycle status <app> <bucket-id> <scan-id>`
+
+### bucket versioning
+
+Inspect or configure bucket versioning
+
+#### bucket versioning status
+
+Show durable versioning progress
+
+`gregale bucket versioning status <app> <bucket-id>`
+
+#### bucket versioning enable
+
+Enable retained versions
+
+`gregale bucket versioning enable <app> <bucket-id>`
+
+#### bucket versioning suspend
+
+Suspend versioning while retaining older versions
+
+`gregale bucket versioning suspend <app> <bucket-id>`
 
 
 ## bindings
@@ -2862,7 +3141,7 @@ Restore linked credentials and hostnames
 
 ## edge-rules
 
-Per-app edge rules (edge-rules list|trace|create|get|update|rm --app &lt;slug&gt;)
+Per-app edge rules (edge-rules list|trace|create|get|update --app &lt;slug&gt;; edge-rules rm &lt;id&gt;)
 
 `gregale edge-rules [<subcommand>] --app <slug> [--kind <value>]`
 

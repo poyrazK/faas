@@ -712,6 +712,9 @@ jobs:
             package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
             coverage_file: cover-shard2a.out
             gitops_acceptance: true
+            state_coverage: true
+            test_timeout: 30m
+            job_timeout_minutes: 40
           - id: b
             label: gregale/gregalectl/daemons
             # Packages with pgtest-backed tests must run in a Postgres shard:
@@ -720,11 +723,15 @@ jobs:
             package_pattern: '/(cmd/gregale|cmd/gregalectl|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall)(/|$)'
             coverage_file: cover-shard2b.out
             gitops_acceptance: false
-    # PostgreSQL fixtures use a migrated template and clone clean databases.
-    # Each test binary retains its strict 20-minute budget.
+            state_coverage: false
+            test_timeout: 20m
+            job_timeout_minutes: 30
+    # Keep main's bounded PostgreSQL budgets: 30 minutes for parity and
+    # reconciliation, 20 minutes for CLI/daemons. The full state suite runs
+    # in its two deterministic shards above.
     # Allow headroom for race compilation, coverage, PostgreSQL contract gates,
     # and artifact upload after the main suite completes.
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.job_timeout_minutes }}
     permissions:
       contents: read
       id-token: write
@@ -793,7 +800,7 @@ jobs:
           test -n "$PKGS"
           printf '%s\n' "$PKGS"
           COVERARGS=()
-          if [ '${{ matrix.id }}' = 'a' ]; then
+          if [ '${{ matrix.state_coverage }}' = 'true' ]; then
             # External GitOps parity tests exercise the actual state adapters.
             # Union those calls with both complete state test shards below.
             # Generated sqlc remains outside the exact-package 70% gate.
@@ -801,10 +808,10 @@ jobs:
             COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | grep -v '/pkg/state/sqlc$' | sort -u | paste -sd, -)
             COVERARGS=(-coverpkg="$COVERPKGS")
           fi
-          go test -race -count=1 -p 4 -timeout=20m "${COVERARGS[@]}" -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
+          go test -race -count=1 -p 4 -timeout='${{ matrix.test_timeout }}' "${COVERARGS[@]}" -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
 
       - name: upload external state-adapter coverage
-        if: matrix.id == 'a'
+        if: matrix.state_coverage
         uses: actions/upload-artifact@v4
         with:
           name: coverage-state-parity

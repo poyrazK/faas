@@ -1,6 +1,6 @@
 //go:build linux
 
-// adr: 532 — memory/device outputs bind anonymous disk inodes before capture.
+// adr: 567 — memory/device outputs bind anonymous disk inodes before capture.
 package fcvm
 
 import (

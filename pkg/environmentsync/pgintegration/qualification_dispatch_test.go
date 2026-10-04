@@ -1,4 +1,4 @@
-// adr: 532 — durable discovery is advisory, never a lease or VM receipt.
+// adr: 567 — durable discovery is advisory, never a lease or VM receipt.
 package pgintegration_test
 
 import (

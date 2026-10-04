@@ -152,13 +152,15 @@ func NewGCS(c BackendConfig, _ func(string) string) (Provider, error) {
 
 func newGCSHTTPClient(tokenSource oauth2.TokenSource) *http.Client {
 	oauthClient := oauth2.NewClient(context.Background(), tokenSource)
-	oauthClient.Timeout = gcsRequestTimeout
 	oauthClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	oauthClient.Transport = dependencytrace.NewDependencyTransport(oauthClient.Transport,
 		attribute.String("gregale.dependency.type", "managed_binding"),
 		attribute.String("gregale.binding.type", "object_storage"),
 		attribute.String("gregale.binding.provider", "gcs"),
 	)
+	bounded := *oauthClient
+	bounded.Timeout = gcsRequestTimeout
+	oauthClient.Transport = &gcsRequestTransport{client: &bounded}
 	return oauthClient
 }
 
@@ -192,7 +194,12 @@ func (s *googleGCSStore) DeleteBucket(ctx context.Context, bucket string) error 
 }
 
 func (s *googleGCSStore) ListObjects(ctx context.Context, bucket, prefix, delimiter, cursor string, limit int32) ([]gcsObjectState, []string, string, error) {
-	iter := s.client.Bucket(bucket).Objects(ctx, &storage.Query{Prefix: prefix, Delimiter: delimiter, Projection: storage.ProjectionNoACL})
+	return s.ListObjectsStartingAfter(ctx, bucket, ObjectListRequest{Prefix: prefix, Delimiter: delimiter, Cursor: cursor, Limit: limit})
+}
+
+func (s *googleGCSStore) ListObjectsStartingAfter(ctx context.Context, bucket string, request ObjectListRequest) ([]gcsObjectState, []string, string, error) {
+	prefix, delimiter, cursor, limit := request.Prefix, request.Delimiter, request.Cursor, request.Limit
+	iter := s.client.Bucket(bucket).Objects(ctx, &storage.Query{Prefix: prefix, Delimiter: delimiter, StartOffset: request.StartAfter, Projection: storage.ProjectionNoACL})
 	pager := iterator.NewPager(iter, int(limit), cursor)
 	var attrs []*storage.ObjectAttrs
 	next, err := pager.NextPage(&attrs)
@@ -202,6 +209,9 @@ func (s *googleGCSStore) ListObjects(ctx context.Context, bucket, prefix, delimi
 	objects := make([]gcsObjectState, 0, len(attrs))
 	prefixes := make([]string, 0)
 	for _, attr := range attrs {
+		if request.StartAfter != "" && (attr.Prefix == "" && attr.Name <= request.StartAfter || attr.Prefix != "" && attr.Prefix <= request.StartAfter) {
+			continue
+		}
 		if attr.Prefix != "" {
 			prefixes = append(prefixes, attr.Prefix)
 			continue
@@ -216,7 +226,7 @@ func (s *googleGCSStore) DeleteObject(ctx context.Context, bucket, key string) e
 }
 
 func (s *googleGCSStore) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
-	return s.client.Bucket(bucket).Object(key).NewReader(ctx)
+	return s.client.Bucket(bucket).Object(key).NewReader(context.WithValue(ctx, gcsObjectStreamContextKey{}, true))
 }
 
 func (s *googleGCSStore) WriteObject(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata) (UploadResult, error) {
@@ -224,7 +234,7 @@ func (s *googleGCSStore) WriteObject(ctx context.Context, bucket, key string, bo
 	if err != nil {
 		return UploadResult{}, err
 	}
-	w := s.client.Bucket(bucket).Object(key).NewWriter(ctx)
+	w := s.client.Bucket(bucket).Object(key).NewWriter(context.WithValue(ctx, gcsObjectStreamContextKey{}, true))
 	w.ContentType = metadata.ContentType
 	w.CacheControl = metadata.CacheControl
 	w.ContentDisposition = metadata.ContentDisposition
@@ -252,7 +262,8 @@ func (s *googleGCSStore) WriteObject(ctx context.Context, bucket, key string, bo
 }
 
 func (s *googleGCSStore) ObjectState(ctx context.Context, bucket, key string) (gcsObjectState, error) {
-	attr, err := s.client.Bucket(bucket).Object(key).Attrs(ctx)
+	// Proof and admission callers meter each attempt; defer retries to them.
+	attr, err := s.client.Bucket(bucket).Object(key).Retryer(storage.WithPolicy(storage.RetryNever)).Attrs(ctx)
 	if err != nil {
 		return gcsObjectState{}, err
 	}
@@ -357,7 +368,30 @@ func (p *GCS) ListObjectsDelimited(ctx context.Context, bucket, prefix, delimite
 	if limit < 1 || limit > 1000 {
 		return ObjectPage{}, ErrInvalid
 	}
-	objects, prefixes, next, err := p.store.ListObjects(ctx, bucket, prefix, delimiter, cursor, limit)
+	return p.ListObjectsV2(ctx, bucket, ObjectListRequest{Prefix: prefix, Delimiter: delimiter, Cursor: cursor, Limit: limit})
+}
+
+type gcsStartAfterLister interface {
+	ListObjectsStartingAfter(context.Context, string, ObjectListRequest) ([]gcsObjectState, []string, string, error)
+}
+
+func (p *GCS) ListObjectsV2(ctx context.Context, bucket string, request ObjectListRequest) (ObjectPage, error) {
+	var objects []gcsObjectState
+	var prefixes []string
+	var next string
+	var err error
+	if request.Limit < 1 || request.Limit > 1000 {
+		return ObjectPage{}, ErrInvalid
+	}
+	if request.StartAfter != "" {
+		lister, ok := p.store.(gcsStartAfterLister)
+		if !ok {
+			return ObjectPage{}, ErrUnsupported
+		}
+		objects, prefixes, next, err = lister.ListObjectsStartingAfter(ctx, bucket, request)
+	} else {
+		objects, prefixes, next, err = p.store.ListObjects(ctx, bucket, request.Prefix, request.Delimiter, request.Cursor, request.Limit)
+	}
 	if err != nil {
 		return ObjectPage{}, normalizeGCS(err)
 	}
@@ -366,7 +400,7 @@ func (p *GCS) ListObjectsDelimited(ctx context.Context, bucket, prefix, delimite
 		if !ValidKey(object.Key) || object.Size < 0 {
 			return ObjectPage{}, ErrUnavailable
 		}
-		page.Items = append(page.Items, Object{Key: object.Key, Size: object.Size, LastModified: object.LastModified})
+		page.Items = append(page.Items, Object{Key: object.Key, ETag: object.ETag, Size: object.Size, LastModified: object.LastModified})
 	}
 	return page, nil
 }
@@ -436,6 +470,9 @@ func (p *GCS) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest
 }
 
 func (p *GCS) CopyObjectBetweenBuckets(ctx context.Context, sourceBucket, destinationBucket string, r CopyObjectRequest) (CopyObjectResult, error) {
+	if r.SourceProviderVersionID != "" {
+		return CopyObjectResult{}, ErrUnsupported
+	}
 	if sourceBucket == "" || destinationBucket == "" {
 		return CopyObjectResult{}, ErrInvalid
 	}
@@ -571,6 +608,9 @@ func cloneMetadata(metadata map[string]string) map[string]string {
 }
 
 func (p *GCS) Presign(ctx context.Context, bucket string, r SignRequest) (SignedRequest, error) {
+	if r.Encryption != nil {
+		return SignedRequest{}, ErrUnsupported
+	}
 	if err := r.Validate(api.MaxObjectSinglePutBytes); err != nil {
 		return SignedRequest{}, err
 	}
@@ -764,12 +804,12 @@ func (p *GCS) EnsureMultipartUpload(ctx context.Context, bucket string, r Multip
 }
 
 func (p *GCS) PresignMultipartPart(ctx context.Context, bucket string, r MultipartPartRequest) (SignedRequest, error) {
-	if !ValidKey(r.Key) || r.ProviderUploadID == "" || r.PartNumber < 1 || r.PartNumber > 10000 || r.SizeBytes < 1 || r.SizeBytes > api.MaxObjectSinglePutBytes || r.ExpiresIn < 0 || r.ExpiresIn > 900 {
+	if !ValidKey(r.Key) || r.ProviderUploadID == "" || r.PartNumber < 1 || r.PartNumber > api.MaxMultipartParts || r.SizeBytes < 1 || r.SizeBytes > api.MaxObjectSinglePutBytes || r.ExpiresIn < 0 || r.ExpiresIn > api.ObjectMultipartPartURLMaxTTLSeconds {
 		return SignedRequest{}, ErrInvalid
 	}
 	ttl := time.Duration(r.ExpiresIn) * time.Second
 	if ttl == 0 {
-		ttl = 5 * time.Minute
+		ttl = time.Duration(api.ObjectMultipartPartURLDefaultTTLSeconds) * time.Second
 	}
 	expiresAt := p.now().Add(ttl)
 	length := strconv.FormatInt(r.SizeBytes, 10)
@@ -813,37 +853,67 @@ func (p *GCS) ListMultipartParts(ctx context.Context, bucket string, r Multipart
 }
 
 func (p *GCS) CompleteMultipartUpload(ctx context.Context, bucket string, r MultipartCompleteRequest) error {
-	if r.SessionID == "" || !ValidKey(r.Key) || r.ProviderUploadID == "" || r.SizeBytes <= 0 || len(r.Parts) < 1 || len(r.Parts) > 10000 {
-		return ErrInvalid
+	_, err := p.CompleteMultipartWithResult(ctx, bucket, r, ObjectWriteConditions{})
+	return err
+}
+
+var _ MultipartResultCompleter = (*GCS)(nil)
+
+func (p *GCS) CompleteMultipartWithResult(ctx context.Context, bucket string, r MultipartCompleteRequest, c ObjectWriteConditions) (MultipartCompletionResult, error) {
+	result := MultipartCompletionResult{}
+	if !c.Valid() {
+		return result, ErrInvalid
+	}
+	if !c.Empty() {
+		return result, ErrUnsupported
+	}
+
+	if r.SessionID == "" || !ValidKey(r.Key) || r.ProviderUploadID == "" || r.SizeBytes <= 0 || r.SizeBytes > api.MaxObjectUploadBytes || r.RecoveryCursor != "" || len(r.Parts) < 1 || len(r.Parts) > api.MaxMultipartParts {
+		return result, ErrInvalid
 	}
 	body := gcsCompleteMultipartUpload{Parts: make([]gcsCompletedPart, 0, len(r.Parts))}
 	var previousPart int32
 	for _, part := range r.Parts {
-		if part.PartNumber < 1 || part.PartNumber > 10000 || part.PartNumber <= previousPart || part.ETag == "" || len(part.ETag) > 256 {
-			return ErrInvalid
+		if part.PartNumber < 1 || part.PartNumber > api.MaxMultipartParts || part.PartNumber <= previousPart || !validUploadETag(part.ETag) {
+			return result, ErrInvalid
 		}
 		previousPart = part.PartNumber
 		body.Parts = append(body.Parts, gcsCompletedPart(part))
 	}
 	payload, err := xml.Marshal(body)
 	if err != nil {
-		return ErrUnavailable
+		return result, ErrUnavailable
 	}
-	err = p.xmlRequest(ctx, http.MethodPost, bucket, r.Key, url.Values{"uploadId": {r.ProviderUploadID}}, http.Header{"Content-Type": {"application/xml"}}, payload, nil)
+	if err = multipartBeforeRequest(ctx, r); err != nil {
+		return result, err
+	}
+	var out struct {
+		XMLName xml.Name `xml:"CompleteMultipartUploadResult"`
+		ETag    string   `xml:"ETag"`
+	}
+	err = p.xmlRequest(ctx, http.MethodPost, bucket, r.Key, url.Values{"uploadId": {r.ProviderUploadID}}, http.Header{"Content-Type": {"application/xml"}}, payload, &out)
 	if err == nil {
-		return nil
+		if !validUploadETag(out.ETag) {
+			return result, ErrUnavailable
+		}
+		result.ETag = out.ETag
+		return result, nil
 	}
 	if !errors.Is(normalizeGCS(err), ErrNotFound) {
-		return normalizeGCS(err)
+		return result, normalizeGCS(err)
+	}
+	if err = multipartBeforeRequest(ctx, r); err != nil {
+		return result, err
 	}
 	object, attrErr := p.store.ObjectState(ctx, bucket, r.Key)
 	if attrErr != nil {
-		return normalizeGCS(attrErr)
+		return result, normalizeGCS(attrErr)
 	}
-	if object.Size != r.SizeBytes || object.Metadata[ReservedMultipartSessionMetadataKey] != r.SessionID {
-		return ErrConflict
+	if object.Size != r.SizeBytes || object.Metadata[ReservedMultipartSessionMetadataKey] != r.SessionID || !validUploadETag(object.ETag) {
+		return result, ErrConflict
 	}
-	return nil
+	result.ETag = object.ETag
+	return result, nil
 }
 
 func (p *GCS) AbortMultipartUpload(ctx context.Context, bucket string, r MultipartAbortRequest) error {
