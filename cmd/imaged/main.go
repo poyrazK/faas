@@ -700,6 +700,9 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		"assigned_runtimes", assignedBases.Runtimes,
 		"assigned_minimal", assignedBases.Minimal,
 	)
+	// ADR-531: keep every staged base byte-identical to its shared
+	// publication so snapshots restore on any node (ADR-510).
+	go h.RunBaseConvergence(ctx, imaged.BaseConvergenceInterval)
 
 	// Issue #571 PR-A2: construct the daemon-level readiness probe
 	// independently of the optional metrics listener. systemd's
