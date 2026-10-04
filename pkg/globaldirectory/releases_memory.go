@@ -39,7 +39,7 @@ func (s *MemoryStore) PlanRelease(_ context.Context, owner, slug, releaseID, ima
 	if s.releaseHeads[app.ID] >= api.GlobalImageReleaseGenerationMax {
 		return Release{}, &ReleaseLimitError{Kind: "generation", Limit: api.GlobalImageReleaseGenerationMax, Observed: s.releaseHeads[app.ID] + 1}
 	}
-	r := Release{GlobalAppID: app.ID, AccountID: app.AccountID, ReleaseID: releaseID, Generation: s.releaseHeads[app.ID] + 1, Image: image, CreatedAt: time.Now().UTC()}
+	r := Release{GlobalAppID: app.ID, OwnerID: app.OwnerID, ReleaseID: releaseID, Generation: s.releaseHeads[app.ID] + 1, Image: image, CreatedAt: time.Now().UTC()}
 	r.DesiredGeneration = r.Generation
 	for _, target := range s.targets[app.ID] {
 		cell := s.cells[target.Region]

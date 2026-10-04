@@ -37,7 +37,7 @@ func TestGlobalReleasePostgresRestartAndGuards(t *testing.T) {
 	if err != nil || restored.Generation != 1 || len(restored.Targets) != 2 {
 		t.Fatalf("restart: %+v %v", restored, err)
 	}
-	_, err = pool.Exec(t.Context(), "INSERT INTO global_apps(account_id,slug,desired_release_generation) VALUES($1,'forged-head',2)", owner)
+	_, err = pool.Exec(t.Context(), "INSERT INTO global_apps(owner_id,slug,desired_release_generation) VALUES($1,'forged-head',2)", owner)
 	var insertErr *pgconn.PgError
 	if !errors.As(err, &insertErr) || insertErr.ConstraintName != "global_release_identity" {
 		t.Fatalf("initial head: %v", err)

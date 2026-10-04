@@ -32,20 +32,20 @@ func (s *server) configureGlobalDirectory(ctx context.Context, enabled bool, poo
 
 func (s *server) registerGlobalDirectoryRoutes(mux *http.ServeMux) {
 	read := func(h accountHandler) http.HandlerFunc {
-		return s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireDirectoryAccount(h))))
+		return s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireGlobalDirectoryOwner(false, h))))
 	}
 	write := func(h accountHandler) http.HandlerFunc {
-		return s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireDirectoryAccount(s.requireVerifiedEmail(h)))))
+		return s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireGlobalDirectoryOwner(true, s.requireVerifiedEmail(h)))))
 	}
 	mux.HandleFunc("GET /v1/global-cells", read(s.listGlobalCells))
 	mux.HandleFunc("PUT /v1/global-cells/{id}", s.authLimited(s.requireAdminMutation(s.putGlobalCell)))
 	mux.HandleFunc("GET /v1/global-apps", read(s.listGlobalApps))
 	mux.HandleFunc("POST /v1/global-apps", write(s.createGlobalApp))
 	mux.HandleFunc("GET /v1/global-apps/{slug}", read(s.getGlobalApp))
-	mux.HandleFunc("PUT /v1/global-apps/{slug}/image-releases/{release_id}", write(s.putGlobalImageRelease))
+	mux.HandleFunc("PUT /v1/global-apps/{slug}/image-releases/{release_id}", write(s.requirePersonalGlobalTarget(s.putGlobalImageRelease)))
 	mux.HandleFunc("GET /v1/global-apps/{slug}/image-releases/{release_id}", read(s.getGlobalImageRelease))
-	mux.HandleFunc("PUT /v1/global-apps/{slug}/targets/{region}", write(s.attachGlobalAppTarget))
-	mux.HandleFunc("DELETE /v1/global-apps/{slug}/targets/{region}", write(s.detachGlobalAppTarget))
+	mux.HandleFunc("PUT /v1/global-apps/{slug}/targets/{region}", write(s.requirePersonalGlobalTarget(s.attachGlobalAppTarget)))
+	mux.HandleFunc("DELETE /v1/global-apps/{slug}/targets/{region}", write(s.requirePersonalGlobalTarget(s.detachGlobalAppTarget)))
 	mux.HandleFunc("GET /v1/global-apps/{slug}/targets/{region}/resolve", read(s.resolveGlobalApp))
 	cellDeploy := s.requireRegionalAccountKey(s.requireDirectoryAccount(s.requireVerifiedEmail(s.requireCellDeploymentApp(s.idempotent(s.createDeployment)))))
 	mux.HandleFunc("POST /v1/cells/{cell_id}/apps/{app_id}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(cellDeploy))))
@@ -82,8 +82,16 @@ func decodeGlobalDirectoryRequest(w http.ResponseWriter, r *http.Request, out an
 
 func (s *server) globalDirectoryError(w http.ResponseWriter, r *http.Request, acct state.Account, err error) {
 	switch {
+	case errors.Is(err, globaldirectory.ErrOwnerInactive):
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Directory owner inactive", "An active organization is required for directory access."))
+	case errors.Is(err, globaldirectory.ErrOwnerForbidden):
+		api.WriteProblem(w, api.ErrOrgRoleForbidden("global directory access"))
+	case errors.Is(err, globaldirectory.ErrOwnerPlanChanged):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Organization plan changed", "Retry registration using the current organization plan."))
+	case errors.Is(err, globaldirectory.ErrOrgTargetsUnavailable):
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Shared regional authorization unavailable", "Organization identities can be registered. Regional attachment and releases require the organization grant protocol."))
 	case errors.Is(err, globaldirectory.ErrNotFound):
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Directory identity not found", "No matching global app or regional binding exists for this account."))
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Directory identity not found", "No matching global app or regional binding exists for this tenant."))
 	case errors.Is(err, globaldirectory.ErrConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Directory identity conflicts", "The global name or regional identity is already bound; existing identities cannot be replaced."))
 	case errors.Is(err, globaldirectory.ErrStaleCell):
@@ -91,12 +99,12 @@ func (s *server) globalDirectoryError(w http.ResponseWriter, r *http.Request, ac
 	case errors.Is(err, globaldirectory.ErrVerification):
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, api.CodeGlobalAppTargetVerificationFailed, "Regional ownership could not be verified", "The regional app must belong to the supplied account-admin key in the registered cell."))
 	case errors.Is(err, globaldirectory.ErrLimit):
-		apps, readErr := s.globalDirectory.ListApps(r.Context(), acct.ID)
+		apps, readErr := s.globalDirectory.ListApps(r.Context(), globalOwnerID(r, acct))
 		if readErr != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not read global identity count"))
 			return
 		}
-		api.WriteProblem(w, api.ErrPlanLimitApps(api.MustLimitsFor(acct.Plan), len(apps)))
+		api.WriteProblem(w, api.ErrPlanLimitApps(api.MustLimitsFor(globalOwner(r, acct).Plan), len(apps)))
 	default:
 		api.WriteProblem(w, api.ErrCapacity("could not access the global app directory"))
 	}
@@ -117,11 +125,11 @@ func globalTargetResponse(target globaldirectory.Target) api.GlobalAppTargetResp
 }
 
 func (s *server) globalAppResponse(r *http.Request, app globaldirectory.App) (api.GlobalAppResponse, error) {
-	targets, err := s.globalDirectory.ListTargets(r.Context(), app.AccountID, app.Slug)
+	targets, err := s.globalDirectory.ListTargets(r.Context(), app.OwnerID, app.Slug)
 	if err != nil {
 		return api.GlobalAppResponse{}, err
 	}
-	out := api.GlobalAppResponse{ID: app.ID, Slug: app.Slug, RoutingPolicy: app.RoutingPolicy, CreatedAt: app.CreatedAt, Targets: make([]api.GlobalAppTargetResponse, 0, len(targets))}
+	out := api.GlobalAppResponse{ID: app.ID, Slug: app.Slug, RoutingPolicy: app.RoutingPolicy, Owner: globalOwnerResponse(globalOwner(r, state.Account{ID: app.OwnerID}).Owner), CreatedAt: app.CreatedAt, Targets: make([]api.GlobalAppTargetResponse, 0, len(targets))}
 	for _, target := range targets {
 		out.Targets = append(out.Targets, globalTargetResponse(target))
 	}
@@ -179,7 +187,7 @@ func (s *server) createGlobalApp(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid global slug", "Use a canonical app slug."))
 		return
 	}
-	app, err := s.globalDirectory.CreateApp(r.Context(), acct.ID, req.Slug, api.MustLimitsFor(acct.Plan).DeployedApps)
+	app, err := s.createGlobalDirectoryApp(r, acct, req.Slug)
 	if err != nil {
 		s.globalDirectoryError(w, r, acct, err)
 		return
@@ -197,7 +205,7 @@ func (s *server) listGlobalApps(w http.ResponseWriter, r *http.Request, acct sta
 	if !s.globalDirectoryAvailable(w) {
 		return
 	}
-	apps, err := s.globalDirectory.ListApps(r.Context(), acct.ID)
+	apps, err := s.globalDirectory.ListApps(r.Context(), globalOwnerID(r, acct))
 	if err != nil {
 		s.globalDirectoryError(w, r, acct, err)
 		return
@@ -218,7 +226,7 @@ func (s *server) getGlobalApp(w http.ResponseWriter, r *http.Request, acct state
 	if !s.globalDirectoryAvailable(w) {
 		return
 	}
-	app, err := s.globalDirectory.AppBySlug(r.Context(), acct.ID, r.PathValue("slug"))
+	app, err := s.globalDirectory.AppBySlug(r.Context(), globalOwnerID(r, acct), r.PathValue("slug"))
 	if err != nil {
 		s.globalDirectoryError(w, r, acct, err)
 		return
@@ -236,7 +244,7 @@ func (s *server) attachGlobalAppTarget(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	slug, region := r.PathValue("slug"), r.PathValue("region")
-	if _, err := s.globalDirectory.AppBySlug(r.Context(), acct.ID, slug); err != nil {
+	if _, err := s.globalDirectory.AppBySlug(r.Context(), globalOwnerID(r, acct), slug); err != nil {
 		s.globalDirectoryError(w, r, acct, err)
 		return
 	}
@@ -253,7 +261,7 @@ func (s *server) attachGlobalAppTarget(w http.ResponseWriter, r *http.Request, a
 		s.globalDirectoryError(w, r, acct, err)
 		return
 	}
-	target, err := s.globalDirectory.AttachTarget(r.Context(), acct.ID, slug, binding)
+	target, err := s.globalDirectory.AttachTarget(r.Context(), globalOwnerID(r, acct), slug, binding)
 	if err != nil {
 		s.globalDirectoryError(w, r, acct, err)
 		return
@@ -277,7 +285,7 @@ func (s *server) detachGlobalAppTarget(w http.ResponseWriter, r *http.Request, a
 	if !s.globalDirectoryAvailable(w) {
 		return
 	}
-	if err := s.globalDirectory.DetachTarget(r.Context(), acct.ID, r.PathValue("slug"), r.PathValue("region")); err != nil {
+	if err := s.globalDirectory.DetachTarget(r.Context(), globalOwnerID(r, acct), r.PathValue("slug"), r.PathValue("region")); err != nil {
 		s.globalDirectoryError(w, r, acct, err)
 		return
 	}
@@ -289,7 +297,7 @@ func (s *server) resolveGlobalApp(w http.ResponseWriter, r *http.Request, acct s
 	if !s.globalDirectoryAvailable(w) {
 		return
 	}
-	target, err := globaldirectory.Resolve(r.Context(), s.globalDirectory, acct.ID, r.PathValue("slug"), r.PathValue("region"))
+	target, err := globaldirectory.Resolve(r.Context(), s.globalDirectory, globalOwnerID(r, acct), r.PathValue("slug"), r.PathValue("region"))
 	if err != nil {
 		s.globalDirectoryError(w, r, acct, err)
 		return

@@ -170,12 +170,12 @@ func (c *DelegationService) grant(ctx context.Context, g Delegation, method, key
 // Revoke uses the immutable original endpoint only, even after detachment.
 // A 401 is retryable: revoked bearers cannot prove their tombstone over HTTP.
 func (c *DelegationService) Revoke(ctx context.Context, g Delegation) error {
-	current, err := c.Journal.ReadDelegation(ctx, g.AccountID, g.GlobalAppID, g.ID)
+	current, err := c.Journal.ReadDelegation(ctx, g.OwnerID, g.GlobalAppID, g.ID)
 	if err != nil {
 		return err
 	}
 	if !current.ExpiresAt.After(time.Now()) {
-		return c.Journal.SetDelegationStatus(ctx, g.AccountID, g.GlobalAppID, g.ID, DelegationExpired)
+		return c.Journal.SetDelegationStatus(ctx, g.OwnerID, g.GlobalAppID, g.ID, DelegationExpired)
 	}
 	if current.Status != DelegationRevoking {
 		return nil
@@ -188,5 +188,5 @@ func (c *DelegationService) Revoke(ctx context.Context, g Delegation) error {
 	if err != nil || meta.Status != DelegationRevoked && meta.Status != DelegationExpired {
 		return ErrDelegationUnavailable
 	}
-	return c.Journal.SetDelegationStatus(ctx, g.AccountID, g.GlobalAppID, g.ID, DelegationRevoked)
+	return c.Journal.SetDelegationStatus(ctx, g.OwnerID, g.GlobalAppID, g.ID, DelegationRevoked)
 }

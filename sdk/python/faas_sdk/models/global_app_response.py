@@ -14,6 +14,7 @@ from ..models.global_app_response_routing_policy import (
 )
 
 if TYPE_CHECKING:
+    from ..models.global_app_owner_response import GlobalAppOwnerResponse
     from ..models.global_app_target_response import GlobalAppTargetResponse
 
 
@@ -22,8 +23,15 @@ T = TypeVar("T", bound="GlobalAppResponse")
 
 @_attrs_define
 class GlobalAppResponse:
-    """Account-owned global identity and selected regional identities. No runtime health or deployment claim."""
+    """Account or organization owned global identity. Shared organizations can register identities; regional attachment
+    requires the organization grant protocol. Select a workspace using X-Active-Org or org, or an organization-bound API
+    key. No runtime health or deployment claim.
 
+    """
+
+    owner: GlobalAppOwnerResponse
+    """Immutable directory tenant root. Account roots retain the account UUID; organization roots have an
+    independent UUID and survive creator departure."""
     id: UUID
     slug: str
     routing_policy: GlobalAppResponseRoutingPolicy
@@ -32,6 +40,8 @@ class GlobalAppResponse:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        owner = self.owner.to_dict()
+
         id = str(self.id)
 
         slug = self.slug
@@ -49,6 +59,7 @@ class GlobalAppResponse:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "owner": owner,
                 "id": id,
                 "slug": slug,
                 "routing_policy": routing_policy,
@@ -61,9 +72,12 @@ class GlobalAppResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.global_app_owner_response import GlobalAppOwnerResponse
         from ..models.global_app_target_response import GlobalAppTargetResponse
 
         d = dict(src_dict)
+        owner = GlobalAppOwnerResponse.from_dict(d.pop("owner"))
+
         id = UUID(d.pop("id"))
 
         slug = d.pop("slug")
@@ -80,6 +94,7 @@ class GlobalAppResponse:
             targets.append(targets_item)
 
         global_app_response = cls(
+            owner=owner,
             id=id,
             slug=slug,
             routing_policy=routing_policy,

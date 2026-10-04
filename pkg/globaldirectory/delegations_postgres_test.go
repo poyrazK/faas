@@ -43,7 +43,7 @@ func TestPostgresDelegationDeletionOutboxAndGuards(t *testing.T) {
 			t.Fatalf("SQL guard %s: %v", query, err)
 		}
 	}
-	if _, err := pool.Exec(t.Context(), "INSERT INTO global_release_recovery_work(global_app_id,account_id,global_app_slug) VALUES($1,$2,'forged-app')", uuid.NewString(), owner); err == nil {
+	if _, err := pool.Exec(t.Context(), "INSERT INTO global_release_recovery_work(global_app_id,owner_id,global_app_slug) VALUES($1,$2,'forged-app')", uuid.NewString(), owner); err == nil {
 		t.Fatal("forged recovery identity")
 	}
 	if _, err := pool.Exec(t.Context(), "DELETE FROM accounts WHERE id=$1", owner); err != nil {
@@ -92,8 +92,8 @@ func TestPostgresDelegationQuotaIncludesRevocation(t *testing.T) {
 	_, err = pool.Exec(t.Context(), `DO $$ DECLARE i integer; new_id uuid; BEGIN
  FOR i IN 2..1024 LOOP
   new_id=gen_random_uuid();
-  INSERT INTO global_release_delegations(id,global_app_id,account_id,global_app_slug,cell_id,region,cell_generation,api_base,regional_account_id,regional_app_id,regional_app_slug,token_sha256,sealed_credential,expires_at)
-   SELECT new_id,global_app_id,account_id,global_app_slug,cell_id,region,cell_generation,api_base,regional_account_id,regional_app_id,regional_app_slug,token_sha256,sealed_credential,expires_at
+  INSERT INTO global_release_delegations(id,global_app_id,owner_id,global_app_slug,cell_id,region,cell_generation,api_base,regional_account_id,regional_app_id,regional_app_slug,token_sha256,sealed_credential,expires_at)
+   SELECT new_id,global_app_id,owner_id,global_app_slug,cell_id,region,cell_generation,api_base,regional_account_id,regional_app_id,regional_app_slug,token_sha256,sealed_credential,expires_at
     FROM global_release_delegations ORDER BY created_at LIMIT 1;
   UPDATE global_release_delegations SET status='revoking' WHERE id=new_id;
  END LOOP;

@@ -25,7 +25,15 @@ type CreateGlobalAppRequest struct {
 	Slug string `json:"slug"`
 }
 
+type GlobalAppOwnerResponse struct {
+	ID        string  `json:"id"`
+	Kind      string  `json:"kind"`
+	AccountID *string `json:"account_id,omitempty"`
+	OrgID     *string `json:"org_id,omitempty"`
+}
+
 type GlobalAppResponse struct {
+	Owner         GlobalAppOwnerResponse    `json:"owner"`
 	ID            string                    `json:"id"`
 	Slug          string                    `json:"slug"`
 	RoutingPolicy string                    `json:"routing_policy"`

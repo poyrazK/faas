@@ -18,9 +18,10 @@ type DelegationKeys struct{ Identities []*age.X25519Identity }
 
 // The authenticated payload excludes mutable delivery state and server timestamps.
 type delegationPayload struct {
-	ID, GlobalAppID, AccountID, Slug, APIBase, Token string
-	Binding                                          Binding
-	ExpiresAt                                        time.Time
+	ID, GlobalAppID, Slug, APIBase, Token string
+	OwnerID                               string `json:"AccountID"` // ADR-482 ciphertext compatibility.
+	Binding                               Binding
+	ExpiresAt                             time.Time
 }
 
 func (k DelegationKeys) Available() bool {
@@ -31,13 +32,13 @@ func (k DelegationKeys) Mint(app App, t Target) (Delegation, error) {
 	if err != nil || !k.Available() {
 		return Delegation{}, ErrDelegationSealed
 	}
-	g := Delegation{ID: uuid.NewString(), GlobalAppID: app.ID, AccountID: app.AccountID, Slug: app.Slug,
+	g := Delegation{ID: uuid.NewString(), GlobalAppID: app.ID, OwnerID: app.OwnerID, Slug: app.Slug,
 		Binding: t.Binding, APIBase: t.APIBase, Hash: hash, ExpiresAt: time.Now().UTC().Add(api.GlobalDelegationLifetime).Truncate(time.Microsecond), Status: DelegationPending}
 	g.Sealed, err = k.Seal(g, token)
 	return g, err
 }
 func payload(g Delegation, token string) delegationPayload {
-	return delegationPayload{ID: g.ID, GlobalAppID: g.GlobalAppID, AccountID: g.AccountID, Slug: g.Slug,
+	return delegationPayload{ID: g.ID, GlobalAppID: g.GlobalAppID, OwnerID: g.OwnerID, Slug: g.Slug,
 		APIBase: g.APIBase, Token: token, Binding: g.Binding, ExpiresAt: g.ExpiresAt}
 }
 func (k DelegationKeys) Seal(g Delegation, token string) ([]byte, error) {

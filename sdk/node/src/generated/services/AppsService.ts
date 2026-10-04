@@ -175,9 +175,9 @@ export class AppsService {
     });
   }
   /**
-   * List account-owned global app identities.
-   * Requires personal account read access to an enabled separate global directory. Targets report identity verification status, not deployment readiness.
-   * @returns GlobalAppResponse Global app identities owned by this directory account.
+   * List global app identities for the active tenant.
+   * Requires read scope and current membership for organization access. The organization key selects its own tenant; sessions use X-Active-Org or org. Targets report identity verification status, not deployment readiness.
+   * @returns GlobalAppResponse Global app identities owned by the active directory tenant.
    * @throws ApiError
    */
   public static listGlobalApps(): CancelablePromise<Array<GlobalAppResponse>> {
@@ -200,7 +200,7 @@ export class AppsService {
   }
   /**
    * Register a global app identity.
-   * Requires personal account deploy-write access and verified email. Idempotent for the same account and slug. Uses the plan app-count limit for directory registrations. Creates no regional app or runtime resource entitlement. Initial serving policy is all selected regions.
+   * Requires deploy-write scope and verified email. Organization owners, admins and developers may register identities using the organization plan. Idempotent for the same tenant and slug. Uses the plan app-count limit for directory registrations. Creates no regional app or runtime resource entitlement. Initial serving policy is all selected regions.
    * @returns GlobalAppResponse Stable registered global app identity.
    * @throws ApiError
    */

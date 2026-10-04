@@ -4121,11 +4121,11 @@ paths:
     get:
       tags: [apps]
       operationId: listGlobalApps
-      summary: List account-owned global app identities.
-      description: "Requires personal account read access to an enabled separate global directory. Targets report identity verification status, not deployment readiness."
+      summary: List global app identities for the active tenant.
+      description: "Requires read scope and current membership for organization access. The organization key selects its own tenant; sessions use X-Active-Org or org. Targets report identity verification status, not deployment readiness."
       responses:
         '200':
-          description: Global app identities owned by this directory account.
+          description: Global app identities owned by the active directory tenant.
           content:
             application/json:
               schema:
@@ -4139,7 +4139,7 @@ paths:
       tags: [apps]
       operationId: createGlobalApp
       summary: Register a global app identity.
-      description: "Requires personal account deploy-write access and verified email. Idempotent for the same account and slug. Uses the plan app-count limit for directory registrations. Creates no regional app or runtime resource entitlement. Initial serving policy is all selected regions."
+      description: "Requires deploy-write scope and verified email. Organization owners, admins and developers may register identities using the organization plan. Idempotent for the same tenant and slug. Uses the plan app-count limit for directory registrations. Creates no regional app or runtime resource entitlement. Initial serving policy is all selected regions."
       requestBody:
         required: true
         content:
@@ -30827,11 +30827,21 @@ components:
       required: [slug]
       properties:
         slug: { type: string, minLength: 3, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
+    GlobalAppOwnerResponse:
+      type: object
+      description: Immutable directory tenant root. Account roots retain the account UUID; organization roots have an independent UUID and survive creator departure.
+      required: [id, kind]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [account, organization] }
+        account_id: { type: string, format: uuid, description: Present only for account ownership. }
+        org_id: { type: string, format: uuid, description: Present only for organization ownership. }
     GlobalAppResponse:
       type: object
-      description: Account-owned global identity and selected regional identities. No runtime health or deployment claim.
-      required: [id, slug, routing_policy, created_at, targets]
+      description: Account or organization owned global identity. Shared organizations can register identities; regional attachment requires the organization grant protocol. Select a workspace using X-Active-Org or org, or an organization-bound API key. No runtime health or deployment claim.
+      required: [id, owner, slug, routing_policy, created_at, targets]
       properties:
+        owner: { $ref: '#/components/schemas/GlobalAppOwnerResponse' }
         id: { type: string, format: uuid }
         slug: { type: string }
         routing_policy: { type: string, enum: [all_selected_regions] }

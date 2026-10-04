@@ -65,7 +65,7 @@ func (w Recovery) app(ctx context.Context, job RecoveryWork) error {
 	c := w.Service
 	workCtx, cancel := context.WithTimeout(ctx, api.GlobalRecoveryAppTimeout)
 	defer cancel()
-	grants, listErr := c.Journal.ListRecoveryDelegations(workCtx, job.AccountID, job.GlobalAppID)
+	grants, listErr := c.Journal.ListRecoveryDelegations(workCtx, job.OwnerID, job.GlobalAppID)
 	// A durable cursor gives every retained grant a bounded turn during outages.
 	sort.Slice(grants, func(i, j int) bool { return grants[i].ID < grants[j].ID })
 	start := sort.Search(len(grants), func(i int) bool { return grants[i].ID > job.CursorID })
@@ -82,11 +82,11 @@ func (w Recovery) app(ctx context.Context, job RecoveryWork) error {
 	go func() { revoked <- w.grants(workCtx, batch) }()
 	var releaseErr error
 	if job.ReleaseID != "" {
-		if releaseErr = c.authorize(workCtx, job.AccountID); releaseErr == nil {
-			app, err := c.Store.AppBySlug(workCtx, job.AccountID, job.Slug)
+		if releaseErr = c.authorize(workCtx, job.OwnerID); releaseErr == nil {
+			app, err := c.Store.AppBySlug(workCtx, job.OwnerID, job.Slug)
 			if err == nil && app.ID == job.GlobalAppID {
 				r := Reconciler{Store: c.Store, Verifier: c.Verifier, Delegations: c}
-				_, releaseErr = r.Resume(workCtx, job.AccountID, job.Slug, job.ReleaseID, nil)
+				_, releaseErr = r.Resume(workCtx, job.OwnerID, job.Slug, job.ReleaseID, nil)
 			} else if !errors.Is(err, ErrNotFound) {
 				releaseErr = err
 			}
@@ -132,20 +132,20 @@ func (w Recovery) grants(ctx context.Context, batch []Delegation) error {
 func (w Recovery) grant(ctx context.Context, g Delegation) error {
 	c := w.Service
 	if !g.ExpiresAt.After(time.Now()) {
-		return c.Journal.SetDelegationStatus(ctx, g.AccountID, g.GlobalAppID, g.ID, DelegationExpired)
+		return c.Journal.SetDelegationStatus(ctx, g.OwnerID, g.GlobalAppID, g.ID, DelegationExpired)
 	}
 	if g.Status != DelegationRevoking {
-		authErr := c.authorize(ctx, g.AccountID)
+		authErr := c.authorize(ctx, g.OwnerID)
 		if authErr != nil && !errors.Is(authErr, ErrDelegationOwnerInactive) {
 			return authErr
 		}
-		identityErr := c.Journal.CheckDelegation(ctx, g.AccountID, g.GlobalAppID, g.ID)
+		identityErr := c.Journal.CheckDelegation(ctx, g.OwnerID, g.GlobalAppID, g.ID)
 		stale := errors.Is(identityErr, ErrStaleCell) || errors.Is(identityErr, ErrNotFound)
 		if identityErr != nil && !stale {
 			return identityErr
 		}
 		if errors.Is(authErr, ErrDelegationOwnerInactive) || stale {
-			if err := c.Journal.SetDelegationStatus(ctx, g.AccountID, g.GlobalAppID, g.ID, DelegationRevoking); err != nil {
+			if err := c.Journal.SetDelegationStatus(ctx, g.OwnerID, g.GlobalAppID, g.ID, DelegationRevoking); err != nil {
 				return err
 			}
 			g.Status = DelegationRevoking

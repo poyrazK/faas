@@ -7,6 +7,26 @@ or publish ingress routes. Global deployment orchestration, shared org/auth,
 runtime quota allocation, data/secret replication, and independent native KVM
 recovery acceptance remain required for the complete multi-region feature.
 
+## Organization directory identities
+
+An organization-bound API key selects its own workspace for global app
+registration, listing and lookup. Browser sessions can select one with
+`X-Active-Org: ORG_SLUG` or `?org=ORG_SLUG`. A key cannot switch to another
+organization. Current members may read; owners, admins and developers may
+register identities. Inactive or pending-deletion organizations are denied.
+
+Responses include an `owner` object with a stable root UUID and either
+`account_id` or `org_id`. Personal roots retain the account UUID. Shared roots
+have independent UUIDs and survive the creator leaving or deleting their
+account. Registration uses the organization's plan app-count limit, with live
+membership and plan checks during allocation. This limit counts directory
+identities; it does not allocate runtime capacity or change billing.
+
+Shared organization attachment and image releases remain unavailable until the
+regional organization grant and billing protocol is integrated. PostgreSQL
+also rejects shared target bindings. Personal regional operation remains
+available. Rollback of ADR-483 refuses retained shared directory roots.
+
 ## Configure the directory and regional cells
 
 Provision a separate directory PostgreSQL database and `apid` endpoint using

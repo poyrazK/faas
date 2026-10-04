@@ -6398,32 +6398,32 @@ SELECT id::text AS cell_id, region, api_base, enabled, generation FROM global_di
 WHERE id = sqlc.arg(cell_id)::uuid AND enabled AND generation = sqlc.arg(generation)::bigint FOR SHARE;
 
 -- name: CreateGlobalAppIdentity :one
-SELECT create_global_app(sqlc.arg(account_id)::uuid, sqlc.arg(slug)::text, sqlc.arg(app_limit)::integer)::text AS global_app_id;
+SELECT create_global_app(sqlc.arg(owner_id)::uuid, sqlc.arg(slug)::text, sqlc.arg(app_limit)::integer)::text AS global_app_id;
 
 -- name: GlobalAppIdentity :one
-SELECT id::text AS global_app_id, account_id::text AS account_id, slug, routing_policy, created_at
-FROM global_apps WHERE account_id = sqlc.arg(account_id)::uuid AND slug = sqlc.arg(slug)::text;
+SELECT id::text AS global_app_id, owner_id::text AS owner_id, slug, routing_policy, created_at
+FROM global_apps WHERE owner_id = sqlc.arg(owner_id)::uuid AND slug = sqlc.arg(slug)::text;
 
 -- name: ListGlobalAppIdentities :many
-SELECT id::text AS global_app_id, account_id::text AS account_id, slug, routing_policy, created_at
-FROM global_apps WHERE account_id = sqlc.arg(account_id)::uuid ORDER BY slug;
+SELECT id::text AS global_app_id, owner_id::text AS owner_id, slug, routing_policy, created_at
+FROM global_apps WHERE owner_id = sqlc.arg(owner_id)::uuid ORDER BY slug;
 
 -- name: LockGlobalAppIdentity :one
-SELECT id::text AS global_app_id, account_id::text AS account_id, slug, routing_policy, created_at
-FROM global_apps WHERE account_id = sqlc.arg(account_id)::uuid AND slug = sqlc.arg(slug)::text FOR UPDATE;
+SELECT id::text AS global_app_id, owner_id::text AS owner_id, slug, routing_policy, created_at
+FROM global_apps WHERE owner_id = sqlc.arg(owner_id)::uuid AND slug = sqlc.arg(slug)::text FOR UPDATE;
 
--- name: InsertGlobalAccountCellBinding :exec
-INSERT INTO global_account_cell_bindings(account_id, cell_id, regional_account_id)
-VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(cell_id)::uuid, sqlc.arg(regional_account_id)::uuid)
-ON CONFLICT (account_id, cell_id) DO NOTHING;
+-- name: InsertGlobalOwnerCellBinding :exec
+INSERT INTO global_owner_cell_bindings(owner_id, cell_id, regional_account_id)
+VALUES (sqlc.arg(owner_id)::uuid, sqlc.arg(cell_id)::uuid, sqlc.arg(regional_account_id)::uuid)
+ON CONFLICT (owner_id, cell_id) DO NOTHING;
 
--- name: ReadGlobalAccountCellBinding :one
-SELECT regional_account_id::text AS regional_account_id FROM global_account_cell_bindings
-WHERE account_id = sqlc.arg(account_id)::uuid AND cell_id = sqlc.arg(cell_id)::uuid;
+-- name: ReadGlobalOwnerCellBinding :one
+SELECT regional_account_id::text AS regional_account_id FROM global_owner_cell_bindings
+WHERE owner_id = sqlc.arg(owner_id)::uuid AND cell_id = sqlc.arg(cell_id)::uuid;
 
 -- name: AttachGlobalAppTarget :one
-INSERT INTO global_app_targets(global_app_id, account_id, cell_id, region, cell_generation, regional_account_id, regional_app_id, regional_app_slug)
-VALUES (sqlc.arg(global_app_id)::uuid, sqlc.arg(account_id)::uuid, sqlc.arg(cell_id)::uuid, sqlc.arg(region)::text, sqlc.arg(cell_generation)::bigint,
+INSERT INTO global_app_targets(global_app_id, owner_id, cell_id, region, cell_generation, regional_account_id, regional_app_id, regional_app_slug)
+VALUES (sqlc.arg(global_app_id)::uuid, sqlc.arg(owner_id)::uuid, sqlc.arg(cell_id)::uuid, sqlc.arg(region)::text, sqlc.arg(cell_generation)::bigint,
         sqlc.arg(regional_account_id)::uuid, sqlc.arg(regional_app_id)::uuid, sqlc.arg(regional_app_slug)::text)
 ON CONFLICT (global_app_id, region) DO UPDATE SET cell_generation = EXCLUDED.cell_generation, verified_at = now()
 WHERE global_app_targets.cell_id = EXCLUDED.cell_id AND global_app_targets.regional_account_id = EXCLUDED.regional_account_id
@@ -6436,11 +6436,11 @@ SELECT t.global_app_id::text AS global_app_id, t.cell_id::text AS cell_id, t.reg
        c.api_base, c.enabled AS cell_enabled, c.generation AS registry_generation
 FROM global_app_targets t JOIN global_apps a ON a.id = t.global_app_id
 JOIN global_directory_cells c ON c.id = t.cell_id
-WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.slug = sqlc.arg(slug)::text ORDER BY t.region;
+WHERE a.owner_id = sqlc.arg(owner_id)::uuid AND a.slug = sqlc.arg(slug)::text ORDER BY t.region;
 
 -- name: DeleteGlobalAppTarget :execrows
 DELETE FROM global_app_targets t USING global_apps a WHERE a.id = t.global_app_id
-AND a.account_id = sqlc.arg(account_id)::uuid AND a.slug = sqlc.arg(slug)::text AND t.region = sqlc.arg(region)::text;
+AND a.owner_id = sqlc.arg(owner_id)::uuid AND a.slug = sqlc.arg(slug)::text AND t.region = sqlc.arg(region)::text;
 
 -- ADR-478: a durable image-release receipt is committed with deployment intent.
 -- name: LockRegionalImageReleaseApp :one
@@ -6491,15 +6491,15 @@ WHERE app_id = sqlc.arg(app_id)::uuid;
 
 -- ADR-480: global image release journal, only directory apid writes intent.
 -- name: PlanGlobalImageRelease :one
-SELECT plan_global_image_release(sqlc.arg(account_id)::uuid, sqlc.arg(slug)::text,
+SELECT plan_global_image_release(sqlc.arg(owner_id)::uuid, sqlc.arg(slug)::text,
     sqlc.arg(release_id)::uuid, sqlc.arg(image_ref)::text)::text AS global_app_id;
 
 -- name: ReadGlobalImageRelease :one
-SELECT a.id::text AS global_app_id, a.account_id::text AS account_id,
+SELECT a.id::text AS global_app_id, a.owner_id::text AS owner_id,
     r.release_id::text AS release_id, r.generation, a.desired_release_generation,
     r.image_ref, r.created_at
 FROM global_apps a JOIN global_image_releases r ON r.global_app_id=a.id
-WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.slug=sqlc.arg(slug)::text AND r.release_id=sqlc.arg(release_id)::uuid;
+WHERE a.owner_id=sqlc.arg(owner_id)::uuid AND a.slug=sqlc.arg(slug)::text AND r.release_id=sqlc.arg(release_id)::uuid;
 
 -- name: ListGlobalImageReleaseTargets :many
 SELECT region,cell_id::text AS cell_id,cell_generation,api_base,regional_account_id::text AS regional_account_id,
@@ -6549,11 +6549,11 @@ WHERE id=sqlc.arg(grant_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND cell_id=
 
 -- ADR-482: immutable sealed authority and restart-safe recovery claims.
 -- name: InsertGlobalDelegation :one
-INSERT INTO global_release_delegations(id,global_app_id,account_id,global_app_slug,cell_id,region,cell_generation,api_base,regional_account_id,regional_app_id,regional_app_slug,token_sha256,sealed_credential,expires_at)
-VALUES(sqlc.arg(grant_id)::uuid,sqlc.arg(global_app_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(slug)::text,sqlc.arg(cell_id)::uuid,sqlc.arg(region)::text,sqlc.arg(cell_generation)::bigint,sqlc.arg(api_base)::text,sqlc.arg(regional_account_id)::uuid,sqlc.arg(regional_app_id)::uuid,sqlc.arg(regional_app_slug)::text,sqlc.arg(token_sha256)::bytea,sqlc.arg(sealed_credential)::bytea,sqlc.arg(expires_at)::timestamptz) RETURNING *;
+INSERT INTO global_release_delegations(id,global_app_id,owner_id,global_app_slug,cell_id,region,cell_generation,api_base,regional_account_id,regional_app_id,regional_app_slug,token_sha256,sealed_credential,expires_at)
+VALUES(sqlc.arg(grant_id)::uuid,sqlc.arg(global_app_id)::uuid,sqlc.arg(owner_id)::uuid,sqlc.arg(slug)::text,sqlc.arg(cell_id)::uuid,sqlc.arg(region)::text,sqlc.arg(cell_generation)::bigint,sqlc.arg(api_base)::text,sqlc.arg(regional_account_id)::uuid,sqlc.arg(regional_app_id)::uuid,sqlc.arg(regional_app_slug)::text,sqlc.arg(token_sha256)::bytea,sqlc.arg(sealed_credential)::bytea,sqlc.arg(expires_at)::timestamptz) RETURNING *;
 
 -- name: ReadGlobalDelegation :one
-SELECT * FROM global_release_delegations WHERE id=sqlc.arg(grant_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND global_app_id=sqlc.arg(global_app_id)::uuid;
+SELECT * FROM global_release_delegations WHERE id=sqlc.arg(grant_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid AND global_app_id=sqlc.arg(global_app_id)::uuid;
 
 -- name: LiveGlobalDelegation :one
 SELECT * FROM global_release_delegations WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND region=sqlc.arg(region)::text AND status IN ('pending','active');
@@ -6564,10 +6564,10 @@ UPDATE global_release_delegations SET status='expired',sealed_credential=NULL WH
 -- name: SetGlobalDelegationStatus :execrows
 UPDATE global_release_delegations SET status=sqlc.arg(status)::text,
  sealed_credential=CASE WHEN sqlc.arg(status)::text IN ('revoked','expired') THEN NULL ELSE sealed_credential END
-WHERE id=sqlc.arg(grant_id)::uuid AND global_app_id=sqlc.arg(global_app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
+WHERE id=sqlc.arg(grant_id)::uuid AND global_app_id=sqlc.arg(global_app_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid;
 
 -- name: ListRecoveryDelegations :many
-SELECT * FROM global_release_delegations WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND status IN ('pending','active','revoking') ORDER BY id;
+SELECT * FROM global_release_delegations WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid AND status IN ('pending','active','revoking') ORDER BY id;
 
 -- name: ClaimGlobalRecovery :many
 WITH candidates AS (
@@ -6577,12 +6577,23 @@ WITH candidates AS (
  UPDATE global_release_recovery_work w SET claim_id=sqlc.arg(claim_id)::uuid,claim_until=clock_timestamp()+make_interval(secs=>sqlc.arg(lease_seconds)::integer)
  FROM candidates c WHERE w.global_app_id=c.global_app_id RETURNING w.*
 )
-SELECT c.global_app_id::text AS global_app_id,c.account_id::text AS account_id,c.global_app_slug,
+SELECT c.global_app_id::text AS global_app_id,c.owner_id::text AS owner_id,c.global_app_slug,
  c.claim_id::text AS claim_id,c.wake_id::text AS wake_id,COALESCE(c.cursor_id::text,'')::text AS cursor_id,COALESCE(r.release_id::text,'')::text AS release_id
-FROM claimed c LEFT JOIN global_apps a ON a.id=c.global_app_id AND a.account_id=c.account_id
+FROM claimed c LEFT JOIN global_apps a ON a.id=c.global_app_id AND a.owner_id=c.owner_id
 LEFT JOIN global_image_releases r ON r.global_app_id=a.id AND r.generation=a.desired_release_generation;
 
 -- name: FinishGlobalRecovery :execrows
 UPDATE global_release_recovery_work SET claim_id=NULL,claim_until=NULL,cursor_id=NULLIF(sqlc.arg(cursor_id)::text,'')::uuid,
  next_attempt_at=CASE WHEN wake_id=sqlc.arg(wake_id)::uuid THEN clock_timestamp()+make_interval(secs=>sqlc.arg(retry_seconds)::integer) ELSE next_attempt_at END
 WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND claim_id=sqlc.arg(claim_id)::uuid;
+
+-- ADR-483: directory tenant roots, separate from authentication actors.
+-- name: ReadGlobalDirectoryOwner :one
+SELECT id::text AS owner_id,coalesce(account_id::text,'')::text AS account_id,coalesce(org_id::text,'')::text AS org_id
+FROM global_directory_owners WHERE id=sqlc.arg(owner_id)::uuid;
+
+-- name: ResolveGlobalOrgOwner :one
+SELECT resolve_global_org_owner(sqlc.arg(org_id)::uuid)::text AS owner_id;
+
+-- name: CreateGlobalOrgApp :one
+SELECT create_global_org_app(sqlc.arg(owner_id)::uuid,sqlc.arg(actor_id)::uuid,sqlc.arg(slug)::text,sqlc.arg(expected_plan)::text,sqlc.arg(app_limit)::integer)::text AS global_app_id;

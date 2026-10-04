@@ -22,7 +22,7 @@ import (
 func globalDirectoryHarness(t *testing.T) testEnv {
 	t.Helper()
 	e := setup(t, api.PlanPro)
-	e.s.globalDirectory = globaldirectory.NewMemoryStore()
+	e.s.globalDirectory = globaldirectory.NewMemoryStoreWithOrgAuthority(e.store)
 	identity, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatal(err)

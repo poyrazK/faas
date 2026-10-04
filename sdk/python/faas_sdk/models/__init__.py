@@ -916,6 +916,8 @@ from .github_recovery_retry_response_kind import GithubRecoveryRetryResponseKind
 from .github_recovery_status_response import GithubRecoveryStatusResponse
 from .github_webhook_delivery_record import GithubWebhookDeliveryRecord
 from .github_webhook_delivery_record_status import GithubWebhookDeliveryRecordStatus
+from .global_app_owner_response import GlobalAppOwnerResponse
+from .global_app_owner_response_kind import GlobalAppOwnerResponseKind
 from .global_app_resolution_response import GlobalAppResolutionResponse
 from .global_app_response import GlobalAppResponse
 from .global_app_response_routing_policy import GlobalAppResponseRoutingPolicy
@@ -3081,6 +3083,8 @@ __all__ = (
     "GitHubWebhookActivityStatus",
     "GithubWebhookDeliveryRecord",
     "GithubWebhookDeliveryRecordStatus",
+    "GlobalAppOwnerResponse",
+    "GlobalAppOwnerResponseKind",
     "GlobalAppResolutionResponse",
     "GlobalAppResponse",
     "GlobalAppResponseRoutingPolicy",

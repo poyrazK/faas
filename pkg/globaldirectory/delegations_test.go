@@ -54,7 +54,7 @@ func TestDelegationSealIdentityRotationAndTamper(t *testing.T) {
 	mutations := map[string]func(*Delegation){
 		"grant":        func(g *Delegation) { g.ID = uuid.NewString() },
 		"global app":   func(g *Delegation) { g.GlobalAppID = uuid.NewString() },
-		"owner":        func(g *Delegation) { g.AccountID = uuid.NewString() },
+		"owner":        func(g *Delegation) { g.OwnerID = uuid.NewString() },
 		"slug":         func(g *Delegation) { g.Slug = "other-app" },
 		"origin":       func(g *Delegation) { g.APIBase = "https://other.example.com" },
 		"cell":         func(g *Delegation) { g.Binding.CellID = uuid.NewString() },
@@ -189,4 +189,30 @@ func delegationContract(t *testing.T, s Store, journal DelegationStore, owner st
 func TestMemoryDelegationContract(t *testing.T) {
 	s := NewMemoryStore()
 	delegationContract(t, s, s, uuid.NewString())
+}
+
+func TestDelegationLegacyAccountPayloadCompatibility(t *testing.T) {
+	s := NewMemoryStore()
+	app, targets := releaseSetup(t, s, uuid.NewString())
+	keys := delegationKeys(t)
+	g, err := keys.Mint(app, targets[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := keys.Open(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := map[string]any{"ID": g.ID, "GlobalAppID": g.GlobalAppID, "AccountID": g.OwnerID, "Slug": g.Slug, "APIBase": g.APIBase, "Token": token, "Binding": g.Binding, "ExpiresAt": g.ExpiresAt}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.Sealed, err = secretbox.SealBytes(keys.Identities[0].Recipient(), delegationNamespace, data, api.GlobalDelegationPlaintextMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := keys.Open(g); err != nil || got != token {
+		t.Fatalf("legacy credential lost after owner rename: %v", err)
+	}
 }

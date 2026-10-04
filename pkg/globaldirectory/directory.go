@@ -36,7 +36,7 @@ type Cell struct {
 
 type App struct {
 	ID            string
-	AccountID     string
+	OwnerID       string
 	Slug          string
 	RoutingPolicy string
 	CreatedAt     time.Time

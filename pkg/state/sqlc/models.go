@@ -2101,15 +2101,9 @@ type GithubWebhookSecret struct {
 	UpgradedBy     string
 }
 
-type GlobalAccountCellBinding struct {
-	AccountID         pgtype.UUID
-	CellID            pgtype.UUID
-	RegionalAccountID pgtype.UUID
-}
-
 type GlobalApp struct {
 	ID                       pgtype.UUID
-	AccountID                pgtype.UUID
+	OwnerID                  pgtype.UUID
 	Slug                     string
 	RoutingPolicy            string
 	CreatedAt                pgtype.Timestamptz
@@ -2118,7 +2112,7 @@ type GlobalApp struct {
 
 type GlobalAppTarget struct {
 	GlobalAppID       pgtype.UUID
-	AccountID         pgtype.UUID
+	OwnerID           pgtype.UUID
 	CellID            pgtype.UUID
 	Region            string
 	CellGeneration    int64
@@ -2134,6 +2128,12 @@ type GlobalDirectoryCell struct {
 	ApiBase    string
 	Enabled    bool
 	Generation int64
+}
+
+type GlobalDirectoryOwner struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	OrgID     pgtype.UUID
 }
 
 type GlobalImageRelease struct {
@@ -2161,10 +2161,16 @@ type GlobalImageReleaseTarget struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+type GlobalOwnerCellBinding struct {
+	OwnerID           pgtype.UUID
+	CellID            pgtype.UUID
+	RegionalAccountID pgtype.UUID
+}
+
 type GlobalReleaseDelegation struct {
 	ID                pgtype.UUID
 	GlobalAppID       pgtype.UUID
-	AccountID         pgtype.UUID
+	OwnerID           pgtype.UUID
 	GlobalAppSlug     string
 	CellID            pgtype.UUID
 	Region            string
@@ -2182,7 +2188,7 @@ type GlobalReleaseDelegation struct {
 
 type GlobalReleaseRecoveryWork struct {
 	GlobalAppID   pgtype.UUID
-	AccountID     pgtype.UUID
+	OwnerID       pgtype.UUID
 	GlobalAppSlug string
 	WakeID        pgtype.UUID
 	NextAttemptAt pgtype.Timestamptz

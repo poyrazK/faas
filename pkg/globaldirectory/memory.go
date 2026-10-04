@@ -14,6 +14,8 @@ import (
 // covering registry generation, account mapping and target uniqueness.
 type MemoryStore struct {
 	mu              sync.Mutex
+	owners          map[string]Owner
+	orgAuthority    OrgAuthority
 	cells           map[string]Cell
 	apps            map[string]App
 	accountBindings map[string]string
@@ -25,7 +27,7 @@ type MemoryStore struct {
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{cells: make(map[string]Cell), apps: make(map[string]App), accountBindings: make(map[string]string), targets: make(map[string]map[string]Target), releases: make(map[string]map[string]Release), releaseHeads: make(map[string]int64), delegations: make(map[string]Delegation), recovery: make(map[string]memoryRecovery)}
+	return &MemoryStore{owners: make(map[string]Owner), cells: make(map[string]Cell), apps: make(map[string]App), accountBindings: make(map[string]string), targets: make(map[string]map[string]Target), releases: make(map[string]map[string]Release), releaseHeads: make(map[string]int64), delegations: make(map[string]Delegation), recovery: make(map[string]memoryRecovery)}
 }
 
 func (s *MemoryStore) CheckScope(context.Context) error { return nil }
@@ -84,22 +86,33 @@ func (s *MemoryStore) CreateApp(_ context.Context, accountID, slug string, limit
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if o, ok := s.owners[accountID]; ok && o.Shared() {
+		return App{}, ErrConflict
+	}
+	s.owners[accountID] = Owner{ID: accountID, AccountID: accountID}
+	return s.createApp(accountID, slug, limit)
+}
+
+func (s *MemoryStore) createApp(accountID, slug string, limit int) (App, error) {
+	if !validOwnerID(accountID) || !ValidSlug(slug) {
+		return App{}, ErrConflict
+	}
 	if old, ok := s.apps[slug]; ok {
-		if old.AccountID != accountID {
+		if old.OwnerID != accountID {
 			return App{}, ErrConflict
 		}
 		return old, nil
 	}
 	count := 0
 	for _, old := range s.apps {
-		if old.AccountID == accountID {
+		if old.OwnerID == accountID {
 			count++
 		}
 	}
 	if limit < 1 || count >= limit {
 		return App{}, ErrLimit
 	}
-	app := App{ID: uuid.NewString(), AccountID: accountID, Slug: slug, RoutingPolicy: AllSelectedRegions, CreatedAt: time.Now().UTC()}
+	app := App{ID: uuid.NewString(), OwnerID: accountID, Slug: slug, RoutingPolicy: AllSelectedRegions, CreatedAt: time.Now().UTC()}
 	s.apps[slug] = app
 	return app, nil
 }
@@ -112,7 +125,7 @@ func (s *MemoryStore) AppBySlug(_ context.Context, accountID, slug string) (App,
 
 func (s *MemoryStore) app(accountID, slug string) (App, error) {
 	app, ok := s.apps[slug]
-	if !ok || app.AccountID != accountID {
+	if !ok || app.OwnerID != accountID {
 		return App{}, ErrNotFound
 	}
 	return app, nil
@@ -123,7 +136,7 @@ func (s *MemoryStore) ListApps(_ context.Context, accountID string) ([]App, erro
 	defer s.mu.Unlock()
 	out := make([]App, 0)
 	for _, app := range s.apps {
-		if app.AccountID == accountID {
+		if app.OwnerID == accountID {
 			out = append(out, app)
 		}
 	}
@@ -140,6 +153,9 @@ func (s *MemoryStore) AttachTarget(_ context.Context, accountID, slug string, bi
 	app, err := s.app(accountID, slug)
 	if err != nil {
 		return Target{}, err
+	}
+	if s.owners[accountID].Shared() {
+		return Target{}, ErrOrgTargetsUnavailable
 	}
 	cell, ok := s.cells[binding.Region]
 	if !ok || cell.ID != binding.CellID || !cell.Enabled || cell.Generation != binding.CellGeneration {

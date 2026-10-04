@@ -92,9 +92,10 @@ def sync_detailed(
 ) -> Response[GlobalAppResponse | Problem]:
     """Register a global app identity.
 
-     Requires personal account deploy-write access and verified email. Idempotent for the same account
-    and slug. Uses the plan app-count limit for directory registrations. Creates no regional app or
-    runtime resource entitlement. Initial serving policy is all selected regions.
+     Requires deploy-write scope and verified email. Organization owners, admins and developers may
+    register identities using the organization plan. Idempotent for the same tenant and slug. Uses the
+    plan app-count limit for directory registrations. Creates no regional app or runtime resource
+    entitlement. Initial serving policy is all selected regions.
 
     Args:
         body (CreateGlobalAppRequest): Global identity registration with no regional provisioning.
@@ -125,9 +126,10 @@ def sync(
 ) -> GlobalAppResponse | Problem | None:
     """Register a global app identity.
 
-     Requires personal account deploy-write access and verified email. Idempotent for the same account
-    and slug. Uses the plan app-count limit for directory registrations. Creates no regional app or
-    runtime resource entitlement. Initial serving policy is all selected regions.
+     Requires deploy-write scope and verified email. Organization owners, admins and developers may
+    register identities using the organization plan. Idempotent for the same tenant and slug. Uses the
+    plan app-count limit for directory registrations. Creates no regional app or runtime resource
+    entitlement. Initial serving policy is all selected regions.
 
     Args:
         body (CreateGlobalAppRequest): Global identity registration with no regional provisioning.
@@ -153,9 +155,10 @@ async def asyncio_detailed(
 ) -> Response[GlobalAppResponse | Problem]:
     """Register a global app identity.
 
-     Requires personal account deploy-write access and verified email. Idempotent for the same account
-    and slug. Uses the plan app-count limit for directory registrations. Creates no regional app or
-    runtime resource entitlement. Initial serving policy is all selected regions.
+     Requires deploy-write scope and verified email. Organization owners, admins and developers may
+    register identities using the organization plan. Idempotent for the same tenant and slug. Uses the
+    plan app-count limit for directory registrations. Creates no regional app or runtime resource
+    entitlement. Initial serving policy is all selected regions.
 
     Args:
         body (CreateGlobalAppRequest): Global identity registration with no regional provisioning.
@@ -184,9 +187,10 @@ async def asyncio(
 ) -> GlobalAppResponse | Problem | None:
     """Register a global app identity.
 
-     Requires personal account deploy-write access and verified email. Idempotent for the same account
-    and slug. Uses the plan app-count limit for directory registrations. Creates no regional app or
-    runtime resource entitlement. Initial serving policy is all selected regions.
+     Requires deploy-write scope and verified email. Organization owners, admins and developers may
+    register identities using the organization plan. Idempotent for the same tenant and slug. Uses the
+    plan app-count limit for directory registrations. Creates no regional app or runtime resource
+    entitlement. Initial serving policy is all selected regions.
 
     Args:
         body (CreateGlobalAppRequest): Global identity registration with no regional provisioning.

@@ -22,6 +22,18 @@ func (s *server) globalReleaseService() *globaldirectory.DelegationService {
 	}
 }
 func (s *server) globalReleaseOwner(ctx context.Context, id string) error {
+	if roots, ok := s.globalDirectory.(globaldirectory.OwnerStore); ok {
+		owner, err := roots.OwnerByID(ctx, id)
+		if err != nil && !errors.Is(err, globaldirectory.ErrNotFound) {
+			return err
+		}
+		if err == nil && owner.Shared() {
+			return globaldirectory.ErrDelegationOwnerInactive
+		}
+		if err == nil {
+			id = owner.AccountID
+		}
+	}
 	acct, err := s.store.AccountByID(ctx, id)
 	if errors.Is(err, state.ErrNotFound) {
 		return globaldirectory.ErrDelegationOwnerInactive
@@ -51,7 +63,7 @@ func (s *server) globalReleaseServiceForRequest(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrCapacity("regional delegation sealing is unavailable"))
 		return nil
 	}
-	err := s.globalReleaseOwner(r.Context(), acct.ID)
+	err := s.globalReleaseOwner(r.Context(), globalOwnerID(r, acct))
 	if errors.Is(err, globaldirectory.ErrDelegationOwnerInactive) {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Global release owner inactive", "An active account with verified email is required to deploy."))
 		return nil

@@ -175,7 +175,7 @@ func TestRecoveryCursorFairness(t *testing.T) {
 	s.mu.Lock()
 	for i := range api.GlobalRecoveryDelegationsPerApp + 1 {
 		id := fmt.Sprintf("%08x-0000-4000-8000-000000000001", i+1)
-		s.delegations[id] = Delegation{ID: id, GlobalAppID: app.ID, AccountID: owner, Slug: app.Slug, Status: DelegationRevoking, ExpiresAt: time.Now().Add(-time.Second), Sealed: []byte("erase at expiry")}
+		s.delegations[id] = Delegation{ID: id, GlobalAppID: app.ID, OwnerID: owner, Slug: app.Slug, Status: DelegationRevoking, ExpiresAt: time.Now().Add(-time.Second), Sealed: []byte("erase at expiry")}
 	}
 	s.wake(app)
 	s.mu.Unlock()

@@ -471,6 +471,7 @@ export type { GithubRecoveryRetryResponse } from './models/GithubRecoveryRetryRe
 export type { GithubRecoveryStatusResponse } from './models/GithubRecoveryStatusResponse.js';
 export type { GitHubWebhookActivity } from './models/GitHubWebhookActivity.js';
 export type { GithubWebhookDeliveryRecord } from './models/GithubWebhookDeliveryRecord.js';
+export type { GlobalAppOwnerResponse } from './models/GlobalAppOwnerResponse.js';
 export type { GlobalAppResolutionResponse } from './models/GlobalAppResolutionResponse.js';
 export type { GlobalAppResponse } from './models/GlobalAppResponse.js';
 export type { GlobalAppTargetResponse } from './models/GlobalAppTargetResponse.js';

@@ -32,12 +32,12 @@ func (s *server) putGlobalImageRelease(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrValidation("use a canonical release UUID, a digest-pinned image and regional API keys indexed by canonical region"))
 		return
 	}
-	if _, err := s.globalDirectory.PlanRelease(ctx, acct.ID, slug, releaseID, req.Image); err != nil {
+	if _, err := s.globalDirectory.PlanRelease(ctx, globalOwnerID(r, acct), slug, releaseID, req.Image); err != nil {
 		s.globalImageReleaseError(w, r, acct, err)
 		return
 	}
 	coordinator := globaldirectory.Reconciler{Store: s.globalDirectory, Verifier: s.globalVerifier, Delegations: service}
-	release, err := coordinator.Resume(ctx, acct.ID, slug, releaseID, req.RegionalAPIKeys)
+	release, err := coordinator.Resume(ctx, globalOwnerID(r, acct), slug, releaseID, req.RegionalAPIKeys)
 	if err != nil {
 		s.globalImageReleaseError(w, r, acct, err)
 		return
@@ -54,7 +54,7 @@ func (s *server) getGlobalImageRelease(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrValidation("use a canonical nonzero release UUID"))
 		return
 	}
-	release, err := s.globalDirectory.GetRelease(r.Context(), acct.ID, r.PathValue("slug"), r.PathValue("release_id"))
+	release, err := s.globalDirectory.GetRelease(r.Context(), globalOwnerID(r, acct), r.PathValue("slug"), r.PathValue("release_id"))
 	if err != nil {
 		s.globalImageReleaseError(w, r, acct, err)
 		return

@@ -10,11 +10,11 @@ import (
 
 func (s *PgStore) readRelease(ctx context.Context, db sqlc.DBTX, owner, slug, releaseID string) (Release, error) {
 	q := &sqlc.Queries{}
-	row, err := q.ReadGlobalImageRelease(ctx, db, sqlc.ReadGlobalImageReleaseParams{AccountID: idArg(owner), Slug: slug, ReleaseID: idArg(releaseID)})
+	row, err := q.ReadGlobalImageRelease(ctx, db, sqlc.ReadGlobalImageReleaseParams{OwnerID: idArg(owner), Slug: slug, ReleaseID: idArg(releaseID)})
 	if err != nil {
 		return Release{}, err
 	}
-	out := Release{GlobalAppID: row.GlobalAppID, AccountID: row.AccountID, ReleaseID: row.ReleaseID, Generation: row.Generation, DesiredGeneration: row.DesiredReleaseGeneration, Image: row.ImageRef, CreatedAt: row.CreatedAt.Time}
+	out := Release{GlobalAppID: row.GlobalAppID, OwnerID: row.OwnerID, ReleaseID: row.ReleaseID, Generation: row.Generation, DesiredGeneration: row.DesiredReleaseGeneration, Image: row.ImageRef, CreatedAt: row.CreatedAt.Time}
 	rows, err := q.ListGlobalImageReleaseTargets(ctx, db, sqlc.ListGlobalImageReleaseTargetsParams{GlobalAppID: idArg(out.GlobalAppID), ReleaseID: idArg(releaseID)})
 	if err != nil {
 		return Release{}, err
@@ -32,7 +32,7 @@ func (s *PgStore) PlanRelease(ctx context.Context, owner, slug, releaseID, image
 	}
 	var out Release
 	err := s.transaction(ctx, "plan release", func(tx pgx.Tx) error {
-		_, err := (&sqlc.Queries{}).PlanGlobalImageRelease(ctx, tx, sqlc.PlanGlobalImageReleaseParams{AccountID: idArg(owner), Slug: slug, ReleaseID: idArg(releaseID), ImageRef: image})
+		_, err := (&sqlc.Queries{}).PlanGlobalImageRelease(ctx, tx, sqlc.PlanGlobalImageReleaseParams{OwnerID: idArg(owner), Slug: slug, ReleaseID: idArg(releaseID), ImageRef: image})
 		if err != nil {
 			return err
 		}
@@ -46,7 +46,7 @@ func (s *PgStore) GetRelease(ctx context.Context, owner, slug, releaseID string)
 	var out Release
 	err := s.transaction(ctx, "read release", func(tx pgx.Tx) error {
 		// Serialize the head, snapshot and results into one coherent response.
-		_, err := (&sqlc.Queries{}).LockGlobalAppIdentity(ctx, tx, sqlc.LockGlobalAppIdentityParams{AccountID: idArg(owner), Slug: slug})
+		_, err := (&sqlc.Queries{}).LockGlobalAppIdentity(ctx, tx, sqlc.LockGlobalAppIdentityParams{OwnerID: idArg(owner), Slug: slug})
 		if err != nil {
 			return err
 		}
@@ -57,7 +57,7 @@ func (s *PgStore) GetRelease(ctx context.Context, owner, slug, releaseID string)
 }
 
 func (s *PgStore) lockRelease(ctx context.Context, tx pgx.Tx, owner, slug, releaseID string) (Release, error) {
-	_, err := (&sqlc.Queries{}).LockGlobalAppIdentity(ctx, tx, sqlc.LockGlobalAppIdentityParams{AccountID: idArg(owner), Slug: slug})
+	_, err := (&sqlc.Queries{}).LockGlobalAppIdentity(ctx, tx, sqlc.LockGlobalAppIdentityParams{OwnerID: idArg(owner), Slug: slug})
 	if err != nil {
 		return Release{}, err
 	}

@@ -75,7 +75,7 @@ func TestGlobalDirectoryPostgresRegistryWinsAttachmentRace(t *testing.T) {
 		t.Fatalf("stale probe committed: %v", err)
 	}
 	var targets, mappings int
-	if err := pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM global_app_targets), (SELECT count(*) FROM global_account_cell_bindings)`).Scan(&targets, &mappings); err != nil {
+	if err := pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM global_app_targets), (SELECT count(*) FROM global_owner_cell_bindings)`).Scan(&targets, &mappings); err != nil {
 		t.Fatal(err)
 	}
 	if targets != 0 || mappings != 0 {
@@ -87,10 +87,10 @@ func TestGlobalDirectoryPostgresAttachmentFencesRegistry(t *testing.T) {
 	pool, store, owner, app, cell, binding := directoryPGTargetFixture(t)
 	tx := beginDirectoryTx(t, pool)
 	// Exercise the row guard even for a SQL caller bypassing the adapter.
-	if _, err := tx.Exec(t.Context(), `INSERT INTO global_account_cell_bindings(account_id,cell_id,regional_account_id) VALUES($1,$2,$3)`, owner, cell.ID, binding.RegionalAccountID); err != nil {
+	if _, err := tx.Exec(t.Context(), `INSERT INTO global_owner_cell_bindings(owner_id,cell_id,regional_account_id) VALUES($1,$2,$3)`, owner, cell.ID, binding.RegionalAccountID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(t.Context(), `INSERT INTO global_app_targets(global_app_id,account_id,cell_id,region,cell_generation,regional_account_id,regional_app_id,regional_app_slug) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, app.ID, owner, cell.ID, cell.Region, cell.Generation, binding.RegionalAccountID, binding.RegionalAppID, binding.RegionalAppSlug); err != nil {
+	if _, err := tx.Exec(t.Context(), `INSERT INTO global_app_targets(global_app_id,owner_id,cell_id,region,cell_generation,regional_account_id,regional_app_id,regional_app_slug) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, app.ID, owner, cell.ID, cell.Region, cell.Generation, binding.RegionalAccountID, binding.RegionalAppID, binding.RegionalAppSlug); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -123,9 +123,9 @@ func TestGlobalDirectoryPostgresSQLIdentityGuards(t *testing.T) {
 		args                  []any
 	}{
 		{"cell_region", `UPDATE global_directory_cells SET region='eu-hel' WHERE id=$1`, "global_directory_identity", []any{cell.ID}},
-		{"global_owner", `UPDATE global_apps SET account_id=$1 WHERE id=$2`, "global_directory_identity", []any{uuid.NewString(), app.ID}},
+		{"global_owner", `UPDATE global_apps SET owner_id=$1 WHERE id=$2`, "global_directory_identity", []any{uuid.NewString(), app.ID}},
 		{"global_slug", `UPDATE global_apps SET slug='other-global' WHERE id=$1`, "global_directory_identity", []any{app.ID}},
-		{"mapping", `UPDATE global_account_cell_bindings SET regional_account_id=$1 WHERE account_id=$2`, "global_directory_identity", []any{uuid.NewString(), owner}},
+		{"mapping", `UPDATE global_owner_cell_bindings SET regional_account_id=$1 WHERE owner_id=$2`, "global_directory_identity", []any{uuid.NewString(), owner}},
 		{"local_app", `UPDATE global_app_targets SET regional_app_id=$1 WHERE global_app_id=$2`, "global_directory_identity", []any{uuid.NewString(), app.ID}},
 		{"stale_target", `UPDATE global_app_targets SET cell_generation=7 WHERE global_app_id=$1`, "global_directory_stale_cell", []any{app.ID}},
 		{"cell_init", `INSERT INTO control_plane_cells(singleton,id,compute_region) VALUES(true,$1,'eu-hel')`, "global_directory_scope", []any{uuid.NewString()}},

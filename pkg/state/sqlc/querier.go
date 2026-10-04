@@ -158,6 +158,7 @@ type Querier interface {
 	CreateDevBridge(ctx context.Context, db DBTX, arg CreateDevBridgeParams) (int64, error)
 	CreateDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg CreateDevBridgeWebhookReplayParams) (int64, error)
 	CreateGlobalAppIdentity(ctx context.Context, db DBTX, arg CreateGlobalAppIdentityParams) (string, error)
+	CreateGlobalOrgApp(ctx context.Context, db DBTX, arg CreateGlobalOrgAppParams) (string, error)
 	CreateInstance(ctx context.Context, db DBTX, arg CreateInstanceParams) (CreateInstanceRow, error)
 	CreateJobDefinitionWithComputeRegion(ctx context.Context, db DBTX, arg CreateJobDefinitionWithComputeRegionParams) (Job, error)
 	CreateMirrorSlotLease(ctx context.Context, db DBTX, arg CreateMirrorSlotLeaseParams) (string, error)
@@ -513,9 +514,9 @@ type Querier interface {
 	InsertExclusiveWorkEffect(ctx context.Context, db DBTX, arg InsertExclusiveWorkEffectParams) error
 	InsertExclusiveWorkOperation(ctx context.Context, db DBTX, arg InsertExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)
 	InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg InsertFeatureFlagVersionParams) (FeatureFlagVersion, error)
-	InsertGlobalAccountCellBinding(ctx context.Context, db DBTX, arg InsertGlobalAccountCellBindingParams) error
 	// ADR-482: immutable sealed authority and restart-safe recovery claims.
 	InsertGlobalDelegation(ctx context.Context, db DBTX, arg InsertGlobalDelegationParams) (GlobalReleaseDelegation, error)
+	InsertGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg InsertGlobalOwnerCellBindingParams) error
 	InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error)
 	// Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 	// Returns the full row (with created_at server-stamped).
@@ -887,7 +888,7 @@ type Querier interface {
 	// successful public request and terminal instances remain for 30 days, which
 	// fully covers the 14-day beta cohort window.
 	ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx context.Context, db DBTX, createdAt pgtype.Timestamptz) ([]ListFirstSuccessfulRequestsForAccountsCreatedSinceRow, error)
-	ListGlobalAppIdentities(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListGlobalAppIdentitiesRow, error)
+	ListGlobalAppIdentities(ctx context.Context, db DBTX, ownerID pgtype.UUID) ([]ListGlobalAppIdentitiesRow, error)
 	ListGlobalAppTargets(ctx context.Context, db DBTX, arg ListGlobalAppTargetsParams) ([]ListGlobalAppTargetsRow, error)
 	ListGlobalDirectoryCells(ctx context.Context, db DBTX) ([]ListGlobalDirectoryCellsRow, error)
 	ListGlobalImageReleaseTargets(ctx context.Context, db DBTX, arg ListGlobalImageReleaseTargetsParams) ([]ListGlobalImageReleaseTargetsRow, error)
@@ -1223,9 +1224,11 @@ type Querier interface {
 	ReadExclusiveWorkOperation(ctx context.Context, db DBTX, arg ReadExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)
 	ReadExclusiveWorkPolicy(ctx context.Context, db DBTX, arg ReadExclusiveWorkPolicyParams) (ExclusiveWorkPolicy, error)
 	ReadExclusiveWorkReplay(ctx context.Context, db DBTX, arg ReadExclusiveWorkReplayParams) (ExclusiveWorkOperation, error)
-	ReadGlobalAccountCellBinding(ctx context.Context, db DBTX, arg ReadGlobalAccountCellBindingParams) (string, error)
 	ReadGlobalDelegation(ctx context.Context, db DBTX, arg ReadGlobalDelegationParams) (GlobalReleaseDelegation, error)
+	// ADR-483: directory tenant roots, separate from authentication actors.
+	ReadGlobalDirectoryOwner(ctx context.Context, db DBTX, ownerID pgtype.UUID) (ReadGlobalDirectoryOwnerRow, error)
 	ReadGlobalImageRelease(ctx context.Context, db DBTX, arg ReadGlobalImageReleaseParams) (ReadGlobalImageReleaseRow, error)
+	ReadGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg ReadGlobalOwnerCellBindingParams) (string, error)
 	// A single statement reads the pointer and its complete membership together.
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)
 	ReadRouteCheckHistoryEntry(ctx context.Context, db DBTX, arg ReadRouteCheckHistoryEntryParams) ([]byte, error)
@@ -1402,6 +1405,7 @@ type Querier interface {
 	ReserveAccountCreditConsumption(ctx context.Context, db DBTX, arg ReserveAccountCreditConsumptionParams) (pgtype.UUID, error)
 	ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accountID string) (int32, error)
 	ReserveRuntimeLogArchive(ctx context.Context, db DBTX, arg ReserveRuntimeLogArchiveParams) (int64, error)
+	ResolveGlobalOrgOwner(ctx context.Context, db DBTX, orgID pgtype.UUID) (string, error)
 	// A detector pass that no longer sees a regression resolves the previous
 	// observation. Returning rows lets apid publish one account-scoped event per
 	// lifecycle transition without a second read.

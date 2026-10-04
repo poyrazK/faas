@@ -63,7 +63,7 @@ const (
 
 type Release struct {
 	GlobalAppID       string
-	AccountID         string
+	OwnerID           string
 	ReleaseID         string
 	Generation        int64
 	DesiredGeneration int64

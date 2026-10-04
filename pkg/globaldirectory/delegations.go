@@ -28,7 +28,7 @@ func (e *DelegationLimitError) Error() string { return "global delegation bound 
 type Delegation struct {
 	ID          string
 	GlobalAppID string
-	AccountID   string
+	OwnerID     string
 	Slug        string
 	Binding     Binding
 	APIBase     string
@@ -43,7 +43,7 @@ func (g Delegation) usable(now time.Time) bool {
 	return (g.Status == DelegationPending || g.Status == DelegationActive) && g.ExpiresAt.After(now)
 }
 func (g Delegation) identityValid() bool {
-	return ValidID(g.ID) && ValidID(g.GlobalAppID) && validOwnerID(g.AccountID) && ValidSlug(g.Slug) &&
+	return ValidID(g.ID) && ValidID(g.GlobalAppID) && validOwnerID(g.OwnerID) && ValidSlug(g.Slug) &&
 		g.Binding.Validate() == nil && ValidAPIBase(g.APIBase) && len(g.Hash) == api.RegionalReleaseTokenRandomBytes && !g.ExpiresAt.IsZero()
 }
 func (g Delegation) matches(t Target) bool {
@@ -56,7 +56,7 @@ func copyDelegation(g Delegation) Delegation {
 }
 
 type RecoveryWork struct {
-	GlobalAppID, AccountID, Slug, ReleaseID, ClaimID, WakeID, CursorID string
+	GlobalAppID, OwnerID, Slug, ReleaseID, ClaimID, WakeID, CursorID string
 }
 
 type DelegationStore interface {

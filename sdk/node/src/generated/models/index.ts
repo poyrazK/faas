@@ -465,6 +465,7 @@ export type { GithubCheckUpdateRecord } from './GithubCheckUpdateRecord.js';
 export type { GithubRecoveryRetryResponse } from './GithubRecoveryRetryResponse.js';
 export type { GithubRecoveryStatusResponse } from './GithubRecoveryStatusResponse.js';
 export type { GithubWebhookDeliveryRecord } from './GithubWebhookDeliveryRecord.js';
+export type { GlobalAppOwnerResponse } from './GlobalAppOwnerResponse.js';
 export type { GlobalAppResolutionResponse } from './GlobalAppResolutionResponse.js';
 export type { GlobalAppResponse } from './GlobalAppResponse.js';
 export type { GlobalAppTargetResponse } from './GlobalAppTargetResponse.js';

@@ -32,6 +32,14 @@ func directoryError(op string, err error) error {
 		err = ErrNotFound
 	} else if errors.As(err, &pgErr) {
 		switch pgErr.ConstraintName {
+		case "global_directory_owner_inactive":
+			err = ErrOwnerInactive
+		case "global_directory_owner_forbidden":
+			err = ErrOwnerForbidden
+		case "global_directory_owner_plan_changed":
+			err = ErrOwnerPlanChanged
+		case "global_directory_org_targets_unavailable":
+			err = ErrOrgTargetsUnavailable
 		case "global_directory_scope":
 			err = ErrBoundCell
 		case "global_directory_limit":
@@ -125,20 +133,20 @@ func (s *PgStore) CreateApp(ctx context.Context, accountID, slug string, limit i
 	var out App
 	queries := &sqlc.Queries{}
 	err := s.transaction(ctx, "create app", func(tx pgx.Tx) error {
-		_, err := queries.CreateGlobalAppIdentity(ctx, tx, sqlc.CreateGlobalAppIdentityParams{AccountID: idArg(accountID), Slug: slug, AppLimit: int32(limit)})
+		_, err := queries.CreateGlobalAppIdentity(ctx, tx, sqlc.CreateGlobalAppIdentityParams{OwnerID: idArg(accountID), Slug: slug, AppLimit: int32(limit)})
 		if err != nil {
 			return err
 		}
-		row, err := queries.GlobalAppIdentity(ctx, tx, sqlc.GlobalAppIdentityParams{AccountID: idArg(accountID), Slug: slug})
-		out = App{ID: row.GlobalAppID, AccountID: row.AccountID, Slug: row.Slug, RoutingPolicy: row.RoutingPolicy, CreatedAt: row.CreatedAt.Time}
+		row, err := queries.GlobalAppIdentity(ctx, tx, sqlc.GlobalAppIdentityParams{OwnerID: idArg(accountID), Slug: slug})
+		out = App{ID: row.GlobalAppID, OwnerID: row.OwnerID, Slug: row.Slug, RoutingPolicy: row.RoutingPolicy, CreatedAt: row.CreatedAt.Time}
 		return err
 	})
 	return out, err
 }
 
 func (s *PgStore) AppBySlug(ctx context.Context, accountID, slug string) (App, error) {
-	row, err := (&sqlc.Queries{}).GlobalAppIdentity(ctx, s.pool, sqlc.GlobalAppIdentityParams{AccountID: idArg(accountID), Slug: slug})
-	return App{ID: row.GlobalAppID, AccountID: row.AccountID, Slug: row.Slug, RoutingPolicy: row.RoutingPolicy, CreatedAt: row.CreatedAt.Time}, directoryError("read app", err)
+	row, err := (&sqlc.Queries{}).GlobalAppIdentity(ctx, s.pool, sqlc.GlobalAppIdentityParams{OwnerID: idArg(accountID), Slug: slug})
+	return App{ID: row.GlobalAppID, OwnerID: row.OwnerID, Slug: row.Slug, RoutingPolicy: row.RoutingPolicy, CreatedAt: row.CreatedAt.Time}, directoryError("read app", err)
 }
 
 func (s *PgStore) ListApps(ctx context.Context, accountID string) ([]App, error) {
@@ -148,7 +156,7 @@ func (s *PgStore) ListApps(ctx context.Context, accountID string) ([]App, error)
 	}
 	out := make([]App, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, App{ID: row.GlobalAppID, AccountID: row.AccountID, Slug: row.Slug, RoutingPolicy: row.RoutingPolicy, CreatedAt: row.CreatedAt.Time})
+		out = append(out, App{ID: row.GlobalAppID, OwnerID: row.OwnerID, Slug: row.Slug, RoutingPolicy: row.RoutingPolicy, CreatedAt: row.CreatedAt.Time})
 	}
 	return out, nil
 }
@@ -160,7 +168,7 @@ func (s *PgStore) AttachTarget(ctx context.Context, accountID, slug string, bind
 	queries := &sqlc.Queries{}
 	var out Target
 	err := s.transaction(ctx, "attach target", func(tx pgx.Tx) error {
-		app, err := queries.LockGlobalAppIdentity(ctx, tx, sqlc.LockGlobalAppIdentityParams{AccountID: idArg(accountID), Slug: slug})
+		app, err := queries.LockGlobalAppIdentity(ctx, tx, sqlc.LockGlobalAppIdentityParams{OwnerID: idArg(accountID), Slug: slug})
 		if err != nil {
 			return err
 		}
@@ -171,25 +179,25 @@ func (s *PgStore) AttachTarget(ctx context.Context, accountID, slug string, bind
 		if err != nil {
 			return err
 		}
-		mapArgs := sqlc.InsertGlobalAccountCellBindingParams{AccountID: idArg(accountID), CellID: idArg(binding.CellID), RegionalAccountID: idArg(binding.RegionalAccountID)}
-		if err := queries.InsertGlobalAccountCellBinding(ctx, tx, mapArgs); err != nil {
+		mapArgs := sqlc.InsertGlobalOwnerCellBindingParams{OwnerID: idArg(accountID), CellID: idArg(binding.CellID), RegionalAccountID: idArg(binding.RegionalAccountID)}
+		if err := queries.InsertGlobalOwnerCellBinding(ctx, tx, mapArgs); err != nil {
 			return err
 		}
-		mapped, err := queries.ReadGlobalAccountCellBinding(ctx, tx, sqlc.ReadGlobalAccountCellBindingParams{AccountID: idArg(accountID), CellID: idArg(binding.CellID)})
+		mapped, err := queries.ReadGlobalOwnerCellBinding(ctx, tx, sqlc.ReadGlobalOwnerCellBindingParams{OwnerID: idArg(accountID), CellID: idArg(binding.CellID)})
 		if err != nil {
 			return err
 		}
 		if mapped != binding.RegionalAccountID {
 			return ErrConflict
 		}
-		id, err := queries.AttachGlobalAppTarget(ctx, tx, sqlc.AttachGlobalAppTargetParams{GlobalAppID: idArg(app.GlobalAppID), AccountID: idArg(accountID), CellID: idArg(binding.CellID), Region: binding.Region, CellGeneration: binding.CellGeneration, RegionalAccountID: idArg(binding.RegionalAccountID), RegionalAppID: idArg(binding.RegionalAppID), RegionalAppSlug: binding.RegionalAppSlug})
+		id, err := queries.AttachGlobalAppTarget(ctx, tx, sqlc.AttachGlobalAppTargetParams{GlobalAppID: idArg(app.GlobalAppID), OwnerID: idArg(accountID), CellID: idArg(binding.CellID), Region: binding.Region, CellGeneration: binding.CellGeneration, RegionalAccountID: idArg(binding.RegionalAccountID), RegionalAppID: idArg(binding.RegionalAppID), RegionalAppSlug: binding.RegionalAppSlug})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConflict
 		}
 		if err != nil {
 			return err
 		}
-		rows, err := queries.ListGlobalAppTargets(ctx, tx, sqlc.ListGlobalAppTargetsParams{AccountID: idArg(accountID), Slug: slug})
+		rows, err := queries.ListGlobalAppTargets(ctx, tx, sqlc.ListGlobalAppTargetsParams{OwnerID: idArg(accountID), Slug: slug})
 		if err != nil {
 			return err
 		}
@@ -212,7 +220,7 @@ func (s *PgStore) ListTargets(ctx context.Context, accountID, slug string) ([]Ta
 	if _, err := s.AppBySlug(ctx, accountID, slug); err != nil {
 		return nil, err
 	}
-	rows, err := (&sqlc.Queries{}).ListGlobalAppTargets(ctx, s.pool, sqlc.ListGlobalAppTargetsParams{AccountID: idArg(accountID), Slug: slug})
+	rows, err := (&sqlc.Queries{}).ListGlobalAppTargets(ctx, s.pool, sqlc.ListGlobalAppTargetsParams{OwnerID: idArg(accountID), Slug: slug})
 	if err != nil {
 		return nil, directoryError("list targets", err)
 	}
@@ -226,11 +234,11 @@ func (s *PgStore) ListTargets(ctx context.Context, accountID, slug string) ([]Ta
 func (s *PgStore) DetachTarget(ctx context.Context, accountID, slug, region string) error {
 	return s.transaction(ctx, "detach target", func(tx pgx.Tx) error {
 		// Match attachment/allocation lock order before DELETE locks a target row.
-		_, err := (&sqlc.Queries{}).LockGlobalAppIdentity(ctx, tx, sqlc.LockGlobalAppIdentityParams{AccountID: idArg(accountID), Slug: slug})
+		_, err := (&sqlc.Queries{}).LockGlobalAppIdentity(ctx, tx, sqlc.LockGlobalAppIdentityParams{OwnerID: idArg(accountID), Slug: slug})
 		if err != nil {
 			return err
 		}
-		count, err := (&sqlc.Queries{}).DeleteGlobalAppTarget(ctx, tx, sqlc.DeleteGlobalAppTargetParams{AccountID: idArg(accountID), Slug: slug, Region: region})
+		count, err := (&sqlc.Queries{}).DeleteGlobalAppTarget(ctx, tx, sqlc.DeleteGlobalAppTargetParams{OwnerID: idArg(accountID), Slug: slug, Region: region})
 		if err != nil {
 			return err
 		}

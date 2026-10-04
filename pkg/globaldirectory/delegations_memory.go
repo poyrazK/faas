@@ -16,7 +16,7 @@ type memoryRecovery struct {
 
 func (s *MemoryStore) wake(app App) {
 	old := s.recovery[app.ID]
-	old.GlobalAppID, old.AccountID, old.Slug, old.WakeID = app.ID, app.AccountID, app.Slug, uuid.NewString()
+	old.GlobalAppID, old.OwnerID, old.Slug, old.WakeID = app.ID, app.OwnerID, app.Slug, uuid.NewString()
 	old.due = time.Now().UTC()
 	s.recovery[app.ID] = old
 }
@@ -27,7 +27,7 @@ func (s *MemoryStore) retireDelegations(appID, region string) {
 		}
 		g.Status = DelegationRevoking
 		s.delegations[id] = g
-		s.wake(App{ID: g.GlobalAppID, AccountID: g.AccountID, Slug: g.Slug})
+		s.wake(App{ID: g.GlobalAppID, OwnerID: g.OwnerID, Slug: g.Slug})
 	}
 }
 func (s *MemoryStore) delegationTarget(appID, region string) (Target, bool) {
@@ -47,7 +47,7 @@ func (s *MemoryStore) EnsureDelegation(_ context.Context, owner, slug string, g 
 		return Delegation{}, err
 	}
 	current, ok := s.delegationTarget(app.ID, g.Binding.Region)
-	if !ok || g.AccountID != app.AccountID || g.Slug != app.Slug || !g.matches(current) {
+	if !ok || g.OwnerID != app.OwnerID || g.Slug != app.Slug || !g.matches(current) {
 		return Delegation{}, ErrStaleCell
 	}
 	count := int64(0)
@@ -100,13 +100,13 @@ func (s *MemoryStore) ReadDelegation(_ context.Context, owner, appID, id string)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	g, ok := s.delegations[id]
-	if !ok || g.AccountID != owner || g.GlobalAppID != appID {
+	if !ok || g.OwnerID != owner || g.GlobalAppID != appID {
 		return Delegation{}, ErrNotFound
 	}
 	return copyDelegation(g), nil
 }
 func (s *MemoryStore) checkDelegation(g Delegation) error {
-	app, err := s.app(g.AccountID, g.Slug)
+	app, err := s.app(g.OwnerID, g.Slug)
 	if err != nil || app.ID != g.GlobalAppID {
 		return ErrStaleCell
 	}
@@ -120,7 +120,7 @@ func (s *MemoryStore) CheckDelegation(_ context.Context, owner, appID, id string
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	g, ok := s.delegations[id]
-	if !ok || g.AccountID != owner || g.GlobalAppID != appID {
+	if !ok || g.OwnerID != owner || g.GlobalAppID != appID {
 		return ErrNotFound
 	}
 	return s.checkDelegation(g)
@@ -129,7 +129,7 @@ func (s *MemoryStore) SetDelegationStatus(_ context.Context, owner, appID, id, s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	g, ok := s.delegations[id]
-	if !ok || g.AccountID != owner || g.GlobalAppID != appID {
+	if !ok || g.OwnerID != owner || g.GlobalAppID != appID {
 		return ErrNotFound
 	}
 	if g.Status == DelegationRevoked || g.Status == DelegationExpired {
@@ -163,7 +163,7 @@ func (s *MemoryStore) ListRecoveryDelegations(_ context.Context, owner, appID st
 	defer s.mu.Unlock()
 	out := []Delegation{}
 	for _, g := range s.delegations {
-		if g.GlobalAppID == appID && g.AccountID == owner && g.Status != DelegationRevoked && g.Status != DelegationExpired {
+		if g.GlobalAppID == appID && g.OwnerID == owner && g.Status != DelegationRevoked && g.Status != DelegationExpired {
 			out = append(out, copyDelegation(g))
 		}
 	}

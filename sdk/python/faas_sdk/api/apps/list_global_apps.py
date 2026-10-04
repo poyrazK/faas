@@ -74,10 +74,11 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | list[GlobalAppResponse]]:
-    """List account-owned global app identities.
+    """List global app identities for the active tenant.
 
-     Requires personal account read access to an enabled separate global directory. Targets report
-    identity verification status, not deployment readiness.
+     Requires read scope and current membership for organization access. The organization key selects its
+    own tenant; sessions use X-Active-Org or org. Targets report identity verification status, not
+    deployment readiness.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -100,10 +101,11 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | list[GlobalAppResponse] | None:
-    """List account-owned global app identities.
+    """List global app identities for the active tenant.
 
-     Requires personal account read access to an enabled separate global directory. Targets report
-    identity verification status, not deployment readiness.
+     Requires read scope and current membership for organization access. The organization key selects its
+    own tenant; sessions use X-Active-Org or org. Targets report identity verification status, not
+    deployment readiness.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -122,10 +124,11 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | list[GlobalAppResponse]]:
-    """List account-owned global app identities.
+    """List global app identities for the active tenant.
 
-     Requires personal account read access to an enabled separate global directory. Targets report
-    identity verification status, not deployment readiness.
+     Requires read scope and current membership for organization access. The organization key selects its
+    own tenant; sessions use X-Active-Org or org. Targets report identity verification status, not
+    deployment readiness.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,10 +149,11 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | list[GlobalAppResponse] | None:
-    """List account-owned global app identities.
+    """List global app identities for the active tenant.
 
-     Requires personal account read access to an enabled separate global directory. Targets report
-    identity verification status, not deployment readiness.
+     Requires read scope and current membership for organization access. The organization key selects its
+    own tenant; sessions use X-Active-Org or org. Targets report identity verification status, not
+    deployment readiness.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
