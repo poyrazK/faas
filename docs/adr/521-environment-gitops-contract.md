@@ -87,8 +87,9 @@
    qualification requests with separate bounded execution leases. Dedicated
    scheduler instance admission now binds the current attempt and preserves
    reservation limits. Attempt-bound runtime publication and a bounded scheduler
-   VM execution primitive are now available. The durable VM consumer, native
-   qualification/smoke receipts, release commands and activation
+   VM execution primitive and bounded node-owned page consumer are now available.
+   Production polling, durable qualification/smoke/restore completion receipts,
+   release commands and activation
    remain to be implemented. Retry and crash recovery resume the journaled operation;
    an older generation cannot activate a replacement approved graph. Release coordination
    must expose partial execution across database, edge and runtime boundaries.
@@ -2024,3 +2025,46 @@ with race detection and no skips. Linux lint passes with zero issues in state,
 scheduler and external adapter tests; SQLC regeneration matches. Initial local
 fixture failures and a shared-host disk-exhaustion run are retained in the audit.
 These portable checks do not establish native smoke or snapshot acceptance.
+
+## Original-attempt snapshot capture
+
+The additive `CaptureEnvironmentQualification` RPC carries the complete original
+execution and selects its recorded node. Generic snapshots and older node
+capabilities cannot substitute for it. vmmd validates the live instance's original
+physical generation and complete lease against both host journals, pins the
+Manager flight, and serializes capture with incoming revocation. Destroy cancels
+and joins that flight. The stored incoming deadline bounds every capture.
+
+vmmd derives a warm v2 object namespace from the original deployment and incoming
+generation. Callers supply neither object keys nor host paths. The capture pairs
+memory, device state, and the frozen private drive, resumes through the existing
+warm path, and requires successful publication of the kernel/base backing sidecar
+remembered at boot. Capture start is durably recorded before snapshot effects;
+completion is durable only after publication, resume, positive byte evidence and
+revalidation of the same physical owner. Duplicate completion returns the same
+receipt without recapture. Interrupted publication or uncertain completion retains
+the started record and rejects another capture in that namespace.
+
+Native recovery validates these separate capture records against the original
+incoming journal, including unknown/missing/duplicate fields, changed identities
+and symlinks. It does not reconstruct a live instance or promote an interrupted
+capture. The private RPC validates the original echoed frame, profile, physical
+identity and all coupled keys before returning capture evidence. A capture alone
+grants no health, smoke, restore, deployment-ready or graph activation authority.
+Durable graph completion must additionally bind this capture to matching original
+retirement evidence and the required smoke/restore results under current state
+fences. Production qualification polling and enforcement remain gated.
+
+Portable qualification checks cover capture replay, failed capture/resume/backing
+publication, changed live and physical identity, cancellation joins, racing
+delivery and damaged journal recovery. The final original-attempt host checks
+pass 28 top-level tests / 95 cases with race detection. Scheduler qualification
+and RPC checks pass 41 top-level tests / 116 cases. The broader portable VM,
+wire and RPC regression run passed 2,039 cases with six platform-dependent skips;
+the final app/deployment identity guards were subsequently covered by the focused
+host checks. Linux lint reports zero issues in the four changed behavior packages.
+Protobuf regeneration matches and retains the normalized version-comment policy.
+These checks use journal/process fixtures and do not establish native KVM
+capture/restore acceptance. Dedicated native `test-metal` and `leakcheck`, durable
+graph completion, isolated smoke/restore evidence and graph activation remain
+required before enablement.

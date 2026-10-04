@@ -31,6 +31,9 @@ service Vmmd {
   // ownership must be configured before creation or retirement is available.
   rpc CreateEnvironmentQualification(CreateEnvironmentQualificationRequest) returns (CreateEnvironmentQualificationResponse);
   rpc RetireEnvironmentQualification(RetireEnvironmentQualificationRequest) returns (RetireEnvironmentQualificationResponse);
+  // Captures the original VM in a vmmd-chosen immutable namespace. This
+  // acknowledges capture only, never smoke/restore or graph qualification.
+  rpc CaptureEnvironmentQualification(CaptureEnvironmentQualificationRequest) returns (CaptureEnvironmentQualificationResponse);
 
   // JobColdBoot starts a non-listening job-task VM. Jobs own their image,
   // command, environment, and timeout, so they use a dedicated flat wire
@@ -1029,6 +1032,29 @@ message EnvironmentQualificationRetirement {
 message RetireEnvironmentQualificationResponse {
   EnvironmentQualificationExecution execution = 1;
   EnvironmentQualificationRetirement retirement = 2;
+}
+
+message CaptureEnvironmentQualificationRequest {
+  EnvironmentQualificationExecution execution = 1;
+}
+
+message EnvironmentQualificationSnapshot {
+  uint32 contract_version = 1;
+  string capture_id = 2;
+  string native_generation = 3;
+  string kernel_boot_id = 4;
+  string storage_key = 5;
+  string vmstate_storage_key = 6;
+  string drive_storage_key = 7;
+  string backing_storage_key = 8;
+  int64 mem_bytes = 9;
+  int64 vmstate_bytes = 10;
+  int64 stored_bytes = 11;
+}
+
+message CaptureEnvironmentQualificationResponse {
+  EnvironmentQualificationExecution execution = 1;
+  EnvironmentQualificationSnapshot snapshot = 2;
 }
 
 message CreateColdBootRequest {

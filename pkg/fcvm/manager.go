@@ -5256,6 +5256,20 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: app task instances cannot be snapshotted", instance)
 	}
+	info, err := m.warmSnapshotInstance(ctx, inst, spec)
+	if err != nil {
+		return SnapshotInfo{}, err
+	}
+	m.writeSnapshotBacking(ctx, instance, spec.StorageKey)
+	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
+	return info, nil
+}
+
+// The caller pins inst with a live flight through publication. Qualification
+// capture also holds its original authority and requires a durable backing
+// sidecar before recording completion.
+func (m *Manager) warmSnapshotInstance(ctx context.Context, inst *Instance, spec SnapshotSpec) (SnapshotInfo, error) {
+	instance := inst.Lease.Instance
 	spec.ResumeBeforePublish = true
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	if err != nil {
@@ -5279,8 +5293,6 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	if err := ctx.Err(); err != nil {
 		return SnapshotInfo{}, err
 	}
-	m.writeSnapshotBacking(ctx, instance, spec.StorageKey)
-	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
 }
 

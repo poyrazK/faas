@@ -160,6 +160,11 @@ func (j *nativeQualificationJournal) recoveryLeases(ctx context.Context, physica
 	}
 	var leases []Lease
 	for _, entry := range entries {
+		if entry.Name() == "captures" {
+			// Receipts carry no native allocation authority. Validate their
+			// original identity after the incoming inventory.
+			continue
+		}
 		if strings.HasSuffix(entry.Name(), ".lock") || strings.HasPrefix(entry.Name(), ".launch-") {
 			continue
 		}
@@ -192,5 +197,5 @@ func (j *nativeQualificationJournal) recoveryLeases(ctx context.Context, physica
 			leases = append(leases, record.NativeLease)
 		}
 	}
-	return leases, ctx.Err()
+	return leases, errors.Join(ctx.Err(), j.validateCaptures(ctx))
 }
