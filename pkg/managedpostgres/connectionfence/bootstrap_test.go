@@ -151,7 +151,7 @@ func TestMaintenanceBootstrapRecoversOwnershipAndActivatesPrivately(t *testing.T
 	}
 	poolConfig := f.fixture.bootstrap.Copy()
 	poolConfig.ConnConfig.Database, poolConfig.ConnConfig.User = MaintenanceDatabase, f.admin
-poolConfig.ConnConfig.Password = f.password
+	poolConfig.ConnConfig.Password = f.password
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		t.Fatal(err)
