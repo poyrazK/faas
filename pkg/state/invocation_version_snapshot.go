@@ -4,6 +4,7 @@ package state
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -14,6 +15,8 @@ import (
 // part of version selection.
 type InvocationVersionReader interface {
 	AppByID(context.Context, string) (App, error)
+	OperationByID(context.Context, string, string, string) (Operation, error)
+	DeploymentByID(context.Context, string) (Deployment, error)
 	ResolveProjectRelease(context.Context, string, string, string) (string, string, error)
 	ResolveRevisionPin(context.Context, string, string, string) (Deployment, error)
 	InvocationTargetAllowed(context.Context, string, string, InvocationTarget) (bool, error)
@@ -33,6 +36,41 @@ func (s *PgStore) WithInvocationVersionSnapshot(ctx context.Context, read func(I
 }
 
 type invocationVersionPolicyReader struct{ servicePolicyReader }
+
+func (s invocationVersionPolicyReader) OperationByID(ctx context.Context, accountID, tenantID, id string) (Operation, error) {
+	account, err := operationUUID(accountID)
+	if err != nil {
+		return Operation{}, err
+	}
+	operation, err := operationUUID(id)
+	if err != nil {
+		return Operation{}, err
+	}
+	raw, err := sqlc.New().GetCustomerOperation(ctx, s.tx, sqlc.GetCustomerOperationParams{ID: operation, AccountID: account, TenantID: tenantID})
+	if err != nil {
+		return Operation{}, mapErr(err)
+	}
+	op, err := operationPGRecord(raw)
+	if err != nil {
+		return Operation{}, err
+	}
+	if !operationRetained(op, time.Now().UTC()) {
+		return Operation{}, ErrOperationExpired
+	}
+	return op, nil
+}
+
+func (s invocationVersionPolicyReader) DeploymentByID(ctx context.Context, id string) (Deployment, error) {
+	row, err := sqlc.New().ReadInvocationVersionDeployment(ctx, s.tx, uuidToPgtype(id))
+	if err != nil {
+		return Deployment{}, mapErr(err)
+	}
+	dep := Deployment{ID: pgUUIDString(row.ID), AppID: pgUUIDString(row.AppID), Scope: row.Scope, Status: DeploymentStatus(row.Status)}
+	if row.DeletedAt.Valid {
+		dep.DeletedAt = cloneTimePtr(&row.DeletedAt.Time)
+	}
+	return dep, nil
+}
 
 func (s invocationVersionPolicyReader) InvocationTargetAllowed(ctx context.Context, app, scope string, target InvocationTarget) (bool, error) {
 	return sqlc.New().InvocationTargetAllowed(ctx, s.tx, sqlc.InvocationTargetAllowedParams{
@@ -97,6 +135,28 @@ func (m *MemStore) WithInvocationVersionSnapshot(ctx context.Context, read func(
 }
 
 type memInvocationVersionReader struct{ store *MemStore }
+
+func (s memInvocationVersionReader) OperationByID(_ context.Context, accountID, tenantID, id string) (Operation, error) {
+	if s.store.operationData == nil {
+		return Operation{}, ErrNotFound
+	}
+	op, ok := s.store.operationData.operations[id]
+	if !ok || op.AccountID != accountID || tenantID != "" && op.PlatformTenantID != tenantID {
+		return Operation{}, ErrNotFound
+	}
+	if !operationRetained(op, time.Now().UTC()) {
+		return Operation{}, ErrOperationExpired
+	}
+	return cloneOperation(op), nil
+}
+
+func (s memInvocationVersionReader) DeploymentByID(_ context.Context, id string) (Deployment, error) {
+	dep, ok := s.store.deployments[id]
+	if !ok {
+		return Deployment{}, ErrNotFound
+	}
+	return Deployment{ID: dep.ID, AppID: dep.AppID, Scope: dep.Scope, Status: dep.Status, DeletedAt: cloneTimePtr(dep.DeletedAt)}, nil
+}
 
 func (s memInvocationVersionReader) InvocationTargetAllowed(_ context.Context, app, scope string, target InvocationTarget) (bool, error) {
 	instance, exists := s.store.instances[target.InstanceID]

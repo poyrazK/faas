@@ -100,6 +100,9 @@ func resolveInvocationVersionForApp(ctx context.Context, store invocationAppRead
 	if app.Status == AppDeleted || app.DeletedAt != nil || inv.AccountID != "" && inv.AccountID != app.AccountID {
 		return inv, InvocationVersion{}, ErrNotFound
 	}
+	if InvocationHasOperation(inv) {
+		return resolveOperationInvocationVersion(ctx, store, app, inv)
+	}
 	headers := map[string]string{}
 	if len(inv.Headers) > 0 {
 		if err := json.Unmarshal(inv.Headers, &headers); err != nil {
@@ -215,4 +218,36 @@ func invocationPinHeaders(headers map[string]string) (revision, release string, 
 		}
 	}
 	return revision, release, nil
+}
+
+// Durable operation pins are trusted admission metadata. They outlive public
+// revision-pin TTLs, and cannot move to a newer deployment when dispatch waits.
+func resolveOperationInvocationVersion(ctx context.Context, store invocationAppReader, app App, inv Invocation) (Invocation, InvocationVersion, error) {
+	operations, ok := store.(interface {
+		OperationByID(context.Context, string, string, string) (Operation, error)
+	})
+	if !ok {
+		return inv, InvocationVersion{}, ErrConflict
+	}
+	op, err := operations.OperationByID(ctx, inv.AccountID, inv.PlatformTenantID, inv.OperationID)
+	if err != nil {
+		return inv, InvocationVersion{}, err
+	}
+	if app.AccountID != op.AccountID || app.ID != op.AppID || app.Status == AppDeleted || op.CurrentInvocationID != inv.ID || (op.State != api.OperationAccepted && op.State != api.OperationRunning) {
+		return inv, InvocationVersion{}, ErrOperationStaleAttempt
+	}
+	reader, ok := store.(interface {
+		DeploymentByID(context.Context, string) (Deployment, error)
+	})
+	if !ok {
+		return inv, InvocationVersion{}, ErrConflict
+	}
+	dep, err := reader.DeploymentByID(ctx, op.DeploymentID)
+	if err != nil {
+		return inv, InvocationVersion{}, err
+	}
+	if dep.AppID != app.ID || dep.Scope != op.Scope || dep.Status != DeployLive || dep.DeletedAt != nil {
+		return inv, InvocationVersion{}, ErrConflict
+	}
+	return inv, InvocationVersion{DeploymentID: op.DeploymentID, ReleaseID: op.ReleaseID, Scope: op.Scope}, nil
 }

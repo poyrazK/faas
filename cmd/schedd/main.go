@@ -600,7 +600,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		ResidentBytes: func(_ context.Context) (int64, error) {
 			return int64(ledger.ResidentRAM()) * 1024 * 1024, nil
 		},
-		LvFcUsedPct: fcvm.DefaultLvFcUsedPct(api.LvFcName),
+		LvFcUsedPct: fcvm.DefaultFcVolumeUsedPct(api.FcVolumeRoot),
 	})
 	engine, err := sched.NewEngine(ctx, store, ledger, vmmRouter, sched.PoolNotifier{Pool: pool}, fcVersion, log)
 	if err != nil {

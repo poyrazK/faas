@@ -99,7 +99,7 @@ func defaultDeps() runDeps {
 			// F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap.
 			return db.MigrateUp(ctx, pool)
 		},
-		lvUsedPct:  imaged.DefaultLvFcUsedPct(imaged.LvFcName),
+		lvUsedPct:  imaged.DefaultFcVolumeUsedPct(envOr("FAAS_STORAGE_ROOT", defaultStorageRoot)),
 		detectFC:   imaged.DetectFirecrackerVersion,
 		now:        time.Now,
 		configPath: imagedConfigPath(flag.Lookup),
