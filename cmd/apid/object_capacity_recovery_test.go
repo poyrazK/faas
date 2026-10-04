@@ -45,6 +45,7 @@ func TestCompleteCapacityInventory(t *testing.T) {
 		{name: "duplicate key", pages: []objectstorage.ObjectPage{{Items: []objectstorage.Object{{Key: "a", Size: 3}, {Key: "a", Size: 4}}}}},
 		{name: "negative size", pages: []objectstorage.ObjectPage{{Items: []objectstorage.Object{{Key: "a", Size: -1}}}}},
 		{name: "empty truncated page", pages: []objectstorage.ObjectPage{{NextCursor: "next"}}},
+		{name: "unexpected grouped keys", pages: []objectstorage.ObjectPage{{CommonPrefixes: []string{"folder/"}}}},
 		{name: "cursor cycle", pages: []objectstorage.ObjectPage{{Items: []objectstorage.Object{{Key: "a", Size: 3}}, NextCursor: "next"}, {Items: []objectstorage.Object{{Key: "b", Size: 4}}, NextCursor: "next"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

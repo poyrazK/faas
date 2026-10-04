@@ -115,6 +115,12 @@ func TestObjectUploadRecoveryAfterLostAcknowledgmentPG(t *testing.T) {
 	if _, err = provider.WriteTrackedObject(ctx, b.PhysicalName, c.Key, c.ID, strings.NewReader("hello"), c.Bytes, objectstorage.ObjectMetadata{}); !errors.Is(err, objectstorage.ErrUnavailable) {
 		t.Fatal(err)
 	}
+	// Preserve the committed unversioned receipt before the worker can probe it.
+	// A second route admission must not replace the native current object.
+	replacement := state.ObjectUploadCompletion{ID: uuid.NewString(), RouteID: route.ID, AccountID: acct.ID, AppID: app.ID, BucketID: b.ID, SubjectID: "owner", Key: c.Key, Bytes: 5, Status: "pending", IdempotencyKey: "replace", RequestFingerprint: "replacement"}
+	if _, _, err = st.BeginTrackedObjectUpload(ctx, replacement, registry.Accounting); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("pending current-object proof replaced", err)
+	}
 	due(ctx, c.ID)
 	e := setup(t, api.PlanHobby)
 	e.s.store = st

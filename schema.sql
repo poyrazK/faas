@@ -3013,6 +3013,54 @@ END $$;
 
 
 --
+-- Name: fence_object_bucket_account_cleanup(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_bucket_account_cleanup() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE current_status text;
+BEGIN
+ SELECT status INTO current_status FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+ IF current_status IS DISTINCT FROM 'active' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_account_cleanup_fenced',MESSAGE='Inactive account cannot reserve new object buckets';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: fence_object_bucket_pending_writes(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_bucket_pending_writes() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bid uuid; bucket_state text;
+BEGIN
+ IF TG_TABLE_NAME='object_storage_write_admissions' THEN
+  SELECT state INTO bucket_state FROM object_buckets WHERE id=NEW.bucket_id FOR SHARE;
+  IF bucket_state IS DISTINCT FROM 'ready' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_pending_write_fenced',MESSAGE='Bucket cleanup fences new write admission';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF TG_OP='DELETE' THEN bid:=OLD.id;
+ ELSE
+  IF NEW.state NOT IN ('deleting','deleted') THEN RETURN NEW; END IF;
+  bid:=NEW.id;
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_storage_write_admissions w WHERE w.bucket_id=bid AND w.state='pending'
+  AND (w.multipart_upload_id IS NULL OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads m
+   WHERE m.id=w.multipart_upload_id AND m.state IN ('initiating','active','completing','completing_conditional','aborting')))) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_pending_write_fenced',MESSAGE='Settle accepted writes before bucket cleanup';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: fence_object_capacity_write(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3306,6 +3354,35 @@ BEGIN
  IF EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=bid AND v.state<>'ready'
   AND (v.state<>'inventory' OR (TG_TABLE_NAME='object_storage_capacity_reconciliations' AND v.capacity_job_id IS DISTINCT FROM jid))) THEN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Configuration transition fences unrelated inventory';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: fence_object_write_key(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_write_key() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE owner uuid; own_write uuid;
+BEGIN
+ SELECT account_id INTO owner FROM object_buckets WHERE id=NEW.bucket_id;
+ PERFORM 1 FROM accounts WHERE id=owner FOR UPDATE;
+ PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR SHARE;
+ IF TG_TABLE_NAME='object_storage_write_admissions' THEN
+  own_write:=NEW.id;
+ ELSE
+  own_write:=NEW.last_write_id;
+  IF TG_OP='UPDATE' AND NEW.last_write_id IS NOT DISTINCT FROM OLD.last_write_id THEN own_write:=NULL; END IF;
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_storage_write_admissions w
+  WHERE w.bucket_id=NEW.bucket_id AND w.key_hash=NEW.key_hash AND w.state='pending'
+  AND w.id IS DISTINCT FROM own_write
+  AND (w.multipart_upload_id IS NULL OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads m
+   WHERE m.id=w.multipart_upload_id AND m.state IN ('initiating','active','completing','completing_conditional','aborting')))) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_write_key_fenced',MESSAGE='Settle the pending write before replacing its proof';
  END IF;
  RETURN NEW;
 END $$;
@@ -13971,7 +14048,7 @@ CREATE TABLE public.object_buckets (
     CONSTRAINT object_buckets_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT object_buckets_backend_id_check CHECK (((length(backend_id) >= 1) AND (length(backend_id) <= 63))),
     CONSTRAINT object_buckets_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
-    CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text]))),
+    CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text, 'protected'::text, 'cleanup_pending'::text]))),
     CONSTRAINT object_buckets_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT object_buckets_region_check CHECK (((length(region) >= 1) AND (length(region) <= 63))),
     CONSTRAINT object_buckets_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 63))),
@@ -25179,6 +25256,13 @@ CREATE INDEX object_write_admissions_bucket_idx ON public.object_storage_write_a
 
 
 --
+-- Name: object_write_pending_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_write_pending_key_idx ON public.object_storage_write_admissions USING btree (bucket_id, key_hash) WHERE (state = 'pending'::text);
+
+
+--
 -- Name: oidc_exchanged_tokens_expires_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -28140,6 +28224,20 @@ CREATE TRIGGER mirror_rules_set_updated_at_trg BEFORE UPDATE ON public.mirror_ru
 
 
 --
+-- Name: object_storage_write_admissions object_aaa_write_key_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_aaa_write_key_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_object_write_key();
+
+
+--
+-- Name: object_buckets object_bucket_account_cleanup_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_account_cleanup_fence BEFORE INSERT ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.fence_object_bucket_account_cleanup();
+
+
+--
 -- Name: object_buckets object_bucket_capacity_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28172,6 +28270,13 @@ CREATE TRIGGER object_bucket_encryption_immutable BEFORE INSERT OR DELETE OR UPD
 --
 
 CREATE TRIGGER object_bucket_object_lock_protected BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_object_lock FOR EACH ROW EXECUTE FUNCTION public.protect_object_bucket_object_lock();
+
+
+--
+-- Name: object_buckets object_bucket_pending_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_pending_write_fence BEFORE DELETE OR UPDATE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.fence_object_bucket_pending_writes();
 
 
 --
@@ -28305,6 +28410,13 @@ CREATE TRIGGER object_fixed_multipart_capacity_immutable BEFORE DELETE OR UPDATE
 --
 
 CREATE TRIGGER object_grant_capacity_fence BEFORE INSERT OR UPDATE ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.fence_object_capacity_write();
+
+
+--
+-- Name: object_storage_key_grants object_grant_write_key_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_grant_write_key_fence BEFORE INSERT OR UPDATE ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.fence_object_write_key();
 
 
 --
@@ -28550,6 +28662,13 @@ CREATE TRIGGER object_versioning_rebase_fence BEFORE UPDATE OF baseline_bytes, b
 --
 
 CREATE TRIGGER object_versioning_scan_fence BEFORE UPDATE ON public.object_storage_capacity_reconciliations FOR EACH ROW EXECUTE FUNCTION public.fence_object_versioning_inventory();
+
+
+--
+-- Name: object_storage_write_admissions object_write_bucket_cleanup_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_write_bucket_cleanup_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_object_bucket_pending_writes();
 
 
 --
@@ -34016,3 +34135,66 @@ ALTER TABLE ONLY public.workflow_steps
 --
 
 
+
+-- ADR-521: private HTTP operation code retention.
+CREATE INDEX IF NOT EXISTS customer_operations_definition_retention_idx
+    ON customer_operations(definition_id, expires_at);
+
+CREATE INDEX IF NOT EXISTS customer_operations_release_retention_idx
+    ON customer_operations((record->>'release_id'), expires_at);
+
+CREATE OR REPLACE VIEW customer_operation_retained_release_refs AS
+SELECT DISTINCT rs.id AS release_id
+FROM customer_operations o
+JOIN customer_operation_definitions def ON def.id = o.definition_id
+    AND def.account_id = o.account_id AND def.app_id = o.app_id
+    AND def.deployment_id::text = o.record->>'deployment_id'
+    AND def.scope = o.record->>'scope'
+JOIN apps a ON a.id = def.app_id AND a.account_id = o.account_id AND a.status <> 'deleted'
+JOIN deployments d ON d.id = def.deployment_id AND d.app_id = def.app_id AND d.scope = def.scope
+JOIN project_release_sets rs ON rs.id::text = o.record->>'release_id'
+    AND rs.account_id = o.account_id AND rs.project_id = a.project_id
+    AND rs.environment_slug = def.scope
+JOIN project_release_members source ON source.release_id = rs.id
+    AND source.app_id = def.app_id AND source.deployment_id = def.deployment_id
+WHERE o.state IN ('accepted', 'running') OR o.expires_at > now();
+
+CREATE OR REPLACE VIEW customer_operation_retained_deployment_refs AS
+SELECT DISTINCT def.deployment_id
+FROM customer_operations o
+JOIN customer_operation_definitions def ON def.id = o.definition_id
+    AND def.account_id = o.account_id AND def.app_id = o.app_id
+    AND def.deployment_id::text = o.record->>'deployment_id'
+    AND def.scope = o.record->>'scope'
+JOIN apps a ON a.id = def.app_id AND a.account_id = o.account_id AND a.status <> 'deleted'
+JOIN deployments d ON d.id = def.deployment_id AND d.app_id = def.app_id AND d.scope = def.scope
+WHERE o.state IN ('accepted', 'running') OR o.expires_at > now()
+UNION
+SELECT rm.deployment_id
+FROM customer_operation_retained_release_refs retained
+JOIN project_release_sets rs ON rs.id = retained.release_id
+JOIN project_release_members rm ON rm.release_id = rs.id
+JOIN apps a ON a.id = rm.app_id AND a.account_id = rs.account_id AND a.project_id = rs.project_id AND a.status <> 'deleted'
+JOIN deployments d ON d.id = rm.deployment_id AND d.app_id = a.id AND d.scope = rs.environment_slug;
+
+-- ADR-521: private HTTP operation code retention.
+CREATE UNIQUE INDEX IF NOT EXISTS deployments_operation_code_pin_owner_idx ON deployments(id,app_id);
+
+CREATE TABLE IF NOT EXISTS customer_operation_code_pins (
+    deployment_id uuid PRIMARY KEY,
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    expires_at timestamptz NOT NULL CHECK (isfinite(expires_at)),
+    CONSTRAINT customer_operation_code_pins_owner_fk FOREIGN KEY(deployment_id,app_id)
+        REFERENCES deployments(id,app_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS customer_operation_code_pins_app_expiry_idx ON customer_operation_code_pins(app_id,expires_at);
+
+CREATE INDEX IF NOT EXISTS customer_operation_code_pins_expiry_idx ON customer_operation_code_pins(expires_at);
+
+CREATE OR REPLACE VIEW deployment_code_pin_deadlines AS
+SELECT deployment_id,app_id,max(expires_at) AS expires_at FROM (
+    SELECT deployment_id,app_id,expires_at FROM deployment_revision_pins
+    UNION ALL
+    SELECT deployment_id,app_id,expires_at FROM customer_operation_code_pins
+) receipts GROUP BY deployment_id,app_id;

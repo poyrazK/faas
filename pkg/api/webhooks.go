@@ -79,6 +79,7 @@ var AllowedAppWebhookEvents = []string{
 	"deployment.live", "deployment.failed",
 	"rollout.completed", "rollout.aborted",
 	"job.finished",
+	"operation.finished",
 	"usage_statement.finalized",
 	"debug.regression.detected", "debug.regression.resolved",
 	"routes.requirements.changed", "routes.requirements.violated",

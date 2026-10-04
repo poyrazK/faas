@@ -104,6 +104,7 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 func invocationFromSQL(row sqlc.Invocation) (Invocation, error) {
 	inv := Invocation{
 		ID: uuidString(row.ID), AppID: uuidString(row.AppID), AccountID: uuidString(row.AccountID),
+		OperationID:     uuidString(row.OperationID),
 		DeploymentScope: row.DeploymentScope, PlatformTenantID: uuidString(row.PlatformTenantID),
 		InstanceID: row.InstanceID.String, Source: InvocationSource(row.Source),
 		QueueBindingID: uuidString(row.QueueBindingID), QueueName: row.QueueName, State: InvocationState(row.State),

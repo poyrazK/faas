@@ -94,7 +94,7 @@ func TestBucketVersioningSDKEndToEndMem(t *testing.T) {
 				t.Fatal(out, err)
 			}
 			_, err = f.client.PutObject(t.Context(), &awss3.PutObjectInput{Bucket: in.Bucket, Key: aws.String("blocked"), Body: strings.NewReader("x")})
-			assertSDKErrorCode(t, err, "ServiceUnavailable")
+			assertSDKErrorCode(t, err, "OperationAborted")
 			j, err := st.GetObjectBucketVersioning(t.Context(), f.bucket.AccountID, f.bucket.AppID, f.bucket.ID)
 			if err != nil || j.State != "propagating" {
 				t.Fatal(j, err)

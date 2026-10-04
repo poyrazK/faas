@@ -4083,8 +4083,14 @@ DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted';
 INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at, environment_clone_source_bucket_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *;
 
+-- name: ObjectBucketReserveLockAccount :one
+SELECT id FROM accounts WHERE id=$1 AND status='active' FOR UPDATE;
+
 -- name: ObjectBucketList :many
 SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id;
+
+-- name: ObjectAccountBucketCleanupList :many
+SELECT * FROM object_buckets WHERE account_id=$1 AND state<>'deleted' ORDER BY created_at,id LIMIT $2;
 
 -- name: ObjectBucketGet :one
 SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted';
@@ -4165,6 +4171,13 @@ AND ($1 = 'deleting' OR object_buckets.state = 'provisioning')
 AND ($1 <> 'deleting' OR NOT EXISTS (
   SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id = object_buckets.id
   AND m.state IN ('initiating','active','completing','completing_conditional','aborting')
+))
+AND ($1 <> 'deleting' OR NOT EXISTS (
+  SELECT 1 FROM object_storage_write_admissions w WHERE w.bucket_id = object_buckets.id AND w.state = 'pending'
+  AND (w.multipart_upload_id IS NULL OR EXISTS (
+    SELECT 1 FROM object_storage_multipart_uploads m WHERE m.id = w.multipart_upload_id
+    AND m.state IN ('initiating','active','completing','completing_conditional','aborting')
+  ))
 ))
 AND (NOT sqlc.arg(recovery)::boolean OR object_buckets.state = $1)
 AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING *;
@@ -6199,7 +6212,9 @@ FROM customer_operation_definitions WHERE app_id=sqlc.arg(app_id)::uuid AND acco
 AND deployment_id=sqlc.arg(deployment_id)::uuid AND name=sqlc.arg(name)::text;
 
 -- name: GetCustomerOperationIdempotency :one
-SELECT operation_id::text,fingerprint,expires_at FROM customer_operation_idempotency
+SELECT operation_id::text,fingerprint,expires_at,
+ EXISTS(SELECT 1 FROM customer_operations o WHERE o.id=customer_operation_idempotency.operation_id AND o.state IN ('accepted','running')) AS active
+FROM customer_operation_idempotency
 WHERE scope_digest=sqlc.arg(scope_digest)::text AND account_id=sqlc.arg(account_id)::uuid;
 
 -- name: PutCustomerOperationIdempotency :exec
@@ -6309,7 +6324,8 @@ WITH doomed AS (SELECT id FROM customer_operations
 DELETE FROM customer_operations o USING doomed d WHERE o.id=d.id;
 
 -- name: PruneCustomerOperationIdempotency :execrows
-WITH doomed AS (SELECT scope_digest FROM customer_operation_idempotency WHERE expires_at<=sqlc.arg(now)::timestamptz
+WITH doomed AS (SELECT scope_digest FROM customer_operation_idempotency i WHERE expires_at<=sqlc.arg(now)::timestamptz
+ AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.id=i.operation_id AND o.state IN ('accepted','running'))
  ORDER BY expires_at,scope_digest LIMIT sqlc.arg(page_limit)::integer)
 DELETE FROM customer_operation_idempotency i USING doomed d WHERE i.scope_digest=d.scope_digest;
 
@@ -6358,16 +6374,15 @@ DELETE FROM customer_operation_stream_leases l USING doomed d WHERE l.id=d.id;
 -- name: LockCustomerOperationDeployment :one
 SELECT d.status::text FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=sqlc.arg(deployment_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid
+AND d.scope=sqlc.arg(scope)::text
 AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted' FOR SHARE OF a,d;
 
--- name: PinCustomerOperationDeployment :exec
-INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
-VALUES(sqlc.arg(deployment_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(expires_at)::timestamptz)
-ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(deployment_revision_pins.expires_at,excluded.expires_at);
-
--- name: PinCustomerOperationRelease :exec
-UPDATE project_release_sets SET expires_at=greatest(expires_at,sqlc.arg(expires_at)::timestamptz)
-WHERE id=sqlc.arg(id)::uuid AND NOT active;
+-- name: PinCustomerOperationDeployment :execrows
+INSERT INTO customer_operation_code_pins(deployment_id,app_id,expires_at)
+SELECT d.id,d.app_id,sqlc.arg(expires_at)::timestamptz FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=sqlc.arg(deployment_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
+ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(customer_operation_code_pins.expires_at,excluded.expires_at);
 
 -- name: SetCustomerOperationExecutionIdentity :exec
 UPDATE invocations SET operation_id=sqlc.arg(operation_id)::uuid
@@ -6382,7 +6397,7 @@ FROM invocations WHERE id = sqlc.arg(id) FOR UPDATE;
 
 -- name: CustomerOperationStateMetrics :many
 SELECT state,count(*)::bigint AS retained_count,min(created_at)::timestamptz AS oldest_created_at
-FROM customer_operations WHERE expires_at>sqlc.arg(now)::timestamptz
+FROM customer_operations WHERE expires_at>sqlc.arg(now)::timestamptz OR state IN ('accepted','running')
 GROUP BY state ORDER BY state;
 
 -- name: CustomerOperationStreamMetric :one
@@ -6749,6 +6764,8 @@ update invocations set state='pending', attempts=0, last_error=null, outcome=nul
   due_at=clock_timestamp(), lease_expires_at=null, instance_id=null,
   last_replayed_at=clock_timestamp(), completed_at=null, result=null
 where id=sqlc.arg(id)::uuid and account_id=sqlc.arg(account_id)::uuid and state='dead_letter'
+  and operation_id IS NULL
+  and NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
 returning *;
 
 -- name: QueueInvocationForTriggerReceipt :one
@@ -6852,7 +6869,9 @@ update invocations set state='pending', attempts=0, last_error=null, outcome=nul
   due_at=clock_timestamp(),lease_expires_at=null,instance_id=null,
   last_replayed_at=clock_timestamp(),completed_at=null,result=null
 where id=sqlc.arg(id)::uuid and account_id=sqlc.arg(account_id)::uuid
-  and app_id=sqlc.arg(app_id)::uuid and state='dead_letter';
+  and app_id=sqlc.arg(app_id)::uuid and state='dead_letter'
+  and operation_id IS NULL
+  and NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id);
 
 -- name: DeleteExternalTriggerDeadLetterAudit :exec
 delete from trigger_dead_letter d using trigger_records r, triggers t
@@ -6924,6 +6943,13 @@ WHERE id=$1 AND lease_token=$2 AND state='completing_conditional';
 
 -- name: ObjectCapacityFenced :one
 SELECT (EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=$1 AND l.state<>'ready') OR EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1 AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning')))::boolean AS fenced;
+
+-- name: ObjectWriteKeyFenced :one
+SELECT EXISTS(SELECT 1 FROM object_storage_write_admissions w
+ WHERE w.bucket_id=$1 AND w.key_hash=$2 AND w.state='pending'
+ AND (w.multipart_upload_id IS NULL OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads m
+  WHERE m.id=w.multipart_upload_id AND m.state IN ('initiating','active','completing','completing_conditional','aborting')))
+ AND w.id IS DISTINCT FROM sqlc.narg(own_write)::uuid)::boolean AS fenced;
 
 -- name: ObjectWriteInsert :exec
 INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id,route_receipt,native_version,native_bytes)
@@ -9648,6 +9674,229 @@ select o.scope, o.key, o.instance_id::text AS instance_id, o.workload_name, o.se
 	  where s.account_id = sqlc.arg(account_id)::uuid and o.app_id = sqlc.arg(app_id)::uuid and (sqlc.arg(scope)::text = '' or o.scope = sqlc.arg(scope)::text)
 	    and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
 	  order by o.scope asc, o.key asc, o.instance_id asc, o.workload_name asc;
+
+-- name: RetainCustomerOperationIdempotency :exec
+UPDATE customer_operation_idempotency SET expires_at=greatest(expires_at,sqlc.arg(expires_at)::timestamptz)
+WHERE operation_id=sqlc.arg(operation_id)::uuid;
+
+
+-- name: LockCustomerOperationCodeApp :one
+SELECT id FROM apps WHERE id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid
+AND status<>'deleted' FOR SHARE;
+
+
+-- name: CustomerOperationReleaseMemberCount :one
+SELECT count(*) FROM (
+    SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id
+    WHERE rs.id=sqlc.arg(release_id)::uuid AND rs.account_id=sqlc.arg(account_id)::uuid
+    AND rs.environment_slug=sqlc.arg(scope)::text
+    AND EXISTS(SELECT 1 FROM project_release_members source WHERE source.release_id=rs.id
+        AND source.app_id=sqlc.arg(app_id)::uuid AND source.deployment_id=sqlc.arg(deployment_id)::uuid)
+    LIMIT sqlc.arg(member_limit)::integer
+) members;
+
+
+-- name: LockCustomerOperationReleaseApps :many
+SELECT a.id FROM apps a JOIN project_release_sets rs ON rs.project_id=a.project_id AND rs.account_id=a.account_id
+WHERE rs.id=sqlc.arg(release_id)::uuid AND rs.account_id=sqlc.arg(account_id)::uuid
+AND a.status<>'deleted' AND EXISTS(SELECT 1 FROM project_release_members rm WHERE rm.release_id=rs.id AND rm.app_id=a.id)
+ORDER BY a.id LIMIT sqlc.arg(member_limit)::integer FOR SHARE OF a;
+
+
+-- name: LockCustomerOperationReleaseDeployments :many
+SELECT d.id FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id
+JOIN apps a ON a.id=rm.app_id AND a.account_id=rs.account_id AND a.project_id=rs.project_id AND a.status<>'deleted'
+JOIN deployments d ON d.id=rm.deployment_id AND d.app_id=a.id AND d.scope=rs.environment_slug AND d.status='live'
+WHERE rs.id=sqlc.arg(release_id)::uuid AND rs.account_id=sqlc.arg(account_id)::uuid
+ORDER BY a.id,d.id LIMIT sqlc.arg(member_limit)::integer FOR SHARE OF d;
+
+
+-- name: PinCustomerOperationReleaseMembers :execrows
+INSERT INTO customer_operation_code_pins(deployment_id,app_id,expires_at)
+SELECT d.id,d.app_id,sqlc.arg(expires_at)::timestamptz FROM project_release_sets rs
+JOIN project_release_members source ON source.release_id=rs.id AND source.app_id=sqlc.arg(app_id)::uuid AND source.deployment_id=sqlc.arg(deployment_id)::uuid
+JOIN apps origin ON origin.id=source.app_id AND origin.account_id=rs.account_id AND origin.project_id=rs.project_id AND origin.status<>'deleted'
+JOIN deployments origin_dep ON origin_dep.id=source.deployment_id AND origin_dep.app_id=origin.id AND origin_dep.scope=rs.environment_slug
+JOIN project_release_members rm ON rm.release_id=rs.id
+JOIN apps a ON a.id=rm.app_id AND a.account_id=rs.account_id AND a.project_id=rs.project_id AND a.status<>'deleted'
+JOIN deployments d ON d.id=rm.deployment_id AND d.app_id=a.id AND d.scope=rs.environment_slug
+WHERE rs.id=sqlc.arg(release_id)::uuid AND rs.account_id=sqlc.arg(account_id)::uuid AND rs.environment_slug=sqlc.arg(scope)::text
+ORDER BY a.id,d.id LIMIT sqlc.arg(member_limit)::integer
+ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(customer_operation_code_pins.expires_at,excluded.expires_at);
+
+
+-- name: DeactivateProjectReleaseSets :exec
+UPDATE project_release_sets SET active=false,expires_at=now()+(ttl_seconds*interval '1 second')
+WHERE project_id=sqlc.arg(project_id)::uuid AND environment_slug=sqlc.arg(environment)::text AND active
+AND (sqlc.narg(release_id)::uuid IS NULL OR id=sqlc.narg(release_id)::uuid);
+
+
+-- name: RetireLiveDeploymentSiblings :execrows
+UPDATE deployments d SET status = CASE WHEN
+    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0
+WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+AND d.status='live' AND d.id<>sqlc.arg(deployment_id)::uuid;
+
+
+-- name: SetRetainedServiceRolloutSiblingTraffic :execrows
+UPDATE deployments d SET status = CASE WHEN sqlc.arg(traffic_percent)::integer>0
+    OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END, traffic_percent=sqlc.arg(traffic_percent)::integer
+WHERE d.id=sqlc.arg(deployment_id)::uuid;
+
+
+-- name: ClearServiceRolloutPredecessorPin :exec
+DELETE FROM deployment_revision_pins WHERE deployment_id=sqlc.arg(deployment_id)::uuid;
+
+
+-- name: LockExpiredRevisionPinApps :many
+SELECT a.id FROM apps a WHERE EXISTS(SELECT 1 FROM deployment_code_pin_deadlines p WHERE p.app_id=a.id AND p.expires_at<=now()
+        AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=p.deployment_id)
+        AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+            WHERE rm.deployment_id=p.deployment_id AND (rs.active OR rs.expires_at>now())))
+ORDER BY a.id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE OF a;
+
+-- Admission locks apps before deployments. A fresh READ COMMITTED snapshot
+-- after app-lock acquisition sees references published while waiting. Both
+-- receipt kinds must have expired; one page locks at most page_limit deployments.
+
+-- name: ExpireRetainedDeploymentRevisionPins :execrows
+WITH locked_deployments AS MATERIALIZED (
+    SELECT d.id,
+        EXISTS(SELECT 1 FROM deployment_revision_pins public_pin WHERE public_pin.deployment_id=d.id) AS has_public,
+        EXISTS(SELECT 1 FROM customer_operation_code_pins private_pin WHERE private_pin.deployment_id=d.id) AS has_private
+    FROM deployments d JOIN deployment_code_pin_deadlines p ON p.deployment_id=d.id AND p.app_id=d.app_id
+    WHERE d.app_id=ANY(sqlc.arg(app_ids)::uuid[]) AND p.expires_at<=now()
+    AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
+    ORDER BY d.app_id,d.id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE OF d
+), expired_public AS (
+    DELETE FROM deployment_revision_pins p USING locked_deployments d WHERE p.deployment_id=d.id AND p.expires_at<=now()
+    RETURNING p.deployment_id
+), expired_private AS (
+    DELETE FROM customer_operation_code_pins p USING locked_deployments d WHERE p.deployment_id=d.id AND p.expires_at<=now()
+    RETURNING p.deployment_id
+), expired AS (
+    SELECT d.id AS deployment_id FROM locked_deployments d
+    WHERE (NOT d.has_public OR EXISTS(SELECT 1 FROM expired_public p WHERE p.deployment_id=d.id))
+    AND (NOT d.has_private OR EXISTS(SELECT 1 FROM expired_private p WHERE p.deployment_id=d.id))
+)
+UPDATE deployments d SET status='superseded',traffic_percent=0 FROM expired e
+WHERE d.id=e.deployment_id AND d.status='live' AND d.traffic_percent=0;
+
+
+-- name: ResolveRetainedProjectRelease :one
+SELECT rs.id::text AS release_id,coalesce(rm.deployment_id::text,'')::text AS deployment_id
+FROM apps a JOIN project_release_sets rs ON rs.project_id=a.project_id AND rs.account_id=a.account_id
+LEFT JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.status<>'deleted' AND rs.environment_slug=sqlc.arg(scope)::text
+AND ((sqlc.narg(release_id)::uuid IS NULL AND rs.active)
+    OR (rs.id=sqlc.narg(release_id)::uuid AND (rs.active OR rs.expires_at>now()
+        OR EXISTS(SELECT 1 FROM customer_operation_retained_release_refs retained WHERE retained.release_id=rs.id))));
+
+
+-- name: RetainedReleaseTargetUsable :one
+SELECT EXISTS(SELECT 1 FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid
+AND d.app_id=sqlc.arg(app_id)::uuid AND d.status='live' AND (
+    d.traffic_percent>0
+    OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND rm.app_id=d.app_id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)));
+
+
+-- name: ListRetainedServiceReleases :many
+SELECT rs.id::text AS release_id,target.deployment_id::text AS deployment_id FROM project_release_sets rs
+JOIN project_release_members caller ON caller.release_id=rs.id
+JOIN project_release_members target ON target.release_id=rs.id
+JOIN apps ca ON ca.id=caller.app_id AND ca.account_id=rs.account_id AND ca.project_id=rs.project_id AND ca.status<>'deleted'
+JOIN apps ta ON ta.id=target.app_id AND ta.account_id=rs.account_id AND ta.project_id=rs.project_id AND ta.status<>'deleted'
+WHERE caller.app_id=sqlc.arg(caller_app_id)::uuid AND caller.deployment_id=sqlc.arg(caller_deployment_id)::uuid
+AND target.app_id=sqlc.arg(target_app_id)::uuid AND (sqlc.narg(release_id)::uuid IS NULL OR rs.id=sqlc.narg(release_id)::uuid)
+AND (rs.active OR rs.expires_at>now() OR EXISTS(SELECT 1 FROM customer_operation_retained_release_refs retained WHERE retained.release_id=rs.id))
+ORDER BY rs.created_at DESC LIMIT 2;
+
+
+-- name: RetainedReleaseMemberDeploymentForUpdate :one
+SELECT d.id FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid
+AND d.scope=sqlc.arg(scope)::text AND d.status='live' AND (
+    d.traffic_percent>0 OR d.traffic_percent_explicit
+    OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND rm.app_id=d.app_id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))
+FOR UPDATE OF d;
+
+
+-- name: FinalizeRetainedServiceRolloutAbortTarget :one
+UPDATE deployments d SET status=CASE WHEN
+    EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END,
+    traffic_percent=0,rollout_state='aborted',rollout_completed_at=NULL,
+    rollout_aborted_at=sqlc.arg(aborted_at)::timestamptz,
+    rollout_aborted_reason=sqlc.arg(reason)::text,
+    service_rollout_handoff=sqlc.arg(handoff)::jsonb
+WHERE d.id=sqlc.arg(deployment_id)::uuid RETURNING status::text;
+
+
+-- name: LatestRetainedRollbackDeployment :one
+SELECT d.id FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid
+AND (sqlc.narg(scope)::text IS NULL OR d.scope=sqlc.narg(scope)::text)
+AND (sqlc.narg(current_deployment_id)::uuid IS NULL OR d.id<>sqlc.narg(current_deployment_id)::uuid)
+AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
+    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))))
+ORDER BY d.created_at DESC,d.id DESC LIMIT 1;
+
+
+-- name: LockRetainedRollbackDeployment :one
+SELECT d.id FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+AND d.id<>sqlc.arg(current_deployment_id)::uuid
+AND d.environment_workload_runtime IS NULL
+AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
+    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))))
+ORDER BY d.created_at DESC,d.id DESC LIMIT 1 FOR UPDATE OF d;
+
+
+-- name: RetireAutoRollbackDeploymentSiblings :exec
+UPDATE deployments d SET status=CASE WHEN
+    EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END,
+    traffic_percent=0,rollout_state='aborted',rollout_completed_at=NULL,
+    rollout_aborted_at=coalesce(rollout_aborted_at,now()),
+    rollout_aborted_reason=coalesce(nullif(rollout_aborted_reason,''),'automatic rollback'),
+    last_auto_rollback_at=CASE WHEN d.id=sqlc.arg(current_deployment_id)::uuid THEN coalesce(last_auto_rollback_at,now()) ELSE last_auto_rollback_at END,
+    last_auto_rollback_reason=CASE WHEN d.id=sqlc.arg(current_deployment_id)::uuid THEN coalesce(last_auto_rollback_reason,'threshold_exceeded') ELSE last_auto_rollback_reason END
+WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text AND d.status='live';
+
+
+-- name: ActivateRetainedRollbackDeployment :execrows
+UPDATE deployments SET status='live',error='',traffic_percent=100,
+    canary_step=canary_total_steps,
+    canary_step_started_at=CASE WHEN canary_total_steps>0 THEN now() ELSE canary_step_started_at END,
+    rollout_state='complete',rollout_started_at=coalesce(rollout_started_at,now()),
+    rollout_completed_at=now(),rollout_aborted_at=NULL,rollout_aborted_reason=''
+WHERE id=sqlc.arg(deployment_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+AND scope=sqlc.arg(scope)::text AND status IN ('superseded','live');
+
+-- Public release selectors retain their configured access window. Private
+-- execution retention is resolved only through an owned operation/workload.
+-- name: ResolvePublicProjectRelease :one
+SELECT rs.id::text AS release_id,coalesce(rm.deployment_id::text,'')::text AS deployment_id
+FROM apps a JOIN project_release_sets rs ON rs.project_id=a.project_id AND rs.account_id=a.account_id
+LEFT JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.status<>'deleted' AND rs.environment_slug=sqlc.arg(scope)::text
+AND ((sqlc.narg(release_id)::uuid IS NULL AND rs.active)
+    OR (rs.id=sqlc.narg(release_id)::uuid AND (rs.active OR rs.expires_at>now())));
 
 -- ADR-569: known resources remain accountable through lifecycle shutdown.
 -- name: ListManagedPostgresUsageResources :many

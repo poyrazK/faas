@@ -49,6 +49,12 @@ func objectCapacitySuite(t *testing.T, st accountingStore) {
 		b, _ := seedAccounting(t, st)
 		one, two := uuid.NewString(), uuid.NewString()
 		for i, token := range []string{one, two} {
+			// A replacement is admitted after the previous receipt settles.
+			if i > 0 {
+				if err := cap.SettleObjectWrite(ctx, b.AccountID, b.ID, one); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if err := cap.BeginObjectWrite(ctx, b.AccountID, b.ID, token, "key", int64(10+10*i), p); err != nil {
 				t.Fatal(err)
 			}

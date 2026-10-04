@@ -78,3 +78,18 @@ and cancellation. PostgreSQL/HTTP/SDK acceptance is distinct from native KVM
 park/restore, scheduler restart, and leakcheck; both are required for the complete
 end-to-end goal. Rollback disables new admission while preserving reads, reports,
 delivery, and recovery for already admitted operations.
+
+Private code retention uses owned operation references and separate code-pin
+receipts. Admission and safe recovery lock the bounded release graph before
+execution rows. Active operations retain their code and idempotency identity
+through long waits; settled work reserves the full documented replay window.
+Code cleanup and rollout changes preserve those references without extending
+the configured public revision or release-header access window.
+
+Customer HTTP operation claims use `X-Gregale-Customer-Operation-Id`. Managed
+exclusive operations retain their own identity and result negotiation. A
+customer claim cannot substitute a managed operation header for its attempt
+proof. Ordinary HTTP definitions validate the complete handler response against
+their output schema. A managed result envelope requires an explicit adapter;
+an unexpected envelope preserves backend completion evidence and requests
+reconciliation instead of silently decoding or executing the handler again.

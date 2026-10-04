@@ -50,6 +50,9 @@ func (m *MemStore) retryQueueDeadLetterLocked(accountID, invocationID string, no
 	if !ok || inv.AccountID != accountID || inv.State != InvocationDeadLetter {
 		return Invocation{}, ErrNotFound
 	}
+	if InvocationHasOperation(inv) {
+		return Invocation{}, ErrConflict
+	}
 	inv.State, inv.Attempts, inv.QuotaReserved = InvocationPending, 0, false
 	inv.ReplayGeneration++
 	inv.LastError, inv.InstanceID = "", ""

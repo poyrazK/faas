@@ -347,6 +347,30 @@ func (q *Queries) AcknowledgePendingNotification(ctx context.Context, db DBTX, i
 	return err
 }
 
+const activateRetainedRollbackDeployment = `-- name: ActivateRetainedRollbackDeployment :execrows
+UPDATE deployments SET status='live',error='',traffic_percent=100,
+    canary_step=canary_total_steps,
+    canary_step_started_at=CASE WHEN canary_total_steps>0 THEN now() ELSE canary_step_started_at END,
+    rollout_state='complete',rollout_started_at=coalesce(rollout_started_at,now()),
+    rollout_completed_at=now(),rollout_aborted_at=NULL,rollout_aborted_reason=''
+WHERE id=$1::uuid AND app_id=$2::uuid
+AND scope=$3::text AND status IN ('superseded','live')
+`
+
+type ActivateRetainedRollbackDeploymentParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+}
+
+func (q *Queries) ActivateRetainedRollbackDeployment(ctx context.Context, db DBTX, arg ActivateRetainedRollbackDeploymentParams) (int64, error) {
+	result, err := db.Exec(ctx, activateRetainedRollbackDeployment, arg.DeploymentID, arg.AppID, arg.Scope)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const activeTCPListenerByPublicPort = `-- name: ActiveTCPListenerByPublicPort :one
 SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
 WHERE l.public_port = $1 AND l.enabled
@@ -2383,6 +2407,15 @@ DELETE FROM instance_runtime_config_receipts WHERE instance_id = $1::uuid
 
 func (q *Queries) ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) error {
 	_, err := db.Exec(ctx, clearInstanceRuntimeConfigReceipt, instanceID)
+	return err
+}
+
+const clearServiceRolloutPredecessorPin = `-- name: ClearServiceRolloutPredecessorPin :exec
+DELETE FROM deployment_revision_pins WHERE deployment_id=$1::uuid
+`
+
+func (q *Queries) ClearServiceRolloutPredecessorPin(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearServiceRolloutPredecessorPin, deploymentID)
 	return err
 }
 
@@ -4670,9 +4703,43 @@ func (q *Queries) CustomerOperationIDForInvocation(ctx context.Context, db DBTX,
 	return operation_id, err
 }
 
+const customerOperationReleaseMemberCount = `-- name: CustomerOperationReleaseMemberCount :one
+SELECT count(*) FROM (
+    SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id
+    WHERE rs.id=$1::uuid AND rs.account_id=$2::uuid
+    AND rs.environment_slug=$3::text
+    AND EXISTS(SELECT 1 FROM project_release_members source WHERE source.release_id=rs.id
+        AND source.app_id=$4::uuid AND source.deployment_id=$5::uuid)
+    LIMIT $6::integer
+) members
+`
+
+type CustomerOperationReleaseMemberCountParams struct {
+	ReleaseID    pgtype.UUID
+	AccountID    pgtype.UUID
+	Scope        string
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	MemberLimit  int32
+}
+
+func (q *Queries) CustomerOperationReleaseMemberCount(ctx context.Context, db DBTX, arg CustomerOperationReleaseMemberCountParams) (int64, error) {
+	row := db.QueryRow(ctx, customerOperationReleaseMemberCount,
+		arg.ReleaseID,
+		arg.AccountID,
+		arg.Scope,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.MemberLimit,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const customerOperationStateMetrics = `-- name: CustomerOperationStateMetrics :many
 SELECT state,count(*)::bigint AS retained_count,min(created_at)::timestamptz AS oldest_created_at
-FROM customer_operations WHERE expires_at>$1::timestamptz
+FROM customer_operations WHERE expires_at>$1::timestamptz OR state IN ('accepted','running')
 GROUP BY state ORDER BY state
 `
 
@@ -4711,6 +4778,23 @@ func (q *Queries) CustomerOperationStreamMetric(ctx context.Context, db DBTX, no
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const deactivateProjectReleaseSets = `-- name: DeactivateProjectReleaseSets :exec
+UPDATE project_release_sets SET active=false,expires_at=now()+(ttl_seconds*interval '1 second')
+WHERE project_id=$1::uuid AND environment_slug=$2::text AND active
+AND ($3::uuid IS NULL OR id=$3::uuid)
+`
+
+type DeactivateProjectReleaseSetsParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+	ReleaseID   pgtype.UUID
+}
+
+func (q *Queries) DeactivateProjectReleaseSets(ctx context.Context, db DBTX, arg DeactivateProjectReleaseSetsParams) error {
+	_, err := db.Exec(ctx, deactivateProjectReleaseSets, arg.ProjectID, arg.Environment, arg.ReleaseID)
+	return err
 }
 
 const decrementInstanceTailCount = `-- name: DecrementInstanceTailCount :exec
@@ -8463,6 +8547,49 @@ func (q *Queries) ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt p
 	return result.RowsAffected(), nil
 }
 
+const expireRetainedDeploymentRevisionPins = `-- name: ExpireRetainedDeploymentRevisionPins :execrows
+
+WITH locked_deployments AS MATERIALIZED (
+    SELECT d.id,
+        EXISTS(SELECT 1 FROM deployment_revision_pins public_pin WHERE public_pin.deployment_id=d.id) AS has_public,
+        EXISTS(SELECT 1 FROM customer_operation_code_pins private_pin WHERE private_pin.deployment_id=d.id) AS has_private
+    FROM deployments d JOIN deployment_code_pin_deadlines p ON p.deployment_id=d.id AND p.app_id=d.app_id
+    WHERE d.app_id=ANY($1::uuid[]) AND p.expires_at<=now()
+    AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
+    ORDER BY d.app_id,d.id LIMIT $2::integer FOR UPDATE OF d
+), expired_public AS (
+    DELETE FROM deployment_revision_pins p USING locked_deployments d WHERE p.deployment_id=d.id AND p.expires_at<=now()
+    RETURNING p.deployment_id
+), expired_private AS (
+    DELETE FROM customer_operation_code_pins p USING locked_deployments d WHERE p.deployment_id=d.id AND p.expires_at<=now()
+    RETURNING p.deployment_id
+), expired AS (
+    SELECT d.id AS deployment_id FROM locked_deployments d
+    WHERE (NOT d.has_public OR EXISTS(SELECT 1 FROM expired_public p WHERE p.deployment_id=d.id))
+    AND (NOT d.has_private OR EXISTS(SELECT 1 FROM expired_private p WHERE p.deployment_id=d.id))
+)
+UPDATE deployments d SET status='superseded',traffic_percent=0 FROM expired e
+WHERE d.id=e.deployment_id AND d.status='live' AND d.traffic_percent=0
+`
+
+type ExpireRetainedDeploymentRevisionPinsParams struct {
+	AppIds    []pgtype.UUID
+	PageLimit int32
+}
+
+// Admission locks apps before deployments. A fresh READ COMMITTED snapshot
+// after app-lock acquisition sees references published while waiting. Both
+// receipt kinds must have expired; one page locks at most page_limit deployments.
+func (q *Queries) ExpireRetainedDeploymentRevisionPins(ctx context.Context, db DBTX, arg ExpireRetainedDeploymentRevisionPinsParams) (int64, error) {
+	result, err := db.Exec(ctx, expireRetainedDeploymentRevisionPins, arg.AppIds, arg.PageLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const expireUploadSession = `-- name: ExpireUploadSession :exec
 UPDATE upload_sessions
    SET status = 'expired'
@@ -8735,6 +8862,36 @@ func (q *Queries) FenceManagedPostgresCutoverAdmission(ctx context.Context, db D
 	var managed_postgres_admission_fenced_at pgtype.Timestamptz
 	err := row.Scan(&managed_postgres_admission_fenced_at)
 	return managed_postgres_admission_fenced_at, err
+}
+
+const finalizeRetainedServiceRolloutAbortTarget = `-- name: FinalizeRetainedServiceRolloutAbortTarget :one
+UPDATE deployments d SET status=CASE WHEN
+    EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END,
+    traffic_percent=0,rollout_state='aborted',rollout_completed_at=NULL,
+    rollout_aborted_at=$1::timestamptz,
+    rollout_aborted_reason=$2::text,
+    service_rollout_handoff=$3::jsonb
+WHERE d.id=$4::uuid RETURNING status::text
+`
+
+type FinalizeRetainedServiceRolloutAbortTargetParams struct {
+	AbortedAt    pgtype.Timestamptz
+	Reason       string
+	Handoff      []byte
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) FinalizeRetainedServiceRolloutAbortTarget(ctx context.Context, db DBTX, arg FinalizeRetainedServiceRolloutAbortTargetParams) (string, error) {
+	row := db.QueryRow(ctx, finalizeRetainedServiceRolloutAbortTarget,
+		arg.AbortedAt,
+		arg.Reason,
+		arg.Handoff,
+		arg.DeploymentID,
+	)
+	var status string
+	err := row.Scan(&status)
+	return status, err
 }
 
 const findInvoiceIDsByProviderKey = `-- name: FindInvoiceIDsByProviderKey :many
@@ -9434,7 +9591,9 @@ func (q *Queries) GetCustomerOperationDefinitionForRoute(ctx context.Context, db
 }
 
 const getCustomerOperationIdempotency = `-- name: GetCustomerOperationIdempotency :one
-SELECT operation_id::text,fingerprint,expires_at FROM customer_operation_idempotency
+SELECT operation_id::text,fingerprint,expires_at,
+ EXISTS(SELECT 1 FROM customer_operations o WHERE o.id=customer_operation_idempotency.operation_id AND o.state IN ('accepted','running')) AS active
+FROM customer_operation_idempotency
 WHERE scope_digest=$1::text AND account_id=$2::uuid
 `
 
@@ -9447,12 +9606,18 @@ type GetCustomerOperationIdempotencyRow struct {
 	OperationID string
 	Fingerprint string
 	ExpiresAt   pgtype.Timestamptz
+	Active      bool
 }
 
 func (q *Queries) GetCustomerOperationIdempotency(ctx context.Context, db DBTX, arg GetCustomerOperationIdempotencyParams) (GetCustomerOperationIdempotencyRow, error) {
 	row := db.QueryRow(ctx, getCustomerOperationIdempotency, arg.ScopeDigest, arg.AccountID)
 	var i GetCustomerOperationIdempotencyRow
-	err := row.Scan(&i.OperationID, &i.Fingerprint, &i.ExpiresAt)
+	err := row.Scan(
+		&i.OperationID,
+		&i.Fingerprint,
+		&i.ExpiresAt,
+		&i.Active,
+	)
 	return i, err
 }
 
@@ -13930,6 +14095,29 @@ func (q *Queries) LatestInstanceReadinessBySource(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const latestRetainedRollbackDeployment = `-- name: LatestRetainedRollbackDeployment :one
+SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid
+AND ($2::text IS NULL OR d.scope=$2::text)
+AND ($3::uuid IS NULL OR d.id<>$3::uuid)
+AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
+    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))))
+ORDER BY d.created_at DESC,d.id DESC LIMIT 1
+`
+
+type LatestRetainedRollbackDeploymentParams struct {
+	AppID               pgtype.UUID
+	Scope               pgtype.Text
+	CurrentDeploymentID pgtype.UUID
+}
+
+func (q *Queries) LatestRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LatestRetainedRollbackDeploymentParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, latestRetainedRollbackDeployment, arg.AppID, arg.Scope, arg.CurrentDeploymentID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const latestSupersededDeployment = `-- name: LatestSupersededDeployment :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
@@ -18318,6 +18506,55 @@ func (q *Queries) ListResumableImagePreparations(ctx context.Context, db DBTX, a
 	return items, nil
 }
 
+const listRetainedServiceReleases = `-- name: ListRetainedServiceReleases :many
+SELECT rs.id::text AS release_id,target.deployment_id::text AS deployment_id FROM project_release_sets rs
+JOIN project_release_members caller ON caller.release_id=rs.id
+JOIN project_release_members target ON target.release_id=rs.id
+JOIN apps ca ON ca.id=caller.app_id AND ca.account_id=rs.account_id AND ca.project_id=rs.project_id AND ca.status<>'deleted'
+JOIN apps ta ON ta.id=target.app_id AND ta.account_id=rs.account_id AND ta.project_id=rs.project_id AND ta.status<>'deleted'
+WHERE caller.app_id=$1::uuid AND caller.deployment_id=$2::uuid
+AND target.app_id=$3::uuid AND ($4::uuid IS NULL OR rs.id=$4::uuid)
+AND (rs.active OR rs.expires_at>now() OR EXISTS(SELECT 1 FROM customer_operation_retained_release_refs retained WHERE retained.release_id=rs.id))
+ORDER BY rs.created_at DESC LIMIT 2
+`
+
+type ListRetainedServiceReleasesParams struct {
+	CallerAppID        pgtype.UUID
+	CallerDeploymentID pgtype.UUID
+	TargetAppID        pgtype.UUID
+	ReleaseID          pgtype.UUID
+}
+
+type ListRetainedServiceReleasesRow struct {
+	ReleaseID    string
+	DeploymentID string
+}
+
+func (q *Queries) ListRetainedServiceReleases(ctx context.Context, db DBTX, arg ListRetainedServiceReleasesParams) ([]ListRetainedServiceReleasesRow, error) {
+	rows, err := db.Query(ctx, listRetainedServiceReleases,
+		arg.CallerAppID,
+		arg.CallerDeploymentID,
+		arg.TargetAppID,
+		arg.ReleaseID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRetainedServiceReleasesRow{}
+	for rows.Next() {
+		var i ListRetainedServiceReleasesRow
+		if err := rows.Scan(&i.ReleaseID, &i.DeploymentID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRouteCheckHistory = `-- name: ListRouteCheckHistory :many
 SELECT jsonb_build_object('version', 1, 'id', h.id, 'checked_at', h.checked_at,
     'status', entry->'check'->'report'->>'status',
@@ -18988,20 +19225,44 @@ func (q *Queries) LockCustomerOperationClaim(ctx context.Context, db DBTX, id pg
 	return i, err
 }
 
+const lockCustomerOperationCodeApp = `-- name: LockCustomerOperationCodeApp :one
+SELECT id FROM apps WHERE id=$1::uuid AND account_id=$2::uuid
+AND status<>'deleted' FOR SHARE
+`
+
+type LockCustomerOperationCodeAppParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockCustomerOperationCodeApp(ctx context.Context, db DBTX, arg LockCustomerOperationCodeAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationCodeApp, arg.AppID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockCustomerOperationDeployment = `-- name: LockCustomerOperationDeployment :one
 SELECT d.status::text FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=$1::uuid AND d.app_id=$2::uuid
-AND a.account_id=$3::uuid AND a.status<>'deleted' FOR SHARE OF a,d
+AND d.scope=$3::text
+AND a.account_id=$4::uuid AND a.status<>'deleted' FOR SHARE OF a,d
 `
 
 type LockCustomerOperationDeploymentParams struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
+	Scope        string
 	AccountID    pgtype.UUID
 }
 
 func (q *Queries) LockCustomerOperationDeployment(ctx context.Context, db DBTX, arg LockCustomerOperationDeploymentParams) (string, error) {
-	row := db.QueryRow(ctx, lockCustomerOperationDeployment, arg.DeploymentID, arg.AppID, arg.AccountID)
+	row := db.QueryRow(ctx, lockCustomerOperationDeployment,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.Scope,
+		arg.AccountID,
+	)
 	var d_status string
 	err := row.Scan(&d_status)
 	return d_status, err
@@ -19078,6 +19339,73 @@ func (q *Queries) LockCustomerOperationInvocation(ctx context.Context, db DBTX, 
 		&i.OutcomeCode,
 	)
 	return i, err
+}
+
+const lockCustomerOperationReleaseApps = `-- name: LockCustomerOperationReleaseApps :many
+SELECT a.id FROM apps a JOIN project_release_sets rs ON rs.project_id=a.project_id AND rs.account_id=a.account_id
+WHERE rs.id=$1::uuid AND rs.account_id=$2::uuid
+AND a.status<>'deleted' AND EXISTS(SELECT 1 FROM project_release_members rm WHERE rm.release_id=rs.id AND rm.app_id=a.id)
+ORDER BY a.id LIMIT $3::integer FOR SHARE OF a
+`
+
+type LockCustomerOperationReleaseAppsParams struct {
+	ReleaseID   pgtype.UUID
+	AccountID   pgtype.UUID
+	MemberLimit int32
+}
+
+func (q *Queries) LockCustomerOperationReleaseApps(ctx context.Context, db DBTX, arg LockCustomerOperationReleaseAppsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockCustomerOperationReleaseApps, arg.ReleaseID, arg.AccountID, arg.MemberLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockCustomerOperationReleaseDeployments = `-- name: LockCustomerOperationReleaseDeployments :many
+SELECT d.id FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id
+JOIN apps a ON a.id=rm.app_id AND a.account_id=rs.account_id AND a.project_id=rs.project_id AND a.status<>'deleted'
+JOIN deployments d ON d.id=rm.deployment_id AND d.app_id=a.id AND d.scope=rs.environment_slug AND d.status='live'
+WHERE rs.id=$1::uuid AND rs.account_id=$2::uuid
+ORDER BY a.id,d.id LIMIT $3::integer FOR SHARE OF d
+`
+
+type LockCustomerOperationReleaseDeploymentsParams struct {
+	ReleaseID   pgtype.UUID
+	AccountID   pgtype.UUID
+	MemberLimit int32
+}
+
+func (q *Queries) LockCustomerOperationReleaseDeployments(ctx context.Context, db DBTX, arg LockCustomerOperationReleaseDeploymentsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockCustomerOperationReleaseDeployments, arg.ReleaseID, arg.AccountID, arg.MemberLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockCustomerOperationTenant = `-- name: LockCustomerOperationTenant :one
@@ -19572,6 +19900,34 @@ func (q *Queries) LockExclusiveWorkAccount(ctx context.Context, db DBTX, account
 	var i LockExclusiveWorkAccountRow
 	err := row.Scan(&i.ID, &i.Plan)
 	return i, err
+}
+
+const lockExpiredRevisionPinApps = `-- name: LockExpiredRevisionPinApps :many
+SELECT a.id FROM apps a WHERE EXISTS(SELECT 1 FROM deployment_code_pin_deadlines p WHERE p.app_id=a.id AND p.expires_at<=now()
+        AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=p.deployment_id)
+        AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+            WHERE rm.deployment_id=p.deployment_id AND (rs.active OR rs.expires_at>now())))
+ORDER BY a.id LIMIT $1::integer FOR UPDATE OF a
+`
+
+func (q *Queries) LockExpiredRevisionPinApps(ctx context.Context, db DBTX, pageLimit int32) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockExpiredRevisionPinApps, pageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockFeatureFlagEnvironment = `-- name: LockFeatureFlagEnvironment :one
@@ -20169,6 +20525,29 @@ func (q *Queries) LockProjectEnvironmentCloneGitSources(ctx context.Context, db 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockRetainedRollbackDeployment = `-- name: LockRetainedRollbackDeployment :one
+SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.scope=$2::text
+AND d.id<>$3::uuid
+AND d.environment_workload_runtime IS NULL
+AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
+    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))))
+ORDER BY d.created_at DESC,d.id DESC LIMIT 1 FOR UPDATE OF d
+`
+
+type LockRetainedRollbackDeploymentParams struct {
+	AppID               pgtype.UUID
+	Scope               string
+	CurrentDeploymentID pgtype.UUID
+}
+
+func (q *Queries) LockRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LockRetainedRollbackDeploymentParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRetainedRollbackDeployment, arg.AppID, arg.Scope, arg.CurrentDeploymentID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockRouteCheckCompletionAccount = `-- name: LockRouteCheckCompletionAccount :one
@@ -21474,6 +21853,56 @@ func (q *Queries) NotifyRouteHealthRecovery(ctx context.Context, db DBTX, payloa
 	return err
 }
 
+const objectAccountBucketCleanupList = `-- name: ObjectAccountBucketCleanupList :many
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets WHERE account_id=$1 AND state<>'deleted' ORDER BY created_at,id LIMIT $2
+`
+
+type ObjectAccountBucketCleanupListParams struct {
+	AccountID pgtype.UUID
+	Limit     int32
+}
+
+func (q *Queries) ObjectAccountBucketCleanupList(ctx context.Context, db DBTX, arg ObjectAccountBucketCleanupListParams) ([]ObjectBucket, error) {
+	rows, err := db.Query(ctx, objectAccountBucketCleanupList, arg.AccountID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucket{}
+	for rows.Next() {
+		var i ObjectBucket
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Scope,
+			&i.Region,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.State,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
+			&i.EnvironmentCloneSourceBucketID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const objectBucketAccessCheck = `-- name: ObjectBucketAccessCheck :one
 SELECT EXISTS (
     SELECT 1
@@ -21720,6 +22149,13 @@ AND ($1 = 'deleting' OR object_buckets.state = 'provisioning')
 AND ($1 <> 'deleting' OR NOT EXISTS (
   SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id = object_buckets.id
   AND m.state IN ('initiating','active','completing','completing_conditional','aborting')
+))
+AND ($1 <> 'deleting' OR NOT EXISTS (
+  SELECT 1 FROM object_storage_write_admissions w WHERE w.bucket_id = object_buckets.id AND w.state = 'pending'
+  AND (w.multipart_upload_id IS NULL OR EXISTS (
+    SELECT 1 FROM object_storage_multipart_uploads m WHERE m.id = w.multipart_upload_id
+    AND m.state IN ('initiating','active','completing','completing_conditional','aborting')
+  ))
 ))
 AND (NOT $7::boolean OR object_buckets.state = $1)
 AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id
@@ -22332,6 +22768,17 @@ DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted'
 func (q *Queries) ObjectBucketPruneTombstones(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
 	_, err := db.Exec(ctx, objectBucketPruneTombstones, accountID)
 	return err
+}
+
+const objectBucketReserveLockAccount = `-- name: ObjectBucketReserveLockAccount :one
+SELECT id FROM accounts WHERE id=$1 AND status='active' FOR UPDATE
+`
+
+func (q *Queries) ObjectBucketReserveLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectBucketReserveLockAccount, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
 }
 
 const objectBucketRetry = `-- name: ObjectBucketRetry :execrows
@@ -27859,6 +28306,27 @@ func (q *Queries) ObjectWriteInsert(ctx context.Context, db DBTX, arg ObjectWrit
 	return err
 }
 
+const objectWriteKeyFenced = `-- name: ObjectWriteKeyFenced :one
+SELECT EXISTS(SELECT 1 FROM object_storage_write_admissions w
+ WHERE w.bucket_id=$1 AND w.key_hash=$2 AND w.state='pending'
+ AND (w.multipart_upload_id IS NULL OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads m
+  WHERE m.id=w.multipart_upload_id AND m.state IN ('initiating','active','completing','completing_conditional','aborting')))
+ AND w.id IS DISTINCT FROM $3::uuid)::boolean AS fenced
+`
+
+type ObjectWriteKeyFencedParams struct {
+	BucketID pgtype.UUID
+	KeyHash  string
+	OwnWrite pgtype.UUID
+}
+
+func (q *Queries) ObjectWriteKeyFenced(ctx context.Context, db DBTX, arg ObjectWriteKeyFencedParams) (bool, error) {
+	row := db.QueryRow(ctx, objectWriteKeyFenced, arg.BucketID, arg.KeyHash, arg.OwnWrite)
+	var fenced bool
+	err := row.Scan(&fenced)
+	return fenced, err
+}
+
 const objectWriteReceiptGet = `-- name: ObjectWriteReceiptGet :one
 SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND write_phase <> 'untracked'
 `
@@ -28595,36 +29063,74 @@ func (q *Queries) PerAccountRateLimitAggregate(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
-const pinCustomerOperationDeployment = `-- name: PinCustomerOperationDeployment :exec
-INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
-VALUES($1::uuid,$2::uuid,$3::timestamptz)
-ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(deployment_revision_pins.expires_at,excluded.expires_at)
+const pinCustomerOperationDeployment = `-- name: PinCustomerOperationDeployment :execrows
+INSERT INTO customer_operation_code_pins(deployment_id,app_id,expires_at)
+SELECT d.id,d.app_id,$1::timestamptz FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=$2::uuid AND d.app_id=$3::uuid AND d.scope=$4::text
+AND a.account_id=$5::uuid AND a.status<>'deleted'
+ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(customer_operation_code_pins.expires_at,excluded.expires_at)
 `
 
 type PinCustomerOperationDeploymentParams struct {
+	ExpiresAt    pgtype.Timestamptz
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
-	ExpiresAt    pgtype.Timestamptz
+	Scope        string
+	AccountID    pgtype.UUID
 }
 
-func (q *Queries) PinCustomerOperationDeployment(ctx context.Context, db DBTX, arg PinCustomerOperationDeploymentParams) error {
-	_, err := db.Exec(ctx, pinCustomerOperationDeployment, arg.DeploymentID, arg.AppID, arg.ExpiresAt)
-	return err
+func (q *Queries) PinCustomerOperationDeployment(ctx context.Context, db DBTX, arg PinCustomerOperationDeploymentParams) (int64, error) {
+	result, err := db.Exec(ctx, pinCustomerOperationDeployment,
+		arg.ExpiresAt,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.Scope,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const pinCustomerOperationRelease = `-- name: PinCustomerOperationRelease :exec
-UPDATE project_release_sets SET expires_at=greatest(expires_at,$1::timestamptz)
-WHERE id=$2::uuid AND NOT active
+const pinCustomerOperationReleaseMembers = `-- name: PinCustomerOperationReleaseMembers :execrows
+INSERT INTO customer_operation_code_pins(deployment_id,app_id,expires_at)
+SELECT d.id,d.app_id,$1::timestamptz FROM project_release_sets rs
+JOIN project_release_members source ON source.release_id=rs.id AND source.app_id=$2::uuid AND source.deployment_id=$3::uuid
+JOIN apps origin ON origin.id=source.app_id AND origin.account_id=rs.account_id AND origin.project_id=rs.project_id AND origin.status<>'deleted'
+JOIN deployments origin_dep ON origin_dep.id=source.deployment_id AND origin_dep.app_id=origin.id AND origin_dep.scope=rs.environment_slug
+JOIN project_release_members rm ON rm.release_id=rs.id
+JOIN apps a ON a.id=rm.app_id AND a.account_id=rs.account_id AND a.project_id=rs.project_id AND a.status<>'deleted'
+JOIN deployments d ON d.id=rm.deployment_id AND d.app_id=a.id AND d.scope=rs.environment_slug
+WHERE rs.id=$4::uuid AND rs.account_id=$5::uuid AND rs.environment_slug=$6::text
+ORDER BY a.id,d.id LIMIT $7::integer
+ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(customer_operation_code_pins.expires_at,excluded.expires_at)
 `
 
-type PinCustomerOperationReleaseParams struct {
-	ExpiresAt pgtype.Timestamptz
-	ID        pgtype.UUID
+type PinCustomerOperationReleaseMembersParams struct {
+	ExpiresAt    pgtype.Timestamptz
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	ReleaseID    pgtype.UUID
+	AccountID    pgtype.UUID
+	Scope        string
+	MemberLimit  int32
 }
 
-func (q *Queries) PinCustomerOperationRelease(ctx context.Context, db DBTX, arg PinCustomerOperationReleaseParams) error {
-	_, err := db.Exec(ctx, pinCustomerOperationRelease, arg.ExpiresAt, arg.ID)
-	return err
+func (q *Queries) PinCustomerOperationReleaseMembers(ctx context.Context, db DBTX, arg PinCustomerOperationReleaseMembersParams) (int64, error) {
+	result, err := db.Exec(ctx, pinCustomerOperationReleaseMembers,
+		arg.ExpiresAt,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.ReleaseID,
+		arg.AccountID,
+		arg.Scope,
+		arg.MemberLimit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const pinManagedPostgresCutoverDatabases = `-- name: PinManagedPostgresCutoverDatabases :execrows
@@ -28808,7 +29314,8 @@ func (q *Queries) PruneCustomerOperationEvents(ctx context.Context, db DBTX, arg
 }
 
 const pruneCustomerOperationIdempotency = `-- name: PruneCustomerOperationIdempotency :execrows
-WITH doomed AS (SELECT scope_digest FROM customer_operation_idempotency WHERE expires_at<=$1::timestamptz
+WITH doomed AS (SELECT scope_digest FROM customer_operation_idempotency i WHERE expires_at<=$1::timestamptz
+ AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.id=i.operation_id AND o.state IN ('accepted','running'))
  ORDER BY expires_at,scope_digest LIMIT $2::integer)
 DELETE FROM customer_operation_idempotency i USING doomed d WHERE i.scope_digest=d.scope_digest
 `
@@ -32600,6 +33107,8 @@ update invocations set state='pending', attempts=0, last_error=null, outcome=nul
   last_replayed_at=clock_timestamp(),completed_at=null,result=null
 where id=$1::uuid and account_id=$2::uuid
   and app_id=$3::uuid and state='dead_letter'
+  and operation_id IS NULL
+  and NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
 `
 
 type ReplayDeadLetterInvocationParams struct {
@@ -34246,6 +34755,63 @@ func (q *Queries) ResetManagedPostgresCutoverVerification(ctx context.Context, d
 	return err
 }
 
+const resolvePublicProjectRelease = `-- name: ResolvePublicProjectRelease :one
+SELECT rs.id::text AS release_id,coalesce(rm.deployment_id::text,'')::text AS deployment_id
+FROM apps a JOIN project_release_sets rs ON rs.project_id=a.project_id AND rs.account_id=a.account_id
+LEFT JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+WHERE a.id=$1::uuid AND a.status<>'deleted' AND rs.environment_slug=$2::text
+AND (($3::uuid IS NULL AND rs.active)
+    OR (rs.id=$3::uuid AND (rs.active OR rs.expires_at>now())))
+`
+
+type ResolvePublicProjectReleaseParams struct {
+	AppID     pgtype.UUID
+	Scope     string
+	ReleaseID pgtype.UUID
+}
+
+type ResolvePublicProjectReleaseRow struct {
+	ReleaseID    string
+	DeploymentID string
+}
+
+// Public release selectors retain their configured access window. Private
+// execution retention is resolved only through an owned operation/workload.
+func (q *Queries) ResolvePublicProjectRelease(ctx context.Context, db DBTX, arg ResolvePublicProjectReleaseParams) (ResolvePublicProjectReleaseRow, error) {
+	row := db.QueryRow(ctx, resolvePublicProjectRelease, arg.AppID, arg.Scope, arg.ReleaseID)
+	var i ResolvePublicProjectReleaseRow
+	err := row.Scan(&i.ReleaseID, &i.DeploymentID)
+	return i, err
+}
+
+const resolveRetainedProjectRelease = `-- name: ResolveRetainedProjectRelease :one
+SELECT rs.id::text AS release_id,coalesce(rm.deployment_id::text,'')::text AS deployment_id
+FROM apps a JOIN project_release_sets rs ON rs.project_id=a.project_id AND rs.account_id=a.account_id
+LEFT JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+WHERE a.id=$1::uuid AND a.status<>'deleted' AND rs.environment_slug=$2::text
+AND (($3::uuid IS NULL AND rs.active)
+    OR (rs.id=$3::uuid AND (rs.active OR rs.expires_at>now()
+        OR EXISTS(SELECT 1 FROM customer_operation_retained_release_refs retained WHERE retained.release_id=rs.id))))
+`
+
+type ResolveRetainedProjectReleaseParams struct {
+	AppID     pgtype.UUID
+	Scope     string
+	ReleaseID pgtype.UUID
+}
+
+type ResolveRetainedProjectReleaseRow struct {
+	ReleaseID    string
+	DeploymentID string
+}
+
+func (q *Queries) ResolveRetainedProjectRelease(ctx context.Context, db DBTX, arg ResolveRetainedProjectReleaseParams) (ResolveRetainedProjectReleaseRow, error) {
+	row := db.QueryRow(ctx, resolveRetainedProjectRelease, arg.AppID, arg.Scope, arg.ReleaseID)
+	var i ResolveRetainedProjectReleaseRow
+	err := row.Scan(&i.ReleaseID, &i.DeploymentID)
+	return i, err
+}
+
 const resolveStaleRegressionObservations = `-- name: ResolveStaleRegressionObservations :many
 UPDATE debug_regression_observations
 SET state = 'resolved',
@@ -34313,6 +34879,90 @@ func (q *Queries) RetainCustomerOperationBlob(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
+const retainCustomerOperationIdempotency = `-- name: RetainCustomerOperationIdempotency :exec
+UPDATE customer_operation_idempotency SET expires_at=greatest(expires_at,$1::timestamptz)
+WHERE operation_id=$2::uuid
+`
+
+type RetainCustomerOperationIdempotencyParams struct {
+	ExpiresAt   pgtype.Timestamptz
+	OperationID pgtype.UUID
+}
+
+func (q *Queries) RetainCustomerOperationIdempotency(ctx context.Context, db DBTX, arg RetainCustomerOperationIdempotencyParams) error {
+	_, err := db.Exec(ctx, retainCustomerOperationIdempotency, arg.ExpiresAt, arg.OperationID)
+	return err
+}
+
+const retainedReleaseMemberDeploymentForUpdate = `-- name: RetainedReleaseMemberDeploymentForUpdate :one
+SELECT d.id FROM deployments d WHERE d.id=$1::uuid AND d.app_id=$2::uuid
+AND d.scope=$3::text AND d.status='live' AND (
+    d.traffic_percent>0 OR d.traffic_percent_explicit
+    OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND rm.app_id=d.app_id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))
+FOR UPDATE OF d
+`
+
+type RetainedReleaseMemberDeploymentForUpdateParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+}
+
+func (q *Queries) RetainedReleaseMemberDeploymentForUpdate(ctx context.Context, db DBTX, arg RetainedReleaseMemberDeploymentForUpdateParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, retainedReleaseMemberDeploymentForUpdate, arg.DeploymentID, arg.AppID, arg.Scope)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const retainedReleaseTargetUsable = `-- name: RetainedReleaseTargetUsable :one
+SELECT EXISTS(SELECT 1 FROM deployments d WHERE d.id=$1::uuid
+AND d.app_id=$2::uuid AND d.status='live' AND (
+    d.traffic_percent>0
+    OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND rm.app_id=d.app_id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)))
+`
+
+type RetainedReleaseTargetUsableParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+func (q *Queries) RetainedReleaseTargetUsable(ctx context.Context, db DBTX, arg RetainedReleaseTargetUsableParams) (bool, error) {
+	row := db.QueryRow(ctx, retainedReleaseTargetUsable, arg.DeploymentID, arg.AppID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const retireAutoRollbackDeploymentSiblings = `-- name: RetireAutoRollbackDeploymentSiblings :exec
+UPDATE deployments d SET status=CASE WHEN
+    EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END,
+    traffic_percent=0,rollout_state='aborted',rollout_completed_at=NULL,
+    rollout_aborted_at=coalesce(rollout_aborted_at,now()),
+    rollout_aborted_reason=coalesce(nullif(rollout_aborted_reason,''),'automatic rollback'),
+    last_auto_rollback_at=CASE WHEN d.id=$1::uuid THEN coalesce(last_auto_rollback_at,now()) ELSE last_auto_rollback_at END,
+    last_auto_rollback_reason=CASE WHEN d.id=$1::uuid THEN coalesce(last_auto_rollback_reason,'threshold_exceeded') ELSE last_auto_rollback_reason END
+WHERE d.app_id=$2::uuid AND d.scope=$3::text AND d.status='live'
+`
+
+type RetireAutoRollbackDeploymentSiblingsParams struct {
+	CurrentDeploymentID pgtype.UUID
+	AppID               pgtype.UUID
+	Scope               string
+}
+
+func (q *Queries) RetireAutoRollbackDeploymentSiblings(ctx context.Context, db DBTX, arg RetireAutoRollbackDeploymentSiblingsParams) error {
+	_, err := db.Exec(ctx, retireAutoRollbackDeploymentSiblings, arg.CurrentDeploymentID, arg.AppID, arg.Scope)
+	return err
+}
+
 const retireEnvironmentQualificationExecution = `-- name: RetireEnvironmentQualificationExecution :execrows
 UPDATE environment_qualification_executions SET retirement=$1::jsonb,retired_at=clock_timestamp()
 WHERE instance_id=$2::uuid AND retired_at IS NULL
@@ -34325,6 +34975,31 @@ type RetireEnvironmentQualificationExecutionParams struct {
 
 func (q *Queries) RetireEnvironmentQualificationExecution(ctx context.Context, db DBTX, arg RetireEnvironmentQualificationExecutionParams) (int64, error) {
 	result, err := db.Exec(ctx, retireEnvironmentQualificationExecution, arg.Retirement, arg.InstanceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retireLiveDeploymentSiblings = `-- name: RetireLiveDeploymentSiblings :execrows
+UPDATE deployments d SET status = CASE WHEN
+    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0
+WHERE d.app_id=$1::uuid AND d.scope=$2::text
+AND d.status='live' AND d.id<>$3::uuid
+`
+
+type RetireLiveDeploymentSiblingsParams struct {
+	AppID        pgtype.UUID
+	Scope        string
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) RetireLiveDeploymentSiblings(ctx context.Context, db DBTX, arg RetireLiveDeploymentSiblingsParams) (int64, error) {
+	result, err := db.Exec(ctx, retireLiveDeploymentSiblings, arg.AppID, arg.Scope, arg.DeploymentID)
 	if err != nil {
 		return 0, err
 	}
@@ -34386,6 +35061,8 @@ update invocations set state='pending', attempts=0, last_error=null, outcome=nul
   due_at=clock_timestamp(), lease_expires_at=null, instance_id=null,
   last_replayed_at=clock_timestamp(), completed_at=null, result=null
 where id=$1::uuid and account_id=$2::uuid and state='dead_letter'
+  and operation_id IS NULL
+  and NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
 returning id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code
 `
 
@@ -36329,6 +37006,29 @@ func (q *Queries) SetOutboundBindingProbePolicy(ctx context.Context, db DBTX, ar
 	var integration_id pgtype.UUID
 	err := row.Scan(&integration_id)
 	return integration_id, err
+}
+
+const setRetainedServiceRolloutSiblingTraffic = `-- name: SetRetainedServiceRolloutSiblingTraffic :execrows
+UPDATE deployments d SET status = CASE WHEN $1::integer>0
+    OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END, traffic_percent=$1::integer
+WHERE d.id=$2::uuid
+`
+
+type SetRetainedServiceRolloutSiblingTrafficParams struct {
+	TrafficPercent int32
+	DeploymentID   pgtype.UUID
+}
+
+func (q *Queries) SetRetainedServiceRolloutSiblingTraffic(ctx context.Context, db DBTX, arg SetRetainedServiceRolloutSiblingTrafficParams) (int64, error) {
+	result, err := db.Exec(ctx, setRetainedServiceRolloutSiblingTraffic, arg.TrafficPercent, arg.DeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setServiceCapacityProtection = `-- name: SetServiceCapacityProtection :one
