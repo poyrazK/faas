@@ -144,8 +144,9 @@ func TestDrainSecurityCancelsWaiterWhileSharedWakeRemainsOwned(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("wake did not start")
 			}
-			// Join the actual existing leader so its independent lifetime is observed.
-			call, leader, err := d.engine.wakeCoord.Enter(inv.AppID, WakeFanout{})
+			// Dispatch resolves a blank legacy scope to default. Join that
+			// actual leader so its independent lifetime is observed.
+			call, leader, err := d.engine.wakeCoord.EnterScoped(inv.AppID, state.DefaultEnvScope, WakeFanout{})
 			if err != nil || leader {
 				t.Fatalf("missing shared wake owner: %v leader=%v", err, leader)
 			}

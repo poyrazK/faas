@@ -259,7 +259,11 @@ func TestPgInvocationDispatchSnapshotTargetMembership(t *testing.T) {
 			}
 			prepared, version, owner, err := state.ResolveInvocationDispatch(ctx, store, request, &target)
 			if kind == "valid" || kind == "legacy account" {
-				if err != nil || owner != account || version.Scope != "default" || !reflect.DeepEqual(prepared, request) {
+				// The committed resolver stamps the canonical deployment scope;
+				// every other invocation field must retain its original value.
+				expected := request
+				expected.DeploymentScope = state.DefaultEnvScope
+				if err != nil || owner != account || version.Scope != state.DefaultEnvScope || !reflect.DeepEqual(prepared, expected) {
 					t.Fatalf("valid dispatch: %+v %+v %q %v", prepared, version, owner, err)
 				}
 			} else if !errors.Is(err, state.ErrNotFound) || owner != "" || version != (state.InvocationVersion{}) || !reflect.DeepEqual(prepared, request) {

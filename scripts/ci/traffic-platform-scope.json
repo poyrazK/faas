@@ -184,6 +184,10 @@
     {
       "package": "github.com/onebox-faas/faas/pkg/state",
       "test": "TestPGRateLimitBackendStatementRecoveryPreservesDebt"
+    },
+    {
+      "package": "github.com/onebox-faas/faas/pkg/state",
+      "test": "TestPgAppConfigLocksAccountBeforeApp"
     }
   ]
 }

@@ -6348,6 +6348,11 @@ FROM reservations r WHERE q.account_id=r.account_id;
 -- name: LockTrafficAppAccount :one
 SELECT account_id FROM apps WHERE id=sqlc.arg(app_id)::uuid FOR UPDATE;
 
+-- name: LockAppConfigAccount :one
+-- App UPDATE triggers lock their parent account. Acquire it before the app
+-- row so account/app foreign-key writers cannot form a reverse lock cycle.
+SELECT id FROM accounts WHERE id=sqlc.arg(account_id)::uuid FOR UPDATE;
+
 -- name: ReadTrafficDeletionAccountStatus :one
 SELECT status FROM accounts WHERE id=sqlc.arg(account_id)::uuid;
 

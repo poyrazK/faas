@@ -168,7 +168,27 @@ func (s *PgStore) beginAppConfigMutation(ctx context.Context, id string, p Updat
 	if appConfigChangesTrafficScope(p) {
 		return s.beginAppTrafficMutation(ctx, id)
 	}
-	return s.pool.BeginTx(ctx, pgx.TxOptions{})
+	account, err := sqlc.New().ReadAppTrafficAccount(ctx, s.pool, uuidToPgtype(id))
+	if err != nil {
+		return nil, fmt.Errorf("state: read app config owner: %w", mapErr(err))
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("state: begin app config mutation: %w", err)
+	}
+	if _, err := sqlc.New().LockAppConfigAccount(ctx, tx, account); err != nil {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+		return nil, fmt.Errorf("state: lock app config account: %w", mapErr(err))
+	}
+	owner, err := sqlc.New().LockTrafficAppAccount(ctx, tx, uuidToPgtype(id))
+	if err != nil || owner != account {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+		if err != nil {
+			return nil, fmt.Errorf("state: lock app config owner: %w", mapErr(err))
+		}
+		return nil, ErrConflict
+	}
+	return tx, nil
 }
 
 func appConfigChangesTrafficScope(p UpdateAppParams) bool {

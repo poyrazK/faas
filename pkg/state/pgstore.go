@@ -3917,10 +3917,7 @@ func (s *PgStore) AuthDefaultFlippedAt(ctx context.Context) (time.Time, error) {
 }
 
 func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error) {
-	if !appConfigChangesTrafficScope(p) {
-		return updateApp(ctx, s.pool, id, p)
-	}
-	tx, err := s.beginAppTrafficMutation(ctx, id)
+	tx, err := s.beginAppConfigMutation(ctx, id, p)
 	if err != nil {
 		return App{}, err
 	}

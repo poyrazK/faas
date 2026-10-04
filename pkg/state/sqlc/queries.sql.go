@@ -19418,6 +19418,19 @@ func (q *Queries) LiveServiceProxyIdentitiesByHostIP(ctx context.Context, db DBT
 	return items, nil
 }
 
+const lockAppConfigAccount = `-- name: LockAppConfigAccount :one
+SELECT id FROM accounts WHERE id=$1::uuid FOR UPDATE
+`
+
+// App UPDATE triggers lock their parent account. Acquire it before the app
+// row so account/app foreign-key writers cannot form a reverse lock cycle.
+func (q *Queries) LockAppConfigAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockAppConfigAccount, accountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockAppEnvironmentSecretReferenceScope = `-- name: LockAppEnvironmentSecretReferenceScope :one
 SELECT e.id,e.project_id FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
  WHERE a.id=$1::uuid AND a.account_id=$2::uuid AND a.status<>'deleted'
