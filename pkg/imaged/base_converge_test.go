@@ -1,4 +1,4 @@
-// adr: 531
+// adr: 571
 package imaged
 
 import (
@@ -131,7 +131,7 @@ func TestConvergeBaseKeepsLocalCopyForAnotherRecipe(t *testing.T) {
 func TestConvergeBaseBackfillsAMissingContentSidecar(t *testing.T) {
 	f := newConvergeFixture(t)
 	if !f.converge(t) {
-		t.Fatal("a pre-ADR-531 publication was not adopted")
+		t.Fatal("a pre-ADR-571 publication was not adopted")
 	}
 	if got := f.local(t); got != "other-node-build" {
 		t.Fatalf("local base = %q, want the published bytes", got)
