@@ -6517,3 +6517,71 @@ retirement also remain required. Enabling this private service does not enable
 public full clones. PostgreSQL 14/15, mixed-version and paid-provider
 qualification, complete configuration/object coverage, graph publication and
 production-preserving promotion/rollback remain in the complete contract.
+
+
+### Provider service for native PostgreSQL admission closure (2026-10-04)
+
+The managed PostgreSQL service now exposes the optional private
+`CheckpointConnectionClosureProvider` capability. Closing consumes the exact
+operation owner, source dataset, authenticated ready maintenance owner and
+selected database names. A separate observation consumes the same selection
+and performs no installation or close dispatch. Backend fingerprint, region,
+captured specification and separate maintenance/barrier owners are validated
+before provider IO. Ownership recovery continues when provisioning is disabled.
+The selection is bounded at 1,024 databases by
+`api.PostgresCheckpointDatabasesMax`; oversized or invalid names/sets are refused
+before IO and never truncated. PostgreSQL identifier lengths are measured in
+bytes. Caller selection and returned database evidence have independent slices;
+ordinary JSON and formatted output redact the private identities and names.
+
+The Neon adapter uses one direct, verify-full connection to the ready private
+maintenance database. It independently rechecks the captured endpoint/host and
+major version after connecting and after native work. The original maintenance
+owner, database OID, owner OID, bootstrap marker, SQL role and major version are
+authenticated before dispatch and after observation. Existing abandonment and
+terminal observation share these checks. A failed connector closes any pool it
+returned and sanitizes connection errors. Cancellation or any failed postcheck
+returns zero evidence, including after an actual closure committed; durable
+source recovery authority must remain held for the same owner.
+
+A valid observation requires the exact sorted database set, unique nonzero
+OIDs, original owners, a finite PostgreSQL-precision closure time, nonnegative
+session counts and a consistent drained flag. Existing sessions can continue
+writing after admission closes. Closure retries recover the original timestamp,
+OIDs and original connection flags; an observation cannot adopt another set or
+owner. Released/abandoned records cannot supply closed admission evidence.
+Neither `ClosedAt` nor an empty session count chooses a common capture point or
+attests complete source/background writer coverage.
+
+The data-bearing capture gate remains closed. The coordinator still needs a
+qualified durable selection covering every source database, all application and
+external/background writer barriers, the common frozen configuration/database/
+object checkpoint, retained-source proof and successful barrier release before
+it can install the native data composition. Paid Neon privileges and behavior,
+PostgreSQL 14/15 and mixed-version operation, complete schema/data/globals and
+final authority, resource admission/usage/retirement, object/configuration
+coverage and production-preserving promotion/rollback remain required.
+
+
+Verification: 208 original top-level contracts passed across managedpostgres,
+Neon and connectionfence, without test or production overlays. The paid live
+provider lifecycle contract was explicitly excluded. PostgreSQL 16 tests use a
+fresh isolated native cluster, real private maintenance bootstrap and SQL
+closure, synthetic provider HTTP placement and a private test connector mapping
+the authenticated endpoint to that cluster. They qualify admission versus
+existing-session writes, independent drainage, original closure recovery,
+selection/owner substitution, observation without installation, refusal before
+SQL for changed maintenance OIDs/owners/major or placement, and recovery after
+committed SQL followed by failed native/provider checks or cancellation. Fourteen
+relevant service/adapter roots passed again after adding final context checks
+before returning evidence. The normal APID production build passed; 526 actual
+production files were pinned and checked. The exact owned PostgreSQL process,
+roles/databases, RAM fixture and generated binary were retired after verification.
+
+The first package run exposed an overly broad privacy-test sample (the database
+name `a` also matched ordinary redaction text); the sample was corrected without
+weakening the assertion. One original native cancelled-close contract received
+an installation refusal before dispatch on that run. Its isolated rerun and the
+complete native package rerun passed. That transient refusal was not reproduced;
+these local checks do not qualify deployed provider availability, a common
+checkpoint, full repository acceptance or native Linux worker enforcement.

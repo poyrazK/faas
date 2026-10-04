@@ -26,6 +26,7 @@ type maintenancePlacement struct {
 type maintenanceConnection struct {
 	*pgx.ConnConfig
 	PostgresMajor int
+	placement     maintenancePlacement
 }
 
 // These private worker seams do not advertise complete checkpoint support.
@@ -137,7 +138,7 @@ func (p *Provider) maintenanceConnectionConfigForDatabase(ctx context.Context, i
 		return nil, managedpostgres.ErrUnavailable
 	}
 	config.RuntimeParams = map[string]string{"application_name": "gregale-maintenance-bootstrap"}
-	return &maintenanceConnection{ConnConfig: config, PostgresMajor: before.PostgresMajor}, nil
+	return &maintenanceConnection{ConnConfig: config, PostgresMajor: before.PostgresMajor, placement: before}, nil
 }
 
 func (p *Provider) maintenanceEndpoint(ctx context.Context, source resourceRef) (maintenancePlacement, error) {
