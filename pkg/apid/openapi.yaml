@@ -23226,6 +23226,273 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/billing/costs:
+    get:
+      tags: [billing]
+      operationId: getFinancialCosts
+      summary: Read attributable usage costs and historical price contracts.
+      description: |
+        Requires usage:read and session MFA. Uses retained account-owned evidence
+        and immutable price versions. Applies a single shared monthly allowance;
+        when the plan changes, the largest recorded grant is retained and shared
+        proportionally across versions. Known usage amounts use integer millicents.
+        Missing samples and historical prices are explicit coverage gaps.
+        The reported compute/interface-egress scope excludes other bill components.
+        Stored provider invoices are separate facts and are not automatically
+        reconciled to this usage ledger. The UTC usage month and provider invoice
+        periods can differ. At most 10000 allocations are returned; larger reports
+        fail without returning truncated totals. This endpoint has no writes.
+      parameters:
+        - name: month
+          in: query
+          description: Current or historical UTC usage month; defaults to the current month.
+          schema: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' }
+      responses:
+        '200':
+          description: Account-owned cost breakdown, coverage, forecasts, and separate invoice facts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialCostsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/billing/forecast:
+    get:
+      tags: [billing]
+      operationId: getFinancialForecast
+      summary: Read usage cost forecasts with coverage and method.
+      description: |
+        Requires usage:read and session MFA. Elapsed-time quantity forecasts apply
+        the recorded price after the shared allowance. At least one complete day,
+        fresh evidence, and unchanged pricing are required. Unavailable forecasts
+        contain a reason and omit projected amounts. The overall invoice forecast
+        remains unavailable until all bill components have authoritative coverage.
+        This endpoint is read-only and never changes workload admission.
+      parameters:
+        - name: month
+          in: query
+          description: UTC usage month for the projection; defaults to the current month.
+          schema: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' }
+      responses:
+        '200':
+          description: Meter forecasts and explicit missing bill components.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialForecastResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/billing/budgets:
+    get:
+      tags: [billing]
+      operationId: listFinancialBudgets
+      summary: List account budget policies and their enforcement readiness.
+      description: Requires usage:read and session MFA. Deleted policies are omitted. Drafts do not enforce limits.
+      responses:
+        '200':
+          description: Account-owned policies, bounded to 128.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [billing]
+      operationId: createFinancialBudget
+      summary: Save an account-owned budget draft with atomic revision audit.
+      description: |
+        Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
+        It fixes creation identity beyond replay-cache retention. Reusing an operation
+        identity cannot overwrite a changed or deleted policy. Set enabled=false:
+        activation currently returns 422 financial_budget_activation_unavailable.
+        Saving a draft creates no holds, decisions, notifications or workload changes.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Stable creation operation identity, required for retries across replay-cache retention.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateFinancialBudgetRequest' }
+      responses:
+        '201':
+          description: Saved draft with revision 1; retries retain its identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: Invalid policy count or financial_budget_activation_unavailable; no policy mutation occurred.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/billing/budgets/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Stable identity of an account-owned budget policy.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [billing]
+      operationId: getFinancialBudget
+      summary: Read an account-owned budget, including its deletion tombstone.
+      description: Requires usage:read and session MFA. Foreign or missing policies return 404.
+      responses:
+        '200':
+          description: Saved intent and explicit enforcement readiness.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [billing]
+      operationId: updateFinancialBudget
+      summary: Replace a budget draft at its expected revision.
+      description: |
+        Requires admin scope, session MFA and Idempotency-Key. expected_revision
+        must match the current policy; stale edits return 409. Set enabled=false:
+        activation remains unavailable. Scope ownership and action eligibility are
+        revalidated. Payment, security and user holds are independent of this intent.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Retry key for this replacement at its expected policy revision.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateFinancialBudgetRequest' }
+      responses:
+        '200':
+          description: Updated draft and incremented revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: financial_budget_activation_unavailable; the existing policy revision is unchanged.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [billing]
+      operationId: deleteFinancialBudget
+      summary: Tombstone a policy while retaining its immutable revision history.
+      description: Requires admin scope, session MFA and Idempotency-Key. expected_revision prevents stale deletion. Does not change account status or unrelated holds.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Retry identity for this policy tombstone operation.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeleteFinancialBudgetRequest' }
+      responses:
+        '200':
+          description: Tombstone and incremented revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/billing/budgets/{id}/revisions:
+    get:
+      tags: [billing]
+      operationId: listFinancialBudgetRevisions
+      summary: Page through immutable budget revisions, including deleted policies.
+      description: Requires usage:read and session MFA. Ownership is checked before history is read. Use next_revision as after_revision for continuation; a final full page may be followed by an empty page.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Budget identity whose immutable revision audit is being listed.
+          schema: { type: string, format: uuid }
+        - name: after_revision
+          in: query
+          description: Exclusive revision cursor; use the previous response's next_revision.
+          schema: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991, default: 0 }
+        - name: limit
+          in: query
+          description: Maximum number of immutable revision records in this page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        '200':
+          description: Revision page in ascending order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetHistoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/billing/budgets/preview:
+    post:
+      tags: [billing]
+      operationId: previewFinancialBudget
+      summary: Preview a scoped budget and its workload consequences without writes.
+      description: |
+        Requires usage:read and session MFA. Uses the current UTC usage period.
+        Validates account ownership and authoritative workload eligibility.
+        Reports known attributed cost, coverage, affected and continuing targets.
+        Net usage shares the account allowance once; strict scoped policies use
+        gross compute. Rejecting traffic does not stop background or idle compute.
+        A broad strict policy must suspend every covered workload; selective
+        preview/background actions cannot cap continuing production spending.
+        Environment targets are discovered from current live deployment scopes.
+        No policies, holds, decisions, dispatches or instances are written.
+        Enforcement remains unavailable while owner integrations and native
+        lifecycle acceptance are pending, as reported by enforcement_ready=false.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FinancialBudgetPreviewRequest' }
+      responses:
+        '200':
+          description: Financial observation, workload consequences and enforcement readiness.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetPreviewResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/billing/focus:
     get:
       tags: [billing]
@@ -27535,6 +27802,257 @@ components:
         failure_reason: { type: string, enum: [telemetry_missing, requests_active, quiet_period_not_elapsed, restart_attempt_failed] }
         requested_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
+    FinancialBudgetResponse:
+      type: object
+      description: Saved policy intent; draft and unavailable policies do not protect workloads.
+      required: [id, account_id, revision, spec, created_at, updated_at, status, enforcement_ready, reasons]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: string, format: date-time }
+        status: { type: string, enum: [draft, unavailable, deleted] }
+        enforcement_ready: { type: boolean, description: False until runtime integrations and acceptance are complete. }
+        reasons: { type: array, items: { type: string } }
+    FinancialBudgetListResponse:
+      type: object
+      description: Nondeleted account-owned policy intents with separately reported readiness.
+      required: [budgets]
+      properties:
+        budgets: { type: array, maxItems: 128, items: { $ref: '#/components/schemas/FinancialBudgetResponse' } }
+    CreateFinancialBudgetRequest:
+      type: object
+      description: New budget intent; this deployment accepts disabled drafts only.
+      required: [spec]
+      properties:
+        spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
+    UpdateFinancialBudgetRequest:
+      type: object
+      description: Complete replacement of budget intent guarded by its current revision.
+      required: [expected_revision, spec]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740990 }
+        spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
+    DeleteFinancialBudgetRequest:
+      type: object
+      description: Optimistic revision condition for retaining a policy deletion tombstone.
+      required: [expected_revision]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740990 }
+    FinancialBudgetRevisionResponse:
+      type: object
+      description: Immutable intent audit written in the same transaction as the policy.
+      required: [policy_id, revision, actor, mutation, spec, recorded_at]
+      properties:
+        policy_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        actor: { type: string, description: Authenticated account or API key identity; never a supplied actor value. }
+        mutation: { type: string, enum: [created, updated, deleted] }
+        spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
+        recorded_at: { type: string, format: date-time }
+    FinancialBudgetHistoryResponse:
+      type: object
+      description: Immutable policy revision page and an optional exclusive continuation cursor.
+      required: [revisions]
+      properties:
+        revisions: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/FinancialBudgetRevisionResponse' } }
+        next_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+    FinancialBudgetScope:
+      type: object
+      description: Authoritative account or resource identity; resource ids must belong to the account.
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [account, project, environment, app, job] }
+        id: { type: string, format: uuid, description: Omitted for account scope and required for resource scopes. }
+    FinancialBudgetSpec:
+      type: object
+      description: Customer budget intent; activation and enforcement are separately acknowledged.
+      required: [name, scope, currency, meters, basis, limit_millicents, notify_millicents, mode, action, drain_seconds, resume_rule, enabled]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128, description: Nonblank name bounded to 128 UTF-8 bytes. }
+        scope: { $ref: '#/components/schemas/FinancialBudgetScope' }
+        currency: { type: string, enum: [EUR] }
+        meters: { type: array, minItems: 1, maxItems: 2, uniqueItems: true, description: Sorted meter names; strict mode covers compute only., items: { type: string, enum: [compute, egress] } }
+        basis: { type: string, enum: [net_usage, gross_usage], description: Net usage after the shared account allowance or gross usage before it; strict resource scopes require gross usage. }
+        limit_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        notify_millicents: { type: array, maxItems: 8, uniqueItems: true, description: Increasing nonnegative thresholds at or below the limit., items: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 } }
+        mode: { type: string, enum: [monitored, strict] }
+        action: { type: string, enum: [notify, reject_traffic, suspend_background, stop_previews, suspend_workloads] }
+        drain_seconds: { type: integer, minimum: 0, maximum: 300, description: Notify uses zero; stopping targets drain before the deadline. }
+        resume_rule: { type: string, enum: [manual, next_period] }
+        enabled: { type: boolean }
+    FinancialBudgetPreviewRequest:
+      type: object
+      description: Proposed budget intent to inspect without saving or activating it.
+      required: [spec]
+      properties:
+        spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
+    FinancialBudgetTarget:
+      type: object
+      description: Current workload selected or left running by a proposed response.
+      required: [kind, id, name, effect]
+      properties:
+        kind: { type: string, enum: [app, job] }
+        id: { type: string, format: uuid }
+        name: { type: string }
+        environment_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        effect: { type: string }
+    FinancialBudgetPreviewResponse:
+      type: object
+      description: Known spending, evidence gaps, workload consequences and explicit readiness.
+      required: [spec, period_start, period_end, as_of, known_millicents, known_limit_reached, coverage_complete, fresh, reasons, enforcement_ready, guarantee, targets, continuing_targets]
+      properties:
+        spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+        known_millicents: { type: integer, format: int64 }
+        known_limit_reached: { type: boolean, description: Known subtotal is at or above the limit; inspect coverage before inferring complete spending. }
+        coverage_complete: { type: boolean }
+        fresh: { type: boolean }
+        reasons: { type: array, items: { type: string } }
+        enforcement_ready: { type: boolean, description: False while durable decisions and owner integrations lack acceptance; preview never activates a policy. }
+        guarantee: { type: string }
+        targets: { type: array, maxItems: 10000, items: { $ref: '#/components/schemas/FinancialBudgetTarget' } }
+        continuing_targets: { type: array, maxItems: 10000, items: { $ref: '#/components/schemas/FinancialBudgetTarget' } }
+    FinancialPrice:
+      type: object
+      description: Immutable version of a meter's exact price and allowance terms.
+      required: [version, meter, currency, unit, unit_quantity, millicents_per_unit, included_quantity]
+      properties:
+        version: { type: string }
+        meter: { type: string }
+        currency: { type: string, enum: [EUR] }
+        unit: { type: string }
+        unit_quantity: { type: integer, format: int64, minimum: 1 }
+        millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        included_quantity: { type: integer, format: int64, minimum: 0 }
+    FinancialPriceContract:
+      type: object
+      description: Historical activation of recorded account pricing.
+      required: [price, plan, effective_from, delivery_mode]
+      properties:
+        price: { $ref: '#/components/schemas/FinancialPrice' }
+        plan: { type: string, enum: [free, hobby, pro, scale] }
+        effective_from: { type: string, format: date-time }
+        delivery_mode: { type: string, enum: [live, shadow, off] }
+    FinancialAttribution:
+      type: object
+      description: Workload identity retained at first observation, surviving rename and deletion.
+      properties:
+        app_id: { type: string }
+        job_id: { type: string }
+        project_id: { type: string }
+        environment_id: { type: string }
+        deployment_id: { type: string }
+        name: { type: string }
+    FinancialAllocation:
+      type: object
+      description: Exact quantity-share allocation; row amounts and account totals reconcile.
+      required: [attribution, quantity, gross_millicents, allowance_millicents, net_millicents]
+      properties:
+        attribution: { $ref: '#/components/schemas/FinancialAttribution' }
+        quantity: { type: integer, format: int64 }
+        gross_millicents: { type: integer, format: int64 }
+        allowance_millicents: { type: integer, format: int64 }
+        net_millicents: { type: integer, format: int64 }
+    FinancialMeterCost:
+      type: object
+      description: Meter cost priced by one immutable contract with its assigned allowance.
+      required: [price, quantity, included_quantity, gross_millicents, allowance_millicents, net_millicents, allocation_method, allocations]
+      properties:
+        price: { $ref: '#/components/schemas/FinancialPrice' }
+        quantity: { type: integer, format: int64 }
+        included_quantity: { type: integer, format: int64 }
+        gross_millicents: { type: integer, format: int64 }
+        allowance_millicents: { type: integer, format: int64 }
+        net_millicents: { type: integer, format: int64 }
+        allocation_method: { type: string }
+        allocations: { type: array, maxItems: 10000, items: { $ref: '#/components/schemas/FinancialAllocation' } }
+    FinancialContractCosts:
+      type: object
+      description: One shared period allowance applied across historical rate versions.
+      required: [meter, quantity, included_quantity, net_millicents, allowance_method, contracts]
+      properties:
+        meter: { type: string }
+        quantity: { type: integer, format: int64 }
+        included_quantity: { type: integer, format: int64 }
+        net_millicents: { type: integer, format: int64 }
+        allowance_method: { type: string }
+        contracts: { type: array, items: { $ref: '#/components/schemas/FinancialMeterCost' } }
+    FinancialForecast:
+      type: object
+      description: Quantity run-rate projection; absent amounts mean unavailable, never zero.
+      required: [method, available, account_id, period_start, period_end, complete_through, price_version, meter, currency]
+      properties:
+        method: { type: string }
+        available: { type: boolean }
+        reason: { type: string }
+        account_id: { type: string }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        complete_through: { type: string, format: date-time }
+        price_version: { type: string }
+        meter: { type: string }
+        currency: { type: string, enum: [EUR] }
+        projected_quantity: { type: integer, format: int64 }
+        projected_net_millicents: { type: integer, format: int64 }
+    FinancialMeterCoverage:
+      type: object
+      description: Completeness and freshness of authoritative retained meter evidence.
+      required: [complete, fresh, expected_minutes, complete_minutes, unpriced_quantity, non_billable_quantity, reasons]
+      properties:
+        complete: { type: boolean }
+        fresh: { type: boolean }
+        expected_minutes: { type: integer, format: int64 }
+        complete_minutes: { type: integer, format: int64 }
+        unpriced_quantity: { type: integer, format: int64 }
+        non_billable_quantity: { type: integer, format: int64 }
+        reasons: { type: array, items: { type: string } }
+    FinancialMeterCosts:
+      type: object
+      description: Accrued meter costs, source coverage, historical terms, and forecast.
+      required: [meter, coverage, accrued, forecast, price_contracts]
+      properties:
+        meter: { type: string }
+        coverage: { $ref: '#/components/schemas/FinancialMeterCoverage' }
+        accrued: { $ref: '#/components/schemas/FinancialContractCosts' }
+        forecast: { $ref: '#/components/schemas/FinancialForecast' }
+        price_contracts: { type: array, items: { $ref: '#/components/schemas/FinancialPriceContract' } }
+    FinancialCostsResponse:
+      type: object
+      description: Account usage costs for a UTC period; invoice facts remain separate.
+      required: [account_id, currency, period_start, period_end, as_of, retained_from, evidence_through_id, known_usage_millicents, meters, scope, invoices, invoice_reconciliation, missing_bill_components]
+      properties:
+        account_id: { type: string }
+        currency: { type: string, enum: [EUR] }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+        retained_from: { type: string, format: date-time }
+        evidence_through_id: { type: integer, format: int64 }
+        known_usage_millicents: { type: integer, format: int64 }
+        meters: { type: array, items: { $ref: '#/components/schemas/FinancialMeterCosts' } }
+        scope: { type: string }
+        invoices: { type: array, items: { $ref: '#/components/schemas/Invoice' } }
+        invoice_reconciliation: { type: string, enum: [not_reconciled] }
+        missing_bill_components: { type: array, items: { type: string } }
+    FinancialForecastResponse:
+      type: object
+      description: Meter projections; a complete bill forecast requires all bill components.
+      required: [period_start, period_end, as_of, currency, meters, bill_estimate_available, missing_bill_components]
+      properties:
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+        currency: { type: string, enum: [EUR] }
+        meters: { type: array, items: { $ref: '#/components/schemas/FinancialMeterCosts' } }
+        bill_estimate_available: { type: boolean }
+        missing_bill_components: { type: array, items: { type: string } }
     CreateDevBridgeRequest:
       type: object
       description: Owned app and explicit development graph for local execution.

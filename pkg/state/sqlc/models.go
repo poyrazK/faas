@@ -2100,6 +2100,70 @@ type FeatureFlagVersion struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type FinancialBudgetPolicy struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	Revision  int64
+	Spec      []byte
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+	DeletedAt pgtype.Timestamptz
+}
+
+type FinancialBudgetRevision struct {
+	AccountID  pgtype.UUID
+	PolicyID   pgtype.UUID
+	Revision   int64
+	Actor      string
+	Mutation   string
+	Spec       []byte
+	RecordedAt pgtype.Timestamptz
+}
+
+type FinancialEvidenceCoverage struct {
+	Singleton    bool
+	RetainedFrom pgtype.Timestamptz
+}
+
+type FinancialPriceSnapshot struct {
+	AccountID     pgtype.UUID
+	PeriodStart   pgtype.Timestamptz
+	PeriodEnd     pgtype.Timestamptz
+	Meter         string
+	Version       string
+	Plan          string
+	EffectiveFrom pgtype.Timestamptz
+	DeliveryMode  string
+	Price         []byte
+	RecordedAt    pgtype.Timestamptz
+}
+
+type FinancialSamplingWindow struct {
+	Minute          pgtype.Timestamptz
+	ComputeComplete bool
+	EgressComplete  bool
+	ObservedAt      pgtype.Timestamptz
+}
+
+type FinancialUsageEvidence struct {
+	ID               int64
+	AccountID        pgtype.UUID
+	InstanceID       pgtype.UUID
+	SourceID         string
+	Meter            string
+	Unit             string
+	Quantity         int64
+	SourceStart      pgtype.Timestamptz
+	SourceEnd        pgtype.Timestamptz
+	Plan             string
+	Attribution      []byte
+	ObservedAt       pgtype.Timestamptz
+	PriceVersion     pgtype.Text
+	CorrectsSourceID pgtype.Text
+	AdjustmentActor  pgtype.Text
+	AdjustmentReason pgtype.Text
+}
+
 // Singleton non-secret secretbox probe proving every admitted node shares the fleet.age unseal domain.
 type FleetSealDomainProbe struct {
 	ID         int16
