@@ -420,9 +420,17 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 			}},
 			{Name: "add", Short: "Add an alert rule", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "name", Short: "rule name (3..120 chars)", Req: true, Value: "NAME"},
+				{Name: "metric", Short: "metric, e.g. error_rate_pct or latency_p95_ms", Value: "METRIC"},
+				{Name: "comparison", Short: "gt|gte|lt|lte", Value: "OP"},
+				{Name: "threshold", Short: "threshold value", Value: "N"},
+				{Name: "window-spec", Short: "5m|15m|1h|6h|24h|7d|15d", Value: "WINDOW"},
+				{Name: "failure-source", Short: "any|cron|queue|delayed_task|async_invoke|inbound_webhook", Value: "SOURCE"},
+				{Name: "webhook-url", Short: "https webhook URL", Req: true, Value: "URL"},
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
 				{Name: "webhook-secret-stdin", Short: "read the webhook secret from stdin"},
-			}},
+			}, Examples: []string{"gregale alerts add --app my-api --name p95-latency --metric latency_p95_ms --comparison gt --threshold 800 --window-spec 15m --webhook-url https://hooks.example.com/gregale"}},
 			{Name: "info", Short: "Show one alert rule"},
 			{Name: "update", Short: "Update one alert rule", Flags: []cliFlag{
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
@@ -767,9 +775,14 @@ var cliCommands = []cliCommand{
 		DocSlug: "cors",
 		Short:   "Configure CORS for an app (allow|ls|rm|show)",
 		Subcommands: []cliSub{
-			{Name: "allow", Short: "Attach a CORS rule to <slug>"},
+			{Name: "allow", Short: "Attach a CORS rule to <slug>", Positionals: []string{"<slug>", "<origin>", "[<origin>...]"}, Flags: []cliFlag{
+				{Name: "method", Short: "allowed method (repeat)", Value: "VERB"},
+				{Name: "credentials", Short: "enable Access-Control-Allow-Credentials"},
+				{Name: "max-age", Short: "Access-Control-Max-Age in seconds (default 600)", Value: "N"},
+				{Name: "host", Short: "match host (default: the app's first verified custom domain)", Value: "HOST"},
+			}, Examples: []string{"gregale cors allow my-api https://app.example.com --method GET --method POST"}},
 			{Name: "ls", Short: "List CORS rules bound to <slug> (defaults to linked context)"},
-			{Name: "rm", Short: "Delete a CORS rule by id"},
+			{Name: "rm", Short: "Delete a CORS rule by id", Positionals: []string{"<rule-id>"}},
 			{Name: "show", Short: "Show per-app default CORS + active rules (defaults to linked context)"},
 		},
 	},
@@ -780,8 +793,8 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List cron rules"},
 			{Name: "add", Short: "Schedule an HTTP request or deployment command", Flags: []cliFlag{
-				{Name: "app", Short: "app slug (required)", Req: true, Value: "slug"},
-				{Name: "schedule", Short: "five-field cron expression (required)", Req: true, Value: "EXPR"},
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "schedule", Short: "five-field cron expression", Req: true, Value: "EXPR"},
 				{Name: "path", Short: "HTTP request path (mutually exclusive with --command)", Value: "PATH"},
 				{Name: "command", Short: "executable for a deployment command cron", Value: "EXEC"},
 				{Name: "arg", Short: "append one command argument (repeatable)", Value: "ARG"},
@@ -810,7 +823,7 @@ var cliCommands = []cliCommand{
 				{Name: "failure-rules", Short: "replace versioned failure and outcome-code rules JSON", Value: "JSON"},
 			}},
 			{Name: "rm", Short: "Delete one cron rule"},
-			{Name: "run", Short: "Fire one cron immediately"},
+			{Name: "run", Short: "Fire one cron immediately", Positionals: []string{"<cron-id>"}},
 			{Name: "fire-now", Short: "Show the status of a manual fire request"},
 			{Name: "runs", Short: "Show execution history", Flags: []cliFlag{
 				{Name: "before", Short: "pagination cursor for older runs", Value: "CURSOR"},
@@ -835,8 +848,8 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "get", Short: "Show one trigger"},
 			{Name: "create", Short: "Create a broker trigger", Flags: []cliFlag{
-				{Name: "app", Short: "app slug (required)", Req: true, Value: "slug"},
-				{Name: "kind", Short: "trigger kind (required)", Req: true, Value: "kind", ClosedSet: triggerBrokerKindNames},
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "kind", Short: "trigger kind", Req: true, Value: "kind", ClosedSet: triggerBrokerKindNames},
 				{Name: "slug", Short: "trigger slug (required for non-cron kinds)", Value: "slug"},
 				{Name: "config", Short: "JSON config (inline | @file | -)", Value: "JSON"},
 				{Name: "enabled", Short: "enable the trigger"},
@@ -908,7 +921,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List jobs in this account"},
 			{Name: "add", Short: "Create a new job", Flags: []cliFlag{
-				{Name: "image", Value: "REF", Short: "OCI image (required)", Req: true},
+				{Name: "image", Value: "REF", Short: "OCI image", Req: true},
 				{Name: "schedule", Value: "EXPR", Short: "recurring five-field cron schedule"},
 				{Name: "timezone", Value: "TZ", Short: "IANA timezone for the recurring schedule"},
 				{Name: "schedule-policy", Value: "JSON", Short: "versioned recurring schedule policy JSON"},
@@ -923,7 +936,7 @@ var cliCommands = []cliCommand{
 				{Name: "failure-rules", Value: "JSON", Short: "replace versioned exit-code and outcome retry rules JSON"},
 			}},
 			{Name: "rm", Short: "Soft-delete one job"},
-			{Name: "run", Short: "Dispatch a new run (fan-out N tasks)", Flags: []cliFlag{
+			{Name: "run", Short: "Dispatch a new run (fan-out N tasks)", Positionals: []string{"<job-name>"}, Flags: []cliFlag{
 				{Name: "input", Value: "ID=REF", Short: "repeatable input binding"},
 				{Name: "input-manifest-uri", Value: "URI", Short: "account-readable input manifest object"},
 				{Name: "input-manifest-sha256", Value: "DIGEST", Short: "SHA-256 of exact manifest bytes"},
@@ -957,7 +970,7 @@ var cliCommands = []cliCommand{
 		Short:   "Manage durable execution workflows",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List workflow runs for an app"},
-			{Name: "run", Short: "Trigger a new workflow run"},
+			{Name: "run", Short: "Trigger a new workflow run", Positionals: []string{"<workflow-name>"}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "input", Short: "JSON input payload (default {})", Value: "JSON"}}},
 			{Name: "status", Short: "Show details of a workflow run"},
 			{Name: "steps", Short: "List steps for a workflow run"},
 			{Name: "cancel", Short: "Cancel an active workflow run"},
@@ -1245,8 +1258,8 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List custom domain bindings"},
 			{Name: subAdd, Short: "Bind a custom domain to an app or project environment", Flags: []cliFlag{
-				{Name: "domain", Short: "domain to attach (required)", Req: true, Value: "DOMAIN"},
-				{Name: "app", Short: "app slug to attach to (required)", Req: true, Value: "SLUG"},
+				{Name: "domain", Short: "domain to attach", Req: true, Value: "DOMAIN"},
+				{Name: "app", Short: "app slug to attach to", Req: true, Value: "SLUG"},
 				{Name: "environment", Short: "project environment to route this domain to", Value: "SLUG"},
 			}},
 			{Name: subRm, Short: "Remove a custom domain binding"},
@@ -1534,9 +1547,43 @@ var cliCommands = []cliCommand{
 				{Name: "body-file", Short: "request body file or - for stdin (max 1 MiB; contents are withheld)", Value: "path|-"},
 			}},
 			{Name: subCreate, Short: "Add an edge rule", Examples: []string{
+				"gregale edge-rules create --app my-api --kind throttle --match-host my-api.gregale.dev --match-path /search --throttle-requests-per-second 5 --throttle-burst 10",
+				"gregale edge-rules create --app my-api --kind redirect --match-host my-api.gregale.dev --match-path /old --redirect-status 308 --redirect-to https://my-api.gregale.dev/new",
+				"gregale edge-rules create --app my-api --kind cache --match-host my-api.gregale.dev --match-path /catalog --cache-max-age-seconds 60",
+				"gregale edge-rules create --app my-api --kind budget --match-host my-api.gregale.dev --match-path /reports --budget-ms 20000",
 				"gregale edge-rules create --app my-api --kind validate --match-host api.example.com --validate-schema @schema.json --validate-content-type application/json --validate-mode block",
 				"cat schema.json | gregale edge-rules create --app my-api --kind validate --match-host api.example.com --validate-schema -",
 			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "slug", Req: true},
+				{Name: "kind", Short: "rule kind", Value: "KIND", Req: true, ClosedSet: edgeRuleKindVocab},
+				{Name: "match-host", Short: "host to match", Value: "HOST", Req: true},
+				{Name: "match-path", Short: "path to match (default /)", Value: "PATH"},
+				{Name: "match-method", Short: "HTTP method to match (repeat for multiple)", Value: "METHOD"},
+				{Name: "match-header", Short: "exact request header selector (repeat)", Value: "Name=Value"},
+				{Name: "priority", Short: "match priority; lower wins (default 100)", Value: "N"},
+				{Name: "enabled", Short: "whether the rule is enabled (default true)"},
+				{Name: "throttle-requests-per-second", Short: "kind=throttle: refill rate in requests per second", Value: "RPS"},
+				{Name: "throttle-burst", Short: "kind=throttle: token-bucket burst", Value: "N"},
+				{Name: "throttle-key-by", Short: "kind=throttle: bucket key (none|api_key|consumer_id|jwt_subject|jwt_claim|country)", Value: "KEY"},
+				{Name: "redirect-status", Short: "kind=redirect: 301|302|307|308", Value: "CODE"},
+				{Name: "redirect-to", Short: "kind=redirect: Location URL", Value: "URL"},
+				{Name: "rewrite-from", Short: "kind=rewrite: from path", Value: "PATH"},
+				{Name: "rewrite-to", Short: "kind=rewrite: to path", Value: "PATH"},
+				{Name: "route-target-slug", Short: "kind=route: target app slug", Value: "slug"},
+				{Name: "cache-max-age-seconds", Short: "kind=cache: fresh window (default 60; max 3600)", Value: "N"},
+				{Name: "cache-stale-while-revalidate-seconds", Short: "kind=cache: serve stale during a background refresh (max 300)", Value: "N"},
+				{Name: "budget-ms", Short: "kind=budget: per-request wall-clock budget in ms (max 30000)", Value: "MS"},
+				{Name: "retry-max-attempts", Short: "kind=retry: total attempts including the original (default 2; max 3)", Value: "N"},
+				{Name: "circuit-failure-threshold", Short: "kind=circuit_breaker: failure ratio that opens the breaker (default 0.5)", Value: "RATIO"},
+				{Name: "circuit-open-seconds", Short: "kind=circuit_breaker: first open interval (default 5)", Value: "N"},
+				{Name: "respond-status", Short: "kind=respond: response status (default 200)", Value: "CODE"},
+				{Name: "respond-body", Short: "kind=respond: JSON response body (max 64 KiB)", Value: "JSON"},
+				{Name: "ip-allow", Short: "kind=ip: allow CIDR (repeat)", Value: "CIDR"},
+				{Name: "ip-deny", Short: "kind=ip: deny CIDR (repeat)", Value: "CIDR"},
+				{Name: "geo-allow", Short: "kind=geo: allow ISO country code (repeat)", Value: "CC"},
+				{Name: "geo-deny", Short: "kind=geo: deny ISO country code (repeat)", Value: "CC"},
+				{Name: "jwt-issuer", Short: "kind=jwt: token issuer", Value: "ISSUER"},
+				{Name: "jwt-jwks-url", Short: "kind=jwt: JWKS URL (https)", Value: "URL"},
 				{Name: "on-success-webhook", Short: "success webhook subscription; repeat when updating async policy", Value: "ID"},
 				{Name: "on-failure-webhook", Short: "failure webhook subscription; repeat when updating async policy", Value: "ID"},
 				{Name: "async-max-attempts", Short: "total attempts (0 = plan default; capped by plan)", Value: "N"},
@@ -1955,7 +2002,7 @@ var cliCommands = []cliCommand{
 				{Name: "scopes", Short: "comma-separated API key scopes; omit for full admin access", Value: "SCOPE,..."},
 			}, Examples: []string{"gregale keys add agent-runner --scopes runs:write"}},
 			{Name: "rm", Short: "Revoke an API key"},
-			{Name: subRotate, Short: "Rotate an API key"},
+			{Name: subRotate, Short: "Rotate an API key", Positionals: []string{"<key-id>"}, Examples: []string{"gregale keys rotate 7f8c2a1e-6d3b-4c55-9a7e-0b1d2c3e4f5a"}},
 			{Name: "grace-window", Short: "Set the rotation grace window"},
 		},
 	},
@@ -2176,7 +2223,7 @@ var cliCommands = []cliCommand{
 		Short:   "Inspect queues and manage first-class queue bindings",
 		Subcommands: []cliSub{
 			{Name: "tail", Short: "Tail the wake queue"},
-			{Name: "send", Short: "Enqueue a wake request", Flags: []cliFlag{
+			{Name: "send", Short: "Enqueue a wake request", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "payload", Short: "JSON payload (inline | @file | -)", Value: "J"},
 				{Name: "queue-name", Short: "logical queue name", Value: "QUEUE"},
 				{Name: "environment", Short: "registered project environment with an enabled queue binding", Value: "ENV"},
@@ -2256,7 +2303,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed realtime endpoints"},
 			{Name: "get", Short: "Show one endpoint and safe auth-rotation status"},
-			{Name: "create", Short: "Create a managed realtime endpoint"},
+			{Name: "create", Short: "Create a managed realtime endpoint", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "callback-url", Short: "application callback URL", Req: true, Value: "URL"}, {Name: "callback-auth-token-stdin", Short: "read the callback bearer token from stdin"}, {Name: "connect-path", Short: "callback path for connect events", Value: "PATH"}, {Name: "message-path", Short: "callback path for message events", Value: "PATH"}, {Name: "disconnect-path", Short: "callback path for disconnect events", Value: "PATH"}, {Name: "auth-mode", Short: "client auth mode (none|static_bearer|oidc_jwt)", Value: "MODE"}, {Name: "auth-token-stdin", Short: "read the client static bearer token from stdin"}, {Name: "max-connections", Short: "per-endpoint connection cap (0 inherits the default)", Value: "N"}}},
 			{Name: "update", Short: "Update endpoint callback, auth, or connection policy"},
 			{Name: "delete", Short: "Delete a managed realtime endpoint"},
 			{Name: "connections", Short: "List live connections for an endpoint", Flags: []cliFlag{
@@ -2728,7 +2775,7 @@ var cliCommands = []cliCommand{
 		Short:   "Manage app and account release webhooks (webhooks account <verb>)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List webhooks"},
-			{Name: "add", Short: "Add a webhook"},
+			{Name: "add", Short: "Add a webhook", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "target-url", Short: "HTTPS target URL", Req: true, Value: "URL"}, {Name: "event", Short: "event to deliver (repeat)", Value: "EVENT"}, {Name: "retry-policy", Short: "default|aggressive|none", Value: "POLICY"}, {Name: "delivery-format", Short: "json|cloudevents", Value: "FORMAT"}}},
 			{Name: "info", Short: "Show one webhook"},
 			{Name: "update", Short: "Update one webhook"},
 			{Name: "rm", Short: "Delete one webhook"},
