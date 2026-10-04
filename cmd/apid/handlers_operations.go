@@ -185,11 +185,14 @@ func (s *server) getPlatformTenantSelfOperation(w http.ResponseWriter, r *http.R
 }
 
 func operationEventsCursor(r *http.Request) (int64, error) {
-	raw := r.URL.Query().Get("after")
-	if raw == "" {
-		raw = r.Header.Get("Last-Event-ID")
-	}
-	if raw == "" {
+	query := r.URL.Query()
+	raw := r.Header.Get("Last-Event-ID")
+	if query.Has("after") {
+		raw = query.Get("after")
+		if raw == "" {
+			return 0, state.ErrInvalidArgument
+		}
+	} else if raw == "" {
 		return 0, nil
 	}
 	after, err := strconv.ParseInt(raw, 10, 64)

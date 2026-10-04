@@ -228,3 +228,25 @@ func TestOperationsBodyLimitProblem(t *testing.T) {
 		t.Fatalf("body limit did not include its numeric bound: %d %s, %v", rec.Code, rec.Body.String(), err)
 	}
 }
+
+// ADR-521: an explicit cursor takes precedence without silently ignoring invalid values.
+func TestOperationsEventCursorPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		query, header string
+		want          int64
+		invalid       bool
+	}{
+		{"", "", 0, false}, {"", "2", 2, false}, {"?after=0", "2", 0, false},
+		{"?after=1", "2", 1, false}, {"?after=", "2", 0, true},
+		{"?after=-1", "2", 0, true}, {"", "9223372036854775808", 0, true},
+	} {
+		t.Run(tc.query+"/"+tc.header, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/"+tc.query, nil)
+			req.Header.Set("Last-Event-ID", tc.header)
+			got, err := operationEventsCursor(req)
+			if (err != nil) != tc.invalid || got != tc.want {
+				t.Fatalf("cursor=%d error=%v, want %d invalid=%v", got, err, tc.want, tc.invalid)
+			}
+		})
+	}
+}
