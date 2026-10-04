@@ -2696,6 +2696,37 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/accounting/{account_id}:
+    get:
+      operationId: listManagedPostgresAccountingDiagnostics
+      summary: Explain managed PostgreSQL accounting blockers
+      description: Operator allowlist and admin scope required, with the existing session MFA gate (bearer API keys follow IAM policy). Reads local catalog and ledger evidence only. Each page is one database snapshot; pages are live views, not a frozen account snapshot. No provider requests, opaque provider IDs, or credentials.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account whose local accounting evidence is requested.
+          schema: { type: string, format: uuid }
+        - name: after
+          in: query
+          description: Resume after the database ID returned as next_cursor.
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          description: Maximum databases returned in this page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Bounded per-database accounting evidence; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresAccountingDiagnosticsResponse' }
+        default:
+          description: Access denied, invalid pagination, account not found, or accounting unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/admin/object-storage/usage-reports:
     post:
       operationId: recordObjectStorageUsage
@@ -31293,6 +31324,41 @@ components:
         max_monthly_history_byte_seconds: { type: integer, format: int64, minimum: 0 }
         max_monthly_egress_bytes: { type: integer, format: int64, minimum: 0 }
         line_items: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresUsageLineItem' } }
+    ManagedPostgresAccountingDiagnostic:
+      description: Local evidence for one accountable database. Shared restores refer to their accounting root. Reasons explain stale admission only; an empty list does not establish invoice settlement or remaining budget. An unknown legacy tombstone has no confirmed terminal deadline.
+      type: object
+      required: [database_id, name, state, accounting_required, identity_known, accounting_database_id, blocking, reasons, collected_window_seconds]
+      properties:
+        database_id: { type: string, format: uuid }
+        name: { type: string }
+        state: { type: string, enum: [provisioning, ready, updating, deleting, failed, deleted] }
+        accounting_required: { type: boolean }
+        identity_known: { type: boolean }
+        accounting_database_id: { type: string, format: uuid }
+        blocking: { type: boolean, description: This resource blocks admission due to stale accounting under the enabled policy. False when the policy is disabled. }
+        reasons:
+          type: array
+          items: { type: string, enum: [identity_unknown, legacy_identity_unknown, coverage_missing, window_mismatch, shutdown_unconfirmed, coverage_incomplete, observation_stale, final_correction_pending] }
+        collected_window_seconds: { type: integer, format: int64, minimum: 0 }
+        required_from: { type: [string, "null"], format: date-time }
+        required_until: { type: [string, "null"], format: date-time }
+        collected_from: { type: [string, "null"], format: date-time }
+        collected_until: { type: [string, "null"], format: date-time }
+        observed_at: { type: [string, "null"], format: date-time }
+        correction_observed_at: { type: [string, "null"], format: date-time }
+        correction_required_at: { type: [string, "null"], format: date-time }
+        lease_until: { type: [string, "null"], format: date-time }
+    ManagedPostgresAccountingDiagnosticsResponse:
+      description: One live account-scoped page of local accounting evidence.
+      type: object
+      required: [account_id, evaluated_at, policy_enabled, window_seconds, items]
+      properties:
+        account_id: { type: string, format: uuid }
+        evaluated_at: { type: string, format: date-time }
+        policy_enabled: { type: boolean }
+        window_seconds: { type: integer, format: int64, minimum: 0 }
+        items: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/ManagedPostgresAccountingDiagnostic' } }
+        next_cursor: { type: [string, "null"], format: uuid }
     CreateManagedPostgresDatabaseRequest:
       description: Customer request to reserve a managed PostgreSQL database.
       type: object

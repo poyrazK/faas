@@ -172,26 +172,7 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 			if database.State == StateReady {
 				snapshot.ReadyDatabases++
 			}
-			var progress UsageProgress
-			accountingDatabase := database
-			for key, candidate := range s.usageProgress {
-				if key.databaseID == database.ID && candidate.UpdatedAt.After(progress.UpdatedAt) {
-					progress = candidate
-				}
-			}
-			if progress.SourceDatabaseID != "" {
-				if source, ok := s.databases[progress.SourceDatabaseID]; ok {
-					accountingDatabase = source
-				}
-				progress = s.usageProgressLocked(progress.SourceDatabaseID, progress.Window)
-			} else {
-				progress = s.usageProgressLocked(database.ID, progress.Window)
-			}
-			progress.Terminal = accountingDatabase.State == StateDeleted
-			progress.Unresolved = database.AccountingRequired && database.ProviderResourceID == ""
-			if accountingDatabase.DeletedAt != nil {
-				progress.EndedAt = *accountingDatabase.DeletedAt
-			}
+			progress := s.accountingCoverageLocked(database).Progress
 			snapshot.Databases = append(snapshot.Databases, progress)
 		}
 	}

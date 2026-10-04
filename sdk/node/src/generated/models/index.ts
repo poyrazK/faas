@@ -646,6 +646,8 @@ export type { MFAVerifyResponse } from './MFAVerifyResponse.js';
 export type { MagicLinkSignupRequest } from './MagicLinkSignupRequest.js';
 export type { ManagedExecutionWorkflowArtifactInput } from './ManagedExecutionWorkflowArtifactInput.js';
 export type { ManagedExecutionWorkflowResponse } from './ManagedExecutionWorkflowResponse.js';
+export type { ManagedPostgresAccountingDiagnostic } from './ManagedPostgresAccountingDiagnostic.js';
+export type { ManagedPostgresAccountingDiagnosticsResponse } from './ManagedPostgresAccountingDiagnosticsResponse.js';
 export type { ManagedPostgresBinding } from './ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './ManagedPostgresBindingList.js';
 export type { ManagedPostgresCutover } from './ManagedPostgresCutover.js';

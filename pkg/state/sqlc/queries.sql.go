@@ -23454,7 +23454,9 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 }
 
 const listManagedPostgresAccountingCoverage = `-- name: ListManagedPostgresAccountingCoverage :many
-SELECT d.state, (d.accounting_required AND NULLIF(d.provider_resource_id, '') IS NULL)::boolean AS unresolved,
+SELECT d.id AS database_id, d.name, d.state, d.accounting_required,
+(NULLIF(d.provider_resource_id, '') IS NOT NULL)::boolean AS identity_known, d.lease_until,
+COALESCE(source.id, d.id)::uuid AS accounting_database_id, COALESCE(source.created_at, d.created_at)::timestamptz AS accounting_created_at, (d.accounting_required AND NULLIF(d.provider_resource_id, '') IS NULL)::boolean AS unresolved,
 COALESCE(source.state, d.state)::text AS accounting_state,
 (CASE WHEN source.id IS NULL THEN d.deleted_at ELSE source.deleted_at END)::timestamptz AS ended_at, COALESCE(c.window_seconds, 0)::bigint AS window_seconds,
 COALESCE(s.collected_from, c.collected_from)::timestamptz AS collected_from,
@@ -23471,11 +23473,25 @@ LEFT JOIN LATERAL (SELECT database_id, window_seconds, collected_from, collected
 LEFT JOIN managed_postgres_databases source ON source.id = c.source_database_id
 LEFT JOIN managed_postgres_usage_coverage s ON s.database_id = c.source_database_id AND s.window_seconds = c.window_seconds
 WHERE d.account_id = $1::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL OR d.accounting_required)
-ORDER BY d.id
+AND ($2::uuid IS NULL OR d.id > $2::uuid)
+ORDER BY d.id LIMIT $3::integer
 `
 
+type ListManagedPostgresAccountingCoverageParams struct {
+	AccountID pgtype.UUID
+	AfterID   pgtype.UUID
+	PageLimit pgtype.Int4
+}
+
 type ListManagedPostgresAccountingCoverageRow struct {
+	DatabaseID           pgtype.UUID
+	Name                 string
 	State                string
+	AccountingRequired   bool
+	IdentityKnown        bool
+	LeaseUntil           pgtype.Timestamptz
+	AccountingDatabaseID pgtype.UUID
+	AccountingCreatedAt  pgtype.Timestamptz
 	Unresolved           bool
 	AccountingState      string
 	EndedAt              pgtype.Timestamptz
@@ -23487,8 +23503,8 @@ type ListManagedPostgresAccountingCoverageRow struct {
 	SourceDatabaseID     string
 }
 
-func (q *Queries) ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListManagedPostgresAccountingCoverageRow, error) {
-	rows, err := db.Query(ctx, listManagedPostgresAccountingCoverage, accountID)
+func (q *Queries) ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, arg ListManagedPostgresAccountingCoverageParams) ([]ListManagedPostgresAccountingCoverageRow, error) {
+	rows, err := db.Query(ctx, listManagedPostgresAccountingCoverage, arg.AccountID, arg.AfterID, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -23497,7 +23513,14 @@ func (q *Queries) ListManagedPostgresAccountingCoverage(ctx context.Context, db 
 	for rows.Next() {
 		var i ListManagedPostgresAccountingCoverageRow
 		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.Name,
 			&i.State,
+			&i.AccountingRequired,
+			&i.IdentityKnown,
+			&i.LeaseUntil,
+			&i.AccountingDatabaseID,
+			&i.AccountingCreatedAt,
 			&i.Unresolved,
 			&i.AccountingState,
 			&i.EndedAt,

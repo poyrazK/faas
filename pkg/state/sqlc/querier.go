@@ -1238,7 +1238,7 @@ type Querier interface {
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
 	ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error)
 	ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]Deployment, error)
-	ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListManagedPostgresAccountingCoverageRow, error)
+	ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, arg ListManagedPostgresAccountingCoverageParams) ([]ListManagedPostgresAccountingCoverageRow, error)
 	ListManagedPostgresCustomerDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ManagedPostgresDatabase, error)
 	ListManagedPostgresCutoverCredentials(ctx context.Context, db DBTX, id string) ([]ManagedPostgresCutoverCredential, error)
 	ListManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ManagedPostgresDatabase, error)

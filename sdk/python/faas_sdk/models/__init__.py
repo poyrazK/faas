@@ -1228,6 +1228,10 @@ from .magic_link_signup_request import MagicLinkSignupRequest
 from .managed_execution_workflow_artifact_input import ManagedExecutionWorkflowArtifactInput
 from .managed_execution_workflow_response import ManagedExecutionWorkflowResponse
 from .managed_execution_workflow_response_status import ManagedExecutionWorkflowResponseStatus
+from .managed_postgres_accounting_diagnostic import ManagedPostgresAccountingDiagnostic
+from .managed_postgres_accounting_diagnostic_reasons_item import ManagedPostgresAccountingDiagnosticReasonsItem
+from .managed_postgres_accounting_diagnostic_state import ManagedPostgresAccountingDiagnosticState
+from .managed_postgres_accounting_diagnostics_response import ManagedPostgresAccountingDiagnosticsResponse
 from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
@@ -3728,6 +3732,10 @@ __all__ = (
     "ManagedExecutionWorkflowArtifactInput",
     "ManagedExecutionWorkflowResponse",
     "ManagedExecutionWorkflowResponseStatus",
+    "ManagedPostgresAccountingDiagnostic",
+    "ManagedPostgresAccountingDiagnosticReasonsItem",
+    "ManagedPostgresAccountingDiagnosticsResponse",
+    "ManagedPostgresAccountingDiagnosticState",
     "ManagedPostgresBinding",
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",
