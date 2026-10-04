@@ -89,16 +89,19 @@ func cmdWorkflowsList(args []string) int {
 }
 
 func cmdWorkflowsRun(args []string) int {
-	if len(args) == 0 {
+	// The workflow name may come before or after the flags (help shows
+	// `workflows run --app <slug> <workflow-name>`).
+	flagArgs, positional := splitArgsForFlags(args)
+	if len(positional) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale workflows run <workflow_name> --app <slug> [--input '{\"k\":\"v\"}']", "workflows")
 		return 1
 	}
-	workflowName := args[0]
+	workflowName := positional[0]
 
 	fs := newFlagSet("workflows-run", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "app slug")
 	inputStr := fs.String("input", "{}", "JSON input payload for the workflow")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {

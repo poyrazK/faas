@@ -27212,3 +27212,66 @@ ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_eve
 ALTER TABLE route_monitors ADD COLUMN IF NOT EXISTS customer_group_by text NOT NULL DEFAULT '' CHECK (customer_group_by IN ('','tenant','consumer'));
 
 ALTER TABLE route_monitors ADD COLUMN IF NOT EXISTS customer_recovery_state jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(customer_recovery_state)='object' AND octet_length(customer_recovery_state::text)<=262144);
+
+-- ADR-521: private HTTP operation code retention.
+CREATE INDEX IF NOT EXISTS customer_operations_definition_retention_idx
+    ON customer_operations(definition_id, expires_at);
+
+CREATE INDEX IF NOT EXISTS customer_operations_release_retention_idx
+    ON customer_operations((record->>'release_id'), expires_at);
+
+CREATE OR REPLACE VIEW customer_operation_retained_release_refs AS
+SELECT DISTINCT rs.id AS release_id
+FROM customer_operations o
+JOIN customer_operation_definitions def ON def.id = o.definition_id
+    AND def.account_id = o.account_id AND def.app_id = o.app_id
+    AND def.deployment_id::text = o.record->>'deployment_id'
+    AND def.scope = o.record->>'scope'
+JOIN apps a ON a.id = def.app_id AND a.account_id = o.account_id AND a.status <> 'deleted'
+JOIN deployments d ON d.id = def.deployment_id AND d.app_id = def.app_id AND d.scope = def.scope
+JOIN project_release_sets rs ON rs.id::text = o.record->>'release_id'
+    AND rs.account_id = o.account_id AND rs.project_id = a.project_id
+    AND rs.environment_slug = def.scope
+JOIN project_release_members source ON source.release_id = rs.id
+    AND source.app_id = def.app_id AND source.deployment_id = def.deployment_id
+WHERE o.state IN ('accepted', 'running') OR o.expires_at > now();
+
+CREATE OR REPLACE VIEW customer_operation_retained_deployment_refs AS
+SELECT DISTINCT def.deployment_id
+FROM customer_operations o
+JOIN customer_operation_definitions def ON def.id = o.definition_id
+    AND def.account_id = o.account_id AND def.app_id = o.app_id
+    AND def.deployment_id::text = o.record->>'deployment_id'
+    AND def.scope = o.record->>'scope'
+JOIN apps a ON a.id = def.app_id AND a.account_id = o.account_id AND a.status <> 'deleted'
+JOIN deployments d ON d.id = def.deployment_id AND d.app_id = def.app_id AND d.scope = def.scope
+WHERE o.state IN ('accepted', 'running') OR o.expires_at > now()
+UNION
+SELECT rm.deployment_id
+FROM customer_operation_retained_release_refs retained
+JOIN project_release_sets rs ON rs.id = retained.release_id
+JOIN project_release_members rm ON rm.release_id = rs.id
+JOIN apps a ON a.id = rm.app_id AND a.account_id = rs.account_id AND a.project_id = rs.project_id AND a.status <> 'deleted'
+JOIN deployments d ON d.id = rm.deployment_id AND d.app_id = a.id AND d.scope = rs.environment_slug;
+
+-- ADR-521: private HTTP operation code retention.
+CREATE UNIQUE INDEX IF NOT EXISTS deployments_operation_code_pin_owner_idx ON deployments(id,app_id);
+
+CREATE TABLE IF NOT EXISTS customer_operation_code_pins (
+    deployment_id uuid PRIMARY KEY,
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    expires_at timestamptz NOT NULL CHECK (isfinite(expires_at)),
+    CONSTRAINT customer_operation_code_pins_owner_fk FOREIGN KEY(deployment_id,app_id)
+        REFERENCES deployments(id,app_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS customer_operation_code_pins_app_expiry_idx ON customer_operation_code_pins(app_id,expires_at);
+
+CREATE INDEX IF NOT EXISTS customer_operation_code_pins_expiry_idx ON customer_operation_code_pins(expires_at);
+
+CREATE OR REPLACE VIEW deployment_code_pin_deadlines AS
+SELECT deployment_id,app_id,max(expires_at) AS expires_at FROM (
+    SELECT deployment_id,app_id,expires_at FROM deployment_revision_pins
+    UNION ALL
+    SELECT deployment_id,app_id,expires_at FROM customer_operation_code_pins
+) receipts GROUP BY deployment_id,app_id;
