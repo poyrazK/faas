@@ -270,12 +270,13 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	}
 	// These values identify the actual task and attempt, so customer-supplied
 	// job/run environment entries must never be able to replace them.
+	partitionIndex, partitionCount := e.jobPartition(ctx, run, task)
 	env["GREGALE_RUN_ID"] = run.ID
-	env["GREGALE_TASK_INDEX"] = strconv.Itoa(task.TaskIndex)
+	env["GREGALE_TASK_INDEX"] = strconv.Itoa(partitionIndex)
 	env["GREGALE_TASK_ATTEMPT"] = strconv.Itoa(task.Attempt)
-	env["GREGALE_TASK_COUNT"] = strconv.Itoa(run.Tasks)
-	env["GREGALE_PARTITION_INDEX"] = strconv.Itoa(task.TaskIndex)
-	env["GREGALE_PARTITION_COUNT"] = strconv.Itoa(run.Tasks)
+	env["GREGALE_TASK_COUNT"] = strconv.Itoa(partitionCount)
+	env["GREGALE_PARTITION_INDEX"] = strconv.Itoa(partitionIndex)
+	env["GREGALE_PARTITION_COUNT"] = strconv.Itoa(partitionCount)
 	env["GREGALE_OUTPUT_MANIFEST_PATH"] = jobresult.GuestPath
 	if task.InputID != "" {
 		env["GREGALE_INPUT_ID"] = task.InputID
@@ -1200,3 +1201,35 @@ var ErrJobTaskNotRetriable = errors.New("sched: job task not retriable")
 // ErrJobTaskMaxRetriesReached marks a RetryJob against a task
 // that's already exhausted job.retry_max+1 attempts.
 var ErrJobTaskMaxRetriesReached = errors.New("sched: job task max retries reached")
+
+// maxJobReplayDepth bounds the source_run_id walk for a replay of a replay.
+const maxJobReplayDepth = 8
+
+// jobPartition returns the partition identity a task works on. Ordinary tasks
+// are partition TaskIndex of run.Tasks. A replayed task (jobs replay-failed)
+// keeps the index and count of the run it replays, the stable partition
+// identity docs/jobs.md promises. On production-us replay-failed re-ran failed
+// partition 2 of 4 as partition 0 of 1: the task redid partition 0's work, the
+// replay run reported OK, and partition 2 was never redone. A source run that
+// cannot be read falls back to the replay run's count.
+func (e *Engine) jobPartition(ctx context.Context, run state.JobRun, task state.JobTask) (index, count int) {
+	if task.SourceTaskIndex == nil {
+		return task.TaskIndex, run.Tasks
+	}
+	index, count = *task.SourceTaskIndex, run.Tasks
+	source := run
+	for hop := 0; hop < maxJobReplayDepth && source.SourceRunID != nil && *source.SourceRunID != ""; hop++ {
+		parent, err := e.store.JobRunGetByID(ctx, *source.SourceRunID)
+		if err != nil {
+			break
+		}
+		source = parent
+	}
+	if source.Tasks > count {
+		count = source.Tasks
+	}
+	if index >= count {
+		count = index + 1
+	}
+	return index, count
+}
