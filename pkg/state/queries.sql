@@ -8325,3 +8325,59 @@ select o.scope, o.key, o.instance_id::text AS instance_id, o.workload_name, o.se
 	  where s.account_id = sqlc.arg(account_id)::uuid and o.app_id = sqlc.arg(app_id)::uuid and (sqlc.arg(scope)::text = '' or o.scope = sqlc.arg(scope)::text)
 	    and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
 	  order by o.scope asc, o.key asc, o.instance_id asc, o.workload_name asc;
+
+-- ADR-569: known resources remain accountable through lifecycle shutdown.
+-- name: ListManagedPostgresUsageResources :many
+SELECT d.* FROM managed_postgres_databases d
+WHERE NULLIF(d.provider_resource_id, '') IS NOT NULL
+  AND (sqlc.narg(after_updated_at)::timestamptz IS NULL
+       OR (d.updated_at, d.id) > (sqlc.narg(after_updated_at)::timestamptz, sqlc.arg(after_id)::uuid))
+ORDER BY d.updated_at, d.id LIMIT sqlc.arg(page_limit);
+
+-- name: LockManagedPostgresUsageResource :one
+SELECT d.* FROM managed_postgres_databases d WHERE d.id = sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: GetManagedPostgresUsageProgress :one
+SELECT c.collected_from, c.collected_until, c.observed_at, COALESCE(c.source_database_id::text, '')::text AS source_database_id,
+ (SELECT min(u.observed_at) FROM managed_postgres_usage u
+  WHERE u.database_id = d.id AND u.window_to <= c.collected_until
+    AND u.window_from >= GREATEST(c.collected_from, c.collected_until - 3 * sqlc.arg(window_seconds)::bigint * interval '1 second'))::timestamptz AS correction_observed_at
+FROM managed_postgres_databases d LEFT JOIN managed_postgres_usage_coverage c
+ON c.database_id = d.id AND c.window_seconds = sqlc.arg(window_seconds)::bigint
+WHERE d.account_id = sqlc.arg(account_id)::uuid AND d.id = sqlc.arg(database_id)::uuid;
+
+-- name: RecordManagedPostgresSharedUsage :execrows
+WITH RECURSIVE ancestry AS (
+ SELECT restore_source_database_id AS id FROM managed_postgres_databases
+ WHERE id = sqlc.arg(database_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+ UNION
+ SELECT d.restore_source_database_id FROM managed_postgres_databases d JOIN ancestry a ON d.id = a.id
+ WHERE d.account_id = sqlc.arg(account_id)::uuid
+)
+INSERT INTO managed_postgres_usage_coverage (database_id, window_seconds, source_database_id)
+SELECT d.id, sqlc.arg(window_seconds)::bigint, s.id FROM managed_postgres_databases d JOIN managed_postgres_databases s
+ON s.id = sqlc.arg(source_id)::uuid AND s.account_id = d.account_id
+AND s.backend_id = d.backend_id AND s.backend_fingerprint = d.backend_fingerprint
+WHERE d.id = sqlc.arg(database_id)::uuid AND d.account_id = sqlc.arg(account_id)::uuid
+AND NULLIF(d.provider_resource_id, '') IS NOT NULL AND NULLIF(s.provider_resource_id, '') IS NOT NULL
+AND s.id IN (SELECT id FROM ancestry)
+ON CONFLICT (database_id, window_seconds) DO UPDATE SET
+source_database_id = EXCLUDED.source_database_id, collected_from = NULL, collected_until = NULL,
+observed_at = NULL, updated_at = now();
+
+-- name: ListManagedPostgresAccountingCoverage :many
+SELECT d.state, d.deleted_at, COALESCE(c.window_seconds, 0)::bigint AS window_seconds,
+COALESCE(s.collected_from, c.collected_from)::timestamptz AS collected_from,
+COALESCE(s.collected_until, c.collected_until)::timestamptz AS collected_until,
+COALESCE(s.observed_at, c.observed_at)::timestamptz AS observed_at,
+(SELECT min(u.observed_at) FROM managed_postgres_usage u
+ WHERE u.database_id = COALESCE(c.source_database_id, d.id)
+ AND u.window_to <= COALESCE(s.collected_until, c.collected_until)
+ AND u.window_from >= GREATEST(COALESCE(s.collected_from, c.collected_from),
+ COALESCE(s.collected_until, c.collected_until) - 3 * c.window_seconds * interval '1 second'))::timestamptz AS correction_observed_at, COALESCE(c.source_database_id::text, '')::text AS source_database_id
+FROM managed_postgres_databases d
+LEFT JOIN LATERAL (SELECT * FROM managed_postgres_usage_coverage WHERE database_id = d.id
+ ORDER BY updated_at DESC, window_seconds DESC LIMIT 1) c ON true
+LEFT JOIN managed_postgres_usage_coverage s ON s.database_id = c.source_database_id AND s.window_seconds = c.window_seconds
+WHERE d.account_id = sqlc.arg(account_id)::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL)
+ORDER BY d.id;
