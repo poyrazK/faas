@@ -28,6 +28,7 @@ const (
 	RegionalRuntimeQuotaEnvelopeMaxBytes       = 8192
 	RegionalRuntimeQuotaPayloadMaxBytes        = 4096
 	RegionalRuntimeCapacityPageMax             = 1000
+	RegionalRuntimeHostRecordMaxBytes          = 16384
 	GlobalDirectoryRequestMaxBytes             = 4096
 	GlobalDirectoryProofMaxBytes               = 4096
 	GlobalDirectoryAPIOriginMaxBytes           = 2048

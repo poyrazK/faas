@@ -947,6 +947,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return runtimeAuthorizeErr
 	}
 	mgr.WithRuntimeAuthorizer(runtimeAuthorize)
+	hostJournal, hostJournalErr := openRegionalRuntimeHostJournal(cfg.RegionalRuntimeJournalDir, nodeID, nil)
+	if hostJournalErr != nil {
+		return hostJournalErr
+	}
+	if hostJournal != nil {
+		mgr.WithRuntimeHostJournal(hostJournal)
+		defer func() {
+			if err := hostJournal.Close(); err != nil {
+				log.Error("vmmd: regional host journal close", "err", err)
+			}
+		}()
+		log.Info("vmmd: regional host journal opened", "node_id", nodeID, "epoch_id", hostJournal.Identity().EpochID)
+	}
 	// ADR-373: DNS-gated egress is on unless the operator turns it off for
 	// this node, e.g. while the node's resolver hook is unavailable.
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_EGRESS_DNS_GATING")), "off") {

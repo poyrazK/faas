@@ -946,6 +946,9 @@ message CreateFromSnapshotRequest {
   // resuming guest execution. The scheduler later resumes this VM in place
   // when it promotes the warm reservation to serving capacity.
   bool keep_paused = 8;
+  // ADR-493: canonical internal Placement JSON. Bookkeeping only; vmmd
+  // separately checks cell authority and its durable local host fence.
+  bytes regional_runtime = 9;
 }
 
 message CreateColdBootRequest {
@@ -966,6 +969,7 @@ message CreateColdBootRequest {
   // WakeID (issue #517 / ADR-061) — same semantics as
   // CreateFromSnapshotRequest.wake_id.
   string wake_id = 6;
+  bytes regional_runtime = 7; // ADR-493, same semantics as snapshot restore.
 }
 
 // JobColdBoot is the schedd → vmmd envelope for one claimed job task.
@@ -1851,6 +1855,7 @@ message AdoptMigratedInstanceRequest {
   string account_id = 7;
   string deployment_id = 8;
   string fc_version = 9;
+  bytes regional_runtime = 10; // Exact destination host incarnation pins.
 }
 
 // AdoptMigratedInstanceResponse carries the network identifiers
@@ -2248,6 +2253,7 @@ message RestoreAppTaskRequest {
   string plan = 3;
   string account_id = 4;
   string deployment_id = 5;
+  bytes regional_runtime = 6; // ADR-493, physical app-task permit, no serving seat.
 }
 
 message RestoreAppTaskResponse {

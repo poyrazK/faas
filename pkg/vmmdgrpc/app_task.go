@@ -134,7 +134,8 @@ func appTaskWakeRequestFromProto(ctx context.Context, req *vmmdpb.RestoreAppTask
 			"Invalid app task restore", "deployment_id is required")
 	}
 	wake, err := toColdBootRequest(ctx, &vmmdpb.CreateColdBootRequest{
-		Instance: req.GetInstance(), App: req.GetApp(), Plan: req.GetPlan(), AccountId: req.GetAccountId(),
+		RegionalRuntime: req.GetRegionalRuntime(),
+		Instance:        req.GetInstance(), App: req.GetApp(), Plan: req.GetPlan(), AccountId: req.GetAccountId(),
 	})
 	if err != nil {
 		return fcvm.AppTaskWakeRequest{}, err

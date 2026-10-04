@@ -26,13 +26,18 @@ type AppTaskRestoreOutcome struct {
 }
 
 func (c *VMMClient) RestoreAppTask(ctx context.Context, spec AppTaskRestoreSpec) (*AppTaskRestoreOutcome, error) {
+	placement, placementErr := regionalRuntimeToProto(spec.App.RegionalRuntime)
+	if placementErr != nil {
+		return nil, placementErr
+	}
 	if c == nil || c.cli == nil {
 		return nil, errors.New("sched: nil vmmd app task client")
 	}
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.RestoreAppTask(ctx, &vmmdpb.RestoreAppTaskRequest{
-		Instance: spec.Instance, App: spec.App.toProto(), Plan: string(spec.App.Plan),
+		RegionalRuntime: placement,
+		Instance:        spec.Instance, App: spec.App.toProto(), Plan: string(spec.App.Plan),
 		AccountId: spec.App.AccountID, DeploymentId: spec.DeploymentID,
 	})
 	if err != nil {

@@ -27,6 +27,9 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	// RegionalRuntimeJournalDir is private persistent host fence storage.
+	// Empty keeps regional execution unavailable; never use tmpfs or /run.
+	RegionalRuntimeJournalDir string `toml:"regional_runtime_journal_dir"`
 	// PreparedNetworks bounds the optional cache of unused namespaces.
 	// Zero disables it; FAAS_PREPARED_NETWORKS overrides TOML for canaries.
 	PreparedNetworks int `toml:"prepared_networks"`

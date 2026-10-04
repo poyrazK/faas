@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/overlay"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -423,6 +424,7 @@ type VMInstanceStat struct {
 // Empty slice = no allowlist rule emitted in the per-netns forward chain
 // (current behaviour preserved).
 type AppSpec struct {
+	RegionalRuntime *runtimequota.Placement `json:"-"` // host-only, omitted from guest AppSpec
 	// ComputeRegion is scheduler-only intent used to fence live handoff destinations.
 	ComputeRegion string
 	BaseKey       string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
@@ -670,6 +672,10 @@ func (c *VMMClient) Close() error {
 }
 
 func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app AppSpec) (*WakeOutcome, error) {
+	placement, placementErr := regionalRuntimeToProto(app.RegionalRuntime)
+	if placementErr != nil {
+		return nil, placementErr
+	}
 	// issue #517: lift correlation fields (wake_id, app_id, etc.)
 	// from the engine's bootCtx onto both the gRPC outbound
 	// metadata (for vmmd's slog correlation) and the proto
@@ -679,11 +685,12 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.CreateColdBoot(ctx, &vmmdpb.CreateColdBootRequest{
-		Instance:  instance,
-		App:       app.toProto(),
-		Plan:      string(app.Plan),
-		AccountId: app.AccountID,
-		WakeId:    fields.WakeID,
+		RegionalRuntime: placement,
+		Instance:        instance,
+		App:             app.toProto(),
+		Plan:            string(app.Plan),
+		AccountId:       app.AccountID,
+		WakeId:          fields.WakeID,
 	})
 	if err != nil {
 		return nil, liftErr(err)
@@ -984,14 +991,19 @@ func (c *VMMClient) CreatePausedFromSnapshot(ctx context.Context, instance strin
 }
 
 func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app AppSpec, snap SnapshotRef, keepPaused bool) (*WakeOutcome, error) {
+	placement, placementErr := regionalRuntimeToProto(app.RegionalRuntime)
+	if placementErr != nil {
+		return nil, placementErr
+	}
 	// issue #517: see CreateColdBoot above for the rationale.
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.CreateFromSnapshot(ctx, &vmmdpb.CreateFromSnapshotRequest{
-		Instance:  instance,
-		App:       app.toProto(),
-		Plan:      string(app.Plan),
-		AccountId: app.AccountID,
+		RegionalRuntime: placement,
+		Instance:        instance,
+		App:             app.toProto(),
+		Plan:            string(app.Plan),
+		AccountId:       app.AccountID,
 		Snapshot: &vmmdpb.SnapshotRef{
 			DeploymentId:      snap.DeploymentID,
 			VmstatePath:       snap.VMStatePath,
@@ -1387,7 +1399,12 @@ func (c *VMMClient) PrepareLiveMigration(ctx context.Context, _, instanceID, sna
 // wrote at Phase 1 and returns the new instance's network
 // identifiers.
 func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID string, app AppSpec, memKey, vmstateKey, leaseToken string) (LiveMigrationAdopt, error) {
+	placement, placementErr := regionalRuntimeToProto(app.RegionalRuntime)
+	if placementErr != nil {
+		return LiveMigrationAdopt{}, placementErr
+	}
 	resp, err := c.cli.AdoptMigratedInstance(ctx, &vmmdpb.AdoptMigratedInstanceRequest{
+		RegionalRuntime:   placement,
 		InstanceId:        instanceID,
 		AppSpec:           app.toProto(),
 		MemStorageKey:     memKey,

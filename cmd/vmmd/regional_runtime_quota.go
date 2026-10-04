@@ -3,10 +3,15 @@ package main
 // adr: 489
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
+	"github.com/onebox-faas/faas/pkg/runtimequotahost"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -18,6 +23,18 @@ func regionalRuntimeQuotaAuthorizer(store state.Store) (fcvm.RuntimeAuthorizer, 
 	}
 	reader := store
 	return func(ctx context.Context, operation fcvm.RuntimeAdmission) error {
+		if operation.RegionalRuntime != nil {
+			head, err := reader.RegionalRuntimeQuotaHead(ctx, operation.AppID)
+			if errors.Is(err, state.ErrNotFound) {
+				return runtimequota.ErrTrust
+			}
+			if err != nil {
+				return err
+			}
+			if operation.IsBuilder || operation.ExecutionOnly || head.Grant != operation.RegionalRuntime.Permit.Grant {
+				return runtimequota.ErrBinding
+			}
+		}
 		if operation.IsBuilder || operation.ExecutionOnly {
 			return nil
 		}
@@ -44,4 +61,25 @@ func regionalRuntimeQuotaAuthorizer(store state.Store) (fcvm.RuntimeAuthorizer, 
 		}
 		return state.CheckRegionalRuntimeQuotaAdmission(ctx, reader, instance.AppID)
 	}, nil
+}
+
+func openRegionalRuntimeHostJournal(dir, nodeID string, readBootID func() ([]byte, error)) (*runtimequotahost.Journal, error) {
+	if dir == "" {
+		return nil, nil
+	}
+	if nodeID == "" {
+		return nil, fmt.Errorf("vmmd: regional host journal requires registered node identity")
+	}
+	if readBootID == nil {
+		readBootID = func() ([]byte, error) { return os.ReadFile("/proc/sys/kernel/random/boot_id") }
+	}
+	bootID, err := readBootID()
+	if err != nil {
+		return nil, fmt.Errorf("vmmd: regional host kernel boot identity: %w", err)
+	}
+	j, err := runtimequotahost.Open(dir, nodeID, strings.TrimSpace(string(bootID)))
+	if err != nil {
+		return nil, fmt.Errorf("vmmd: regional host journal: %w", err)
+	}
+	return j, nil
 }

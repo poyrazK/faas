@@ -1426,9 +1426,12 @@ type CreateFromSnapshotRequest struct {
 	// KeepPaused restores the snapshot into the resident warm pool without
 	// resuming guest execution. The scheduler later resumes this VM in place
 	// when it promotes the warm reservation to serving capacity.
-	KeepPaused    bool `protobuf:"varint,8,opt,name=keep_paused,json=keepPaused,proto3" json:"keep_paused,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	KeepPaused bool `protobuf:"varint,8,opt,name=keep_paused,json=keepPaused,proto3" json:"keep_paused,omitempty"`
+	// ADR-493: canonical internal Placement JSON. Bookkeeping only; vmmd
+	// separately checks cell authority and its durable local host fence.
+	RegionalRuntime []byte `protobuf:"bytes,9,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CreateFromSnapshotRequest) Reset() {
@@ -1517,6 +1520,13 @@ func (x *CreateFromSnapshotRequest) GetKeepPaused() bool {
 	return false
 }
 
+func (x *CreateFromSnapshotRequest) GetRegionalRuntime() []byte {
+	if x != nil {
+		return x.RegionalRuntime
+	}
+	return nil
+}
+
 type CreateColdBootRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Instance string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
@@ -1535,9 +1545,10 @@ type CreateColdBootRequest struct {
 	AccountId string `protobuf:"bytes,5,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
 	// WakeID (issue #517 / ADR-061) — same semantics as
 	// CreateFromSnapshotRequest.wake_id.
-	WakeId        string `protobuf:"bytes,6,opt,name=wake_id,json=wakeId,proto3" json:"wake_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	WakeId          string `protobuf:"bytes,6,opt,name=wake_id,json=wakeId,proto3" json:"wake_id,omitempty"`
+	RegionalRuntime []byte `protobuf:"bytes,7,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"` // ADR-493, same semantics as snapshot restore.
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CreateColdBootRequest) Reset() {
@@ -1610,6 +1621,13 @@ func (x *CreateColdBootRequest) GetWakeId() string {
 		return x.WakeId
 	}
 	return ""
+}
+
+func (x *CreateColdBootRequest) GetRegionalRuntime() []byte {
+	if x != nil {
+		return x.RegionalRuntime
+	}
+	return nil
 }
 
 // JobColdBoot is the schedd → vmmd envelope for one claimed job task.
@@ -5334,12 +5352,13 @@ type AdoptMigratedInstanceRequest struct {
 	// Request-level restore context mirrored from CreateFromSnapshotRequest.
 	// These fields are additive so older callers can continue using the
 	// original AppSpec-only envelope.
-	Plan          string `protobuf:"bytes,6,opt,name=plan,proto3" json:"plan,omitempty"`
-	AccountId     string `protobuf:"bytes,7,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
-	DeploymentId  string `protobuf:"bytes,8,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
-	FcVersion     string `protobuf:"bytes,9,opt,name=fc_version,json=fcVersion,proto3" json:"fc_version,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Plan            string `protobuf:"bytes,6,opt,name=plan,proto3" json:"plan,omitempty"`
+	AccountId       string `protobuf:"bytes,7,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	DeploymentId    string `protobuf:"bytes,8,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	FcVersion       string `protobuf:"bytes,9,opt,name=fc_version,json=fcVersion,proto3" json:"fc_version,omitempty"`
+	RegionalRuntime []byte `protobuf:"bytes,10,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"` // Exact destination host incarnation pins.
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *AdoptMigratedInstanceRequest) Reset() {
@@ -5433,6 +5452,13 @@ func (x *AdoptMigratedInstanceRequest) GetFcVersion() string {
 		return x.FcVersion
 	}
 	return ""
+}
+
+func (x *AdoptMigratedInstanceRequest) GetRegionalRuntime() []byte {
+	if x != nil {
+		return x.RegionalRuntime
+	}
+	return nil
 }
 
 // AdoptMigratedInstanceResponse carries the network identifiers
@@ -8141,14 +8167,15 @@ func (x *ResumeWarmInstanceResponse) GetInstance() string {
 // deployment-attached one-shot command. App carries the same immutable
 // runtime, environment, secret, and network projection as an ordinary wake.
 type RestoreAppTaskRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Instance      string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
-	App           *AppSpec               `protobuf:"bytes,2,opt,name=app,proto3" json:"app,omitempty"`
-	Plan          string                 `protobuf:"bytes,3,opt,name=plan,proto3" json:"plan,omitempty"`
-	AccountId     string                 `protobuf:"bytes,4,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
-	DeploymentId  string                 `protobuf:"bytes,5,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Instance        string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
+	App             *AppSpec               `protobuf:"bytes,2,opt,name=app,proto3" json:"app,omitempty"`
+	Plan            string                 `protobuf:"bytes,3,opt,name=plan,proto3" json:"plan,omitempty"`
+	AccountId       string                 `protobuf:"bytes,4,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	DeploymentId    string                 `protobuf:"bytes,5,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	RegionalRuntime []byte                 `protobuf:"bytes,6,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"` // ADR-493, physical app-task permit, no serving seat.
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *RestoreAppTaskRequest) Reset() {
@@ -8214,6 +8241,13 @@ func (x *RestoreAppTaskRequest) GetDeploymentId() string {
 		return x.DeploymentId
 	}
 	return ""
+}
+
+func (x *RestoreAppTaskRequest) GetRegionalRuntime() []byte {
+	if x != nil {
+		return x.RegionalRuntime
+	}
+	return nil
 }
 
 type RestoreAppTaskResponse struct {
@@ -9124,7 +9158,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\fnetns_tap_ms\x18\f \x01(\x03R\n" +
 	"netnsTapMs\x12$\n" +
 	"\x0eguest_ready_ms\x18\r \x01(\x03R\fguestReadyMs\x126\n" +
-	"\x17restore_fallback_reason\x18\x0e \x01(\tR\x15restoreFallbackReason\"\xc8\x02\n" +
+	"\x17restore_fallback_reason\x18\x0e \x01(\tR\x15restoreFallbackReason\"\xf3\x02\n" +
 	"\x19CreateFromSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x12<\n" +
@@ -9135,7 +9169,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\awake_id\x18\x06 \x01(\tR\x06wakeId\x124\n" +
 	"\x05build\x18\a \x01(\v2\x1e.onebox.faas.vmmd.v1.BuildSpecR\x05build\x12\x1f\n" +
 	"\vkeep_paused\x18\b \x01(\bR\n" +
-	"keepPaused\"\xe5\x01\n" +
+	"keepPaused\x12)\n" +
+	"\x10regional_runtime\x18\t \x01(\fR\x0fregionalRuntime\"\x90\x02\n" +
 	"\x15CreateColdBootRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x124\n" +
@@ -9143,7 +9178,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x04plan\x18\x04 \x01(\tR\x04plan\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x05 \x01(\tR\taccountId\x12\x17\n" +
-	"\awake_id\x18\x06 \x01(\tR\x06wakeId\"\xab\x04\n" +
+	"\awake_id\x18\x06 \x01(\tR\x06wakeId\x12)\n" +
+	"\x10regional_runtime\x18\a \x01(\fR\x0fregionalRuntime\"\xab\x04\n" +
 	"\x12JobColdBootRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1d\n" +
 	"\n" +
@@ -9387,7 +9423,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\vlease_token\x18\x03 \x01(\tR\n" +
 	"leaseToken\x12\x1d\n" +
 	"\n" +
-	"fc_version\x18\x04 \x01(\tR\tfcVersion\"\xe8\x02\n" +
+	"fc_version\x18\x04 \x01(\tR\tfcVersion\"\x93\x03\n" +
 	"\x1cAdoptMigratedInstanceRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x127\n" +
@@ -9401,7 +9437,9 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"account_id\x18\a \x01(\tR\taccountId\x12#\n" +
 	"\rdeployment_id\x18\b \x01(\tR\fdeploymentId\x12\x1d\n" +
 	"\n" +
-	"fc_version\x18\t \x01(\tR\tfcVersion\"k\n" +
+	"fc_version\x18\t \x01(\tR\tfcVersion\x12)\n" +
+	"\x10regional_runtime\x18\n" +
+	" \x01(\fR\x0fregionalRuntime\"k\n" +
 	"\x1dAdoptMigratedInstanceResponse\x12\x17\n" +
 	"\ahost_ip\x18\x01 \x01(\tR\x06hostIp\x12\x14\n" +
 	"\x05netns\x18\x02 \x01(\tR\x05netns\x12\x1b\n" +
@@ -9603,14 +9641,15 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x19ResumeWarmInstanceRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\"8\n" +
 	"\x1aResumeWarmInstanceResponse\x12\x1a\n" +
-	"\binstance\x18\x01 \x01(\tR\binstance\"\xbb\x01\n" +
+	"\binstance\x18\x01 \x01(\tR\binstance\"\xe6\x01\n" +
 	"\x15RestoreAppTaskRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x12\x12\n" +
 	"\x04plan\x18\x03 \x01(\tR\x04plan\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x04 \x01(\tR\taccountId\x12#\n" +
-	"\rdeployment_id\x18\x05 \x01(\tR\fdeploymentId\"\x8a\x01\n" +
+	"\rdeployment_id\x18\x05 \x01(\tR\fdeploymentId\x12)\n" +
+	"\x10regional_runtime\x18\x06 \x01(\fR\x0fregionalRuntime\"\x8a\x01\n" +
 	"\x16RestoreAppTaskResponse\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\tlease_uid\x18\x02 \x01(\x05R\bleaseUid\x127\n" +

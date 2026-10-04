@@ -30,6 +30,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
+	"github.com/onebox-faas/faas/pkg/runtimequotahost"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/storage"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -414,9 +416,10 @@ func (w *wakePhases) attrs() []any {
 }
 
 type Instance struct {
-	Lease  Lease
-	Net    netns.Config
-	Method WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
+	regionalRuntime *runtimequota.Placement // immutable host-only authority pins
+	Lease           Lease
+	Net             netns.Config
+	Method          WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
 	// ExecutionOnly marks a VM created by the dedicated disposable-execution
 	// restore/cold-boot path. ExecuteExecution refuses ordinary app instances;
 	// this prevents a caller from turning a networked long-lived app VM into a
@@ -729,10 +732,11 @@ func ClassifyDiskPressure(used, capacity int64) DiskPressure {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
-	runtimeAuthorizer RuntimeAuthorizer
-	alloc             *Allocator
-	preparedNetworks  *preparedNetworkPool
-	run               Runner
+	runtimeAuthorizer  RuntimeAuthorizer
+	runtimeHostJournal *runtimequotahost.Journal
+	alloc              *Allocator
+	preparedNetworks   *preparedNetworkPool
+	run                Runner
 	// captureRunner (tier-2 PR-B) is the optional stdout-aware
 	// handle used by captureAllowlistHandles to read `nft -a list
 	// chain` output and resolve the freshly-added allowlist
@@ -3172,7 +3176,8 @@ func (m *Manager) preparesWakeStateBeforeBoot() bool {
 // *Path fields used, so single-box behaviour is preserved. Field
 // names changed from *Path → *Key to match the new semantics.
 type WakeRequest struct {
-	Instance string
+	RegionalRuntime *runtimequota.Placement `json:"-"` // internal capacity pins, never guest-visible
+	Instance        string
 	// ExecutionOnly is an internal vmmd/schedd fence for the disposable
 	// one-shot path. Ordinary app wakes leave it false and can never be used by
 	// ExecuteExecution. It is not accepted from the public app wake proto.
@@ -3849,9 +3854,14 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
-	if err := m.authorizeRuntime(ctx, admissionForWake(req)); err != nil {
-		return nil, err
+	req.RegionalRuntime = cloneRuntimePlacement(req.RegionalRuntime)
+	finish, admissionErr := m.beginRuntimeLaunch(ctx, admissionForWake(req))
+	if admissionErr != nil {
+		return nil, admissionErr
 	}
+	// This defer is registered before resource cleanup, so a failed late boot
+	// remains inside the barrier until all Manager cleanup has returned.
+	defer finish()
 	if req.ExecutionOnly {
 		integrationIDs, normalizeErr := api.NormalizeExecutionIntegrationIDs(req.ExecutionOutboundIntegrationIDs)
 		if normalizeErr != nil {
@@ -4448,7 +4458,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		executionID = req.Instance
 	}
 	inst := &Instance{
-		Lease: lease, Net: nc, Method: method,
+		regionalRuntime: cloneRuntimePlacement(req.RegionalRuntime),
+		Lease:           lease, Net: nc, Method: method,
 		ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
@@ -5117,6 +5128,11 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: app task instances cannot be snapshotted", instance)
 	}
+	finish, admissionErr := m.beginRuntimeSnapshot(ctx, admissionForInstance(inst))
+	if admissionErr != nil {
+		return SnapshotInfo{}, admissionErr
+	}
+	defer finish()
 	spec.ResumeBeforePublish = true
 	spec.BeforeResume = func(resumeCtx context.Context) error {
 		return m.authorizeRuntime(resumeCtx, admissionForInstance(inst))
@@ -5197,6 +5213,10 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	m.cancelLivenessLoop(instance)
 	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
+	// Migration capture promises to leave the guest paused. Only WarmSnapshot
+	// may request an embedded early resume, with its guarded operation barrier.
+	spec.ResumeBeforePublish = false
+	spec.BeforeResume = nil
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	if err == nil {
 		return info, nil

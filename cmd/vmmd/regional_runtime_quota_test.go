@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -58,6 +59,10 @@ func TestRegionalRuntimeQuotaAuthorizerUsesDurableApp(t *testing.T) {
 	policy, _ := api.RuntimeQuotaPolicyForPlan(api.PlanPro)
 	binding := runtimequota.Binding{CellID: uuid.NewString(), Region: "eu-fsn", CellGeneration: 1, RegionalAccountID: uuid.MustParse(account.ID).String(), RegionalAppID: app.ID, RegionalAppSlug: app.Slug, APIBase: "https://fsn.example.com"}
 	grant := runtimequota.Grant{IssuerID: issuer, GlobalAppID: uuid.NewString(), OwnerID: uuid.NewString(), AllocationID: uuid.NewString(), Generation: 1, Binding: binding, Policy: policy, Concurrency: 2, IssuedAtMicros: time.Now().UnixMicro()}
+	request.RegionalRuntime = &runtimequota.Placement{Permit: runtimequota.CapacityPermit{Grant: grant}}
+	if err = authorize(t.Context(), request); !errors.Is(err, runtimequota.ErrTrust) {
+		t.Fatalf("metadata on independent app bypassed cell authority: %v", err)
+	}
 	envelope, err := signer.SignGrant(grant)
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +76,13 @@ func TestRegionalRuntimeQuotaAuthorizerUsesDurableApp(t *testing.T) {
 			t.Fatalf("journal did not fence %+v: %v", op, err)
 		}
 	}
+	wrongGrant := request
+	placement := request.RegionalRuntime.Clone()
+	placement.Permit.Grant.AllocationID = uuid.NewString()
+	wrongGrant.RegionalRuntime = &placement
+	if err = authorize(t.Context(), wrongGrant); !errors.Is(err, runtimequota.ErrBinding) {
+		t.Fatalf("metadata replaced durable allocation: %v", err)
+	}
 	if err = authorize(t.Context(), fcvm.RuntimeAdmission{Instance: "missing", AppID: app.ID}); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("unknown instance allowed", err)
 	}
@@ -79,6 +91,41 @@ func TestRegionalRuntimeQuotaAuthorizerUsesDurableApp(t *testing.T) {
 	}
 	if err = authorize(t.Context(), fcvm.RuntimeAdmission{Instance: "execution", ExecutionOnly: true}); err != nil {
 		t.Fatal("disposable execution claim path changed", err)
+	}
+}
+
+func TestRegionalRuntimeHostJournalStartupPinsKernelIdentity(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "journal")
+	nodeID, bootID := uuid.NewString(), uuid.NewString()
+	reader := func() ([]byte, error) { return []byte(bootID + "\n"), nil }
+	if j, err := openRegionalRuntimeHostJournal("", "", reader); err != nil || j != nil {
+		t.Fatalf("disabled config: %v", err)
+	}
+	if j, err := openRegionalRuntimeHostJournal(dir, "", reader); err == nil {
+		if j != nil {
+			_ = j.Close()
+		}
+		t.Fatal("unregistered node owns journal")
+	}
+	if j, err := openRegionalRuntimeHostJournal(dir, nodeID, func() ([]byte, error) { return nil, errors.New("kernel unavailable") }); err == nil {
+		if j != nil {
+			_ = j.Close()
+		}
+		t.Fatal("missing kernel identity admitted")
+	}
+	j, err := openRegionalRuntimeHostJournal(dir, nodeID, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := j.Identity()
+	_ = j.Close()
+	j, err = openRegionalRuntimeHostJournal(dir, nodeID, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = j.Close() }()
+	if j.Identity() != i {
+		t.Fatal("daemon restart replaced host incarnation")
 	}
 }
 

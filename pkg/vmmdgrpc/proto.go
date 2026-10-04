@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -291,9 +292,14 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		return fcvm.WakeRequest{}, problem
 	}
 	snap := req.GetSnapshot()
+	placement, placementErr := regionalRuntimeFromProto(req.GetRegionalRuntime())
+	if placementErr != nil {
+		return fcvm.WakeRequest{}, placementErr
+	}
 	wr := fcvm.WakeRequest{
-		Instance:   req.GetInstance(),
-		KeepPaused: req.GetKeepPaused(),
+		RegionalRuntime: placement,
+		Instance:        req.GetInstance(),
+		KeepPaused:      req.GetKeepPaused(),
 		// issue #463 / ADR-069 / PR-B AC #1 — pull the deployment_id
 		// schedd stamped onto the inbound gRPC MD so the vsock DGRAM
 		// sidecar-init-failed dispatch can flip the deployments row
@@ -423,10 +429,11 @@ func toMigrationWakeRequest(ctx context.Context, req *vmmdpb.AdoptMigratedInstan
 			WithDocs(wire.DocsBaseURL + "/vmmd#adopt")
 	}
 	wr, err := toWakeRequest(ctx, &vmmdpb.CreateFromSnapshotRequest{
-		Instance:  req.GetInstanceId(),
-		App:       req.GetAppSpec(),
-		Plan:      req.GetPlan(),
-		AccountId: req.GetAccountId(),
+		RegionalRuntime: req.GetRegionalRuntime(),
+		Instance:        req.GetInstanceId(),
+		App:             req.GetAppSpec(),
+		Plan:            req.GetPlan(),
+		AccountId:       req.GetAccountId(),
 		Snapshot: &vmmdpb.SnapshotRef{
 			DeploymentId:      req.GetDeploymentId(),
 			StorageKey:        req.GetMemStorageKey(),
@@ -446,6 +453,10 @@ func toMigrationWakeRequest(ctx context.Context, req *vmmdpb.AdoptMigratedInstan
 // toColdBootRequest flattens CreateColdBootRequest into an fcvm.WakeRequest
 // with no snapshot. Same validations as toWakeRequest minus snapshot.
 func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (fcvm.WakeRequest, error) {
+	placement, placementErr := regionalRuntimeFromProto(req.GetRegionalRuntime())
+	if placementErr != nil {
+		return fcvm.WakeRequest{}, placementErr
+	}
 	if req.GetInstance() == "" {
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing instance", "instance is required").
@@ -461,7 +472,8 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		return fcvm.WakeRequest{}, problem
 	}
 	return fcvm.WakeRequest{
-		Instance: req.GetInstance(),
+		RegionalRuntime: placement,
+		Instance:        req.GetInstance(),
 		// issue #463 / ADR-069 / PR-B AC #1 — see toWakeRequest's
 		// comment. Cold-boot mirrors the deployment_id resolution
 		// so deploy's first boot (which is the cold-boot path,
@@ -537,6 +549,18 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		ExportDir:       buildSpecExportDir(req.GetBuild()),
 		BuildTimeoutSec: buildSpecTimeoutSec(req.GetBuild()),
 	}, nil
+}
+
+func regionalRuntimeFromProto(raw []byte) (*runtimequota.Placement, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	p, err := runtimequota.DecodePlacement(raw)
+	if err != nil {
+		return nil, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid regional runtime", "regional_runtime must be canonical bounded placement metadata")
+	}
+	return &p, nil
 }
 
 func validateAppHealthcheck(app *vmmdpb.AppSpec) *api.Problem {
