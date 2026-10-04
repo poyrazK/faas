@@ -20,9 +20,10 @@ func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders 
 	if err != nil {
 		return state.Invocation{}, api.ErrValidation("revision and release headers must be unique UUIDs")
 	}
+	// Replay retains the original invocation's scope and environment lifetime.
 	// A first-class queue has already selected its immutable binding and scope.
 	// Other shared producers remain pinned to their default environment.
-	if inv.Source == state.InvocationQueue && inv.QueueBindingID != "" {
+	if inv.Source == state.InvocationReplay || inv.Source == state.InvocationQueue && inv.QueueBindingID != "" {
 		inv, _, err = state.ResolveInvocationVersion(ctx, s.store, inv)
 	} else {
 		inv, _, err = state.ResolveInvocationVersionForEnvironment(ctx, s.store, inv, "")

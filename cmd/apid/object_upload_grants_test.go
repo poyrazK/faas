@@ -48,9 +48,13 @@ func brokerGrantGateway(t *testing.T, e testEnv, transport uploadGrantRoundTripp
 	return h
 }
 
-func mintAPIPutGrant(t *testing.T, e testEnv, path string) api.ObjectSignedRequest {
+func mintAPIPutGrant(t *testing.T, e testEnv, path string, keys ...string) api.ObjectSignedRequest {
 	t.Helper()
-	response := e.do(t, "POST", path+"/signed-url", map[string]any{"method": "PUT", "key": "folder/a b%2F.txt", "size_bytes": 3, "content_type": "text/plain", "cache_control": "private", "metadata": map[string]string{"custom": "frozen"}, "tags": map[string]string{"tag": "value"}}, nil)
+	key := "folder/a b%2F.txt"
+	if len(keys) > 0 {
+		key = keys[0]
+	}
+	response := e.do(t, "POST", path+"/signed-url", map[string]any{"method": "PUT", "key": key, "size_bytes": 3, "content_type": "text/plain", "cache_control": "private", "metadata": map[string]string{"custom": "frozen"}, "tags": map[string]string{"tag": "value"}}, nil)
 	var grant api.ObjectSignedRequest
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &grant) != nil {
 		t.Fatalf("mint = %d %s", response.Code, response.Body.String())
@@ -65,7 +69,7 @@ func mintAPIPutGrant(t *testing.T, e testEnv, path string) api.ObjectSignedReque
 func TestObjectUploadGrantAPIAndGatewayDrainSynchronousWrite(t *testing.T) {
 	e, provider, b, path := mutationAPIFixture(t)
 	g := mintAPIPutGrant(t, e, path)
-	unused := mintAPIPutGrant(t, e, path)
+	unused := mintAPIPutGrant(t, e, path, "folder/unused")
 	if len(provider.accessed) != 0 {
 		t.Fatal("minting broker grant contacted storage")
 	}

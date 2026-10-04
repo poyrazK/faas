@@ -75,7 +75,7 @@ func projectCloneValuesDB(ctx context.Context, db sqlc.DBTX, clone ProjectEnviro
 func mapProjectCloneSnapshotErr(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "40001" {
-		return fmt.Errorf("source changed during clone capture: %w", ErrConflict)
+		return fmt.Errorf("source changed during clone capture: %w: %w", ErrConflict, err)
 	}
 	return mapErr(err)
 }

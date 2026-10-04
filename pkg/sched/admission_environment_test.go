@@ -277,7 +277,7 @@ func TestEnvironmentLedgerRecoveryRecordsOverCapServingRows(t *testing.T) {
 	if ledger.ConcurrencyForEnvironment("app", "environment:stage") != 3 || ledger.ResidentRAM() != 3*(128+api.PerVMOverheadMB) {
 		t.Fatal("recovery hid over-cap serving capacity")
 	}
-	if err := ledger.Admit(Request{Instance: "production", AppID: "app", Plan: api.PlanPro, RAMMB: 128, MaxConcurrency: 1}); err != nil {
+	if err := ledger.Admit(Request{Instance: "production", AppID: "app", EnvironmentKey: "environment:production", ProductionEnvironment: true, Plan: api.PlanPro, RAMMB: 128, MaxConcurrency: 1}); err != nil {
 		t.Fatalf("stage's configured over-cap debt constrained production below the shared plan budget: %v", err)
 	}
 }

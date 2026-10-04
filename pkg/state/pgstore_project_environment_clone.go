@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -15,6 +16,21 @@ func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvi
 }
 
 func (s *PgStore) cloneProjectEnvironment(ctx context.Context, clone ProjectEnvironmentClone, limits api.Limits, lease *ProjectEnvironmentCloneLease) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
+	// A source write or another clone can commit while this transaction waits
+	// for its locks. Retry the whole snapshot, including quota and owner checks.
+	for attempt := 0; ; attempt++ {
+		created, result, err := s.cloneProjectEnvironmentOnce(ctx, clone, limits, lease)
+		var pgErr *pgconn.PgError
+		if attempt >= 2 || !errors.As(err, &pgErr) || pgErr.Code != "40001" {
+			return created, result, err
+		}
+		if err := ctx.Err(); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+	}
+}
+
+func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone ProjectEnvironmentClone, limits api.Limits, lease *ProjectEnvironmentCloneLease) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, fmt.Errorf("state: begin project environment clone: %w", err)

@@ -52,7 +52,7 @@ func testRuntimeInstancePublicationOwnership(t *testing.T, store runtimeAppEnvTe
 	if err != nil {
 		t.Fatal(err)
 	}
-	inputs := state.RuntimeConfigInputs{Scope: snapshot.Scope, Boundary: time.Now().UTC(), Variables: map[string]string{}, SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}
+	inputs := state.RuntimeConfigInputs{Scope: snapshot.Scope, Boundary: time.Now().UTC().Truncate(time.Microsecond), Variables: map[string]string{}, SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}
 	for _, row := range snapshot.Values {
 		inputs.Variables[row.Key] = row.Value
 	}

@@ -3475,10 +3475,10 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	}
 	m.deleteRuntimeScalingEnvironmentLocked(environmentID)
 	delete(m.featureFlagVersions, environmentID)
-	delete(m.projectEnvironments, environmentID)
 	m.deleteEnvironmentWorkloadSpecsLocked(environmentID)
 	m.deleteEnvironmentSecretRefsLocked("", environmentID)
 	m.deleteEnvironmentWorkloadIntentsLocked("", environmentID)
+	delete(m.projectEnvironments, environmentID)
 	for sourceID, memory := range m.environmentGitOps {
 		if memory.source.EnvironmentID == environmentID {
 			delete(m.environmentGitOps, sourceID)
