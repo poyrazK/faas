@@ -658,9 +658,9 @@ lifecycle rule as a backup with a window longer than Gregale's 24-hour session
 TTL. Enable provider/account public-access blocking where available. The driver
 creates buckets without public ACLs, but does not manage provider-specific
 account policies, lifecycle rules, encryption keys, residency controls,
-retention, or replication. Enable versioning through the managed cutover below;
-keep Object Lock off until retention support is implemented. The UI does not
-manage historical versions or retention locks.
+replication. Enable versioning through the managed cutover below. Bucket Object
+Lock configuration is available through the enrolled API/SDK/CLI capability
+described below. The UI does not manage historical versions or retention locks.
 
 ADR-412 adds an internal native S3 encryption foundation. An operator can
 declare backend `encryption.algorithms` (`AES256`, `aws:kms`, `aws:kms:dsse`)
@@ -1834,3 +1834,78 @@ route policy changes without another key check or write. Successful upload and
 receipt responses include the owned `encryption` selection. Go, Node and Python
 clients expose the route policy and bucket write receipt selection. See
 [ADR-417](adr/417-owned-encryption-on-upload-routes.md).
+
+## Bucket Object Lock configuration
+
+ADR-422 adds permanent bucket enablement and native retention defaults. The
+operator must explicitly enroll an S3 backend with
+`"object_lock":{"enabled":true,"event_holds":true}`. Event holds are separately
+optional; `event_holds:true` requires `enabled:true`. The provider must implement
+bucket lock, exact-version lock, versioning, history listing and all-version
+inventory. These flags do not change immutable placement. Capability discovery
+makes no native request and does not establish native permissions or health.
+
+`GET /v1/apps/{slug}/buckets/{bucket}/object-lock-capabilities` lists the enrolled
+bucket configuration and default event hold capabilities.
+`GET .../object-lock` returns durable progress, separate desired/native observed
+configurations, `observed_known`, a revision and permanent `enabled_required`.
+Both reads remain available with ingress disabled. When enrollment is disabled,
+the control GET returns existing persisted progress without contacting the
+provider. No unenrolled policy is silently rewritten.
+
+`PUT .../object-lock` accepts the following configuration and returns 202:
+
+```json
+{
+  "configuration": {
+    "enabled": true,
+    "default_retention": {
+      "mode": "COMPLIANCE",
+      "days": 7,
+      "default_event_hold": {"years": 1}
+    }
+  }
+}
+```
+
+Mode is `GOVERNANCE` or `COMPLIANCE`. Specify exactly one fixed `days` or `years`
+duration, an enrolled event hold duration, or both fixed and event durations.
+Days are 1–36500 and years 1–100. Nulls, duplicate/case-variant keys and unknown
+fields are rejected. To clear defaults for future versions, send
+`{"configuration":{"enabled":true}}`. Enablement cannot be disabled; existing
+version protection is retained. Management requires storage manage scope, the
+bucket write grant and MFA where required.
+
+Enablement atomically requires Enabled versioning. New writes are fenced while
+accepted writes and multipart sessions drain, versioning propagates, a fresh
+all-version inventory commits and native policy is verified. Identical pending
+requests are idempotent; a different pending target conflicts. Accepted recovery
+continues with ingress or enrollment disabled. A lost native acknowledgment is
+recovered by readback rather than repeating a successful PUT. Native calls are
+metered. Unknown or incomplete native responses preserve the fence and permanent
+history; an empty 200 response is not verified absence.
+
+Standard AWS SDK `GetObjectLockConfiguration` and `PutObjectLockConfiguration`
+use the branded path-style S3 endpoint. GET reports fresh native truth or
+`ObjectLockConfigurationNotFoundError`. PUT returns 200 only after verification;
+pending cutover returns `OperationAborted` with `Retry-After: 30` and durable
+intent. Inspect the control GET or retry the identical request. DELETE of the
+configuration is unsupported; clear a default with an Enabled-only PUT.
+
+Go, Node and Python clients expose the capability, status and configuration
+methods. CLI examples:
+
+```sh
+gregale bucket object-lock capabilities <app> <bucket-id>
+gregale bucket object-lock enable <app> <bucket-id>
+gregale bucket object-lock COMPLIANCE <app> <bucket-id> --days 7 --event-years 1
+gregale bucket object-lock status <app> <bucket-id>
+gregale bucket object-lock clear-default <app> <bucket-id>
+```
+
+This increment covers bucket configuration. Customer per-version retention,
+legal hold and governance bypass, per-write protection snapshots and qualified
+protected deletion/lifecycle/account cleanup remain separate implementation
+work. The gateway rejects unsupported per-object lock/bypass headers. Local
+HTTP/TLS and memory/PostgreSQL tests qualify the implementation; activation and
+production provider qualification remain deployment work.

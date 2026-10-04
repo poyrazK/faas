@@ -7853,6 +7853,8 @@ const (
 	MaxObjectLockRetentionYears       int32 = 100
 	MaxObjectLockBodyBytes            int64 = 16 << 10
 	MaxObjectLockXMLDepth                   = 8
+	MaxObjectLockJSONDepth                  = 8
+	MaxObjectLockJSONFields                 = 64
 	MaxObjectLockXMLElements                = 64
 	MaxObjectLockLeaseTokenBytes            = 128
 	ObjectBucketObjectLockLease             = 2 * time.Minute

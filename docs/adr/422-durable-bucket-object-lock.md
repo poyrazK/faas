@@ -1,7 +1,7 @@
 # ADR-422: Durable owned bucket Object Lock
 
 Date: 2026-10-04
-Status: Proposed
+Status: Accepted
 
 ## Context
 
@@ -61,15 +61,38 @@ bucket can recover without rewriting policy or draining unsafe legacy grants.
 Superseded suspension inventory drains its existing worker, then requires a new
 scan created after the current propagation interval; database guards also reject
 reuse of the old scan. Bucket-parent cascades preserve history until a leased
-physical deletion has been settled. Accepted intent is still an internal service
-contract at this checkpoint.
+physical deletion has been settled. The customer control API, standard S3 routes, bounded daemon worker,
+capability enrollment, typed Go/Node/Python clients and CLI are now connected.
+Control PUT reports 202 with durable progress; S3 PUT reports success only after
+exact native readback. Existing progress can be read with enrollment disabled,
+and accepted reconciliation ignores enrollment and ingress flags. Defaults
+include fixed and separately enrolled event hold periods. Public per-version
+management is not advertised by this bucket capability.
+
+Only an exact native configuration-not-found 404 establishes absence. An empty
+200 document or an empty Rule is unknown, preserves the admission fence and
+never authorizes a default clear. The Python generator retains typed nested
+DTOs by removing validation-only compositions from its temporary input; the
+source OpenAPI schema and server enforce cross-field predicates.
 
 ## Acceptance
 
-Pending implementation and local memory/PostgreSQL/native HTTP/TLS qualification
-through customer APIs and clients, including quota/drain, ownership, lost
-acknowledgment, disabled-capability recovery, propagation/inventory, conflicting
-suspension, lease races, raw SQL/rollback guards and generated client parity.
+Local memory/PostgreSQL/native HTTP/TLS qualification passes through the owned
+control client, standard AWS SDK gateway and bounded daemon worker. Tests cover
+quota/drain, ownership, lost acknowledgment, reconstructed stores,
+disabled-capability recovery, propagation/inventory, conflicting suspension,
+lease races and raw SQL/rollback guards. Full API/provider/gateway and CLI suites,
+object/bucket control regressions, focused races and Go/Node/Python clients pass.
+Node and Python regeneration is deterministic; embedded OpenAPI parity and SDK
+route coverage pass. OpenAPI lint passes with existing warnings. Changed-line
+Go lint and the Python generator/client lint pass after correcting a wrapped
+error assertion and removing an unused generator variable.
+
+For the scoped pre-1.0 release, keep new Object Lock enrollment disabled by
+omitting `object_lock` or setting `object_lock.enabled:false` on each backend.
+Accepted intent must continue recovery even with enrollment disabled. Bucket
+configuration is qualified locally; unrestricted protection management and
+cleanup are not part of this release contract.
 
 Per-version retention/legal hold management and protected deletion/lifecycle/
 account cleanup remain part of the broader S3 goal. This bucket configuration

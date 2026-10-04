@@ -570,6 +570,9 @@ export type { ObjectBucketLifecycleRequest } from './ObjectBucketLifecycleReques
 export type { ObjectBucketList } from './ObjectBucketList.js';
 export type { ObjectBucketNotifications } from './ObjectBucketNotifications.js';
 export type { ObjectBucketNotificationsRequest } from './ObjectBucketNotificationsRequest.js';
+export type { ObjectBucketObjectLock } from './ObjectBucketObjectLock.js';
+export type { ObjectBucketObjectLockConfiguration } from './ObjectBucketObjectLockConfiguration.js';
+export type { ObjectBucketObjectLockRequest } from './ObjectBucketObjectLockRequest.js';
 export type { ObjectBucketVersioning } from './ObjectBucketVersioning.js';
 export type { ObjectBucketVersioningRequest } from './ObjectBucketVersioningRequest.js';
 export type { ObjectCapacityReconciliation } from './ObjectCapacityReconciliation.js';
@@ -582,6 +585,8 @@ export type { ObjectLifecycleFilter } from './ObjectLifecycleFilter.js';
 export type { ObjectLifecycleNoncurrentExpiration } from './ObjectLifecycleNoncurrentExpiration.js';
 export type { ObjectLifecycleRule } from './ObjectLifecycleRule.js';
 export type { ObjectLifecycleScan } from './ObjectLifecycleScan.js';
+export type { ObjectLockCapabilities } from './ObjectLockCapabilities.js';
+export type { ObjectLockDefaultRetention } from './ObjectLockDefaultRetention.js';
 export type { ObjectMultipartCompletedPart } from './ObjectMultipartCompletedPart.js';
 export type { ObjectMultipartPart } from './ObjectMultipartPart.js';
 export type { ObjectMultipartPartList } from './ObjectMultipartPartList.js';
@@ -589,6 +594,7 @@ export type { ObjectMultipartPartSignRequest } from './ObjectMultipartPartSignRe
 export type { ObjectMultipartUpload } from './ObjectMultipartUpload.js';
 export type { ObjectMultipartUploadList } from './ObjectMultipartUploadList.js';
 export type { ObjectNotificationRule } from './ObjectNotificationRule.js';
+export type { ObjectRetentionPeriod } from './ObjectRetentionPeriod.js';
 export type { ObjectS3CopySource } from './ObjectS3CopySource.js';
 export type { ObjectS3CopySourceList } from './ObjectS3CopySourceList.js';
 export type { ObjectS3Credential } from './ObjectS3Credential.js';

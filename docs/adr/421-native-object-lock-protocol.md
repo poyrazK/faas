@@ -31,7 +31,9 @@ count. Unknown well-formed policy extensions return Unsupported and preserve a
 known Enabled observation, which the durable service must turn into a sticky
 versioning fence. Malformed policies and empty legal hold responses must never
 become an unprotected observation. Only the exact configuration-not-found code
-with HTTP 404 establishes absent bucket Object Lock configuration.
+with HTTP 404 establishes absent bucket Object Lock configuration. Empty 200
+configuration documents and Enabled documents with an empty Rule are unknown,
+not an absent policy or an accepted default clear (qualified with ADR-422).
 
 Sign requests with the configured provider credential and native SDK. PUTs
 carry SHA256 checksums of the exact XML. Each operation makes one native attempt;

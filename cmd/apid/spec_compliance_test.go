@@ -308,6 +308,10 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	// ADR-421 native adapter primitives. Customer per-version lock management
+	// is not part of the ADR-422 bucket API capability.
+	"ObjectVersionRetention": true,
+	"ObjectVersionLegalHold": true,
 	// Parsed ARN routing helper; notification wire requests carry a string destination.
 	"ObjectNotificationTarget":        true,
 	"ObjectWriteConditions":           true, // internal S3 protocol validators, not a JSON wire DTO
@@ -994,6 +998,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption_capabilities.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption.go"),
+		filepath.Join(root, "pkg", "api", "object_lock.go"),
+		filepath.Join(root, "pkg", "api", "object_bucket_object_lock.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_versioning.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_s3_copy_sources.go"),

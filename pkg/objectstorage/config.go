@@ -35,6 +35,7 @@ type Config struct {
 }
 
 type BackendConfig struct {
+	ObjectLock       ObjectLockConfig `json:"object_lock,omitempty"`
 	Encryption       EncryptionConfig `json:"encryption,omitempty"`
 	UsageReportsPath string           `json:"usage_reports_path,omitempty"`
 	Usage            UsageConfig      `json:"usage,omitempty"`
@@ -214,6 +215,9 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		if !ok {
 			return nil, fmt.Errorf("object storage: unknown driver %s", b.Driver)
 		}
+		if err = validateObjectLockConfig(b.ObjectLock, b.Driver); err != nil {
+			return nil, err
+		}
 		b.Encryption, err = normalizeEncryptionConfig(b.Encryption, b, c.PublicRegion)
 		if err != nil {
 			return nil, err
@@ -234,7 +238,10 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 				return nil, fmt.Errorf("object storage: backend %s lacks its declared encryption capability", b.ID)
 			}
 		}
-		r.backends[b.ID] = Backend{Encryption: cloneEncryptionConfig(b.Encryption), AllowedOrigins: append([]string(nil), b.AllowedOrigins...), ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage}
+		if b.ObjectLock.Enabled && !SupportsNativeObjectLock(p) {
+			return nil, fmt.Errorf("object storage: backend %s lacks its declared Object Lock contract", b.ID)
+		}
+		r.backends[b.ID] = Backend{ObjectLock: b.ObjectLock, Encryption: cloneEncryptionConfig(b.Encryption), AllowedOrigins: append([]string(nil), b.AllowedOrigins...), ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage}
 	}
 	for region, id := range c.Defaults {
 		b, ok := r.backends[id]

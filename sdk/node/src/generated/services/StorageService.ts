@@ -17,6 +17,8 @@ import type { ObjectBucketLifecycleRequest } from '../models/ObjectBucketLifecyc
 import type { ObjectBucketList } from '../models/ObjectBucketList.js';
 import type { ObjectBucketNotifications } from '../models/ObjectBucketNotifications.js';
 import type { ObjectBucketNotificationsRequest } from '../models/ObjectBucketNotificationsRequest.js';
+import type { ObjectBucketObjectLock } from '../models/ObjectBucketObjectLock.js';
+import type { ObjectBucketObjectLockRequest } from '../models/ObjectBucketObjectLockRequest.js';
 import type { ObjectBucketVersioning } from '../models/ObjectBucketVersioning.js';
 import type { ObjectBucketVersioningRequest } from '../models/ObjectBucketVersioningRequest.js';
 import type { ObjectCapacityReconciliation } from '../models/ObjectCapacityReconciliation.js';
@@ -24,6 +26,7 @@ import type { ObjectDeletion } from '../models/ObjectDeletion.js';
 import type { ObjectDeletionRequest } from '../models/ObjectDeletionRequest.js';
 import type { ObjectEncryptionCapabilities } from '../models/ObjectEncryptionCapabilities.js';
 import type { ObjectLifecycleScan } from '../models/ObjectLifecycleScan.js';
+import type { ObjectLockCapabilities } from '../models/ObjectLockCapabilities.js';
 import type { ObjectMultipartPartList } from '../models/ObjectMultipartPartList.js';
 import type { ObjectMultipartPartSignRequest } from '../models/ObjectMultipartPartSignRequest.js';
 import type { ObjectMultipartUpload } from '../models/ObjectMultipartUpload.js';
@@ -1128,6 +1131,97 @@ export class StorageService {
         'slug': slug,
         'bucket': bucket,
       },
+    });
+  }
+  /**
+   * Discover enrolled bucket Object Lock capabilities
+   * Requires storage manage scope, MFA where required and the bucket write grant. Makes no native requests. Available while ingress is disabled. Capability enrollment does not verify native permissions or health.
+   * @returns ObjectLockCapabilities Enrolled bucket configuration and default event hold capabilities
+   * @returns Problem Access denied or placement unavailable
+   * @throws ApiError
+   */
+  public static getObjectBucketObjectLockCapabilities({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose enrolled Object Lock capabilities are being discovered.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose enrolled configuration and event hold capabilities are listed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectLockCapabilities | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/object-lock-capabilities',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Read owned Object Lock intent and native observation
+   * Requires storage manage scope, MFA where required and the bucket write grant. Native readback detects drift and permanently records observed enablement. Unknown native settings fence new writes and never become a default clear. Available while ingress is disabled; disabled capability enrollment returns existing persisted progress without a native call. Cache-Control no-store.
+   * @returns ObjectBucketObjectLock Durable progress with separate desired and observed configurations
+   * @returns Problem Access denied, unsupported backend or unavailable native observation
+   * @throws ApiError
+   */
+  public static getObjectBucketObjectLock({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose bucket Object Lock configuration is managed.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose permanent enablement and retention defaults are managed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectBucketObjectLock | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/object-lock',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Request permanent Object Lock enablement or a default retention change
+   * Requires storage manage scope, MFA where required and the bucket write grant. Enabled must be true. Omit default_retention to clear defaults for future versions while retaining permanent enablement and existing protection. GOVERNANCE and COMPLIANCE support a fixed duration, an enrolled event hold duration or both. New writes remain fenced until accepted transfers drain, versioning is Enabled, propagation and a fresh all-version inventory finish, and native configuration is verified. Identical pending requests are idempotent; opposite pending requests conflict. Accepted recovery continues after ingress or capability enrollment is disabled. Per-version lock management is a separate capability.
+   * @returns Problem Invalid configuration, busy transition or unsupported capability
+   * @returns ObjectBucketObjectLock Durable request accepted; GET reports progress
+   * @throws ApiError
+   */
+  public static putObjectBucketObjectLock({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App whose bucket Object Lock configuration is managed.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose permanent enablement and retention defaults are managed.
+     */
+    bucket: string,
+    requestBody: ObjectBucketObjectLockRequest,
+  }): CancelablePromise<Problem | ObjectBucketObjectLock> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/object-lock',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**

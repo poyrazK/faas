@@ -20,7 +20,7 @@ func TestS3ObjectLockStrictConfigurationRead(t *testing.T) {
 		want       error
 		enabled    bool
 	}{
-		{"absent", `<ObjectLockConfiguration/>`, nil, false},
+		{"empty_success_is_unknown", `<ObjectLockConfiguration/>`, ErrUnavailable, false},
 		{"enabled", `<ObjectLockConfiguration>` + enabled + `</ObjectLockConfiguration>`, nil, true},
 		{"namespaced", `<ObjectLockConfiguration xmlns="` + objectLockXMLNamespace + `">` + enabled + `</ObjectLockConfiguration>`, nil, true},
 		{"prefixed", `<s:ObjectLockConfiguration xmlns:s="` + objectLockXMLNamespace + `"><s:ObjectLockEnabled>Enabled</s:ObjectLockEnabled></s:ObjectLockConfiguration>`, nil, true},
@@ -34,6 +34,7 @@ func TestS3ObjectLockStrictConfigurationRead(t *testing.T) {
 		{"empty_enabled", `<ObjectLockConfiguration><ObjectLockEnabled/></ObjectLockConfiguration>`, ErrUnavailable, false},
 		{"duplicate", `<ObjectLockConfiguration>` + enabled + enabled + `</ObjectLockConfiguration>`, ErrUnavailable, true},
 		{"duplicate_default", `<ObjectLockConfiguration>` + enabled + `<Rule/><Rule/></ObjectLockConfiguration>`, ErrUnavailable, true},
+		{"empty_rule", `<ObjectLockConfiguration>` + enabled + `<Rule/></ObjectLockConfiguration>`, ErrUnavailable, true},
 		{"empty_default", `<ObjectLockConfiguration>` + enabled + `<Rule><DefaultRetention/></Rule></ObjectLockConfiguration>`, ErrUnavailable, true},
 		{"default_without_enabled", `<ObjectLockConfiguration><Rule><DefaultRetention><Mode>GOVERNANCE</Mode><Days>1</Days></DefaultRetention></Rule></ObjectLockConfiguration>`, ErrUnavailable, false},
 		{"empty_rule_without_enabled", `<ObjectLockConfiguration><Rule/></ObjectLockConfiguration>`, ErrUnavailable, false},

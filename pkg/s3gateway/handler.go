@@ -221,6 +221,7 @@ type requestContext struct {
 	signature        sigV4Request
 	streaming        *awsChunkedReader
 	encryptionConfig objectstorage.EncryptionConfig
+	objectLockConfig objectstorage.ObjectLockConfig
 	encryption       objectstorage.ResolvedObjectEncryption
 	copySource       *state.ObjectBucket
 	copyGrantID      string
@@ -287,6 +288,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPut && r.URL.Query().Has("encryption") {
 		bodyLimit = api.MaxObjectBucketEncryptionBodyBytes
 	}
+	if r.Method == http.MethodPut && r.URL.Query().Has("object-lock") {
+		bodyLimit = api.MaxObjectLockBodyBytes
+	}
 	if r.Method == http.MethodPut && r.URL.Query().Get("uploadId") != "" {
 		bodyLimit = h.registry.MaxPartBytes
 	}
@@ -301,7 +305,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.touchResolvedCredential(r, credential)
-	request := requestContext{requestID: requestID, credential: credential, bucket: bucket, provider: backend.Provider, signature: parsed, streaming: streaming, encryptionConfig: backend.Encryption}
+	request := requestContext{requestID: requestID, credential: credential, bucket: bucket, provider: backend.Provider, signature: parsed, streaming: streaming, encryptionConfig: backend.Encryption, objectLockConfig: backend.ObjectLock}
 	h.route(w, r, request)
 }
 
@@ -390,6 +394,18 @@ func parsePath(escapedPath string) (bucket, key string, hasBucket, hasKey bool, 
 func (h *Handler) routeBucket(w http.ResponseWriter, r *http.Request, req requestContext) {
 	query := operationQuery(r.URL.Query())
 	query.Del("x-id")
+	if query.Has("object-lock") {
+		if !queryKeysOnly(query, "object-lock") || len(query["object-lock"]) != 1 || query.Get("object-lock") != "" {
+			h.bucketObjectLockError(w, r, req, objectstorage.ErrInvalid)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodPut {
+			h.unsupported(w, r, req.requestID)
+			return
+		}
+		h.bucketObjectLock(w, r, req)
+		return
+	}
 	if query.Has("encryption") {
 		if !queryKeysOnly(query, "encryption") || len(query["encryption"]) != 1 || query.Get("encryption") != "" {
 			h.bucketEncryptionError(w, r, req, objectstorage.ErrInvalid)
@@ -877,6 +893,7 @@ func unsupportedS3SemanticName(name string) bool {
 		name == "x-amz-copy-source-range" ||
 		name == "x-amz-checksum-algorithm" ||
 		name == "x-amz-bypass-governance-retention" ||
+		name == "x-amz-bucket-object-lock-token" ||
 		name == "x-amz-mfa"
 }
 

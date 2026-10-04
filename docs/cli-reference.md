@@ -6,7 +6,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 |---|---|
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
-| [`bucket`](#bucket) | Manage object encryption, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
+| [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
 | [`bindings`](#bindings) | Inspect app bindings and rotation status, manage storage credentials, or verify service and PostgreSQL connections |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
@@ -175,7 +175,7 @@ Provision or attach object storage and inject sealed S3 settings
 
 ## bucket
 
-Manage object encryption, copy sources, tags, versioning, lifecycle rules, receipts and capacity
+Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity
 
 `gregale bucket [<subcommand>]`
 
@@ -240,6 +240,60 @@ Set owned KMS encryption
 Set owned dual-layer KMS encryption
 
 `gregale bucket encryption aws:kms:dsse <app> <bucket-id> <owned-key-ref>`
+
+### bucket object-lock
+
+Inspect permanent Object Lock and configure retention defaults
+
+#### bucket object-lock status
+
+Show durable Object Lock progress
+
+`gregale bucket object-lock status <app> <bucket-id>`
+
+#### bucket object-lock capabilities
+
+Show enrolled bucket lock capabilities
+
+`gregale bucket object-lock capabilities <app> <bucket-id>`
+
+#### bucket object-lock enable
+
+Permanently enable Object Lock without defaults
+
+`gregale bucket object-lock enable <app> <bucket-id>`
+
+#### bucket object-lock clear-default
+
+Clear future defaults while keeping Object Lock enabled
+
+`gregale bucket object-lock clear-default <app> <bucket-id>`
+
+#### bucket object-lock GOVERNANCE
+
+Set governance defaults
+
+`gregale bucket object-lock GOVERNANCE <app> <bucket-id> [--days <N>] [--years <N>] [--event-days <N>] [--event-years <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--days <N>` | fixed retention in days |  |
+| `--years <N>` | fixed retention in years |  |
+| `--event-days <N>` | event hold duration in days |  |
+| `--event-years <N>` | event hold duration in years |  |
+
+#### bucket object-lock COMPLIANCE
+
+Set compliance defaults
+
+`gregale bucket object-lock COMPLIANCE <app> <bucket-id> [--days <N>] [--years <N>] [--event-days <N>] [--event-years <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--days <N>` | fixed retention in days |  |
+| `--years <N>` | fixed retention in years |  |
+| `--event-days <N>` | event hold duration in days |  |
+| `--event-years <N>` | event hold duration in years |  |
 
 ### bucket reconcile
 

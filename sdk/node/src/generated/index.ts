@@ -574,6 +574,9 @@ export type { ObjectBucketLifecycleRequest } from './models/ObjectBucketLifecycl
 export type { ObjectBucketList } from './models/ObjectBucketList.js';
 export type { ObjectBucketNotifications } from './models/ObjectBucketNotifications.js';
 export type { ObjectBucketNotificationsRequest } from './models/ObjectBucketNotificationsRequest.js';
+export type { ObjectBucketObjectLock } from './models/ObjectBucketObjectLock.js';
+export type { ObjectBucketObjectLockConfiguration } from './models/ObjectBucketObjectLockConfiguration.js';
+export type { ObjectBucketObjectLockRequest } from './models/ObjectBucketObjectLockRequest.js';
 export type { ObjectBucketVersioning } from './models/ObjectBucketVersioning.js';
 export type { ObjectBucketVersioningRequest } from './models/ObjectBucketVersioningRequest.js';
 export type { ObjectCapacityReconciliation } from './models/ObjectCapacityReconciliation.js';
@@ -586,6 +589,8 @@ export type { ObjectLifecycleFilter } from './models/ObjectLifecycleFilter.js';
 export type { ObjectLifecycleNoncurrentExpiration } from './models/ObjectLifecycleNoncurrentExpiration.js';
 export type { ObjectLifecycleRule } from './models/ObjectLifecycleRule.js';
 export type { ObjectLifecycleScan } from './models/ObjectLifecycleScan.js';
+export type { ObjectLockCapabilities } from './models/ObjectLockCapabilities.js';
+export type { ObjectLockDefaultRetention } from './models/ObjectLockDefaultRetention.js';
 export type { ObjectMultipartCompletedPart } from './models/ObjectMultipartCompletedPart.js';
 export type { ObjectMultipartPart } from './models/ObjectMultipartPart.js';
 export type { ObjectMultipartPartList } from './models/ObjectMultipartPartList.js';
@@ -593,6 +598,7 @@ export type { ObjectMultipartPartSignRequest } from './models/ObjectMultipartPar
 export type { ObjectMultipartUpload } from './models/ObjectMultipartUpload.js';
 export type { ObjectMultipartUploadList } from './models/ObjectMultipartUploadList.js';
 export type { ObjectNotificationRule } from './models/ObjectNotificationRule.js';
+export type { ObjectRetentionPeriod } from './models/ObjectRetentionPeriod.js';
 export type { ObjectS3CopySource } from './models/ObjectS3CopySource.js';
 export type { ObjectS3CopySourceList } from './models/ObjectS3CopySourceList.js';
 export type { ObjectS3Credential } from './models/ObjectS3Credential.js';

@@ -112,6 +112,15 @@ def pre_normalize_spec(spec: Path) -> Path:
         return node
 
     fixed = fix_flow_scalars(safe_data)
+    # 0.29 interprets validation-only required/not compositions as Any,
+    # dropping these named DTOs and their nested types. Preserve the source
+    # schema and its runtime validation; give codegen the same object fields
+    # without cross-field predicates it cannot express in attrs models.
+    for name in ("ObjectRetentionPeriod", "ObjectLockDefaultRetention"):
+        schema = fixed["components"]["schemas"].get(name)
+        if schema is not None:
+            for keyword in ("oneOf", "anyOf", "not"):
+                schema.pop(keyword, None)
     tmp = Path(tempfile.mkstemp(suffix=".json", prefix="openapi-")[1])
     with tmp.open("w") as fh:
         json.dump(fixed, fh, indent=2, sort_keys=False, default=str)
@@ -543,8 +552,6 @@ def _patch_generator_bugs(sdk_root: Path) -> None:
     # ways that drop the macro's padding space from the captured
     # group. Per-line processing is simpler and matches the macro's
     # output shape exactly.
-    DQ = '"""'
-
     for path in sdk_root.rglob("*.py"):
         text = path.read_text()
         original = text

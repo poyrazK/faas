@@ -192,13 +192,15 @@ func parseBucketObjectLock(body []byte) (api.ObjectBucketObjectLockConfiguration
 	if err != nil {
 		return c, err
 	}
-	if enabled, ok := v[root+"/ObjectLockEnabled"]; ok && enabled != "Enabled" {
+	if !c.Enabled {
 		return c, ErrUnavailable
 	}
 	const prefix = root + "/Rule/DefaultRetention/"
 	// A present empty DefaultRetention is invalid, unlike an absent rule.
-	if _, present := v[root+"/Rule"]; present && !c.Enabled {
-		return c, ErrUnavailable
+	if _, present := v[root+"/Rule"]; present {
+		if _, configured := v[root+"/Rule/DefaultRetention"]; !configured {
+			return c, ErrUnavailable
+		}
 	}
 	if _, present := v[root+"/Rule/DefaultRetention"]; present {
 		period, periodErr := parseObjectLockPeriod(v, prefix)

@@ -602,6 +602,7 @@ func ValidateObjectMetadata(metadata ObjectMetadata) error {
 }
 
 type Backend struct {
+	ObjectLock       ObjectLockConfig
 	Encryption       EncryptionConfig
 	AllowedOrigins   []string
 	ID               string

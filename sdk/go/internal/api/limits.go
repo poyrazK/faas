@@ -121,3 +121,9 @@ const (
 	MaxObjectNotificationXMLDepth             = 6
 	MaxObjectNotificationXMLNodes             = MaxObjectNotificationRules*24 + 1
 )
+
+// Object Lock duration bounds mirror the server contract.
+const (
+	MaxObjectLockRetentionDays  int32 = 36500
+	MaxObjectLockRetentionYears int32 = 100
+)

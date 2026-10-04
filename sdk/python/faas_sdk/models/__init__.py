@@ -1087,6 +1087,11 @@ from .object_bucket_list import ObjectBucketList
 from .object_bucket_list_upload_profile import ObjectBucketListUploadProfile
 from .object_bucket_notifications import ObjectBucketNotifications
 from .object_bucket_notifications_request import ObjectBucketNotificationsRequest
+from .object_bucket_object_lock import ObjectBucketObjectLock
+from .object_bucket_object_lock_configuration import ObjectBucketObjectLockConfiguration
+from .object_bucket_object_lock_last_error_code import ObjectBucketObjectLockLastErrorCode
+from .object_bucket_object_lock_request import ObjectBucketObjectLockRequest
+from .object_bucket_object_lock_state import ObjectBucketObjectLockState
 from .object_bucket_state import ObjectBucketState
 from .object_bucket_versioning import ObjectBucketVersioning
 from .object_bucket_versioning_desired_status import ObjectBucketVersioningDesiredStatus
@@ -1114,6 +1119,9 @@ from .object_lifecycle_rule_status import ObjectLifecycleRuleStatus
 from .object_lifecycle_scan import ObjectLifecycleScan
 from .object_lifecycle_scan_phase import ObjectLifecycleScanPhase
 from .object_lifecycle_scan_state import ObjectLifecycleScanState
+from .object_lock_capabilities import ObjectLockCapabilities
+from .object_lock_default_retention import ObjectLockDefaultRetention
+from .object_lock_default_retention_mode import ObjectLockDefaultRetentionMode
 from .object_multipart_completed_part import ObjectMultipartCompletedPart
 from .object_multipart_part import ObjectMultipartPart
 from .object_multipart_part_list import ObjectMultipartPartList
@@ -1123,6 +1131,7 @@ from .object_multipart_upload_list import ObjectMultipartUploadList
 from .object_multipart_upload_state import ObjectMultipartUploadState
 from .object_notification_rule import ObjectNotificationRule
 from .object_notification_rule_events_item import ObjectNotificationRuleEventsItem
+from .object_retention_period import ObjectRetentionPeriod
 from .object_s3_copy_source import ObjectS3CopySource
 from .object_s3_copy_source_list import ObjectS3CopySourceList
 from .object_s3_credential import ObjectS3Credential
@@ -3084,6 +3093,11 @@ __all__ = (
     "ObjectBucketListUploadProfile",
     "ObjectBucketNotifications",
     "ObjectBucketNotificationsRequest",
+    "ObjectBucketObjectLock",
+    "ObjectBucketObjectLockConfiguration",
+    "ObjectBucketObjectLockLastErrorCode",
+    "ObjectBucketObjectLockRequest",
+    "ObjectBucketObjectLockState",
     "ObjectBucketState",
     "ObjectBucketVersioning",
     "ObjectBucketVersioningDesiredStatus",
@@ -3111,6 +3125,9 @@ __all__ = (
     "ObjectLifecycleScan",
     "ObjectLifecycleScanPhase",
     "ObjectLifecycleScanState",
+    "ObjectLockCapabilities",
+    "ObjectLockDefaultRetention",
+    "ObjectLockDefaultRetentionMode",
     "ObjectMultipartCompletedPart",
     "ObjectMultipartPart",
     "ObjectMultipartPartList",
@@ -3120,6 +3137,7 @@ __all__ = (
     "ObjectMultipartUploadState",
     "ObjectNotificationRule",
     "ObjectNotificationRuleEventsItem",
+    "ObjectRetentionPeriod",
     "ObjectS3CopySource",
     "ObjectS3CopySourceList",
     "ObjectS3Credential",

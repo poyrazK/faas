@@ -222,11 +222,12 @@ func (p *multipartCopyHTTPProvider) checkSourceCopy(t *testing.T, w http.Respons
 }
 
 type multipartCopyIntegration struct {
-	handler  *Handler
-	client   *awss3.Client
-	store    multipartCopyIntegrationStore
-	bucket   state.ObjectBucket
-	provider *multipartCopyHTTPProvider
+	nativeEndpoint string
+	handler        *Handler
+	client         *awss3.Client
+	store          multipartCopyIntegrationStore
+	bucket         state.ObjectBucket
+	provider       *multipartCopyHTTPProvider
 }
 
 func newMultipartCopyIntegration(t *testing.T, st multipartCopyIntegrationStore, permissions ...string) *multipartCopyIntegration {
@@ -318,7 +319,7 @@ func newMultipartCopyIntegrationConfigured(t *testing.T, st multipartCopyIntegra
 		o.UsePathStyle = true
 		o.RetryMaxAttempts = 1
 	})
-	return &multipartCopyIntegration{handler: h, client: client, store: st, bucket: b, provider: p}
+	return &multipartCopyIntegration{nativeEndpoint: upstream.URL, handler: h, client: client, store: st, bucket: b, provider: p}
 }
 
 func (f *multipartCopyIntegration) initiate(t *testing.T, key string) string {

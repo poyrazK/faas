@@ -314,7 +314,7 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name: "bucket", DocSlug: "object-storage", Short: "Manage object encryption, copy sources, tags, versioning, lifecycle rules, receipts and capacity",
+		Name: "bucket", DocSlug: "object-storage", Short: "Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity",
 		Subcommands: []cliSub{{Name: "copy-sources", Short: "Manage copy-only owned source grants", Subcommands: []cliSub{
 			{Name: "list", Short: "List source grants for a destination credential", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>"}},
 			{Name: "grant", Short: "Allow copying an owned source bucket or prefix", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>", "[prefix]"}},
@@ -326,6 +326,13 @@ var cliCommands = []cliCommand{
 				{Name: "AES256", Short: "Set provider AES256 encryption", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "aws:kms", Short: "Set owned KMS encryption", Positionals: []string{"<app>", "<bucket-id>", "<owned-key-ref>", "[bucket-key-enabled]"}},
 				{Name: "aws:kms:dsse", Short: "Set owned dual-layer KMS encryption", Positionals: []string{"<app>", "<bucket-id>", "<owned-key-ref>"}},
+			}}, {Name: "object-lock", Short: "Inspect permanent Object Lock and configure retention defaults", Subcommands: []cliSub{
+				{Name: "status", Short: "Show durable Object Lock progress", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "capabilities", Short: "Show enrolled bucket lock capabilities", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "enable", Short: "Permanently enable Object Lock without defaults", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "clear-default", Short: "Clear future defaults while keeping Object Lock enabled", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "GOVERNANCE", Short: "Set governance defaults", Positionals: []string{"<app>", "<bucket-id>"}, Flags: objectLockCLIFlags()},
+				{Name: "COMPLIANCE", Short: "Set compliance defaults", Positionals: []string{"<app>", "<bucket-id>"}, Flags: objectLockCLIFlags()},
 			}}, {Name: "reconcile", Short: "Start, inspect or cancel a fenced capacity inventory", Subcommands: []cliSub{
 				{Name: "start", Short: "Pause writes and request capacity reconciliation", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "status", Short: "Show reconciliation progress and reclaimed capacity", Positionals: []string{"<app>", "<bucket-id>", "<job-id>"}},

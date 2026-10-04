@@ -1847,6 +1847,69 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/object-lock-capabilities:
+    parameters:
+      - { name: slug, in: path, required: true, description: App whose enrolled Object Lock capabilities are being discovered., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Logical bucket whose enrolled configuration and event hold capabilities are listed., schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectBucketObjectLockCapabilities
+      summary: Discover enrolled bucket Object Lock capabilities
+      description: Requires storage manage scope, MFA where required and the bucket write grant. Makes no native requests. Available while ingress is disabled. Capability enrollment does not verify native permissions or health.
+      tags: [storage]
+      responses:
+        '200':
+          description: Enrolled bucket configuration and default event hold capabilities
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectLockCapabilities' }
+        default:
+          description: Access denied or placement unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/object-lock:
+    parameters:
+      - { name: slug, in: path, required: true, description: App whose bucket Object Lock configuration is managed., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Logical bucket whose permanent enablement and retention defaults are managed., schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectBucketObjectLock
+      summary: Read owned Object Lock intent and native observation
+      description: Requires storage manage scope, MFA where required and the bucket write grant. Native readback detects drift and permanently records observed enablement. Unknown native settings fence new writes and never become a default clear. Available while ingress is disabled; disabled capability enrollment returns existing persisted progress without a native call. Cache-Control no-store.
+      tags: [storage]
+      responses:
+        '200':
+          description: Durable progress with separate desired and observed configurations
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketObjectLock' }
+        default:
+          description: Access denied, unsupported backend or unavailable native observation
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      operationId: putObjectBucketObjectLock
+      summary: Request permanent Object Lock enablement or a default retention change
+      description: Requires storage manage scope, MFA where required and the bucket write grant. Enabled must be true. Omit default_retention to clear defaults for future versions while retaining permanent enablement and existing protection. GOVERNANCE and COMPLIANCE support a fixed duration, an enrolled event hold duration or both. New writes remain fenced until accepted transfers drain, versioning is Enabled, propagation and a fresh all-version inventory finish, and native configuration is verified. Identical pending requests are idempotent; opposite pending requests conflict. Accepted recovery continues after ingress or capability enrollment is disabled. Per-version lock management is a separate capability.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectBucketObjectLockRequest' }
+      responses:
+        '202':
+          description: Durable request accepted; GET reports progress
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketObjectLock' }
+        default:
+          description: Invalid configuration, busy transition or unsupported capability
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/versioning:
     parameters:
       - { name: slug, in: path, required: true, description: App whose bucket configuration is being read or changed., schema: { type: string } }
@@ -25103,6 +25166,71 @@ components:
         revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         encryption: { $ref: '#/components/schemas/ObjectEncryption', description: Verified active default for new implicit writes. }
         desired_encryption: { $ref: '#/components/schemas/ObjectEncryption', description: Requested default awaiting native verification. }
+        updated_at: { type: string, format: date-time }
+    ObjectLockCapabilities:
+      type: object
+      description: Enrolled bucket configuration and default event hold capabilities, without a native health check.
+      additionalProperties: false
+      required: [bucket_configuration, default_event_hold]
+      properties:
+        bucket_configuration: { type: boolean }
+        default_event_hold: { type: boolean }
+    ObjectRetentionPeriod:
+      type: object
+      description: Exactly one positive days or years duration must be present. Null values are rejected.
+      additionalProperties: false
+      properties:
+        days: { type: integer, format: int32, minimum: 1, maximum: 36500 }
+        years: { type: integer, format: int32, minimum: 1, maximum: 100 }
+      oneOf:
+        - required: [days]
+          not: { required: [years] }
+        - required: [years]
+          not: { required: [days] }
+    ObjectLockDefaultRetention:
+      type: object
+      description: A mode with exactly one fixed duration, an event hold duration or both. Null values and an empty default are rejected.
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [GOVERNANCE, COMPLIANCE] }
+        days: { type: integer, format: int32, minimum: 1, maximum: 36500 }
+        years: { type: integer, format: int32, minimum: 1, maximum: 100 }
+        default_event_hold: { $ref: '#/components/schemas/ObjectRetentionPeriod' }
+      anyOf:
+        - required: [days]
+        - required: [years]
+        - required: [default_event_hold]
+      not: { required: [days, years] }
+    ObjectBucketObjectLockConfiguration:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      description: Native observation may report disabled. PUT requires enabled true. Omitting default_retention clears defaults while keeping Object Lock enabled.
+      properties:
+        enabled: { type: boolean }
+        default_retention: { $ref: '#/components/schemas/ObjectLockDefaultRetention' }
+    ObjectBucketObjectLockRequest:
+      type: object
+      description: An enabled-only permanent bucket configuration request; omitted defaults clear future defaults.
+      additionalProperties: false
+      required: [configuration]
+      properties:
+        configuration: { $ref: '#/components/schemas/ObjectBucketObjectLockConfiguration' }
+    ObjectBucketObjectLock:
+      type: object
+      description: Owned durable intent and native observation with permanent enablement history and reconciliation progress.
+      additionalProperties: false
+      required: [bucket_id, state, revision, enabled_required, observed_known, updated_at]
+      properties:
+        bucket_id: { type: string, format: uuid }
+        state: { type: string, enum: [waiting, applying, ready] }
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        enabled_required: { type: boolean, description: Permanent protection latch; enablement and version accounting cannot be disabled. }
+        observed_known: { type: boolean }
+        observed_configuration: { $ref: '#/components/schemas/ObjectBucketObjectLockConfiguration' }
+        desired_configuration: { $ref: '#/components/schemas/ObjectBucketObjectLockConfiguration' }
+        last_error_code: { type: string, enum: [versioning_pending, untracked_writes, unsettled_writes, multipart_active, capacity_active, provider_failed, provider_mismatch, provider_unsupported] }
         updated_at: { type: string, format: date-time }
     ObjectBucketVersioningRequest:
       type: object
