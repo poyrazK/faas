@@ -8,6 +8,7 @@ import type { BuildProvenanceResponse } from '../models/BuildProvenanceResponse.
 import type { BuildResponse } from '../models/BuildResponse.js';
 import type { CanaryAdvanceResponse } from '../models/CanaryAdvanceResponse.js';
 import type { CancelDeploymentRequest } from '../models/CancelDeploymentRequest.js';
+import type { CellImageReleaseResponse } from '../models/CellImageReleaseResponse.js';
 import type { ClearObsoleteReport } from '../models/ClearObsoleteReport.js';
 import type { CreateDeploymentRequest } from '../models/CreateDeploymentRequest.js';
 import type { DeploymentAliasListResponse } from '../models/DeploymentAliasListResponse.js';
@@ -18,6 +19,7 @@ import type { DeploymentResponse } from '../models/DeploymentResponse.js';
 import type { DeploymentSummaryResponse } from '../models/DeploymentSummaryResponse.js';
 import type { LatestDeploymentsByAppResponse } from '../models/LatestDeploymentsByAppResponse.js';
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
+import type { PutCellImageReleaseRequest } from '../models/PutCellImageReleaseRequest.js';
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
 import type { RollbackRequest } from '../models/RollbackRequest.js';
@@ -205,6 +207,128 @@ export class DeploymentsService {
         409: `code: conflict`,
         413: `code: source_too_large`,
         422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Accept a durable regional image release.
+   * Requires a personal regional account key with admin or deploy-write scope,
+   * verified email, and MFA when required. Uses the regional app configuration
+   * and the existing image deployment pipeline. The body is limited to 4096 bytes.
+   * Authorization and current app ownership are checked before durable replay.
+   * A matching release UUID and image return the same deployment forever,
+   * independently of the ordinary 24-hour request cache. A different image
+   * returns regional_image_release_conflict (409). A collected deployment
+   * returns regional_image_release_expired (410); it is never executed again.
+   * No Idempotency-Key header is required. Redirects must not be followed.
+   * This receipt proves regional acceptance, not global readiness or routing.
+   *
+   * @returns CellImageReleaseResponse Image release accepted or its existing receipt replayed.
+   * @throws ApiError
+   */
+  public static putCellImageRelease({
+    cellId,
+    appId,
+    releaseId,
+    requestBody,
+  }: {
+    /**
+     * Canonical nonzero UUID of this configured regional cell.
+     */
+    cellId: string,
+    /**
+     * Canonical nonzero UUID of the personal regional app receiving this release.
+     */
+    appId: string,
+    /**
+     * Canonical nonzero UUID chosen once for this release, retained across retries.
+     */
+    releaseId: string,
+    /**
+     * Digest-pinned image to accept using the regional configuration.
+     */
+    requestBody: PutCellImageReleaseRequest,
+  }): CancelablePromise<CellImageReleaseResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/cells/{cell_id}/apps/{app_id}/image-releases/{release_id}',
+      path: {
+        'cell_id': cellId,
+        'app_id': appId,
+        'release_id': releaseId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range; or email_verification_required when the account email is unverified.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        410: `The accepted deployment was collected. This release UUID cannot be reused.`,
+        422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read a regional image release receipt and current deployment status.
+   * Requires a personal regional account key with admin, apps-read or deploy-write
+   * scope, verified email, and MFA when required. Current app ownership and cell
+   * identity are checked before returning the receipt. Collected deployments
+   * have a null deployment_id and expired status. Previous owners' receipts
+   * are hidden after transfer. Redirects must not be followed.
+   *
+   * @returns CellImageReleaseResponse Committed regional acceptance receipt, including retained tombstones.
+   * @throws ApiError
+   */
+  public static getCellImageRelease({
+    cellId,
+    appId,
+    releaseId,
+  }: {
+    /**
+     * Canonical nonzero UUID of this configured regional cell.
+     */
+    cellId: string,
+    /**
+     * Canonical nonzero UUID of the personal regional app receiving this release.
+     */
+    appId: string,
+    /**
+     * Canonical nonzero UUID chosen once for this release, retained across retries.
+     */
+    releaseId: string,
+  }): CancelablePromise<CellImageReleaseResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/cells/{cell_id}/apps/{app_id}/image-releases/{release_id}',
+      path: {
+        'cell_id': cellId,
+        'app_id': appId,
+        'release_id': releaseId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

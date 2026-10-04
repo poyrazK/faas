@@ -9172,6 +9172,87 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
 
+  /v1/cells/{cell_id}/apps/{app_id}/image-releases/{release_id}:
+    parameters:
+      - name: cell_id
+        in: path
+        required: true
+        description: Canonical nonzero UUID of this configured regional cell.
+        schema: { type: string, format: uuid }
+      - name: app_id
+        in: path
+        required: true
+        description: Canonical nonzero UUID of the personal regional app receiving this release.
+        schema: { type: string, format: uuid }
+      - name: release_id
+        in: path
+        required: true
+        description: Canonical nonzero UUID chosen once for this release, retained across retries.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [deployments]
+      operationId: putCellImageRelease
+      summary: Accept a durable regional image release.
+      description: |
+        Requires a personal regional account key with admin or deploy-write scope,
+        verified email, and MFA when required. Uses the regional app configuration
+        and the existing image deployment pipeline. The body is limited to 4096 bytes.
+        Authorization and current app ownership are checked before durable replay.
+        A matching release UUID and image return the same deployment forever,
+        independently of the ordinary 24-hour request cache. A different image
+        returns regional_image_release_conflict (409). A collected deployment
+        returns regional_image_release_expired (410); it is never executed again.
+        No Idempotency-Key header is required. Redirects must not be followed.
+        This receipt proves regional acceptance, not global readiness or routing.
+      requestBody:
+        required: true
+        description: Digest-pinned image to accept using the regional configuration.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutCellImageReleaseRequest' }
+      responses:
+        '202':
+          description: Image release accepted or its existing receipt replayed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CellImageReleaseResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/DeploymentForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410':
+          description: The accepted deployment was collected. This release UUID cannot be reused.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/DeployFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    get:
+      tags: [deployments]
+      operationId: getCellImageRelease
+      summary: Read a regional image release receipt and current deployment status.
+      description: |
+        Requires a personal regional account key with admin, apps-read or deploy-write
+        scope, verified email, and MFA when required. Current app ownership and cell
+        identity are checked before returning the receipt. Collected deployments
+        have a null deployment_id and expired status. Previous owners' receipts
+        are hidden after transfer. Redirects must not be followed.
+      responses:
+        '200':
+          description: Committed regional acceptance receipt, including retained tombstones.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CellImageReleaseResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/deployments:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -30638,6 +30719,32 @@ components:
         account_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         app_slug: { type: string }
+    PutCellImageReleaseRequest:
+      type: object
+      description: Digest-pinned OCI image release using the existing regional app configuration.
+      required: [image]
+      additionalProperties: false
+      properties:
+        image:
+          type: string
+          maxLength: 2048
+          pattern: '^[^\s@]+@sha256:[0-9a-f]{64}$'
+          example: ghcr.io/gregale/shop@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    CellImageReleaseResponse:
+      type: object
+      description: Durable regional acceptance receipt. This does not establish global readiness or routing eligibility.
+      required: [cell_id, region, regional_account_id, regional_app_id, release_id, image, deployment_id, deployment_status, created_at, replayed]
+      properties:
+        cell_id: { type: string, format: uuid }
+        region: { type: string }
+        regional_account_id: { type: string, format: uuid }
+        regional_app_id: { type: string, format: uuid }
+        release_id: { type: string, format: uuid }
+        image: { type: string, maxLength: 2048 }
+        deployment_id: { type: [string, 'null'], format: uuid, description: Null after collection; the release cannot be executed again. }
+        deployment_status: { type: string, description: "Current regional deployment status, or expired after collection." }
+        created_at: { type: string, format: date-time }
+        replayed: { type: boolean, description: Whether PUT returned an existing acceptance receipt. Always false for GET. }
     ComputeRegionResponse:
       type: object
       description: Durable compute locality with admission policy and observed node state. No capacity reservation is implied.

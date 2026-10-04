@@ -138,31 +138,32 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
-	runtimeLogArchiveBindings   map[string]RuntimeLogArchiveBinding
-	runtimeLogArchives          map[string]RuntimeLogArchive
-	runtimeLogArchiveFragments  map[string]bool
-	runtimeLogArchiveExpiry     map[string]string
-	runtimeLogArchiveCollected  map[string]bool
-	exclusivePolicies           map[string]ExclusiveWorkPolicy
-	exclusiveTriggerBindings    map[string]ExclusiveTriggerBinding
-	exclusiveKeys               map[string]exclusiveKey
-	exclusiveOperations         map[string]ExclusiveOperation
-	exclusiveEffects            map[string][]exclusivework.Effect
-	exclusiveNow                func() time.Time
-	exclusiveSubmissions        map[string]string
-	capacityInstanceResources   map[string]capacityResources
-	serviceCapacityProtection   bool
-	serviceRecovery             map[string]ServiceRecovery
-	devBridgeSessions           map[string]devbridge.Session
-	devBridgeWebhookReplays     map[string]devbridge.WebhookReplay
-	featureFlagVersions         map[string][]FeatureFlagVersion
-	safeReleaseWorkerLeaseUntil time.Time
-	requestAuditEvents          map[string]RequestAuditRecord
-	discoveredAPIRoutes         map[string]DiscoveredAPIRoute
-	discoveryReceipts           map[string]struct{}
-	revisionPins                map[string]time.Time
-	deploymentActivationMu      sync.Mutex
-	deploymentActivationLocks   map[string]*deploymentActivationLock
+	regionalImageReleaseReceipts map[string]RegionalImageReleaseReceipt
+	runtimeLogArchiveBindings    map[string]RuntimeLogArchiveBinding
+	runtimeLogArchives           map[string]RuntimeLogArchive
+	runtimeLogArchiveFragments   map[string]bool
+	runtimeLogArchiveExpiry      map[string]string
+	runtimeLogArchiveCollected   map[string]bool
+	exclusivePolicies            map[string]ExclusiveWorkPolicy
+	exclusiveTriggerBindings     map[string]ExclusiveTriggerBinding
+	exclusiveKeys                map[string]exclusiveKey
+	exclusiveOperations          map[string]ExclusiveOperation
+	exclusiveEffects             map[string][]exclusivework.Effect
+	exclusiveNow                 func() time.Time
+	exclusiveSubmissions         map[string]string
+	capacityInstanceResources    map[string]capacityResources
+	serviceCapacityProtection    bool
+	serviceRecovery              map[string]ServiceRecovery
+	devBridgeSessions            map[string]devbridge.Session
+	devBridgeWebhookReplays      map[string]devbridge.WebhookReplay
+	featureFlagVersions          map[string][]FeatureFlagVersion
+	safeReleaseWorkerLeaseUntil  time.Time
+	requestAuditEvents           map[string]RequestAuditRecord
+	discoveredAPIRoutes          map[string]DiscoveredAPIRoute
+	discoveryReceipts            map[string]struct{}
+	revisionPins                 map[string]time.Time
+	deploymentActivationMu       sync.Mutex
+	deploymentActivationLocks    map[string]*deploymentActivationLock
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex
@@ -6988,15 +6989,15 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 // image: branch had before, and gives the tarball branch the parity
 // it has always lacked.
 func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
-	created, _, err := m.createDeployment(d, nil)
+	created, _, err := m.createDeployment(d, nil, nil)
 	return created, err
 }
 
 func (m *MemStore) CreateDeploymentWithActivity(_ context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
-	return m.createDeployment(d, &activity)
+	return m.createDeployment(d, &activity, nil)
 }
 
-func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deployment, int64, error) {
+func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, regional *regionalImageReleaseMutation) (Deployment, int64, error) {
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -7005,6 +7006,14 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 	app, ok := m.apps[d.AppID]
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
+	}
+	if regional != nil {
+		if err := m.lockRegionalImageRelease(app, regional); err != nil {
+			return Deployment{}, 0, err
+		}
+		if regional.replayed {
+			return m.deployments[regional.receipt.DeploymentID], 0, nil
+		}
 	}
 	if !validSourceReference(app.ComputeRegion, d.SourceStorageKey) || d.BuildArtifactReference() != (BuildArtifactReference{}) {
 		return Deployment{}, 0, ErrInvalidArgument
@@ -7139,6 +7148,13 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 		d.Revision = m.nextDeploymentRevisionLocked(d.AppID)
 	}
 	m.deployments[d.ID] = d
+	if regional != nil {
+		regional.accepted(d)
+		if m.regionalImageReleaseReceipts == nil {
+			m.regionalImageReleaseReceipts = make(map[string]RegionalImageReleaseReceipt)
+		}
+		m.regionalImageReleaseReceipts[d.AppID+"/"+regional.intent.ReleaseID] = regional.receipt
+	}
 	var outboxID int64
 	if activity != nil {
 		outboxID = m.enqueueOrgActivityOutboxLocked(*activity)

@@ -6727,15 +6727,15 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // to supply a deterministic UUID; all other callers keep the database-generated
 // UUID behavior by leaving d.ID empty.
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
-	created, _, err := s.createDeployment(ctx, d, nil)
+	created, _, err := s.createDeployment(ctx, d, nil, nil)
 	return created, err
 }
 
 func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
-	return s.createDeployment(ctx, d, &activity)
+	return s.createDeployment(ctx, d, &activity, nil)
 }
 
-func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity) (Deployment, int64, error) {
+func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity, regional *regionalImageReleaseMutation) (Deployment, int64, error) {
 	if d.BuildArtifactReference() != (BuildArtifactReference{}) {
 		return Deployment{}, 0, ErrInvalidArgument
 	}
@@ -6761,6 +6761,14 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 	//    acquisition in one round-trip; apps.status flips are blocked
 	//    behind this lock until COMMIT/ROLLBACK. apps_pkey is the
 	//    primary key on id, so the lock search is an index hit.
+	if regional != nil {
+		if err := lockRegionalImageRelease(ctx, tx, regional); err != nil {
+			return Deployment{}, 0, err
+		}
+		if regional.replayed {
+			return Deployment{}, 0, nil
+		}
+	}
 	var locked int
 	if err := tx.QueryRow(ctx,
 		`select 1 from apps where id = $1 and status in ('active', 'evicted_cold') for update`,
@@ -6976,6 +6984,11 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		}
 		outboxID, err = enqueueOrgActivityOutboxTx(ctx, tx, normalized)
 		if err != nil {
+			return Deployment{}, 0, err
+		}
+	}
+	if regional != nil {
+		if err := insertRegionalImageRelease(ctx, tx, regional, created); err != nil {
 			return Deployment{}, 0, err
 		}
 	}

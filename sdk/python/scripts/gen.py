@@ -285,6 +285,7 @@ def regen(overwrite: bool = True) -> None:
     _rewrite_init_py(OUT / "faas_sdk" / "__init__.py")
     _protect_global_directory_request(OUT / "faas_sdk")
     _protect_cell_deployment_request(OUT / "faas_sdk")
+    _protect_cell_image_release_requests(OUT / "faas_sdk")
     _patch_generator_bugs(OUT / "faas_sdk")
 
     # Restore the hand-curated project files that we stashed before
@@ -996,6 +997,19 @@ def _protect_cell_deployment_request(package: Path) -> None:
         raise RuntimeError("cell deployment multipart generator anchor missing")
     source = source.replace(boundary, "        # httpx supplies the boundary for the encoded files.")
     endpoint.write_text(source.replace(anchor, '    _kwargs["follow_redirects"] = False\n' + anchor))
+
+
+def _protect_cell_image_release_requests(package: Path) -> None:
+    """Durable releases remain at their addressed cell even with custom clients."""
+    for name in ("put_cell_image_release", "get_cell_image_release"):
+        endpoint = package / "api" / "deployments" / (name + ".py")
+        if not endpoint.exists():
+            continue  # The minimal generator regression fixture has no cell route.
+        source = endpoint.read_text()
+        anchor = "    return _kwargs"
+        if source.count(anchor) != 1:
+            raise RuntimeError("cell image release transport generator anchor missing")
+        endpoint.write_text(source.replace(anchor, '    _kwargs["follow_redirects"] = False\n' + anchor))
 
 
 def main() -> None:

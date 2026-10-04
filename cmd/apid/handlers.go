@@ -725,18 +725,7 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	activity := s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{
 		"source": "image", "scope": dep.Scope, "supersedes": prev.ID, "has_overrides": req.Overrides != nil,
 	})
-	var d state.Deployment
-	var activityOutboxID int64
-	var err error
-	if activity != nil {
-		if activityStore, ok := s.store.(state.OrgActivityDeploymentMutationStore); ok {
-			d, activityOutboxID, err = activityStore.CreateDeploymentWithActivity(r.Context(), dep, *activity)
-		} else {
-			d, err = s.store.CreateDeployment(r.Context(), dep)
-		}
-	} else {
-		d, err = s.store.CreateDeployment(r.Context(), dep)
-	}
+	d, activityOutboxID, replayed, err := s.createImageDeploymentIntent(r, dep, activity)
 	if err != nil {
 		// ADR-091 / PR-D: per-deployment scope collision. mapErr
 		// wraps state.ErrConflict with the constraint name —
@@ -752,14 +741,22 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 				"a live deployment already targets this scope on this app; supersede it before creating another"))
 			return
 		}
-		s.writeDeploymentCreateError(w, err)
+		if _, regional := r.Context().Value(cellImageReleaseContextKey{}).(*cellImageReleaseRequest); regional && (errors.Is(err, state.ErrRegionalImageReleaseConflict) || errors.Is(err, state.ErrRegionalImageReleaseExpired) || errors.Is(err, state.ErrNotFound)) {
+			s.writeCellImageReleaseError(w, err)
+		} else {
+			s.writeDeploymentCreateError(w, err)
+		}
+		return
+	}
+	if replayed {
+		s.writeImageDeploymentAcceptance(w, r, d, app)
 		return
 	}
 	if activityOutboxID > 0 {
 		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
 	}
 	notifyAndAuditDeployment(r, s, acct, app, d, prev, &req)
-	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+	s.writeImageDeploymentAcceptance(w, r, d, app)
 }
 
 // handleDevSourceDeploy is the developer-only delta transport. Keeping it on

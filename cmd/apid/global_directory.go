@@ -47,6 +47,11 @@ func (s *server) registerGlobalDirectoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/global-apps/{slug}/targets/{region}/resolve", read(s.resolveGlobalApp))
 	cellDeploy := s.requireRegionalAccountKey(s.requireDirectoryAccount(s.requireVerifiedEmail(s.requireCellDeploymentApp(s.idempotent(s.createDeployment)))))
 	mux.HandleFunc("POST /v1/cells/{cell_id}/apps/{app_id}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(cellDeploy))))
+	cellRelease := func(h accountHandler) accountHandler {
+		return s.requireRegionalAccountKey(s.requireDirectoryAccount(s.requireVerifiedEmail(s.requireCellDeploymentApp(h))))
+	}
+	mux.HandleFunc("PUT /v1/cells/{cell_id}/apps/{app_id}/image-releases/{release_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(cellRelease(s.putCellImageRelease)))))
+	mux.HandleFunc("GET /v1/cells/{cell_id}/apps/{app_id}/image-releases/{release_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeAppsRead, api.ScopeDeployWrite)(cellRelease(s.getCellImageRelease)))))
 	mux.HandleFunc("GET /v1/cell/apps/{slug}/binding", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireRegionalAccountKey(s.requireDirectoryAccount(s.cellAppBinding))))))
 }
 

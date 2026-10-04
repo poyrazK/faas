@@ -6441,3 +6441,44 @@ WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.slug = sqlc.arg(slug)::tex
 -- name: DeleteGlobalAppTarget :execrows
 DELETE FROM global_app_targets t USING global_apps a WHERE a.id = t.global_app_id
 AND a.account_id = sqlc.arg(account_id)::uuid AND a.slug = sqlc.arg(slug)::text AND t.region = sqlc.arg(region)::text;
+
+-- ADR-478: a durable image-release receipt is committed with deployment intent.
+-- name: LockRegionalImageReleaseApp :one
+SELECT a.id
+FROM apps a
+JOIN control_plane_cells c ON c.id = sqlc.arg(cell_id)::uuid
+WHERE a.id = sqlc.arg(app_id)::uuid
+  AND a.account_id = sqlc.arg(account_id)::uuid
+  AND a.org_id IS NOT DISTINCT FROM sqlc.narg(org_id)::uuid
+  AND a.status IN ('active', 'evicted_cold')
+  AND (a.org_id IS NULL OR EXISTS (
+      SELECT 1 FROM orgs o WHERE o.id = a.org_id AND o.personal_org
+      AND o.personal_owner_account_id = a.account_id AND o.status = 'active'
+      AND NOT o.deleted_pending
+  ))
+FOR UPDATE OF a;
+
+-- name: RegionalImageReleaseReceipt :one
+SELECT r.app_id, r.release_id, r.cell_id, r.account_id, r.image_ref,
+       r.deployment_id, r.created_at, COALESCE(d.status, 'expired')::text AS deployment_status
+FROM regional_image_release_receipts r
+JOIN apps a ON a.id = r.app_id
+LEFT JOIN deployments d ON d.id = r.deployment_id
+WHERE r.cell_id = sqlc.arg(cell_id)::uuid
+  AND r.app_id = sqlc.arg(app_id)::uuid
+  AND r.release_id = sqlc.arg(release_id)::uuid
+  AND (NOT sqlc.arg(require_current_owner)::boolean OR (
+      a.account_id = r.account_id AND a.status IN ('active', 'evicted_cold')
+      AND (a.org_id IS NULL OR EXISTS (
+          SELECT 1 FROM orgs o WHERE o.id = a.org_id AND o.personal_org
+          AND o.personal_owner_account_id = a.account_id AND o.status = 'active'
+          AND NOT o.deleted_pending
+      ))
+  ));
+
+-- name: InsertRegionalImageReleaseReceipt :exec
+INSERT INTO regional_image_release_receipts
+    (app_id, release_id, cell_id, account_id, image_ref, deployment_id, created_at)
+VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(release_id)::uuid, sqlc.arg(cell_id)::uuid,
+        sqlc.arg(account_id)::uuid, sqlc.arg(image_ref)::text,
+        sqlc.arg(deployment_id)::uuid, sqlc.arg(created_at)::timestamptz);

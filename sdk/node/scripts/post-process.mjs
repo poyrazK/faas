@@ -17,7 +17,7 @@ export async function patchGlobalDirectoryRequests(dir) {
   const path = join(dir, 'core', 'request.ts');
   const source = await readFile(path, 'utf8');
   const anchor = '  if (config.WITH_CREDENTIALS) {';
-  const guard = "  if ((options.method === 'PUT' && options.url === '/v1/global-apps/{slug}/targets/{region}') || (options.method === 'POST' && options.url === '/v1/cells/{cell_id}/apps/{app_id}/deployments')) {\n    request.redirect = 'error';\n  }\n\n";
+  const guard = "  if ((options.method === 'PUT' && options.url === '/v1/global-apps/{slug}/targets/{region}') || (options.method === 'POST' && options.url === '/v1/cells/{cell_id}/apps/{app_id}/deployments') || ((options.method === 'PUT' || options.method === 'GET') && options.url === '/v1/cells/{cell_id}/apps/{app_id}/image-releases/{release_id}')) {\n    request.redirect = 'error';\n  }\n\n";
   if (source.includes(guard)) return;
   if (!source.includes(anchor)) throw new Error('global directory transport generator anchor missing');
   await writeFile(path, source.replace(anchor, guard + anchor), 'utf8');

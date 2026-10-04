@@ -553,6 +553,8 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/global-apps/{slug}/targets/{region}":                                        "DetachGlobalAppTarget",
 	"GET /v1/global-apps/{slug}/targets/{region}/resolve":                                   "ResolveGlobalApp",
 	"GET /v1/cell/apps/{slug}/binding":                                                      "GetCellAppBinding",
+	"PUT /v1/cells/{cell_id}/apps/{app_id}/image-releases/{release_id}":                     "PutCellImageRelease",
+	"GET /v1/cells/{cell_id}/apps/{app_id}/image-releases/{release_id}":                     "GetCellImageRelease",
 	"POST /v1/cells/{cell_id}/apps/{app_id}/deployments":                                    "DeployCellApp",
 	"GET /v1/regions":                                                                       "ListComputeRegions",
 	"GET /v1/apps":                                                                          "ListApps",

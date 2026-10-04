@@ -171,6 +171,7 @@ export type { CancelPendingWorkResponse } from './models/CancelPendingWorkRespon
 export type { CapabilitiesResponse } from './models/CapabilitiesResponse.js';
 export type { CapabilityStatus } from './models/CapabilityStatus.js';
 export type { CellAppBindingResponse } from './models/CellAppBindingResponse.js';
+export type { CellImageReleaseResponse } from './models/CellImageReleaseResponse.js';
 export type { ChangeMemberRoleRequest } from './models/ChangeMemberRoleRequest.js';
 export type { ChangePlanRequest } from './models/ChangePlanRequest.js';
 export type { CheckRouteRequirementsRequest } from './models/CheckRouteRequirementsRequest.js';
@@ -848,6 +849,7 @@ export type { PublishProjectReleaseSetRequest } from './models/PublishProjectRel
 export type { PutAppEnvRequest } from './models/PutAppEnvRequest.js';
 export type { PutAppRegistryCredentialRequest } from './models/PutAppRegistryCredentialRequest.js';
 export type { PutAppSecretRequest } from './models/PutAppSecretRequest.js';
+export type { PutCellImageReleaseRequest } from './models/PutCellImageReleaseRequest.js';
 export type { PutDataUpstreamRequest } from './models/PutDataUpstreamRequest.js';
 export type { PutGlobalCellRequest } from './models/PutGlobalCellRequest.js';
 export type { PutJobRegistryCredentialRequest } from './models/PutJobRegistryCredentialRequest.js';

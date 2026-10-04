@@ -3714,6 +3714,52 @@ $$;
 
 
 --
+-- Name: protect_regional_image_release_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_regional_image_release_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF EXISTS (SELECT 1 FROM apps WHERE id = OLD.app_id) THEN
+            RAISE EXCEPTION 'release receipts remain until the app identity is removed'
+                USING ERRCODE = '23514', CONSTRAINT = 'regional_image_release_identity';
+        END IF;
+        RETURN OLD;
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+        IF ROW(NEW.app_id, NEW.release_id, NEW.cell_id, NEW.account_id, NEW.image_ref, NEW.created_at)
+            IS DISTINCT FROM ROW(OLD.app_id, OLD.release_id, OLD.cell_id, OLD.account_id, OLD.image_ref, OLD.created_at)
+            OR (NEW.deployment_id IS DISTINCT FROM OLD.deployment_id AND NEW.deployment_id IS NOT NULL) THEN
+            RAISE EXCEPTION 'regional release identity is immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'regional_image_release_identity';
+        END IF;
+        RETURN NEW;
+    END IF;
+    PERFORM 1 FROM control_plane_cells WHERE id = NEW.cell_id FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'release receipts require the initialized regional cell'
+            USING ERRCODE = '23514', CONSTRAINT = 'regional_image_release_scope';
+    END IF;
+    PERFORM 1 FROM apps WHERE id = NEW.app_id AND account_id = NEW.account_id
+        AND status IN ('active', 'evicted_cold') FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'regional release app ownership changed'
+            USING ERRCODE = '23514', CONSTRAINT = 'regional_image_release_owner';
+    END IF;
+    PERFORM 1 FROM deployments WHERE id = NEW.deployment_id AND app_id = NEW.app_id
+        AND image_digest = NEW.image_ref AND kind = 'image';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'regional receipt must identify the accepted image deployment'
+            USING ERRCODE = '23514', CONSTRAINT = 'regional_image_release_deployment';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: prune_pr_preview_set_on_root_delete(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3851,6 +3897,20 @@ BEGIN
         ON CONFLICT (run_id, task_index, attempt) DO NOTHING;
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: refuse_regional_image_release_receipt_truncate(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refuse_regional_image_release_receipt_truncate() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'regional release receipts cannot be truncated'
+        USING ERRCODE = '23514', CONSTRAINT = 'regional_image_release_identity';
 END;
 $$;
 
@@ -11484,6 +11544,25 @@ CREATE TABLE public.recent_build_claims (
 
 
 --
+-- Name: regional_image_release_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.regional_image_release_receipts (
+    app_id uuid NOT NULL,
+    release_id uuid NOT NULL,
+    cell_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    image_ref text NOT NULL,
+    deployment_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT regional_image_release_receipts_account_id_check CHECK ((account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_image_release_receipts_cell_id_check CHECK ((cell_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT regional_image_release_receipts_image_ref_check CHECK (((octet_length(image_ref) >= 1) AND (octet_length(image_ref) <= 2048))),
+    CONSTRAINT regional_image_release_receipts_release_id_check CHECK ((release_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
 -- Name: release_bundles; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16079,6 +16158,14 @@ ALTER TABLE ONLY public.provisioned_static_egress_ips
 
 ALTER TABLE ONLY public.queue_bindings
     ADD CONSTRAINT queue_bindings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: regional_image_release_receipts regional_image_release_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_image_release_receipts
+    ADD CONSTRAINT regional_image_release_receipts_pkey PRIMARY KEY (app_id, release_id);
 
 
 --
@@ -22764,6 +22851,20 @@ CREATE TRIGGER queue_work_receipt_reconciliation AFTER UPDATE OF state ON public
 
 
 --
+-- Name: regional_image_release_receipts regional_image_release_identity_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_image_release_identity_guard BEFORE INSERT OR DELETE OR UPDATE ON public.regional_image_release_receipts FOR EACH ROW EXECUTE FUNCTION public.protect_regional_image_release_receipt();
+
+
+--
+-- Name: regional_image_release_receipts regional_image_release_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_image_release_truncate_guard BEFORE TRUNCATE ON public.regional_image_release_receipts FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_image_release_receipt_truncate();
+
+
+--
 -- Name: reserved_ip_inventory reserved_ip_inventory_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26588,6 +26689,22 @@ ALTER TABLE ONLY public.recent_build_claims
 
 ALTER TABLE ONLY public.recent_build_claims
     ADD CONSTRAINT recent_build_claims_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: regional_image_release_receipts regional_image_release_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_image_release_receipts
+    ADD CONSTRAINT regional_image_release_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: regional_image_release_receipts regional_image_release_receipts_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_image_release_receipts
+    ADD CONSTRAINT regional_image_release_receipts_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
 
 
 --

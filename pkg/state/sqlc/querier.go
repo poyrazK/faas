@@ -512,6 +512,7 @@ type Querier interface {
 	// Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 	// Returns the full row (with created_at server-stamped).
 	InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg InsertOIDCExchangedTokenParams) (InsertOIDCExchangedTokenRow, error)
+	InsertRegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg InsertRegionalImageReleaseReceiptParams) error
 	// ---------------------------------------------------------------------------
 	// ADR-127 / issue #477 — production debugger per-request telemetry
 	//
@@ -973,6 +974,8 @@ type Querier interface {
 	// Lifecycle writers take incompatible locks, held until the transfer commits.
 	// Stable node order avoids deadlocks between transfers in opposite directions.
 	LockOwnershipRecoveryNodes(ctx context.Context, db DBTX, arg LockOwnershipRecoveryNodesParams) ([]LockOwnershipRecoveryNodesRow, error)
+	// ADR-478: a durable image-release receipt is committed with deployment intent.
+	LockRegionalImageReleaseApp(ctx context.Context, db DBTX, arg LockRegionalImageReleaseAppParams) (pgtype.UUID, error)
 	// Parent locks serialize configuration edits while remaining compatible with
 	// the FK key-share locks taken by captures, rules and webhook event inserts.
 	LockRouteCheckCompletionAccount(ctx context.Context, db DBTX, accountID string) ([]byte, error)
@@ -1309,6 +1312,7 @@ type Querier interface {
 	// original deployment_id. ON CONFLICT DO NOTHING (rather than
 	// DO UPDATE) is correct: the original row is canonical.
 	RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg RecordUploadCommitOutcomeParams) (UploadCommitOutcome, error)
+	RegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg RegionalImageReleaseReceiptParams) (RegionalImageReleaseReceiptRow, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
 	ReleaseMirrorSlotLease(ctx context.Context, db DBTX, arg ReleaseMirrorSlotLeaseParams) error
 	// Bounded deployment cost allocation for the customer request analytics

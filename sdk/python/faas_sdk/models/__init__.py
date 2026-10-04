@@ -323,6 +323,7 @@ from .capability_status_maturity import CapabilityStatusMaturity
 from .capability_status_plans_item import CapabilityStatusPlansItem
 from .capability_status_unavailable_reason import CapabilityStatusUnavailableReason
 from .cell_app_binding_response import CellAppBindingResponse
+from .cell_image_release_response import CellImageReleaseResponse
 from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
@@ -1614,6 +1615,7 @@ from .put_app_env_request import PutAppEnvRequest
 from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
 from .put_app_secret_request import PutAppSecretRequest
 from .put_app_secret_request_secret_class import PutAppSecretRequestSecretClass
+from .put_cell_image_release_request import PutCellImageReleaseRequest
 from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
@@ -2487,6 +2489,7 @@ __all__ = (
     "CapabilityStatusPlansItem",
     "CapabilityStatusUnavailableReason",
     "CellAppBindingResponse",
+    "CellImageReleaseResponse",
     "ChangeMemberRoleRequest",
     "ChangeMemberRoleRequestRole",
     "ChangePlanRequest",
@@ -3722,6 +3725,7 @@ __all__ = (
     "PutAppRegistryCredentialRequest",
     "PutAppSecretRequest",
     "PutAppSecretRequestSecretClass",
+    "PutCellImageReleaseRequest",
     "PutCommitSourceConnectionBody",
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",

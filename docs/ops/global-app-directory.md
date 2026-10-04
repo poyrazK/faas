@@ -146,3 +146,42 @@ pipeline's readiness before publication. Global quota reservations, durable
 multi-target coordination and ingress publication remain pending. The global
 routing policy remains `all_selected_regions`; this endpoint alone does not
 publish a global route.
+
+## Durable image release acceptance
+
+Use ADR-478's receipt endpoint for coordinator submissions of a prebuilt image:
+
+```go
+receipt, err := regional.PutCellImageRelease(ctx, resolved.CellID, resolved.RegionalAppID,
+    releaseUUID, api.PutCellImageReleaseRequest{Image: pinnedImage})
+```
+
+Choose the release UUID once and retain it across every retry. The endpoint uses
+regional app configuration and accepts only a digest-pinned image; it does not
+copy source, settings or secrets. It applies the same regional authorization,
+image validation and admission pipeline as ordinary image deployment. PUT needs
+admin or deploy-write scope; GET also permits apps-read. Personal regional
+account keys, verified email and required MFA apply to both methods.
+
+A matching PUT returns the original deployment UUID, including after an uncertain
+response or a newer deployment. It bypasses the ordinary 24-hour replay cache.
+A different image returns `regional_image_release_conflict` (409). Use a new
+release UUID for a changed image, configuration or retry of a failed deployment.
+GET at the same URL returns the receipt and current regional deployment status.
+A collected deployment has a null `deployment_id` and `expired` status; matching
+PUT returns `regional_image_release_expired` (410) and never creates another row.
+Deleted apps and previous owners' receipts are hidden. App renames preserve the
+original UUID; reusing the slug cannot redirect release intent.
+
+Go clients use `PutCellImageRelease` and `GetCellImageRelease`, Node clients use
+`DeploymentsService.putCellImageRelease` and `getCellImageRelease`, and Python
+clients use `put_cell_image_release` and `get_cell_image_release` in the deployments
+package. All refuse redirects, including custom HTTP clients. The region commits
+its receipt, deployment intent and activity event atomically. Receipts are retained
+until hard app deletion; database guards refuse destructive downgrade while any
+receipt remains. Keep them in regional database backups.
+
+This is the recovery primitive for the upcoming multi-target coordinator. It
+proves regional acceptance; health checks, quota allocations and ingress
+publication must establish serving eligibility separately. The default global
+policy remains `all_selected_regions`.

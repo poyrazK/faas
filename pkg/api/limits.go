@@ -33,6 +33,12 @@ const (
 	GlobalDirectorySlugMaxBytes        = 40
 )
 
+// ADR-478 bounds immutable image-release input and receipt projections.
+const (
+	CellImageReleaseRequestMaxBytes = 4096
+	CellImageReleaseImageMaxBytes   = 2048
+)
+
 // OCI healthcheck image durations are nanoseconds. Docker permits zero for
 // inheritance and otherwise requires at least one millisecond.
 const (

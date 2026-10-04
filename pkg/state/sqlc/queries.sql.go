@@ -7406,6 +7406,37 @@ func (q *Queries) InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg Ins
 	return i, err
 }
 
+const insertRegionalImageReleaseReceipt = `-- name: InsertRegionalImageReleaseReceipt :exec
+INSERT INTO regional_image_release_receipts
+    (app_id, release_id, cell_id, account_id, image_ref, deployment_id, created_at)
+VALUES ($1::uuid, $2::uuid, $3::uuid,
+        $4::uuid, $5::text,
+        $6::uuid, $7::timestamptz)
+`
+
+type InsertRegionalImageReleaseReceiptParams struct {
+	AppID        pgtype.UUID
+	ReleaseID    pgtype.UUID
+	CellID       pgtype.UUID
+	AccountID    pgtype.UUID
+	ImageRef     string
+	DeploymentID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) InsertRegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg InsertRegionalImageReleaseReceiptParams) error {
+	_, err := db.Exec(ctx, insertRegionalImageReleaseReceipt,
+		arg.AppID,
+		arg.ReleaseID,
+		arg.CellID,
+		arg.AccountID,
+		arg.ImageRef,
+		arg.DeploymentID,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const insertRequestTelemetry = `-- name: InsertRequestTelemetry :exec
 
 INSERT INTO request_telemetry (
@@ -14221,6 +14252,42 @@ func (q *Queries) LockOwnershipRecoveryNodes(ctx context.Context, db DBTX, arg L
 	return items, nil
 }
 
+const lockRegionalImageReleaseApp = `-- name: LockRegionalImageReleaseApp :one
+SELECT a.id
+FROM apps a
+JOIN control_plane_cells c ON c.id = $1::uuid
+WHERE a.id = $2::uuid
+  AND a.account_id = $3::uuid
+  AND a.org_id IS NOT DISTINCT FROM $4::uuid
+  AND a.status IN ('active', 'evicted_cold')
+  AND (a.org_id IS NULL OR EXISTS (
+      SELECT 1 FROM orgs o WHERE o.id = a.org_id AND o.personal_org
+      AND o.personal_owner_account_id = a.account_id AND o.status = 'active'
+      AND NOT o.deleted_pending
+  ))
+FOR UPDATE OF a
+`
+
+type LockRegionalImageReleaseAppParams struct {
+	CellID    pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	OrgID     pgtype.UUID
+}
+
+// ADR-478: a durable image-release receipt is committed with deployment intent.
+func (q *Queries) LockRegionalImageReleaseApp(ctx context.Context, db DBTX, arg LockRegionalImageReleaseAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRegionalImageReleaseApp,
+		arg.CellID,
+		arg.AppID,
+		arg.AccountID,
+		arg.OrgID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockRouteCheckCompletionAccount = `-- name: LockRouteCheckCompletionAccount :one
 SELECT jsonb_build_object('ID', id, 'Plan', plan, 'Status', status, 'AbuseHoldAt', abuse_hold_at) AS snapshot
 FROM accounts WHERE id = $1::text::uuid FOR NO KEY UPDATE
@@ -19214,6 +19281,64 @@ func (q *Queries) RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg Re
 		&i.DeploymentID,
 		&i.BuildID,
 		&i.FinalizedAt,
+	)
+	return i, err
+}
+
+const regionalImageReleaseReceipt = `-- name: RegionalImageReleaseReceipt :one
+SELECT r.app_id, r.release_id, r.cell_id, r.account_id, r.image_ref,
+       r.deployment_id, r.created_at, COALESCE(d.status, 'expired')::text AS deployment_status
+FROM regional_image_release_receipts r
+JOIN apps a ON a.id = r.app_id
+LEFT JOIN deployments d ON d.id = r.deployment_id
+WHERE r.cell_id = $1::uuid
+  AND r.app_id = $2::uuid
+  AND r.release_id = $3::uuid
+  AND (NOT $4::boolean OR (
+      a.account_id = r.account_id AND a.status IN ('active', 'evicted_cold')
+      AND (a.org_id IS NULL OR EXISTS (
+          SELECT 1 FROM orgs o WHERE o.id = a.org_id AND o.personal_org
+          AND o.personal_owner_account_id = a.account_id AND o.status = 'active'
+          AND NOT o.deleted_pending
+      ))
+  ))
+`
+
+type RegionalImageReleaseReceiptParams struct {
+	CellID              pgtype.UUID
+	AppID               pgtype.UUID
+	ReleaseID           pgtype.UUID
+	RequireCurrentOwner bool
+}
+
+type RegionalImageReleaseReceiptRow struct {
+	AppID            pgtype.UUID
+	ReleaseID        pgtype.UUID
+	CellID           pgtype.UUID
+	AccountID        pgtype.UUID
+	ImageRef         string
+	DeploymentID     pgtype.UUID
+	CreatedAt        pgtype.Timestamptz
+	DeploymentStatus string
+}
+
+func (q *Queries) RegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg RegionalImageReleaseReceiptParams) (RegionalImageReleaseReceiptRow, error) {
+	row := db.QueryRow(ctx, regionalImageReleaseReceipt,
+		arg.CellID,
+		arg.AppID,
+		arg.ReleaseID,
+		arg.RequireCurrentOwner,
+	)
+	var i RegionalImageReleaseReceiptRow
+	err := row.Scan(
+		&i.AppID,
+		&i.ReleaseID,
+		&i.CellID,
+		&i.AccountID,
+		&i.ImageRef,
+		&i.DeploymentID,
+		&i.CreatedAt,
+		&i.DeploymentStatus,
 	)
 	return i, err
 }
