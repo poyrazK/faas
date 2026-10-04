@@ -7033,6 +7033,20 @@
     "kind": "operational"
   },
   {
+    "table": "workflow_automation_definitions",
+    "kind": "configuration",
+    "columns": [
+      "app_id",
+      "draft",
+      "enabled",
+      "name",
+      "published",
+      "published_version",
+      "updated_at",
+      "version"
+    ]
+  },
+  {
     "table": "workflow_callback_webhook_bindings",
     "columns": [
       "created_at",
@@ -7046,6 +7060,16 @@
     "kind": "configuration"
   },
   {
+    "table": "workflow_event_receipts",
+    "kind": "operational",
+    "columns": [
+      "admitted_at",
+      "outbox_id",
+      "recipient_id",
+      "run_id"
+    ]
+  },
+  {
     "table": "workflow_events",
     "columns": [
       "event_name",
@@ -7057,9 +7081,23 @@
     "kind": "operational"
   },
   {
+    "table": "workflow_run_resumes",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "created_at",
+      "previous_error",
+      "previous_status",
+      "resume_number",
+      "resumed_steps",
+      "run_id"
+    ]
+  },
+  {
     "table": "workflow_runs",
     "columns": [
       "app_id",
+      "cancelled_at",
       "created_at",
       "current_step",
       "definition_snapshot",
@@ -7069,6 +7107,7 @@
       "last_error",
       "lease_until",
       "output",
+      "resume_count",
       "scheduled_for",
       "started_at",
       "status",
@@ -7076,6 +7115,21 @@
       "workflow_name"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "workflow_schedule_cursors",
+    "kind": "operational",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "last_evaluated_at",
+      "last_run_id",
+      "scheduled_for",
+      "status",
+      "trigger_snapshot",
+      "updated_at",
+      "workflow_name"
+    ]
   },
   {
     "table": "workflow_step_attempts",
@@ -7099,15 +7153,51 @@
       "created_at",
       "error",
       "finished_at",
+      "foreach_count",
+      "foreach_index",
+      "foreach_parent",
       "input",
       "next_check_at",
       "next_retry_at",
+      "outbound_attempt_token",
       "output",
+      "retry_base",
       "run_id",
+      "skip_reason",
       "started_at",
       "status",
-      "step_name"
+      "step_name",
+      "when_evaluated_at",
+      "when_matched"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "workflow_webhook_bindings",
+    "kind": "configuration",
+    "columns": [
+      "endpoint_id",
+      "event_type",
+      "filter",
+      "updated_at",
+      "version",
+      "workflow_name"
+    ]
+  },
+  {
+    "table": "workflow_webhook_receipts",
+    "kind": "operational",
+    "columns": [
+      "accepted_at",
+      "body_hash",
+      "endpoint_id",
+      "ignored_reason",
+      "outbox_id",
+      "provider_event_id",
+      "receipt_id",
+      "recipient_id",
+      "status",
+      "workflow_name"
+    ]
   }
 ]
