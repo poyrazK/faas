@@ -487,18 +487,7 @@ func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
 		return true
 	}
 	for _, progress := range s.Databases {
-		if progress.Unresolved || progress.Window != policy.Window || progress.ObservedAt.IsZero() {
-			return true
-		}
-		if progress.Terminal {
-			end := usageEnd(progress.EndedAt, policy.Window)
-			if end.IsZero() || progress.CollectedUntil.Before(end) ||
-				progress.CorrectionObservedAt.Before(end.Add(recentUsageCorrectionWindows*policy.Window)) {
-				return true
-			}
-			continue
-		}
-		if now.Sub(progress.ObservedAt) > policy.StaleAfter || progress.CollectedUntil.Before(now.UTC().Truncate(policy.Window)) {
+		if progress.blockingIssues(policy, now) != 0 {
 			return true
 		}
 	}

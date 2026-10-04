@@ -1,4 +1,4 @@
-# ADR-582: Versioned business-key and customer routing for Commit
+# ADR-587: Versioned business-key and customer routing for Commit
 
 - **Status:** Accepted, operator qualification only
 - **Date:** 2026-10-03

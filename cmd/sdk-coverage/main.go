@@ -528,6 +528,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account/egress_allowlist_extra":                    "GetEgressAllowlistExtra",
 	"PATCH /v1/account/egress_allowlist_extra":                  "SetEgressAllowlistExtra",
 	"GET /v1/account/managed-postgres-usage":                    "GetManagedPostgresUsage",
+	"GET /v1/admin/managed-postgres/accounting/{account_id}":    "ListManagedPostgresAccountingDiagnostics",
 	"GET /v1/account/realtime-history-usage":                    "GetManagedRealtimeHistoryUsage",
 	"GET /v1/account/usage":                                     "AccountUsage",
 	"GET /v1/postgres/databases":                                "ListManagedPostgresDatabases",

@@ -2,7 +2,7 @@
 
 - Status: Accepted for implementation; runtime promotion follows ADR-583 qualification
 - Date: 2026-10-03
-- Related: ADR-430 (Commit), ADR-582 (customer routing), ADR-583 (webhook effects)
+- Related: ADR-430 (Commit), ADR-587 (customer routing), ADR-583 (webhook effects)
 
 ## Context
 

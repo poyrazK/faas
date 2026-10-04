@@ -1233,6 +1233,10 @@ from .managed_execution_workflow_response_status import ManagedExecutionWorkflow
 from .managed_operation_effect import ManagedOperationEffect
 from .managed_operation_result import ManagedOperationResult
 from .managed_operation_result_gregale_operation_result import ManagedOperationResultGregaleOperationResult
+from .managed_postgres_accounting_diagnostic import ManagedPostgresAccountingDiagnostic
+from .managed_postgres_accounting_diagnostic_reasons_item import ManagedPostgresAccountingDiagnosticReasonsItem
+from .managed_postgres_accounting_diagnostic_state import ManagedPostgresAccountingDiagnosticState
+from .managed_postgres_accounting_diagnostics_response import ManagedPostgresAccountingDiagnosticsResponse
 from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
@@ -3728,6 +3732,10 @@ __all__ = (
     "ManagedOperationEffect",
     "ManagedOperationResult",
     "ManagedOperationResultGregaleOperationResult",
+    "ManagedPostgresAccountingDiagnostic",
+    "ManagedPostgresAccountingDiagnosticReasonsItem",
+    "ManagedPostgresAccountingDiagnosticsResponse",
+    "ManagedPostgresAccountingDiagnosticState",
     "ManagedPostgresBinding",
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",

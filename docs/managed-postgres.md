@@ -458,6 +458,24 @@ continues to fail closed when observations are stale. Provider IDs, provider
 rates, internal cost line items, credentials, and connection URLs never appear
 in the customer response.
 
+Operators can diagnose stale accounting with
+`GET /v1/admin/managed-postgres/accounting/{account_id}` or
+`gregale postgres diagnostics ACCOUNT_ID --json`. The route uses the admin scope,
+MFA middleware, and operator email allowlist. Pages default to 50 resources, with
+`limit` capped at 100 and `after` set to the preceding page's `next_cursor`.
+Each page is a current local snapshot; a multi-page read does not freeze the
+account. The report reads the catalog and ledger without provider calls or writes.
+
+Each resource includes its accounting root, required/collected ranges, observation
+times, lease expiry, and stable stale-admission reasons: `identity_unknown`,
+`legacy_identity_unknown`, `coverage_missing`, `window_mismatch`,
+`shutdown_unconfirmed`, `coverage_incomplete`, `observation_stale`, or
+`final_correction_pending`. Shared restores use their root's evidence. Unknown
+legacy tombstones have no confirmed terminal deadline. A disabled policy reports
+no blockers, while retaining identity and coverage metadata. Empty reasons do not
+establish budget headroom or final provider settlement. Provider IDs and credential
+material are excluded. See [ADR-582](adr/582-managed-postgres-accounting-diagnostics.md).
+
 Operators with the admin scope and MFA can inspect the same account through
 `GET /v1/admin/managed-postgres/usage/{account_id}`. This bounded view adds the
 effective normalized safety ceilings and internal millicent COGS line items;

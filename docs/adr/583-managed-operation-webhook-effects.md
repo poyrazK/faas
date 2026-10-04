@@ -2,7 +2,7 @@
 
 - Status: Accepted for implementation; promotion requires runtime qualification
 - Date: 2026-10-03
-- Related: ADR-387 (managed exclusive operations), ADR-582 (Commit customer routing), ADR-076 (outbound webhooks)
+- Related: ADR-387 (managed exclusive operations), ADR-587 (Commit customer routing), ADR-076 (outbound webhooks)
 
 ## Context
 

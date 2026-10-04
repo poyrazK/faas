@@ -650,6 +650,8 @@ export type { ManagedExecutionWorkflowArtifactInput } from './ManagedExecutionWo
 export type { ManagedExecutionWorkflowResponse } from './ManagedExecutionWorkflowResponse.js';
 export type { ManagedOperationEffect } from './ManagedOperationEffect.js';
 export type { ManagedOperationResult } from './ManagedOperationResult.js';
+export type { ManagedPostgresAccountingDiagnostic } from './ManagedPostgresAccountingDiagnostic.js';
+export type { ManagedPostgresAccountingDiagnosticsResponse } from './ManagedPostgresAccountingDiagnosticsResponse.js';
 export type { ManagedPostgresBinding } from './ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './ManagedPostgresBindingList.js';
 export type { ManagedPostgresCutover } from './ManagedPostgresCutover.js';

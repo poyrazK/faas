@@ -2138,7 +2138,7 @@ Standing rules: (1) no number graduates from "assumption" to "fact" without a ro
 *End of spec. Deviations require an ADR. Keep the three fragile numbers on the dashboard.*
 
 
-## Versioned Commit operation routing (ADR-582)
+## Versioned Commit operation routing (ADR-587)
 
 Commit version 2 admits a trusted producer's typed business key and optional
 owner-authorized platform-tenant selector into the existing Operations engine.

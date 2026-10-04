@@ -1117,7 +1117,7 @@ type Querier interface {
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
 	ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error)
 	ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]Deployment, error)
-	ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListManagedPostgresAccountingCoverageRow, error)
+	ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, arg ListManagedPostgresAccountingCoverageParams) ([]ListManagedPostgresAccountingCoverageRow, error)
 	ListManagedPostgresCutoverCredentials(ctx context.Context, db DBTX, id string) ([]ManagedPostgresCutoverCredential, error)
 	// ADR-569: known resources remain accountable through lifecycle shutdown.
 	ListManagedPostgresUsageResources(ctx context.Context, db DBTX, arg ListManagedPostgresUsageResourcesParams) ([]ManagedPostgresDatabase, error)
