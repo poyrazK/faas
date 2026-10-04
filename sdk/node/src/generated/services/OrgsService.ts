@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { APIKeyResponse } from '../models/APIKeyResponse.js';
 import type { ApplicationStandardEnrollment } from '../models/ApplicationStandardEnrollment.js';
+import type { ApplicationStandardException } from '../models/ApplicationStandardException.js';
 import type { ApplicationStandardExceptionList } from '../models/ApplicationStandardExceptionList.js';
 import type { ApplicationStandardList } from '../models/ApplicationStandardList.js';
 import type { ApplicationStandardLogDestination } from '../models/ApplicationStandardLogDestination.js';
@@ -15,6 +16,7 @@ import type { ApplicationStandardReview } from '../models/ApplicationStandardRev
 import type { ApplicationStandardReviewRequest } from '../models/ApplicationStandardReviewRequest.js';
 import type { ApplicationStandardVersion } from '../models/ApplicationStandardVersion.js';
 import type { AppResponse } from '../models/AppResponse.js';
+import type { ApproveApplicationStandardExceptionRequest } from '../models/ApproveApplicationStandardExceptionRequest.js';
 import type { ChangeMemberRoleRequest } from '../models/ChangeMemberRoleRequest.js';
 import type { CreateApplicationStandardLogDestinationRequest } from '../models/CreateApplicationStandardLogDestinationRequest.js';
 import type { CreateApplicationStandardPublisherRequest } from '../models/CreateApplicationStandardPublisherRequest.js';
@@ -34,9 +36,11 @@ import type { OrgListResponse } from '../models/OrgListResponse.js';
 import type { OrgMemberResponse } from '../models/OrgMemberResponse.js';
 import type { OrgResponse } from '../models/OrgResponse.js';
 import type { PatchOrgRequest } from '../models/PatchOrgRequest.js';
+import type { RevokeApplicationStandardExceptionRequest } from '../models/RevokeApplicationStandardExceptionRequest.js';
 import type { RotateOrgAPIKeyRequest } from '../models/RotateOrgAPIKeyRequest.js';
 import type { RotateOrgAPIKeyResponse } from '../models/RotateOrgAPIKeyResponse.js';
 import type { SeatUsageResponse } from '../models/SeatUsageResponse.js';
+import type { SetApplicationStandardLocalIntentRequest } from '../models/SetApplicationStandardLocalIntentRequest.js';
 import type { TransferOwnershipRequest } from '../models/TransferOwnershipRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -718,11 +722,69 @@ export class OrgsService {
     });
   }
   /**
+   * Approve a bounded application exception
+   * Requires an active owner or admin. Approves one field for an adopted immutable standard version; all independent constraints and platform controls still apply. The server enforces a future expiry within 30 days and queues a new desired revision.
+   * Disabled by default until the application standards release acceptance gates pass.
+   * Idempotency replay requires the current role and release gate. Saved intent is not consumer observation.
+   *
+   * @returns ApplicationStandardException Saved intent or retained exception approval; worker installation and consumer convergence remain separate.
+   * @throws ApiError
+   */
+  public static approveApplicationStandardException({
+    slug,
+    app,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    app: string,
+    requestBody: ApproveApplicationStandardExceptionRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ApplicationStandardException> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions',
+      path: {
+        'slug': slug,
+        'app': app,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller lacks the write scope, required organization action or completed MFA.`,
+        404: `code: not_found`,
+        409: `Enrollment revision changed, an exception already exists, or installation or a controlled operation is pending.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Standards mutations are disabled by the release gate, or storage is unavailable. Disabled requests return application_standards_pending and make no change.`,
+      },
+    });
+  }
+  /**
    * Read application standards intent, installed settings and observation progress.
    * Requires org.view_application_standards and a read-scoped credential, with MFA for sessions.
    * Local choices and desired revision describe saved intent. installed_effective describes
    * the last installed projection and is absent before installation. Neither persisted
-   * settings nor this read establish consumer observation. Read-only during implementation.
+   * settings nor this read establish consumer observation. Reads remain available while mutations are disabled.
    *
    * @returns ApplicationStandardEnrollment Scoped enrollment with saved adoption pins and installed field provenance.
    * @throws ApiError
@@ -761,6 +823,125 @@ export class OrgsService {
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `Application standards storage is temporarily unavailable.`,
+      },
+    });
+  }
+  /**
+   * Replace permitted local application settings
+   * Requires an active owner, admin or developer. settings and additional_log_destinations replace the complete local intent; explicit empty values clear it. Mandatory settings and permitted extensions are checked atomically against the current desired revision. The response retains the last installed projection while a changed desired revision waits for installation.
+   * Disabled by default until the application standards release acceptance gates pass.
+   * Idempotency replay requires the current role and release gate. Saved intent is not consumer observation.
+   *
+   * @returns ApplicationStandardEnrollment Saved intent or retained exception approval; worker installation and consumer convergence remain separate.
+   * @throws ApiError
+   */
+  public static setApplicationStandardLocalIntent({
+    slug,
+    app,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    app: string,
+    requestBody: SetApplicationStandardLocalIntentRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ApplicationStandardEnrollment> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{slug}/application-standard-enrollments/{app}/local-intent',
+      path: {
+        'slug': slug,
+        'app': app,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller lacks the write scope, required organization action or completed MFA.`,
+        404: `code: not_found`,
+        409: `Enrollment revision changed, an exception already exists, or installation or a controlled operation is pending.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Standards mutations are disabled by the release gate, or storage is unavailable. Disabled requests return application_standards_pending and make no change.`,
+      },
+    });
+  }
+  /**
+   * Revoke an application exception and retain its approval history
+   * Requires an active owner or admin and the current desired revision. The original approval, reason and value remain immutable; revocation queues reevaluation under the ordinary inherited controls. A conflicting local setting can leave the application blocked until it is corrected.
+   * Disabled by default until the application standards release acceptance gates pass.
+   * Idempotency replay requires the current role and release gate. Saved intent is not consumer observation.
+   *
+   * @returns ApplicationStandardException Saved intent or retained exception approval; worker installation and consumer convergence remain separate.
+   * @throws ApiError
+   */
+  public static revokeApplicationStandardException({
+    slug,
+    app,
+    exception,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    app: string,
+    exception: string,
+    requestBody: RevokeApplicationStandardExceptionRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ApplicationStandardException> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions/{exception}/revoke',
+      path: {
+        'slug': slug,
+        'app': app,
+        'exception': exception,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller lacks the write scope, required organization action or completed MFA.`,
+        404: `code: not_found`,
+        409: `Enrollment revision changed, an exception already exists, or installation or a controlled operation is pending.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Standards mutations are disabled by the release gate, or storage is unavailable. Disabled requests return application_standards_pending and make no change.`,
       },
     });
   }

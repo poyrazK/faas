@@ -5,6 +5,26 @@ import (
 	"time"
 )
 
+type SetApplicationStandardLocalIntentRequest struct {
+	ExpectedRevision          int64           `json:"expected_revision"`
+	Settings                  json.RawMessage `json:"settings"`
+	AdditionalLogDestinations []string        `json:"additional_log_destinations"`
+}
+
+type ApproveApplicationStandardExceptionRequest struct {
+	ExpectedRevision int64           `json:"expected_revision"`
+	StandardID       string          `json:"standard_id"`
+	Version          int64           `json:"version"`
+	Field            string          `json:"field"`
+	Value            json.RawMessage `json:"value"`
+	Reason           string          `json:"reason"`
+	ExpiresAt        time.Time       `json:"expires_at"`
+}
+
+type RevokeApplicationStandardExceptionRequest struct {
+	ExpectedRevision int64 `json:"expected_revision"`
+}
+
 type CreateApplicationStandardVersionRequest struct {
 	Description     string          `json:"description"`
 	ExpectedVersion int64           `json:"expected_version"`

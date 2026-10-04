@@ -2,6 +2,117 @@
 
 import httpx
 
+
+def test_standard_mutations_preserve_empty_false_and_revocation_over_transport():
+    import json
+    from uuid import UUID
+
+    from faas_sdk.api.orgs import (
+        approve_application_standard_exception,
+        revoke_application_standard_exception,
+        set_application_standard_local_intent,
+    )
+    from faas_sdk.client import AuthenticatedClient
+    from faas_sdk.models.approve_application_standard_exception_request import (
+        ApproveApplicationStandardExceptionRequest,
+    )
+    from faas_sdk.models.revoke_application_standard_exception_request import RevokeApplicationStandardExceptionRequest
+    from faas_sdk.models.set_application_standard_local_intent_request import SetApplicationStandardLocalIntentRequest
+
+    resource = "00000000-0000-4000-8000-000000000001"
+    stamp = "2026-10-05T12:00:00+00:00"
+    base = f"/v1/orgs/acme/application-standard-enrollments/{resource}"
+    local = {"expected_revision": 1, "settings": {}, "additional_log_destinations": []}
+    approval = {
+        "expected_revision": 2,
+        "standard_id": resource,
+        "version": 1,
+        "field": "require_signed",
+        "value": False,
+        "reason": "Maintenance",
+        "expires_at": stamp,
+    }
+    revoke = {"expected_revision": 3}
+    calls = []
+
+    def transport(request):
+        assert request.headers["Authorization"] == "Bearer fixture"
+        calls.append((request.method, request.url.path, json.loads(request.content)))
+        if request.url.path.endswith("/local-intent"):
+            return httpx.Response(
+                200,
+                json={
+                    "app_id": resource,
+                    "org_id": resource,
+                    "local_settings": {},
+                    "additional_log_destinations": [],
+                    "adoptions": [],
+                    "materialized_fields": [],
+                    "desired_revision": 2,
+                    "persisted_revision": 1,
+                    "observed_revision": 0,
+                    "state": "pending",
+                    "updated_at": stamp,
+                },
+            )
+        revoked = request.url.path.endswith("/revoke")
+        return httpx.Response(
+            200 if revoked else 201,
+            json={
+                "id": resource,
+                "org_id": resource,
+                "app_id": resource,
+                "standard_id": resource,
+                "version": 1,
+                "field": "require_signed",
+                "value": False,
+                "reason": "Maintenance",
+                "expires_at": stamp,
+                "approved_by": resource,
+                "created_at": stamp,
+                "status": "revoked" if revoked else "active",
+            },
+        )
+
+    with AuthenticatedClient(
+        base_url="https://api.example.test", token="fixture", httpx_args={"transport": httpx.MockTransport(transport)}
+    ) as client:
+        enrollment = set_application_standard_local_intent.sync(
+            "acme",
+            UUID(resource),
+            client=client,
+            body=SetApplicationStandardLocalIntentRequest.from_dict(local),
+            idempotency_key="local",
+        )
+        assert enrollment.desired_revision == 2
+        assert enrollment.persisted_revision == 1
+        assert enrollment.observed_revision == 0
+        approved = approve_application_standard_exception.sync(
+            "acme",
+            UUID(resource),
+            client=client,
+            body=ApproveApplicationStandardExceptionRequest.from_dict(approval),
+            idempotency_key="approve",
+        )
+        assert approved.value is False
+        assert approved.status == "active"
+        revoked = revoke_application_standard_exception.sync(
+            "acme",
+            UUID(resource),
+            UUID(resource),
+            client=client,
+            body=RevokeApplicationStandardExceptionRequest.from_dict(revoke),
+            idempotency_key="revoke",
+        )
+        assert revoked.status == "revoked"
+        assert revoked.reason == approved.reason
+    assert calls == [
+        ("PUT", base + "/local-intent", local),
+        ("POST", base + "/exceptions", approval),
+        ("POST", base + f"/exceptions/{resource}/revoke", revoke),
+    ]
+
+
 from faas_sdk.api.orgs import get_application_standard_version, publish_application_standard_version
 from faas_sdk.client import Client
 from faas_sdk.models.application_standard_version import ApplicationStandardVersion

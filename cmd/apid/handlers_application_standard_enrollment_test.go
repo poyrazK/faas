@@ -28,8 +28,9 @@ func standardEnrollmentAPIFixture(ctx context.Context, t *testing.T, e testEnv) 
 		t.Fatal(err)
 	}
 	definition, err := json.Marshal(appstandards.Definition{
-		appstandards.LogDestinations: {Mode: appstandards.Mandatory, Value: json.RawMessage(`["` + d.ID + `"]`)},
-		appstandards.EgressCIDRs:     {Mode: appstandards.Restricted, Value: json.RawMessage(`["8.8.8.0/24"]`)},
+		appstandards.LogDestinations:  {Mode: appstandards.Mandatory, Value: json.RawMessage(`["` + d.ID + `"]`)},
+		appstandards.EgressCIDRs:      {Mode: appstandards.Restricted, Value: json.RawMessage(`["8.8.8.0/24"]`)},
+		appstandards.EgressExtraPorts: {Mode: appstandards.Restricted, Value: json.RawMessage(`[8443]`)},
 	})
 	if err != nil {
 		t.Fatal(err)

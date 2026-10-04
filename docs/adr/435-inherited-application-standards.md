@@ -1842,3 +1842,36 @@ acknowledgments. The checkpoint still establishes no fleet membership roster,
 whole-application observed revision, wave release, provider success for a quiet
 service, or native runtime acceptance. Public activation remains disabled until
 those broader capability and recovery gates pass.
+
+
+## Release-gated local and exception HTTP contract (2026-10-04)
+
+The existing private atomic intent and exception operations now have typed HTTP,
+Go/Node/Python SDK and CLI entry points. PUT local intent replaces the complete
+settings object and additional destination set. POST approval records an immutable
+one-field exception against an adopted version, reason and bounded expiry. POST
+revocation preserves approval history and queues ordinary inheritance repair.
+All require the current desired revision and preserve installed/observed facts.
+
+Local choices use a dedicated organization action for owners, admins and
+developers; approvals and revocations use the owner/admin approval action. Scope,
+MFA, current role and live application ownership are checked before idempotency
+lookup, with store authority checked again during the atomic mutation. Strict
+request DTOs reject missing required values, nulls, duplicate or unknown keys,
+unsupported fields and invalid value types. Public errors redact private details.
+
+`FAAS_APPLICATION_STANDARD_MUTATIONS_ENABLED=1` is an explicit boot-time release
+opt-in, following the existing execution/app-task gates. The default is false;
+all other literals keep it disabled. Deployment must leave it unset until the
+already-required consumer convergence, controlled rollout/rollback/recovery and
+dedicated Linux amd64 root/KVM acceptance are complete. The gate wraps idempotency
+replay as well as execution. No assignment approval/operator route is added by
+this checkpoint, and no deployment flag is activated.
+
+Portable HTTP/store lifecycle, role, revision contention, gate/replay, strict
+request and SDK/CLI checks establish this contract only. Saving local choices,
+approving or revoking an exception, or installing its projection does not create
+consumer acknowledgments, advance observed revision or release a rollout wave.
+All-consumer convergence, multiservice onboarding/rollback and daemon recovery,
+source composition/scanner/native cold boot/restore/promotion, live egress restart
+and leakcheck acceptance remain incomplete. Public activation stays disabled.

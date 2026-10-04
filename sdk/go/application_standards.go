@@ -4,6 +4,9 @@ import "github.com/poyrazK/faas/sdk/go/internal/api"
 
 // Wire types for application standards, reviews and inspection.
 type (
+	SetApplicationStandardLocalIntentRequest       = api.SetApplicationStandardLocalIntentRequest
+	ApproveApplicationStandardExceptionRequest     = api.ApproveApplicationStandardExceptionRequest
+	RevokeApplicationStandardExceptionRequest      = api.RevokeApplicationStandardExceptionRequest
 	CreateApplicationStandardVersionRequest        = api.CreateApplicationStandardVersionRequest
 	ApplicationStandardVersion                     = api.ApplicationStandardVersion
 	ApplicationStandardList                        = api.ApplicationStandardList

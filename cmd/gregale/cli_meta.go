@@ -2059,7 +2059,8 @@ var cliCommands = []cliCommand{
 			{Name: "standards", Short: "Manage versioned application standards", Subcommands: []cliSub{
 				{Name: "reviews", Short: "Preview assignment changes and inspect saved reviews", Subcommands: standardReviewCLIHelp()},
 				{Name: "operation", Short: "Inspect rollout targets and saved progress", Flags: standardInspectionCLIHelp("operation UUID")},
-				{Name: "exceptions", Short: "Inspect approval, revocation and expiry history", Flags: standardExceptionCLIHelp()},
+				{Name: "exceptions", Short: "Inspect history or manage bounded exceptions", Flags: standardExceptionCLIHelp(), Subcommands: standardExceptionMutationCLIHelp()},
+				{Name: "local-intent", Short: "Replace permitted local settings with revision checks; release gated", Flags: standardMutationCLIHelp(false)},
 				{Name: "application", Short: "Inspect application adoption and installed standards", Flags: []cliFlag{
 					{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
 					{Name: "app", Short: "application UUID", Value: "UUID", Req: true},

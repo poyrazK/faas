@@ -83,6 +83,11 @@ var roleMatrixCells = []struct {
 	role        state.OrgRole
 	wantAllowed bool
 }{
+	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleOwner, true},
+	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleAdmin, true},
+	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleDeveloper, true},
+	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleViewer, false},
+	{OrgActionSetApplicationStandardLocalIntent, state.OrgRoleBilling, false},
 	{OrgActionViewApplicationStandards, state.OrgRoleOwner, true},
 	{OrgActionViewApplicationStandards, state.OrgRoleAdmin, true},
 	{OrgActionViewApplicationStandards, state.OrgRoleDeveloper, true},

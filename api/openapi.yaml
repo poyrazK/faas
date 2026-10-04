@@ -23977,6 +23977,41 @@ paths:
           description: Application standards storage is temporarily unavailable.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
 
+    post:
+      tags: [orgs]
+      operationId: approveApplicationStandardException
+      summary: Approve a bounded application exception
+      description: |
+        Requires an active owner or admin. Approves one field for an adopted immutable standard version; all independent constraints and platform controls still apply. The server enforces a future expiry within 30 days and queues a new desired revision.
+        Disabled by default until the application standards release acceptance gates pass.
+        Idempotency replay requires the current role and release gate. Saved intent is not consumer observation.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApproveApplicationStandardExceptionRequest' }
+      responses:
+        '201':
+          description: Saved intent or retained exception approval; worker installation and consumer convergence remain separate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardException' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller lacks the write scope, required organization action or completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Enrollment revision changed, an exception already exists, or installation or a controlled operation is pending.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Standards mutations are disabled by the release gate, or storage is unavailable. Disabled requests return application_standards_pending and make no change.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
   /v1/orgs/{slug}/application-standard-enrollments/{app}:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -23993,7 +24028,7 @@ paths:
         Requires org.view_application_standards and a read-scoped credential, with MFA for sessions.
         Local choices and desired revision describe saved intent. installed_effective describes
         the last installed projection and is absent before installation. Neither persisted
-        settings nor this read establish consumer observation. Read-only during implementation.
+        settings nor this read establish consumer observation. Reads remain available while mutations are disabled.
       responses:
         '200':
           description: Scoped enrollment with saved adoption pins and installed field provenance.
@@ -24009,6 +24044,85 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503':
           description: Application standards storage is temporarily unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/orgs/{slug}/application-standard-enrollments/{app}/local-intent:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { in: path, name: app, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [orgs]
+      operationId: setApplicationStandardLocalIntent
+      summary: Replace permitted local application settings
+      description: |
+        Requires an active owner, admin or developer. settings and additional_log_destinations replace the complete local intent; explicit empty values clear it. Mandatory settings and permitted extensions are checked atomically against the current desired revision. The response retains the last installed projection while a changed desired revision waits for installation.
+        Disabled by default until the application standards release acceptance gates pass.
+        Idempotency replay requires the current role and release gate. Saved intent is not consumer observation.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetApplicationStandardLocalIntentRequest' }
+      responses:
+        '200':
+          description: Saved intent or retained exception approval; worker installation and consumer convergence remain separate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardEnrollment' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller lacks the write scope, required organization action or completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Enrollment revision changed, an exception already exists, or installation or a controlled operation is pending.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Standards mutations are disabled by the release gate, or storage is unavailable. Disabled requests return application_standards_pending and make no change.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions/{exception}/revoke:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { in: path, name: app, required: true, schema: { type: string, format: uuid } }
+      - { in: path, name: exception, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [orgs]
+      operationId: revokeApplicationStandardException
+      summary: Revoke an application exception and retain its approval history
+      description: |
+        Requires an active owner or admin and the current desired revision. The original approval, reason and value remain immutable; revocation queues reevaluation under the ordinary inherited controls. A conflicting local setting can leave the application blocked until it is corrected.
+        Disabled by default until the application standards release acceptance gates pass.
+        Idempotency replay requires the current role and release gate. Saved intent is not consumer observation.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevokeApplicationStandardExceptionRequest' }
+      responses:
+        '200':
+          description: Saved intent or retained exception approval; worker installation and consumer convergence remain separate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardException' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller lacks the write scope, required organization action or completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Enrollment revision changed, an exception already exists, or installation or a controlled operation is pending.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Standards mutations are disabled by the release gate, or storage is unavailable. Disabled requests return application_standards_pending and make no change.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
 
   /v1/orgs/{slug}/application-standards:
@@ -46573,6 +46687,46 @@ components:
         created_by: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
 
+    SetApplicationStandardLocalIntentRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_revision, settings, additional_log_destinations]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740990 }
+        settings: { $ref: '#/components/schemas/ApplicationStandardSettings' }
+        additional_log_destinations:
+          type: array
+          maxItems: 64
+          items: { type: string, format: uuid }
+
+    ApproveApplicationStandardExceptionRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_revision, standard_id, version, field, value, reason, expires_at]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740990 }
+        standard_id: { type: string, format: uuid }
+        version: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        field:
+          type: string
+          enum: [log_destinations, require_signed, security_policy, trusted_publishers, egress_cidrs, egress_extra_ports]
+        value:
+          description: Non-null value for the selected field, validated by the server against that field and the full inherited controls.
+          oneOf:
+            - type: boolean
+            - { type: string, enum: [off, warn, enforce] }
+            - { type: array, maxItems: 64, items: { type: string } }
+            - { type: array, maxItems: 64, items: { type: integer, minimum: 1, maximum: 65535 } }
+        reason: { type: string, minLength: 1, maxLength: 512, description: Trimmed nonempty UTF-8 reason bounded to 512 bytes. }
+        expires_at: { type: string, format: date-time, description: Future expiry within 30 days of server time. }
+
+    RevokeApplicationStandardExceptionRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_revision]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740990 }
+
     ApplicationStandardSettings:
       type: object
       additionalProperties: false
@@ -46992,7 +47146,7 @@ components:
           - type: string
             enum:
             - 'off'
-            - audit
+            - warn
             - enforce
           - type: array
             items:

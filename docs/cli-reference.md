@@ -4134,7 +4134,7 @@ Inspect rollout targets and saved progress
 
 #### orgs standards exceptions
 
-Inspect approval, revocation and expiry history
+Inspect history or manage bounded exceptions
 
 `gregale orgs standards exceptions --org <SLUG> --app <UUID> [--after <UUID>] [--limit <N>]`
 
@@ -4144,6 +4144,18 @@ Inspect approval, revocation and expiry history
 | `--app <UUID>` | application UUID | required |
 | `--after <UUID>` | last exception UUID from the previous page |  |
 | `--limit <N>` | page size (1..100) |  |
+
+#### orgs standards local-intent
+
+Replace permitted local settings with revision checks; release gated
+
+`gregale orgs standards local-intent --org <SLUG> --app <UUID> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--app <UUID>` | application UUID | required |
+| `--file <PATH>` | complete mutation JSON including expected_revision | required |
 
 #### orgs standards application
 

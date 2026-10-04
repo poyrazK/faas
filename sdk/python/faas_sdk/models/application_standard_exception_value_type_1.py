@@ -1,11 +1,11 @@
 from typing import Literal
 
-ApplicationStandardExceptionValueType1 = Literal["audit", "enforce", "off"]
+ApplicationStandardExceptionValueType1 = Literal["enforce", "off", "warn"]
 
 APPLICATION_STANDARD_EXCEPTION_VALUE_TYPE_1_VALUES: set[ApplicationStandardExceptionValueType1] = {
-    "audit",
     "enforce",
     "off",
+    "warn",
 }
 
 

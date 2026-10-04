@@ -18,6 +18,27 @@ func (c *Client) GetApplicationStandardEnrollment(ctx context.Context, org, appI
 	return result, err
 }
 
+func (c *Client) SetApplicationStandardLocalIntent(ctx context.Context, org, appID string, request SetApplicationStandardLocalIntentRequest) (ApplicationStandardEnrollment, error) {
+	var result ApplicationStandardEnrollment
+	path := standardResourcePath(org, "enrollments") + "/" + url.PathEscape(appID) + "/local-intent"
+	err := c.do(ctx, http.MethodPut, path, request, &result)
+	return result, err
+}
+
+func (c *Client) ApproveApplicationStandardException(ctx context.Context, org, appID string, request ApproveApplicationStandardExceptionRequest) (ApplicationStandardException, error) {
+	var result ApplicationStandardException
+	path := standardResourcePath(org, "enrollments") + "/" + url.PathEscape(appID) + "/exceptions"
+	err := c.do(ctx, http.MethodPost, path, request, &result)
+	return result, err
+}
+
+func (c *Client) RevokeApplicationStandardException(ctx context.Context, org, appID, exceptionID string, request RevokeApplicationStandardExceptionRequest) (ApplicationStandardException, error) {
+	var result ApplicationStandardException
+	path := standardResourcePath(org, "enrollments") + "/" + url.PathEscape(appID) + "/exceptions/" + url.PathEscape(exceptionID) + "/revoke"
+	err := c.do(ctx, http.MethodPost, path, request, &result)
+	return result, err
+}
+
 func standardResourcePath(org, kind string) string {
 	return "/v1/orgs/" + url.PathEscape(org) + "/application-standard-" + kind
 }

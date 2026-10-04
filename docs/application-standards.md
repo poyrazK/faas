@@ -530,5 +530,57 @@ and preserve the distinction between desired, installed and observed revisions.
 The installed exception deadline refuses new runtime admission even when repair
 is delayed. If expiry makes saved local choices invalid, the application stays
 blocked until a permitted correction restores compliance. This private lifecycle
-has no public mutation route yet; native enforcement and consumer convergence
-acceptance remain required for public activation.
+has release-gated mutation routes described below; native enforcement and consumer
+convergence acceptance remain required before enabling them.
+
+
+## Release-gated local settings and exceptions
+
+The API, Go/Node/Python SDKs and CLI now expose the existing atomic local-intent
+and exception lifecycle. These mutations are **disabled by default**. The apid
+boot-time opt-in is `FAAS_APPLICATION_STANDARD_MUTATIONS_ENABLED=1`; deployment
+must keep it unset until ADR-435's consumer convergence, controlled rollout and
+recovery, and dedicated Linux amd64 root/KVM acceptance gates pass. Adding the
+contract does not satisfy those gates or enable assignment approval.
+
+| Operation | Route suffix under `/v1/orgs/{slug}/application-standard-enrollments/{app}` | Authority |
+| --- | --- | --- |
+| Replace local choices | `PUT /local-intent` | Owner, admin or developer |
+| Approve one-field exception | `POST /exceptions` | Owner or admin |
+| Revoke and retain history | `POST /exceptions/{exception}/revoke` | Owner or admin |
+
+All three require write scope and completed session MFA. Current organization
+role, live application ownership and the release gate are checked before
+idempotency replay. The stores recheck write authority and controls atomically.
+A disabled gate returns `503 application_standards_pending` without persisting
+intent, approval or revocation. Errors omit internal configuration and credentials.
+
+Local intent requires `expected_revision`, a complete `settings` object and an
+explicit `additional_log_destinations` array. `{}` and `[]` clear local choices.
+An approval requires the current `expected_revision`, adopted `standard_id` and
+`version`, one `field` with a non-null `value`, a nonempty `reason`, and a future
+`expires_at` within 30 days of server time. Revocation requires the current
+`expected_revision`; it retains the original approval and reason. Conflicting
+local choices after revocation remain blocked until corrected.
+
+```sh
+gregale orgs standards local-intent --org acme --app APP_UUID --file local.json
+gregale orgs standards exceptions approve --org acme --app APP_UUID --file exception.json
+gregale orgs standards exceptions revoke --org acme --app APP_UUID --id EXCEPTION_UUID --file revoke.json
+```
+
+For example, `local.json` can contain:
+
+```json
+{"expected_revision": 1, "settings": {}, "additional_log_destinations": []}
+```
+
+`revoke.json` contains `{"expected_revision": 3}` using the revision from a
+fresh enrollment read. SDK methods are `SetApplicationStandardLocalIntent`,
+`ApproveApplicationStandardException` and `RevokeApplicationStandardException`
+in Go, their lower-camel-case equivalents on Node's `OrgsService`, and the
+corresponding snake-case endpoints in Python's `faas_sdk.api.orgs`.
+
+Successful writes save intent or retained approval history. Changed intent
+queues installation and retains the last installed projection; it does not
+advance observed revision, release a rollout wave or prove native enforcement.

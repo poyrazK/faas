@@ -1,5 +1,24 @@
 package main
 
+func standardMutationCLIHelp(revoke bool) []cliFlag {
+	flags := []cliFlag{
+		{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+		{Name: "app", Short: "application UUID", Value: "UUID", Req: true},
+		{Name: "file", Short: "complete mutation JSON including expected_revision", Value: "PATH", Req: true},
+	}
+	if revoke {
+		flags = append(flags, cliFlag{Name: "id", Short: "exception UUID", Value: "UUID", Req: true})
+	}
+	return flags
+}
+
+func standardExceptionMutationCLIHelp() []cliSub {
+	return []cliSub{
+		{Name: "approve", Short: "Approve one field with a reason and expiry; admin only, release gated", Flags: standardMutationCLIHelp(false)},
+		{Name: "revoke", Short: "Revoke an exception and retain its history; admin only, release gated", Flags: standardMutationCLIHelp(true)},
+	}
+}
+
 func standardResourceCLIHelp() []cliSub {
 	return []cliSub{
 		{Name: "list", Short: "List organization resources", Flags: []cliFlag{

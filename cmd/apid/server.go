@@ -360,6 +360,9 @@ type server struct {
 	// attached to an app deployment (ADR-230). It remains separate from
 	// schedd's dispatch gate so apid cannot enqueue work into a disabled fleet.
 	appTaskAPIEnabled bool
+	// ADR-435: keep standards intent/exception mutations disabled until
+	// consumer convergence, rollout recovery and native acceptance pass.
+	applicationStandardMutationsEnabled bool
 	// runtimeConfig is the durable operator configuration snapshot. It is
 	// deliberately in-memory for request hot paths; the admin handler writes
 	// Postgres and the notification reconciler refreshes this snapshot.
@@ -1326,6 +1329,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-operations/{operation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardOperation)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listApplicationStandardExceptions)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-enrollments/{app}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardEnrollment)))))
+	mux.HandleFunc("PUT /v1/orgs/{slug}/application-standard-enrollments/{app}/local-intent", s.applicationStandardMutationRoute(authz.OrgActionSetApplicationStandardLocalIntent, s.setApplicationStandardLocalIntent))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions", s.applicationStandardMutationRoute(authz.OrgActionApproveApplicationStandards, s.approveApplicationStandardException))
+	mux.HandleFunc("POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions/{exception}/revoke", s.applicationStandardMutationRoute(authz.OrgActionApproveApplicationStandards, s.revokeApplicationStandardException))
 	mux.HandleFunc("GET /v1/orgs/{slug}/application-standards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listApplicationStandards)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/application-standards/{standard}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardVersion)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/application-standards/{standard}/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.idempotent(s.publishApplicationStandardVersion))))))

@@ -19,6 +19,12 @@ type standardCLIOptions struct {
 }
 
 func cmdOrgStandards(args []string) int {
+	if len(args) > 0 && args[0] == "local-intent" {
+		return cmdOrgStandardMutation("local-intent", args[1:])
+	}
+	if len(args) > 1 && args[0] == "exceptions" && (args[1] == "approve" || args[1] == "revoke") {
+		return cmdOrgStandardMutation(args[1], args[2:])
+	}
 	if len(args) > 0 && (args[0] == "reviews" || args[0] == "operation" || args[0] == "exceptions") {
 		return cmdOrgStandardInspection(args[0], args[1:])
 	}
@@ -29,7 +35,7 @@ func cmdOrgStandards(args []string) int {
 		return cmdOrgStandardResources(args[0], args[1:])
 	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale orgs standards <list|show|publish|application|destinations|publishers|reviews|operation|exceptions> --org ORG [options]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale orgs standards <list|show|publish|application|local-intent|destinations|publishers|reviews|operation|exceptions> --org ORG [options]", "orgs")
 		return 1
 	}
 	options, err := parseStandardCLI(args[0], args[1:])

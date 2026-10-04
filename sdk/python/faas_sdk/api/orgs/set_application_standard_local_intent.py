@@ -9,22 +9,34 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.application_standard_enrollment import ApplicationStandardEnrollment
 from ...models.problem import Problem
-from ...types import Response
+from ...models.set_application_standard_local_intent_request import SetApplicationStandardLocalIntentRequest
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
     app: UUID,
+    *,
+    body: SetApplicationStandardLocalIntentRequest,
+    idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(idempotency_key, Unset):
+        headers["Idempotency-Key"] = idempotency_key
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/v1/orgs/{slug}/application-standard-enrollments/{app}".format(
+        "method": "put",
+        "url": "/v1/orgs/{slug}/application-standard-enrollments/{app}/local-intent".format(
             slug=quote(str(slug), safe=""),
             app=quote(str(app), safe=""),
         ),
     }
 
+    _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -55,6 +67,11 @@ def _parse_response(
         response_404 = Problem.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
 
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
@@ -88,18 +105,24 @@ def sync_detailed(
     app: UUID,
     *,
     client: AuthenticatedClient | Client,
+    body: SetApplicationStandardLocalIntentRequest,
+    idempotency_key: str | Unset = UNSET,
 ) -> Response[ApplicationStandardEnrollment | Problem]:
-    """Read application standards intent, installed settings and observation progress.
+    """Replace permitted local application settings
 
-     Requires org.view_application_standards and a read-scoped credential, with MFA for sessions.
-    Local choices and desired revision describe saved intent. installed_effective describes
-    the last installed projection and is absent before installation. Neither persisted
-    settings nor this read establish consumer observation. Reads remain available while mutations are
-    disabled.
+     Requires an active owner, admin or developer. settings and additional_log_destinations replace the
+    complete local intent; explicit empty values clear it. Mandatory settings and permitted extensions
+    are checked atomically against the current desired revision. The response retains the last installed
+    projection while a changed desired revision waits for installation.
+    Disabled by default until the application standards release acceptance gates pass.
+    Idempotency replay requires the current role and release gate. Saved intent is not consumer
+    observation.
 
     Args:
         slug (str):
         app (UUID):
+        idempotency_key (str | Unset):
+        body (SetApplicationStandardLocalIntentRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -112,6 +135,8 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         app=app,
+        body=body,
+        idempotency_key=idempotency_key,
     )
 
     response = client.get_httpx_client().request(
@@ -126,18 +151,24 @@ def sync(
     app: UUID,
     *,
     client: AuthenticatedClient | Client,
+    body: SetApplicationStandardLocalIntentRequest,
+    idempotency_key: str | Unset = UNSET,
 ) -> ApplicationStandardEnrollment | Problem | None:
-    """Read application standards intent, installed settings and observation progress.
+    """Replace permitted local application settings
 
-     Requires org.view_application_standards and a read-scoped credential, with MFA for sessions.
-    Local choices and desired revision describe saved intent. installed_effective describes
-    the last installed projection and is absent before installation. Neither persisted
-    settings nor this read establish consumer observation. Reads remain available while mutations are
-    disabled.
+     Requires an active owner, admin or developer. settings and additional_log_destinations replace the
+    complete local intent; explicit empty values clear it. Mandatory settings and permitted extensions
+    are checked atomically against the current desired revision. The response retains the last installed
+    projection while a changed desired revision waits for installation.
+    Disabled by default until the application standards release acceptance gates pass.
+    Idempotency replay requires the current role and release gate. Saved intent is not consumer
+    observation.
 
     Args:
         slug (str):
         app (UUID):
+        idempotency_key (str | Unset):
+        body (SetApplicationStandardLocalIntentRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,6 +182,8 @@ def sync(
         slug=slug,
         app=app,
         client=client,
+        body=body,
+        idempotency_key=idempotency_key,
     ).parsed
 
 
@@ -159,18 +192,24 @@ async def asyncio_detailed(
     app: UUID,
     *,
     client: AuthenticatedClient | Client,
+    body: SetApplicationStandardLocalIntentRequest,
+    idempotency_key: str | Unset = UNSET,
 ) -> Response[ApplicationStandardEnrollment | Problem]:
-    """Read application standards intent, installed settings and observation progress.
+    """Replace permitted local application settings
 
-     Requires org.view_application_standards and a read-scoped credential, with MFA for sessions.
-    Local choices and desired revision describe saved intent. installed_effective describes
-    the last installed projection and is absent before installation. Neither persisted
-    settings nor this read establish consumer observation. Reads remain available while mutations are
-    disabled.
+     Requires an active owner, admin or developer. settings and additional_log_destinations replace the
+    complete local intent; explicit empty values clear it. Mandatory settings and permitted extensions
+    are checked atomically against the current desired revision. The response retains the last installed
+    projection while a changed desired revision waits for installation.
+    Disabled by default until the application standards release acceptance gates pass.
+    Idempotency replay requires the current role and release gate. Saved intent is not consumer
+    observation.
 
     Args:
         slug (str):
         app (UUID):
+        idempotency_key (str | Unset):
+        body (SetApplicationStandardLocalIntentRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -183,6 +222,8 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         app=app,
+        body=body,
+        idempotency_key=idempotency_key,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -195,18 +236,24 @@ async def asyncio(
     app: UUID,
     *,
     client: AuthenticatedClient | Client,
+    body: SetApplicationStandardLocalIntentRequest,
+    idempotency_key: str | Unset = UNSET,
 ) -> ApplicationStandardEnrollment | Problem | None:
-    """Read application standards intent, installed settings and observation progress.
+    """Replace permitted local application settings
 
-     Requires org.view_application_standards and a read-scoped credential, with MFA for sessions.
-    Local choices and desired revision describe saved intent. installed_effective describes
-    the last installed projection and is absent before installation. Neither persisted
-    settings nor this read establish consumer observation. Reads remain available while mutations are
-    disabled.
+     Requires an active owner, admin or developer. settings and additional_log_destinations replace the
+    complete local intent; explicit empty values clear it. Mandatory settings and permitted extensions
+    are checked atomically against the current desired revision. The response retains the last installed
+    projection while a changed desired revision waits for installation.
+    Disabled by default until the application standards release acceptance gates pass.
+    Idempotency replay requires the current role and release gate. Saved intent is not consumer
+    observation.
 
     Args:
         slug (str):
         app (UUID):
+        idempotency_key (str | Unset):
+        body (SetApplicationStandardLocalIntentRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -221,5 +268,7 @@ async def asyncio(
             slug=slug,
             app=app,
             client=client,
+            body=body,
+            idempotency_key=idempotency_key,
         )
     ).parsed

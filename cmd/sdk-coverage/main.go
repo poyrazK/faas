@@ -276,6 +276,9 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"PUT /v1/orgs/{slug}/application-standard-enrollments/{app}/local-intent":                   "SetApplicationStandardLocalIntent",
+	"POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions":                    "ApproveApplicationStandardException",
+	"POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions/{exception}/revoke": "RevokeApplicationStandardException",
 	// ADR-435: these hyphenated routes use the existing typed client names.
 	"POST /v1/orgs/{slug}/application-standard-reviews":                     "PreviewApplicationStandardAssignment",
 	"GET /v1/orgs/{slug}/application-standard-reviews/{review}":             "GetApplicationStandardReview",
