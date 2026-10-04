@@ -16,6 +16,19 @@ type DeploymentRuntimeProducerInputs struct {
 	deploymentRuntimeArtifactIdentity
 	InputHash            string
 	CheckedAt, ExpiresAt time.Time
+	Publishers           []RuntimePublisherApproval
+}
+
+// RuntimePublisherApproval is returned only after current scoped signatures
+// authenticate the selected producer. It is not native consumption authority.
+type RuntimePublisherApproval struct {
+	Kind               string    `json:"kind"`
+	WorkloadName       string    `json:"workload_name"`
+	ID                 string    `json:"id"`
+	InputHash          string    `json:"input_hash"`
+	PublisherKeySHA256 string    `json:"publisher_key_sha256"`
+	VerifiedAt         time.Time `json:"verified_at"`
+	ExpiresAt          time.Time `json:"expires_at"`
 }
 
 // Presence includes retained producer history even when current metadata is
@@ -53,10 +66,14 @@ type runtimeProducerSelection struct {
 
 type runtimeProducerLease struct {
 	PublishedAt, VerifiedAt, ExpiresAt time.Time
+	Publisher                          RuntimePublisherApproval
 }
 
 func registryRuntimeProducerLease(parent artifactScanParents) runtimeProducerLease {
-	return runtimeProducerLease{parent.Rootfs.PublishedAt, parent.Approval.VerifiedAt, parent.Approval.ExpiresAt}
+	p := parent.Approval
+	return runtimeProducerLease{PublishedAt: parent.Rootfs.PublishedAt, VerifiedAt: p.VerifiedAt, ExpiresAt: p.ExpiresAt,
+		Publisher: RuntimePublisherApproval{Kind: "registry-image", WorkloadName: p.Input.WorkloadName, ID: p.ID, InputHash: p.InputHash,
+			PublisherKeySHA256: p.Input.Proof.PublisherKeySHA256, VerifiedAt: p.VerifiedAt, ExpiresAt: p.ExpiresAt}}
 }
 
 func finishRuntimeProducerInputs(identity deploymentRuntimeArtifactIdentity, parents []runtimeProducerLease, now time.Time) (DeploymentRuntimeProducerInputs, error) {
@@ -84,5 +101,14 @@ func finishRuntimeProducerInputs(identity deploymentRuntimeArtifactIdentity, par
 			expires = parent.ExpiresAt
 		}
 	}
-	return DeploymentRuntimeProducerInputs{deploymentRuntimeArtifactIdentity: identity, InputHash: hash, CheckedAt: now, ExpiresAt: expires}, nil
+	return DeploymentRuntimeProducerInputs{deploymentRuntimeArtifactIdentity: identity, InputHash: hash, CheckedAt: now, ExpiresAt: expires,
+		Publishers: runtimeProducerPublishers(parents)}, nil
+}
+
+func runtimeProducerPublishers(parents []runtimeProducerLease) []RuntimePublisherApproval {
+	result := make([]RuntimePublisherApproval, len(parents))
+	for i, parent := range parents {
+		result[i] = parent.Publisher
+	}
+	return result
 }

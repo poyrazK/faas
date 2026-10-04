@@ -16,7 +16,9 @@ func sourceRuntimeProducerSelection(root SourceBuildRootfs, proof BuildExportPub
 	identity := deploymentRuntimeArtifactIdentity{Format: "gregale.runtime-artifact-input.v1", AccountID: in.AccountID,
 		OrgID: in.OrgID, AppID: in.AppID, DeploymentID: in.DeploymentID, Scope: in.Scope}
 	return runtimeProducerSelection{identity, runtimeArtifactFromSourceRootfs(root),
-		runtimeProducerLease{root.PublishedAt, proof.VerifiedAt, proof.ExpiresAt}}
+		runtimeProducerLease{PublishedAt: root.PublishedAt, VerifiedAt: proof.VerifiedAt, ExpiresAt: proof.ExpiresAt,
+			Publisher: RuntimePublisherApproval{Kind: "build-export", ID: proof.ID, InputHash: proof.InputHash,
+				PublisherKeySHA256: proof.Input.Proof.PublisherKeySHA256, VerifiedAt: proof.VerifiedAt, ExpiresAt: proof.ExpiresAt}}}
 }
 
 func checkSourceRuntimeIntent(in SourceBuildRootfsInput, intent sourceBuildRootfsIntent) error {

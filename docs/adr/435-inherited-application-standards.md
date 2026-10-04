@@ -1649,3 +1649,23 @@ Portable onboarding covers company assignment before source-app, function,
 registry-main and sidecar creation. Forged signatures and approval in another
 account cannot substitute for a revoked scoped key. This does not establish
 composed bytes, runtime ACKs or native acceptance; public activation stays disabled.
+
+
+## Prospective artifact security reviews
+
+Security-changing previews read the selected typed source/registry producers,
+current authenticated publisher approvals and the complete selected composed
+scan under existing owner, control, artifact and base fences. Source exports
+remain distinct from registry verifications. Prospective publisher resources
+are matched by canonical key fingerprint, including verified private legacy
+backups; labels confer no authority. Enforce mode uses the same composed-report
+severity gate as native admission. Missing or stale evidence, unapproved
+publishers and blocking findings remain explicit application blockers.
+
+The approval hash includes exact producer, publisher and scan identities, and
+the preview expiry cannot outlive their verification lease. Approval recomputes
+these inputs in its transaction; a newly selected scan invalidates old review
+authority. This permits compatible policy materialization without manufacturing
+source component scans, consumed-byte receipts or observed rollout adoption.
+Native scanner, VM and rollout acceptance remain pending; public activation is
+disabled.

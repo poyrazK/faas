@@ -16,7 +16,29 @@ import (
 var _ ApplicationStandardReviewStore = (*PgStore)(nil)
 
 func readStandardReviewSnapshot(ctx context.Context, db sqlc.DBTX, orgID, actorID string, r ApplicationStandardReviewRequest) (standardReviewSnapshot, error) {
-	raw, err := sqlc.New().ReadApplicationStandardReviewSnapshot(ctx, db, sqlc.ReadApplicationStandardReviewSnapshotParams{OrgID: mustPgUUID(orgID), ActorID: mustPgUUID(actorID), Scope: r.Scope, ScopeID: mustPgUUID(r.ScopeID), StandardID: mustPgUUID(r.StandardID)})
+	if tx, ok := db.(pgx.Tx); ok {
+		return readStandardReviewSnapshotTx(ctx, tx, orgID, actorID, r)
+	}
+	beginner, ok := db.(interface {
+		Begin(context.Context) (pgx.Tx, error)
+	})
+	if !ok {
+		return standardReviewSnapshot{}, ErrInvalidArgument
+	}
+	tx, err := beginner.Begin(ctx)
+	if err != nil {
+		return standardReviewSnapshot{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	result, err := readStandardReviewSnapshotTx(ctx, tx, orgID, actorID, r)
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
+	return result, err
+}
+
+func readStandardReviewSnapshotTx(ctx context.Context, tx pgx.Tx, orgID, actorID string, r ApplicationStandardReviewRequest) (standardReviewSnapshot, error) {
+	raw, err := sqlc.New().ReadApplicationStandardReviewSnapshot(ctx, tx, sqlc.ReadApplicationStandardReviewSnapshotParams{OrgID: mustPgUUID(orgID), ActorID: mustPgUUID(actorID), Scope: r.Scope, ScopeID: mustPgUUID(r.ScopeID), StandardID: mustPgUUID(r.StandardID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return standardReviewSnapshot{}, ErrNotFound
 	}
@@ -26,6 +48,9 @@ func readStandardReviewSnapshot(ctx context.Context, db sqlc.DBTX, orgID, actorI
 	var result standardReviewSnapshot
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return result, fmt.Errorf("decode standard review snapshot: %w", err)
+	}
+	if err := completeStandardReviewArtifactSecurityTx(ctx, tx, &result); err != nil {
+		return result, err
 	}
 	return result, nil
 }

@@ -218,7 +218,7 @@ func (m *MemStore) standardReviewSnapshotLocked(orgID, actorID string, r Applica
 		}
 		for _, b := range m.applicationStandardControlBackups {
 			if sameStandardUUID(b.AppID, app.ID) {
-				a.ArchivedResources = append(a.ArchivedResources, standardReviewArchivedResource{Field: b.Field, ID: b.ID, ConfigHash: b.ConfigHash})
+				a.ArchivedResources = append(a.ArchivedResources, standardReviewArchivedResource{Field: b.Field, ID: b.ID, ConfigHash: b.ConfigHash, Body: b.Body})
 			}
 		}
 		for _, deployment := range m.deployments {
@@ -251,5 +251,8 @@ func (m *MemStore) standardReviewSnapshotLocked(orgID, actorID string, r Applica
 		s.Applications = append(s.Applications, a)
 	}
 	slices.SortFunc(s.Applications, func(a, b standardReviewAppSnapshot) int { return strings.Compare(a.AppID, b.AppID) })
+	if err := m.completeStandardReviewArtifactSecurityLocked(&s); err != nil {
+		return s, err
+	}
 	return s, nil
 }

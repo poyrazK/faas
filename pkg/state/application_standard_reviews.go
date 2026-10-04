@@ -136,9 +136,11 @@ type standardReviewAppSnapshot struct {
 	ArchivedResources           []standardReviewArchivedResource `json:"archived_resources"`
 }
 type standardReviewArchivedResource struct {
-	Field      appstandards.Field `json:"field"`
-	ID         string             `json:"id"`
-	ConfigHash string             `json:"config_hash"`
+	Field       appstandards.Field `json:"field"`
+	ID          string             `json:"id"`
+	ConfigHash  string             `json:"config_hash"`
+	Body        json.RawMessage    `json:"body,omitempty"`
+	Fingerprint string             `json:"fingerprint,omitempty"`
 }
 type standardReviewEnrollment struct {
 	MaterializedFields        []appstandards.Field    `json:"materialized_fields,omitempty"`
@@ -166,18 +168,19 @@ type standardReviewSigner struct {
 	Fingerprint string `json:"fingerprint"`
 }
 type standardReviewArtifact struct {
-	ID             string `json:"id"`
-	Scope          string `json:"scope"`
-	Kind           string `json:"kind"`
-	Status         string `json:"status"`
-	ImageDigest    string `json:"image_digest"`
-	RootfsKey      string `json:"rootfs_key"`
-	RootfsBytes    int64  `json:"rootfs_bytes"`
-	SourceSHA256   string `json:"source_sha256"`
-	ParkedReason   string `json:"parked_reason"`
-	ScanStatus     string `json:"scan_status"`
-	ScanResultHash string `json:"scan_result_hash"`
-	SidecarHash    string `json:"sidecar_hash"`
+	ID             string                          `json:"id"`
+	Scope          string                          `json:"scope"`
+	Kind           string                          `json:"kind"`
+	Status         string                          `json:"status"`
+	ImageDigest    string                          `json:"image_digest"`
+	RootfsKey      string                          `json:"rootfs_key"`
+	RootfsBytes    int64                           `json:"rootfs_bytes"`
+	SourceSHA256   string                          `json:"source_sha256"`
+	ParkedReason   string                          `json:"parked_reason"`
+	ScanStatus     string                          `json:"scan_status"`
+	ScanResultHash string                          `json:"scan_result_hash"`
+	SidecarHash    string                          `json:"sidecar_hash"`
+	Security       *standardReviewArtifactSecurity `json:"security,omitempty"`
 }
 
 func prepareStandardReview(orgID, actorID string, r ApplicationStandardReviewRequest) (ApplicationStandardReviewRequest, error) {
@@ -292,6 +295,8 @@ func buildStandardReview(snapshot standardReviewSnapshot, request ApplicationSta
 		p.Applications = append(p.Applications, reviewed)
 		p.Blockers = append(p.Blockers, bindStandardReviewAppResources(snapshot, app, reviewed, resources)...)
 		p.Blockers = append(p.Blockers, standardReviewAppBlockers(app, reviewed)...)
+		p.Blockers = append(p.Blockers, standardReviewArtifactBlockers(snapshot.Publishers, app, reviewed, now)...)
+		p.ExpiresAt = standardReviewArtifactExpiry(p.ExpiresAt, app, reviewed)
 		if _, managed := reviewed.Effective.Sources[appstandards.LogDestinations]; managed || len(prior.Layers) != 0 {
 			accountDelta[app.AccountID] += len(standardReviewStrings(reviewed.Effective.Values[appstandards.LogDestinations])) - len(app.Drains)
 		}
@@ -694,11 +699,6 @@ func standardReviewAppBlockers(app standardReviewAppSnapshot, reviewed Applicati
 	}
 	if signed && len(publishers) == 0 {
 		add(appstandards.TrustedPublishers, "trusted_publisher_required")
-	}
-	artifactSecurityChange := signed && (slices.Contains(reviewed.ChangedFields, appstandards.RequireSigned) || slices.Contains(reviewed.ChangedFields, appstandards.TrustedPublishers))
-	artifactSecurityChange = artifactSecurityChange || slices.Contains(reviewed.ChangedFields, appstandards.SecurityPolicy) && string(reviewed.Effective.Values[appstandards.SecurityPolicy]) == `"enforce"`
-	if len(app.Artifacts) > 0 && artifactSecurityChange {
-		add(appstandards.TrustedPublishers, "current_artifact_verification_required")
 	}
 	return out
 }
