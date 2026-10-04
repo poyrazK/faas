@@ -2264,7 +2264,9 @@ environment serving/enforcement acceptance remain outstanding.
 Customer controls reject enforcement until the production executor qualifies.
 Terraform reserves physical scoped variable/configuration/source fields before
 writes and during refresh/import; the adoption snapshot maps those identities
-onto logical workload fields. Source retirement keeps immutable binding and
+onto logical workload fields. Deployment cancellation/destruction and missing
+history retain the shared source reservation across Terraform replacements;
+release requires an explicit ownership handoff. Source retirement keeps immutable binding and
 approval history, releases that binding's ownership, fences existing leases, and
 requires a replacement binding to receive fresh approval and adoption. The
 replacement generation exceeds every retired binding generation. Pending

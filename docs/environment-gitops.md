@@ -72,6 +72,9 @@ Claims contain resource identities and field paths, never values. The authentica
 `DELETE` releases the specified claims without changing values. Removing a resource
 from Terraform state alone does not release its claims; explicitly release them
 before reviewing a Git adoption. A failed write retains its reservation for retry.
+Deployment cancellation, destruction and missing history also retain the source
+reservation, because another Terraform deployment may manage the same scoped
+source. Release that reservation explicitly during a reviewed handoff to Git.
 
 Use the dashboard source controls or the CLI to rebind or disconnect:
 
