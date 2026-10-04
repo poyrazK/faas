@@ -241,17 +241,11 @@ test-state-coverage: ## Assert pkg/state coverage ≥ 70% (excluding generated p
 check-state-coverage: ## Assert exact pkg/state package coverage ≥ 70% from existing profile (default: coverage/cover.out) without re-running tests
 	@COVERFILE="$${COVERFILE:-$(COVERAGE_DIR)/cover.out}" ; \
 	test -f "$$COVERFILE" || (echo "Coverage file $$COVERFILE not found — run tests with -coverprofile first" ; exit 1) ; \
-	total=$$(awk '/^github\.com\/.*\/pkg\/state\// { \
-		split($$0, a, " "); n=split(a[1], b, ":"); file=b[1]; \
-		prefix="/pkg/state/"; path=substr(file, index(file, prefix)+length(prefix)); \
-		if (path ~ /\// || path == "") next; \
-		count=a[length(a)]+0; stmts=a[length(a)-1]+0; \
-		tot_stmts += stmts; \
-		if (count > 0) tot_hit += stmts; \
-	} END { if (tot_stmts > 0) printf "%.1f", tot_hit*100/tot_stmts; else print "0.0" }' "$$COVERFILE") ; \
-	awk -v t="$$total" 'BEGIN { exit (t+0 >= 70 ? 0 : 1) }' \
-		&& echo "pkg/state coverage: $$total% ✓ (target ≥ 70%, exact package only)" \
-		|| (echo "pkg/state coverage: $$total% ✗ (target ≥ 70%, exact package only)"; exit 1)
+	python3 .claude/ci/coverage_floor.py --state-only "$$COVERFILE"
+
+.PHONY: coverage-checker-test
+coverage-checker-test: ## Exercise coverage block union and exact-package gates without Go or Postgres
+	python3 -m unittest discover -s .claude/ci -p test_coverage_floor.py
 
 .PHONY: memstore-stubs-check
 memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tests vacuous (issue #1529 / PR-2b)
@@ -318,11 +312,10 @@ canary-alert-test: ## Exercise the synthetic-canary Alertmanager payload against
 	bash scripts/ops/canary_alert_test.sh
 
 # coverage-floor: assert per-package coverage ≥ floor for each ship-blocking
-# package. Floors live in the `floors` dict inside the python heredoc below
-# (no separate Make variable — keeping the table adjacent to the verifier
-# keeps edits atomic). Reads every coverage/cover-shard*.out the same way
-# check-state-coverage does. Excludes generated sqlc. Floors are 5pp below
-# the post-PR number; the floor is a fixed line the suite must stay above,
+# package. Floors live beside the verifier in .claude/ci/coverage_floor.py.
+# Reads every coverage/cover-shard*.out and unions repeated source blocks,
+# using the same parser as check-state-coverage. Excludes generated sqlc.
+# The floor is a fixed line the suite must stay above,
 # not a moving goalpost (mirrors codecov.yml project.default.target).
 # Wired into the matrix-expanded unit-tests-pg-2a/2b CI jobs (see ci.yml).
 .PHONY: coverage-floor
