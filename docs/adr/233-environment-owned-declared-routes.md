@@ -91,7 +91,7 @@ not substitute the stable URL's encoded workload before identity resolution.
 Other edge-rule kinds, ordinary app hostnames, and custom domains remain
 application-owned and are still listed as shared resources.
 
-ADR-531's environment-scoped custom-domain follow-up extends the workload app
+ADR-570's environment-scoped custom-domain follow-up extends the workload app
 filter and headers/CORS replacement to explicitly bound custom domains. Its
 public compiler selects the environment from the actual binding in the same
 authoritative snapshot.

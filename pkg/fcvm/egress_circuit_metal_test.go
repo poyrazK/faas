@@ -1,6 +1,6 @@
 //go:build linux && metal
 
-// adr: 531 — real nft setup and transaction rollback in isolated netns.
+// adr: 570 — real nft setup and transaction rollback in isolated netns.
 package fcvm
 
 import (

@@ -38,7 +38,7 @@ verified environment domain follows that environment's active deployment on
 each request; it is deliberately uncached so promotion and environment
 deletion take effect even if a notification is delayed.
 
-## Follow-up: scoped edge policy (ADR-531)
+## Follow-up: scoped edge policy (ADR-570)
 
 An explicitly environment-scoped domain also uses that environment's workload
 headers/CORS replacement and app-filtered edge policy. A missing policy keeps

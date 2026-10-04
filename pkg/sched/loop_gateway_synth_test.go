@@ -205,7 +205,7 @@ func TestHTTPGatewaySynthExecuteStepRequiresWorkflowTokenMinter(t *testing.T) {
 	}
 }
 
-// adr: 531
+// adr: 570
 func TestHTTPGatewaySynthSecurityHandoffComesFromOwnerContext(t *testing.T) {
 	value, err := trafficrevocation.EncodeSnapshot(map[trafficrevocation.Scope]trafficrevocation.State{{Kind: "account", ID: uuid.NewString()}: {Revision: 2}})
 	if err != nil {

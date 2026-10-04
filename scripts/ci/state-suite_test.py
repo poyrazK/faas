@@ -1,4 +1,4 @@
-"""ADR-531: guard test inventory completeness and coverage merging."""
+"""ADR-570: guard test inventory completeness and coverage merging."""
 import importlib.util
 import pathlib
 import subprocess

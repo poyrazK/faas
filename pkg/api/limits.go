@@ -2048,7 +2048,7 @@ func (l Limits) EphemeralDiskMaxBytes() int64 {
 // on the Limits struct) per ADR-098 §263.
 const UpstreamProbeMaxConcurrent = 64
 
-// ADR-531: bounds for resolved TCP circuit sets. Reject an oversized DNS
+// ADR-570: bounds for resolved TCP circuit sets. Reject an oversized DNS
 // response rather than claiming protection for only a subset of its answers.
 const (
 	EgressCircuitMaxResolvedAddresses = 64
@@ -7626,7 +7626,7 @@ const (
 	// call, including a cold wake and all retries. The default remains unset.
 	MaxServiceReliabilityTimeoutMS = 300_000
 	// MaxTrafficDeadlineTokenBytes bounds the private managed-request carrier
-	// before decoding or authenticating any customer-supplied bytes (ADR-531).
+	// before decoding or authenticating any customer-supplied bytes (ADR-570).
 	MaxTrafficDeadlineTokenBytes = 2048
 	// TrafficServicePolicyReadTimeout bounds the complete read-only discovery
 	// and authorization snapshot; no transaction is retained during wake.
@@ -7634,7 +7634,7 @@ const (
 	TrafficPublicRoutingReadTimeout = 250 * time.Millisecond
 	TrafficPublicHostReadTimeout    = 250 * time.Millisecond
 	// Bound public policy host input and hostname expansion in environment
-	// overlays to the DNS name size accepted for custom domains (ADR-531).
+	// overlays to the DNS name size accepted for custom domains (ADR-570).
 	TrafficPolicyMaxHostnameBytes = 253
 	// Contended policy writers return pool connections between lock attempts.
 	TrafficPolicyMutationLockRetry        = 25 * time.Millisecond

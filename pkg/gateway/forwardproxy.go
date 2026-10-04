@@ -328,7 +328,7 @@ func fwdStreamOnce(w http.ResponseWriter, r *http.Request, cli vmmdpb.VmmdClient
 // emitted on the first downstream byte (the Response Init
 // frame's WriteHeader). nil events opts out (pre-PR-C fixtures).
 //
-// ADR-531: ordinary responses retain their budget through the full body.
+// ADR-570: ordinary responses retain their budget through the full body.
 // Explicit streams and gRPC detach after successful headers, retaining the
 // independent session ceiling, idle bound and client cancellation.
 func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.VmmdClient, log *slog.Logger, t Target, events *evts.Platform) {

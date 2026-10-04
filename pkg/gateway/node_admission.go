@@ -31,7 +31,7 @@ func writeNodeAdmissionRefusal(w http.ResponseWriter, err error) bool {
 // gRPC reports server termination as Send EOF; Recv carries the terminal
 // status. Resolve it before classifying an uncommitted forwarding failure.
 // Buffered frames are discarded because the request send has already failed.
-// The receive remains on the original bounded RPC context. adr: 531
+// The receive remains on the original bounded RPC context. adr: 570
 func forwardingSendStatus[Response any](sendErr error, stream interface{ Recv() (*Response, error) }) error {
 	if !errors.Is(sendErr, io.EOF) {
 		return sendErr

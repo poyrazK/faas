@@ -186,7 +186,7 @@ type Config struct {
 	// UpsertComputeNodeFromOperator). Defaults to "".
 	NodeName string `toml:"node_name"`
 
-	// RateLimit selects shared Postgres counters by default (ADR-531).
+	// RateLimit selects shared Postgres counters by default (ADR-570).
 	// Explicit local mode is a development/operator exception and does not
 	// provide a fleet cap. The same mode selects the default retry backend.
 	RateLimit TOMLRateLimitConfig `toml:"ratelimit"`

@@ -1,6 +1,6 @@
 # Node HTTP admission
 
-Implementation: ADR-531. Native Linux KVM, process-fence and leak acceptance
+Implementation: ADR-570. Native Linux KVM, process-fence and leak acceptance
 remains pending; this is not a completed release capability.
 
 The VM node enforces the existing plan cap from the instance's trusted wake

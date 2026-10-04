@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ADR-531: execute every state test once, retaining race and coverage gates."""
+"""ADR-570: execute every state test once, retaining race and coverage gates."""
 
 import argparse
 import hashlib

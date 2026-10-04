@@ -72,7 +72,7 @@ const DirectDSNEnv = "FAAS_DATABASE_URL_DIRECT"
 // across every node.
 const directHubOnMaxConns int32 = 2
 
-// ADR-531: apid holds its outer edge mutation lock while the traffic guard
+// ADR-570: apid holds its outer edge mutation lock while the traffic guard
 // uses a second pinned connection. Its process mutex admits one outer lock.
 const directAPIDHubOnMaxConns int32 = directHubOnMaxConns + 1
 

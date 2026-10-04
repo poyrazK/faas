@@ -1,4 +1,4 @@
-"""ADR-531: prove CI refuses incomplete and skipped traffic evidence."""
+"""ADR-570: prove CI refuses incomplete and skipped traffic evidence."""
 
 import importlib.util
 import json

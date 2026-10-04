@@ -26,7 +26,7 @@ func TestE2E_ServiceRetryBudget_TwoGatewayCanary(t *testing.T) {
 	runServiceRetryBudgetCanary(t, "redis://"+redis.Addr(), func(*normalPathFixture) { redis.Close() })
 }
 
-// ADR-531: a missing Redis setting uses the authoritative Postgres budget.
+// ADR-570: a missing Redis setting uses the authoritative Postgres budget.
 func TestE2E_ServiceRetryBudget_PostgresDefaultTwoGatewayCanary(t *testing.T) {
 	runServiceRetryBudgetCanary(t, "", func(f *normalPathFixture) {
 		if _, err := f.h.Pool.Exec(f.ctx, "ALTER TABLE traffic_retry_counters RENAME TO traffic_retry_counters_offline"); err != nil {

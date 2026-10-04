@@ -1,6 +1,6 @@
 # Shared traffic counters
 
-Implementation: ADR-531. Complete traffic-platform release acceptance remains
+Implementation: ADR-570. Complete traffic-platform release acceptance remains
 pending; local evidence below does not establish deployed latency or HA.
 
 ## Selection and inspection

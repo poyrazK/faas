@@ -1,6 +1,6 @@
 package fcvm
 
-// ADR-201 / ADR-531: schedd owns desired circuits; vmmd applies them to every
+// ADR-201 / ADR-570: schedd owns desired circuits; vmmd applies them to every
 // live or pending tenant network before guest execution.
 
 import (

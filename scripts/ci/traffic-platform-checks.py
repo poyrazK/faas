@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ADR-531: retain complete traffic test logs and reject skipped PG acceptance."""
+"""ADR-570: retain complete traffic test logs and reject skipped PG acceptance."""
 
 import argparse
 import collections

@@ -52,7 +52,7 @@ under `/var/lib/faas/log-drains` before delivery.
   supplied from a common Ansible Vault variable, projects the root-only
   Redis URL through `LoadCredential` and selects the shared Redis retry backend.
   With no Redis override, central mode uses the shared Postgres retry backend
-  (ADR-531); explicit local mode has no fleet-wide cap.
+  (ADR-570); explicit local mode has no fleet-wide cap.
   Set `gatewayd_retry_budget_required=true` on every gateway for the
   activation pass; the role fails if any gateway lacks the URL. The URL is
   never written into the drop-in or logged by Ansible. The optional URL

@@ -1,6 +1,6 @@
 # HTTP security revocation
 
-ADR-531 separates a request's immutable traffic policy from emergency security
+ADR-570 separates a request's immutable traffic policy from emergency security
 state. Postgres `traffic_security_epochs` records account suspension/deletion
 pending and abuse holds, app deletion, and deployment security quarantine.
 Every revoke and release advances a generation. Physical deletion retains a

@@ -665,7 +665,7 @@ type Querier interface {
 	// via the existing app/deployment joins if needed by downstream
 	// code, but the per-tick hot loop doesn't pay for it here.
 	InstanceListByNodeForRecovery(ctx context.Context, db DBTX, nodeID pgtype.UUID) ([]InstanceListByNodeForRecoveryRow, error)
-	// ADR-531: verify every synthetic target in the invocation version snapshot.
+	// ADR-570: verify every synthetic target in the invocation version snapshot.
 	InvocationTargetAllowed(ctx context.Context, db DBTX, arg InvocationTargetAllowedParams) (bool, error)
 	InvoiceRefreshTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	// Returns true if any active suppression matches the address.
@@ -897,7 +897,7 @@ type Querier interface {
 	ListDueManagedPostgresBindings(ctx context.Context, db DBTX, arg ListDueManagedPostgresBindingsParams) ([]ListDueManagedPostgresBindingsRow, error)
 	ListDueManagedPostgresCutovers(ctx context.Context, db DBTX, arg ListDueManagedPostgresCutoversParams) ([]ManagedPostgresCutover, error)
 	ListDueRouteMonitors(ctx context.Context, db DBTX, batchLimit int32) ([]ListDueRouteMonitorsRow, error)
-	// ADR-531: replay actual recent probe history after restart. Keep unprobed
+	// ADR-570: replay actual recent probe history after restart. Keep unprobed
 	// opted-in upstreams as NULL samples so retirement differs from no evidence.
 	// Collapse region verdicts sharing one probe timestamp conservatively.
 	ListEgressCircuitCandidates(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) ([]ListEgressCircuitCandidatesRow, error)
@@ -1458,9 +1458,9 @@ type Querier interface {
 	ReadExclusiveWorkOperation(ctx context.Context, db DBTX, arg ReadExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)
 	ReadExclusiveWorkPolicy(ctx context.Context, db DBTX, arg ReadExclusiveWorkPolicyParams) (ExclusiveWorkPolicy, error)
 	ReadExclusiveWorkReplay(ctx context.Context, db DBTX, arg ReadExclusiveWorkReplayParams) (ExclusiveWorkOperation, error)
-	// ADR-531: generation-fenced gateway wiring observations.
+	// ADR-570: generation-fenced gateway wiring observations.
 	ReadGatewayTrafficRuntimeEpoch(ctx context.Context, db DBTX, nodeName string) (ReadGatewayTrafficRuntimeEpochRow, error)
-	// ADR-531: identity-only projection for a durable invocation version snapshot.
+	// ADR-570: identity-only projection for a durable invocation version snapshot.
 	ReadInvocationVersionApp(ctx context.Context, db DBTX, id pgtype.UUID) (ReadInvocationVersionAppRow, error)
 	ReadManagedPostgresHealthSnapshots(ctx context.Context, db DBTX, arg ReadManagedPostgresHealthSnapshotsParams) ([]ReadManagedPostgresHealthSnapshotsRow, error)
 	ReadOpenAPIImportQuota(ctx context.Context, db DBTX, arg ReadOpenAPIImportQuotaParams) (ReadOpenAPIImportQuotaRow, error)
@@ -1469,7 +1469,7 @@ type Querier interface {
 	// Retain the alias claim independently from current owner/target eligibility.
 	ReadPublicAliasHostReserved(ctx context.Context, db DBTX, hostLabel string) (bool, error)
 	ReadPublicHostAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]byte, error)
-	// ADR-531: public host policy reads are credential-minimal and transaction-scoped.
+	// ADR-570: public host policy reads are credential-minimal and transaction-scoped.
 	ReadPublicHostApp(ctx context.Context, db DBTX, arg ReadPublicHostAppParams) ([]byte, error)
 	ReadPublicHostCorsPreset(ctx context.Context, db DBTX, arg ReadPublicHostCorsPresetParams) (ReadPublicHostCorsPresetRow, error)
 	ReadPublicHostDeployment(ctx context.Context, db DBTX, arg ReadPublicHostDeploymentParams) ([][]byte, error)
@@ -1511,7 +1511,7 @@ type Querier interface {
 	// Saved route intent is read with the same app ownership filters (ADR-448).
 	ReadSavedRouteRequirements(ctx context.Context, db DBTX, arg ReadSavedRouteRequirementsParams) ([]byte, error)
 	ReadServicePolicyActiveRelease(ctx context.Context, db DBTX, arg ReadServicePolicyActiveReleaseParams) (bool, error)
-	// ADR-531: minimal credential-free projection for one read-only service-policy snapshot.
+	// ADR-570: minimal credential-free projection for one read-only service-policy snapshot.
 	ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgtype.UUID) (ReadServicePolicyAppByIDRow, error)
 	ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug string) (ReadServicePolicyAppBySlugRow, error)
 	ReadServicePolicyDeploymentOverride(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentOverrideParams) (bool, error)
@@ -1521,7 +1521,7 @@ type Querier interface {
 	ReadServicePolicyReleaseCandidates(ctx context.Context, db DBTX, arg ReadServicePolicyReleaseCandidatesParams) ([]ReadServicePolicyReleaseCandidatesRow, error)
 	ReadServicePolicyTestApp(ctx context.Context, db DBTX, arg ReadServicePolicyTestAppParams) (ReadServicePolicyTestAppRow, error)
 	ReadServicePolicyTestMember(ctx context.Context, db DBTX, appID pgtype.UUID) (ReadServicePolicyTestMemberRow, error)
-	// ADR-531: fresh synthetic ingress mode without environment or credentials.
+	// ADR-570: fresh synthetic ingress mode without environment or credentials.
 	ReadSyntheticIngressAuthMode(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
 	ReadTenantHostnameTrafficOwner(ctx context.Context, db DBTX, arg ReadTenantHostnameTrafficOwnerParams) (ReadTenantHostnameTrafficOwnerRow, error)
 	ReadTenantSurfaceTrafficAccount(ctx context.Context, db DBTX, surfaceID pgtype.UUID) (pgtype.UUID, error)
@@ -1638,7 +1638,7 @@ type Querier interface {
 	// Materialize the locked row before evaluating expiry. A valid predicate
 	// evaluated before waiting for a row lock must not resurrect an expired lease.
 	RenewNotificationClaim(ctx context.Context, db DBTX, arg RenewNotificationClaimParams) (int64, error)
-	// ADR-531: only the current process may acknowledge durable policy replay.
+	// ADR-570: only the current process may acknowledge durable policy replay.
 	// Lock the node before its epoch, matching registration and FK deletion order.
 	ReportGatewayPolicyProgress(ctx context.Context, db DBTX, arg ReportGatewayPolicyProgressParams) (int64, error)
 	ReportGatewayTrafficRuntime(ctx context.Context, db DBTX, arg ReportGatewayTrafficRuntimeParams) (int64, error)

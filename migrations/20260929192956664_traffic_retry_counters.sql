@@ -1,7 +1,7 @@
 -- filename: 20260929192956664_traffic_retry_counters.sql
 
 -- +goose Up
--- ADR-531: gateways atomically observe originals and spend aggregate retries.
+-- ADR-570: gateways atomically observe originals and spend aggregate retries.
 -- Process replacement never grants a fresh allowance in an active window.
 CREATE TABLE IF NOT EXISTS traffic_retry_counters (
     app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,

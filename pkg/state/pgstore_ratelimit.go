@@ -8,7 +8,7 @@
 //
 //   1. The Store adapter already owns the pgxpool — no need to
 //      open a second pool just for the counter.
-//   2. The atomic consume uses sqlc (ADR-531). Existing diagnostic and
+//   2. The atomic consume uses sqlc (ADR-570). Existing diagnostic and
 //      maintenance queries retain the ADR-041 single-statement carve-out.
 //
 // Interface assertion: the compile-time `var _ gateway.CentralBackend =
@@ -35,7 +35,7 @@
 //
 // # Store outage posture
 //
-// A store error refuses unverified admission (ADR-531). No process-local
+// A store error refuses unverified admission (ADR-570). No process-local
 // allowance is substituted; the gateway returns rate_limit_unavailable/503.
 //
 // # Dimensional rule scope

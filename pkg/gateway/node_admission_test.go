@@ -1,4 +1,4 @@
-// adr: 531 — preserve structured compute-node admission refusals.
+// adr: 570 — preserve structured compute-node admission refusals.
 package gateway
 
 import (

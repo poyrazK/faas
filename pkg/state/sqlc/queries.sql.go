@@ -10052,7 +10052,7 @@ type InvocationTargetAllowedParams struct {
 	Scope        string
 }
 
-// ADR-531: verify every synthetic target in the invocation version snapshot.
+// ADR-570: verify every synthetic target in the invocation version snapshot.
 func (q *Queries) InvocationTargetAllowed(ctx context.Context, db DBTX, arg InvocationTargetAllowedParams) (bool, error) {
 	row := db.QueryRow(ctx, invocationTargetAllowed,
 		arg.InstanceID,
@@ -13992,7 +13992,7 @@ type ListEgressCircuitCandidatesRow struct {
 	SampledAt                      pgtype.Timestamptz
 }
 
-// ADR-531: replay actual recent probe history after restart. Keep unprobed
+// ADR-570: replay actual recent probe history after restart. Keep unprobed
 // opted-in upstreams as NULL samples so retirement differs from no evidence.
 // Collapse region verdicts sharing one probe timestamp conservatively.
 func (q *Queries) ListEgressCircuitCandidates(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) ([]ListEgressCircuitCandidatesRow, error) {
@@ -26951,7 +26951,7 @@ type ReadGatewayTrafficRuntimeEpochRow struct {
 	BootID     pgtype.UUID
 }
 
-// ADR-531: generation-fenced gateway wiring observations.
+// ADR-570: generation-fenced gateway wiring observations.
 func (q *Queries) ReadGatewayTrafficRuntimeEpoch(ctx context.Context, db DBTX, nodeName string) (ReadGatewayTrafficRuntimeEpochRow, error) {
 	row := db.QueryRow(ctx, readGatewayTrafficRuntimeEpoch, nodeName)
 	var i ReadGatewayTrafficRuntimeEpochRow
@@ -26973,7 +26973,7 @@ type ReadInvocationVersionAppRow struct {
 	DeletedAt     pgtype.Timestamptz
 }
 
-// ADR-531: identity-only projection for a durable invocation version snapshot.
+// ADR-570: identity-only projection for a durable invocation version snapshot.
 func (q *Queries) ReadInvocationVersionApp(ctx context.Context, db DBTX, id pgtype.UUID) (ReadInvocationVersionAppRow, error) {
 	row := db.QueryRow(ctx, readInvocationVersionApp, id)
 	var i ReadInvocationVersionAppRow
@@ -27182,7 +27182,7 @@ type ReadPublicHostAppParams struct {
 	Slug  string
 }
 
-// ADR-531: public host policy reads are credential-minimal and transaction-scoped.
+// ADR-570: public host policy reads are credential-minimal and transaction-scoped.
 func (q *Queries) ReadPublicHostApp(ctx context.Context, db DBTX, arg ReadPublicHostAppParams) ([]byte, error) {
 	row := db.QueryRow(ctx, readPublicHostApp, arg.AppID, arg.Slug)
 	var data []byte
@@ -28107,7 +28107,7 @@ type ReadServicePolicyAppByIDRow struct {
 	Manifest         []byte
 }
 
-// ADR-531: minimal credential-free projection for one read-only service-policy snapshot.
+// ADR-570: minimal credential-free projection for one read-only service-policy snapshot.
 func (q *Queries) ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgtype.UUID) (ReadServicePolicyAppByIDRow, error) {
 	row := db.QueryRow(ctx, readServicePolicyAppByID, id)
 	var i ReadServicePolicyAppByIDRow
@@ -28455,7 +28455,7 @@ SELECT public_auth_mode FROM apps
 WHERE id = $1::uuid AND status <> 'deleted' AND deleted_at IS NULL
 `
 
-// ADR-531: fresh synthetic ingress mode without environment or credentials.
+// ADR-570: fresh synthetic ingress mode without environment or credentials.
 func (q *Queries) ReadSyntheticIngressAuthMode(ctx context.Context, db DBTX, id pgtype.UUID) (string, error) {
 	row := db.QueryRow(ctx, readSyntheticIngressAuthMode, id)
 	var public_auth_mode string
@@ -29723,7 +29723,7 @@ type ReportGatewayPolicyProgressParams struct {
 	BootID       pgtype.UUID
 }
 
-// ADR-531: only the current process may acknowledge durable policy replay.
+// ADR-570: only the current process may acknowledge durable policy replay.
 // Lock the node before its epoch, matching registration and FK deletion order.
 func (q *Queries) ReportGatewayPolicyProgress(ctx context.Context, db DBTX, arg ReportGatewayPolicyProgressParams) (int64, error) {
 	result, err := db.Exec(ctx, reportGatewayPolicyProgress,

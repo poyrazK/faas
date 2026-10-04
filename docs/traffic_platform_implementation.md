@@ -1,7 +1,7 @@
 # Traffic platform implementation tracker
 
 Objective: implement the six delivery steps in the 2026-09-29 gap-closure plan.
-Base: `56618879c`; branch: `codex/traffic-platform-gaps`; decision: ADR-531.
+Base: `56618879c`; branch: `codex/traffic-platform-gaps`; decision: ADR-570.
 
 ## Bounded selected-deployment service wakes — 2026-10-02
 
@@ -2016,7 +2016,7 @@ captured router namespace in the same snapshot. An alias, exact ordinary domain
 or higher-priority tenant binding cannot inherit a shadowed domain's overlay.
 Fresh requests read the authoritative inputs before cache reuse; admitted
 snapshots remain immutable. Oversized or failed scoped reads refuse forwarding.
-ADR-531 records the decision, with follow-up references in ADR-233 and ADR-283.
+ADR-570 records the decision, with follow-up references in ADR-233 and ADR-283.
 
 Bounded aggregate analysis includes valid owned scoped-domain identities and
 injects their environment overlays by binding rather than only by generated
@@ -2092,7 +2092,7 @@ Checks include cross-account and environment-scoped fallbacks, newly unclaimed
 global discovery and each potential route owner's retained policy. An active
 tenant shadow can still cause a conservative refusal because the potential
 fallback with tenant surfaces disabled is checked; complete tenant transition
-guards remain pending. ADR-531 and the request-policy operations guide record
+guards remain pending. ADR-570 and the request-policy operations guide record
 the scope and repair behavior.
 
 Global aggregate analysis now subtracts app, tenant and exact/literal-wildcard
@@ -2161,7 +2161,7 @@ All six release guarantees remain unchecked.
 
 ### 2026-10-01: bounded public and managed-service decisions
 
-ADR-531 records the design before runtime changes. Public routing requests and
+ADR-570 records the design before runtime changes. Public routing requests and
 managed HTTP service calls now own a fixed decision record. Seventeen scalar
 span attributes report path, last phase, final outcome, actual proxy dispatches
 and replays, first retry refusal, rejecting limiter family, cache outcome,
@@ -3503,7 +3503,7 @@ instance. The existing 30-second duration now lives in `pkg/api/limits.go`.
 Managed service leases retain the wake privately and reject replacement identity;
 their public JSON shape is unchanged. Legacy optional API fallbacks remain weaker
 and require the coordinated migration/producer/observation/consumer rollout in
-the traffic policy runbook. ADR 531 records the contract.
+the traffic policy runbook. ADR 570 records the contract.
 
 Verification against the final unchanged 12,539-file source freeze:
 
@@ -3595,7 +3595,7 @@ eviction, recreation or weight changes. Confirmed removal fences the retired
 wake/node without blocking a known fresh lifetime. Partial readiness results
 returned with an error cannot certify routing. The daemon cancels and joins the
 placement worker on startup failure and shutdown. All bounds live in
-`pkg/api/limits.go`; customer quotas are unchanged. ADR 531 and the traffic policy
+`pkg/api/limits.go`; customer quotas are unchanged. ADR 570 and the traffic policy
 runbook describe the contract and its limits.
 
 Verification against the 12,545-file executed source freeze:
@@ -3691,7 +3691,7 @@ dedicated mirror VMs stay outside the public picker and count. Scoped verificati
 normalizes target ownership. Legacy optional backends without the stored
 reader/verifier retain weaker compatibility behavior. Production wiring supplies
 both. The existing daemon fleet fixture now uses verified publication without
-relaxing its readiness, routing or capacity assertions. ADR 531 and the traffic
+relaxing its readiness, routing or capacity assertions. ADR 570 and the traffic
 policy runbook describe the contract and its limits; customer quotas are unchanged.
 
 Verification against the 12,550-file executed source freeze:
@@ -4268,7 +4268,7 @@ into an invocation error, preserves an available cancellation/revocation cause,
 and discards both partial response bytes and any prior result. Cancellation in
 both gateway-owned and pre-woken invocation paths also clears prior results.
 Unrelated panics still propagate. Public HTTP forwarding keeps its existing
-stream-abort behavior. ADR 531's requirement that revoked exchanges cannot
+stream-abort behavior. ADR 570's requirement that revoked exchanges cannot
 publish successful results remains the contract; no owner, quota, deadline,
 retry budget or routing fence changes.
 

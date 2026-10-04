@@ -1,6 +1,6 @@
 // The existing FAAS_SESSION_KEY contract is shared with apid. It accepts
 // operator-provisioned 32-byte hex content or a LoadCredential file path.
-// ADR-531 derives a distinct managed-deadline MAC key from this master.
+// ADR-570 derives a distinct managed-deadline MAC key from this master.
 package main
 
 import (
