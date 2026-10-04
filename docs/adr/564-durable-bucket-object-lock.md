@@ -35,6 +35,12 @@ would deadlock with an account-locked admission despite a NO KEY UPDATE bucket
 lock. PostgreSQL contention tests exercise each mutation against a raw grant
 admission with the full guard set installed.
 
+Public and fixed multipart creation and completion results follow the same
+account-before-bucket-before-upload order. Creation takes the account lock even
+without a fixed quota policy so its account foreign key cannot invert this
+order. PostgreSQL contention tests cover both creation paths and completion
+dispatch, finish, retry and rejection while configuration owns the account.
+
 Fence new admissions while configuration is unresolved. Existing writes and
 multipart sessions drain under the preceding native default before a new default
 is dispatched; configuration cannot cancel them or change their quota. Deletion

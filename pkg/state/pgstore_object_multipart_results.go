@@ -18,10 +18,10 @@ func (s *PgStore) lockObjectMultipartResult(ctx context.Context, u ObjectMultipa
 		return nil, ObjectMultipartUpload{}, err
 	}
 	q := sqlc.New()
-	// Lifecycle, configuration and inventory mutations lock bucket then
-	// account. Taking the account first here creates a cycle with their lock.
-	if _, err = q.ObjectVersionBucketOwned(ctx, tx, sqlc.ObjectVersionBucketOwnedParams{ID: mustPgUUID(u.BucketID), AccountID: mustPgUUID(u.AccountID)}); err == nil {
-		_, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(u.AccountID))
+	// Match admission and configuration: account, then bucket, then upload.
+	// Waiting on the account must leave its owner's bucket lock available.
+	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(u.AccountID)); err == nil {
+		_, err = q.ObjectVersionBucketOwned(ctx, tx, sqlc.ObjectVersionBucketOwnedParams{ID: mustPgUUID(u.BucketID), AccountID: mustPgUUID(u.AccountID)})
 	}
 	var old ObjectMultipartUpload
 	if err == nil {

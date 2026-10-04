@@ -72,7 +72,7 @@ func (s *PgStore) ListObjectLifecycleMultipartUploads(ctx context.Context, id, t
 	return rows, err
 }
 
-// Bucket/account/upload locks serialize admission with completion and rule
+// Account/bucket/upload locks serialize admission with completion and rule
 // replacement. The abort journal and scan checkpoint commit together.
 func (s *PgStore) CheckpointObjectLifecycleMultipartUpload(ctx context.Context, id, token string, expected ObjectMultipartUpload) (ObjectLifecycleScan, error) {
 	return s.withLifecycleMultipartScan(ctx, id, token, func(tx pgx.Tx, j ObjectLifecycleScan, now time.Time) (ObjectLifecycleScan, error) {

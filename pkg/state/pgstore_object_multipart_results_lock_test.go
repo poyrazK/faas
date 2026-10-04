@@ -10,7 +10,7 @@ import (
 )
 
 // adr: 550
-func TestObjectMultipartResultsBucketBeforeAccountPG(t *testing.T) {
+func TestObjectMultipartResultsAccountBeforeBucketPG(t *testing.T) {
 	st, pool, _ := pgStoreWithPool(t)
 	for _, operation := range []string{"dispatch", "finish", "retry", "reject"} {
 		t.Run(operation, func(t *testing.T) {
@@ -31,8 +31,8 @@ func TestObjectMultipartResultsBucketBeforeAccountPG(t *testing.T) {
 			if err = fixture.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&fixturePID); err != nil {
 				t.Fatal(err)
 			}
-			// Lifecycle/configuration transactions take this bucket lock first.
-			if _, err = fixture.Exec(ctx, "SELECT id FROM object_buckets WHERE id=$1 FOR NO KEY UPDATE", b.ID); err != nil {
+			// Configuration owns the account before requesting the bucket lock.
+			if _, err = fixture.Exec(ctx, "SELECT id FROM accounts WHERE id=$1 FOR UPDATE", b.AccountID); err != nil {
 				t.Fatal(err)
 			}
 			result := make(chan error, 1)
@@ -50,30 +50,10 @@ func TestObjectMultipartResultsBucketBeforeAccountPG(t *testing.T) {
 				}
 				result <- e
 			}()
-			// Wait for the exact contested bucket lock, rather than guessing how
-			// long the goroutine needs to enter the result transaction.
-			for {
-				var blocked bool
-				err = pool.QueryRow(ctx, `SELECT EXISTS (
-					SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
-					AND wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid))
-					AND query LIKE '%FROM object_buckets%FOR SHARE%')`, fixturePID).Scan(&blocked)
-				if err != nil || blocked {
-					break
-				}
-				select {
-				case e := <-result:
-					t.Fatalf("result returned before reaching the bucket lock: %v", e)
-				case <-ctx.Done():
-					err = ctx.Err()
-				case <-time.After(10 * time.Millisecond):
-				}
-				if err != nil {
-					break
-				}
-			}
+			// An account waiter must not already hold a conflicting bucket lock.
+			err = waitVersioningAccountLock(ctx, pool, fixturePID)
 			if err == nil {
-				_, err = fixture.Exec(ctx, "SELECT id FROM accounts WHERE id=$1 FOR UPDATE", b.AccountID)
+				_, err = fixture.Exec(ctx, "SELECT id FROM object_buckets WHERE id=$1 FOR NO KEY UPDATE", b.ID)
 			}
 			if err == nil {
 				err = fixture.Commit(ctx)
@@ -82,7 +62,7 @@ func TestObjectMultipartResultsBucketBeforeAccountPG(t *testing.T) {
 			}
 			resultErr := <-result
 			if err != nil || resultErr != nil {
-				t.Fatalf("bucket/account lock ordering: fixture=%v result=%v", err, resultErr)
+				t.Fatalf("account/bucket lock ordering: fixture=%v result=%v", err, resultErr)
 			}
 			got, err := st.GetObjectMultipartUpload(ctx, b.AccountID, b.AppID, b.ID, u.ID)
 			if err != nil {

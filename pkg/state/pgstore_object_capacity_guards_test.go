@@ -121,6 +121,12 @@ func TestObjectBucketMutationRequestsDoNotDeadlockAdmission(t *testing.T) {
 			_, err := st.ReserveAdmittedObjectMultipartUpload(ctx, fixedMultipartCandidate(b, "lock order"), 100, accountingPolicy())
 			return err
 		}},
+		{"public multipart", func(ctx context.Context, st *state.PgStore, b state.ObjectBucket) error {
+			u := fixedMultipartCandidate(b, "public lock order")
+			u.SizeBytes, u.PartSizeBytes, u.PartCount = 0, 0, 0
+			_, err := st.ReserveObjectMultipartUpload(ctx, u, 100)
+			return err
+		}},
 		{"versioning", func(ctx context.Context, st *state.PgStore, b state.ObjectBucket) error {
 			_, err := st.RequestObjectBucketVersioning(ctx, b.AccountID, b.AppID, b.ID, "Enabled")
 			return err

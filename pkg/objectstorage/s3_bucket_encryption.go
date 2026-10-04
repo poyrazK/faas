@@ -236,16 +236,31 @@ func validBucketEncryptionNamespaces(body []byte) bool {
 
 // DecodeBucketEncryptionConfiguration accepts an owned public default, without
 // per-object contexts or changes to unrelated native encryption protections.
-func DecodeBucketEncryptionConfiguration(body []byte)(api.ObjectEncryption,error) {
- if int64(len(body))>api.MaxObjectBucketEncryptionBodyBytes || !validBucketEncryptionResponse(body){return api.ObjectEncryption{},ErrInvalid}
- var in struct{Rules []bucketEncryptionXMLRule `xml:"Rule"`}
- if xml.Unmarshal(body,&in)!=nil{return api.ObjectEncryption{},ErrInvalid}
- rule:=in.Rules[0]
- if len(rule.Blocked)>0{return api.ObjectEncryption{},ErrUnsupported}
- apply:=rule.Apply[0]
- e:=api.ObjectEncryption{Algorithm:apply.Algorithm[0]}
- if len(apply.Key)>0{e.KeyID=apply.Key[0]}
- if e.Algorithm=="aws:kms" && len(rule.BucketKey)>0{value:=rule.BucketKey[0]=="true";e.BucketKeyEnabled=&value}
- if e.Empty() || !e.Valid(){return api.ObjectEncryption{},ErrInvalid}
- return e,nil
+func DecodeBucketEncryptionConfiguration(body []byte) (api.ObjectEncryption, error) {
+	if int64(len(body)) > api.MaxObjectBucketEncryptionBodyBytes || !validBucketEncryptionResponse(body) {
+		return api.ObjectEncryption{}, ErrInvalid
+	}
+	var in struct {
+		Rules []bucketEncryptionXMLRule `xml:"Rule"`
+	}
+	if xml.Unmarshal(body, &in) != nil {
+		return api.ObjectEncryption{}, ErrInvalid
+	}
+	rule := in.Rules[0]
+	if len(rule.Blocked) > 0 {
+		return api.ObjectEncryption{}, ErrUnsupported
+	}
+	apply := rule.Apply[0]
+	e := api.ObjectEncryption{Algorithm: apply.Algorithm[0]}
+	if len(apply.Key) > 0 {
+		e.KeyID = apply.Key[0]
+	}
+	if e.Algorithm == "aws:kms" && len(rule.BucketKey) > 0 {
+		value := rule.BucketKey[0] == "true"
+		e.BucketKeyEnabled = &value
+	}
+	if e.Empty() || !e.Valid() {
+		return api.ObjectEncryption{}, ErrInvalid
+	}
+	return e, nil
 }

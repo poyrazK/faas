@@ -81,12 +81,12 @@ func (s *PgStore) reserveObjectMultipart(ctx context.Context, upload ObjectMulti
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	// Follow configuration and admission's account-before-bucket order. The
-	// Object Lock admission guard needs SHARE beyond the FK's KEY SHARE.
+	// Both public and fixed admissions must lock the account before the bucket.
+	// Otherwise insertion's account FK lock can deadlock with configuration.
+	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(upload.AccountID)); err != nil {
+		return ObjectMultipartUpload{}, mapErr(err)
+	}
 	if policy != nil {
-		if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(upload.AccountID)); err != nil {
-			return ObjectMultipartUpload{}, mapErr(err)
-		}
 		upload.FixedAdmission = true
 	}
 	_, err = q.ObjectMultipartLockBucket(ctx, tx, sqlc.ObjectMultipartLockBucketParams{

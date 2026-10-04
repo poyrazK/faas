@@ -95,8 +95,8 @@ recovery owns abort, drain and verification, independently of later rule removal
 or disabled S3 ingress. Lifecycle manages Gregale-owned sessions; discovery of
 provider-only orphan uploads remains outside this scan.
 
-PostgreSQL completion dispatch, finish, retry and rejection all lock bucket,
-then account, then upload, matching lifecycle/configuration/inventory ordering.
+PostgreSQL completion dispatch, finish, retry and rejection all lock account,
+then bucket, then upload, matching lifecycle/configuration/inventory ordering.
 A deterministic contested-bucket regression reproduced a deadlock in all four
 paths before this correction. Memory multipart operations share the store clock
 with lifecycle admission and recovery.
