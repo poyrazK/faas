@@ -351,7 +351,46 @@ func TestResourceAssetsLegacyAndCorruptRecords(t *testing.T) {
 	}
 }
 
-func TestResourceAssetsBindModeRetryAndAliases(t *testing.T) {
+// The artifact cache evicts an entry by unlinking it and refreshes one by
+// renaming a new file over the path. Either way the file whose mode the bind
+// changed is gone from the path: release must finish without touching the
+// file now there. Production: an evicted cache file made every teardown retry
+// fail with ENOENT, the instance stayed running, and fsn-2 could never drain.
+func TestResourceAssetsBindModeReleaseAfterSourceUnlinked(t *testing.T) {
+	for _, tc := range []string{"evicted", "replaced"} {
+		t.Run(tc, func(t *testing.T) {
+			v := NewJailerVMM(t.TempDir(), time.Second)
+			path := filepath.Join(t.TempDir(), "source")
+			if err := os.WriteFile(path, []byte("owned"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			info, _ := os.Stat(path)
+			identity, _ := resourceFileID(info)
+			v.bindSourceModes[path] = bindSourceMode{file: identity, mode: 0o600, refs: 1}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if tc == "replaced" {
+				if err := os.WriteFile(path, []byte("refreshed"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := v.releaseBindSource(path); err != nil {
+				t.Fatalf("release after the source was %s: %v", tc, err)
+			}
+			if len(v.bindSourceModes) != 0 {
+				t.Fatal("release kept tracking a source that is no longer at its path")
+			}
+			if tc == "replaced" {
+				if info, _ := os.Stat(path); info.Mode().Perm() != 0o644 {
+					t.Fatalf("replacement file mode changed to %v", info.Mode().Perm())
+				}
+			}
+		})
+	}
+}
+
+func TestResourceAssetsBindModeAliases(t *testing.T) {
 	v := NewJailerVMM(t.TempDir(), time.Second)
 	path := filepath.Join(t.TempDir(), "source")
 	if err := os.WriteFile(path, []byte("owned"), 0o644); err != nil {
@@ -360,14 +399,6 @@ func TestResourceAssetsBindModeRetryAndAliases(t *testing.T) {
 	info, _ := os.Stat(path)
 	identity, _ := resourceFileID(info)
 	v.bindSourceModes[path] = bindSourceMode{file: identity, mode: 0o600, refs: 1}
-	held := path + ".held"
-	_ = os.Rename(path, held)
-	_ = os.WriteFile(path, []byte("foreign"), 0o644)
-	if err := v.releaseBindSource(path); err == nil || len(v.bindSourceModes) != 1 {
-		t.Fatal("failed restoration forgot source ownership")
-	}
-	_ = os.Remove(path)
-	_ = os.Rename(held, path)
 	alias := path + ".alias"
 	if err := os.Link(path, alias); err != nil {
 		t.Fatal(err)

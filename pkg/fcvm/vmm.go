@@ -4971,6 +4971,15 @@ func (v *JailerVMM) releaseBindSource(src string) error {
 		}
 	}
 	if !shared {
+		unlinked, err := bindSourceUnlinked(src, state.file)
+		if err != nil {
+			return fmt.Errorf("restore bind source mode: %w", err)
+		}
+		if unlinked {
+			// No mode to restore: see bindSourceUnlinked.
+			delete(v.bindSourceModes, src)
+			return nil
+		}
 		if v.resourceJournal != nil {
 			owned := make(map[string]bool)
 			for _, binds := range v.bindMounts {
@@ -5004,6 +5013,30 @@ func (v *JailerVMM) releaseBindSource(src string) error {
 	}
 	delete(v.bindSourceModes, src)
 	return nil
+}
+
+// bindSourceUnlinked reports whether the file whose mode a bind changed is no
+// longer at src. The artifact cache only ever unlinks an entry (eviction, app
+// deletion) or replaces it by renaming a new file over the path; it never
+// moves an entry away and back. So a missing path, or a different file at the
+// path, means the original inode is unlinked and its last reference was this
+// instance's bind mount: there is no mode left to restore, and the file now
+// at the path is not ours to chmod. Treating this as retryable wedged
+// teardown forever (production: evicted cache file → "cleanup pending" every
+// 10 s, the instance row stayed running, and the node could never drain).
+func bindSourceUnlinked(src string, expected resourceFileIdentity) (bool, error) {
+	info, err := os.Lstat(src)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	actual, err := resourceFileID(info)
+	if err != nil {
+		return false, err
+	}
+	return actual != expected, nil
 }
 
 // prepareConfigFIFO creates the one-shot config handoff used during a cold
