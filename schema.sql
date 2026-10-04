@@ -490,6 +490,265 @@ $$;
 
 
 --
+-- Name: application_standard_egress_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_egress_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE actual jsonb;
+BEGIN
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||NEW.app_id::text,0)) THEN
+  RAISE EXCEPTION 'standard egress inputs are busy' USING ERRCODE='55P03';
+ END IF;
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,acct,e NOWAIT;
+ PERFORM id FROM compute_nodes WHERE id=NEW.node_id FOR SHARE NOWAIT;
+ PERFORM id FROM instances WHERE app_id=NEW.app_id AND node_id=NEW.node_id
+  AND state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining') FOR SHARE NOWAIT;
+ actual:=application_standard_egress_target(NEW.app_id,NEW.node_id);
+ IF actual IS NULL OR actual<>NEW.target OR actual->>'org_id'<>NEW.org_id::text
+  OR actual->'identity'->>'ProtocolVersion'<>'2' OR actual->'identity'->>'Incarnation'=''
+  OR NEW.receipt<>jsonb_build_object('identity',actual->'identity','app_id',actual->>'app_id',
+   'revision',actual->'policy'->'revision','policy_hash',actual->>'policy_hash') THEN
+  RAISE EXCEPTION 'standard egress process or inputs changed' USING ERRCODE='40001',CONSTRAINT='application_standard_egress_current';
+ END IF;
+ NEW.observed_at:=clock_timestamp();
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: apps_streaming_plan_allowed(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_streaming_plan_allowed(p_account_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT EXISTS (
+        SELECT 1
+          FROM accounts
+         WHERE id = p_account_id
+           AND plan <> 'free'
+    );
+$$;
+
+
+SET default_table_access_method = heap;
+
+--
+-- Name: apps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.apps (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    slug text NOT NULL,
+    type text DEFAULT 'app'::text NOT NULL,
+    runtime text,
+    ram_mb integer NOT NULL,
+    idle_timeout_s integer,
+    max_concurrency integer DEFAULT 1 NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    manifest jsonb DEFAULT '{}'::jsonb NOT NULL,
+    github_install_id bigint,
+    github_repo_full_name text,
+    github_production_branch text,
+    min_instances integer DEFAULT 0 NOT NULL,
+    egress_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
+    autoscale_target_rps integer,
+    autoscale_target_cpu_pct integer,
+    github_install_binding_id text,
+    github_install_account_id uuid,
+    github_install_linked_at timestamp with time zone,
+    project_id uuid,
+    root_dir text DEFAULT ''::text NOT NULL,
+    workload_name text DEFAULT ''::text NOT NULL,
+    workload_class text DEFAULT 'http'::text NOT NULL,
+    start_command text,
+    streaming_enabled boolean DEFAULT false NOT NULL,
+    scaling_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
+    last_scale_out_at timestamp with time zone,
+    last_scale_in_at timestamp with time zone,
+    require_signed boolean DEFAULT false NOT NULL,
+    node_id uuid,
+    reassigned_at timestamp with time zone,
+    org_id uuid,
+    migrated_at timestamp with time zone,
+    warm_snapshot_enabled boolean DEFAULT false NOT NULL,
+    warm_snapshot_min_requests integer DEFAULT 5 NOT NULL,
+    warm_snapshot_min_ms integer DEFAULT 2000 NOT NULL,
+    eviction_priority text DEFAULT 'best_effort'::text NOT NULL,
+    require_authn boolean DEFAULT false NOT NULL,
+    public_auth_mode text DEFAULT 'open'::text NOT NULL,
+    public_auth_basic bytea,
+    websocket_enabled boolean DEFAULT false NOT NULL,
+    auth_default_flipped_at timestamp with time zone,
+    overflow_node uuid,
+    route_metrics_enabled boolean DEFAULT false NOT NULL,
+    preview_of_slug text,
+    preview_pr_number integer,
+    preview_pr_state text,
+    preview_expires_at timestamp with time zone,
+    cors_default_enabled boolean DEFAULT false NOT NULL,
+    cors_default_origins text[],
+    maintenance_mode boolean DEFAULT false NOT NULL,
+    public_auth_ip_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
+    static_egress_ip inet,
+    static_egress_ip_set_at timestamp with time zone,
+    preview_destroy_commented_at timestamp with time zone,
+    app_protocol text DEFAULT 'http1'::text NOT NULL,
+    cpu_millicores integer DEFAULT 1000 NOT NULL,
+    last_deploy_failed_email_at timestamp with time zone,
+    deleted_at timestamp with time zone,
+    delete_grace_until timestamp with time zone,
+    consumer_auth_mode text DEFAULT 'optional'::text NOT NULL,
+    only_declared_routes boolean DEFAULT false NOT NULL,
+    declared_routes jsonb DEFAULT '[]'::jsonb NOT NULL,
+    purge_claimed_at timestamp with time zone,
+    visibility text DEFAULT 'public'::text NOT NULL,
+    retry_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
+    warm_pool_size integer DEFAULT 0 NOT NULL,
+    security_policy text DEFAULT 'off'::text NOT NULL,
+    egress_allowlist_revision bigint DEFAULT 1 NOT NULL,
+    scaling_policy_revision bigint DEFAULT 1 NOT NULL,
+    app_cpu_policy_revision bigint DEFAULT 1 NOT NULL,
+    request_rate_limit_rps integer,
+    request_rate_limit_burst integer,
+    github_owner_id bigint,
+    github_repo_id bigint,
+    park_transition_id uuid,
+    wake_transition_id uuid,
+    egress_ports integer[] DEFAULT '{}'::integer[] NOT NULL,
+    platform_tenant_required boolean DEFAULT false NOT NULL,
+    managed_postgres_admission_cutover_id uuid,
+    managed_postgres_admission_fenced_at timestamp with time zone,
+    CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
+    CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
+    CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
+    CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
+    CONSTRAINT apps_consumer_auth_mode_chk CHECK ((consumer_auth_mode = ANY (ARRAY['optional'::text, 'required'::text]))),
+    CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
+    CONSTRAINT apps_declared_routes_array_chk CHECK ((jsonb_typeof(declared_routes) = 'array'::text)),
+    CONSTRAINT apps_egress_allowlist_revision_positive CHECK ((egress_allowlist_revision > 0)),
+    CONSTRAINT apps_egress_ports_valid CHECK (((cardinality(egress_ports) <= 64) AND (1 <= ALL (egress_ports)) AND (65535 >= ALL (egress_ports)))),
+    CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
+    CONSTRAINT apps_github_identity_ids_check CHECK ((((github_owner_id IS NULL) AND (github_repo_id IS NULL)) OR ((github_owner_id IS NOT NULL) AND (github_repo_id IS NOT NULL) AND (github_owner_id > 0) AND (github_repo_id > 0)))),
+    CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
+    CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
+    CONSTRAINT apps_last_scale_out_at_le_now_chk CHECK (((last_scale_out_at IS NULL) OR (last_scale_out_at <= now()))),
+    CONSTRAINT apps_managed_postgres_admission_fence_check CHECK (((managed_postgres_admission_cutover_id IS NULL) = (managed_postgres_admission_fenced_at IS NULL))),
+    CONSTRAINT apps_max_concurrency_check CHECK ((max_concurrency >= 1)),
+    CONSTRAINT apps_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
+    CONSTRAINT apps_min_instances_check CHECK ((min_instances >= 0)),
+    CONSTRAINT apps_node_id_nonempty_chk CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT apps_overflow_node_chk CHECK (((overflow_node IS NULL) OR (overflow_node <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT apps_preview_pr_state_chk CHECK (((preview_pr_state = ANY (ARRAY['open'::text, 'closed'::text, 'stale'::text, 'tearing_down'::text, 'torn_down'::text])) OR (preview_pr_state IS NULL))),
+    CONSTRAINT apps_public_auth_mode_chk CHECK ((public_auth_mode = ANY (ARRAY['open'::text, 'bearer'::text, 'basic'::text, 'ip_allowlist'::text, 'internal_only'::text]))),
+    CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
+    CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
+    CONSTRAINT apps_request_rate_limit_burst_positive CHECK (((request_rate_limit_burst IS NULL) OR (request_rate_limit_burst > 0))),
+    CONSTRAINT apps_request_rate_limit_rps_positive CHECK (((request_rate_limit_rps IS NULL) OR (request_rate_limit_rps > 0))),
+    CONSTRAINT apps_retry_policy_object_chk CHECK ((jsonb_typeof(retry_policy) = 'object'::text)),
+    CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
+    CONSTRAINT apps_scaling_policy_revision_positive CHECK ((scaling_policy_revision > 0)),
+    CONSTRAINT apps_security_policy_chk CHECK ((security_policy = ANY (ARRAY['off'::text, 'warn'::text, 'enforce'::text]))),
+    CONSTRAINT apps_static_egress_ip_family_check CHECK (((static_egress_ip IS NULL) OR (family(static_egress_ip) = 4))),
+    CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
+    CONSTRAINT apps_streaming_enabled_plan_check CHECK (((NOT streaming_enabled) OR public.apps_streaming_plan_allowed(account_id))),
+    CONSTRAINT apps_type_check CHECK ((type = ANY (ARRAY['app'::text, 'function'::text]))),
+    CONSTRAINT apps_visibility_chk CHECK ((visibility = ANY (ARRAY['public'::text, 'internal'::text]))),
+    CONSTRAINT apps_warm_pool_size_chk CHECK (((warm_pool_size >= 0) AND (warm_pool_size <= max_concurrency))),
+    CONSTRAINT apps_warm_snapshot_min_ms_check CHECK (((warm_snapshot_min_ms >= 100) AND (warm_snapshot_min_ms <= 60000))),
+    CONSTRAINT apps_warm_snapshot_min_requests_check CHECK (((warm_snapshot_min_requests >= 1) AND (warm_snapshot_min_requests <= 100))),
+    CONSTRAINT apps_workload_class_chk CHECK ((workload_class = ANY (ARRAY['http'::text, 'graphql'::text, 'grpc'::text, 'job'::text, 'worker'::text])))
+);
+
+
+--
+-- Name: COLUMN apps.autoscale_target_rps; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.autoscale_target_rps IS 'Per-instance RPS target. When live_request_count / live_instance_count exceeds this, schedd admits another instance (up to plan max_concurrency). Hobby/Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app).';
+
+
+--
+-- Name: COLUMN apps.autoscale_target_cpu_pct; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.autoscale_target_cpu_pct IS 'Per-instance CPU% target (1..100). Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app). CPU target is unbounded above 100 inside the DB; the apid handler enforces [1, 100] via 422.';
+
+
+--
+-- Name: COLUMN apps.deleted_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.deleted_at IS 'Customer-requested app soft-delete timestamp; NULL for live and legacy tombstones.';
+
+
+--
+-- Name: COLUMN apps.delete_grace_until; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.delete_grace_until IS 'Deadline through which a deleted app may be restored; hard-delete sweeper runs after this instant.';
+
+
+--
+-- Name: COLUMN apps.request_rate_limit_rps; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.request_rate_limit_rps IS 'Optional app-wide edge token-bucket refill override. NULL inherits the account plan.';
+
+
+--
+-- Name: COLUMN apps.request_rate_limit_burst; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.request_rate_limit_burst IS 'Optional app-wide edge token-bucket burst override. NULL inherits the account plan.';
+
+
+--
+-- Name: application_standard_egress_policy_hash(public.apps); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_egress_policy_hash(a public.apps) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT encode(sha256(convert_to('gregale.egress-policy.v1'||E'\n'||a.id::text||E'\n'||
+ a.egress_allowlist_revision::text||E'\n'||
+ coalesce((SELECT string_agg(c.key,',' ORDER BY c.key COLLATE "C") FROM
+  (SELECT DISTINCT encode(substring(inet_send(prefix) from 5),'hex')||'/'||masklen(prefix)::text AS key FROM unnest(a.egress_allowlist) prefix) c),'')||E'\n'||
+ coalesce((SELECT string_agg(p.port::text,',' ORDER BY p.port) FROM (SELECT DISTINCT port FROM unnest(a.egress_ports) port) p),''),'UTF8')),'hex');
+$$;
+
+
+--
+-- Name: application_standard_egress_target(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_egress_target(app uuid, node uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $_$
+ SELECT jsonb_build_object('org_id',a.org_id::text,'app_id',a.id::text,
+ 'desired_revision',e.desired_revision,'effective_hash',e.effective_hash,
+ 'identity',jsonb_build_object('ProtocolVersion',coalesce(n.vmmd_admission_protocol,0),'NodeID',n.id::text,'Incarnation',coalesce(n.vmmd_incarnation::text,'')),
+ 'policy',jsonb_build_object('app_id',a.id::text,'revision',a.egress_allowlist_revision,'allowlist',to_jsonb(a.egress_allowlist::text[]),'ports',to_jsonb(a.egress_ports)),
+ 'policy_hash',application_standard_egress_policy_hash(a))
+ FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN app_application_standards e ON e.app_id=a.id JOIN compute_nodes n ON n.id=node
+ WHERE a.id=app AND a.status='active' AND o.status='active' AND NOT o.deleted_pending AND acct.status='active'
+ AND e.org_id=a.org_id AND e.project_id IS NOT DISTINCT FROM a.project_id
+ AND e.state IN ('persisted','observed') AND e.desired_revision=e.persisted_revision
+ AND e.effective_hash~'^[a-f0-9]{64}$' AND (e.exception_expires_at IS NULL OR e.exception_expires_at>clock_timestamp())
+ AND n.active AND n.role IS DISTINCT FROM 'control-plane'
+ AND EXISTS(SELECT 1 FROM instances i WHERE i.app_id=a.id AND i.node_id=n.id
+  AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining'));
+$_$;
+
+
+--
 -- Name: application_standard_enroll_app(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -999,8 +1258,6 @@ BEGIN
 END;
 $$;
 
-
-SET default_table_access_method = heap;
 
 --
 -- Name: app_log_drains; Type: TABLE; Schema: public; Owner: -
@@ -2178,194 +2435,6 @@ EXCEPTION WHEN lock_not_available THEN
  RAISE EXCEPTION 'runtime inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
 END;
 $$;
-
-
---
--- Name: apps_streaming_plan_allowed(uuid); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.apps_streaming_plan_allowed(p_account_id uuid) RETURNS boolean
-    LANGUAGE sql STABLE
-    AS $$
-    SELECT EXISTS (
-        SELECT 1
-          FROM accounts
-         WHERE id = p_account_id
-           AND plan <> 'free'
-    );
-$$;
-
-
---
--- Name: apps; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.apps (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    slug text NOT NULL,
-    type text DEFAULT 'app'::text NOT NULL,
-    runtime text,
-    ram_mb integer NOT NULL,
-    idle_timeout_s integer,
-    max_concurrency integer DEFAULT 1 NOT NULL,
-    status text DEFAULT 'active'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    manifest jsonb DEFAULT '{}'::jsonb NOT NULL,
-    github_install_id bigint,
-    github_repo_full_name text,
-    github_production_branch text,
-    min_instances integer DEFAULT 0 NOT NULL,
-    egress_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
-    autoscale_target_rps integer,
-    autoscale_target_cpu_pct integer,
-    github_install_binding_id text,
-    github_install_account_id uuid,
-    github_install_linked_at timestamp with time zone,
-    project_id uuid,
-    root_dir text DEFAULT ''::text NOT NULL,
-    workload_name text DEFAULT ''::text NOT NULL,
-    workload_class text DEFAULT 'http'::text NOT NULL,
-    start_command text,
-    streaming_enabled boolean DEFAULT false NOT NULL,
-    scaling_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
-    last_scale_out_at timestamp with time zone,
-    last_scale_in_at timestamp with time zone,
-    require_signed boolean DEFAULT false NOT NULL,
-    node_id uuid,
-    reassigned_at timestamp with time zone,
-    org_id uuid,
-    migrated_at timestamp with time zone,
-    warm_snapshot_enabled boolean DEFAULT false NOT NULL,
-    warm_snapshot_min_requests integer DEFAULT 5 NOT NULL,
-    warm_snapshot_min_ms integer DEFAULT 2000 NOT NULL,
-    eviction_priority text DEFAULT 'best_effort'::text NOT NULL,
-    require_authn boolean DEFAULT false NOT NULL,
-    public_auth_mode text DEFAULT 'open'::text NOT NULL,
-    public_auth_basic bytea,
-    websocket_enabled boolean DEFAULT false NOT NULL,
-    auth_default_flipped_at timestamp with time zone,
-    overflow_node uuid,
-    route_metrics_enabled boolean DEFAULT false NOT NULL,
-    preview_of_slug text,
-    preview_pr_number integer,
-    preview_pr_state text,
-    preview_expires_at timestamp with time zone,
-    cors_default_enabled boolean DEFAULT false NOT NULL,
-    cors_default_origins text[],
-    maintenance_mode boolean DEFAULT false NOT NULL,
-    public_auth_ip_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
-    static_egress_ip inet,
-    static_egress_ip_set_at timestamp with time zone,
-    preview_destroy_commented_at timestamp with time zone,
-    app_protocol text DEFAULT 'http1'::text NOT NULL,
-    cpu_millicores integer DEFAULT 1000 NOT NULL,
-    last_deploy_failed_email_at timestamp with time zone,
-    deleted_at timestamp with time zone,
-    delete_grace_until timestamp with time zone,
-    consumer_auth_mode text DEFAULT 'optional'::text NOT NULL,
-    only_declared_routes boolean DEFAULT false NOT NULL,
-    declared_routes jsonb DEFAULT '[]'::jsonb NOT NULL,
-    purge_claimed_at timestamp with time zone,
-    visibility text DEFAULT 'public'::text NOT NULL,
-    retry_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
-    warm_pool_size integer DEFAULT 0 NOT NULL,
-    security_policy text DEFAULT 'off'::text NOT NULL,
-    egress_allowlist_revision bigint DEFAULT 1 NOT NULL,
-    scaling_policy_revision bigint DEFAULT 1 NOT NULL,
-    app_cpu_policy_revision bigint DEFAULT 1 NOT NULL,
-    request_rate_limit_rps integer,
-    request_rate_limit_burst integer,
-    github_owner_id bigint,
-    github_repo_id bigint,
-    park_transition_id uuid,
-    wake_transition_id uuid,
-    egress_ports integer[] DEFAULT '{}'::integer[] NOT NULL,
-    platform_tenant_required boolean DEFAULT false NOT NULL,
-    managed_postgres_admission_cutover_id uuid,
-    managed_postgres_admission_fenced_at timestamp with time zone,
-    CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
-    CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
-    CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
-    CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
-    CONSTRAINT apps_consumer_auth_mode_chk CHECK ((consumer_auth_mode = ANY (ARRAY['optional'::text, 'required'::text]))),
-    CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
-    CONSTRAINT apps_declared_routes_array_chk CHECK ((jsonb_typeof(declared_routes) = 'array'::text)),
-    CONSTRAINT apps_egress_allowlist_revision_positive CHECK ((egress_allowlist_revision > 0)),
-    CONSTRAINT apps_egress_ports_valid CHECK (((cardinality(egress_ports) <= 64) AND (1 <= ALL (egress_ports)) AND (65535 >= ALL (egress_ports)))),
-    CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
-    CONSTRAINT apps_github_identity_ids_check CHECK ((((github_owner_id IS NULL) AND (github_repo_id IS NULL)) OR ((github_owner_id IS NOT NULL) AND (github_repo_id IS NOT NULL) AND (github_owner_id > 0) AND (github_repo_id > 0)))),
-    CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
-    CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
-    CONSTRAINT apps_last_scale_out_at_le_now_chk CHECK (((last_scale_out_at IS NULL) OR (last_scale_out_at <= now()))),
-    CONSTRAINT apps_managed_postgres_admission_fence_check CHECK (((managed_postgres_admission_cutover_id IS NULL) = (managed_postgres_admission_fenced_at IS NULL))),
-    CONSTRAINT apps_max_concurrency_check CHECK ((max_concurrency >= 1)),
-    CONSTRAINT apps_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
-    CONSTRAINT apps_min_instances_check CHECK ((min_instances >= 0)),
-    CONSTRAINT apps_node_id_nonempty_chk CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT apps_overflow_node_chk CHECK (((overflow_node IS NULL) OR (overflow_node <> '00000000-0000-0000-0000-000000000000'::uuid))),
-    CONSTRAINT apps_preview_pr_state_chk CHECK (((preview_pr_state = ANY (ARRAY['open'::text, 'closed'::text, 'stale'::text, 'tearing_down'::text, 'torn_down'::text])) OR (preview_pr_state IS NULL))),
-    CONSTRAINT apps_public_auth_mode_chk CHECK ((public_auth_mode = ANY (ARRAY['open'::text, 'bearer'::text, 'basic'::text, 'ip_allowlist'::text, 'internal_only'::text]))),
-    CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
-    CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
-    CONSTRAINT apps_request_rate_limit_burst_positive CHECK (((request_rate_limit_burst IS NULL) OR (request_rate_limit_burst > 0))),
-    CONSTRAINT apps_request_rate_limit_rps_positive CHECK (((request_rate_limit_rps IS NULL) OR (request_rate_limit_rps > 0))),
-    CONSTRAINT apps_retry_policy_object_chk CHECK ((jsonb_typeof(retry_policy) = 'object'::text)),
-    CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
-    CONSTRAINT apps_scaling_policy_revision_positive CHECK ((scaling_policy_revision > 0)),
-    CONSTRAINT apps_security_policy_chk CHECK ((security_policy = ANY (ARRAY['off'::text, 'warn'::text, 'enforce'::text]))),
-    CONSTRAINT apps_static_egress_ip_family_check CHECK (((static_egress_ip IS NULL) OR (family(static_egress_ip) = 4))),
-    CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
-    CONSTRAINT apps_streaming_enabled_plan_check CHECK (((NOT streaming_enabled) OR public.apps_streaming_plan_allowed(account_id))),
-    CONSTRAINT apps_type_check CHECK ((type = ANY (ARRAY['app'::text, 'function'::text]))),
-    CONSTRAINT apps_visibility_chk CHECK ((visibility = ANY (ARRAY['public'::text, 'internal'::text]))),
-    CONSTRAINT apps_warm_pool_size_chk CHECK (((warm_pool_size >= 0) AND (warm_pool_size <= max_concurrency))),
-    CONSTRAINT apps_warm_snapshot_min_ms_check CHECK (((warm_snapshot_min_ms >= 100) AND (warm_snapshot_min_ms <= 60000))),
-    CONSTRAINT apps_warm_snapshot_min_requests_check CHECK (((warm_snapshot_min_requests >= 1) AND (warm_snapshot_min_requests <= 100))),
-    CONSTRAINT apps_workload_class_chk CHECK ((workload_class = ANY (ARRAY['http'::text, 'graphql'::text, 'grpc'::text, 'job'::text, 'worker'::text])))
-);
-
-
---
--- Name: COLUMN apps.autoscale_target_rps; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.autoscale_target_rps IS 'Per-instance RPS target. When live_request_count / live_instance_count exceeds this, schedd admits another instance (up to plan max_concurrency). Hobby/Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app).';
-
-
---
--- Name: COLUMN apps.autoscale_target_cpu_pct; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.autoscale_target_cpu_pct IS 'Per-instance CPU% target (1..100). Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app). CPU target is unbounded above 100 inside the DB; the apid handler enforces [1, 100] via 422.';
-
-
---
--- Name: COLUMN apps.deleted_at; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.deleted_at IS 'Customer-requested app soft-delete timestamp; NULL for live and legacy tombstones.';
-
-
---
--- Name: COLUMN apps.delete_grace_until; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.delete_grace_until IS 'Deadline through which a deleted app may be restored; hard-delete sweeper runs after this instant.';
-
-
---
--- Name: COLUMN apps.request_rate_limit_rps; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.request_rate_limit_rps IS 'Optional app-wide edge token-bucket refill override. NULL inherits the account plan.';
-
-
---
--- Name: COLUMN apps.request_rate_limit_burst; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.request_rate_limit_burst IS 'Optional app-wide edge token-bucket burst override. NULL inherits the account plan.';
 
 
 --
@@ -8916,6 +8985,23 @@ CREATE TABLE public.application_standard_control_bindings (
     physical_id text NOT NULL,
     CONSTRAINT application_standard_control_bindings_field_check CHECK ((field = ANY (ARRAY['log_destinations'::text, 'trusted_publishers'::text]))),
     CONSTRAINT application_standard_control_bindings_physical_id_check CHECK (((octet_length(physical_id) >= 1) AND (octet_length(physical_id) <= 128)))
+);
+
+
+--
+-- Name: application_standard_egress_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_egress_observations (
+    app_id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    target jsonb NOT NULL,
+    receipt jsonb NOT NULL,
+    observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT application_standard_egress_observations_observed_at_check CHECK ((observed_at > '1970-01-01 02:00:00+02'::timestamp with time zone)),
+    CONSTRAINT application_standard_egress_observations_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text)),
+    CONSTRAINT application_standard_egress_observations_target_check CHECK ((jsonb_typeof(target) = 'object'::text))
 );
 
 
@@ -16980,6 +17066,14 @@ ALTER TABLE ONLY public.application_standard_control_bindings
 
 ALTER TABLE ONLY public.application_standard_control_bindings
     ADD CONSTRAINT application_standard_control_bindings_pkey PRIMARY KEY (app_id, field, resource_id);
+
+
+--
+-- Name: application_standard_egress_observations application_standard_egress_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_egress_observations
+    ADD CONSTRAINT application_standard_egress_observations_pkey PRIMARY KEY (app_id, node_id);
 
 
 --
@@ -25716,6 +25810,13 @@ CREATE TRIGGER application_standard_drain_input_guard BEFORE INSERT OR DELETE OR
 
 
 --
+-- Name: application_standard_egress_observations application_standard_egress_current; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_egress_current BEFORE INSERT OR UPDATE ON public.application_standard_egress_observations FOR EACH ROW EXECUTE FUNCTION public.application_standard_egress_guard();
+
+
+--
 -- Name: apps application_standard_enroll_app; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28005,6 +28106,30 @@ ALTER TABLE ONLY public.application_standard_control_backups
 
 ALTER TABLE ONLY public.application_standard_control_bindings
     ADD CONSTRAINT application_standard_control_bindings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_egress_observations application_standard_egress_observations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_egress_observations
+    ADD CONSTRAINT application_standard_egress_observations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_egress_observations application_standard_egress_observations_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_egress_observations
+    ADD CONSTRAINT application_standard_egress_observations_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_egress_observations application_standard_egress_observations_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_egress_observations
+    ADD CONSTRAINT application_standard_egress_observations_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
 
 
 --

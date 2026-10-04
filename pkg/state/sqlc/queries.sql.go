@@ -13580,6 +13580,41 @@ func (q *Queries) ListApplicationStandardControlBindings(ctx context.Context, db
 	return items, nil
 }
 
+const listApplicationStandardEgress = `-- name: ListApplicationStandardEgress :many
+SELECT jsonb_build_object('target',x.target,'receipt',x.receipt,'observed_at',x.observed_at)::jsonb AS observation
+ FROM application_standard_egress_observations x
+ WHERE x.app_id=$1::uuid AND x.org_id=$2::uuid
+ AND x.target=application_standard_egress_target(x.app_id,x.node_id)
+ AND x.observed_at>clock_timestamp()-make_interval(secs=>$3::double precision)
+ ORDER BY x.node_id
+`
+
+type ListApplicationStandardEgressParams struct {
+	AppID            pgtype.UUID
+	OrgID            pgtype.UUID
+	FreshnessSeconds float64
+}
+
+func (q *Queries) ListApplicationStandardEgress(ctx context.Context, db DBTX, arg ListApplicationStandardEgressParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listApplicationStandardEgress, arg.AppID, arg.OrgID, arg.FreshnessSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var observation []byte
+		if err := rows.Scan(&observation); err != nil {
+			return nil, err
+		}
+		items = append(items, observation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listApplicationStandardExceptions = `-- name: ListApplicationStandardExceptions :many
 SELECT to_jsonb(x)::jsonb AS exception FROM application_standard_exceptions x
 JOIN apps a ON a.id=x.app_id AND a.org_id=x.org_id AND a.status<>'deleted'
@@ -16277,6 +16312,45 @@ func (q *Queries) ListOrphanedAppsPage(ctx context.Context, db DBTX, arg ListOrp
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingApplicationStandardEgress = `-- name: ListPendingApplicationStandardEgress :many
+WITH serving AS (
+ SELECT DISTINCT i.app_id,i.node_id FROM instances i WHERE i.node_id IS NOT NULL
+ AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining')
+ AND ($3::text='' OR i.app_id::text=$3::text)
+), targets AS (
+ SELECT s.app_id, s.node_id,application_standard_egress_target(s.app_id,s.node_id) AS target FROM serving s
+)
+SELECT t.target::jsonb FROM targets t LEFT JOIN application_standard_egress_observations x ON x.app_id=t.app_id AND x.node_id=t.node_id
+ WHERE t.target IS NOT NULL AND (x.target IS DISTINCT FROM t.target OR x.observed_at<=clock_timestamp()-make_interval(secs=>$1::double precision))
+ ORDER BY t.app_id,t.node_id LIMIT $2::integer
+`
+
+type ListPendingApplicationStandardEgressParams struct {
+	FreshnessSeconds float64
+	TargetLimit      int32
+	AppID            string
+}
+
+func (q *Queries) ListPendingApplicationStandardEgress(ctx context.Context, db DBTX, arg ListPendingApplicationStandardEgressParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listPendingApplicationStandardEgress, arg.FreshnessSeconds, arg.TargetLimit, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var t_target []byte
+		if err := rows.Scan(&t_target); err != nil {
+			return nil, err
+		}
+		items = append(items, t_target)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -23896,6 +23970,37 @@ func (q *Queries) RecordAppSecretRevocationAck(ctx context.Context, db DBTX, arg
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordApplicationStandardEgress = `-- name: RecordApplicationStandardEgress :one
+WITH recorded AS (
+ INSERT INTO application_standard_egress_observations(app_id,org_id,node_id,target,receipt)
+ VALUES($1::uuid,$2::uuid,$3::uuid,$4::jsonb,$5::jsonb)
+ ON CONFLICT(app_id,node_id) DO UPDATE SET org_id=EXCLUDED.org_id,target=EXCLUDED.target,receipt=EXCLUDED.receipt,observed_at=clock_timestamp()
+ RETURNING target,receipt,observed_at
+)
+SELECT to_jsonb(recorded) AS observation FROM recorded
+`
+
+type RecordApplicationStandardEgressParams struct {
+	AppID   pgtype.UUID
+	OrgID   pgtype.UUID
+	NodeID  pgtype.UUID
+	Target  []byte
+	Receipt []byte
+}
+
+func (q *Queries) RecordApplicationStandardEgress(ctx context.Context, db DBTX, arg RecordApplicationStandardEgressParams) ([]byte, error) {
+	row := db.QueryRow(ctx, recordApplicationStandardEgress,
+		arg.AppID,
+		arg.OrgID,
+		arg.NodeID,
+		arg.Target,
+		arg.Receipt,
+	)
+	var observation []byte
+	err := row.Scan(&observation)
+	return observation, err
 }
 
 const recordApplicationStandardLogDelivery = `-- name: RecordApplicationStandardLogDelivery :one

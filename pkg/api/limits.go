@@ -32,6 +32,8 @@ const (
 	ApplicationStandardMaxDescriptionBytes            = 512
 	ApplicationStandardLogReceiptTimeout              = 2 * time.Second
 	ApplicationStandardLogInventoryFreshness          = 90 * time.Second
+	ApplicationStandardEgressFreshness                = 90 * time.Second
+	ApplicationStandardEgressBatchLimit               = 500
 	ApplicationStandardMaxLogSequence           int64 = 9223372036854775807
 	ApplicationStandardMaxActiveExceptions            = 64
 	ApplicationStandardMaxExceptionTTL                = 30 * 24 * time.Hour

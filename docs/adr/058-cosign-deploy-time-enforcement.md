@@ -140,7 +140,7 @@ attachments at `sha256-<subject-hex>.sig`. The attachment manifest references a
 payload by that payload's own digest and size; its detached ASN.1 P256 signature
 authenticates the exact payload, including the image subject digest. Trust
 comes exclusively from the approved publisher key set. See
-[ADR-435](435-inherited-application-standards.md#registry-publisher-signature-transport)
+[ADR-581](581-inherited-application-standards.md#registry-publisher-signature-transport)
 for the supported format and remaining artifact-admission work.
 
 The preceding raw primitive rationale is historical. ADR-038's local ext4

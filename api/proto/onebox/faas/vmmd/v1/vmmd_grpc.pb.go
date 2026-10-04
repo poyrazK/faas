@@ -50,6 +50,7 @@ const (
 	Vmmd_Heartbeat_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/Heartbeat"
 	Vmmd_UpdateEgressAllowlist_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressAllowlist"
 	Vmmd_UpdateAppEgressPolicy_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/UpdateAppEgressPolicy"
+	Vmmd_UpdateAdmittedAppEgressPolicy_FullMethodName = "/onebox.faas.vmmd.v1.Vmmd/UpdateAdmittedAppEgressPolicy"
 	Vmmd_AllowResolvedEgress_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/AllowResolvedEgress"
 	Vmmd_UpdateAppCPULimit_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/UpdateAppCPULimit"
 	Vmmd_UpdateStaticEgressIP_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/UpdateStaticEgressIP"
@@ -257,6 +258,8 @@ type VmmdClient interface {
 	// A separate method makes old nodes refuse revision-aware updates before
 	// touching the network. Acknowledgments echo the successfully applied revision.
 	UpdateAppEgressPolicy(ctx context.Context, in *UpdateAppEgressPolicyRequest, opts ...grpc.CallOption) (*UpdateAppEgressPolicyAck, error)
+	// Strict current-process acknowledgment for inherited standards.
+	UpdateAdmittedAppEgressPolicy(ctx context.Context, in *UpdateAdmittedAppEgressPolicyRequest, opts ...grpc.CallOption) (*UpdateAdmittedAppEgressPolicyAck, error)
 	// AllowResolvedEgress (ADR-373): the node's bridge resolver reports the
 	// addresses a guest just resolved; vmmd lets that guest open TCP to them
 	// for the answer's TTL before the resolver replies. source_ip is the
@@ -828,6 +831,16 @@ func (c *vmmdClient) UpdateAppEgressPolicy(ctx context.Context, in *UpdateAppEgr
 	return out, nil
 }
 
+func (c *vmmdClient) UpdateAdmittedAppEgressPolicy(ctx context.Context, in *UpdateAdmittedAppEgressPolicyRequest, opts ...grpc.CallOption) (*UpdateAdmittedAppEgressPolicyAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateAdmittedAppEgressPolicyAck)
+	err := c.cc.Invoke(ctx, Vmmd_UpdateAdmittedAppEgressPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) AllowResolvedEgress(ctx context.Context, in *AllowResolvedEgressRequest, opts ...grpc.CallOption) (*AllowResolvedEgressAck, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AllowResolvedEgressAck)
@@ -1270,6 +1283,8 @@ type VmmdServer interface {
 	// A separate method makes old nodes refuse revision-aware updates before
 	// touching the network. Acknowledgments echo the successfully applied revision.
 	UpdateAppEgressPolicy(context.Context, *UpdateAppEgressPolicyRequest) (*UpdateAppEgressPolicyAck, error)
+	// Strict current-process acknowledgment for inherited standards.
+	UpdateAdmittedAppEgressPolicy(context.Context, *UpdateAdmittedAppEgressPolicyRequest) (*UpdateAdmittedAppEgressPolicyAck, error)
 	// AllowResolvedEgress (ADR-373): the node's bridge resolver reports the
 	// addresses a guest just resolved; vmmd lets that guest open TCP to them
 	// for the answer's TTL before the resolver replies. source_ip is the
@@ -1623,6 +1638,9 @@ func (UnimplementedVmmdServer) UpdateEgressAllowlist(context.Context, *UpdateEgr
 }
 func (UnimplementedVmmdServer) UpdateAppEgressPolicy(context.Context, *UpdateAppEgressPolicyRequest) (*UpdateAppEgressPolicyAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateAppEgressPolicy not implemented")
+}
+func (UnimplementedVmmdServer) UpdateAdmittedAppEgressPolicy(context.Context, *UpdateAdmittedAppEgressPolicyRequest) (*UpdateAdmittedAppEgressPolicyAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateAdmittedAppEgressPolicy not implemented")
 }
 func (UnimplementedVmmdServer) AllowResolvedEgress(context.Context, *AllowResolvedEgressRequest) (*AllowResolvedEgressAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method AllowResolvedEgress not implemented")
@@ -2196,6 +2214,24 @@ func _Vmmd_UpdateAppEgressPolicy_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_UpdateAdmittedAppEgressPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateAdmittedAppEgressPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).UpdateAdmittedAppEgressPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_UpdateAdmittedAppEgressPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).UpdateAdmittedAppEgressPolicy(ctx, req.(*UpdateAdmittedAppEgressPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_AllowResolvedEgress_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AllowResolvedEgressRequest)
 	if err := dec(in); err != nil {
@@ -2683,6 +2719,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateAppEgressPolicy",
 			Handler:    _Vmmd_UpdateAppEgressPolicy_Handler,
+		},
+		{
+			MethodName: "UpdateAdmittedAppEgressPolicy",
+			Handler:    _Vmmd_UpdateAdmittedAppEgressPolicy_Handler,
 		},
 		{
 			MethodName: "AllowResolvedEgress",

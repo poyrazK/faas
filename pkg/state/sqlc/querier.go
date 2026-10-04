@@ -836,6 +836,7 @@ type Querier interface {
 	ListApplicationStandardAssignments(ctx context.Context, db DBTX, orgID pgtype.UUID) ([]ListApplicationStandardAssignmentsRow, error)
 	ListApplicationStandardControlBackups(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ApplicationStandardControlBackup, error)
 	ListApplicationStandardControlBindings(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ApplicationStandardControlBinding, error)
+	ListApplicationStandardEgress(ctx context.Context, db DBTX, arg ListApplicationStandardEgressParams) ([][]byte, error)
 	ListApplicationStandardExceptions(ctx context.Context, db DBTX, arg ListApplicationStandardExceptionsParams) ([][]byte, error)
 	ListApplicationStandardLogDeliveries(ctx context.Context, db DBTX, arg ListApplicationStandardLogDeliveriesParams) ([][]byte, error)
 	ListApplicationStandardLogDestinations(ctx context.Context, db DBTX, arg ListApplicationStandardLogDestinationsParams) ([]ApplicationStandardLogDestination, error)
@@ -1002,6 +1003,7 @@ type Querier interface {
 	ListOrgsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListOrgsForAccountRow, error)
 	// ADR-421: keyset paging advances even when a candidate cannot fit.
 	ListOrphanedAppsPage(ctx context.Context, db DBTX, arg ListOrphanedAppsPageParams) ([]ListOrphanedAppsPageRow, error)
+	ListPendingApplicationStandardEgress(ctx context.Context, db DBTX, arg ListPendingApplicationStandardEgressParams) ([][]byte, error)
 	// Retired and expired graphs remain visible for diagnosis. UUID breaks ties.
 	ListProjectReleaseSetsBefore(ctx context.Context, db DBTX, arg ListProjectReleaseSetsBeforeParams) ([][]byte, error)
 	// ADR-091 §3.7 / PR #3 — per-account events drill-down. Backed by
@@ -1431,6 +1433,7 @@ type Querier interface {
 	ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error)
 	ReassignOrphanedAppOwner(ctx context.Context, db DBTX, arg ReassignOrphanedAppOwnerParams) (int64, error)
 	RecordAppSecretRevocationAck(ctx context.Context, db DBTX, arg RecordAppSecretRevocationAckParams) (int64, error)
+	RecordApplicationStandardEgress(ctx context.Context, db DBTX, arg RecordApplicationStandardEgressParams) ([]byte, error)
 	RecordApplicationStandardLogDelivery(ctx context.Context, db DBTX, arg RecordApplicationStandardLogDeliveryParams) ([]byte, error)
 	RecordApplicationStandardLogInventory(ctx context.Context, db DBTX, arg RecordApplicationStandardLogInventoryParams) ([]byte, error)
 	RecordApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg RecordApplicationStandardSnapshotCaptureParams) (int64, error)

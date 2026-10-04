@@ -1,4 +1,4 @@
-# ADR-435 · Versioned inherited application standards
+# ADR-581 · Versioned inherited application standards
 
 - **Status:** implementation in progress; acceptance required before release
 - **Date:** 2026-09-30
@@ -30,7 +30,7 @@ Upstream assigned ADR-430 to the managed PostgreSQL Commit outbox. This decision
 moved to ADR-431; frozen SQL files and their historical citations remain unchanged.
 
 Upstream assigned ADR-431 to bounded gateway trace retention. This decision now
-uses ADR-435; frozen SQL files and their historical citations remain unchanged.
+uses ADR-581; frozen SQL files and their historical citations remain unchanged.
 
 ## Contract
 
@@ -1937,3 +1937,47 @@ fixtures check those refusals, current retries, concurrent replacement, raw SQL
 protection, backfill and node erasure. They simulate receipt storage and do not
 prove native execution, fleet membership, runtime convergence or wave completion.
 Release activation and the full recovery/native acceptance gates remain pending.
+
+
+### Current-process live egress observations
+
+Add a distinct private `UpdateAdmittedAppEgressPolicy` RPC for schedd's live
+repair path. It names the expected native startup identity and carries the entire
+CIDR/port projection and durable app egress revision. The native manager checks
+its immutable identity before mutation, orders physical updates through the
+existing per-app gate, and returns its own receipt only after both controls
+succeed. Missing capability refuses; an echoed legacy revision supplies no
+standard observation. The current native artifact protocol is 2; this additive
+RPC does not reinterpret older protocol identities or change frozen boot hashes.
+
+A receipt binds the node, incarnation, protocol, application, egress revision and
+canonical projection SHA-256. CIDRs hash masked address bytes with their prefix
+length; ports hash the complete sorted unique requested set, including declared
+base ports. This avoids IPv6 rendering differences between Go and PostgreSQL and
+refuses malformed/forbidden ports before narrowing a wire integer.
+
+Retain private egress observations for each application/serving-node pair in both
+stores. Capture the current desired standard revision/effective hash, policy and
+native identity together. Nonwaiting SQL guards compare that entire captured
+tuple with current intent and eligible live ownership, check the backend receipt,
+and stamp the storage clock. Restart, pending/changed enrollment, expired
+exceptions, inactive nodes and absent live instances invalidate reads and late
+writes. Node/application erasure removes their facts. Repair runs at subscriber
+startup, on policy notifications and each existing reconciliation tick. Freshness
+and batch limits live in `pkg/api/limits.go`.
+
+These are per-node consumer facts. They neither establish fleet membership nor
+advance enrollment/operation observations, release subsequent waves, or prove
+firewall behavior on native hardware. Logging, image-security/artifact consumers,
+whole-application convergence, controlled waves and dedicated Linux amd64
+root/KVM restart/tightening/reload/leakcheck acceptance remain release gates.
+Public activation remains disabled. The initial applied egress migration is
+preserved; an additive repair aligns its guard with native protocol 2.
+
+
+### Historical reference number
+
+This decision was originally numbered ADR-435 on the application-standards
+branch. It is renumbered because the integrated preview-route-report decision
+also uses 435. Earlier application-standards code comments and preserved migration
+headers using ADR-435 refer to this decision; frozen history is not rewritten.

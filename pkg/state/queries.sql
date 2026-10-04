@@ -8250,3 +8250,33 @@ SELECT (x.inventory||jsonb_build_object('node_id',x.node_id::text,'session_id',x
  AND x.inventory=application_standard_log_inventory(a.id)
  AND x.observed_at>clock_timestamp()-make_interval(secs=>sqlc.arg(freshness_seconds)::double precision)
  ORDER BY x.node_id;
+
+
+-- name: ListPendingApplicationStandardEgress :many
+WITH serving AS (
+ SELECT DISTINCT i.app_id,i.node_id FROM instances i WHERE i.node_id IS NOT NULL
+ AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining')
+ AND (sqlc.arg(app_id)::text='' OR i.app_id::text=sqlc.arg(app_id)::text)
+), targets AS (
+ SELECT s.*,application_standard_egress_target(s.app_id,s.node_id) AS target FROM serving s
+)
+SELECT t.target::jsonb FROM targets t LEFT JOIN application_standard_egress_observations x ON x.app_id=t.app_id AND x.node_id=t.node_id
+ WHERE t.target IS NOT NULL AND (x.target IS DISTINCT FROM t.target OR x.observed_at<=clock_timestamp()-make_interval(secs=>sqlc.arg(freshness_seconds)::double precision))
+ ORDER BY t.app_id,t.node_id LIMIT sqlc.arg(target_limit)::integer;
+
+-- name: RecordApplicationStandardEgress :one
+WITH recorded AS (
+ INSERT INTO application_standard_egress_observations(app_id,org_id,node_id,target,receipt)
+ VALUES(sqlc.arg(app_id)::uuid,sqlc.arg(org_id)::uuid,sqlc.arg(node_id)::uuid,sqlc.arg(target)::jsonb,sqlc.arg(receipt)::jsonb)
+ ON CONFLICT(app_id,node_id) DO UPDATE SET org_id=EXCLUDED.org_id,target=EXCLUDED.target,receipt=EXCLUDED.receipt,observed_at=clock_timestamp()
+ RETURNING target,receipt,observed_at
+)
+SELECT to_jsonb(recorded) AS observation FROM recorded;
+
+-- name: ListApplicationStandardEgress :many
+SELECT jsonb_build_object('target',x.target,'receipt',x.receipt,'observed_at',x.observed_at)::jsonb AS observation
+ FROM application_standard_egress_observations x
+ WHERE x.app_id=sqlc.arg(app_id)::uuid AND x.org_id=sqlc.arg(org_id)::uuid
+ AND x.target=application_standard_egress_target(x.app_id,x.node_id)
+ AND x.observed_at>clock_timestamp()-make_interval(secs=>sqlc.arg(freshness_seconds)::double precision)
+ ORDER BY x.node_id;

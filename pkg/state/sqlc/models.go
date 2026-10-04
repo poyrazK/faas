@@ -963,6 +963,15 @@ type ApplicationStandardControlBinding struct {
 	PhysicalID string
 }
 
+type ApplicationStandardEgressObservation struct {
+	AppID      pgtype.UUID
+	OrgID      pgtype.UUID
+	NodeID     pgtype.UUID
+	Target     []byte
+	Receipt    []byte
+	ObservedAt pgtype.Timestamptz
+}
+
 type ApplicationStandardException struct {
 	ID         pgtype.UUID
 	OrgID      pgtype.UUID

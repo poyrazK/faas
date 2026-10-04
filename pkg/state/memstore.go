@@ -174,6 +174,7 @@ type MemStore struct {
 	applicationStandardLogConsumers            map[string]ApplicationStandardLogConsumerSession
 	applicationStandardLogConsumerSessions     map[string]ApplicationStandardLogConsumerSession
 	applicationStandardLogInventories          map[string]ApplicationStandardLogInventoryObservation
+	applicationStandardEgressObservations      map[string]ApplicationStandardEgressObservation
 	applicationStandardReviewPlans             map[string]ApplicationStandardReviewPlan
 	applicationStandardOperations              map[string]ApplicationStandardOperation
 	applicationStandardWorkerClaims            map[string]ApplicationStandardWorkerClaim
@@ -16152,6 +16153,7 @@ func (m *MemStore) DeleteComputeNode(_ context.Context, id string) error {
 	delete(m.computeNodeRuntimeIncarnations, id)
 	delete(m.computeNodeRuntimeProtocols, id)
 	m.eraseStandardLogConsumerNodeLocked(id)
+	m.eraseStandardEgressLocked("", id)
 	m.eraseNativeRuntimeHistoryLocked(id)
 	// CP-1: cascade the heartbeat history. Mirrors the FK ON DELETE
 	// CASCADE on compute_node_heartbeats.node_id; the endpoint

@@ -9,7 +9,7 @@ The implementation is in progress. Immutable candidates, resource management,
 automatic enrollment, assignment inventory, reviewed approval/operator controls,
 local intent and bounded exception APIs are implemented. Mutation APIs share a
 default-off release gate. Runtime consumer convergence and controlled rollout
-must pass the acceptance checklist in [ADR-435](adr/435-inherited-application-standards.md)
+must pass the acceptance checklist in [ADR-581](adr/581-inherited-application-standards.md)
 before this feature is declared available.
 
 ## Enrollment boundary
@@ -714,3 +714,23 @@ They do not contact the log provider or registry, execute a microVM, establish
 fleet consumer membership, or release a rollout wave. Project plan/reconcile
 insertion checks remain separate; complete create-path, named-environment,
 consumer and native acceptance is still required before public activation.
+
+
+## Live egress acknowledgment binding
+
+The scheduler's private standards repair path asks the current vmmd process to
+apply the full CIDR/extra-port projection. An acknowledgment identifies that
+process and the exact policy revision and digest. A delayed reply from an earlier
+process or an earlier standard projection is refused. Missing capability and
+failed physical updates leave the observation pending for a later repair pass.
+
+Private storage retains current serving-node facts for 90 seconds. Restart,
+policy/enrollment changes, expired exceptions, unavailable nodes and removal of
+live instances make earlier facts unusable. Limits are centralized, storage owns
+timestamps, and memory and PostgreSQL use the same complete projection contract.
+Legacy egress revision acknowledgments do not populate these facts.
+
+A node acknowledgment alone does not advance the application's observed revision
+or release a rollout wave. Complete fleet/consumer convergence and native Linux
+amd64 root/KVM enforcement, recovery and leakcheck acceptance remain required.
+The mutation release gate remains disabled.

@@ -121,6 +121,7 @@ func (e *EgressDriftSubscriber) convergenceStore() (state.AppEgressPolicyConverg
 // session starts and periodically thereafter, so a missed notification or a
 // transient vmmd failure cannot strand a live instance on an old allowlist.
 func (e *EgressDriftSubscriber) reconcilePending(ctx context.Context) {
+	e.reconcileStandardEgress(ctx, "")
 	store, ok := e.convergenceStore()
 	if ok {
 		targets, err := store.ListPendingAppEgressPolicyTargets(ctx, "", state.AppEgressPolicyObservationFreshness/2, egressDriftBatchLimit)
@@ -207,6 +208,7 @@ func (e *EgressDriftSubscriber) applyCPULimitTarget(ctx context.Context, store s
 }
 
 func (e *EgressDriftSubscriber) reconcileApp(ctx context.Context, appID string) {
+	e.reconcileStandardEgress(ctx, appID)
 	store, ok := e.convergenceStore()
 	if !ok {
 		app, err := e.engine.store.AppByID(ctx, appID)
