@@ -1595,6 +1595,27 @@
     ]
   },
   {
+    "table": "customer_operation_result_blobs",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "attempt",
+      "execution_id",
+      "expires_at",
+      "fingerprint",
+      "generation",
+      "id",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "operation_id",
+      "report_id",
+      "size_bytes",
+      "state",
+      "storage_key"
+    ]
+  },
+  {
     "table": "customer_operation_stream_leases",
     "kind": "operational",
     "columns": [

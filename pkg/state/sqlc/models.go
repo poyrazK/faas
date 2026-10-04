@@ -1406,6 +1406,24 @@ type CustomerOperationReport struct {
 	Fingerprint string
 }
 
+type CustomerOperationResultBlob struct {
+	ID            pgtype.UUID
+	OperationID   pgtype.UUID
+	AccountID     pgtype.UUID
+	Generation    int32
+	ExecutionID   pgtype.UUID
+	Attempt       int32
+	ReportID      string
+	Fingerprint   string
+	StorageKey    string
+	SizeBytes     int64
+	State         string
+	ExpiresAt     pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
+	LeaseToken    string
+	LeaseUntil    pgtype.Timestamptz
+}
+
 type CustomerOperationStreamLease struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID

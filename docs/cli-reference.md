@@ -541,12 +541,26 @@ List alert rules
 
 Add an alert rule
 
-`gregale alerts add [--action <ACTION>] [--webhook-secret-stdin]`
+`gregale alerts add --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--failure-source <SOURCE>] --webhook-url <URL> [--action <ACTION>] [--webhook-secret-stdin]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <slug>` | app slug | required |
+| `--name <NAME>` | rule name (3..120 chars) | required |
+| `--metric <METRIC>` | metric, e.g. error_rate_pct or latency_p95_ms |  |
+| `--comparison <OP>` | gt\|gte\|lt\|lte |  |
+| `--threshold <N>` | threshold value |  |
+| `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
+| `--failure-source <SOURCE>` | any\|cron\|queue\|delayed_task\|async_invoke\|inbound_webhook |  |
+| `--webhook-url <URL>` | https webhook URL | required |
 | `--action <ACTION>` | alert action | one of `webhook` · `rollback` · `demote` · `promote` |
 | `--webhook-secret-stdin` | read the webhook secret from stdin |  |
+
+Examples:
+
+```sh
+gregale alerts add --app my-api --name p95-latency --metric latency_p95_ms --comparison gt --threshold 800 --window-spec 15m --webhook-url https://hooks.example.com/gregale
+```
 
 ### alerts info
 
@@ -1390,6 +1404,21 @@ Configure CORS for an app (allow|ls|rm|show)
 
 Attach a CORS rule to &lt;slug&gt;
 
+`gregale cors allow [--method <VERB>] [--credentials] [--max-age <N>] [--host <HOST>] <slug> <origin> [<origin>...]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--method <VERB>` | allowed method (repeat) |  |
+| `--credentials` | enable Access-Control-Allow-Credentials |  |
+| `--max-age <N>` | Access-Control-Max-Age in seconds (default 600) |  |
+| `--host <HOST>` | match host (default: the app&#39;s first verified custom domain) |  |
+
+Examples:
+
+```sh
+gregale cors allow my-api https://app.example.com --method GET --method POST
+```
+
 ### cors ls
 
 List CORS rules bound to &lt;slug&gt; (defaults to linked context)
@@ -1397,6 +1426,8 @@ List CORS rules bound to &lt;slug&gt; (defaults to linked context)
 ### cors rm
 
 Delete a CORS rule by id
+
+`gregale cors rm <rule-id>`
 
 ### cors show
 
@@ -1421,8 +1452,8 @@ Schedule an HTTP request or deployment command
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug (required) | required |
-| `--schedule <EXPR>` | five-field cron expression (required) | required |
+| `--app <slug>` | app slug | required |
+| `--schedule <EXPR>` | five-field cron expression | required |
 | `--path <PATH>` | HTTP request path (mutually exclusive with --command) |  |
 | `--command <EXEC>` | executable for a deployment command cron |  |
 | `--arg <ARG>` | append one command argument (repeatable) |  |
@@ -1467,6 +1498,8 @@ Delete one cron rule
 ### crons run
 
 Fire one cron immediately
+
+`gregale crons run <cron-id>`
 
 ### crons fire-now
 
@@ -1529,8 +1562,8 @@ Create a broker trigger
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug (required) | required |
-| `--kind <kind>` | trigger kind (required) | required; one of `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` |
+| `--app <slug>` | app slug | required |
+| `--kind <kind>` | trigger kind | required; one of `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` |
 | `--slug <slug>` | trigger slug (required for non-cron kinds) |  |
 | `--config <JSON>` | JSON config (inline \| @file \| -) |  |
 | `--enabled` | enable the trigger |  |
@@ -1678,7 +1711,7 @@ Create a new job
 
 | Flag | Meaning | |
 |---|---|---|
-| `--image <REF>` | OCI image (required) | required |
+| `--image <REF>` | OCI image | required |
 | `--schedule <EXPR>` | recurring five-field cron schedule |  |
 | `--timezone <TZ>` | IANA timezone for the recurring schedule |  |
 | `--schedule-policy <JSON>` | versioned recurring schedule policy JSON |  |
@@ -1710,7 +1743,7 @@ Soft-delete one job
 
 Dispatch a new run (fan-out N tasks)
 
-`gregale jobs run [--input <ID=REF>] [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>]`
+`gregale jobs run [--input <ID=REF>] [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>] <job-name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1791,6 +1824,13 @@ List workflow runs for an app
 ### workflows run
 
 Trigger a new workflow run
+
+`gregale workflows run --app <slug> [--input <JSON>] <workflow-name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--input <JSON>` | JSON input payload (default {}) |  |
 
 ### workflows status
 
@@ -2212,8 +2252,8 @@ Bind a custom domain to an app or project environment
 
 | Flag | Meaning | |
 |---|---|---|
-| `--domain <DOMAIN>` | domain to attach (required) | required |
-| `--app <SLUG>` | app slug to attach to (required) | required |
+| `--domain <DOMAIN>` | domain to attach | required |
+| `--app <SLUG>` | app slug to attach to | required |
 | `--environment <SLUG>` | project environment to route this domain to |  |
 
 ### domains rm
@@ -2868,10 +2908,40 @@ Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breake
 
 Add an edge rule
 
-`gregale edge-rules create [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields]`
+`gregale edge-rules create --app <slug> --kind <KIND> --match-host <HOST> [--match-path <PATH>] [--match-method <METHOD>] [--match-header <Name=Value>] [--priority <N>] [--enabled] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--redirect-status <CODE>] [--redirect-to <URL>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--route-target-slug <slug>] [--cache-max-age-seconds <N>] [--cache-stale-while-revalidate-seconds <N>] [--budget-ms <MS>] [--retry-max-attempts <N>] [--circuit-failure-threshold <RATIO>] [--circuit-open-seconds <N>] [--respond-status <CODE>] [--respond-body <JSON>] [--ip-allow <CIDR>] [--ip-deny <CIDR>] [--geo-allow <CC>] [--geo-deny <CC>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <slug>` | app slug | required |
+| `--kind <KIND>` | rule kind | required; one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `async` |
+| `--match-host <HOST>` | host to match | required |
+| `--match-path <PATH>` | path to match (default /) |  |
+| `--match-method <METHOD>` | HTTP method to match (repeat for multiple) |  |
+| `--match-header <Name=Value>` | exact request header selector (repeat) |  |
+| `--priority <N>` | match priority; lower wins (default 100) |  |
+| `--enabled` | whether the rule is enabled (default true) |  |
+| `--throttle-requests-per-second <RPS>` | kind=throttle: refill rate in requests per second |  |
+| `--throttle-burst <N>` | kind=throttle: token-bucket burst |  |
+| `--throttle-key-by <KEY>` | kind=throttle: bucket key (none\|api_key\|consumer_id\|jwt_subject\|jwt_claim\|country) |  |
+| `--redirect-status <CODE>` | kind=redirect: 301\|302\|307\|308 |  |
+| `--redirect-to <URL>` | kind=redirect: Location URL |  |
+| `--rewrite-from <PATH>` | kind=rewrite: from path |  |
+| `--rewrite-to <PATH>` | kind=rewrite: to path |  |
+| `--route-target-slug <slug>` | kind=route: target app slug |  |
+| `--cache-max-age-seconds <N>` | kind=cache: fresh window (default 60; max 3600) |  |
+| `--cache-stale-while-revalidate-seconds <N>` | kind=cache: serve stale during a background refresh (max 300) |  |
+| `--budget-ms <MS>` | kind=budget: per-request wall-clock budget in ms (max 30000) |  |
+| `--retry-max-attempts <N>` | kind=retry: total attempts including the original (default 2; max 3) |  |
+| `--circuit-failure-threshold <RATIO>` | kind=circuit_breaker: failure ratio that opens the breaker (default 0.5) |  |
+| `--circuit-open-seconds <N>` | kind=circuit_breaker: first open interval (default 5) |  |
+| `--respond-status <CODE>` | kind=respond: response status (default 200) |  |
+| `--respond-body <JSON>` | kind=respond: JSON response body (max 64 KiB) |  |
+| `--ip-allow <CIDR>` | kind=ip: allow CIDR (repeat) |  |
+| `--ip-deny <CIDR>` | kind=ip: deny CIDR (repeat) |  |
+| `--geo-allow <CC>` | kind=geo: allow ISO country code (repeat) |  |
+| `--geo-deny <CC>` | kind=geo: deny ISO country code (repeat) |  |
+| `--jwt-issuer <ISSUER>` | kind=jwt: token issuer |  |
+| `--jwt-jwks-url <URL>` | kind=jwt: JWKS URL (https) |  |
 | `--on-success-webhook <ID>` | success webhook subscription; repeat when updating async policy |  |
 | `--on-failure-webhook <ID>` | failure webhook subscription; repeat when updating async policy |  |
 | `--async-max-attempts <N>` | total attempts (0 = plan default; capped by plan) |  |
@@ -2889,6 +2959,10 @@ Add an edge rule
 Examples:
 
 ```sh
+gregale edge-rules create --app my-api --kind throttle --match-host my-api.gregale.dev --match-path /search --throttle-requests-per-second 5 --throttle-burst 10
+gregale edge-rules create --app my-api --kind redirect --match-host my-api.gregale.dev --match-path /old --redirect-status 308 --redirect-to https://my-api.gregale.dev/new
+gregale edge-rules create --app my-api --kind cache --match-host my-api.gregale.dev --match-path /catalog --cache-max-age-seconds 60
+gregale edge-rules create --app my-api --kind budget --match-host my-api.gregale.dev --match-path /reports --budget-ms 20000
 gregale edge-rules create --app my-api --kind validate --match-host api.example.com --validate-schema @schema.json --validate-content-type application/json --validate-mode block
 cat schema.json | gregale edge-rules create --app my-api --kind validate --match-host api.example.com --validate-schema -
 ```
@@ -4022,6 +4096,14 @@ Revoke an API key
 
 Rotate an API key
 
+`gregale keys rotate <key-id>`
+
+Examples:
+
+```sh
+gregale keys rotate 7f8c2a1e-6d3b-4c55-9a7e-0b1d2c3e4f5a
+```
+
 ### keys grace-window
 
 Set the rotation grace window
@@ -4311,7 +4393,7 @@ Tail the wake queue
 
 Enqueue a wake request
 
-`gregale queue send [--payload <J>] [--queue-name <QUEUE>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>]`
+`gregale queue send [--payload <J>] [--queue-name <QUEUE>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4469,6 +4551,19 @@ Show one endpoint and safe auth-rotation status
 ### realtime create
 
 Create a managed realtime endpoint
+
+`gregale realtime create --callback-url <URL> [--callback-auth-token-stdin] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-mode <MODE>] [--auth-token-stdin] [--max-connections <N>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--callback-url <URL>` | application callback URL | required |
+| `--callback-auth-token-stdin` | read the callback bearer token from stdin |  |
+| `--connect-path <PATH>` | callback path for connect events |  |
+| `--message-path <PATH>` | callback path for message events |  |
+| `--disconnect-path <PATH>` | callback path for disconnect events |  |
+| `--auth-mode <MODE>` | client auth mode (none\|static_bearer\|oidc_jwt) |  |
+| `--auth-token-stdin` | read the client static bearer token from stdin |  |
+| `--max-connections <N>` | per-endpoint connection cap (0 inherits the default) |  |
 
 ### realtime update
 
@@ -5290,6 +5385,16 @@ List webhooks
 ### webhooks add
 
 Add a webhook
+
+`gregale webhooks add --app <slug> --target-url <URL> [--event <EVENT>] [--retry-policy <POLICY>] [--delivery-format <FORMAT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--target-url <URL>` | HTTPS target URL | required |
+| `--event <EVENT>` | event to deliver (repeat) |  |
+| `--retry-policy <POLICY>` | default\|aggressive\|none |  |
+| `--delivery-format <FORMAT>` | json\|cloudevents |  |
 
 ### webhooks info
 
