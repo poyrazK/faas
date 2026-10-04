@@ -26,6 +26,7 @@ type VerificationClosure struct {
 	sourceOID, targetOID                                                     uint32
 	ownerID, importOwnerID                                                   uuid.UUID
 	preparationCreatedAt, importOpenedAt, importClosedAt, openedAt, closedAt time.Time
+	attempt                                                                  int32
 }
 
 func (VerificationClosure) String() string     { return "private PostgreSQL verification access closure" }
@@ -33,7 +34,8 @@ func (c VerificationClosure) GoString() string { return c.String() }
 func (c VerificationClosure) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct{ Closed bool }{!c.closedAt.IsZero()})
 }
-func (c VerificationClosure) ClosedAt() time.Time { return c.closedAt }
+func (c VerificationClosure) ClosedAt() time.Time     { return c.closedAt }
+func (c VerificationClosure) AttemptForWorker() int32 { return c.attempt }
 
 // Bind native closure to the exact original preparation, both durable owners
 // and opening time retained with the data comparison. No exported fields can
@@ -42,7 +44,7 @@ func (c VerificationClosure) MatchesForWorker(r Receipt, imported, owner uuid.UU
 	target, err := r.TargetForWorker()
 	fp, fpErr := preparationPlanFingerprint(r.plan)
 	if err != nil || fpErr != nil || !r.preparationValid() || imported == uuid.Nil || owner == uuid.Nil || imported == owner ||
-		c.ownerID != owner || c.importOwnerID != imported || c.sourceOID != r.sourceOID || c.targetOID != target.DatabaseOID ||
+		c.attempt < 1 || c.attempt > api.PostgresCopyVerificationAttemptsMax || c.ownerID != owner || c.importOwnerID != imported || c.sourceOID != r.sourceOID || c.targetOID != target.DatabaseOID ||
 		c.planFingerprint != fp || !c.preparationCreatedAt.Equal(r.createdAt) || !c.openedAt.Equal(openedAt) {
 		return false
 	}
@@ -73,6 +75,11 @@ func (r Receipt) WithVerificationAccess(ctx context.Context, conn *pgx.Conn, sou
 	if err != nil {
 		return result, err
 	}
+	return v.withAccess(ctx, run)
+}
+
+func (v *verification) withAccess(ctx context.Context, run VerificationRun) (result VerificationClosure, err error) {
+	r, owner, conn := v.receipt, v.owner, v.conn
 	if err = v.lock(ctx); err != nil {
 		return result, err
 	}
@@ -81,7 +88,7 @@ func (r Receipt) WithVerificationAccess(ctx context.Context, conn *pgx.Conn, sou
 	if err != nil {
 		return result, err
 	}
-	if w := verificationWindow(windows, r.sourceOID); w.SourceOid.Valid {
+	if w := v.ownedWindow(windows); w.SourceOid.Valid {
 		if w.OwnerID.Bytes != owner {
 			return result, pgerrors.ErrConflict
 		}
@@ -94,6 +101,9 @@ func (r Receipt) WithVerificationAccess(ctx context.Context, conn *pgx.Conn, sou
 		if w.State != "closed" {
 			return result, pgerrors.ErrConflict
 		}
+	}
+	if err = v.checkRetryPosition(windows); err != nil {
+		return result, err
 	}
 	if err = v.check(ctx); err != nil {
 		return result, err
@@ -132,7 +142,7 @@ func (r Receipt) WithVerificationAccess(ctx context.Context, conn *pgx.Conn, sou
 		return result, err
 	}
 	child, _ := r.TargetForWorker()
-	target := VerificationTarget{v, child, verificationWindow(windows, r.sourceOID).OpenedAt.Time}
+	target := VerificationTarget{v, child, v.ownedWindow(windows).OpenedAt.Time}
 	if err = run(ctx, target); err != nil {
 		return result, maintenanceCallbackError(ctx, err)
 	}
@@ -178,6 +188,7 @@ func (r Receipt) CloseVerificationAccess(ctx context.Context, conn *pgx.Conn, so
 type verification struct {
 	*maintenance
 	owner uuid.UUID
+	retry *verificationRetry
 }
 
 func newVerification(r Receipt, conn *pgx.Conn, source copyinventory.ExportPlan, imported, owner uuid.UUID, authorize copyroles.Authorize) (*verification, error) {
@@ -194,18 +205,25 @@ func newVerification(r Receipt, conn *pgx.Conn, source copyinventory.ExportPlan,
 			return nil, pgerrors.ErrInvalid
 		}
 	}
-	return &verification{m, owner}, nil
+	return &verification{maintenance: m, owner: owner}, nil
 }
 
 // Every row is bound to the original completed preparation and the exact first
 // closed import window. Ordinary import readers call this too, rejecting any
 // active verification owner even when its closing catalogue equals the baseline.
-func readVerificationJournal(ctx context.Context, m *maintenance, rows []sqlc.GregaleCopyDatabasesDatabase, imported []sqlc.GregaleCopyDatabaseMaintenanceWindow) ([]sqlc.GregaleCopyDatabaseVerificationWindow, error) {
+func readVerificationJournal(ctx context.Context, m *maintenance, rows []sqlc.GregaleCopyDatabasesDatabase, imported []sqlc.GregaleCopyDatabaseMaintenanceWindow) ([]verificationWindowRow, error) {
 	present, err := m.q.CopyDatabaseVerificationSchemaExists(ctx, m.conn)
 	if err != nil {
 		return nil, classify(ctx, err)
 	}
 	if !present {
+		retries, retryErr := m.q.CopyDatabaseVerificationRetrySchemaExists(ctx, m.conn)
+		if retryErr != nil {
+			return nil, classify(ctx, retryErr)
+		}
+		if retries {
+			return nil, pgerrors.ErrConflict
+		}
 		return nil, nil
 	}
 	private, err := m.q.PrivateCopyDatabaseVerificationJournal(ctx, m.conn)
@@ -215,13 +233,13 @@ func readVerificationJournal(ctx context.Context, m *maintenance, rows []sqlc.Gr
 	if !private {
 		return nil, pgerrors.ErrConflict
 	}
-	windows, err := m.q.CopyDatabaseVerificationWindows(ctx, m.conn)
+	original, err := m.q.CopyDatabaseVerificationWindows(ctx, m.conn)
 	if err != nil {
 		return nil, classify(ctx, err)
 	}
 	seen, owners, targets := map[uint32]bool{}, map[uuid.UUID]bool{}, map[uint32]bool{}
 	active := 0
-	for _, w := range windows {
+	for _, w := range original {
 		d, _, e := m.receipt.plan.creationDatabase(w.SourceOid.Uint32)
 		made := receiptRow(rows, w.SourceOid.Uint32)
 		parent := maintenanceWindow(imported, w.SourceOid.Uint32)
@@ -246,17 +264,21 @@ func readVerificationJournal(ctx context.Context, m *maintenance, rows []sqlc.Gr
 	if active > 1 {
 		return nil, pgerrors.ErrConflict
 	}
-	return windows, nil
+	windows := make([]verificationWindowRow, 0, len(original))
+	for _, w := range original {
+		windows = append(windows, verificationWindowRow{GregaleCopyDatabaseVerificationWindow: w, Attempt: 1})
+	}
+	return readVerificationRetries(ctx, m, windows)
 }
-func verificationWindow(rows []sqlc.GregaleCopyDatabaseVerificationWindow, id uint32) sqlc.GregaleCopyDatabaseVerificationWindow {
+func verificationWindow(rows []verificationWindowRow, id uint32) verificationWindowRow {
 	for _, r := range rows {
 		if r.SourceOid.Uint32 == id {
 			return r
 		}
 	}
-	return sqlc.GregaleCopyDatabaseVerificationWindow{}
+	return verificationWindowRow{}
 }
-func (v *verification) read(ctx context.Context) ([]sqlc.GregaleCopyDatabasesDatabase, []sqlc.GregaleCopyDatabaseVerificationWindow, sqlc.GregaleCopyDatabaseMaintenanceWindow, error) {
+func (v *verification) read(ctx context.Context) ([]sqlc.GregaleCopyDatabasesDatabase, []verificationWindowRow, sqlc.GregaleCopyDatabaseMaintenanceWindow, error) {
 	rows, imported, err := v.readBase(ctx)
 	if err != nil {
 		return nil, nil, sqlc.GregaleCopyDatabaseMaintenanceWindow{}, err
@@ -273,7 +295,7 @@ func (v *verification) read(ctx context.Context) ([]sqlc.GregaleCopyDatabasesDat
 	windows, err := readVerificationJournal(ctx, v.maintenance, rows, imported)
 	return rows, windows, parent, err
 }
-func (v *verification) verify(ctx context.Context, rows []sqlc.GregaleCopyDatabasesDatabase, windows []sqlc.GregaleCopyDatabaseVerificationWindow) error {
+func (v *verification) verify(ctx context.Context, rows []sqlc.GregaleCopyDatabasesDatabase, windows []verificationWindowRow) error {
 	overrides := map[uint32]copyinventory.Database{}
 	for _, w := range windows {
 		if w.State == "closed" {
@@ -297,6 +319,9 @@ func (v *verification) params(action string, parent sqlc.GregaleCopyDatabaseMain
 	return sqlc.ChangeCopyDatabaseVerificationAdmissionParams{SourceOid: a.SourceOid, TargetOid: a.TargetOid, DatabaseName: a.DatabaseName, OwnerOid: a.OwnerOid, VerificationOwner: pgtype.UUID{Bytes: v.owner, Valid: true}, PlanFingerprint: a.PlanFingerprint, PreparedAt: a.PreparedAt, Action: action, OriginalTemplate: a.OriginalTemplate, OriginalLimit: a.OriginalLimit, VerificationLimit: a.MaintenanceLimit, ImportOwner: parent.OwnerID, ImportOpened: parent.OpenedAt, ImportClosed: parent.ClosedAt}
 }
 func (v *verification) open(ctx context.Context, parent sqlc.GregaleCopyDatabaseMaintenanceWindow) error {
+	if v.retry != nil {
+		return v.openRetry(ctx, parent)
+	}
 	if err := v.check(ctx); err != nil {
 		return err
 	}
@@ -339,6 +364,9 @@ func (v *verification) open(ctx context.Context, parent sqlc.GregaleCopyDatabase
 	return nil
 }
 func (v *verification) change(ctx context.Context, tx pgx.Tx, action string, parent sqlc.GregaleCopyDatabaseMaintenanceWindow) error {
+	if v.retry != nil {
+		return v.changeRetry(ctx, tx, action, parent)
+	}
 	if err := v.q.InstallCopyDatabaseVerificationMutation(ctx, tx); err != nil {
 		return classify(ctx, err)
 	}
@@ -370,7 +398,7 @@ func (v *verification) closeOwned(ctx context.Context, absentOK bool) (Verificat
 	if err != nil {
 		return VerificationClosure{}, err
 	}
-	w := verificationWindow(windows, v.receipt.sourceOID)
+	w := v.ownedWindow(windows)
 	if !w.SourceOid.Valid {
 		if absentOK {
 			return VerificationClosure{}, nil
@@ -379,6 +407,11 @@ func (v *verification) closeOwned(ctx context.Context, absentOK bool) (Verificat
 	}
 	if w.OwnerID.Bytes != v.owner {
 		return VerificationClosure{}, pgerrors.ErrConflict
+	}
+	for _, other := range windows {
+		if other.OwnerID.Bytes != v.owner && other.State != "closed" {
+			return VerificationClosure{}, pgerrors.ErrConflict
+		}
 	}
 	if w.State != "closed" {
 		// Quiesce before full catalogue/role checks; a leaked child is never killed.
@@ -402,7 +435,7 @@ func (v *verification) closeOwned(ctx context.Context, absentOK bool) (Verificat
 		if err != nil {
 			return VerificationClosure{}, err
 		}
-		w = verificationWindow(windows, v.receipt.sourceOID)
+		w = v.ownedWindow(windows)
 	}
 	if err = v.verify(ctx, rows, windows); err != nil {
 		return VerificationClosure{}, err
@@ -410,7 +443,7 @@ func (v *verification) closeOwned(ctx context.Context, absentOK bool) (Verificat
 	if err = v.seed.VerifyForWorker(ctx, v.conn); err != nil {
 		return VerificationClosure{}, err
 	}
-	return VerificationClosure{v.fingerprint, v.receipt.sourceOID, v.database.OID, v.owner, v.dispatch, v.receipt.createdAt, w.ImportOpenedAt.Time, w.ImportClosedAt.Time, w.OpenedAt.Time, w.ClosedAt.Time}, nil
+	return VerificationClosure{v.fingerprint, v.receipt.sourceOID, v.database.OID, v.owner, v.dispatch, v.receipt.createdAt, w.ImportOpenedAt.Time, w.ImportClosedAt.Time, w.OpenedAt.Time, w.ClosedAt.Time, w.Attempt}, nil
 }
 
 // Strict preparation/create readers may never accept active import or verification

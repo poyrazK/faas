@@ -6012,11 +6012,70 @@ Opaque state ledger fixtures qualify ownership only, not data authentication.
 
 Failed comparisons before durable `compared` evidence close their original native
 window and retain the charged `verifying` owner. Replaying that window is close-only
-and fails; it never performs another comparison. A qualified attempt-history,
-new-owner admission and retirement protocol is still required to retry such work
-under production budgets. Reopening an old window or redispatching its import is
+and fails; it never performs another comparison. Automatic retries still require
+qualified control-plane attempt history, new-owner admission and retirement under
+production budgets. Reopening an old window or redispatching its import is
 not an allowed shortcut. Fully closed source writers, a common configuration and
 data cut, complete schema/globals/data strategies, stored materialized-row copying,
 final authority and settings, provider isolation, PostgreSQL 14/15, retirement and
 metering, object copying and the complete stage coordinator remain pending. The
 public full database/object clone gate remains closed.
+
+### Bounded native verification retries (2026-10-04)
+
+Native verification now supports a separate new attempt after authenticated
+closure of its predecessor. The original verification and import journals retain
+their first owners, rows and timestamps. Additional attempts use the private
+`gregale_copy_database_verification_retries` namespace. Its table stores the exact
+source/target OIDs, preparation fingerprint and time, original closed import
+owner and opening/closure, new owner and ordinal, predecessor owner and exact
+opening/closure, and this attempt's first opening/closure. Retained history is
+validated as a consecutive chain; gaps, forks, reused owners, changed bindings or
+damaged schema/permissions cannot become an access or closure capability.
+
+`PostgresCopyVerificationAttemptsMax` caps the total at three, including the first
+window. Thus there are at most two additional native history rows per original
+database. The private retry API requires an opaque, authenticated predecessor
+closure bound to the same preparation and import. It admits only the immediate
+next ordinal and a new owner. The shared bootstrap session lock and both journal
+checks serialize first and retry windows across all databases in that target.
+Concurrent owners for one predecessor cannot both run their callbacks. Owner
+reuse from another database's import, first window or retry is rejected before
+opening admission. The original database configuration and ACL remain preserved.
+
+A retry borrows the same opaque verification target and owns the same read-only
+repeatable-read transaction as the first attempt. Data comparison and sealed
+match authentication still bind the exact new owner and native opening. Successful
+closure is separate from a data match. Failure/cancellation/handoff quiesces and
+closes the selected new window; a leaked child session is not killed and prevents
+closure until its borrower closes it. An existing owner is recovered close-only
+and returns conflict from the callback API. Lost opening and closure responses do
+not cause another data read. Close-only retry recovery authenticates the asserted
+current and predecessor owners from the retained native chain, preserving the
+first committed opening and closure times. A missing row yields no closure and
+does not itself grant opening authority.
+
+Ordinary preparation/create/import readers authenticate the complete original
+and retry history. They reject any active or quiescing attempt, including a
+quiescing catalogue whose settings already equal the original closed database.
+An older verification owner cannot supply a publishable closure while another
+attempt owns active access. The first journal's shape is unchanged; no foreign
+key is added to it, since PostgreSQL's internal reference triggers would change
+its qualified private shape. Retry parent identity is authenticated from both
+journals under their shared lock. All install/read/mutation SQL is generated via
+SQLC; the generation check includes the additional protocol file.
+
+Local PostgreSQL 16 qualification includes real encrypted archive restoration
+and independent contents comparison during a new attempt, exact original history,
+read-only semantics, opaque predecessor/closure binding, a third-attempt ceiling,
+stale/foreign parents, concurrent owners, cross-database owner reuse and access,
+lost native opening/closure responses, failure/cancellation/authority loss, leaked
+child recovery, active/quiesced entry fencing, and damaged history/permissions.
+This is native protocol qualification. Control-plane failed-attempt recording,
+durable retry intent, ciphertext reservations, CPU/spool/billing admission and
+retirement, and APID/coordinator composition are still required before enabling
+automatic retries. A native closure alone cannot justify retrying a compared or
+verified owner. Mixed-version reader rollout also needs qualification before
+production wiring. Provider isolation, PostgreSQL 14/15 and every remaining full
+stage requirement remain pending; the public full database/object clone gate
+remains closed.

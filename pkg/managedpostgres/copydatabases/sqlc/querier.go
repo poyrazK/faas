@@ -13,6 +13,7 @@ import (
 type Querier interface {
 	ChangeCopyDatabaseMaintenanceAdmission(ctx context.Context, db DBTX, arg ChangeCopyDatabaseMaintenanceAdmissionParams) (bool, error)
 	ChangeCopyDatabaseVerificationAdmission(ctx context.Context, db DBTX, arg ChangeCopyDatabaseVerificationAdmissionParams) (bool, error)
+	ChangeCopyDatabaseVerificationRetryAdmission(ctx context.Context, db DBTX, arg ChangeCopyDatabaseVerificationRetryAdmissionParams) (bool, error)
 	ClaimCopyDatabase(ctx context.Context, db DBTX, dollar_1 pgtype.Uint32) (int64, error)
 	CompleteCopyDatabase(ctx context.Context, db DBTX, dollar_1 pgtype.Uint32) (int64, error)
 	// Closing needs to authenticate the borrower even if seed catalogue drift would
@@ -27,6 +28,10 @@ type Querier interface {
 	CopyDatabasePlanBody(ctx context.Context, db DBTX) ([]byte, error)
 	CopyDatabaseReceipts(ctx context.Context, db DBTX) ([]GregaleCopyDatabasesDatabase, error)
 	CopyDatabaseSchemaExists(ctx context.Context, db DBTX) (bool, error)
+	// ADR-375: bounded additional attempts preserve the original verification journal.
+	// Every row links the exact predecessor closure; no original row is reopened.
+	CopyDatabaseVerificationRetrySchemaExists(ctx context.Context, db DBTX) (bool, error)
+	CopyDatabaseVerificationRetryWindows(ctx context.Context, db DBTX) ([]GregaleCopyDatabaseVerificationRetriesWindow, error)
 	// The creation namespace stays unchanged so existing receipts remain readable.
 	// Verification is separate from import dispatch and binds the first closed
 	// import window. Its closure never attests to callback execution or equivalence.
@@ -41,6 +46,7 @@ type Querier interface {
 	FormatCopyDatabaseCreate(ctx context.Context, db DBTX, arg FormatCopyDatabaseCreateParams) (string, error)
 	InsertCopyDatabaseMaintenanceWindow(ctx context.Context, db DBTX, arg InsertCopyDatabaseMaintenanceWindowParams) error
 	InsertCopyDatabasePlanBody(ctx context.Context, db DBTX, dollar_1 []byte) error
+	InsertCopyDatabaseVerificationRetryWindow(ctx context.Context, db DBTX, arg InsertCopyDatabaseVerificationRetryWindowParams) error
 	InsertCopyDatabaseVerificationWindow(ctx context.Context, db DBTX, arg InsertCopyDatabaseVerificationWindowParams) error
 	InstallCopyDatabaseMaintenanceActiveIndex(ctx context.Context, db DBTX) error
 	// Functions are invoker-only in the dedicated connection's pg_temp namespace.
@@ -61,6 +67,15 @@ type Querier interface {
 	// Provider administrators (superusers) are outside customer SQL admission; the
 	// enclosing borrower must independently authenticate provider isolation.
 	InstallCopyDatabaseVerificationMutation(ctx context.Context, db DBTX) error
+	InstallCopyDatabaseVerificationRetryActiveIndex(ctx context.Context, db DBTX) error
+	// Functions are invoker-only in the dedicated connection's pg_temp namespace.
+	// No database ACL is rewritten: normal GRANT/REVOKE cannot restore a NULL ACL.
+	// Exact login/ownership capability checks therefore precede opening admission.
+	// Provider administrators (superusers) are outside customer SQL admission; the
+	// enclosing borrower must independently authenticate provider isolation.
+	InstallCopyDatabaseVerificationRetryMutation(ctx context.Context, db DBTX) error
+	InstallCopyDatabaseVerificationRetrySchema(ctx context.Context, db DBTX) error
+	InstallCopyDatabaseVerificationRetryWindows(ctx context.Context, db DBTX) error
 	InstallCopyDatabaseVerificationSchema(ctx context.Context, db DBTX) error
 	InstallCopyDatabaseVerificationWindows(ctx context.Context, db DBTX) error
 	// Session ownership covers the top-level nontransactional CREATE DATABASE.
@@ -69,6 +84,7 @@ type Querier interface {
 	PrivateCopyDatabaseJournal(ctx context.Context, db DBTX) (bool, error)
 	PrivateCopyDatabaseMaintenanceJournal(ctx context.Context, db DBTX) (bool, error)
 	PrivateCopyDatabaseVerificationJournal(ctx context.Context, db DBTX) (bool, error)
+	PrivateCopyDatabaseVerificationRetryJournal(ctx context.Context, db DBTX) (bool, error)
 	ReserveCopyDatabase(ctx context.Context, db DBTX, arg ReserveCopyDatabaseParams) error
 	UnlockCopyDatabases(ctx context.Context, db DBTX) (bool, error)
 }

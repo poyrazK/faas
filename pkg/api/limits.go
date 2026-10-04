@@ -147,6 +147,9 @@ const (
 	// ciphertext is bounded by the contents owner count (64 MiB per account).
 	PostgresCopyVerificationEnvelopeMaxBytes   = 8 << 10
 	PostgresCopyVerificationCiphertextMaxBytes = 16 << 10
+	// Total native verification attempts per original database, including the
+	// first window. Retries keep closed history and need separate worker admission.
+	PostgresCopyVerificationAttemptsMax = 3
 )
 
 // Operator-configurable object-storage preview safeguards, not plan allowances

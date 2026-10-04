@@ -48,6 +48,7 @@ sql:
       - "pkg/managedpostgres/copydatabases/queries.sql"
       - "pkg/managedpostgres/copydatabases/maintenance.sql"
       - "pkg/managedpostgres/copydatabases/verification.sql"
+      - "pkg/managedpostgres/copydatabases/verification_retries.sql"
     schema: "pkg/managedpostgres/copydatabases/schema.sql"
     gen:
       go:

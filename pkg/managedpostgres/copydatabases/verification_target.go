@@ -36,6 +36,7 @@ func (t VerificationTarget) TargetForWorker() (copyarchive.RestoreTarget, error)
 type VerificationAccessIdentity struct {
 	OwnerID, ImportID uuid.UUID
 	OpenedAt          time.Time
+	Attempt           int32
 }
 
 // Identity comes from the opaque live access capability. Persisting a match
@@ -44,7 +45,7 @@ func (t VerificationTarget) IdentityForWorker() (VerificationAccessIdentity, err
 	if _, err := t.TargetForWorker(); err != nil {
 		return VerificationAccessIdentity{}, err
 	}
-	return VerificationAccessIdentity{t.window.owner, t.window.dispatch, t.openedAt}, nil
+	return VerificationAccessIdentity{t.window.owner, t.window.dispatch, t.openedAt, t.window.attempt()}, nil
 }
 func (t VerificationTarget) check(ctx context.Context) error {
 	if _, err := t.TargetForWorker(); err != nil {
@@ -55,7 +56,7 @@ func (t VerificationTarget) check(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	w := verificationWindow(windows, v.receipt.sourceOID)
+	w := v.ownedWindow(windows)
 	if !w.SourceOid.Valid || w.State != "open" || w.OwnerID.Bytes != v.owner || !w.OpenedAt.Time.Equal(t.openedAt) {
 		return pgerrors.ErrConflict
 	}
