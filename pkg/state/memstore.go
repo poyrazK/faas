@@ -19064,6 +19064,20 @@ func (m *MemStore) ReserveIdempotent(_ context.Context, accountID, key string, a
 	return IdempotencyReservation{Status: e.status, Body: append([]byte(nil), e.body...)}, nil
 }
 
+// ReclaimIdempotent mirrors PgStore: turn the completed response back into
+// an in-flight reservation only while it still holds status and body.
+func (m *MemStore) ReclaimIdempotent(_ context.Context, accountID, key string, status int, body []byte) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := accountID + "\x00" + key
+	e, ok := m.idem[id]
+	if !ok || e.status == 0 || e.status != status || !bytes.Equal(e.body, body) {
+		return false, nil
+	}
+	m.idem[id] = idemEntry{created: time.Now()}
+	return true, nil
+}
+
 // ReleaseIdempotent mirrors PgStore: drop an in-flight reservation only.
 func (m *MemStore) ReleaseIdempotent(_ context.Context, accountID, key string) error {
 	m.mu.Lock()

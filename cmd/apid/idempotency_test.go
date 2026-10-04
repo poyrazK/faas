@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -150,6 +151,66 @@ func TestIdempotencyReplayable(t *testing.T) {
 	} {
 		if got := idempotencyReplayable(status); got != want {
 			t.Errorf("idempotencyReplayable(%d) = %v, want %v", status, got, want)
+		}
+	}
+}
+
+// TestIdempotent_FailedDeployIsNotReplayed — the CLI derives the deploy
+// Idempotency-Key from the source digest and flags, so re-running the same
+// `gregale deploy` after a transient build failure replayed the 202 for the
+// failed deployment and streamed the old failure for 24 h (production-us).
+// A failed, cancelled or superseded deployment now runs again; one still in
+// progress is replayed, so a network retry still cannot deploy twice.
+func TestIdempotent_FailedDeployIsNotReplayed(t *testing.T) {
+	env, _ := setupChangePlan(t, api.PlanHobby, "si_test")
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+env.key)
+		r.Header.Set("Content-Type", "application/json")
+		if method == http.MethodPost && strings.HasSuffix(path, "/deployments") {
+			r.Header.Set("Idempotency-Key", "gregale-deploy-same-content")
+		}
+		env.h.ServeHTTP(rec, r)
+		return rec
+	}
+	if rec := do(http.MethodPost, "/v1/apps", `{"slug":"idem-fail","runtime":"node22"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("create app = %d %s", rec.Code, rec.Body)
+	}
+	deploy := `{"image":"registry.gregale.dev/app@sha256:a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"}`
+	deployID := func(rec *httptest.ResponseRecorder) string {
+		t.Helper()
+		var dep api.DeploymentResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &dep); err != nil || dep.ID == "" {
+			t.Fatalf("decode deployment: %v (body=%s)", err, rec.Body)
+		}
+		return dep.ID
+	}
+
+	first := do(http.MethodPost, "/v1/apps/idem-fail/deployments", deploy)
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("first deploy = %d %s", first.Code, first.Body)
+	}
+	firstID := deployID(first)
+	if again := do(http.MethodPost, "/v1/apps/idem-fail/deployments", deploy); again.Header().Get("Idempotent-Replayed") != "true" || deployID(again) != firstID {
+		t.Fatalf("retry while in progress = %d replayed=%q, want the first deployment replayed", again.Code, again.Header().Get("Idempotent-Replayed"))
+	}
+
+	for i, status := range []state.DeploymentStatus{state.DeployFailed, state.DeployCancelled, state.DeploySuperseded} {
+		prevID := firstID
+		if err := env.store.UpdateDeploymentStatus(t.Context(), prevID, status, "builder lost"); err != nil {
+			t.Fatal(err)
+		}
+		rerun := do(http.MethodPost, "/v1/apps/idem-fail/deployments", deploy)
+		if rerun.Code != http.StatusAccepted || rerun.Header().Get("Idempotent-Replayed") != "" {
+			t.Fatalf("rerun %d after %s = %d replayed=%q, want a fresh 202", i, status, rerun.Code, rerun.Header().Get("Idempotent-Replayed"))
+		}
+		firstID = deployID(rerun)
+		if firstID == prevID {
+			t.Fatalf("rerun after %s returned the %s deployment %s again", status, status, prevID)
+		}
+		if replay := do(http.MethodPost, "/v1/apps/idem-fail/deployments", deploy); replay.Header().Get("Idempotent-Replayed") != "true" || deployID(replay) != firstID {
+			t.Fatalf("retry of the new deployment = replayed=%q, want it replayed", replay.Header().Get("Idempotent-Replayed"))
 		}
 	}
 }

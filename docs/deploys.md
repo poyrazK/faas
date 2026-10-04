@@ -11,8 +11,12 @@ gregale deploy --image ghcr.io/acme/api@sha256:...
 
 Use `--no-wait` when a CI job only needs the queued deployment ID. Use
 `--timeout 900` to bound a wait, and `--idempotency-key KEY` when a retry must
-represent the same logical deploy. `--reason`, `--tag`, and `--deployed-by`
-annotate deployment history.
+represent the same logical deploy. Without a key, the CLI derives one from the
+source digest and flags, so repeating an identical deploy returns the
+deployment already in progress or live. A deployment that failed, was
+cancelled, or was superseded is never replayed: re-running the same deploy
+starts a new one.
+`--reason`, `--tag`, and `--deployed-by` annotate deployment history.
 
 Every successful wait ends with readiness plus a platform-side smoke request;
 a queued build is not reported as live. The final output includes the app URL,
