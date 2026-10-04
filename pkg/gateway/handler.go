@@ -6563,6 +6563,8 @@ haveApp:
 
 	burstDone := h.burstPressure.begin(app.ID)
 	defer burstDone()
+	h.metrics.AdjustAppInflight(app.ID, 1)
+	defer h.metrics.AdjustAppInflight(app.ID, -1)
 	limits, _ := api.LimitsFor(app.Plan)
 	var (
 		cold              bool
