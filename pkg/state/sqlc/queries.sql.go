@@ -2730,6 +2730,22 @@ func (q *Queries) CountProjectEnvironmentClonePostgresArchives(ctx context.Conte
 	return i, err
 }
 
+const countProjectEnvironmentClonePostgresContents = `-- name: CountProjectEnvironmentClonePostgresContents :one
+SELECT count(*)::bigint AS count,coalesce(sum(reserved_bytes),0)::bigint AS bytes FROM project_environment_clone_postgres_contents WHERE account_id=$1
+`
+
+type CountProjectEnvironmentClonePostgresContentsRow struct {
+	Count int64
+	Bytes int64
+}
+
+func (q *Queries) CountProjectEnvironmentClonePostgresContents(ctx context.Context, db DBTX, accountID pgtype.UUID) (CountProjectEnvironmentClonePostgresContentsRow, error) {
+	row := db.QueryRow(ctx, countProjectEnvironmentClonePostgresContents, accountID)
+	var i CountProjectEnvironmentClonePostgresContentsRow
+	err := row.Scan(&i.Count, &i.Bytes)
+	return i, err
+}
+
 const countProjectEnvironmentClonePostgresCopyReaders = `-- name: CountProjectEnvironmentClonePostgresCopyReaders :one
 SELECT count(*) FROM project_environment_clone_postgres_copy_readers WHERE account_id=$1 AND state<>'retired'
 `
@@ -9659,6 +9675,84 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresBindingLedger(ctx context
 		arg.ReservationHash,
 	)
 	return err
+}
+
+const insertProjectEnvironmentClonePostgresContents = `-- name: InsertProjectEnvironmentClonePostgresContents :one
+INSERT INTO project_environment_clone_postgres_contents(operation_id,source_database_id,database_oid,account_id,project_id,owner_id,scope,
+ inventory_fingerprint,inventory_ciphertext_sha256,archive_owner_id,archive_reservation_sha256,reader_owner_id,reader_identity_sha256,key_id,reserved_bytes)
+SELECT $1::uuid,$2::uuid,$3::bigint,$4::uuid,$5::uuid,$6::uuid,$7::jsonb,
+ $8::text,$9::text,$10::uuid,$11::text,
+ $12::uuid,$13::text,$14::text,$15::bigint
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$1::uuid
+ AND o.account_id=$4::uuid AND o.project_id=$5::uuid AND o.status='capturing'
+ AND o.revision=$16::bigint AND o.lease_token::text=$17::text AND o.lease_until>clock_timestamp()) RETURNING operation_id, source_database_id, database_oid, account_id, project_id, owner_id, scope, inventory_fingerprint, inventory_ciphertext_sha256, archive_owner_id, archive_reservation_sha256, reader_owner_id, reader_identity_sha256, key_id, reserved_bytes, state, fingerprint, ciphertext, ciphertext_sha256, captured_at, created_at
+`
+
+type InsertProjectEnvironmentClonePostgresContentsParams struct {
+	OperationID               pgtype.UUID
+	SourceDatabaseID          pgtype.UUID
+	DatabaseOid               int64
+	AccountID                 pgtype.UUID
+	ProjectID                 pgtype.UUID
+	OwnerID                   pgtype.UUID
+	Scope                     []byte
+	InventoryFingerprint      string
+	InventoryCiphertextSha256 string
+	ArchiveOwnerID            pgtype.UUID
+	ArchiveReservationSha256  string
+	ReaderOwnerID             pgtype.UUID
+	ReaderIdentitySha256      string
+	KeyID                     string
+	ReservedBytes             int64
+	ExpectedRevision          int64
+	WorkerToken               string
+}
+
+func (q *Queries) InsertProjectEnvironmentClonePostgresContents(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresContentsParams) (ProjectEnvironmentClonePostgresContent, error) {
+	row := db.QueryRow(ctx, insertProjectEnvironmentClonePostgresContents,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.DatabaseOid,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.OwnerID,
+		arg.Scope,
+		arg.InventoryFingerprint,
+		arg.InventoryCiphertextSha256,
+		arg.ArchiveOwnerID,
+		arg.ArchiveReservationSha256,
+		arg.ReaderOwnerID,
+		arg.ReaderIdentitySha256,
+		arg.KeyID,
+		arg.ReservedBytes,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresContent
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.DatabaseOid,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.OwnerID,
+		&i.Scope,
+		&i.InventoryFingerprint,
+		&i.InventoryCiphertextSha256,
+		&i.ArchiveOwnerID,
+		&i.ArchiveReservationSha256,
+		&i.ReaderOwnerID,
+		&i.ReaderIdentitySha256,
+		&i.KeyID,
+		&i.ReservedBytes,
+		&i.State,
+		&i.Fingerprint,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.CapturedAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const insertProjectEnvironmentClonePostgresCopyReader = `-- name: InsertProjectEnvironmentClonePostgresCopyReader :one
@@ -24933,6 +25027,45 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresBindings(ctx context.Contex
 	return items, nil
 }
 
+const readProjectEnvironmentClonePostgresContents = `-- name: ReadProjectEnvironmentClonePostgresContents :one
+SELECT operation_id, source_database_id, database_oid, account_id, project_id, owner_id, scope, inventory_fingerprint, inventory_ciphertext_sha256, archive_owner_id, archive_reservation_sha256, reader_owner_id, reader_identity_sha256, key_id, reserved_bytes, state, fingerprint, ciphertext, ciphertext_sha256, captured_at, created_at FROM project_environment_clone_postgres_contents WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3 FOR UPDATE
+`
+
+type ReadProjectEnvironmentClonePostgresContentsParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	DatabaseOid      int64
+}
+
+func (q *Queries) ReadProjectEnvironmentClonePostgresContents(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresContentsParams) (ProjectEnvironmentClonePostgresContent, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentClonePostgresContents, arg.OperationID, arg.SourceDatabaseID, arg.DatabaseOid)
+	var i ProjectEnvironmentClonePostgresContent
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.DatabaseOid,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.OwnerID,
+		&i.Scope,
+		&i.InventoryFingerprint,
+		&i.InventoryCiphertextSha256,
+		&i.ArchiveOwnerID,
+		&i.ArchiveReservationSha256,
+		&i.ReaderOwnerID,
+		&i.ReaderIdentitySha256,
+		&i.KeyID,
+		&i.ReservedBytes,
+		&i.State,
+		&i.Fingerprint,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.CapturedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const readProjectEnvironmentClonePostgresCopyReader = `-- name: ReadProjectEnvironmentClonePostgresCopyReader :one
 SELECT operation_id, source_database_id, account_id, project_id, capture_database_id, scope, owner_id, state, request_started_at, endpoint_id, endpoint_created_at, available, observed_at, cleanup_requested_at, cleanup_dispatched_at, delete_operation_ids, capture_operation_ids, retired_at, created_at, updated_at FROM project_environment_clone_postgres_copy_readers WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
 `
@@ -26959,6 +27092,63 @@ func (q *Queries) RecordProjectEnvironmentClonePostgresArchive(ctx context.Conte
 		&i.CiphertextBytes,
 		&i.CiphertextSha256,
 		&i.RetainedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const recordProjectEnvironmentClonePostgresContents = `-- name: RecordProjectEnvironmentClonePostgresContents :one
+UPDATE project_environment_clone_postgres_contents c SET state='captured',fingerprint=$1::text,
+ ciphertext=$2::bytea,ciphertext_sha256=$3::text,captured_at=clock_timestamp()
+WHERE c.operation_id=$4::uuid AND c.source_database_id=$5::uuid AND c.database_oid=$6::bigint AND c.state='reserved'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='capturing'
+ AND o.revision=$7::bigint AND o.lease_token::text=$8::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.database_oid, c.account_id, c.project_id, c.owner_id, c.scope, c.inventory_fingerprint, c.inventory_ciphertext_sha256, c.archive_owner_id, c.archive_reservation_sha256, c.reader_owner_id, c.reader_identity_sha256, c.key_id, c.reserved_bytes, c.state, c.fingerprint, c.ciphertext, c.ciphertext_sha256, c.captured_at, c.created_at
+`
+
+type RecordProjectEnvironmentClonePostgresContentsParams struct {
+	Fingerprint      string
+	Ciphertext       []byte
+	CiphertextSha256 string
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	DatabaseOid      int64
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) RecordProjectEnvironmentClonePostgresContents(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresContentsParams) (ProjectEnvironmentClonePostgresContent, error) {
+	row := db.QueryRow(ctx, recordProjectEnvironmentClonePostgresContents,
+		arg.Fingerprint,
+		arg.Ciphertext,
+		arg.CiphertextSha256,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.DatabaseOid,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresContent
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.DatabaseOid,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.OwnerID,
+		&i.Scope,
+		&i.InventoryFingerprint,
+		&i.InventoryCiphertextSha256,
+		&i.ArchiveOwnerID,
+		&i.ArchiveReservationSha256,
+		&i.ReaderOwnerID,
+		&i.ReaderIdentitySha256,
+		&i.KeyID,
+		&i.ReservedBytes,
+		&i.State,
+		&i.Fingerprint,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.CapturedAt,
 		&i.CreatedAt,
 	)
 	return i, err

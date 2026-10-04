@@ -5844,3 +5844,67 @@ and normal production-build gates do not qualify PostgreSQL 14/15, live provider
 permissions, complete clone orchestration, or native KVM acceptance. The public
 full database/object clone gate remains closed while those and the earlier full
 scope requirements are unfinished.
+
+### Original contents manifest ownership and recovery (2026-10-04)
+
+`project_environment_clone_postgres_contents` now reserves private ownership for
+each original SQL database before contents capture. Its `(operation, source
+database, SQL database OID)` index binds the exact retained inventory ciphertext,
+original archive owner/reservation and original reader owner/endpoint identity.
+The reader identity includes its immutable scope, request time and endpoint birth
+time; availability observations and cleanup may progress without changing those
+pins. Foreign keys enforce the original inventory/archive/reader tuples. The
+schema coverage registry classifies this control-plane ledger as operational;
+these rows are not customer configuration copied into another stage.
+
+New reservations and first capture publication authenticate the native capture
+and an observed available reader under the operation lease. Account holds are
+serialized with the existing database account lock. Structural caps in
+`pkg/api/limits.go` are 4,096 contents owners and 1 GiB of reserved ciphertext per
+account, with each reservation bounded by the existing ciphertext cap. Lower
+worker limits may be supplied. A successful replay retains its original charged
+bytes; failed reads, cancellation, lost replies, compensation and reader cleanup
+do not release the hold. This bounds retained manifest ownership, not row-read
+CPU, digest spool placement, storage entitlements or billing. Qualified contents
+owner retirement and worker resource charging remain required before full wiring.
+
+The first captured fingerprint, ciphertext and encryption recipient are immutable.
+Equivalent re-encryption cannot overwrite them. A read rechecks lease authority
+after all receipt locks; stale/expired workers cannot obtain private contents or
+publish a result. Recovery uses retained parents without a current source SQL
+connection or live reader. Original archive/reader identity substitution or
+damaged ciphertext returns no recovered owner. Authenticated reader retirement
+preserves the contents receipt and its quota charge. Downgrade is refused for any
+owned reservation, including one whose read was never dispatched. The generated
+migration is replay-safe and its empty-table downgrade/upgrade retains the same
+columns and constraint shape.
+
+The private APID contents worker recovers committed ciphertext before invoking a
+trusted reader. A missing owner is reserved with the current openable recipient;
+an existing reservation retains its original recipient across rotation. It seals
+the independent manifest and authenticates its complete original private source
+descriptor before storage. A reservation that observes a concurrent first capture
+opens that capture without another source read. Lost committed responses recover
+the original manifest and comparison key. Missing old keys, tampering, stale
+handoff, foreign source descriptors and exhausted reservations return no manifest;
+none causes a current-source recapture or replacement of the first ciphertext.
+
+The PostgreSQL control-plane contracts exercise concurrent owners, exact first
+ciphertext, handoff, stale/expired leases, account count/byte caps, original parent
+substitution, reader retirement, and actual migration round-trip/downgrade refusal.
+The worker contracts use actual independent contents capture in a selected local
+SQL database, with synthetic owned provider receipts and borrowed connections.
+They exercise record/reservation reply loss, original-key recovery, post-read
+provider failure, raced capture recovery, cancellation and substitution. Store
+fixtures separately own opaque ciphertext; those tests alone do not authenticate
+customer data. Existing inventory/archive/import/preparation regressions and the
+schema coverage gate remain part of focused compatibility qualification.
+
+No live source reader is installed by this private callback seam. Complete owned
+reader composition, target verification ownership/publication, original writer
+closure/native point coverage, stored materialized-row copying, all remaining
+schema/globals/extensions/data strategies, provider qualification, ownership
+retirement/metering and the complete stage coordinator remain required. Normal
+production builds, local PostgreSQL 16 and actual SQLC checks do not qualify the
+full repository, PostgreSQL 14/15, paid providers or native KVM acceptance. The
+public full database/object clone gate remains closed.

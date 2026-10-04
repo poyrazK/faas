@@ -139,6 +139,10 @@ const (
 	PostgresCopyContentsSortLevelsMax         = 32
 	PostgresCopyContentsReadBlockBytes        = 1 << 20
 	PostgresCopyContentsCleanupTimeout        = 10 * time.Second
+	// Original manifests retain these account reservations until an explicit
+	// qualified retirement protocol exists; reader cleanup does not release them.
+	PostgresCopyContentsManifestsPerAccountMax       = 4096
+	PostgresCopyContentsBytesPerAccountMax     int64 = 1 << 30
 )
 
 // Operator-configurable object-storage preview safeguards, not plan allowances
