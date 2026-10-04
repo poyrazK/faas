@@ -139,6 +139,10 @@ type nativeImageSourceBackend interface {
 	Inventory(string, []nativeImageSourceRecord) error
 }
 
+type nativeWritableImageBackend interface {
+	PrepareWritable(context.Context, nativeLaunchRecord, string, string, string) (nativeImagePreparation, error)
+}
+
 type nativeImageSourceJournal struct {
 	owner        *nativeLaunchJournal
 	backend      nativeImageSourceBackend
@@ -284,6 +288,25 @@ func (j *nativeImageSourceJournal) stage(ctx context.Context, expected nativeLau
 	if j.backend == nil {
 		return "", errors.New("native image source: native backend is unavailable")
 	}
+	return j.stagePrepared(ctx, expected, root, name, readOnly, addPerms, func(owner nativeLaunchRecord) (nativeImagePreparation, error) {
+		return j.backend.Prepare(owner, root, source, name, preferLink)
+	})
+}
+
+func (j *nativeImageSourceJournal) stageWritable(ctx context.Context, expected nativeLaunchRecord, root, source, name string) (string, error) {
+	if expected.Authorized || expected.Revoked || expected.ExitConfirmed || expected.ResourcesRemoved || expected.Lease.IsBuilder || name != layerImageName {
+		return "", errors.New("native image source: private clone requires an original prepared app drive")
+	}
+	backend, ok := j.backend.(nativeWritableImageBackend)
+	if !ok {
+		return "", errors.New("native image source: private writable producer is unavailable")
+	}
+	return j.stagePrepared(ctx, expected, root, name, false, 0, func(owner nativeLaunchRecord) (nativeImagePreparation, error) {
+		return backend.PrepareWritable(ctx, owner, root, source, name)
+	})
+}
+
+func (j *nativeImageSourceJournal) stagePrepared(ctx context.Context, expected nativeLaunchRecord, root, name string, readOnly bool, addPerms uint32, prepare func(nativeLaunchRecord) (nativeImagePreparation, error)) (staged string, err error) {
 	vmLock, err := j.owner.lock(ctx, expected.Lease.Instance)
 	if err != nil {
 		return "", err
@@ -316,16 +339,34 @@ func (j *nativeImageSourceJournal) stage(ctx context.Context, expected nativeLau
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	preparation, err := j.backend.Prepare(owner, root, source, name, preferLink)
+	// Refuse an interrupted earlier staging operation before allocating a new
+	// anonymous clone. Its incomplete anchor/reference remains recovery work.
+	if err := j.requireUnusedTarget(owner, root, name); err != nil {
+		return "", err
+	}
+	preparation, err := prepare(owner)
+	if err != nil {
+		if preparation != nil {
+			err = errors.Join(err, preparation.Close())
+		}
+		return "", err
+	}
+	if preparation == nil {
+		return "", errors.New("native image source: producer returned no pinned preparation")
+	}
+	var sourceLock *os.File
+	defer func() {
+		// Close producer descriptors before releasing source or physical
+		// ownership, including when a preparation/checkpoint failed.
+		err = errors.Join(err, preparation.Close())
+		if sourceLock != nil {
+			err = errors.Join(err, sourceLock.Close())
+		}
+	}()
+	sourceLock, err = j.lock(ctx, preparation.Identity())
 	if err != nil {
 		return "", err
 	}
-	defer func() { err = errors.Join(err, preparation.Close()) }()
-	lock, err := j.lock(ctx, preparation.Identity())
-	if err != nil {
-		return "", err
-	}
-	defer func() { err = errors.Join(err, lock.Close()) }()
 	records, err := j.records()
 	if err != nil {
 		return "", err
@@ -411,6 +452,21 @@ func (j *nativeImageSourceJournal) stage(ctx context.Context, expected nativeLau
 		return "", err
 	}
 	return name, ctx.Err()
+}
+
+func (j *nativeImageSourceJournal) requireUnusedTarget(owner nativeLaunchRecord, root, name string) error {
+	records, err := j.records()
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		for _, ref := range record.References {
+			if ref.Owner.Generation == owner.Generation && ref.Root == root && ref.Name == name && !ref.Removed {
+				return errors.New("native image source: target retains an earlier staging reference")
+			}
+		}
+	}
+	return nil
 }
 
 func sameNativeImageOwner(ref nativeImageReference, owner nativeLaunchRecord) bool {

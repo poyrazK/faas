@@ -6664,7 +6664,7 @@ func (v *JailerVMM) stageWritableAs(root, src, name string, uid, gid int, instan
 
 func (v *JailerVMM) stageWritableAsForOwner(ctx context.Context, owner nativeLaunchRecord, root, src, name string, uid, gid int, instance string) (string, error) {
 	if v.nativeRecovery != nil {
-		return "", errors.New("native recovery: writable image materialisation has no durable producer authority")
+		return v.stageNativeWritableImageForOwner(ctx, owner, root, src, name, uid, gid, instance)
 	}
 	if instance == "" {
 		return stageWritableAs(root, src, name, uid, gid)

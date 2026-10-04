@@ -2098,7 +2098,51 @@ Portable race checks pass 44 top-level tests / 159 cases with no skips across
 the input, image ownership and qualification journal boundaries. They cover
 replacement paths, original daemon authority, cancellation, damaged bindings,
 descriptor closure and retirement blocked by an active reader. Linux lint and
-type checking report zero issues. The Linux placement refusal tests require
-Linux execution in CI; these local results establish no native mount, VM capture
-or restore acceptance. Gateway clients also implement the additive capture RPC;
+type checking report zero issues. Repository CI at `108093d17` subsequently
+passed all 32 PR checks (31 success, one skipped), including the complete Linux
+FCVM race suite with the placement refusal tests included. These results
+establish no native mount, VM capture or restore acceptance. Gateway clients also
+implement the additive capture RPC;
 the full race/load gateway suite passes 2,234 cases with no skips.
+
+## Native writable image producer
+
+The native application-drive path now prepares a private anonymous inode on the
+original source's ext4, XFS or Btrfs filesystem. It uses `O_TMPFILE`, `O_EXCL` and
+close-on-exec descriptors; unsupported or memory-backed filesystems fail closed.
+The source descriptor remains pinned throughout reflink or bounded copying.
+Only unsupported reflink operations permit copying; space and IO errors remain
+failures. Cancellation, a changed input/output size or an incomplete copy cannot
+publish preparation. Shared source metadata and bytes remain unchanged.
+
+Before file production, vmmd checks its original daemon ownership, generation,
+complete prepared lease and private jail placement. The physical lock spans
+copying and the existing source journal's anchor, permission and writable-bind
+checkpoints. Every producer descriptor closes before source and physical locks
+are released. An anonymous inode has no persistent named-file birth window;
+after attachment, the original source epoch owns its retained mount and jail
+reference. An interrupted earlier target refuses another copy until retirement.
+The native path does not fall back to legacy materialised-file or bind maps.
+
+The required native recovery inventory automatically includes the new crash
+fixture for both anchor and writable-bind acknowledgement loss. It verifies
+retained anonymous inode identity after producer death, cache-path replacement,
+original shared-input preservation and retirement without leaked mounts. This
+fixture still requires execution on the dedicated native KVM acceptance host.
+Portable ownership/race checks and Linux compilation cannot substitute for it.
+
+The complete portable FCVM race suite passes 820 top-level tests / 1,641 cases
+with no skips. Focused writable-drive, image, snapshot-input and qualification
+regression checks pass 48 top-level tests / 180 cases with race detection and no
+skips. Normal Linux lint reports zero issues, the complete Linux metal-tagged
+FCVM package compiles, and the native smoke runner's verdict contract passes.
+An additional metal-tagged lint run reports 13 findings in six files unchanged
+from the preceding checkpoint; this broader lint run does not pass. The new
+ordinary Linux file-IO tests still require execution in current-head CI. No
+dedicated native `test-metal` or `leakcheck` result is claimed.
+
+This closes the local private clone/copy implementation gap, not the complete
+materialisation/recovery gate. Remote artifact download producers, native
+snapshot output/publication, other host producers, namespace/reboot exclusion,
+qualification completion and graph activation remain required. Native recovery,
+qualification polling and environment enforcement retain their enablement gates.
