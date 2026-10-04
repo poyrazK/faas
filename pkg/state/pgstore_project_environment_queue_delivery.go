@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -95,7 +96,7 @@ func (s *PgStore) ClaimNextProjectEnvironmentQueueDelivery(ctx context.Context, 
 		return ProjectEnvironmentQueueDelivery{}, err
 	}
 	if _, err := q.ReserveEnvironmentQueueDeliveryQuota(ctx, tx, mustPgUUID(req.AccountID)); err != nil {
-		if mapErr(err) == ErrNotFound {
+		if errors.Is(mapErr(err), ErrNotFound) {
 			return ProjectEnvironmentQueueDelivery{}, ErrQuotaExceeded
 		}
 		return ProjectEnvironmentQueueDelivery{}, err

@@ -311,7 +311,7 @@ func TestCheckpointConnectionControllerNativePostcheckFailuresRetainOriginalClos
 					case "placement":
 						f.drift.Store(true)
 					case "maintenance":
-						_, err = f.root.Exec(t.Context(), "ALTER ROLE "+pgx.Identifier{ownerRole}.Sanitize()+" LOGIN")
+						_, err = f.root.Exec(ctx, "ALTER ROLE "+pgx.Identifier{ownerRole}.Sanitize()+" LOGIN")
 					case "cancel":
 						cancel()
 					}

@@ -38,7 +38,8 @@ func (p *serviceReaderDatabaseSQLProvider) WithSnapshotCopyReaderDatabaseSQL(ctx
 	case "no_callback":
 		return nil
 	}
-	err := read(context.Background(), new(pgx.Conn), id)
+	// A hostile provider drops the deadline; the service must restore its owned context.
+	err := read(context.WithoutCancel(ctx), new(pgx.Conn), id)
 	if p.fault == "repeat" {
 		_ = read(ctx, new(pgx.Conn), id)
 		return nil

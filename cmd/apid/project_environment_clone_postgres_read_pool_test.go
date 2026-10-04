@@ -135,8 +135,8 @@ func TestPGClonePostgresVerificationReadPoolRequiredAndRetainedThroughPostcheck(
 				v.cfg = cloneContentsReadConfig(t)
 			}
 			if mode == "postcheck" {
-				v.f.afterChild = func(context.Context, *pgx.Conn) error {
-					if _, release, err := cfg.ReserveReadForWorker(t.Context()); !errors.Is(err, managedpostgres.ErrQuotaExceeded) {
+				v.f.afterChild = func(ctx context.Context, _ *pgx.Conn) error {
+					if _, release, err := cfg.ReserveReadForWorker(ctx); !errors.Is(err, managedpostgres.ErrQuotaExceeded) {
 						if release != nil {
 							release()
 						}

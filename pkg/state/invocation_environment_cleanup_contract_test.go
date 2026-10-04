@@ -49,7 +49,7 @@ func testInvocationEnvironmentOwner(t *testing.T, store invocationWorkEnvironmen
 			case "foreign_marker":
 				changed.EnvironmentID = uuid.NewString()
 			case "production_pin":
-				prod := f.request(t.Context(), t, store, "production")
+				prod := f.request(ctx, t, store, "production")
 				changed.Headers = prod.Headers
 			}
 			if _, _, err := state.ResolveInvocationVersion(ctx, store, changed); !errors.Is(err, state.ErrInvocationEnvironmentWorkIsolation) {

@@ -443,7 +443,7 @@ func (tr *importWorkerLostWindowReply) TraceQueryStart(ctx context.Context, _ *p
 func (tr *importWorkerLostWindowReply) TraceQueryEnd(ctx context.Context, c *pgx.Conn, d pgx.TraceQueryEndData) {
 	if commit, _ := ctx.Value(importWorkerCommitKey{}).(bool); commit && d.Err == nil && tr.armed == tr.phase && !tr.fired {
 		tr.fired = true
-		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
 		_ = c.PgConn().Close(cleanup)
 	}

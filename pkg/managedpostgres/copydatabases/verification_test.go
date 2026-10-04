@@ -25,7 +25,7 @@ func verificationImport(t *testing.T, f *fixture, r Receipt) (uuid.UUID, Mainten
 	imported := uuid.New()
 	c, err := r.WithMaintenance(t.Context(), f.target, f.exports, imported, f.authorize, func(ctx context.Context, target copyarchive.RestoreTarget) error {
 		conn := maintenanceChild(ctx, t, f, target)
-		defer conn.Close(context.Background())
+		defer conn.Close(context.WithoutCancel(ctx))
 		run(ctx, t, conn, "CREATE TABLE public.verification_data(id integer PRIMARY KEY, value text)")
 		run(ctx, t, conn, "INSERT INTO public.verification_data VALUES (1,'original imported row')")
 		return nil
@@ -500,7 +500,7 @@ func (tr *verificationLostReplyTracer) TraceQueryStart(ctx context.Context, _ *p
 func (tr *verificationLostReplyTracer) TraceQueryEnd(ctx context.Context, c *pgx.Conn, d pgx.TraceQueryEndData) {
 	if commit, _ := ctx.Value(maintenanceCommitTraceKey{}).(bool); commit && d.Err == nil && tr.armed == tr.phase && !tr.fired {
 		tr.fired = true
-		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
 		_ = c.PgConn().Close(cleanup)
 	}

@@ -104,7 +104,7 @@ func TestCopyDatabaseVerificationRetryBoundedOwnersReadOnlyAndOriginalHistory(t 
 					return err
 				}
 				child := maintenanceChild(ctx, t, f, target)
-				defer child.Close(context.Background())
+				defer child.Close(context.WithoutCancel(ctx))
 				return access.WithReadOnly(ctx, child, verificationPlacement(f, child, target), func(ctx context.Context, tx pgx.Tx) error {
 					var ro bool
 					var isolation, value string
@@ -187,7 +187,7 @@ func TestCopyDatabaseVerificationRetryActualDataMatchAndClosure(t *testing.T) {
 			match, err = manifest.CompareTarget(ctx, tx, target, cfg, place)
 			return err
 		})
-		_ = child.Close(context.Background())
+		_ = child.Close(context.WithoutCancel(ctx))
 		if err != nil {
 			return err
 		}
@@ -300,7 +300,7 @@ func TestCopyDatabaseVerificationRetryFailureAndAuthorityLossCloseOriginalOwner(
 				if mode == "leaked child" {
 					leaked = child
 				} else {
-					defer child.Close(context.Background())
+					defer child.Close(context.WithoutCancel(ctx))
 				}
 				return access.WithReadOnly(ctx, child, verificationPlacement(f, child, target), func(ctx context.Context, tx pgx.Tx) error {
 					var value string
@@ -508,7 +508,7 @@ func TestCopyDatabaseVerificationRetrySerializesConcurrentOwnersForSamePredecess
 		}
 		owner := uuid.New()
 		wg.Go(func() {
-			defer conn.Close(context.Background())
+			defer conn.Close(context.WithoutCancel(ctx))
 			c, err := r.WithVerificationRetryAccess(ctx, conn, f.exports, imported, owner, previous, f.authorize, func(context.Context, VerificationTarget) error { calls.Add(1); return nil })
 			results <- result{owner, c, err}
 		})

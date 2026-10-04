@@ -241,7 +241,7 @@ func (f *fixture) state(ctx context.Context, t *testing.T, id uint32) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close(context.Background())
+	defer c.Close(context.WithoutCancel(ctx))
 	var state string
 	_ = c.QueryRow(ctx, "SELECT state FROM gregale_copy_databases.databases WHERE source_oid=$1::oid", id).Scan(&state)
 	return state

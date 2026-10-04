@@ -36,7 +36,8 @@ func (p *serviceReaderSQLProvider) WithSnapshotCopyReaderSQL(ctx context.Context
 	case "role":
 		identity.RoleName = ""
 	}
-	err := read(context.Background(), conn, identity)
+	// A hostile provider drops the deadline; the service must restore its owned context.
+	err := read(context.WithoutCancel(ctx), conn, identity)
 	if p.sqlFault == "repeat" {
 		_ = read(ctx, conn, identity)
 		return nil // Even ignored provider errors must not grant success.

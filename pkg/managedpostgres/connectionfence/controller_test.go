@@ -118,9 +118,9 @@ func (f fixture) connect(ctx context.Context, t *testing.T, name, user string) (
 	conn, err := pgx.ConnectConfig(ctx, config)
 	if err == nil {
 		t.Cleanup(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 			defer cancel()
-			_ = conn.Close(ctx)
+			_ = conn.Close(cleanupCtx)
 		})
 	}
 	return conn, err

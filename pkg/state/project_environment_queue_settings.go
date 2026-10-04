@@ -43,7 +43,7 @@ func normalizeEnvironmentQueues(bindings []ProjectEnvironmentQueueDefinition) ([
 		binding := &bindings[i]
 		if !environmentQueueNameRE.MatchString(binding.Name) || !environmentQueueNameRE.MatchString(binding.QueueName) || names[binding.Name] || queues[binding.QueueName] ||
 			(binding.Mode != "pull" && binding.Mode != "push") || binding.MaxConcurrency < 1 || binding.MaxConcurrency > 10000 ||
-			(binding.WorkloadClass != WorkloadClassWorker && binding.WorkloadClass != WorkloadClassJob && !(binding.WorkloadClass == WorkloadClassHTTP && binding.Mode == "push")) {
+			(binding.WorkloadClass != WorkloadClassWorker && binding.WorkloadClass != WorkloadClassJob && (binding.WorkloadClass != WorkloadClassHTTP || binding.Mode != "push")) {
 			return nil, ErrInvalidArgument
 		}
 		names[binding.Name], queues[binding.QueueName] = true, true

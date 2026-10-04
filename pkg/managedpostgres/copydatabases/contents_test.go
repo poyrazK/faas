@@ -120,7 +120,7 @@ func contentsRestore(t *testing.T, f *fixture, r Receipt, d copyinventory.Databa
 		if e != nil {
 			return e
 		}
-		defer c.Close(context.Background())
+		defer c.Close(context.WithoutCancel(ctx))
 		_, e = staged.Restore(ctx, c, target, filepath.Join(filepath.Dir(tool), "pg_restore"), verificationPlacement(f, c, target))
 		return e
 	})
@@ -138,7 +138,7 @@ func contentsTargetMutation(ctx context.Context, t *testing.T, f *fixture, r Rec
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer c.Close(context.Background())
+	defer c.Close(context.WithoutCancel(ctx))
 	run(ctx, t, c, sql)
 }
 
@@ -199,7 +199,7 @@ func TestCopyDatabaseContentsIndependentManifestVerifiesRealArchiveAndOriginalKe
 	closure, e := r.WithVerificationAccess(t.Context(), f.target, f.exports, imported, uuid.New(), f.authorize, func(ctx context.Context, access VerificationTarget) error {
 		target, _ := access.TargetForWorker()
 		c := maintenanceChild(ctx, t, f, target)
-		defer c.Close(context.Background())
+		defer c.Close(context.WithoutCancel(ctx))
 		return access.WithReadOnly(ctx, c, verificationPlacement(f, c, target), func(ctx context.Context, tx pgx.Tx) error {
 			var e error
 			targetConfig := cfg
@@ -259,7 +259,7 @@ func TestCopyDatabaseContentsDetectsChangedRowsDuplicatesSequenceAndLargeObjects
 				contentsTargetMutation(ctx, t, f, r, mutation)
 				target, _ := access.TargetForWorker()
 				c := maintenanceChild(ctx, t, f, target)
-				defer c.Close(context.Background())
+				defer c.Close(context.WithoutCancel(ctx))
 				return access.WithReadOnly(ctx, c, verificationPlacement(f, c, target), func(ctx context.Context, tx pgx.Tx) error {
 					match, e := manifest.CompareTarget(ctx, tx, target, cfg, verificationPlacement(f, c, target))
 					if match != (copycontents.Match{}) || !errors.Is(e, pgerrors.ErrConflict) {
@@ -285,7 +285,7 @@ func TestCopyDatabaseContentsDetectsStoredMaterializedRowsOmittedByDump(t *testi
 	_, e = r.WithVerificationAccess(t.Context(), f.target, f.exports, imported, uuid.New(), f.authorize, func(ctx context.Context, access VerificationTarget) error {
 		target, _ := access.TargetForWorker()
 		c := maintenanceChild(ctx, t, f, target)
-		defer c.Close(context.Background())
+		defer c.Close(context.WithoutCancel(ctx))
 		return access.WithReadOnly(ctx, c, verificationPlacement(f, c, target), func(ctx context.Context, tx pgx.Tx) error {
 			match, e := manifest.CompareTarget(ctx, tx, target, cfg, verificationPlacement(f, c, target))
 			if match != (copycontents.Match{}) || !errors.Is(e, pgerrors.ErrConflict) {

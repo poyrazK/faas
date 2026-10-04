@@ -84,7 +84,7 @@ func testInvocationWorkEnvironmentIsolation(t *testing.T, store invocationWorkEn
 	f := seedInvocationWorkEnvironment(t, store)
 	enqueue := func(environment string, policy workpolicy.Policy, key string, fairness ...string) state.Invocation {
 		t.Helper()
-		row, err := store.EnqueueKeyedInvocation(ctx, f.request(t.Context(), t, store, environment), policy, key, fairness...)
+		row, err := store.EnqueueKeyedInvocation(ctx, f.request(ctx, t, store, environment), policy, key, fairness...)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -55,7 +55,8 @@ func (p *serviceTargetDatabaseSQLProvider) WithSnapshotCopyTargetDatabaseSQL(ctx
 	case "role_oid":
 		i.RoleOID++
 	}
-	err := run(context.Background(), conn, i)
+	// A hostile provider drops the deadline; the service must restore its owned context.
+	err := run(context.WithoutCancel(ctx), conn, i)
 	if p.fault == "repeat" {
 		_ = run(ctx, conn, i)
 		return nil

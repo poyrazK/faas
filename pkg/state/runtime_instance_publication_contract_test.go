@@ -65,7 +65,7 @@ func testRuntimeInstancePublicationOwnership(t *testing.T, store runtimeAppEnvTe
 			if _, err := store.PublishOwnedInstanceRuntime(ctx, forged); !errors.Is(err, state.ErrConflict) {
 				t.Fatalf("foreign publication: %v", err)
 			}
-			assertRuntimePublicationUnchanged(t.Context(), t, store, p)
+			assertRuntimePublicationUnchanged(ctx, t, store, p)
 		})
 	}
 	missing := p
@@ -179,7 +179,7 @@ func testWarmInstancePublicationOwnership(t *testing.T, store runtimeAppEnvTestS
 			if _, err := store.PublishOwnedInstanceRuntime(ctx, forged); !errors.Is(err, state.ErrConflict) {
 				t.Fatalf("foreign paused publication: %v", err)
 			}
-			assertRuntimePublicationUnchanged(t.Context(), t, store, p)
+			assertRuntimePublicationUnchanged(ctx, t, store, p)
 		})
 	}
 	for _, target := range []string{string(state.StateStopped), string(state.StateDraining), "unknown"} {

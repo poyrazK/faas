@@ -38,7 +38,7 @@ func TestReadyMaintenanceRecoversWhileSourceAdmissionIsClosed(t *testing.T) {
 	}
 	poolConfig := f.fixture.bootstrap.Copy()
 	poolConfig.ConnConfig.Database, poolConfig.ConnConfig.User = MaintenanceDatabase, f.admin
-poolConfig.ConnConfig.Password = f.password
+	poolConfig.ConnConfig.Password = f.password
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestReadyMaintenanceRejectsReceiptAndSessionSubstitution(t *testing.T) {
 			case "major":
 				cfg.SourcePostgresMajor++
 			case "source_session":
-				session, err = f.connect(t.Context(), t, cfg.SourceDatabase, f.admin)
+				session, err = f.connect(ctx, t, cfg.SourceDatabase, f.admin)
 				if err != nil {
 					t.Fatal(err)
 				}

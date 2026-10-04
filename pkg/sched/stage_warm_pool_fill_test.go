@@ -251,7 +251,7 @@ func TestStageWarmPoolPublicationRejectsChangesAfterRestoreRead(t *testing.T) {
 				}
 				switch change {
 				case "owner":
-					f.recreateStage(t.Context(), t)
+					f.recreateStage(ctx, t)
 				case "variable":
 					if err := f.store.UpsertAppEnvInScope(ctx, f.account.ID, f.app.ID, "stage", "MODE", "changed"); err != nil {
 						t.Fatal(err)
@@ -352,7 +352,7 @@ func TestStageWarmPromotionRejectsChangedOwnerOrInputsDuringResume(t *testing.T)
 			vmm := &stagePoolResumeVMM{stagePoolPausedVMM: &stagePoolPausedVMM{fakeVMM: &fakeVMM{}}}
 			vmm.resumeHook = func() {
 				if change == "owner" {
-					f.recreateStage(t.Context(), t)
+					f.recreateStage(ctx, t)
 				} else if change == "variable" {
 					if err := f.store.UpsertAppEnvInScope(ctx, f.account.ID, f.app.ID, "stage", "MODE", "changed"); err != nil {
 						t.Fatal(err)

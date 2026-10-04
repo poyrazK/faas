@@ -106,11 +106,11 @@ func TestCopyDatabaseMaintenancePreservesClosedZeroLimitAndUnsetACL(t *testing.T
 				c := maintenanceChild(ctx, t, f, target)
 				defer c.Close(context.WithoutCancel(ctx))
 				second := maintenanceChild(ctx, t, f, target)
-				defer second.Close(context.Background())
+				defer second.Close(context.WithoutCancel(ctx))
 				thirdCfg := c.Config().Copy()
 				third, e := pgx.ConnectConfig(ctx, thirdCfg)
 				if third != nil {
-					third.Close(context.Background())
+					third.Close(context.WithoutCancel(ctx))
 				}
 				if e == nil {
 					t.Fatal("temporary connection limit was not enforced")
@@ -119,7 +119,7 @@ func TestCopyDatabaseMaintenancePreservesClosedZeroLimitAndUnsetACL(t *testing.T
 				cfg.User = f.dataOwner
 				customer, e := pgx.ConnectConfig(ctx, cfg)
 				if customer != nil {
-					customer.Close(context.Background())
+					customer.Close(context.WithoutCancel(ctx))
 				}
 				if e == nil {
 					t.Fatal("NOLOGIN customer admitted")
@@ -214,7 +214,7 @@ func TestCopyDatabaseMaintenanceFailureCancellationAndExpiredLeaseClose(t *testi
 				c := maintenanceChild(ctx, t, f, target)
 				defer c.Close(context.WithoutCancel(ctx))
 				run(ctx, t, c, "CREATE TABLE public.committed_before_worker_reply(id integer)")
-				if e := c.Close(context.Background()); e != nil {
+				if e := c.Close(context.WithoutCancel(ctx)); e != nil {
 					t.Fatal(e)
 				}
 				switch mode {
@@ -789,7 +789,7 @@ func (tr *maintenanceLostReplyTracer) TraceQueryStart(ctx context.Context, _ *pg
 func (tr *maintenanceLostReplyTracer) TraceQueryEnd(ctx context.Context, c *pgx.Conn, d pgx.TraceQueryEndData) {
 	if commit, _ := ctx.Value(maintenanceCommitTraceKey{}).(bool); commit && d.Err == nil && tr.armed == tr.phase && !tr.fired {
 		tr.fired = true
-		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
 		_ = c.PgConn().Close(cleanup)
 	}

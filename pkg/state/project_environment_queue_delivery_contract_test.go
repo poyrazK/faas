@@ -82,8 +82,8 @@ func testEnvironmentQueueDeliveryClassesAndReceipts(t *testing.T, store environm
 		mode  string
 	}{{state.WorkloadClassWorker, "pull"}, {state.WorkloadClassJob, "pull"}, {state.WorkloadClassWorker, "push"}, {state.WorkloadClassJob, "push"}, {state.WorkloadClassHTTP, "push"}} {
 		t.Run(string(transport.class)+"_"+transport.mode, func(t *testing.T) {
-			f, req := seedQueueDelivery(t.Context(), t, store, transport.class, transport.mode)
-			inv := enqueueStageQueue(t.Context(), t, store, f)
+			f, req := seedQueueDelivery(ctx, t, store, transport.class, transport.mode)
+			inv := enqueueStageQueue(ctx, t, store, f)
 			first, err := store.ClaimNextProjectEnvironmentQueueDelivery(ctx, req)
 			if err != nil || first.Invocation.ID != inv.ID || first.Invocation.State != state.InvocationDispatching || first.Invocation.Attempts != 1 ||
 				!first.Invocation.QuotaReserved || first.Invocation.EnvironmentID != f.spec.EnvironmentID || first.Receipt == "" ||

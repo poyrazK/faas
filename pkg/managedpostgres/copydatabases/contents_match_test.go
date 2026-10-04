@@ -48,7 +48,7 @@ func TestCopyDatabaseContentsRetainedMatchBindsOriginalWindowCiphertextAndClosur
 				return pgerrors.ErrConflict
 			}
 			child := maintenanceChild(ctx, t, f, target)
-			defer child.Close(context.Background())
+			defer child.Close(context.WithoutCancel(ctx))
 			err = access.WithReadOnly(ctx, child, verificationPlacement(f, child, target), func(ctx context.Context, tx pgx.Tx) error {
 				var err error
 				readMatch, err = manifest.CompareTarget(ctx, tx, target, cfg, verificationPlacement(f, child, target))
