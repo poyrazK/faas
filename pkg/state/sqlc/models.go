@@ -2143,6 +2143,21 @@ type EventFanoutOutbox struct {
 	DeliveredAt       pgtype.Timestamptz
 	RecipientSnapshot []byte
 	RecipientProgress []byte
+	RecipientClaims   bool
+}
+
+type EventFanoutRecipient struct {
+	OutboxID       int64
+	SubscriptionID string
+	AppID          pgtype.UUID
+	Recipient      []byte
+	State          string
+	Generation     int64
+	Attempts       int32
+	TotalAttempts  int32
+	AvailableAt    pgtype.Timestamptz
+	ClaimToken     pgtype.UUID
+	LeaseUntil     pgtype.Timestamptz
 }
 
 type EventSchema struct {

@@ -591,6 +591,27 @@ outcome for each captured candidate, so a transient enqueue error retries only
 that candidate. Retries are capped at 12; terminal routing failures remain on
 the outbox receipt and are logged by the scheduler. Once an invocation is
 enqueued, its handler retry and dead-letter lifecycle applies independently.
+
+When operators enable independent recipient routing (ADR-581), each captured
+candidate has its own five-minute lease and backoff from five seconds to five
+minutes. A terminal recipient can be replayed while its siblings are routing
+or waiting to retry. Each replay gets a fresh twelve-attempt routing budget;
+the visible attempt count and history remain cumulative. Successful siblings
+are not rerun. The flag `FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED=1` enables adoption
+on schedd after all API and scheduler binaries are compatible. It defaults off;
+disabling it stops adoption but continues draining already adopted receipts.
+See [ADR-581](adr/581-independent-event-recipient-routing.md) for rollout and
+rollback requirements.
+
+Publish acceptance means the event is durably stored. A recipient marked
+`enqueued` has an invocation; the receipt is `delivered` when all routing
+candidates settle, including terminal failures. Handler completion is tracked
+by the invocation lifecycle. Handler execution is at least once: use an
+idempotency key or version check for side effects. Gregale does not promise
+FIFO ordering across events or subscriptions. Retry backoff, recovery, and
+replay can change enqueue and completion order; work policies constrain
+dispatch within a key without guaranteeing publication order.
+
 Published and inbox envelopes use CloudEvents `datacontenttype` and the
 `accountid` extension. The API accepts the older `data_content_type` and
 `account_id` request spellings for existing clients.
@@ -703,8 +724,10 @@ gregale events replay APP \
   --subscription-id 5ef2a270-2c12-4ddd-a2a7-a0873995f7c8
 ```
 
-Replay becomes available after the event's fanout receipt settles. It queues
-only that recipient and keeps the event payload and recipient configuration
+For receipts using independent recipient routing, replay is available as soon
+as that recipient fails, even while siblings are active. Legacy receipts must
+wait until the event's fanout receipt settles. Replay queues only that recipient
+and keeps the event payload and recipient configuration
 captured when the event was accepted. A replay therefore uses the same filter
 and target app; fix persistent routing or app problems before retrying. Other
 recipients that already succeeded or failed are not rerun.
@@ -720,9 +743,10 @@ This command requeues only terminal failures classified as retryable, oldest
 first, and never more than 100 recipients per call. Add both `--event-source`
 and `--event-id` to scope it to one published event. `--yes` confirms the
 batch; repeat the command when the response reports `has_more: true`. A queued
-event can accept additional replay batches while pending. If its worker is
-already processing it, the command leaves that event alone and continues to
-report more failures; repeat after the event settles.
+event can accept additional replay batches while pending. Independent recipient
+routing also permits replay while siblings are processing. A legacy event with
+an active whole-event worker is left alone and continues to report more
+failures; repeat after that event settles.
 Configuration failures such as an invalid
 subscription or unavailable target remain untouched for explicit repair and
 single-recipient replay.

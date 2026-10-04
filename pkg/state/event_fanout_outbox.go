@@ -31,6 +31,8 @@ type PublishedEventWork struct {
 	LeaseUntil        time.Time
 	Delivered         bool
 	DeliveredAt       time.Time
+	RecipientClaims   bool
+	routingRecipients map[string]*PublishedEventRecipientWork
 }
 
 // PublishedEventRecipient is an immutable source/type candidate captured when
@@ -240,8 +242,8 @@ func (s *PgStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*P
 	var progress []byte
 	err := s.pool.QueryRow(ctx, `WITH candidate AS (
 		SELECT id FROM event_fanout_outbox
-		WHERE (state = 'pending' AND available_at <= $1)
-		   OR (state = 'processing' AND lease_until <= $1)
+		WHERE NOT recipient_claims AND ((state = 'pending' AND available_at <= $1)
+		   OR (state = 'processing' AND lease_until <= $1))
 		ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
 	) UPDATE event_fanout_outbox AS o
 	SET state = 'processing', claim_token = gen_random_uuid(),
@@ -466,9 +468,12 @@ func (s *PgStore) ListEventFanoutAttemptsForApp(ctx context.Context, appID strin
 }
 
 // ReplayFailedPublishedEventRecipientForApp resets only the selected terminal
-// candidate. It requires the receipt to be delivered so an active fanout claim
-// cannot race the operator action. The original recipient snapshot is kept.
+// candidate. Legacy receipts must settle first; recipient-owned receipts allow
+// replay while siblings route. The original recipient snapshot is kept.
 func (s *PgStore) ReplayFailedPublishedEventRecipientForApp(ctx context.Context, accountID, appID, eventSource, eventID, subscriptionID string) error {
+	if handled, err := s.replayClaimedEventRecipient(ctx, accountID, appID, eventSource, eventID, subscriptionID); handled || err != nil {
+		return err
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin published event recipient replay: %w", err)
@@ -481,7 +486,7 @@ func (s *PgStore) ReplayFailedPublishedEventRecipientForApp(ctx context.Context,
 		FROM event_fanout_outbox AS o
 		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) AS r(recipient)
 		WHERE o.account_id = $1::uuid AND o.source = $3 AND o.event_id = $4
-		  AND o.state = 'delivered'
+		  AND NOT o.recipient_claims AND o.state = 'delivered'
 		  AND (o.recipient_progress -> $5)->>'state' = 'failed'
 		  AND r.recipient->>'app_id' = $2::text AND r.recipient->>'id' = $5
 		FOR UPDATE OF o`, accountID, appID, eventSource, eventID, subscriptionID).Scan(&outboxID, &recipientAppID, &priorJSON)
@@ -547,112 +552,6 @@ func (s *PgStore) ReplayFailedPublishedEventRecipientForApp(ctx context.Context,
 		return fmt.Errorf("commit published event recipient replay: %w", err)
 	}
 	return nil
-}
-
-// ReplayRetryablePublishedEventRecipientsForApp requeues the oldest bounded
-// set of retryable terminal recipients. Candidates are tied to the app's
-// immutable recipient snapshot. Pending receipts can accept additional replay
-// requests; processing receipts remain untouched until their claim settles.
-func (s *PgStore) ReplayRetryablePublishedEventRecipientsForApp(ctx context.Context, accountID, appID, eventSource, eventID string, limit int) (EventFanoutReplayBatch, error) {
-	limit = normalizeEventFanoutReplayLimit(limit)
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return EventFanoutReplayBatch{}, fmt.Errorf("begin event fanout replay batch: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
-
-	rows, err := tx.Query(ctx, `SELECT o.id, p.key, r.recipient->>'app_id', p.outcome
-		FROM event_fanout_outbox AS o
-		JOIN apps AS a ON a.id = $2::uuid AND a.account_id = o.account_id
-		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) AS r(recipient)
-		CROSS JOIN LATERAL jsonb_each(COALESCE(o.recipient_progress, '{}'::jsonb)) AS p(key, outcome)
-		WHERE o.account_id = $1::uuid AND o.state IN ('delivered', 'pending')
-		  AND r.recipient->>'app_id' = a.id::text AND r.recipient->>'id' = p.key
-		  AND p.outcome->>'state' = 'failed'
-		  AND COALESCE(NULLIF(p.outcome->>'retryable', '')::boolean, false)
-		  AND (($3 = '' AND $4 = '') OR (o.source = $3 AND o.event_id = $4))
-		ORDER BY COALESCE(NULLIF(p.outcome->>'updated_at', '')::timestamptz, o.created_at), o.id, p.key
-		LIMIT $5 FOR UPDATE OF o SKIP LOCKED`, accountID, appID, eventSource, eventID, limit)
-	if err != nil {
-		return EventFanoutReplayBatch{}, fmt.Errorf("list retryable event fanout failures: %w", err)
-	}
-	type candidate struct {
-		outboxID       int64
-		subscriptionID string
-		appID          string
-		progress       PublishedEventRecipientProgress
-	}
-	candidates := make([]candidate, 0, limit)
-	for rows.Next() {
-		var item candidate
-		var progressJSON []byte
-		if err := rows.Scan(&item.outboxID, &item.subscriptionID, &item.appID, &progressJSON); err != nil {
-			rows.Close()
-			return EventFanoutReplayBatch{}, fmt.Errorf("scan retryable event fanout failure: %w", err)
-		}
-		if err := json.Unmarshal(progressJSON, &item.progress); err != nil {
-			rows.Close()
-			return EventFanoutReplayBatch{}, fmt.Errorf("decode retryable event fanout failure: %w", err)
-		}
-		candidates = append(candidates, item)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return EventFanoutReplayBatch{}, fmt.Errorf("read retryable event fanout failures: %w", err)
-	}
-	result := EventFanoutReplayBatch{}
-	now := time.Now().UTC()
-	for _, item := range candidates {
-		if _, err := tx.Exec(ctx, `INSERT INTO event_fanout_attempt_history
-			(outbox_id, app_id, subscription_id, action, state, attempts,
-			 failure_code, retryable, last_error, occurred_at)
-			VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10)`,
-			item.outboxID, item.appID, item.subscriptionID, EventFanoutAttemptActionReplay,
-			PublishedEventRecipientPending, item.progress.Attempts, item.progress.FailureCode,
-			item.progress.Retryable, item.progress.LastError, now); err != nil {
-			return EventFanoutReplayBatch{}, fmt.Errorf("append retryable event recipient replay: %w", err)
-		}
-		tag, err := tx.Exec(ctx, `UPDATE event_fanout_outbox AS o
-			SET state = 'pending', available_at = $3::timestamptz, delivered_at = NULL,
-			    claim_token = NULL, lease_until = NULL,
-			    recipient_progress = jsonb_set(o.recipient_progress, ARRAY[$2::text],
-			        ((o.recipient_progress -> $2) - 'failure_code' - 'retryable' - 'last_error') ||
-			            jsonb_build_object('state', 'pending', 'updated_at', $3::timestamptz), false),
-			    last_error = (SELECT left('subscription ' || progress.key || ': ' ||
-			        coalesce(progress.outcome->>'last_error', 'recipient failed'), 1024)
-			        FROM jsonb_each(o.recipient_progress) AS progress(key, outcome)
-			        WHERE progress.key <> $2 AND progress.outcome->>'state' = 'failed'
-			        ORDER BY progress.key LIMIT 1)
-			WHERE o.id = $1 AND o.state IN ('delivered', 'pending')
-			  AND (o.recipient_progress -> $2)->>'state' = 'failed'
-			  AND COALESCE(NULLIF((o.recipient_progress -> $2)->>'retryable', '')::boolean, false)`,
-			item.outboxID, item.subscriptionID, now)
-		if err != nil {
-			return EventFanoutReplayBatch{}, fmt.Errorf("requeue retryable event recipient %s: %w", item.subscriptionID, err)
-		}
-		if tag.RowsAffected() == 0 {
-			return EventFanoutReplayBatch{}, fmt.Errorf("requeue retryable event recipient %s: %w", item.subscriptionID, ErrConflict)
-		}
-		result.Replayed++
-	}
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (
-		SELECT 1
-		FROM event_fanout_outbox AS o
-		JOIN apps AS a ON a.id = $2::uuid AND a.account_id = o.account_id
-		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) AS r(recipient)
-		CROSS JOIN LATERAL jsonb_each(COALESCE(o.recipient_progress, '{}'::jsonb)) AS p(key, outcome)
-		WHERE o.account_id = $1::uuid AND o.state IN ('delivered', 'pending', 'processing')
-		  AND r.recipient->>'app_id' = a.id::text AND r.recipient->>'id' = p.key
-		  AND p.outcome->>'state' = 'failed'
-		  AND COALESCE(NULLIF(p.outcome->>'retryable', '')::boolean, false)
-		  AND (($3 = '' AND $4 = '') OR (o.source = $3 AND o.event_id = $4))
-	)`, accountID, appID, eventSource, eventID).Scan(&result.HasMore); err != nil {
-		return EventFanoutReplayBatch{}, fmt.Errorf("check remaining retryable event fanout failures: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return EventFanoutReplayBatch{}, fmt.Errorf("commit event fanout replay batch: %w", err)
-	}
-	return result, nil
 }
 
 func normalizeEventFanoutReplayLimit(limit int) int {
@@ -789,7 +688,7 @@ func (m *MemStore) ClaimDuePublishedEvent(_ context.Context, now time.Time) (*Pu
 	defer m.mu.Unlock()
 	var chosen *PublishedEventWork
 	for _, work := range m.eventFanout {
-		if work.Delivered || (work.ClaimToken != "" && work.LeaseUntil.After(now)) || work.AvailableAt.After(now) {
+		if work.RecipientClaims || work.Delivered || (work.ClaimToken != "" && work.LeaseUntil.After(now)) || work.AvailableAt.After(now) {
 			continue
 		}
 		if chosen == nil || work.ID < chosen.ID {
@@ -1018,7 +917,7 @@ func (m *MemStore) ReplayFailedPublishedEventRecipientForApp(_ context.Context, 
 		if !failed || progress.State != PublishedEventRecipientFailed {
 			return ErrNotFound
 		}
-		if !work.Delivered {
+		if !work.Delivered && !work.RecipientClaims {
 			return ErrConflict
 		}
 		replay := progress
@@ -1031,6 +930,9 @@ func (m *MemStore) ReplayFailedPublishedEventRecipientForApp(_ context.Context, 
 		progress.LastError = ""
 		progress.UpdatedAt = time.Now().UTC()
 		work.RecipientProgress[subscriptionID] = progress
+		if work.RecipientClaims {
+			resetEventRecipientForReplay(work, subscriptionID, progress.UpdatedAt)
+		}
 		work.Delivered = false
 		work.DeliveredAt = time.Time{}
 		work.AvailableAt = time.Now().UTC()
@@ -1097,6 +999,9 @@ func (m *MemStore) ReplayRetryablePublishedEventRecipientsForApp(_ context.Conte
 		progress.LastError = ""
 		progress.UpdatedAt = now
 		item.work.RecipientProgress[item.subscriptionID] = progress
+		if item.work.RecipientClaims {
+			resetEventRecipientForReplay(item.work, item.subscriptionID, now)
+		}
 		item.work.Delivered = false
 		item.work.DeliveredAt = time.Time{}
 		item.work.AvailableAt = now

@@ -10645,24 +10645,6 @@ CREATE TABLE public.deployment_openapi_snapshots (
 
 
 --
--- Name: deployment_route_policy_snapshots; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.deployment_route_policy_snapshots (
-    deployment_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    scope text NOT NULL,
-    snapshot jsonb NOT NULL,
-    sha256 text NOT NULL,
-    schema_version integer DEFAULT 1 NOT NULL,
-    captured_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT deployment_route_policy_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
-    CONSTRAINT deployment_route_policy_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
-    CONSTRAINT deployment_route_policy_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
-);
-
-
---
 -- Name: deployment_revision_pins; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10684,6 +10666,24 @@ CREATE SEQUENCE public.deployment_route_generation_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
+
+
+--
+-- Name: deployment_route_policy_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_route_policy_snapshots (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    snapshot jsonb NOT NULL,
+    sha256 text NOT NULL,
+    schema_version integer DEFAULT 1 NOT NULL,
+    captured_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_route_policy_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
+    CONSTRAINT deployment_route_policy_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT deployment_route_policy_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
+);
 
 
 --
@@ -11510,6 +11510,7 @@ CREATE TABLE public.event_fanout_outbox (
     delivered_at timestamp with time zone,
     recipient_snapshot jsonb,
     recipient_progress jsonb DEFAULT '{}'::jsonb NOT NULL,
+    recipient_claims boolean DEFAULT false NOT NULL,
     CONSTRAINT event_fanout_outbox_recipient_progress_check CHECK ((jsonb_typeof(recipient_progress) = 'object'::text)),
     CONSTRAINT event_fanout_outbox_recipient_snapshot_check CHECK (((recipient_snapshot IS NULL) OR (jsonb_typeof(recipient_snapshot) = 'array'::text))),
     CONSTRAINT event_fanout_outbox_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'delivered'::text])))
@@ -11527,6 +11528,31 @@ ALTER TABLE public.event_fanout_outbox ALTER COLUMN id ADD GENERATED ALWAYS AS I
     NO MINVALUE
     NO MAXVALUE
     CACHE 1
+);
+
+
+--
+-- Name: event_fanout_recipients; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_fanout_recipients (
+    outbox_id bigint NOT NULL,
+    subscription_id text NOT NULL,
+    app_id uuid NOT NULL,
+    recipient jsonb NOT NULL,
+    state text NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    total_attempts integer DEFAULT 0 NOT NULL,
+    available_at timestamp with time zone DEFAULT now() NOT NULL,
+    claim_token uuid,
+    lease_until timestamp with time zone,
+    CONSTRAINT event_fanout_recipients_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT event_fanout_recipients_check CHECK ((total_attempts >= attempts)),
+    CONSTRAINT event_fanout_recipients_check1 CHECK ((((state = 'processing'::text) AND (claim_token IS NOT NULL) AND (lease_until IS NOT NULL)) OR ((state <> 'processing'::text) AND (claim_token IS NULL) AND (lease_until IS NULL)))),
+    CONSTRAINT event_fanout_recipients_generation_check CHECK ((generation > 0)),
+    CONSTRAINT event_fanout_recipients_recipient_check CHECK ((jsonb_typeof(recipient) = 'object'::text)),
+    CONSTRAINT event_fanout_recipients_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'filtered'::text, 'enqueued'::text, 'failed'::text])))
 );
 
 
@@ -18553,19 +18579,19 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
--- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.deployment_route_policy_snapshots
-    ADD CONSTRAINT deployment_route_policy_snapshots_pkey PRIMARY KEY (deployment_id);
-
-
---
 -- Name: deployment_revision_pins deployment_revision_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.deployment_revision_pins
     ADD CONSTRAINT deployment_revision_pins_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_route_policy_snapshots
+    ADD CONSTRAINT deployment_route_policy_snapshots_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -18966,6 +18992,14 @@ ALTER TABLE ONLY public.event_fanout_outbox
 
 ALTER TABLE ONLY public.event_fanout_outbox
     ADD CONSTRAINT event_fanout_outbox_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: event_fanout_recipients event_fanout_recipients_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_fanout_recipients
+    ADD CONSTRAINT event_fanout_recipients_pkey PRIMARY KEY (outbox_id, subscription_id);
 
 
 --
@@ -23005,13 +23039,6 @@ CREATE INDEX deployment_openapi_snapshots_app_scope_idx ON public.deployment_ope
 
 
 --
--- Name: deployment_route_policy_snapshots_app_scope_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX deployment_route_policy_snapshots_app_scope_idx ON public.deployment_route_policy_snapshots USING btree (app_id, scope, captured_at DESC);
-
-
---
 -- Name: deployment_revision_pins_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -23023,6 +23050,13 @@ CREATE INDEX deployment_revision_pins_app_idx ON public.deployment_revision_pins
 --
 
 CREATE INDEX deployment_revision_pins_expiry_idx ON public.deployment_revision_pins USING btree (expires_at);
+
+
+--
+-- Name: deployment_route_policy_snapshots_app_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_route_policy_snapshots_app_scope_idx ON public.deployment_route_policy_snapshots USING btree (app_id, scope, captured_at DESC);
 
 
 --
@@ -23373,6 +23407,20 @@ CREATE INDEX event_fanout_outbox_pending_idx ON public.event_fanout_outbox USING
 --
 
 CREATE INDEX event_fanout_outbox_retention_idx ON public.event_fanout_outbox USING btree (delivered_at, id) WHERE (state = 'delivered'::text);
+
+
+--
+-- Name: event_fanout_recipients_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_recipients_due_idx ON public.event_fanout_recipients USING btree (available_at, outbox_id, subscription_id) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: event_fanout_recipients_lease_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_recipients_lease_idx ON public.event_fanout_recipients USING btree (lease_until, outbox_id, subscription_id) WHERE (state = 'processing'::text);
 
 
 --
@@ -30620,22 +30668,6 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
--- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.deployment_route_policy_snapshots
-    ADD CONSTRAINT deployment_route_policy_snapshots_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
---
--- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.deployment_route_policy_snapshots
-    ADD CONSTRAINT deployment_route_policy_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
-
-
---
 -- Name: deployment_revision_pins deployment_revision_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30649,6 +30681,22 @@ ALTER TABLE ONLY public.deployment_revision_pins
 
 ALTER TABLE ONLY public.deployment_revision_pins
     ADD CONSTRAINT deployment_revision_pins_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_route_policy_snapshots
+    ADD CONSTRAINT deployment_route_policy_snapshots_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_route_policy_snapshots
+    ADD CONSTRAINT deployment_route_policy_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
@@ -31065,6 +31113,14 @@ ALTER TABLE ONLY public.event_fanout_attempt_history
 
 ALTER TABLE ONLY public.event_fanout_outbox
     ADD CONSTRAINT event_fanout_outbox_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_fanout_recipients event_fanout_recipients_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_fanout_recipients
+    ADD CONSTRAINT event_fanout_recipients_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
 
 
 --

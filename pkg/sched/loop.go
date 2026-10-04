@@ -120,6 +120,7 @@ type Loop struct {
 	workOnce               sync.Once
 	workflowDispatchCursor atomic.Uint32
 	eventFanoutLastPrune   time.Time
+	eventRecipientClaims   bool
 	now                    func() time.Time
 	flowCounts             FlowCounter
 	ops                    *wire.OpsMetrics                        // issue #171 shared registry; nil safe

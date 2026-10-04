@@ -140,7 +140,13 @@ channels:
         $ref: '#/components/messages/PlatformTenantCustomerOffboarded'
   internalEventPublish:
     address: /v1/events:publish
-    description: Publish one tenant-scoped event for asynchronous content-based fanout.
+    description: |
+      Publish one tenant-scoped event for durable asynchronous content-based
+      fanout. Acceptance acknowledges routing intent, not handler completion.
+      With independent recipient routing enabled, each captured subscription
+      has its own routing lease, retry schedule, and selective replay budget.
+      Handler execution is at least once; recovery preserves invocation identity.
+      Events have no publication-order guarantee across or within subscriptions.
     servers:
       - $ref: '#/servers/api'
     messages:
