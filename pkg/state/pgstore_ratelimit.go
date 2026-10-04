@@ -121,6 +121,9 @@ func (b *PGRateLimitBackend) ConsumeToken(ctx context.Context, scope, subjectID,
 	if err != nil {
 		return 0, false, &rateLimitConsultError{err: fmt.Errorf("rate-limit subject: %w", err)}
 	}
+	// This remains ordinary pooled work: one atomic SQLC statement with no
+	// session state. Acquire separately to classify pool versus statement
+	// failures, and release on every path (see pkg/db's acquisition gate).
 	conn, err := b.pool.Acquire(ctx)
 	if err != nil {
 		return 0, false, &rateLimitConsultError{err: fmt.Errorf("ratelimit central acquire: %w", err), backoff: true}

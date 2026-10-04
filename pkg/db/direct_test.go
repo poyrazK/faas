@@ -1,3 +1,5 @@
+// adr: 570 — classify ordinary shared-rate admission without session state.
+
 package db
 
 import (
@@ -183,9 +185,10 @@ var sessionScopedAcquire = map[string]string{
 // pool. Acquiring a connection is not by itself session-scoped; what matters
 // is whether anything session-scoped happens on it before release.
 var pooledAcquireOK = map[string]string{
-	"pkg/db/warmup.go":          "pool warm-up: acquires and releases N connections to prove capacity; must exercise the POOLED path",
-	"pkg/db/pgtest/pgtest.go":   "test harness; never runs against a pooler",
-	"pkg/db/pgtest/template.go": "test harness; never runs against a pooler",
+	"pkg/db/warmup.go":               "pool warm-up: acquires and releases N connections to prove capacity; must exercise the POOLED path",
+	"pkg/db/pgtest/pgtest.go":        "test harness; never runs against a pooler",
+	"pkg/db/pgtest/template.go":      "test harness; never runs against a pooler",
+	"pkg/state/pgstore_ratelimit.go": "one atomic shared-rate statement, released on every path; no LISTEN, session lock, or other session state",
 }
 
 // TestSessionScopedAcquiresRouteThroughDirectPool is the gate.
