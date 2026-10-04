@@ -102,9 +102,10 @@
    receipt namespace, with reviewed repair for ambiguous/missing identities.
 4. Qualify every valid catalog environment name across storage constraints,
    secret references, deployment/runtime receipt paths, queue admission and
-   public clients. Short and numeric catalog names currently expose differing
-   legacy scope grammars. The default and all-scopes sentinel semantics must
-   remain explicit; changing only the Git parser cannot close this gate.
+   public clients. The portable storage and client compatibility checks now
+   pass for short and numeric names, including retained queue statistics and
+   dead-letter replay after membership changes. Native delivery acceptance
+   remains outstanding. Default and all-scopes sentinel semantics stay explicit.
 5. Publish graph preparation, qualification, activation and serving convergence
    separately from source freshness and applied intent. Exercise supersession,
    outage, overrides, failed preparation, recovery and retained work on the
@@ -1934,7 +1935,10 @@ SQL rejects incompatible data inside a transaction and preserves the current
 constraints and intent. Routed variable/all-scopes and authenticated dashboard
 checks pass; CLI and Node/Python reference transports preserve the exact name.
 Pinned Node/Python regeneration is deterministic, OpenAPI source/embed parity and
-AST checks pass, and SQLC regeneration matches. These receipts are portable store
+AST checks pass, and SQLC regeneration matches. Shared conformance checks also
+retain short/numeric queue depth and accepted invocation identity/scope through
+project removal and dead-letter replay. The unpublished scope migration uses
+a version emitted by the repository generator. These receipts are portable store
 fixtures, not native guest or snapshot lifecycle acceptance. Scoped Linux lint
 passes with zero issues; current-head repository CI remains to be completed
 for this increment.

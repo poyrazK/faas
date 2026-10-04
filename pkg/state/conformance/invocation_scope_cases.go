@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,7 +41,17 @@ func testInvocationDeploymentScope(t *testing.T, fx *Fixture) {
 	if production.DeploymentScope != "production" || staging.DeploymentScope != "staging" {
 		t.Fatalf("admitted scopes = %q, %q", production.DeploymentScope, staging.DeploymentScope)
 	}
-	for _, scope := range []string{"__all__", "UPPER", "-staging", "a", "staging/other"} {
+	retained := []state.Invocation{production, staging}
+	var catalogWork []state.Invocation
+	for _, scope := range []string{"a", "1", "qa", "12", "1a", "a-1", strings.Repeat("a", 33)} {
+		work := enqueue(scope)
+		if work.DeploymentScope != scope {
+			t.Fatalf("catalog scope %q admitted as %q", scope, work.DeploymentScope)
+		}
+		catalogWork = append(catalogWork, work)
+		retained = append(retained, work)
+	}
+	for _, scope := range []string{"__all__", "UPPER", "-staging", "-", "staging/other"} {
 		if _, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{AppID: app.ID, AccountID: fx.Account.ID,
 			DeploymentScope: scope, Source: state.InvocationQueue, DueAt: time.Now()}); !errors.Is(err, state.ErrInvalidArgument) {
 			t.Fatalf("invalid scope %q accepted: %v", scope, err)
@@ -80,7 +91,19 @@ func testInvocationDeploymentScope(t *testing.T, fx *Fixture) {
 	if err != nil || replayed.DeploymentScope != "production" || replayed.State != state.InvocationPending {
 		t.Fatalf("DLQ replay moved environment: %+v, %v", replayed, err)
 	}
-	for _, want := range []state.Invocation{production, staging} {
+	for _, work := range catalogWork {
+		if _, err := fx.Store.ClaimInvocationWithCap(fx.Ctx, work.ID, "", 30, 1); err != nil {
+			t.Fatal(err)
+		}
+		if err := fx.Store.FailInvocation(fx.Ctx, work.ID, "exhausted", time.Second, 1); err != nil {
+			t.Fatal(err)
+		}
+		replayed, err := fx.Store.RetryQueueDeadLetter(fx.Ctx, fx.Account.ID, work.ID)
+		if err != nil || replayed.ID != work.ID || replayed.DeploymentScope != work.DeploymentScope {
+			t.Fatalf("catalog DLQ replay changed accepted identity/scope: %+v, %v", replayed, err)
+		}
+	}
+	for _, want := range retained {
 		got, err := fx.Store.InvocationByID(fx.Ctx, want.ID)
 		if err != nil || got.DeploymentScope != want.DeploymentScope {
 			t.Fatalf("stored scope = %q, want %q: %v", got.DeploymentScope, want.DeploymentScope, err)

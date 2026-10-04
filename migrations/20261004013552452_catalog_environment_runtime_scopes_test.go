@@ -84,7 +84,7 @@ func TestMigrationCatalogRuntimeScopesUpgradeAndPopulatedReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `delete from goose_db_version where version_id=20261004002929000`); err != nil {
+	if _, err := pool.Exec(ctx, `delete from goose_db_version where version_id=20261004013552452`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.MigrateUp(ctx, pool); err != nil {
@@ -123,7 +123,7 @@ func TestMigrationCatalogRuntimeScopesUpgradeAndPopulatedReplay(t *testing.T) {
 	// Execute the actual Down body in its own transaction. A historical
 	// grammar cannot represent accepted numeric catalog rows; failure must
 	// preserve both those rows and the current constraints.
-	body, err := migrations.FS.ReadFile("20261004002929000_catalog_environment_runtime_scopes.sql")
+	body, err := migrations.FS.ReadFile("20261004013552452_catalog_environment_runtime_scopes.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

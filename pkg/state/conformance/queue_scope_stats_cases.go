@@ -28,6 +28,8 @@ func testQueueDemandScope(t *testing.T, fx *Fixture) {
 		{"staging", "orders", state.InvocationPending, nil},
 		{"staging", "orders", state.InvocationDeadLetter, nil},
 		{"staging", "orders", state.InvocationCompleted, nil},
+		{"a", "orders", state.InvocationPending, nil},
+		{"1", "orders", state.InvocationPending, nil},
 	} {
 		_, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{AppID: app.ID, AccountID: fx.Account.ID,
 			Source: state.InvocationQueue, DeploymentScope: item.scope, QueueName: item.queue,
@@ -51,6 +53,7 @@ func testQueueDemandScope(t *testing.T, fx *Fixture) {
 		dead            int
 	}{
 		{"production", 6, 1, 1}, {"staging", 1, 0, 1}, {"default", 1, 0, 0}, {"missing", 0, 0, 0},
+		{"a", 1, 0, 0}, {"1", 1, 0, 0},
 	} {
 		stats, err := fx.Store.QueueStateInScope(fx.Ctx, app.ID, item.scope)
 		if err != nil || stats.Depth != item.depth || stats.InFlight != item.inflight || stats.DeadLetter != item.dead ||
@@ -65,13 +68,14 @@ func testQueueDemandScope(t *testing.T, fx *Fixture) {
 	}{
 		{"production", "orders", 4, 1, 1}, {"production", "payments", 1, 0, 0},
 		{"production", "", 1, 0, 0}, {"staging", "orders", 1, 0, 1}, {"default", "orders", 1, 0, 0},
+		{"a", "orders", 1, 0, 0}, {"1", "orders", 1, 0, 0},
 	} {
 		stats, err := fx.Store.QueueStateForQueueInScope(fx.Ctx, app.ID, item.queue, item.scope)
 		if err != nil || stats.Depth != item.depth || stats.InFlight != item.inflight || stats.DeadLetter != item.dead {
 			t.Fatalf("scope/name %q/%q stats = %+v, %v", item.scope, item.queue, stats, err)
 		}
 	}
-	for _, scope := range []string{"", "__all__", "UPPER", "a", "staging/other"} {
+	for _, scope := range []string{"", "__all__", "UPPER", "-", "staging/other"} {
 		if _, err := fx.Store.QueueStateInScope(fx.Ctx, app.ID, scope); !errors.Is(err, state.ErrInvalidArgument) {
 			t.Fatalf("invalid scope %q accepted: %v", scope, err)
 		}
