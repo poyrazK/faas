@@ -12,6 +12,10 @@ var queueBindingNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 // names. These names do not allocate app hostnames and use their own grammar.
 func ValidQueueBindingName(name string) bool { return queueBindingNameRE.MatchString(name) }
 
+// QueueConsumerMaxPollAge bounds scheduler liveness for queue status and the
+// bindings promotion gate. It is independent of connectivity proof age.
+const QueueConsumerMaxPollAge = 30 * time.Second
+
 // QueueBindingResponse is the durable app-scoped mapping between a logical
 // queue and a worker/job workload. It is intentionally independent of queue
 // messages so push consumers and autoscaling can reconcile configuration.

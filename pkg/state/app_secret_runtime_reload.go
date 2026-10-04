@@ -21,7 +21,8 @@ func validAppSecretRuntimeReloadResult(result AppSecretRuntimeReloadResult) bool
 
 func validAppSecretRuntimeReloadAckResult(result AppSecretRuntimeReloadAckResult) bool {
 	if result.AccountID == "" || result.AppID == "" || result.InstanceID == "" ||
-		!ValidSecretRuntimeWorkloadName(result.WorkloadName) || !validSecretRevision(result.Revision) {
+		!ValidSecretRuntimeWorkloadName(result.WorkloadName) || !validSecretRevision(result.Revision) ||
+		(result.Generation != "" && !ValidSecretProcessGeneration(result.Generation)) {
 		return false
 	}
 	if !ValidSecretApplicationReloadAck(result.Revision, result.Status, result.ErrorCode) {
@@ -80,6 +81,7 @@ func ValidSecretReloadOutcome(revision string, projection SecretReloadProjection
 	case projection == SecretReloadProjectionFailed && signal == SecretReloadSignalNotAttempted && errorCode == "projection_failed":
 	case projection == SecretReloadProjectionUpdated && signal == SecretReloadSignalSent && errorCode == "":
 	case projection == SecretReloadProjectionUpdated && signal == SecretReloadSignalQueued && errorCode == "":
+	case projection == SecretReloadProjectionUpdated && signal == SecretReloadSignalNotAttempted && errorCode == "":
 	case projection == SecretReloadProjectionUpdated && signal == SecretReloadSignalFailed && errorCode == "signal_failed":
 	case projection == SecretReloadProjectionUnchanged && signal == SecretReloadSignalNotAttempted && errorCode == "":
 	default:

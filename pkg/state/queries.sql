@@ -203,7 +203,7 @@ SELECT s.scope,
        i.state AS runtime_state,
        CASE
          WHEN d.secret_reload_signal IS NULL THEN 'unknown'
-         WHEN d.secret_reload_signal = '' OR jsonb_array_length(d.sidecars) > 0 THEN 'disabled'
+         WHEN d.secret_reload_signal = '' THEN 'disabled'
          ELSE 'enabled'
        END AS reload_support,
        o.secret_version,
@@ -268,7 +268,6 @@ SELECT s.scope,
    AND sidecar.value->>'type' = 'sidecar'
    AND coalesce(sidecar.value->'env_secrets', '{}'::jsonb) ? s.key
 ORDER BY scope ASC, key ASC, instance_id ASC, workload_name ASC;
-
 -- name: CreateAppSecretRevocation :one
 INSERT INTO app_secret_revocations (id, account_id, app_id, scope, key, created_at)
 VALUES (sqlc.arg(id)::uuid, sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid,
@@ -8506,3 +8505,319 @@ FROM global_population g;
 -- name: ReadActiveRouteMonitorIncident :one
 SELECT i.entry FROM route_monitors m LEFT JOIN route_monitor_incidents i ON i.id=m.active_incident_id
 WHERE m.app_id=sqlc.arg(app_id)::text::uuid AND m.account_id=sqlc.arg(account_id)::text::uuid;
+-- name: ReadBindingApplicationAdoption :many
+-- One statement reads current managed versions, the complete authorized
+-- resident workload roster and independently versioned application receipts.
+WITH managed AS (
+ SELECT s.account_id, s.app_id, s.scope, s.key, s.delivery_version,
+        CASE WHEN s.managed_postgres_binding_id IS NOT NULL THEN 'postgres' ELSE 'object_storage' END::text AS binding_type,
+        coalesce(s.managed_postgres_binding_id, s.managed_object_storage_credential_id) AS binding_id
+ FROM app_secrets s
+ WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.app_id = sqlc.arg(app_id)::uuid
+   AND ((s.managed_postgres_binding_id = ANY(sqlc.arg(postgres_ids)::uuid[]) AND s.managed_object_storage_credential_id IS NULL)
+     OR (s.managed_object_storage_credential_id = ANY(sqlc.arg(storage_ids)::uuid[]) AND s.managed_postgres_binding_id IS NULL))
+), roster AS (
+SELECT s.binding_type, s.binding_id, s.delivery_version AS current_version, d.id::text AS deployment_id, s.scope,
+       s.key,
+       i.id::text AS instance_id,
+       ''::text AS workload_name,
+       i.state AS runtime_state,
+       CASE
+         WHEN d.secret_reload_signal IS NULL THEN 'unknown'
+         WHEN d.secret_reload_signal = '' THEN 'disabled'
+         ELSE 'enabled'
+       END AS reload_support,
+       o.secret_version,
+       o.projection,
+       o.signal,
+       o.observed_at,
+       o.error_code,
+       o.application_ack_version,
+       o.application_ack_status,
+       o.application_ack_at,
+       o.application_ack_error_code,
+       o.application_ack_generation,
+       CASE WHEN process.active THEN process.generation ELSE '' END::text AS process_generation
+  FROM instances i
+  JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
+  JOIN managed s ON s.app_id = i.app_id AND s.scope = d.scope
+  LEFT JOIN app_secret_runtime_reload_observations o
+    ON o.app_id = s.app_id AND o.scope = s.scope AND o.key = s.key AND o.instance_id = i.id
+   AND o.workload_name = ''
+  LEFT JOIN app_secret_runtime_processes process ON process.instance_id = i.id AND process.app_id = i.app_id AND process.workload_name = ''
+ WHERE s.account_id = sqlc.arg(account_id)::uuid
+   AND i.app_id = sqlc.arg(app_id)::uuid
+   AND i.kind = 'wake' AND i.mode <> 'mirror'
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND ((coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
+         AND jsonb_array_length(coalesce(d.sidecars, '[]'::jsonb)) = 0)
+        OR d.override_env_secrets ? s.key)
+UNION ALL
+SELECT s.binding_type, s.binding_id, s.delivery_version AS current_version, d.id::text AS deployment_id, s.scope,
+       s.key,
+       i.id::text AS instance_id,
+       sidecar.value->>'name' AS workload_name,
+       i.state AS runtime_state,
+       CASE
+         WHEN reload.signal IS NULL THEN 'unknown'
+         WHEN reload.signal = '' THEN 'disabled'
+         ELSE 'enabled'
+       END AS reload_support,
+       o.secret_version,
+       o.projection,
+       o.signal,
+       o.observed_at,
+       o.error_code,
+       o.application_ack_version,
+       o.application_ack_status,
+       o.application_ack_at,
+       o.application_ack_error_code,
+       o.application_ack_generation,
+       CASE WHEN process.active THEN process.generation ELSE '' END::text AS process_generation
+  FROM instances i
+  JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
+  JOIN managed s ON s.app_id = i.app_id AND s.scope = d.scope
+ CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.sidecars, '[]'::jsonb)) AS sidecar(value)
+  LEFT JOIN deployment_sidecar_secret_reload_signals reload
+    ON reload.deployment_id = d.id AND reload.sidecar_name = sidecar.value->>'name'
+  LEFT JOIN app_secret_runtime_reload_observations o
+    ON o.app_id = s.app_id AND o.scope = s.scope AND o.key = s.key AND o.instance_id = i.id
+   AND o.workload_name = sidecar.value->>'name'
+  LEFT JOIN app_secret_runtime_processes process ON process.instance_id = i.id AND process.app_id = i.app_id AND process.workload_name = sidecar.value->>'name'
+ WHERE s.account_id = sqlc.arg(account_id)::uuid
+   AND i.app_id = sqlc.arg(app_id)::uuid
+   AND i.kind = 'wake' AND i.mode <> 'mirror'
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND sidecar.value->>'type' = 'sidecar'
+   AND sidecar.value->'env_secrets'->>s.key = 'secret:' || s.key
+)
+SELECT m.binding_type, m.binding_id, m.scope, m.key, m.delivery_version AS current_version,
+       coalesce(r.deployment_id, '')::text AS deployment_id,
+       coalesce(r.instance_id, '')::text AS instance_id,
+       coalesce(r.workload_name, '')::text AS workload_name,
+       coalesce(r.runtime_state, '')::text AS runtime_state,
+       coalesce(r.reload_support, '')::text AS reload_support,
+       coalesce(r.secret_version, 0)::bigint AS reload_version,
+       coalesce(r.projection, '')::text AS projection,
+       coalesce(r.signal, '')::text AS signal, r.observed_at,
+       coalesce(r.application_ack_version, 0)::bigint AS application_ack_version,
+       coalesce(r.application_ack_status, '')::text AS application_ack_status,
+       r.application_ack_at,
+       coalesce(r.application_ack_generation, '')::text AS application_ack_generation,
+       coalesce(r.process_generation, '')::text AS process_generation
+FROM managed m LEFT JOIN roster r ON r.binding_type = m.binding_type AND r.binding_id = m.binding_id AND r.scope = m.scope AND r.key = m.key
+ORDER BY m.binding_type, m.binding_id, m.scope, m.key, instance_id, workload_name;
+-- name: AppManagedPostgresBindingInventory :many
+SELECT b.id AS binding_id, d.name AS database_name, b.scope, b.environment_key, b.access, b.state,
+       b.credential_generation, (COALESCE(b.rotation_previous_generation, 0) > 0) AS rotation_pending,
+       COALESCE(b.rotation_wake_id::text, '')::text AS rotation_wake_id
+FROM managed_postgres_bindings b
+JOIN managed_postgres_databases d ON d.id = b.database_id AND d.account_id = b.account_id
+WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
+  AND b.state <> 'deleted' AND d.state <> 'deleted'
+  AND (sqlc.arg(scope_filter)::text = '' OR b.scope = sqlc.arg(scope_filter)::text)
+ORDER BY d.name, b.environment_key, b.scope;
+-- name: AppObjectStorageBindingInventory :many
+SELECT c.id AS binding_id, b.name AS bucket_name, c.managed_scope AS scope, c.managed_prefix AS prefix,
+	       COALESCE((SELECT stage.id::text FROM object_storage_s3_credentials stage
+	                 WHERE stage.rotation_parent_id = c.id AND stage.account_id = c.account_id
+	                 ORDER BY stage.created_at DESC, stage.id DESC LIMIT 1), '')::text AS rotation_revision_id,
+       c.permission, c.status AS state,
+       EXISTS (SELECT 1 FROM object_storage_s3_credentials stage
+               WHERE stage.rotation_parent_id = c.id AND stage.account_id = c.account_id
+                 AND stage.status = 'active') AS rotation_pending,
+       COALESCE((SELECT stage.rotation_wake_id::text FROM object_storage_s3_credentials stage
+                 WHERE stage.rotation_parent_id = c.id AND stage.account_id = c.account_id
+                   AND stage.status = 'active' ORDER BY stage.id LIMIT 1), '')::text AS rotation_wake_id
+FROM object_storage_s3_credentials c
+JOIN object_buckets b ON b.id = c.bucket_id AND b.account_id = c.account_id
+WHERE c.account_id = sqlc.arg(account_id) AND c.managed_app_id = sqlc.arg(app_id)
+  AND b.app_id = sqlc.arg(app_id) AND b.state <> 'deleted'
+  AND c.status = 'active' AND c.rotation_parent_id IS NULL
+  AND (sqlc.arg(scope_filter)::text = '' OR c.managed_scope = sqlc.arg(scope_filter)::text)
+ORDER BY b.name, c.managed_prefix, c.managed_scope;
+-- name: AppQueueBindingConsumerInventory :many
+SELECT b.id AS binding_id, COALESCE(consumer.id::text, '') AS consumer_id,
+       COALESCE(consumer.enabled, false) AS consumer_enabled,
+       h.last_poll_at, h.last_success_at, h.last_error_at
+FROM queue_bindings b
+LEFT JOIN LATERAL (
+    SELECT t.id, t.enabled FROM triggers t
+    WHERE t.app_id = b.app_id AND t.kind = 'queue' AND t.source = 'queue'
+      AND t.config->>'queue_binding_id' = b.id::text
+    ORDER BY t.created_at, t.id LIMIT 1
+) consumer ON true
+LEFT JOIN trigger_consumer_health h ON h.trigger_id = consumer.id
+WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
+ORDER BY b.created_at, b.id;
+-- name: CreateBindingVerificationTask :one
+INSERT INTO app_tasks (account_id, app_id, deployment_id, kind, command, command_shell,
+ deployment_scope, artifact_key, image_digest, timeout_seconds, max_output_bytes,
+ created_at, updated_at, binding_verification)
+SELECT a.account_id, a.id, d.id, 'manual', sqlc.arg(command)::text[], false,
+ COALESCE(NULLIF(d.scope, ''), 'default'), d.rootfs_key, d.image_digest,
+ sqlc.arg(timeout_seconds), sqlc.arg(max_output_bytes), sqlc.arg(created_at), sqlc.arg(created_at),
+ sqlc.arg(binding_verification)::jsonb
+FROM apps a JOIN deployments d ON d.app_id = a.id
+WHERE a.id = sqlc.arg(app_id) AND a.account_id = sqlc.arg(account_id)
+ AND a.status <> 'deleted' AND d.id = sqlc.arg(deployment_id)
+ AND d.rootfs_key IS NOT NULL AND d.rootfs_key <> '' AND d.image_digest <> ''
+ AND d.status IN ('imaging', 'snapshotting', 'live', 'superseded')
+ AND (NOT sqlc.arg(require_live_deployment)::boolean OR d.status = 'live')
+FOR SHARE OF d
+RETURNING id;
+-- name: ListBindingVerificationTasks :many
+SELECT DISTINCT ON (binding_verification->>'type', binding_verification->>'binding', deployment_scope)
+ binding_verification, deployment_id, deployment_scope, status,
+ CASE WHEN octet_length(stdout_tail) <= 4096 THEN stdout_tail ELSE '' END AS stdout,
+ (output_truncated OR octet_length(stdout_tail) > 4096) AS truncated,
+ exit_code, created_at, finished_at
+FROM app_tasks
+WHERE account_id = sqlc.arg(account_id) AND app_id = sqlc.arg(app_id)
+ AND binding_verification IS NOT NULL
+ AND binding_verification->>'type' = ANY(sqlc.arg(kinds)::text[])
+ AND (NOT sqlc.arg(exact_deployment)::boolean OR deployment_id = sqlc.narg(selected_deployment_id)::uuid)
+ORDER BY binding_verification->>'type', binding_verification->>'binding', deployment_scope,
+ CASE WHEN deployment_id = sqlc.narg(selected_deployment_id)::uuid THEN 0 ELSE 1 END, created_at DESC, id DESC;
+-- name: AppBindingRuntimeInventory :many
+WITH resident AS (
+ SELECT i.deployment_id, i.state, i.started_at FROM instances i
+ JOIN apps a ON a.id = i.app_id AND a.account_id = sqlc.arg(account_id)
+ WHERE i.app_id = sqlc.arg(app_id) AND i.kind = 'wake' AND i.mode <> 'mirror'
+   AND i.state IN ('running','waking','cold_booting','warm','snapshotting','draining','migrating')
+), selected AS (
+ SELECT d.id, d.status, COALESCE(NULLIF(d.scope, ''), 'default') AS scope FROM deployments d
+ WHERE d.app_id = sqlc.arg(app_id)
+   AND (sqlc.arg(scope_filter)::text = '' OR COALESCE(NULLIF(d.scope, ''), 'default') = sqlc.arg(scope_filter)::text)
+   AND (d.status = 'live' OR EXISTS (SELECT 1 FROM resident i WHERE i.deployment_id = d.id))
+)
+SELECT c.changed_at, COALESCE(d.id::text, '')::text AS deployment_id,
+       COALESCE(d.scope, '')::text AS scope, COALESCE(d.status, '')::text AS deployment_status,
+       COALESCE(i.state, '')::text AS instance_state, i.started_at
+FROM apps a
+LEFT JOIN app_runtime_config_changes c ON c.app_id = a.id
+LEFT JOIN selected d ON true
+LEFT JOIN resident i ON i.deployment_id = d.id
+WHERE a.id = sqlc.arg(app_id) AND a.account_id = sqlc.arg(account_id)
+ORDER BY d.scope, d.id;
+-- name: AppBindingRefreshInventory :many
+SELECT DISTINCT ON (o.payload::jsonb->>'wake_id')
+ (o.payload::jsonb->>'wake_id')::text AS wake_id,
+ CASE o.state WHEN 'pending' THEN CASE WHEN o.attempts > 0 THEN 'retrying' ELSE 'queued' END
+ WHEN 'processing' THEN 'running' WHEN 'delivered' THEN 'completed' WHEN 'dead_letter' THEN 'failed'
+ ELSE 'unknown' END::text AS status, o.attempts,
+ CASE WHEN COALESCE(o.last_error, '') = '' THEN ''
+ WHEN position('reason=telemetry_missing' in o.last_error) > 0 THEN 'telemetry_missing'
+ WHEN position('reason=requests_active' in o.last_error) > 0 THEN 'requests_active'
+ WHEN position('reason=quiet_period_not_elapsed' in o.last_error) > 0 THEN 'quiet_period_not_elapsed'
+ ELSE 'restart_attempt_failed' END::text AS failure_reason,
+ o.created_at AS requested_at, o.delivered_at AS completed_at
+FROM notification_outbox o
+JOIN apps a ON a.id = sqlc.arg(app_id) AND a.account_id = sqlc.arg(account_id)
+WHERE o.channel = 'runtime_config_restart' AND o.payload::jsonb->>'app_id' = a.id::text
+ AND o.payload::jsonb->>'wake_id' = ANY(sqlc.arg(wake_ids)::text[])
+ORDER BY o.payload::jsonb->>'wake_id', o.id DESC;
+-- name: ReadBindingPromotionRevision :one
+SELECT (r.epoch::text || ':' || r.revision::text)::text AS revision
+FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id
+WHERE r.app_id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted';
+-- name: LockBindingPromotionRevision :one
+SELECT (r.epoch::text || ':' || r.revision::text)::text AS revision
+FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id
+WHERE r.app_id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted'
+FOR UPDATE OF r;
+-- name: GetOutboundBindingProbePolicy :one
+SELECT p.method, p.path, p.expected_status FROM outbound_integration_probe_policies p
+JOIN outbound_integrations i ON i.id=p.integration_id AND i.account_id=p.account_id
+WHERE p.integration_id=sqlc.arg(integration_id) AND p.account_id=sqlc.arg(account_id) AND i.owner_kind='customer';
+-- name: SetOutboundBindingProbePolicy :one
+INSERT INTO outbound_integration_probe_policies(integration_id,account_id,method,path,expected_status)
+SELECT i.id,i.account_id,sqlc.arg(method),sqlc.arg(path),sqlc.arg(expected_status) FROM outbound_integrations i
+WHERE i.id=sqlc.arg(integration_id) AND i.account_id=sqlc.arg(account_id) AND i.owner_kind='customer' AND enabled
+ON CONFLICT(integration_id) DO UPDATE SET method=EXCLUDED.method,path=EXCLUDED.path,expected_status=EXCLUDED.expected_status
+RETURNING integration_id;
+-- name: DeleteOutboundBindingProbePolicy :execrows
+DELETE FROM outbound_integration_probe_policies p USING outbound_integrations i
+WHERE i.id=sqlc.arg(integration_id) AND i.account_id=sqlc.arg(account_id) AND i.owner_kind='customer' AND p.integration_id=i.id;
+-- name: ListOutboundBindingProbeSnapshots :many
+SELECT i.id, p.method, p.path, p.expected_status,
+ (to_jsonb(i)-'updated_at'-'created_at')::text AS integration_facts,
+ to_jsonb(b)::text AS binding_facts, a.plan,
+ (encode(sha256(coalesce(c.authorization_sealed,''::bytea)), 'hex') || ':' || coalesce(c.updated_at::text,''))::text AS credential_revision
+FROM outbound_app_bindings b
+JOIN outbound_integrations i ON i.id=b.integration_id AND i.account_id=b.account_id
+JOIN accounts a ON a.id=b.account_id
+JOIN apps app ON app.id=b.app_id AND app.account_id=b.account_id AND app.status<>'deleted'
+LEFT JOIN outbound_integration_credentials c ON c.integration_id=i.id AND c.account_id=i.account_id
+LEFT JOIN outbound_integration_probe_policies p ON p.integration_id=i.id AND p.account_id=i.account_id AND i.credential_source='customer_sealed'
+WHERE b.account_id=sqlc.arg(account_id) AND b.app_id=sqlc.arg(app_id)
+ORDER BY i.id;
+-- name: EnsureAppSecretRuntimeProcess :execrows
+INSERT INTO app_secret_runtime_processes(instance_id, app_id, workload_name)
+SELECT i.id, i.app_id, sqlc.arg(workload_name)::text
+FROM instances i JOIN apps a ON a.id = i.app_id
+WHERE i.id = sqlc.arg(instance_id)::uuid AND i.app_id = sqlc.arg(app_id)::uuid
+  AND a.account_id = sqlc.arg(account_id)::uuid
+ON CONFLICT (instance_id, workload_name) DO NOTHING;
+-- name: LockAppSecretRuntimeProcess :one
+SELECT p.generation, p.active, p.started_at
+FROM app_secret_runtime_processes p JOIN apps a ON a.id = p.app_id
+WHERE p.instance_id = sqlc.arg(instance_id)::uuid AND p.app_id = sqlc.arg(app_id)::uuid
+  AND p.workload_name = sqlc.arg(workload_name)::text AND a.account_id = sqlc.arg(account_id)::uuid
+FOR UPDATE OF p;
+-- name: SetAppSecretRuntimeProcess :execrows
+UPDATE app_secret_runtime_processes SET generation = sqlc.arg(generation)::text,
+  active = sqlc.arg(active)::boolean, started_at = sqlc.arg(started_at)::timestamptz
+WHERE instance_id = sqlc.arg(instance_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+  AND workload_name = sqlc.arg(workload_name)::text;
+-- name: ClearAppSecretRuntimeProcessAck :execrows
+UPDATE app_secret_runtime_reload_observations
+SET application_ack_version = NULL, application_ack_status = NULL,
+    application_ack_at = NULL, application_ack_error_code = NULL, application_ack_generation = ''
+WHERE instance_id = sqlc.arg(instance_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+  AND workload_name = sqlc.arg(workload_name)::text;
+-- name: RecordAppSecretRuntimeProcessAck :execrows
+UPDATE app_secret_runtime_reload_observations o
+SET application_ack_version = sqlc.arg(secret_version)::bigint,
+    application_ack_status = sqlc.arg(status)::text, application_ack_at = sqlc.arg(ack_at)::timestamptz,
+    application_ack_error_code = nullif(sqlc.arg(error_code)::text, ''),
+    application_ack_generation = sqlc.arg(generation)::text
+WHERE o.app_id = sqlc.arg(app_id)::uuid AND o.scope = sqlc.arg(scope)::text AND o.key = sqlc.arg(key)::text
+  AND o.instance_id = sqlc.arg(instance_id)::uuid AND o.workload_name = sqlc.arg(workload_name)::text
+  AND o.secret_version <= sqlc.arg(secret_version)::bigint AND coalesce(o.application_ack_version, 0) <= sqlc.arg(secret_version)::bigint
+  AND EXISTS (SELECT 1 FROM app_secrets s JOIN instances i ON i.id = sqlc.arg(instance_id)::uuid AND i.app_id = s.app_id
+      WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.app_id = sqlc.arg(app_id)::uuid
+        AND s.scope = sqlc.arg(scope)::text AND s.key = sqlc.arg(key)::text AND s.delivery_version = sqlc.arg(secret_version)::bigint);
+
+-- ADR-508: preserve only current execution receipts on projection writes.
+-- name: RecordAppSecretRuntimeProjection :execrows
+insert into app_secret_runtime_reload_observations
+				(app_id, scope, key, instance_id, workload_name, secret_version, projection, signal, observed_at, error_code)
+			 select s.app_id, s.scope, s.key, i.id, sqlc.arg(workload_name)::text, sqlc.arg(secret_version)::bigint, sqlc.arg(projection)::text, sqlc.arg(signal)::text, sqlc.arg(observed_at)::timestamptz, nullif(sqlc.arg(error_code)::text, '')
+			 from app_secrets s
+			 join instances i on i.id = sqlc.arg(instance_id)::uuid and i.app_id = s.app_id
+			 where s.account_id = sqlc.arg(account_id)::uuid and s.app_id = sqlc.arg(app_id)::uuid and s.scope = sqlc.arg(scope)::text and s.key = sqlc.arg(key)::text
+			   and s.delivery_version = sqlc.arg(secret_version)::bigint
+			 on conflict (app_id, scope, key, instance_id, workload_name) do update
+			 set secret_version = excluded.secret_version,
+				     projection = excluded.projection,
+				     signal = excluded.signal,
+				     observed_at = excluded.observed_at,
+				     error_code = excluded.error_code,
+				     application_ack_version = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_version END,
+				     application_ack_status = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_status END,
+				     application_ack_at = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_at END,
+				     application_ack_error_code = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_error_code END,
+				     application_ack_generation = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_generation ELSE '' END
+			 where app_secret_runtime_reload_observations.secret_version <= excluded.secret_version;
+-- name: ListAppSecretRuntimeProcessObservations :many
+select o.scope, o.key, o.instance_id::text AS instance_id, o.workload_name, o.secret_version,
+		        o.projection, o.signal, o.observed_at, coalesce(o.error_code, '')::text AS error_code,
+	        coalesce(o.application_ack_version, 0)::bigint AS application_ack_version, coalesce(o.application_ack_status, '')::text AS application_ack_status,
+	        o.application_ack_at, coalesce(o.application_ack_error_code, '')::text AS application_ack_error_code, o.application_ack_generation
+	   from app_secret_runtime_reload_observations o
+	   join app_secrets s on s.app_id = o.app_id and s.scope = o.scope and s.key = o.key
+	   join instances i on i.id = o.instance_id and i.app_id = o.app_id
+	  where s.account_id = sqlc.arg(account_id)::uuid and o.app_id = sqlc.arg(app_id)::uuid and (sqlc.arg(scope)::text = '' or o.scope = sqlc.arg(scope)::text)
+	    and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+	  order by o.scope asc, o.key asc, o.instance_id asc, o.workload_name asc;

@@ -7,7 +7,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
-| [`bindings`](#bindings) | Inspect app bindings and rotation status, manage storage credentials, or verify service and PostgreSQL connections |
+| [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
@@ -373,9 +373,55 @@ Provision or attach object storage and inject sealed S3 settings
 
 ## bindings
 
-Inspect app bindings and rotation status, manage storage credentials, or verify service and PostgreSQL connections
+Inspect app bindings, verification, runtime freshness, and rotation progress
 
-`gregale bindings [<subcommand>] <app>`
+`gregale bindings [<subcommand>] <app> [--require-complete] [--scope <SCOPE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--require-complete` | fail if binding metadata, verification, runtime freshness or refresh progress is incomplete |  |
+| `--scope <SCOPE>` | filter resource bindings by environment scope; app-wide bindings remain included |  |
+
+### bindings probe-policy
+
+Configure or remove an outbound integration probe
+
+`gregale bindings probe-policy [--path <PATH>] [--method <METHOD>] [--expect-status <STATUS>] [--delete] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <PATH>` | provider path declared safe to probe |  |
+| `--method <METHOD>` | GET or HEAD (default GET) |  |
+| `--expect-status <STATUS>` | expected successful response status (default 200) |  |
+| `--delete` | remove probe configuration |  |
+
+Examples:
+
+```sh
+gregale bindings probe-policy INTEGRATION_ID --path /health --method GET --expect-status 200
+```
+
+### bindings check
+
+Evaluate recorded binding evidence and runtime freshness for CI
+
+`gregale bindings check [--scope <SCOPE>] [--max-verification-age <DURATION>] [--deployment <ID|vN>] [--allow-unsupported] [--require-application-ack] <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | require the selected deployment to use this scope (default its current scope) |  |
+| `--max-verification-age <DURATION>` | maximum age of passed probe evidence (default 10m) |  |
+| `--deployment <ID|vN>` | exact live deployment whose evidence must pass, including zero-traffic candidates |  |
+| `--allow-unsupported` | waive connectivity coverage for active queue and outbound bindings |  |
+| `--require-application-ack` | require current PostgreSQL/object-storage application acknowledgements |  |
+
+Examples:
+
+```sh
+gregale bindings check my-api --max-verification-age 10m --json
+gregale bindings check my-api --scope production
+gregale bindings check my-api --deployment v12 --max-verification-age 10m --json
+```
 
 ### bindings object-storage
 
@@ -425,14 +471,17 @@ gregale bindings object-storage revoke my-api assets BINDING_ID
 
 ### bindings verify
 
-Check a private service route or test one managed PostgreSQL binding
+Check a private service route or test a managed PostgreSQL or object-storage binding
 
-`gregale bindings verify [--all] [--postgres <ENVIRONMENT_KEY>] [--poll-interval <D>] [--wait-timeout <D>] <app> [<service>]`
+`gregale bindings verify [--all] [--postgres <ENVIRONMENT_KEY>] [--outbound <INTEGRATION_ID>] [--object-storage <PREFIX>] [--deployment <ID|vN>] [--poll-interval <D>] [--wait-timeout <D>] <app> [<service>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--all` | verify every declared service binding |  |
+| `--all` | verify services, managed PostgreSQL, object storage and configured outbound bindings |  |
 | `--postgres <ENVIRONMENT_KEY>` | verify one managed PostgreSQL binding by environment key |  |
+| `--outbound <INTEGRATION_ID>` | verify a configured outbound integration by UUID |  |
+| `--object-storage <PREFIX>` | verify one object-storage binding by environment prefix (read access only) |  |
+| `--deployment <ID|vN>` | exact live deployment to verify, including zero-traffic candidates |  |
 | `--poll-interval <D>` | status polling interval while the canary runs |  |
 | `--wait-timeout <D>` | maximum time to wait for the canary task |  |
 
@@ -441,7 +490,9 @@ Examples:
 ```sh
 gregale bindings verify my-api billing
 gregale bindings verify my-api --all
+gregale bindings verify my-api --deployment v12 --all
 gregale bindings verify my-api --postgres DATABASE_URL
+gregale bindings verify my-api --object-storage GREGALE_S3_ASSETS
 ```
 
 ### bindings smoke
@@ -5059,13 +5110,17 @@ Set the traffic split for a deployment
 
 Promote a live deployment to 100% production traffic
 
-`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>]`
+`gregale traffic promote [--app <SLUG>] --deployment <ID> [--if-serving <ID>] [--require-bindings] [--max-verification-age <DURATION>] [--allow-unsupported] [--require-application-ack]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
 | `--deployment <ID>` | deployment id or vN revision to promote | required |
 | `--if-serving <ID>` | require this deployment id or vN revision to remain at 100% traffic |  |
+| `--require-bindings` | enforce a bindings check at the server&#39;s traffic write |  |
+| `--max-verification-age <DURATION>` | maximum probe age (default 10m); requires --require-bindings |  |
+| `--allow-unsupported` | waive unsupported queue/outbound probes; requires --require-bindings |  |
+| `--require-application-ack` | require current application acknowledgements; requires --require-bindings |  |
 
 ### traffic status
 

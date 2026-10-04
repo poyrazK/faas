@@ -45,7 +45,7 @@ timezone bug: struct comparison rejected the same instant represented with
 compares instants. PostgreSQL-backed tests verify restart-safe replacement,
 downward and zero revisions, month totals, and rejection without committing
 coverage; fixed-offset tests cover timezone-independent resumption.
-See [ADR-493](../adr/493-managed-postgres-usage-correction-replay.md).
+See [ADR-516](../adr/516-managed-postgres-usage-correction-replay.md).
 
 ## Follow-up: provider throttling and cancellation
 

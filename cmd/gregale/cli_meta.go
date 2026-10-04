@@ -318,9 +318,26 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "bindings",
 		DocSlug:     "bindings",
-		Short:       "Inspect app bindings and rotation status, manage storage credentials, or verify service and PostgreSQL connections",
+		Short:       "Inspect app bindings, verification, runtime freshness, and rotation progress",
 		Positionals: []string{"<app>"},
+		Flags: []cliFlag{
+			{Name: "require-complete", Short: "fail if binding metadata, verification, runtime freshness or refresh progress is incomplete"},
+			{Name: "scope", Value: "SCOPE", Short: "filter resource bindings by environment scope; app-wide bindings remain included"},
+		},
 		Subcommands: []cliSub{
+			{Name: "probe-policy", Short: "Configure or remove an outbound integration probe", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{{Name: "path", Value: "PATH", Short: "provider path declared safe to probe"}, {Name: "method", Value: "METHOD", Short: "GET or HEAD (default GET)"}, {Name: "expect-status", Value: "STATUS", Short: "expected successful response status (default 200)"}, {Name: "delete", Short: "remove probe configuration"}}, Examples: []string{"gregale bindings probe-policy INTEGRATION_ID --path /health --method GET --expect-status 200"}},
+			{
+				Name:        "check",
+				Short:       "Evaluate recorded binding evidence and runtime freshness for CI",
+				Positionals: []string{"<app>"},
+				Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "require the selected deployment to use this scope (default its current scope)"},
+					{Name: "max-verification-age", Value: "DURATION", Short: "maximum age of passed probe evidence (default 10m)"},
+					{Name: "deployment", Value: "ID|vN", Short: "exact live deployment whose evidence must pass, including zero-traffic candidates"},
+					{Name: "allow-unsupported", Short: "waive connectivity coverage for active queue and outbound bindings"},
+					{Name: "require-application-ack", Short: "require current PostgreSQL/object-storage application acknowledgements"},
+				}, Examples: []string{"gregale bindings check my-api --max-verification-age 10m --json", "gregale bindings check my-api --scope production", "gregale bindings check my-api --deployment v12 --max-verification-age 10m --json"},
+			},
 			{
 				Name:  "object-storage",
 				Short: "Manage app-to-bucket compute bindings",
@@ -336,14 +353,17 @@ var cliCommands = []cliCommand{
 			},
 			{
 				Name:        "verify",
-				Short:       "Check a private service route or test one managed PostgreSQL binding",
+				Short:       "Check a private service route or test a managed PostgreSQL or object-storage binding",
 				Positionals: []string{"<app>", "[<service>]"},
 				Flags: []cliFlag{
-					{Name: "all", Short: "verify every declared service binding"},
+					{Name: "all", Short: "verify services, managed PostgreSQL, object storage and configured outbound bindings"},
 					{Name: "postgres", Short: "verify one managed PostgreSQL binding by environment key", Value: "ENVIRONMENT_KEY"},
+					{Name: "outbound", Short: "verify a configured outbound integration by UUID", Value: "INTEGRATION_ID"},
+					{Name: "object-storage", Short: "verify one object-storage binding by environment prefix (read access only)", Value: "PREFIX"},
+					{Name: "deployment", Value: "ID|vN", Short: "exact live deployment to verify, including zero-traffic candidates"},
 					{Name: "poll-interval", Short: "status polling interval while the canary runs", Value: "D"},
 					{Name: "wait-timeout", Short: "maximum time to wait for the canary task", Value: "D"},
-				}, Examples: []string{"gregale bindings verify my-api billing", "gregale bindings verify my-api --all", "gregale bindings verify my-api --postgres DATABASE_URL"},
+				}, Examples: []string{"gregale bindings verify my-api billing", "gregale bindings verify my-api --all", "gregale bindings verify my-api --deployment v12 --all", "gregale bindings verify my-api --postgres DATABASE_URL", "gregale bindings verify my-api --object-storage GREGALE_S3_ASSETS"},
 			},
 			{
 				Name:        "smoke",
@@ -2590,6 +2610,10 @@ var cliCommands = []cliCommand{
 					{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
 					{Name: "deployment", Short: "deployment id or vN revision to promote", Req: true, Value: "ID"},
 					{Name: "if-serving", Short: "require this deployment id or vN revision to remain at 100% traffic", Value: "ID"},
+					{Name: "require-bindings", Short: "enforce a bindings check at the server's traffic write"},
+					{Name: "max-verification-age", Short: "maximum probe age (default 10m); requires --require-bindings", Value: "DURATION"},
+					{Name: "allow-unsupported", Short: "waive unsupported queue/outbound probes; requires --require-bindings"},
+					{Name: "require-application-ack", Short: "require current application acknowledgements; requires --require-bindings"},
 				},
 			},
 			{

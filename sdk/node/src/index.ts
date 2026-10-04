@@ -35,6 +35,7 @@ export { InvocationsService } from './generated/services/InvocationsService.js';
 export { KeysService } from './generated/services/KeysService.js';
 export { MetaService } from './generated/services/MetaService.js';
 export { MfaService } from './generated/services/MfaService.js';
+export { OutboundService } from './generated/services/OutboundService.js';
 export { QueuesService } from './generated/services/QueuesService.js';
 export { TriggersService } from './generated/services/TriggersService.js';
 export { ProjectsService } from './generated/services/ProjectsService.js';

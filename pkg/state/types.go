@@ -6477,6 +6477,7 @@ type AppSecretRuntimeReloadAckResult struct {
 	AppID        string
 	InstanceID   string
 	WorkloadName string
+	Generation   string
 	Revision     string
 	Status       SecretApplicationReloadAckStatus
 	ErrorCode    string
@@ -6489,19 +6490,20 @@ type AppSecretRuntimeReloadAckResult struct {
 // optional separately-versioned application self-attestation. It contains no
 // secret values and does not independently verify the app's internal state.
 type AppSecretRuntimeReloadObservation struct {
-	Scope                   string
-	Key                     string
-	InstanceID              string
-	WorkloadName            string
-	Version                 int64
-	Projection              SecretReloadProjectionStatus
-	Signal                  SecretReloadSignalStatus
-	ObservedAt              time.Time
-	ErrorCode               string
-	ApplicationAckVersion   int64
-	ApplicationAck          SecretApplicationReloadAckStatus
-	ApplicationAckAt        *time.Time
-	ApplicationAckErrorCode string
+	Scope                    string
+	Key                      string
+	InstanceID               string
+	WorkloadName             string
+	Version                  int64
+	Projection               SecretReloadProjectionStatus
+	Signal                   SecretReloadSignalStatus
+	ObservedAt               time.Time
+	ErrorCode                string
+	ApplicationAckVersion    int64
+	ApplicationAck           SecretApplicationReloadAckStatus
+	ApplicationAckAt         *time.Time
+	ApplicationAckErrorCode  string
+	ApplicationAckGeneration string
 }
 
 // AppSecretRuntimeReloadTarget is one active runtime authorized for a secret

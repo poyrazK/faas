@@ -32,7 +32,7 @@ const appTaskSelectColumns = `id, account_id, app_id, deployment_id, kind,
        stdout_tail, stderr_tail, output_truncated, exit_code,
        failure_code, failure_message, started_at, finished_at,
        created_at, updated_at, cron_id, scheduled_for,
-       failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation`
+       failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification`
 
 type appTaskRowScanner interface {
 	Scan(dest ...any) error
@@ -49,7 +49,7 @@ func scanAppTask(row appTaskRowScanner) (AppTask, error) {
 	var leaseOwner, failureCode, failureMessage pgtype.Text
 	var leaseExpiresAt, cancelRequestedAt, startedAt, finishedAt, scheduledFor, retryAt, startDeadlineAt pgtype.Timestamptz
 	var exitCode pgtype.Int4
-	var failureRules, workDecision []byte
+	var failureRules, workDecision, bindingVerification []byte
 	if err := row.Scan(
 		&id, &accountID, &appID, &deploymentID, &task.Kind,
 		&task.Command, &task.CommandShell, &task.DeploymentScope, &task.ArtifactKey, &task.ImageDigest,
@@ -61,10 +61,16 @@ func scanAppTask(row appTaskRowScanner) (AppTask, error) {
 		&task.CreatedAt, &task.UpdatedAt, &cronID, &scheduledFor,
 		&failureRules, &occurrenceID, &startDeadlineAt, &workDecision, &task.OutcomeCode,
 		&exclusiveOperationID, &exclusiveGeneration,
+		&bindingVerification,
 	); err != nil {
 		return AppTask{}, err
 	}
 	task.ID = pgUUIDString(id)
+	if len(bindingVerification) > 0 {
+		if err := json.Unmarshal(bindingVerification, &task.BindingVerification); err != nil {
+			return AppTask{}, err
+		}
+	}
 	task.AccountID = pgUUIDString(accountID)
 	task.AppID = pgUUIDString(appID)
 	task.DeploymentID = pgUUIDString(deploymentID)
@@ -123,6 +129,9 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 	resolved, err := resolveCreateAppTask(params)
 	if err != nil {
 		return AppTask{}, err
+	}
+	if resolved.BindingVerification != nil {
+		return s.createBindingVerificationTask(ctx, resolved)
 	}
 	row := s.pool.QueryRow(ctx, `
 		insert into app_tasks (

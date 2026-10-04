@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppBindingInventory } from '../models/AppBindingInventory.js';
 import type { AppErrorRequestsResponse } from '../models/AppErrorRequestsResponse.js';
 import type { AppErrorSampleResponse } from '../models/AppErrorSampleResponse.js';
 import type { AppErrorsSummaryResponse } from '../models/AppErrorsSummaryResponse.js';
@@ -99,6 +100,68 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AppsService {
+  /**
+   * Inspect all runtime resource bindings attached to an app.
+   * Read-only, best-effort metadata for service, PostgreSQL, object-storage,
+   * queue and outbound bindings. Requires apps:read or admin. PostgreSQL
+   * sections additionally require managed-postgres:read or admin; object
+   * storage sections require storage:manage or admin, matching the existing
+   * compute-binding read surface. MFA-pending sessions are rejected.
+   * Missing permissions and failed sections appear as structured issues in
+   * a 200 response with complete=false; successfully read sections remain.
+   * An unconfigured managed PostgreSQL feature is a warning. Other issues
+   * have error severity. No provider calls, workload probes or writes occur.
+   * State describes configuration/provisioning, not applied runtime health.
+   * Runtime status is unknown unless a scheduler queue observation exists;
+   * verification status includes durable service, PostgreSQL and object-storage task-guest canary results. GeneratedAt is collection time, not a
+   * promise of an atomic snapshot. Credential material and raw errors are
+   * excluded. Responses use Cache-Control: no-store.
+   *
+   * @returns AppBindingInventory Complete or partial binding inventory, without credentials.
+   * @throws ApiError
+   */
+  public static getAppBindingInventory({
+    slug,
+    deploymentId,
+    scope,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Select evidence for this exact app-owned, materialized live deployment, including zero-traffic candidates. No fallback to evidence from another deployment. Omit to use the manual-task selection.
+     */
+    deploymentId?: string,
+    /**
+     * Filter database and bucket binding scopes. Omit to include all scopes. App-wide service, queue and outbound bindings always remain included.
+     */
+    scope?: string,
+  }): CancelablePromise<AppBindingInventory> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'deployment_id': deploymentId,
+        'scope': scope,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
   /**
    * List apps on the account.
    * @returns AppResponse Apps on the account.

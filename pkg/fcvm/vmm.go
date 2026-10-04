@@ -199,6 +199,9 @@ type bindSourceMode struct {
 	mode os.FileMode
 	refs int
 	file resourceFileIdentity
+	// handle pins the original inode so teardown can restore its mode even
+	// when a snapshot writer atomically replaces the source pathname.
+	handle *os.File
 }
 
 // restoreTimingBreakdown is the vmmd-side breakdown of one successful
@@ -5035,17 +5038,27 @@ func (v *JailerVMM) bindImageForOwner(ctx context.Context, owner nativeLaunchRec
 	if err != nil {
 		return "", err
 	}
-	v.mu.Lock()
-	fi, err := os.Stat(src)
+	sourceFile, err := os.OpenFile(src, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
-		v.mu.Unlock()
+		return "", err
+	}
+	fi, err := sourceFile.Stat()
+	if err != nil {
+		_ = sourceFile.Close()
 		return "", err
 	}
 	identity, err := resourceFileID(fi)
 	if err != nil {
-		v.mu.Unlock()
+		_ = sourceFile.Close()
 		return "", err
 	}
+	keepSourceFile := false
+	defer func() {
+		if !keepSourceFile {
+			_ = sourceFile.Close()
+		}
+	}()
+	v.mu.Lock()
 	mode := fi.Mode().Perm()
 	for _, state := range v.bindSourceModes {
 		if state.file == identity {
@@ -5066,14 +5079,22 @@ func (v *JailerVMM) bindImageForOwner(ctx context.Context, owner nativeLaunchRec
 			v.mu.Unlock()
 			return "", errors.New("bind source replaced while referenced")
 		}
+		if state.handle == nil {
+			v.mu.Unlock()
+			return "", errors.New("bind source handle unavailable")
+		}
 		state.refs++
 		v.bindSourceModes[src] = state
+		_ = sourceFile.Close()
+		sourceFile = state.handle
+		keepSourceFile = true
 	} else {
 		// Register before chmod: a failed metadata fsync still needs cleanup.
-		v.bindSourceModes[src] = bindSourceMode{mode: mode, refs: 1, file: identity}
+		v.bindSourceModes[src] = bindSourceMode{mode: mode, refs: 1, file: identity, handle: sourceFile}
+		keepSourceFile = true
 	}
 	v.bindMounts[instance] = append(v.bindMounts[instance], ephemeralBind{source: src, mountpoint: dst, mode: mode, file: identity, tracked: true})
-	err = chmodResourceFile(src, identity, fi.Mode().Perm()|addPerms)
+	err = chmodResourceFile(sourceFile, identity, fi.Mode().Perm()|addPerms)
 	v.mu.Unlock()
 	if err != nil {
 		return "", err
@@ -5173,7 +5194,10 @@ func (v *JailerVMM) releaseBindSource(src string) error {
 				return err
 			}
 			if foreign {
-				info, err := os.Stat(src)
+				if state.handle == nil {
+					return errors.New("bind source handle unavailable")
+				}
+				info, err := state.handle.Stat()
 				if err != nil {
 					return err
 				}
@@ -5183,14 +5207,17 @@ func (v *JailerVMM) releaseBindSource(src string) error {
 				}
 				// No permission change is needed; leave the foreign owner's mode intact.
 				delete(v.bindSourceModes, src)
-				return nil
+				return state.handle.Close()
 			}
 		}
-		if err := chmodResourceFile(src, state.file, state.mode); err != nil {
+		if err := chmodResourceFile(state.handle, state.file, state.mode); err != nil {
 			return fmt.Errorf("restore bind source mode: %w", err)
 		}
 	}
 	delete(v.bindSourceModes, src)
+	if state.handle != nil {
+		return state.handle.Close()
+	}
 	return nil
 }
 

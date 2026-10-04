@@ -111,6 +111,46 @@ func TestMetalResourceAssetsBindLifecycle(t *testing.T) {
 	}
 }
 
+func TestMetalResourceAssetsRestoreOriginalInodeAfterSourceReplacement(t *testing.T) {
+	v, _, source, root := metalAssetFixture(t)
+	jail := filepath.Join(root, "jail")
+	if err := os.Mkdir(jail, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.bindImage(jail, source, "image", idLive, 0o044, true); err != nil {
+		t.Fatal(err)
+	}
+
+	displaced := source + ".displaced"
+	if err := os.Rename(source, displaced); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("replacement image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := v.unmountBindMounts(idLive); err != nil {
+		t.Fatal(err)
+	}
+	oldInfo, err := os.Stat(displaced)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := oldInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("original inode mode = %#o, want %#o", got, 0o600)
+	}
+	newInfo, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := newInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("replacement inode mode = %#o, want %#o", got, 0o600)
+	}
+	if body, err := os.ReadFile(source); err != nil || string(body) != "replacement image" {
+		t.Fatalf("replacement source changed: body=%q err=%v", body, err)
+	}
+}
+
 func TestMetalResourceAssetsRefuseForeignMountAndTarget(t *testing.T) {
 	v, _, source, root := metalAssetFixture(t)
 	alias := filepath.Join(root, "jail-alias")

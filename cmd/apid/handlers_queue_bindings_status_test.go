@@ -144,11 +144,22 @@ func TestQueueBindingConsumerLivenessClassifiesErrorsAndStaleness(t *testing.T) 
 	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &poll, LastErrorAt: &errAt}); got != "degraded" {
 		t.Fatalf("degraded liveness = %q, want degraded", got)
 	}
-	stale := now.Add(-queueBindingConsumerStaleAfter - time.Second)
+	stale := now.Add(-api.QueueConsumerMaxPollAge - time.Second)
 	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &stale}); got != "stale" {
 		t.Fatalf("stale liveness = %q, want stale", got)
 	}
 	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{}); got != "not_observed" {
 		t.Fatalf("empty liveness = %q, want not_observed", got)
+	}
+	zero, future := time.Time{}, now.Add(time.Second)
+	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &zero}); got != "not_observed" {
+		t.Fatalf("zero poll liveness = %q, want not_observed", got)
+	}
+	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &future}); got != "unknown" {
+		t.Fatalf("future poll liveness = %q, want unknown", got)
+	}
+	boundary := now.Add(-api.QueueConsumerMaxPollAge)
+	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &boundary}); got != "healthy" {
+		t.Fatalf("poll age boundary = %q, want healthy", got)
 	}
 }
