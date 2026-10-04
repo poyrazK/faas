@@ -5908,3 +5908,39 @@ retirement/metering and the complete stage coordinator remain required. Normal
 production builds, local PostgreSQL 16 and actual SQLC checks do not qualify the
 full repository, PostgreSQL 14/15, paid providers or native KVM acceptance. The
 public full database/object clone gate remains closed.
+
+### Owned reader composition for original contents (2026-10-04)
+
+The private APID contents path now composes the original manifest reservation
+with the retained provider reader. Captured manifest recovery still happens
+before this path: it needs no provider connection, current source definition,
+creation admission or spool directory. A missing manifest uses its original
+charged owner and encryption recipient, and derives a request from the exact
+retained native snapshot, adopted capture and observed reader. The selected SQL
+database and authenticated role come from the original immutable export plan.
+
+During capture, the worker rechecks that owner's original inventory ciphertext,
+archive reservation, reader identity, recipient, bytes and creation time. It
+authenticates the exact provider reader before borrowing SQL, around transaction
+ownership and every data object, and after the provider's final SQL/placement
+postchecks. Each provider lookup is surrounded by durable lease and original
+request checks. Handoff, cancellation, unavailable/replaced input, a concurrent
+first manifest or failed postcheck returns no new manifest. Actual Capture owns
+its read-only repeatable-read transaction and private digest spools; the provider
+owns and closes the borrowed SQL connection. Failures retain the original charged
+reservation and native inputs for recovery and separately qualified retirement.
+
+The focused local contracts use actual selected PostgreSQL 16 data with synthetic
+owned provider receipts. They exercise committed response loss and original-key
+handoff without another source read, pre-read substitution, authority loss during
+actual row capture and after successful provider postchecks, concurrent first
+publication, and read/sort budget exhaustion with closed SQL and empty spools.
+These checks do not qualify live provider permissions or PostgreSQL 14/15.
+
+This is private composition, not complete stage coordinator wiring. Repeated
+provider/receipt checks are bounded by the worker lease and provider deadlines;
+production work admission, digest spool placement and CPU/storage charging still
+need qualification. Target verification ownership/publication, original writer
+closure, complete schema/globals/data strategies, stored materialized-row copying,
+retirement/metering and all other stage requirements remain pending. The public
+full database/object clone gate remains closed.

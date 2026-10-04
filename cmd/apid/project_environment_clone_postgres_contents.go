@@ -14,7 +14,7 @@ import (
 
 // The trusted reader must authenticate the exact original provider capture and
 // retained reader, and return Capture only after its SQL/provider postchecks.
-// Recovery never invokes this seam. No live reader or public wiring is installed.
+// Recovery never invokes this seam. Public clone wiring remains gated.
 type clonePostgresContentsRead func(context.Context, copyinventory.DatabaseExport, [32]byte) (copycontents.Manifest, error)
 
 // Recover original ciphertext/recipient before considering a source read. The
