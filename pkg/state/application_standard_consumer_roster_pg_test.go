@@ -91,3 +91,30 @@ func TestPgApplicationStandardConsumerRosterAtomicSnapshot(t *testing.T) {
 		t.Fatal("committed shutdown omitted from snapshot")
 	}
 }
+
+func TestPgApplicationStandardConsumerRosterInactiveLoggingOnly(t *testing.T) {
+	s, _ := standardOperationPGStore(t)
+	standardConsumerRosterInactiveLoggingOnly(t, s)
+}
+
+func TestPgApplicationStandardConsumerRosterRoleChangeRetainsRegisteredLogger(t *testing.T) {
+	s, pool := standardOperationPGStore(t)
+	f := newStandardLocalIntentFixture(t.Context(), t, s)
+	c := standardLogInventorySession(t, s, standardLogInventoryNode(t, s).ID)
+	if _, err := pool.Exec(t.Context(), `UPDATE compute_nodes SET role='control-plane',lifecycle='retired' WHERE id=$1`, c.NodeID); err != nil {
+		t.Fatal(err)
+	}
+	r := standardRosterRead(t, s, f)
+	n := standardRosterNode(t, r, c.NodeID)
+	if n.Role != "control-plane" || n.Lifecycle != NodeLifecycleRetired || !n.LoggingRequired || n.NativeRequired || n.LoggingSession == nil || *n.LoggingSession != c {
+		t.Fatal("role/lifecycle label proved false logging quiescence")
+	}
+	closure, err := s.CloseApplicationStandardLogConsumer(t.Context(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n = standardRosterNode(t, standardRosterRead(t, s, f), c.NodeID)
+	if n.LoggingStoppedAt == nil || !n.LoggingStoppedAt.Equal(closure.StoppedAt) {
+		t.Fatal("retired control-plane logger could not acknowledge joined shutdown")
+	}
+}

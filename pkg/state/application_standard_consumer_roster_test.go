@@ -132,6 +132,8 @@ func TestMemApplicationStandardConsumerRosterStatesMissingNodesAndOwnership(t *t
 	f := newStandardLocalIntentFixture(t.Context(), t, m)
 	m.mu.Lock()
 	for id, n := range m.computeNodes {
+		role := "control-plane"
+		n.Role = &role
 		n.Active = false
 		n.Lifecycle = NodeLifecycleRetired
 		n.GatewayTargetURL = nil
@@ -207,5 +209,74 @@ func TestMemApplicationStandardConsumerRosterCopyAndCancellation(t *testing.T) {
 	m.mu.Unlock()
 	if err := <-finished; !errors.Is(err, context.Canceled) {
 		t.Fatal("canceled mutex wait returned roster")
+	}
+}
+
+func TestMemApplicationStandardConsumerRosterInactiveLoggingOnly(t *testing.T) {
+	standardConsumerRosterInactiveLoggingOnly(t, NewMemStore())
+}
+
+func standardConsumerRosterInactiveLoggingOnly(t *testing.T, s standardRosterTestStore) {
+	t.Helper()
+	f := newStandardLocalIntentFixture(t.Context(), t, s)
+	registered := standardLogInventoryNode(t, s)
+	c := standardLogInventorySession(t, s, registered.ID)
+	unknown := standardLogInventoryNode(t, s)
+	for _, n := range []ComputeNode{registered, unknown} {
+		if err := s.SetComputeNodeActive(t.Context(), n.ID, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := standardRosterRead(t, s, f)
+	for _, id := range []string{registered.ID, unknown.ID} {
+		n := standardRosterNode(t, r, id)
+		if n.Active || n.GatewayConfigured || n.NativeRequired || !n.LoggingRequired {
+			t.Fatal("inactive logging-only node disappeared")
+		}
+	}
+	n := standardRosterNode(t, r, registered.ID)
+	if n.LoggingSession == nil || *n.LoggingSession != c || n.LoggingStoppedAt != nil {
+		t.Fatal("open registered startup disappeared")
+	}
+	n = standardRosterNode(t, r, unknown.ID)
+	if n.LoggingSession != nil {
+		t.Fatal("missing startup became reporting evidence")
+	}
+	closure, err := s.CloseApplicationStandardLogConsumer(t.Context(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := standardRosterRead(t, s, f)
+	n = standardRosterNode(t, after, registered.ID)
+	if !n.LoggingRequired || n.LoggingStoppedAt == nil || !n.LoggingStoppedAt.Equal(closure.StoppedAt) || after.Fingerprint() == r.Fingerprint() {
+		t.Fatal("closure removed platform membership")
+	}
+}
+
+func TestMemApplicationStandardConsumerRosterRoleChangeRetainsRegisteredLogger(t *testing.T) {
+	m := NewMemStore()
+	f := newStandardLocalIntentFixture(t.Context(), t, m)
+	c := standardLogInventorySession(t, m, standardLogInventoryNode(t, m).ID)
+	m.mu.Lock()
+	for id, n := range m.computeNodes {
+		if sameStandardUUID(id, c.NodeID) {
+			role := "control-plane"
+			n.Role = &role
+			n.Lifecycle = NodeLifecycleRetired
+			n.Active = false
+			m.computeNodes[id] = n
+		}
+	}
+	m.mu.Unlock()
+	r := standardRosterRead(t, m, f)
+	n := standardRosterNode(t, r, c.NodeID)
+	if n.Role != "control-plane" || !n.LoggingRequired || n.NativeRequired || n.LoggingSession == nil || *n.LoggingSession != c {
+		t.Fatal("role change removed registered logging obligation")
+	}
+	if _, err := m.CloseApplicationStandardLogConsumer(t.Context(), c); err != nil {
+		t.Fatal(err)
+	}
+	if standardRosterNode(t, standardRosterRead(t, m, f), c.NodeID).LoggingStoppedAt == nil {
+		t.Fatal("changed-role shutdown disappeared")
 	}
 }

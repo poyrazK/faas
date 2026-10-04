@@ -785,9 +785,9 @@ open, and the mutation release gate remains disabled.
 
 A private application roster now lists required logging and native consumers
 from compute nodes and live instance placement. Missing startup reports or
-capabilities stay visible. Draining nodes that still host an instance retain
-obligations, and configured gateway endpoints remain visible after admission
-stops. A single storage snapshot binds membership, placement, current process
+capabilities stay visible. Every enrolled compute node retains a logging obligation after admission stops,
+even without live instances or a gateway address. A registered logger remains
+visible after a role change; node labels do not prove its workers have exited. A single storage snapshot binds membership, placement, current process
 identities and enrollment eligibility without exposing endpoint configuration.
 
 The gateway acknowledges its current startup's shutdown after both source and

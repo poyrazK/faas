@@ -2060,10 +2060,11 @@ remains disabled.
 A list of successful private reports cannot establish the required consumer set.
 Read an application roster from compute-node membership and all live/in-flight
 instance placements in one PostgreSQL statement snapshot or one memory-store
-critical section. Include active legacy compute nodes even before any logging
-process registers, and include configured gateway endpoints after admission
-stops, including retired endpoints until their authoritative configuration is
-removed. Include native obligations for every live placement, even on inactive,
+critical section. Include every enrolled compute node, including inactive and retired nodes
+without live placements or gateway addresses, before any logging process reports.
+A placement, lifecycle or role label cannot establish logging quiescence. Keep
+registered logging startups as obligations even after a node becomes control-plane;
+a joined closure remains explicit evidence rather than deleting membership. Include native obligations for every live placement, even on inactive,
 retired, missing or unexpectedly control-plane nodes. Placement states are the
 scheduler's resident/in-flight set: waking, cold booting, running, snapshotting,
 migrating, warm and draining. A drain flag does not prove physical quiescence.

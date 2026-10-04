@@ -8348,14 +8348,14 @@ WITH read_clock AS MATERIALIZED (SELECT clock_timestamp() AS read_at),
  SELECT i.id,i.node_id,i.deployment_id,i.state FROM instances i JOIN app_scope a ON a.id=i.app_id
  WHERE i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining')
  ), members AS (
- SELECT n.id AS node_id FROM compute_nodes n
- WHERE n.role IS DISTINCT FROM 'control-plane' AND (n.active OR n.gateway_target_url IS NOT NULL)
+ SELECT n.id AS node_id FROM compute_nodes n LEFT JOIN application_standard_log_consumers c ON c.node_id=n.id
+ WHERE n.role IS DISTINCT FROM 'control-plane' OR c.node_id IS NOT NULL
  UNION SELECT l.node_id FROM live l
  ), roster_nodes AS (
  SELECT x.node_id,n.id IS NOT NULL AS present,coalesce(n.active,false) AS active,
  coalesce(n.lifecycle::text,'') AS lifecycle,coalesce(n.role,'') AS role,n.gateway_target_url IS NOT NULL AS gateway_configured,
  coalesce(n.last_heartbeat_at<=rc.read_at AND n.last_heartbeat_at>=rc.read_at-make_interval(secs=>sqlc.arg(heartbeat_freshness_seconds)::double precision),false) AS heartbeat_fresh,
- n.id IS NOT NULL AND n.role IS DISTINCT FROM 'control-plane' AND (n.active OR n.gateway_target_url IS NOT NULL OR EXISTS(SELECT 1 FROM live l WHERE l.node_id=x.node_id)) AS logging_required,
+ n.id IS NOT NULL AND (n.role IS DISTINCT FROM 'control-plane' OR c.node_id IS NOT NULL) AS logging_required,
  EXISTS(SELECT 1 FROM live l WHERE l.node_id=x.node_id) AS native_required,
  coalesce(n.vmmd_incarnation::text,'') AS native_incarnation,CASE WHEN n.vmmd_incarnation IS NULL THEN 0 ELSE n.vmmd_admission_protocol END AS native_protocol,
  CASE WHEN c.node_id IS NOT NULL THEN jsonb_build_object('node_id',c.node_id::text,'session_id',c.session_id::text,'generation',c.generation) END AS logging_session,

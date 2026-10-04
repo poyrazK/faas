@@ -77,7 +77,8 @@ func (m *MemStore) standardConsumerRosterNodeLocked(n ComputeNode, live bool, no
 	if n.Role != nil {
 		role = *n.Role
 	}
-	row := ApplicationStandardConsumerNode{NodeID: id, Present: true, Active: n.Active, Lifecycle: n.Lifecycle, Role: role, GatewayConfigured: n.GatewayTargetURL != nil, HeartbeatFresh: !n.LastHeartbeatAt.After(now) && now.Sub(n.LastHeartbeatAt) <= DefaultHeartbeatStaleness, LoggingRequired: role != "control-plane" && (n.Active || n.GatewayTargetURL != nil || live), NativeRequired: live, NativeIncarnation: m.computeNodeRuntimeIncarnations[n.ID], NativeProtocol: m.computeNodeRuntimeProtocols[n.ID]}
+	_, registered := m.applicationStandardLogConsumers[id]
+	row := ApplicationStandardConsumerNode{NodeID: id, Present: true, Active: n.Active, Lifecycle: n.Lifecycle, Role: role, GatewayConfigured: n.GatewayTargetURL != nil, HeartbeatFresh: !n.LastHeartbeatAt.After(now) && now.Sub(n.LastHeartbeatAt) <= DefaultHeartbeatStaleness, LoggingRequired: role != "control-plane" || registered, NativeRequired: live, NativeIncarnation: m.computeNodeRuntimeIncarnations[n.ID], NativeProtocol: m.computeNodeRuntimeProtocols[n.ID]}
 	if session, ok := m.applicationStandardLogConsumers[id]; ok {
 		row.LoggingSession = &session
 	}
