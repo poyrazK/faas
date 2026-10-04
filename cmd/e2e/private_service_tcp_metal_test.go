@@ -27,6 +27,38 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// NodeFixtureTCPService is a private TCP echo service on 5432. A source
+// build infers Node's HTTP readiness contract (GET /healthz on PORT), which a
+// raw TCP listener cannot answer, so the fixture also serves /healthz on
+// PORT; the echo port is the declared internal listener under test.
+func NodeFixtureTCPService(t *testing.T) []byte {
+	t.Helper()
+	const pkgJSON = `{
+  "name": "faas-fixture-node-tcp-service",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {"node": "22"},
+  "scripts": {"start": "node index.js"},
+  "dependencies": {}
+}
+`
+	const indexJS = `const http = require('http');
+const net = require('net');
+net.createServer((socket) => {
+  socket.on('data', (chunk) => socket.write(Buffer.concat([Buffer.from('tcp-echo:'), chunk])));
+}).listen(5432, '0.0.0.0', () => console.log('node fixture TCP service echo on :5432'));
+const port = parseInt(process.env.PORT || '8080', 10);
+http.createServer((req, res) => { res.writeHead(200); res.end('tcp-service-ok'); })
+  .listen(port, '0.0.0.0', () => console.log('node fixture TCP service health on :' + port));
+`
+	return buildTarGz(t, map[string]string{
+		"package.json":     pkgJSON,
+		"index.js":         indexJS,
+		".faas-fixture":    "node22\n",
+		"faas-build-token": time.Now().UTC().Format(time.RFC3339Nano) + "\n",
+	})
+}
+
 // NodeFixtureTCPDialer is an HTTP app whose /dial endpoint opens a raw TCP
 // connection from inside the guest, sends a payload, and reports what came
 // back together with the address the guest's resolver returned.
@@ -72,7 +104,7 @@ http.createServer((req, res) => {
     sock.on('error', (err) => finish(502, { error: err.code || err.message, reply: reply.toString() }));
     sock.on('end', () => finish(502, { error: 'closed', reply: reply.toString() }));
   });
-}).listen(8080, '0.0.0.0', () => console.log('node fixture TCP dialer listening on :8080'));
+}).listen(parseInt(process.env.PORT || '8080', 10), '0.0.0.0', () => console.log('node fixture TCP dialer listening'));
 `
 	return buildTarGz(t, map[string]string{
 		"package.json":     pkgJSON,
@@ -114,14 +146,14 @@ func privateTCPDialFrom(t *testing.T, h *e2etest.Harness, callerSlug, host strin
 	return out
 }
 
-func deployPrivateTCPApp(t *testing.T, ctx context.Context, h *e2etest.Harness, pool *pgxpool.Pool, key string, create api.CreateAppRequest, source []byte, port int) state.App {
+func deployPrivateTCPApp(t *testing.T, ctx context.Context, h *e2etest.Harness, pool *pgxpool.Pool, key string, create api.CreateAppRequest, source []byte) state.App {
 	t.Helper()
 	falsy := false
 	create.Type, create.RequireAuthn = "app", &falsy
 	if got := postOK(t, h, key, "/v1/apps", create); got != http.StatusCreated {
 		t.Fatalf("create app %q: status=%d", create.Slug, got)
 	}
-	raw, status := postMultipartDeploymentWithOverrides(t, h, key, create.Slug, source, false, &api.CreateDeploymentOverrides{Port: port}, "")
+	raw, status := postMultipartDeploymentWithOverrides(t, h, key, create.Slug, source, false, nil, "")
 	if status != http.StatusAccepted {
 		t.Fatalf("deploy %s: status=%d body=%s", create.Slug, status, raw)
 	}
@@ -173,8 +205,8 @@ func TestPrivateServiceTCPMetal(t *testing.T) {
 		Slug:       "cache-" + suffix,
 		Visibility: string(api.AppVisibilityInternal),
 		Ports:      []api.WorkloadPort{{Port: 5432, Protocol: api.WorkloadPortTCP, Internal: true}},
-	}, NodeFixtureTCP(t), 5432)
-	caller := deployPrivateTCPApp(t, ctx, h, pool, key, api.CreateAppRequest{Slug: "api-" + suffix}, NodeFixtureTCPDialer(t), 8080)
+	}, NodeFixtureTCPService(t))
+	caller := deployPrivateTCPApp(t, ctx, h, pool, key, api.CreateAppRequest{Slug: "api-" + suffix}, NodeFixtureTCPDialer(t))
 	want, ok := api.ServiceAddressForIndex(cache.ServiceAddressIndex)
 	if !ok {
 		t.Fatalf("internal target %s has no service address (index %d)", cache.Slug, cache.ServiceAddressIndex)
@@ -215,7 +247,7 @@ func TestPrivateServiceTCPMetal(t *testing.T) {
 
 	// Another account cannot use the name or the address.
 	otherKey := h.SeedAccount(ctx, api.PlanPro)
-	stranger := deployPrivateTCPApp(t, ctx, h, pool, otherKey, api.CreateAppRequest{Slug: "stranger-" + suffix}, NodeFixtureTCPDialer(t), 8080)
+	stranger := deployPrivateTCPApp(t, ctx, h, pool, otherKey, api.CreateAppRequest{Slug: "stranger-" + suffix}, NodeFixtureTCPDialer(t))
 	byName := privateTCPDialFrom(t, h, stranger.Slug, cache.Slug+".svc.gregale", 5432, "leak")
 	if byName.status == http.StatusOK || byName.Resolved == want.String() || strings.Contains(byName.Reply, "leak") {
 		t.Fatalf("another account reached %s by name: %+v", cache.Slug, byName)
