@@ -1938,3 +1938,18 @@ AST checks pass, and SQLC regeneration matches. These receipts are portable stor
 fixtures, not native guest or snapshot lifecycle acceptance. Scoped Linux lint
 passes with zero issues; current-head repository CI remains to be completed
 for this increment.
+
+
+## State CI inventory and coverage union
+
+The previous database shard timed out after twenty minutes while creating its
+next migrated fixture, before the coverage gate ran. The complete state package
+now uses two deterministic test-name shards on independent PostgreSQL runners.
+The inventory includes fuzz seeds and runnable examples, excludes `TestMain`
+(which Go still executes for each binary), and is checked against Go's compiled
+registered list. Existing E2E boot-contract partitioning remains separate.
+Race detection and the twenty-minute test-binary timeout are retained. Both
+state profiles and the external PostgreSQL GitOps adapter profile are required
+by one aggregate exact-package seventy-percent coverage gate. Repeated source
+blocks contribute statements once and count hits from any successful shard.
+This CI partition change does not supply native qualification evidence.

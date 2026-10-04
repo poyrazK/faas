@@ -317,7 +317,7 @@ canary-alert-test: ## Exercise the synthetic-canary Alertmanager payload against
 # using the same parser as check-state-coverage. Excludes generated sqlc.
 # The floor is a fixed line the suite must stay above,
 # not a moving goalpost (mirrors codecov.yml project.default.target).
-# Wired into the matrix-expanded unit-tests-pg-2a/2b CI jobs (see ci.yml).
+# Wired into the state aggregate and remaining package CI jobs (see ci.yml).
 .PHONY: coverage-floor
 coverage-floor: ## Assert ship-blocking package floors across all coverage/cover-shard*.out
 	@bash -c 'set -e; COVERDIR="$${COVERDIR:-$(COVERAGE_DIR)}"; \
