@@ -61,7 +61,7 @@ func validateStandardLocalIntent(s standardReviewSnapshot, current ApplicationSt
 	if current.DesiredRevision != intent.ExpectedRevision {
 		return proposed, false, ErrApplicationStandardLocalIntentStale
 	}
-	if (current.State != "persisted" && current.State != "observed") || current.PersistedRevision != current.DesiredRevision || current.EffectiveHash == "" {
+	if current.State != "blocked" && ((current.State != "persisted" && current.State != "observed") || current.PersistedRevision != current.DesiredRevision || current.EffectiveHash == "") {
 		return proposed, false, ErrApplicationStandardsPending
 	}
 	var err error

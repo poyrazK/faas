@@ -429,6 +429,7 @@ type AppApplicationStandard struct {
 	LeaseGeneration           int64
 	LeaseUntil                pgtype.Timestamptz
 	MaterializedFields        []string
+	ExceptionExpiresAt        pgtype.Timestamptz
 }
 
 type AppCpuPolicyNodeStatus struct {
@@ -960,6 +961,22 @@ type ApplicationStandardControlBinding struct {
 	Field      string
 	ResourceID pgtype.UUID
 	PhysicalID string
+}
+
+type ApplicationStandardException struct {
+	ID         pgtype.UUID
+	OrgID      pgtype.UUID
+	AppID      pgtype.UUID
+	StandardID pgtype.UUID
+	Version    int64
+	Field      string
+	Value      []byte
+	Reason     string
+	ApprovedBy pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	RevokedBy  pgtype.UUID
+	RevokedAt  pgtype.Timestamptz
 }
 
 type ApplicationStandardLedgerRecovery struct {

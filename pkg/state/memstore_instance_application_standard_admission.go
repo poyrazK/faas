@@ -51,6 +51,9 @@ func (m *MemStore) standardRuntimeSnapshotLocked(ins Instance) ([]byte, error) {
 		}
 	}
 	input := standardRuntimeCallerInputs(app, account, dep)
+	if e.ExceptionExpiresAt != nil {
+		input["exception_expires_at_unix_nano"] = e.ExceptionExpiresAt.UnixNano()
+	}
 	input["egress_revision"] = m.appEgressRevisionLocked(app.ID)
 	input["desired_revision"], input["persisted_revision"], input["effective_hash"] = e.DesiredRevision, e.PersistedRevision, e.EffectiveHash
 	input["adoptions"], input["materialized_fields"], input["effective"] = e.Adoptions, e.MaterializedFields, e.Effective

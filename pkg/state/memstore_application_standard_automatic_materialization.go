@@ -35,6 +35,7 @@ func (m *MemStore) ClaimApplicationStandardEnrollment(ctx context.Context, owner
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now().UTC().Truncate(time.Microsecond)
+	m.queueExpiredStandardExceptionsLocked(now)
 	entries := []ApplicationStandardEnrollment{}
 	for _, e := range m.applicationStandardEnrollments {
 		if e.State != "pending" && !(e.State == "blocked" && !e.UpdatedAt.Add(api.ApplicationStandardBlockedRetry).After(now)) {

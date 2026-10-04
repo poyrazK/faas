@@ -539,11 +539,86 @@ BEGIN
       OR NEW.base_settings IS DISTINCT FROM OLD.base_settings OR NEW.local_settings IS DISTINCT FROM OLD.local_settings
       OR NEW.additional_log_destinations IS DISTINCT FROM OLD.additional_log_destinations OR NEW.adoptions IS DISTINCT FROM OLD.adoptions
       OR NEW.desired_revision IS DISTINCT FROM OLD.desired_revision OR NEW.effective IS DISTINCT FROM OLD.effective
+      OR NEW.exception_expires_at IS DISTINCT FROM OLD.exception_expires_at
       OR NEW.effective_hash IS DISTINCT FROM OLD.effective_hash OR NEW.materialized_fields IS DISTINCT FROM OLD.materialized_fields THEN
         NEW.lease_owner := ''; NEW.lease_until := NULL;
         NEW.lease_generation := greatest(NEW.lease_generation,OLD.lease_generation+1);
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_exception_deadline(jsonb, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_exception_deadline(input jsonb, now_utc timestamp with time zone) RETURNS timestamp with time zone
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE nano bigint; deadline timestamptz;
+BEGIN
+ IF NOT input ? 'exception_expires_at_unix_nano' THEN RETURN NULL; END IF;
+ IF jsonb_typeof(input->'exception_expires_at_unix_nano') IS DISTINCT FROM 'number'
+   OR (input->>'exception_expires_at_unix_nano') !~ '^[1-9][0-9]{0,18}$' THEN
+  RAISE EXCEPTION 'exception deadline invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ nano:=(input->>'exception_expires_at_unix_nano')::bigint;
+ deadline:=timestamptz 'epoch'+(nano/1000000000)*interval '1 second'+((nano%1000000000)/1000)*interval '1 microsecond';
+ IF deadline<=greatest(now_utc,clock_timestamp()) THEN
+  RAISE EXCEPTION 'exception authority expired' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN deadline;
+EXCEPTION WHEN numeric_value_out_of_range THEN
+ RAISE EXCEPTION 'exception deadline invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+END;
+$_$;
+
+
+--
+-- Name: application_standard_exception_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_exception_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE actor uuid;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF pg_trigger_depth()>1 AND (NOT EXISTS(SELECT 1 FROM orgs WHERE id=OLD.org_id)
+    OR NOT EXISTS(SELECT 1 FROM apps WHERE id=OLD.app_id)) THEN RETURN OLD; END IF;
+  RAISE EXCEPTION 'exception history is retained' USING ERRCODE='23514',CONSTRAINT='application_standard_exception_immutable';
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  IF (to_jsonb(NEW)-ARRAY['revoked_at','revoked_by']) IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['revoked_at','revoked_by'])
+    OR OLD.revoked_at IS NOT NULL OR NEW.revoked_at IS NULL OR NEW.revoked_at>clock_timestamp() THEN
+   RAISE EXCEPTION 'exception approval is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_exception_immutable';
+  END IF;
+  actor:=NEW.revoked_by;
+ ELSE
+  IF NEW.revoked_at IS NOT NULL OR NEW.expires_at<=clock_timestamp() OR NEW.created_at>clock_timestamp() THEN
+   RAISE EXCEPTION 'exception approval time invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_exception_scope';
+  END IF;
+  actor:=NEW.approved_by;
+ END IF;
+ PERFORM 1 FROM orgs WHERE id=NEW.org_id AND status='active' AND NOT deleted_pending FOR UPDATE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'exception organization unavailable' USING ERRCODE='23514',CONSTRAINT='application_standard_exception_scope'; END IF;
+ PERFORM 1 FROM apps WHERE id=NEW.app_id AND org_id=NEW.org_id AND status<>'deleted' FOR UPDATE NOWAIT;
+ IF NOT FOUND OR NOT EXISTS(SELECT 1 FROM accounts a JOIN org_memberships m ON m.account_id=a.id
+   WHERE a.id=actor AND a.status='active' AND m.org_id=NEW.org_id AND m.removed_at IS NULL AND m.role IN ('owner','admin')) THEN
+  RAISE EXCEPTION 'exception authority unavailable' USING ERRCODE='23514',CONSTRAINT='application_standard_exception_scope';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF NOT EXISTS(SELECT 1 FROM app_application_standards e CROSS JOIN LATERAL jsonb_array_elements(e.adoptions) pin
+    JOIN application_standard_assignments a ON a.id=(pin->>'assignment_id')::uuid
+    JOIN application_standard_versions v ON v.org_id=a.org_id AND v.standard_id=a.standard_id AND v.version=(pin->>'version')::bigint
+    WHERE e.app_id=NEW.app_id AND a.org_id=NEW.org_id AND v.standard_id=NEW.standard_id AND v.version=NEW.version AND v.definition ? NEW.field)
+   OR EXISTS(SELECT 1 FROM application_standard_exceptions x WHERE x.app_id=NEW.app_id AND x.standard_id=NEW.standard_id
+    AND x.version=NEW.version AND x.field=NEW.field AND x.revoked_at IS NULL AND x.expires_at>clock_timestamp()) THEN
+   RAISE EXCEPTION 'exception adoption or overlap invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_exception_scope';
+  END IF;
+ END IF;
+ RETURN NEW;
 END;
 $$;
 
@@ -827,7 +902,7 @@ BEGIN
   IF coalesce((input->'settings'->>'require_signed')::boolean,false) OR enforce THEN
    RAISE EXCEPTION 'native signed producer evidence missing' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
   END IF;
-  RETURN NULL;
+  RETURN application_standard_exception_deadline(input,now_utc);
  END IF;
  IF (identity->>'format'='gregale.runtime-artifact-input.v1' AND identity->>'account_id'=input->>'account_id'
   AND identity->>'org_id'=input->>'org_id' AND identity->>'app_id'=input->>'app_id'
@@ -855,7 +930,7 @@ BEGIN
  IF deadline<=clock_timestamp() THEN
   RAISE EXCEPTION 'native composed authority expired during read' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
  END IF;
- RETURN deadline;
+ RETURN least(deadline,application_standard_exception_deadline(input,now_utc));
 EXCEPTION WHEN lock_not_available THEN
  RAISE EXCEPTION 'native composed inputs busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
  WHEN invalid_text_representation OR numeric_value_out_of_range OR invalid_parameter_value OR datetime_field_overflow THEN
@@ -2257,6 +2332,7 @@ BEGIN
  SELECT * INTO e FROM app_application_standards WHERE app_id=a.id FOR SHARE NOWAIT;
  IF NOT FOUND OR a.status='deleted' OR acct.status NOT IN ('active','past_due') OR acct.abuse_hold_at IS NOT NULL OR o.status NOT IN ('active','past_due') OR o.deleted_pending
    OR e.org_id IS DISTINCT FROM a.org_id OR e.project_id IS DISTINCT FROM a.project_id
+   OR (e.exception_expires_at IS NOT NULL AND e.exception_expires_at<=clock_timestamp())
    OR NOT ((e.state='unmanaged' AND e.adoptions='[]'::jsonb AND cardinality(e.materialized_fields)=0)
      OR (e.state IN ('persisted','observed') AND e.persisted_revision=e.desired_revision AND e.effective_hash <> '')) THEN
   RAISE EXCEPTION 'runtime application standards are incomplete' USING ERRCODE='23514',CONSTRAINT='application_standards_pending';
@@ -2298,6 +2374,7 @@ BEGIN
     'sidecars',coalesce((SELECT jsonb_agg(jsonb_build_object('sidecar_name',r.sidecar_name,
       'storage_key',r.storage_key,'bytes',r.bytes,'content_digest',r.content_digest) ORDER BY r.sidecar_name)
       FROM deployment_sidecar_layers r WHERE r.deployment_id=d.id),'[]'::jsonb)) END)
+  || CASE WHEN e.exception_expires_at IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('exception_expires_at_unix_nano',(extract(epoch FROM e.exception_expires_at)*1000000000)::bigint) END
   || CASE WHEN producers IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('runtime_artifacts',producers) END);
 EXCEPTION WHEN lock_not_available THEN
  RAISE EXCEPTION 'runtime inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
@@ -7678,6 +7755,7 @@ CREATE TABLE public.app_application_standards (
     lease_generation bigint DEFAULT 0 NOT NULL,
     lease_until timestamp with time zone,
     materialized_fields text[] DEFAULT '{}'::text[] NOT NULL,
+    exception_expires_at timestamp with time zone,
     CONSTRAINT app_application_standards_adoptions_check CHECK ((jsonb_typeof(adoptions) = 'array'::text)),
     CONSTRAINT app_application_standards_base_settings_check CHECK ((jsonb_typeof(base_settings) = 'object'::text)),
     CONSTRAINT app_application_standards_check CHECK (((persisted_revision >= 0) AND (persisted_revision <= desired_revision))),
@@ -8573,6 +8651,34 @@ CREATE TABLE public.application_standard_control_bindings (
     physical_id text NOT NULL,
     CONSTRAINT application_standard_control_bindings_field_check CHECK ((field = ANY (ARRAY['log_destinations'::text, 'trusted_publishers'::text]))),
     CONSTRAINT application_standard_control_bindings_physical_id_check CHECK (((octet_length(physical_id) >= 1) AND (octet_length(physical_id) <= 128)))
+);
+
+
+--
+-- Name: application_standard_exceptions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_exceptions (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    standard_id uuid NOT NULL,
+    version bigint NOT NULL,
+    field text NOT NULL,
+    value jsonb NOT NULL,
+    reason text NOT NULL,
+    approved_by uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    revoked_by uuid,
+    revoked_at timestamp with time zone,
+    CONSTRAINT application_standard_exceptions_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '30 days'::interval)))),
+    CONSTRAINT application_standard_exceptions_check1 CHECK (((revoked_by IS NULL) = (revoked_at IS NULL))),
+    CONSTRAINT application_standard_exceptions_check2 CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at))),
+    CONSTRAINT application_standard_exceptions_field_check CHECK ((field = ANY (ARRAY['log_destinations'::text, 'require_signed'::text, 'security_policy'::text, 'trusted_publishers'::text, 'egress_cidrs'::text, 'egress_extra_ports'::text]))),
+    CONSTRAINT application_standard_exceptions_reason_check CHECK ((((octet_length(reason) >= 1) AND (octet_length(reason) <= 512)) AND (btrim(reason) <> ''::text))),
+    CONSTRAINT application_standard_exceptions_value_check CHECK (((value <> 'null'::jsonb) AND (octet_length((value)::text) <= 131072))),
+    CONSTRAINT application_standard_exceptions_version_check CHECK ((version > 0))
 );
 
 
@@ -16523,6 +16629,14 @@ ALTER TABLE ONLY public.application_standard_control_bindings
 
 
 --
+-- Name: application_standard_exceptions application_standard_exceptions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_exceptions
+    ADD CONSTRAINT application_standard_exceptions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: application_standard_ledger_recoveries application_standard_ledger_recoveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20479,6 +20593,20 @@ CREATE UNIQUE INDEX app_webhooks_platform_tenant_target_uniq ON public.app_webho
 --
 
 CREATE INDEX application_standard_assignments_scope_idx ON public.application_standard_assignments USING btree (scope, scope_id, org_id) WHERE active;
+
+
+--
+-- Name: application_standard_exception_app_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX application_standard_exception_app_history ON public.application_standard_exceptions USING btree (org_id, app_id, created_at, id);
+
+
+--
+-- Name: application_standard_expired_enrollments; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX application_standard_expired_enrollments ON public.app_application_standards USING btree (exception_expires_at, app_id) WHERE ((exception_expires_at IS NOT NULL) AND (state = ANY (ARRAY['persisted'::text, 'observed'::text])));
 
 
 --
@@ -25200,6 +25328,13 @@ CREATE TRIGGER application_standard_enrollment_generation_guard BEFORE UPDATE ON
 
 
 --
+-- Name: application_standard_exceptions application_standard_exception_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_exception_guard BEFORE INSERT OR DELETE OR UPDATE ON public.application_standard_exceptions FOR EACH ROW EXECUTE FUNCTION public.application_standard_exception_guard();
+
+
+--
 -- Name: application_standards application_standard_identity_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27405,6 +27540,30 @@ ALTER TABLE ONLY public.application_standard_control_backups
 
 ALTER TABLE ONLY public.application_standard_control_bindings
     ADD CONSTRAINT application_standard_control_bindings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_exceptions application_standard_exceptions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_exceptions
+    ADD CONSTRAINT application_standard_exceptions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_exceptions application_standard_exceptions_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_exceptions
+    ADD CONSTRAINT application_standard_exceptions_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_exceptions application_standard_exceptions_org_id_standard_id_version_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_exceptions
+    ADD CONSTRAINT application_standard_exceptions_org_id_standard_id_version_fkey FOREIGN KEY (org_id, standard_id, version) REFERENCES public.application_standard_versions(org_id, standard_id, version);
 
 
 --

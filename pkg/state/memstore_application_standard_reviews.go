@@ -175,6 +175,7 @@ func (m *MemStore) standardReviewSnapshotLocked(ctx context.Context, orgID, acto
 		}
 		a := standardReviewAppSnapshot{AppID: canonicalStandardUUID(app.ID), OrgID: s.OrgID, AccountID: canonicalStandardUUID(app.AccountID), Slug: app.Slug, Status: string(app.Status), Type: string(app.Type), WorkloadClass: string(app.WorkloadClass), Settings: applicationStandardBaseSettings(app), Drains: []standardReviewDrain{}, Signers: []standardReviewSigner{}, Artifacts: []standardReviewArtifact{}, ArchivedResources: []standardReviewArchivedResource{}}
 		a.AccountDrainCount = accountDrainCounts[a.AccountID]
+		a.Exceptions = m.standardActiveExceptionsLocked(app.OrgID, app.ID, time.Now())
 		if app.ProjectID != "" {
 			a.ProjectID = canonicalStandardUUID(app.ProjectID)
 		}

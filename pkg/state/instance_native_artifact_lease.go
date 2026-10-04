@@ -32,7 +32,7 @@ func standardNativeArtifactDeadline(capture InstanceApplicationStandardAdmission
 		if required || evidence.Scan.ID != "" {
 			return time.Time{}, ErrApplicationStandardRuntimeStale
 		}
-		return time.Time{}, nil // Compatibility only; no producer approval is invented.
+		return capture.ExceptionExpiresAt, nil // Compatibility only; no producer approval is invented.
 	}
 	if evidence.Scan.ID == "" || evidence.Scan.Input.Status != "complete" || evidence.Scan.Input.Facts.InputHash != capture.ArtifactInputHash || evidence.CheckedAt.IsZero() || !evidence.ExpiresAt.After(evidence.CheckedAt) || evidence.ExpiresAt.After(evidence.Scan.ExpiresAt) {
 		return time.Time{}, ErrApplicationStandardRuntimeStale
@@ -44,7 +44,11 @@ func standardNativeArtifactDeadline(capture InstanceApplicationStandardAdmission
 			}
 		}
 	}
-	return evidence.ExpiresAt, nil
+	deadline := evidence.ExpiresAt
+	if !capture.ExceptionExpiresAt.IsZero() && capture.ExceptionExpiresAt.Before(deadline) {
+		deadline = capture.ExceptionExpiresAt
+	}
+	return deadline, nil
 }
 
 func standardNativeScanBlocks(report api.ScanResult) bool {

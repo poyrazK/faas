@@ -422,3 +422,21 @@ accept a changed tree, and cancellation/failure removes its staging copy. This
 handoff is preparation for whole-runtime scanning; separate component scans do
 not prove the composed guest filesystem. Native composition, fresh approval and
 the dedicated Linux amd64 scanner/KVM acceptance remain required.
+
+
+### Private approved exceptions
+
+The private control plane can approve a replacement for one inherited field in
+one application's captured standard version. It records the reason, active owner
+or admin who approved it, and an expiry of at most 30 days. The replacement must
+still satisfy independent standards, platform restrictions, resource ownership,
+plan quotas and current artifact security checks. Permitted local settings are
+separate from an approved exception.
+
+An approval is immutable. Revocation and expiry retain its history, queue repair
+and preserve the distinction between desired, installed and observed revisions.
+The installed exception deadline refuses new runtime admission even when repair
+is delayed. If expiry makes saved local choices invalid, the application stays
+blocked until a permitted correction restores compliance. This private lifecycle
+has no public mutation route yet; native enforcement and consumer convergence
+acceptance remain required for public activation.

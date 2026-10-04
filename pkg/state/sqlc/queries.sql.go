@@ -6960,7 +6960,7 @@ const getApplicationStandardEnrollment = `-- name: GetApplicationStandardEnrollm
 SELECT app_id::text, org_id::text, coalesce(project_id::text, '')::text AS project_id,
        base_settings, local_settings, additional_log_destinations::text[] AS additional_log_destinations,
        adoptions, effective, effective_hash, desired_revision, persisted_revision, observed_revision,
-       state, error_code, materialized_fields, updated_at
+       state, error_code, materialized_fields, updated_at, exception_expires_at
 FROM app_application_standards WHERE org_id = $1::uuid AND app_id = $2::uuid
 `
 
@@ -6986,6 +6986,7 @@ type GetApplicationStandardEnrollmentRow struct {
 	ErrorCode                 string
 	MaterializedFields        []string
 	UpdatedAt                 pgtype.Timestamptz
+	ExceptionExpiresAt        pgtype.Timestamptz
 }
 
 func (q *Queries) GetApplicationStandardEnrollment(ctx context.Context, db DBTX, arg GetApplicationStandardEnrollmentParams) (GetApplicationStandardEnrollmentRow, error) {
@@ -7008,6 +7009,7 @@ func (q *Queries) GetApplicationStandardEnrollment(ctx context.Context, db DBTX,
 		&i.ErrorCode,
 		&i.MaterializedFields,
 		&i.UpdatedAt,
+		&i.ExceptionExpiresAt,
 	)
 	return i, err
 }
@@ -8973,6 +8975,44 @@ func (q *Queries) InsertApplicationStandardControlBinding(ctx context.Context, d
 	return err
 }
 
+const insertApplicationStandardException = `-- name: InsertApplicationStandardException :exec
+INSERT INTO application_standard_exceptions(id,org_id,app_id,standard_id,version,field,value,reason,approved_by,created_at,expires_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,
+ $5::bigint,$6::text,$7::jsonb,$8::text,
+ $9::uuid,$10::timestamptz,$11::timestamptz)
+`
+
+type InsertApplicationStandardExceptionParams struct {
+	ID         pgtype.UUID
+	OrgID      pgtype.UUID
+	AppID      pgtype.UUID
+	StandardID pgtype.UUID
+	Version    int64
+	Field      string
+	Value      []byte
+	Reason     string
+	ActorID    pgtype.UUID
+	Now        pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
+func (q *Queries) InsertApplicationStandardException(ctx context.Context, db DBTX, arg InsertApplicationStandardExceptionParams) error {
+	_, err := db.Exec(ctx, insertApplicationStandardException,
+		arg.ID,
+		arg.OrgID,
+		arg.AppID,
+		arg.StandardID,
+		arg.Version,
+		arg.Field,
+		arg.Value,
+		arg.Reason,
+		arg.ActorID,
+		arg.Now,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
 const insertApplicationStandardOperation = `-- name: InsertApplicationStandardOperation :exec
 INSERT INTO application_standard_operations
 (id, org_id, plan_id, assignment_id, approval_hash, approved_by, batch_size, created_at, updated_at)
@@ -10411,9 +10451,9 @@ const installApplicationStandardEnrollmentIntent = `-- name: InstallApplicationS
 UPDATE app_application_standards SET base_settings = $1::jsonb,
  local_settings = $2::jsonb, additional_log_destinations = $3::uuid[],
  adoptions = $4::jsonb, effective = $5::jsonb, effective_hash = $6::text,
- materialized_fields = $7::text[],
+ materialized_fields = $7::text[], exception_expires_at=$8::timestamptz,
  desired_revision = desired_revision + 1, observed_revision = 0, state = 'applying',error_code = '',updated_at = clock_timestamp()
-WHERE app_id = $8::uuid AND org_id = $9::uuid AND desired_revision = $10::bigint
+WHERE app_id = $9::uuid AND org_id = $10::uuid AND desired_revision = $11::bigint
 `
 
 type InstallApplicationStandardEnrollmentIntentParams struct {
@@ -10424,6 +10464,7 @@ type InstallApplicationStandardEnrollmentIntentParams struct {
 	Effective          []byte
 	EffectiveHash      string
 	MaterializedFields []string
+	ExceptionExpiresAt pgtype.Timestamptz
 	AppID              pgtype.UUID
 	OrgID              pgtype.UUID
 	ExpectedRevision   int64
@@ -10438,6 +10479,7 @@ func (q *Queries) InstallApplicationStandardEnrollmentIntent(ctx context.Context
 		arg.Effective,
 		arg.EffectiveHash,
 		arg.MaterializedFields,
+		arg.ExceptionExpiresAt,
 		arg.AppID,
 		arg.OrgID,
 		arg.ExpectedRevision,
@@ -10503,10 +10545,10 @@ func (q *Queries) InstallApplicationStandardSigner(ctx context.Context, db DBTX,
 const installAutomaticApplicationStandardIntent = `-- name: InstallAutomaticApplicationStandardIntent :execrows
 UPDATE app_application_standards SET base_settings=$1::jsonb,local_settings=$2::jsonb,
  additional_log_destinations=$3::uuid[],adoptions=$4::jsonb,
- effective=$5::jsonb,effective_hash=$6::text,materialized_fields=$7::text[],
+ effective=$5::jsonb,effective_hash=$6::text,materialized_fields=$7::text[], exception_expires_at=$8::timestamptz,
  observed_revision=0,state='applying',error_code='',updated_at=clock_timestamp(),lease_owner='',lease_until=NULL,lease_generation=lease_generation+1
-WHERE app_id=$8::uuid AND org_id=$9::uuid AND desired_revision=$10::bigint
- AND lease_owner=$11::text AND lease_generation=$12::bigint AND lease_until>clock_timestamp()
+WHERE app_id=$9::uuid AND org_id=$10::uuid AND desired_revision=$11::bigint
+ AND lease_owner=$12::text AND lease_generation=$13::bigint AND lease_until>clock_timestamp()
 `
 
 type InstallAutomaticApplicationStandardIntentParams struct {
@@ -10517,6 +10559,7 @@ type InstallAutomaticApplicationStandardIntentParams struct {
 	Effective          []byte
 	EffectiveHash      string
 	MaterializedFields []string
+	ExceptionExpiresAt pgtype.Timestamptz
 	AppID              pgtype.UUID
 	OrgID              pgtype.UUID
 	DesiredRevision    int64
@@ -10533,6 +10576,7 @@ func (q *Queries) InstallAutomaticApplicationStandardIntent(ctx context.Context,
 		arg.Effective,
 		arg.EffectiveHash,
 		arg.MaterializedFields,
+		arg.ExceptionExpiresAt,
 		arg.AppID,
 		arg.OrgID,
 		arg.DesiredRevision,
@@ -13420,6 +13464,46 @@ func (q *Queries) ListApplicationStandardControlBindings(ctx context.Context, db
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listApplicationStandardExceptions = `-- name: ListApplicationStandardExceptions :many
+SELECT to_jsonb(x)::jsonb AS exception FROM application_standard_exceptions x
+JOIN apps a ON a.id=x.app_id AND a.org_id=x.org_id AND a.status<>'deleted'
+WHERE x.org_id=$1::uuid AND x.app_id=$2::uuid
+ AND ($3::text='' OR x.id>NULLIF($3::text,'')::uuid)
+ORDER BY x.id LIMIT $4::integer
+`
+
+type ListApplicationStandardExceptionsParams struct {
+	OrgID     pgtype.UUID
+	AppID     pgtype.UUID
+	AfterID   string
+	PageLimit int32
+}
+
+func (q *Queries) ListApplicationStandardExceptions(ctx context.Context, db DBTX, arg ListApplicationStandardExceptionsParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listApplicationStandardExceptions,
+		arg.OrgID,
+		arg.AppID,
+		arg.AfterID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var exception []byte
+		if err := rows.Scan(&exception); err != nil {
+			return nil, err
+		}
+		items = append(items, exception)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -22392,6 +22476,32 @@ func (q *Queries) PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const queueApplicationStandardExceptionChange = `-- name: QueueApplicationStandardExceptionChange :execrows
+UPDATE app_application_standards SET desired_revision=desired_revision+1,state='pending',error_code='',updated_at=$1::timestamptz,
+ lease_owner='',lease_until=NULL,lease_generation=lease_generation+1
+WHERE org_id=$2::uuid AND app_id=$3::uuid AND desired_revision=$4::bigint
+`
+
+type QueueApplicationStandardExceptionChangeParams struct {
+	Now              pgtype.Timestamptz
+	OrgID            pgtype.UUID
+	AppID            pgtype.UUID
+	ExpectedRevision int64
+}
+
+func (q *Queries) QueueApplicationStandardExceptionChange(ctx context.Context, db DBTX, arg QueueApplicationStandardExceptionChangeParams) (int64, error) {
+	result, err := db.Exec(ctx, queueApplicationStandardExceptionChange,
+		arg.Now,
+		arg.OrgID,
+		arg.AppID,
+		arg.ExpectedRevision,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const queueAutomaticRouteCheck = `-- name: QueueAutomaticRouteCheck :exec
 SELECT enqueue_automatic_route_check($1::text::uuid, $2::text::uuid, false)
 `
@@ -22404,6 +22514,36 @@ type QueueAutomaticRouteCheckParams struct {
 func (q *Queries) QueueAutomaticRouteCheck(ctx context.Context, db DBTX, arg QueueAutomaticRouteCheckParams) error {
 	_, err := db.Exec(ctx, queueAutomaticRouteCheck, arg.AppID, arg.DeploymentID)
 	return err
+}
+
+const queueExpiredApplicationStandardExceptions = `-- name: QueueExpiredApplicationStandardExceptions :one
+WITH expired AS (
+ SELECT e.app_id FROM app_application_standards e JOIN apps a ON a.id=e.app_id
+ WHERE e.exception_expires_at<=clock_timestamp() AND e.state IN ('persisted','observed') AND a.status<>'deleted'
+ AND e.desired_revision<$1::bigint
+ ORDER BY e.exception_expires_at,e.app_id FOR UPDATE OF e SKIP LOCKED LIMIT $2::integer
+), changed AS (
+ UPDATE app_application_standards e SET desired_revision=desired_revision+1,state='pending',error_code='',updated_at=clock_timestamp(),
+ lease_owner='',lease_until=NULL,lease_generation=lease_generation+1 FROM expired x WHERE e.app_id=x.app_id
+ RETURNING e.app_id,e.org_id,e.desired_revision,e.exception_expires_at,e.updated_at
+), audited AS (
+ INSERT INTO audit_log(id,kind,received_at,data)
+ SELECT gen_random_uuid(),'application_standard.exception_expiry_queued',updated_at,
+ jsonb_build_object('org_id',org_id::text,'app_id',app_id::text,'previous_revision',desired_revision-1,
+ 'desired_revision',desired_revision,'exception_expires_at',exception_expires_at) FROM changed RETURNING id
+) SELECT count(*)::bigint FROM audited
+`
+
+type QueueExpiredApplicationStandardExceptionsParams struct {
+	MaxRevision int64
+	PassLimit   int32
+}
+
+func (q *Queries) QueueExpiredApplicationStandardExceptions(ctx context.Context, db DBTX, arg QueueExpiredApplicationStandardExceptionsParams) (int64, error) {
+	row := db.QueryRow(ctx, queueExpiredApplicationStandardExceptions, arg.MaxRevision, arg.PassLimit)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const readAccountCreditConsumption = `-- name: ReadAccountCreditConsumption :one
@@ -22450,6 +22590,24 @@ func (q *Queries) ReadActiveRouteMonitorIncident(ctx context.Context, db DBTX, a
 	var entry []byte
 	err := row.Scan(&entry)
 	return entry, err
+}
+
+const readApplicationStandardException = `-- name: ReadApplicationStandardException :one
+SELECT to_jsonb(x)::jsonb AS exception FROM application_standard_exceptions x
+WHERE org_id=$1::uuid AND app_id=$2::uuid AND id=$3::uuid FOR UPDATE NOWAIT
+`
+
+type ReadApplicationStandardExceptionParams struct {
+	OrgID       pgtype.UUID
+	AppID       pgtype.UUID
+	ExceptionID pgtype.UUID
+}
+
+func (q *Queries) ReadApplicationStandardException(ctx context.Context, db DBTX, arg ReadApplicationStandardExceptionParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readApplicationStandardException, arg.OrgID, arg.AppID, arg.ExceptionID)
+	var exception []byte
+	err := row.Scan(&exception)
+	return exception, err
 }
 
 const readApplicationStandardLocalIntentAuthority = `-- name: ReadApplicationStandardLocalIntentAuthority :one
@@ -22588,6 +22746,7 @@ SELECT jsonb_build_object(
         'settings', jsonb_build_object('require_signed', a.require_signed, 'security_policy', a.security_policy,
             'egress_cidrs', coalesce(to_jsonb(a.egress_allowlist::text[]), '[]'::jsonb), 'egress_extra_ports', coalesce(to_jsonb(a.egress_ports), '[]'::jsonb)),
         'has_enrollment', e.app_id IS NOT NULL,
+        'exceptions', coalesce((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM application_standard_exceptions x WHERE x.org_id=o.id AND x.app_id=a.id AND x.revoked_at IS NULL AND x.expires_at>clock_timestamp()),'[]'::jsonb),
         'enrollment', jsonb_build_object('materialized_fields',to_jsonb(e.materialized_fields),'org_id', e.org_id::text, 'project_id', coalesce(e.project_id::text, ''), 'base_settings', e.base_settings, 'local_settings', e.local_settings,
             'additional_log_destinations', to_jsonb(e.additional_log_destinations::text[]), 'adoptions', e.adoptions,
             'desired_revision', e.desired_revision, 'effective', e.effective, 'effective_hash', e.effective_hash),
@@ -25668,6 +25827,33 @@ func (q *Queries) RevokeAllSessions(ctx context.Context, db DBTX, arg RevokeAllS
 	return items, nil
 }
 
+const revokeApplicationStandardException = `-- name: RevokeApplicationStandardException :execrows
+UPDATE application_standard_exceptions SET revoked_by=$1::uuid,revoked_at=$2::timestamptz
+WHERE org_id=$3::uuid AND app_id=$4::uuid AND id=$5::uuid AND revoked_at IS NULL
+`
+
+type RevokeApplicationStandardExceptionParams struct {
+	ActorID     pgtype.UUID
+	Now         pgtype.Timestamptz
+	OrgID       pgtype.UUID
+	AppID       pgtype.UUID
+	ExceptionID pgtype.UUID
+}
+
+func (q *Queries) RevokeApplicationStandardException(ctx context.Context, db DBTX, arg RevokeApplicationStandardExceptionParams) (int64, error) {
+	result, err := db.Exec(ctx, revokeApplicationStandardException,
+		arg.ActorID,
+		arg.Now,
+		arg.OrgID,
+		arg.AppID,
+		arg.ExceptionID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeDevBridge = `-- name: RevokeDevBridge :execrows
 UPDATE dev_bridge_sessions SET revoked_at=COALESCE(revoked_at,$1)
 WHERE id=$2 AND account_id=$3
@@ -26779,7 +26965,7 @@ UPDATE app_application_standards SET local_settings=$1::jsonb,
  state='pending',error_code='',updated_at=$3::timestamptz,
  lease_owner='',lease_until=NULL,lease_generation=lease_generation+1
 WHERE org_id=$4::uuid AND app_id=$5::uuid
- AND desired_revision=$6::bigint AND persisted_revision=desired_revision AND state IN ('persisted','observed')
+ AND desired_revision=$6::bigint AND (state='blocked' OR (persisted_revision=desired_revision AND state IN ('persisted','observed')))
 `
 
 type SaveApplicationStandardLocalIntentParams struct {

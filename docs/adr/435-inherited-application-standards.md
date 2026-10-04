@@ -1740,3 +1740,38 @@ consumer evidence; this read supplies no new authority or acknowledgment. Origin
 private settings, destination URLs, credentials, control backups and worker leases
 are not response fields. Public review/approval, assignment and override mutations,
 exception lifecycle and native rollout acceptance remain gated.
+
+
+## Private exception lifecycle and expiry authority (2026-10-04)
+
+Private memory and PostgreSQL stores now approve application exceptions against
+an exact desired revision, captured standard version and inherited field. A
+current active owner or admin must approve. Replacement values pass the shared
+resolver, including independent inherited requirements, current resource
+ownership, platform restrictions, account quotas and artifact security checks.
+Approvals retain their reason, approving identity and bounded expiry; their
+approved content cannot be edited. Revocation is one-way and retains that history.
+Approval and revocation atomically queue new desired intent, revoke worker claims
+and append audit hashes without recording configuration values or reason text.
+
+Review snapshots include active approvals and bind their content in the review
+hash. A contributing exception also caps preview validity. Materialization stores
+the earliest contributing expiry in the installed enrollment. Runtime captures
+include that deadline only when present, preserving the input hashes of existing
+captures without exceptions. Admission refuses at the exact expiry independently
+of the repair worker. Native boot, promotion and snapshot authority share the
+exception deadline ceiling with artifact approval deadlines; SQL grant guards
+apply the same ceiling to raw grant writes. This is storage authority, not proof
+that native consumers converged or that running services were repaired.
+
+Each automatic worker pass queues a bounded batch of expired installed revisions,
+with an atomic audit and generation fence, before acquiring a new repair lease.
+Repair resolves the captured adoption pins without the expired approval. A saved
+local choice that now violates an ordinary inherited requirement leaves the app
+blocked; corrective local intent can be saved from that blocked state after all
+current resolver, ownership, quota and artifact checks. Repair retains history and
+never advances observed revision or acknowledges a rollout wave.
+
+Public exception and other activation mutations remain unavailable. Dedicated
+Linux amd64 root/KVM scanner, consumed-byte, restore/promotion and consumer ACK
+acceptance remains required before public activation.

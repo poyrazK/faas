@@ -168,6 +168,7 @@ type MemStore struct {
 	applicationStandardPublishers              map[string]api.ApplicationStandardPublisher
 	applicationStandardAssignments             map[string]applicationStandardAssignmentRecord
 	applicationStandardEnrollments             map[string]ApplicationStandardEnrollment
+	applicationStandardExceptions              map[string]ApplicationStandardException
 	applicationStandardReviewPlans             map[string]ApplicationStandardReviewPlan
 	applicationStandardOperations              map[string]ApplicationStandardOperation
 	applicationStandardWorkerClaims            map[string]ApplicationStandardWorkerClaim
@@ -4179,6 +4180,7 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 		for _, id := range insertedIDs {
 			delete(m.apps, id)
 			delete(m.applicationStandardEnrollments, id)
+			m.eraseStandardAppExceptionsLocked(id)
 			m.deleteStandardMaterializationControlsLocked(id)
 		}
 		return nil, err
@@ -6703,6 +6705,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	delete(m.serviceRecovery, id)
 	delete(m.apps, id)
 	delete(m.applicationStandardEnrollments, id)
+	m.eraseStandardAppExceptionsLocked(id)
 	m.deleteStandardMaterializationControlsLocked(id)
 	return nil
 }
@@ -21177,6 +21180,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.serviceRecovery, aid)
 			delete(m.apps, aid)
 			delete(m.applicationStandardEnrollments, aid)
+			m.eraseStandardAppExceptionsLocked(aid)
 			m.deleteStandardMaterializationControlsLocked(aid)
 			delete(m.savedRouteRequirements, aid)
 			delete(m.canaryRouteGates, aid)

@@ -30,6 +30,7 @@ const (
 	ApplicationStandardMaxSetEntries                  = 64
 	ApplicationStandardMaxLayers                      = 64
 	ApplicationStandardMaxDescriptionBytes            = 512
+	ApplicationStandardMaxActiveExceptions            = 64
 	ApplicationStandardMaxExceptionTTL                = 30 * 24 * time.Hour
 	ApplicationStandardMaxRolloutBatch                = 100
 	ApplicationStandardReviewTTL                      = 30 * time.Minute

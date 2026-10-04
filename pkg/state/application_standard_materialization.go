@@ -310,6 +310,7 @@ func buildStandardControlProjection(app standardReviewAppSnapshot, target Applic
 
 func standardInstalledEnrollment(app standardReviewAppSnapshot, t ApplicationStandardOperationTarget, now time.Time) ApplicationStandardEnrollment {
 	e := ApplicationStandardEnrollment{AppID: app.AppID, OrgID: app.OrgID, ProjectID: app.ProjectID, BaseSettings: cloneStandardSettings(t.ApprovedApp.BaseSettings), LocalSettings: cloneStandardSettings(t.ApprovedApp.LocalSettings), AdditionalLogDestinations: append([]string{}, t.ApprovedApp.AdditionalLogDestinations...), Adoptions: append([]appstandards.Adoption{}, t.ApprovedApp.AfterAdoptions...), Effective: t.ApprovedApp.Effective, EffectiveHash: t.approvalInput.EffectiveHash, DesiredRevision: app.Enrollment.DesiredRevision + 1, MaterializedFields: standardEffectiveFields(t.ApprovedApp.Effective), State: "persisted", UpdatedAt: now}
+	e.ExceptionExpiresAt = standardEffectiveExceptionExpiry(t.ApprovedApp.Effective, app.Exceptions)
 	e.PersistedRevision = e.DesiredRevision
 	return e
 }

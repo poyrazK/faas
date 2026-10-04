@@ -136,6 +136,7 @@ SELECT jsonb_build_object(
         'settings', jsonb_build_object('require_signed', a.require_signed, 'security_policy', a.security_policy,
             'egress_cidrs', coalesce(to_jsonb(a.egress_allowlist::text[]), '[]'::jsonb), 'egress_extra_ports', coalesce(to_jsonb(a.egress_ports), '[]'::jsonb)),
         'has_enrollment', e.app_id IS NOT NULL,
+        'exceptions', coalesce((SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id) FROM application_standard_exceptions x WHERE x.org_id=o.id AND x.app_id=a.id AND x.revoked_at IS NULL AND x.expires_at>clock_timestamp()),'[]'::jsonb),
         'enrollment', jsonb_build_object('materialized_fields',to_jsonb(e.materialized_fields),'org_id', e.org_id::text, 'project_id', coalesce(e.project_id::text, ''), 'base_settings', e.base_settings, 'local_settings', e.local_settings,
             'additional_log_destinations', to_jsonb(e.additional_log_destinations::text[]), 'adoptions', e.adoptions,
             'desired_revision', e.desired_revision, 'effective', e.effective, 'effective_hash', e.effective_hash),
@@ -188,7 +189,7 @@ WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(plan_id)::uuid FOR UPDAT
 SELECT app_id::text, org_id::text, coalesce(project_id::text, '')::text AS project_id,
        base_settings, local_settings, additional_log_destinations::text[] AS additional_log_destinations,
        adoptions, effective, effective_hash, desired_revision, persisted_revision, observed_revision,
-       state, error_code, materialized_fields, updated_at
+       state, error_code, materialized_fields, updated_at, exception_expires_at
 FROM app_application_standards WHERE org_id = sqlc.arg(org_id)::uuid AND app_id = sqlc.arg(app_id)::uuid;
 
 -- name: ListApplicationStandardAssignments :many
@@ -5801,7 +5802,7 @@ VALUES (sqlc.arg(app_id)::uuid,sqlc.arg(field)::text,sqlc.arg(resource_id)::uuid
 UPDATE app_application_standards SET base_settings = sqlc.arg(base_settings)::jsonb,
  local_settings = sqlc.arg(local_settings)::jsonb, additional_log_destinations = sqlc.arg(additional)::uuid[],
  adoptions = sqlc.arg(adoptions)::jsonb, effective = sqlc.arg(effective)::jsonb, effective_hash = sqlc.arg(effective_hash)::text,
- materialized_fields = sqlc.arg(materialized_fields)::text[],
+ materialized_fields = sqlc.arg(materialized_fields)::text[], exception_expires_at=sqlc.narg(exception_expires_at)::timestamptz,
  desired_revision = desired_revision + 1, observed_revision = 0, state = 'applying',error_code = '',updated_at = clock_timestamp()
 WHERE app_id = sqlc.arg(app_id)::uuid AND org_id = sqlc.arg(org_id)::uuid AND desired_revision = sqlc.arg(expected_revision)::bigint;
 
@@ -5873,7 +5874,7 @@ WHERE app_id=sqlc.arg(app_id)::uuid AND org_id=sqlc.arg(org_id)::uuid
 -- name: InstallAutomaticApplicationStandardIntent :execrows
 UPDATE app_application_standards SET base_settings=sqlc.arg(base_settings)::jsonb,local_settings=sqlc.arg(local_settings)::jsonb,
  additional_log_destinations=sqlc.arg(additional)::uuid[],adoptions=sqlc.arg(adoptions)::jsonb,
- effective=sqlc.arg(effective)::jsonb,effective_hash=sqlc.arg(effective_hash)::text,materialized_fields=sqlc.arg(materialized_fields)::text[],
+ effective=sqlc.arg(effective)::jsonb,effective_hash=sqlc.arg(effective_hash)::text,materialized_fields=sqlc.arg(materialized_fields)::text[], exception_expires_at=sqlc.narg(exception_expires_at)::timestamptz,
  observed_revision=0,state='applying',error_code='',updated_at=clock_timestamp(),lease_owner='',lease_until=NULL,lease_generation=lease_generation+1
 WHERE app_id=sqlc.arg(app_id)::uuid AND org_id=sqlc.arg(org_id)::uuid AND desired_revision=sqlc.arg(desired_revision)::bigint
  AND lease_owner=sqlc.arg(owner)::text AND lease_generation=sqlc.arg(generation)::bigint AND lease_until>clock_timestamp();
@@ -5895,7 +5896,7 @@ UPDATE app_application_standards SET local_settings=sqlc.arg(local_settings)::js
  state='pending',error_code='',updated_at=sqlc.arg(now)::timestamptz,
  lease_owner='',lease_until=NULL,lease_generation=lease_generation+1
 WHERE org_id=sqlc.arg(org_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
- AND desired_revision=sqlc.arg(expected_revision)::bigint AND persisted_revision=desired_revision AND state IN ('persisted','observed');
+ AND desired_revision=sqlc.arg(expected_revision)::bigint AND (state='blocked' OR (persisted_revision=desired_revision AND state IN ('persisted','observed')));
 
 -- name: VerifyAutomaticApplicationStandardInstallation :one
 SELECT EXISTS (SELECT 1 FROM app_application_standards WHERE app_id=sqlc.arg(app_id)::uuid AND org_id=sqlc.arg(org_id)::uuid
@@ -8081,3 +8082,46 @@ FROM global_population g;
 -- name: ReadActiveRouteMonitorIncident :one
 SELECT i.entry FROM route_monitors m LEFT JOIN route_monitor_incidents i ON i.id=m.active_incident_id
 WHERE m.app_id=sqlc.arg(app_id)::text::uuid AND m.account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: InsertApplicationStandardException :exec
+INSERT INTO application_standard_exceptions(id,org_id,app_id,standard_id,version,field,value,reason,approved_by,created_at,expires_at)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(org_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(standard_id)::uuid,
+ sqlc.arg(version)::bigint,sqlc.arg(field)::text,sqlc.arg(value)::jsonb,sqlc.arg(reason)::text,
+ sqlc.arg(actor_id)::uuid,sqlc.arg(now)::timestamptz,sqlc.arg(expires_at)::timestamptz);
+
+-- name: ReadApplicationStandardException :one
+SELECT to_jsonb(x)::jsonb AS exception FROM application_standard_exceptions x
+WHERE org_id=sqlc.arg(org_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND id=sqlc.arg(exception_id)::uuid FOR UPDATE NOWAIT;
+
+-- name: RevokeApplicationStandardException :execrows
+UPDATE application_standard_exceptions SET revoked_by=sqlc.arg(actor_id)::uuid,revoked_at=sqlc.arg(now)::timestamptz
+WHERE org_id=sqlc.arg(org_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND id=sqlc.arg(exception_id)::uuid AND revoked_at IS NULL;
+
+-- name: ListApplicationStandardExceptions :many
+SELECT to_jsonb(x)::jsonb AS exception FROM application_standard_exceptions x
+JOIN apps a ON a.id=x.app_id AND a.org_id=x.org_id AND a.status<>'deleted'
+WHERE x.org_id=sqlc.arg(org_id)::uuid AND x.app_id=sqlc.arg(app_id)::uuid
+ AND (sqlc.arg(after_id)::text='' OR x.id>NULLIF(sqlc.arg(after_id)::text,'')::uuid)
+ORDER BY x.id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: QueueApplicationStandardExceptionChange :execrows
+UPDATE app_application_standards SET desired_revision=desired_revision+1,state='pending',error_code='',updated_at=sqlc.arg(now)::timestamptz,
+ lease_owner='',lease_until=NULL,lease_generation=lease_generation+1
+WHERE org_id=sqlc.arg(org_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND desired_revision=sqlc.arg(expected_revision)::bigint;
+
+-- name: QueueExpiredApplicationStandardExceptions :one
+WITH expired AS (
+ SELECT e.app_id FROM app_application_standards e JOIN apps a ON a.id=e.app_id
+ WHERE e.exception_expires_at<=clock_timestamp() AND e.state IN ('persisted','observed') AND a.status<>'deleted'
+ AND e.desired_revision<sqlc.arg(max_revision)::bigint
+ ORDER BY e.exception_expires_at,e.app_id FOR UPDATE OF e SKIP LOCKED LIMIT sqlc.arg(pass_limit)::integer
+), changed AS (
+ UPDATE app_application_standards e SET desired_revision=desired_revision+1,state='pending',error_code='',updated_at=clock_timestamp(),
+ lease_owner='',lease_until=NULL,lease_generation=lease_generation+1 FROM expired x WHERE e.app_id=x.app_id
+ RETURNING e.app_id,e.org_id,e.desired_revision,e.exception_expires_at,e.updated_at
+), audited AS (
+ INSERT INTO audit_log(id,kind,received_at,data)
+ SELECT gen_random_uuid(),'application_standard.exception_expiry_queued',updated_at,
+ jsonb_build_object('org_id',org_id::text,'app_id',app_id::text,'previous_revision',desired_revision-1,
+ 'desired_revision',desired_revision,'exception_expires_at',exception_expires_at) FROM changed RETURNING id
+) SELECT count(*)::bigint FROM audited;

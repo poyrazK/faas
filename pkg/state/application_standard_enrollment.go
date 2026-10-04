@@ -29,6 +29,7 @@ type ApplicationStandardEnrollment struct {
 	ObservedRevision          int64                   `json:"observed_revision"`
 	State                     string                  `json:"state"`
 	ErrorCode                 string                  `json:"error_code,omitempty"`
+	ExceptionExpiresAt        *time.Time              `json:"exception_expires_at,omitempty"`
 	UpdatedAt                 time.Time               `json:"updated_at"`
 }
 
@@ -41,6 +42,13 @@ type ApplicationStandardEnrollmentStore interface {
 // envelope, not consumer convergence. Runtime may be needed to obtain actual
 // observations, so ObservedRevision is deliberately not a prerequisite here.
 func ApplicationStandardEnrollmentPermitsRuntime(app App, enrollment ApplicationStandardEnrollment) bool {
+	return applicationStandardEnrollmentPermitsRuntimeAt(app, enrollment, time.Now())
+}
+
+func applicationStandardEnrollmentPermitsRuntimeAt(app App, enrollment ApplicationStandardEnrollment, now time.Time) bool {
+	if enrollment.ExceptionExpiresAt != nil && !now.Before(*enrollment.ExceptionExpiresAt) {
+		return false
+	}
 	if !sameStandardUUID(app.ID, enrollment.AppID) || !sameStandardUUID(app.OrgID, enrollment.OrgID) {
 		return false
 	}

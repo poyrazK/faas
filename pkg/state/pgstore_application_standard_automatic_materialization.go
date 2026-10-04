@@ -17,6 +17,9 @@ func (s *PgStore) ClaimApplicationStandardEnrollment(ctx context.Context, owner 
 	if !standardWorkerOwnerValid(owner) {
 		return ApplicationStandardEnrollmentClaim{}, ErrInvalidArgument
 	}
+	if err := s.queueExpiredStandardExceptions(ctx); err != nil {
+		return ApplicationStandardEnrollmentClaim{}, err
+	}
 	row, err := sqlc.New().ClaimApplicationStandardEnrollment(ctx, s.pool, sqlc.ClaimApplicationStandardEnrollmentParams{Owner: owner, LeaseSeconds: api.ApplicationStandardWorkerLease.Seconds(), RetrySeconds: api.ApplicationStandardBlockedRetry.Seconds()})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ApplicationStandardEnrollmentClaim{}, ErrNotFound

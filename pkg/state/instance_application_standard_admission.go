@@ -17,22 +17,23 @@ var ErrApplicationStandardRuntimeBusy = errors.New("state: runtime admission inp
 // inputs. It does not assert that vmmd enforced them or that consumers observed
 // them. The private snapshot contains hashes in place of log URLs/credentials.
 type InstanceApplicationStandardAdmission struct {
-	InstanceID        string
-	AppID             string
-	DeploymentID      string
-	DesiredRevision   int64
-	PersistedRevision int64
-	EffectiveHash     string
-	InputHash         string
-	ArtifactInputHash string
-	RuntimeArtifacts  []DeploymentRuntimeArtifact
-	NativeInputHash   string
-	NodeID            string
-	AccountID         string
-	EgressRevision    int64
-	Managed           bool
-	CapturedAt        time.Time
-	inputs            json.RawMessage
+	InstanceID         string
+	AppID              string
+	DeploymentID       string
+	DesiredRevision    int64
+	PersistedRevision  int64
+	EffectiveHash      string
+	InputHash          string
+	ArtifactInputHash  string
+	RuntimeArtifacts   []DeploymentRuntimeArtifact
+	NativeInputHash    string
+	NodeID             string
+	AccountID          string
+	EgressRevision     int64
+	Managed            bool
+	ExceptionExpiresAt time.Time
+	CapturedAt         time.Time
+	inputs             json.RawMessage
 }
 
 type InstanceApplicationStandardAdmissionStore interface {
@@ -179,6 +180,7 @@ func decodeInstanceStandardAdmission(id string, raw []byte, capturedAt time.Time
 		Adoptions          []json.RawMessage `json:"adoptions"`
 		MaterializedFields []string          `json:"materialized_fields"`
 		RuntimeArtifacts   json.RawMessage   `json:"runtime_artifacts"`
+		ExceptionExpiresAt json.RawMessage   `json:"exception_expires_at_unix_nano"`
 		Artifact           struct {
 			ID    string `json:"id"`
 			Scope string `json:"scope"`
@@ -206,6 +208,13 @@ func decodeInstanceStandardAdmission(id string, raw []byte, capturedAt time.Time
 		AccountID: input.AccountID, EgressRevision: input.EgressRevision, Managed: len(input.Adoptions) > 0 || len(input.MaterializedFields) > 0,
 		DesiredRevision: input.DesiredRevision, PersistedRevision: input.PersistedRevision, EffectiveHash: input.EffectiveHash,
 		InputHash: hash, CapturedAt: capturedAt, inputs: append(json.RawMessage(nil), raw...)}
+	if len(input.ExceptionExpiresAt) != 0 {
+		var nano int64
+		if json.Unmarshal(input.ExceptionExpiresAt, &nano) != nil || nano <= 0 {
+			return InstanceApplicationStandardAdmission{}, ErrApplicationStandardRuntimeStale
+		}
+		capture.ExceptionExpiresAt = time.Unix(0, nano).UTC()
+	}
 	capture.RuntimeArtifacts, capture.ArtifactInputHash, err = decodeRuntimeArtifactCapture(input.RuntimeArtifacts, input.AccountID, input.OrgID, input.AppID, input.Artifact.ID, input.Artifact.Scope)
 	return capture, err
 }

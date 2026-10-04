@@ -29,6 +29,10 @@ func readStandardEnrollment(ctx context.Context, db sqlc.DBTX, orgID, appID stri
 		return ApplicationStandardEnrollment{}, fmt.Errorf("read standard enrollment: %w", err)
 	}
 	value := ApplicationStandardEnrollment{AppID: row.AppID, OrgID: row.OrgID, ProjectID: row.ProjectID, AdditionalLogDestinations: row.AdditionalLogDestinations, EffectiveHash: row.EffectiveHash, DesiredRevision: row.DesiredRevision, PersistedRevision: row.PersistedRevision, ObservedRevision: row.ObservedRevision, State: row.State, ErrorCode: row.ErrorCode, MaterializedFields: standardFields(row.MaterializedFields), UpdatedAt: row.UpdatedAt.Time}
+	if row.ExceptionExpiresAt.Valid {
+		t := row.ExceptionExpiresAt.Time
+		value.ExceptionExpiresAt = &t
+	}
 	for _, decode := range []struct {
 		raw    []byte
 		target any

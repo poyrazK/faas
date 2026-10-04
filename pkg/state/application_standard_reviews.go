@@ -133,6 +133,7 @@ type standardReviewAppSnapshot struct {
 	Drains                      []standardReviewDrain            `json:"drains"`
 	Signers                     []standardReviewSigner           `json:"signers"`
 	Artifacts                   []standardReviewArtifact         `json:"artifacts"`
+	Exceptions                  []ApplicationStandardException   `json:"exceptions,omitempty"`
 	ArchivedResources           []standardReviewArchivedResource `json:"archived_resources"`
 }
 type standardReviewArchivedResource struct {
@@ -297,6 +298,9 @@ func buildStandardReview(snapshot standardReviewSnapshot, request ApplicationSta
 		p.Blockers = append(p.Blockers, standardReviewAppBlockers(app, reviewed)...)
 		p.Blockers = append(p.Blockers, standardReviewArtifactBlockers(snapshot.Publishers, app, reviewed, now)...)
 		p.ExpiresAt = standardReviewArtifactExpiry(p.ExpiresAt, app, reviewed)
+		if deadline := standardEffectiveExceptionExpiry(reviewed.Effective, app.Exceptions); deadline != nil && deadline.Before(p.ExpiresAt) {
+			p.ExpiresAt = *deadline
+		}
 		if _, managed := reviewed.Effective.Sources[appstandards.LogDestinations]; managed || len(prior.Layers) != 0 {
 			accountDelta[app.AccountID] += len(standardReviewStrings(reviewed.Effective.Values[appstandards.LogDestinations])) - len(app.Drains)
 		}
@@ -611,7 +615,7 @@ func resolveStandardReviewedApp(app standardReviewAppSnapshot, prior, next appst
 			}
 		}
 	}
-	effective, err := appstandards.Resolve(base, next.Layers, local, nil, now, api.ApplicationStandardResolverLimits())
+	effective, err := appstandards.Resolve(base, next.Layers, local, standardResolverExceptions(app.Exceptions, now), now, api.ApplicationStandardResolverLimits())
 	if err != nil {
 		return ApplicationStandardReviewedApp{}, fmt.Errorf("resolve reviewed application: %w", err)
 	}
@@ -627,7 +631,7 @@ func resolveStandardReviewedApp(app standardReviewAppSnapshot, prior, next appst
 		extras = slices.Compact(extras)
 		withExtras := cloneStandardSettings(local)
 		withExtras[appstandards.LogDestinations], _ = json.Marshal(extras)
-		effective, err = appstandards.Resolve(base, next.Layers, withExtras, nil, now, api.ApplicationStandardResolverLimits())
+		effective, err = appstandards.Resolve(base, next.Layers, withExtras, standardResolverExceptions(app.Exceptions, now), now, api.ApplicationStandardResolverLimits())
 		if err != nil {
 			return ApplicationStandardReviewedApp{}, err
 		}
@@ -756,6 +760,9 @@ func normalizeStandardReviewSnapshot(s standardReviewSnapshot) (standardReviewSn
 	}
 	for i := range s.Applications {
 		a := &s.Applications[i]
+		if err := normalizeStandardExceptions(a); err != nil {
+			return s, err
+		}
 		if !standardMaterializedFieldsValid(a.Enrollment.MaterializedFields) {
 			return s, fmt.Errorf("invalid materialized field context")
 		}

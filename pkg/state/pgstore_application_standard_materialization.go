@@ -238,9 +238,9 @@ func installStandardControlProjectionWithClaim(ctx context.Context, tx pgx.Tx, e
 	var count int64
 	var err error
 	if c == nil {
-		count, err = q.InstallApplicationStandardEnrollmentIntent(ctx, tx, sqlc.InstallApplicationStandardEnrollmentIntentParams{AppID: appID, OrgID: orgID, BaseSettings: base, LocalSettings: local, Additional: standardPgUUIDs(e.AdditionalLogDestinations), Adoptions: pins, Effective: effective, EffectiveHash: e.EffectiveHash, MaterializedFields: standardFieldStrings(e.MaterializedFields), ExpectedRevision: e.DesiredRevision - 1})
+		count, err = q.InstallApplicationStandardEnrollmentIntent(ctx, tx, sqlc.InstallApplicationStandardEnrollmentIntentParams{AppID: appID, OrgID: orgID, BaseSettings: base, LocalSettings: local, Additional: standardPgUUIDs(e.AdditionalLogDestinations), Adoptions: pins, Effective: effective, EffectiveHash: e.EffectiveHash, ExceptionExpiresAt: standardNullablePgTime(e.ExceptionExpiresAt), MaterializedFields: standardFieldStrings(e.MaterializedFields), ExpectedRevision: e.DesiredRevision - 1})
 	} else {
-		count, err = q.InstallAutomaticApplicationStandardIntent(ctx, tx, sqlc.InstallAutomaticApplicationStandardIntentParams{AppID: appID, OrgID: orgID, BaseSettings: base, LocalSettings: local, Additional: standardPgUUIDs(e.AdditionalLogDestinations), Adoptions: pins, Effective: effective, EffectiveHash: e.EffectiveHash, MaterializedFields: standardFieldStrings(e.MaterializedFields), DesiredRevision: c.DesiredRevision, Owner: c.Owner, Generation: c.Generation})
+		count, err = q.InstallAutomaticApplicationStandardIntent(ctx, tx, sqlc.InstallAutomaticApplicationStandardIntentParams{AppID: appID, OrgID: orgID, BaseSettings: base, LocalSettings: local, Additional: standardPgUUIDs(e.AdditionalLogDestinations), Adoptions: pins, Effective: effective, EffectiveHash: e.EffectiveHash, ExceptionExpiresAt: standardNullablePgTime(e.ExceptionExpiresAt), MaterializedFields: standardFieldStrings(e.MaterializedFields), DesiredRevision: c.DesiredRevision, Owner: c.Owner, Generation: c.Generation})
 	}
 	if err != nil {
 		return err
