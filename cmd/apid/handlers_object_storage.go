@@ -584,48 +584,6 @@ func (s *server) signBucketObject(w http.ResponseWriter, r *http.Request, acct s
 	s.requireScope(api.ScopesStorageReadSurface...)(handler)(w, r, acct)
 }
 
-func (s *server) signAuthorizedBucketObject(w http.ResponseWriter, r *http.Request, acct state.Account, req objectstorage.SignRequest) {
-	if !s.objectStorageEnabled() {
-		bucketProblem(w, objectstorage.ErrUnavailable)
-		return
-	}
-	b, _, provider, ok := s.loadBucket(w, r, acct, true)
-	if !ok {
-		return
-	}
-	if err := req.Validate(min(s.objectStorage.MaxUploadBytes, api.MaxObjectSinglePutBytes)); err != nil {
-		bucketProblem(w, err)
-		return
-	}
-	permission := state.ObjectBucketPermissionRead
-	if req.Method == "PUT" {
-		permission = state.ObjectBucketPermissionWrite
-	}
-	if !s.authorizeBucketData(w, r, b, permission) {
-		return
-	}
-	// Commit capacity and authorization accounting before exposing a URL.
-	// Signer/network failures intentionally do not refund the reservation:
-	// a lost response is not proof that no usable capability was issued.
-	if err := s.admitObjectURL(r.Context(), b, req); err != nil {
-		bucketProblem(w, err)
-		return
-	}
-	out, err := s.presignBucketObject(r.Context(), b, provider, req)
-	if err != nil {
-		bucketProblem(w, err)
-		return
-	}
-	writeJSON(w, 200, out)
-}
-
-func (s *server) presignBucketObject(ctx context.Context, b state.ObjectBucket, provider objectstorage.Provider, req objectstorage.SignRequest) (objectstorage.SignedRequest, error) {
-	if req.Method == http.MethodPut {
-		return s.mintObjectPutGrant(ctx, b, req)
-	}
-	return provider.Presign(ctx, b.PhysicalName, req)
-}
-
 func viewBucketAccessGrant(grant state.ObjectBucketAccessGrant) api.ObjectBucketAccessGrant {
 	return api.ObjectBucketAccessGrant{
 		KeyID: grant.APIKeyID, KeyLabel: grant.KeyLabel, KeyStatus: grant.KeyStatus,

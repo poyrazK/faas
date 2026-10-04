@@ -15,6 +15,8 @@ import (
 
 func mutationAPIFixture(t *testing.T) (testEnv, *fakeObjectProvider, state.ObjectBucket, string) {
 	t.Helper()
+	_, restoreIdentities := withTestIdentities(t)
+	t.Cleanup(restoreIdentities)
 	e := setup(t, api.PlanPro)
 	setS3Flag(t, e, true)
 	app := createApp(t, e, "write-source")
