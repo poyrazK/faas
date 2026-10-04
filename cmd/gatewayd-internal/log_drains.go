@@ -96,6 +96,8 @@ type appLogDrainManager struct {
 	httpClient *http.Client
 
 	mu                      sync.Mutex
+	shutdownMu              sync.Mutex
+	stopping                bool
 	workers                 map[string]*appLogDrainWorker
 	active                  map[string]int
 	healthMu                sync.Mutex
@@ -182,6 +184,9 @@ func (m *appLogDrainManager) reconcile(ctx context.Context) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.stopping {
+		return
+	}
 	m.standardInventories = snapshot.Inventories
 	for id, worker := range m.workers {
 		spec, ok := desired[id]

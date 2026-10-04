@@ -1162,18 +1162,52 @@ CREATE FUNCTION public.application_standard_log_consumer_guard() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
+ PERFORM n.id FROM compute_nodes n WHERE n.id=NEW.node_id FOR SHARE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'logging consumer node is absent' USING ERRCODE='55000'; END IF;
+ IF TG_OP='UPDATE' THEN
+  IF NEW.node_id<>OLD.node_id OR NEW.generation<>OLD.generation+(CASE WHEN NEW.session_id=OLD.session_id THEN 0 ELSE 1 END) THEN
+   RAISE EXCEPTION 'logging consumer generation changed' USING ERRCODE='40001';
+  END IF;
+  IF NEW.session_id=OLD.session_id THEN
+   NEW.registered_at:=OLD.registered_at;
+   IF OLD.stopped_at IS NOT NULL AND NEW.stopped_at IS NULL THEN
+    RAISE EXCEPTION 'logging consumer session is stopped' USING ERRCODE='55000';
+   END IF;
+   IF NEW.stopped_at IS NOT NULL THEN
+    NEW.stopped_at:=coalesce(OLD.stopped_at,clock_timestamp());
+    RETURN NEW;
+   END IF;
+  END IF;
+ END IF;
  IF NOT EXISTS(SELECT 1 FROM compute_nodes n WHERE n.id=NEW.node_id AND n.active AND n.role IS DISTINCT FROM 'control-plane') THEN
   RAISE EXCEPTION 'logging consumer node is unavailable' USING ERRCODE='40001';
  END IF;
  IF TG_OP='INSERT' THEN
-  IF NEW.generation<>1 THEN RAISE EXCEPTION 'invalid logging consumer generation' USING ERRCODE='40001'; END IF;
-  NEW.registered_at:=clock_timestamp();
- ELSE
-  IF NEW.node_id<>OLD.node_id OR NEW.generation<>OLD.generation+(CASE WHEN NEW.session_id=OLD.session_id THEN 0 ELSE 1 END) THEN
-   RAISE EXCEPTION 'logging consumer generation changed' USING ERRCODE='40001';
+  IF NEW.generation<>1 OR NEW.stopped_at IS NOT NULL THEN
+   RAISE EXCEPTION 'invalid logging consumer generation' USING ERRCODE='40001';
   END IF;
-  NEW.registered_at:=CASE WHEN NEW.session_id=OLD.session_id THEN OLD.registered_at ELSE clock_timestamp() END;
+  NEW.registered_at:=clock_timestamp();
+ ELSIF NEW.session_id<>OLD.session_id THEN
+  IF NEW.stopped_at IS NOT NULL THEN RAISE EXCEPTION 'new logging session is stopped' USING ERRCODE='40001'; END IF;
+  NEW.registered_at:=clock_timestamp();
  END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_log_consumer_open_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_consumer_open_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM c.node_id FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
+ WHERE c.node_id=NEW.node_id AND c.session_id=NEW.session_id AND c.generation=NEW.generation AND c.stopped_at IS NULL
+ FOR SHARE OF c,n NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'logging consumer session is stopped or superseded' USING ERRCODE='55000'; END IF;
  RETURN NEW;
 END;
 $$;
@@ -9135,9 +9169,11 @@ CREATE TABLE public.application_standard_log_consumers (
     session_id uuid NOT NULL,
     generation bigint NOT NULL,
     registered_at timestamp with time zone NOT NULL,
+    stopped_at timestamp with time zone,
     CONSTRAINT application_standard_log_consumers_generation_check CHECK ((generation > 0)),
     CONSTRAINT application_standard_log_consumers_registered_at_check CHECK ((registered_at > '1970-01-01 02:00:00+02'::timestamp with time zone)),
-    CONSTRAINT application_standard_log_consumers_session_id_check CHECK ((session_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+    CONSTRAINT application_standard_log_consumers_session_id_check CHECK ((session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT application_standard_log_consumers_stopped_at_check CHECK (((stopped_at IS NULL) OR (stopped_at > '1970-01-01 02:00:00+02'::timestamp with time zone)))
 );
 
 
@@ -25996,10 +26032,24 @@ CREATE TRIGGER application_standard_log_destination_immutable BEFORE DELETE OR U
 
 
 --
+-- Name: application_standard_log_health application_standard_log_health_consumer_open; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_health_consumer_open BEFORE INSERT OR UPDATE ON public.application_standard_log_health FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_consumer_open_guard();
+
+
+--
 -- Name: application_standard_log_health application_standard_log_health_current; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER application_standard_log_health_current BEFORE INSERT OR UPDATE ON public.application_standard_log_health FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_health_guard();
+
+
+--
+-- Name: application_standard_log_inventories application_standard_log_inventory_consumer_open; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_inventory_consumer_open BEFORE INSERT OR UPDATE ON public.application_standard_log_inventories FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_consumer_open_guard();
 
 
 --

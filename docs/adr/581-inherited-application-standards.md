@@ -2053,3 +2053,46 @@ no synthetic customer log is emitted. Cross-application endpoint health, full
 consumer convergence, rollout wave release, native KVM enforcement/recovery and
 release activation remain separate acceptance requirements. The mutation gate
 remains disabled.
+
+
+## Authoritative consumer membership and joined logging shutdown
+
+A list of successful private reports cannot establish the required consumer set.
+Read an application roster from compute-node membership and all live/in-flight
+instance placements in one PostgreSQL statement snapshot or one memory-store
+critical section. Include active legacy compute nodes even before any logging
+process registers, and include configured gateway endpoints after admission
+stops, including retired endpoints until their authoritative configuration is
+removed. Include native obligations for every live placement, even on inactive,
+retired, missing or unexpectedly control-plane nodes. Placement states are the
+scheduler's resident/in-flight set: waking, cold booting, running, snapshotting,
+migrating, warm and draining. A drain flag does not prove physical quiescence.
+
+The private roster reports current enrollment eligibility, the desired and
+persisted revisions, effective digest, membership/lifecycle/role, gateway
+configuration presence, heartbeat eligibility, logging startup session/closure,
+native startup incarnation/protocol and instance/deployment placement identity.
+It contains no endpoint, ciphertext, physical network identity or log content.
+Missing processes and capabilities remain visible; pending or expired enrollment
+remains readable but ineligible. Sorted membership/placement and process identity
+can be fingerprinted independently of the read clock. Consumers of the roster
+must re-read it before advancing state; its digest is not a lease or an observed
+revision, and neither an empty roster nor a fresh heartbeat is convergence.
+
+A logging startup can explicitly close after its source and sender workers have
+both joined. The gateway prevents new worker starts once shutdown begins and
+serializes joined shutdown, retaining its operating-system spool lease until the
+bounded storage acknowledgment finishes. Storage owns the first shutdown clock;
+exact-current retries preserve it, and current closure remains readable on an
+inactive node. Closed startups cannot register again, write raw or typed loaded
+inventory/health reports, or qualify retained reports as current evidence. A new
+startup UUID advances the fenced generation and starts without its predecessor's
+closure. Late shutdown from an old startup cannot close a replacement. Node
+removal cascades private consumer history and closure.
+
+Closure describes the joined logging process; it never removes a node or native
+placement obligation. Unavailable storage cannot fabricate a shutdown. A crash
+without joined acknowledgment remains unproven and earlier reports expire under
+the existing freshness rule. Whole-application observation, physical recovery,
+artifact/security coverage, rollout-wave release, native KVM acceptance and public
+release activation remain separate requirements. The mutation gate stays off.

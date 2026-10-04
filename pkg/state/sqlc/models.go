@@ -1005,6 +1005,7 @@ type ApplicationStandardLogConsumer struct {
 	SessionID    pgtype.UUID
 	Generation   int64
 	RegisteredAt pgtype.Timestamptz
+	StoppedAt    pgtype.Timestamptz
 }
 
 type ApplicationStandardLogConsumerSession struct {

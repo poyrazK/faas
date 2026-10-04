@@ -74,6 +74,9 @@ func (m *MemStore) RegisterApplicationStandardLogConsumer(ctx context.Context, n
 	}
 	key := canonicalStandardUUID(nodeID)
 	s := m.applicationStandardLogConsumers[key]
+	if _, closed := m.applicationStandardLogConsumerClosures[key]; closed && sameStandardUUID(s.SessionID, sessionID) {
+		return ApplicationStandardLogConsumerSession{}, ErrApplicationStandardLogConsumerFenced
+	}
 	historyKey := key + "\x00" + canonicalStandardUUID(sessionID)
 	if _, used := m.applicationStandardLogConsumerSessions[historyKey]; used && !sameStandardUUID(s.SessionID, sessionID) {
 		return ApplicationStandardLogConsumerSession{}, ErrApplicationStandardLogConsumerFenced
@@ -81,6 +84,7 @@ func (m *MemStore) RegisterApplicationStandardLogConsumer(ctx context.Context, n
 	if !sameStandardUUID(s.SessionID, sessionID) {
 		s = ApplicationStandardLogConsumerSession{NodeID: key, SessionID: canonicalStandardUUID(sessionID), Generation: s.Generation + 1}
 		m.applicationStandardLogConsumers[key] = s
+		delete(m.applicationStandardLogConsumerClosures, key)
 		if m.applicationStandardLogConsumerSessions == nil {
 			m.applicationStandardLogConsumerSessions = map[string]ApplicationStandardLogConsumerSession{}
 		}
@@ -89,7 +93,7 @@ func (m *MemStore) RegisterApplicationStandardLogConsumer(ctx context.Context, n
 	return s, nil
 }
 
-func (m *MemStore) standardLogSessionCurrentLocked(s ApplicationStandardLogConsumerSession) bool {
+func (m *MemStore) standardLogSessionRegisteredLocked(s ApplicationStandardLogConsumerSession) bool {
 	for _, node := range m.computeNodes {
 		if sameStandardUUID(node.ID, s.NodeID) {
 			return m.applicationStandardLogConsumers[canonicalStandardUUID(s.NodeID)] == s
@@ -194,6 +198,7 @@ func (m *MemStore) eraseStandardLogInventoriesLocked(appID string) {
 func (m *MemStore) eraseStandardLogConsumerNodeLocked(nodeID string) {
 	m.eraseStandardLogHealthLocked("", "", nodeID)
 	delete(m.applicationStandardLogConsumers, canonicalStandardUUID(nodeID))
+	delete(m.applicationStandardLogConsumerClosures, canonicalStandardUUID(nodeID))
 	for key, s := range m.applicationStandardLogConsumerSessions {
 		if sameStandardUUID(s.NodeID, nodeID) {
 			delete(m.applicationStandardLogConsumerSessions, key)

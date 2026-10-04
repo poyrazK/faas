@@ -8229,14 +8229,14 @@ WITH registered AS (
  INSERT INTO application_standard_log_consumers(node_id,session_id,generation,registered_at)
  VALUES (sqlc.arg(node_id)::uuid,sqlc.arg(session_id)::uuid,1,clock_timestamp())
  ON CONFLICT(node_id) DO UPDATE SET session_id=EXCLUDED.session_id,
- generation=application_standard_log_consumers.generation+CASE WHEN application_standard_log_consumers.session_id=EXCLUDED.session_id THEN 0 ELSE 1 END
+ generation=application_standard_log_consumers.generation+CASE WHEN application_standard_log_consumers.session_id=EXCLUDED.session_id THEN 0 ELSE 1 END, stopped_at=NULL
  RETURNING node_id,session_id,generation
 )
 SELECT to_jsonb(registered) AS session FROM registered;
 
 -- name: CheckApplicationStandardLogConsumer :one
 SELECT c.node_id FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
- WHERE c.node_id=sqlc.arg(node_id)::uuid AND c.session_id=sqlc.arg(session_id)::uuid AND c.generation=sqlc.arg(generation)::bigint
+ WHERE c.node_id=sqlc.arg(node_id)::uuid AND c.session_id=sqlc.arg(session_id)::uuid AND c.generation=sqlc.arg(generation)::bigint AND c.stopped_at IS NULL
  FOR SHARE OF c,n NOWAIT;
 
 -- name: LockApplicationStandardLogInventoryParents :one
@@ -8263,7 +8263,7 @@ SELECT (x.inventory||jsonb_build_object('node_id',x.node_id::text,'session_id',x
  JOIN application_standard_log_consumers c ON c.node_id=x.node_id AND c.session_id=x.session_id AND c.generation=x.generation
  JOIN compute_nodes n ON n.id=x.node_id
  WHERE a.id=sqlc.arg(app_id)::uuid AND a.org_id=sqlc.arg(org_id)::uuid AND a.status<>'deleted' AND x.org_id=a.org_id
- AND n.active AND n.role IS DISTINCT FROM 'control-plane'
+ AND c.stopped_at IS NULL AND n.active AND n.role IS DISTINCT FROM 'control-plane'
  AND x.inventory=application_standard_log_inventory(a.id)
  AND x.observed_at>clock_timestamp()-make_interval(secs=>sqlc.arg(freshness_seconds)::double precision)
  ORDER BY x.node_id;
@@ -8291,7 +8291,7 @@ SELECT (h.binding||jsonb_build_object('node_id',h.node_id::text,'session_id',h.s
  JOIN application_standard_log_consumers c ON c.node_id=h.node_id AND c.session_id=h.session_id AND c.generation=h.generation
  JOIN compute_nodes n ON n.id=h.node_id
  WHERE a.id=sqlc.arg(app_id)::uuid AND a.org_id=sqlc.arg(org_id)::uuid AND a.status<>'deleted' AND h.org_id=a.org_id
- AND n.active AND n.role IS DISTINCT FROM 'control-plane' AND h.binding=application_standard_log_binding(a.id,h.drain_id)
+ AND c.stopped_at IS NULL AND n.active AND n.role IS DISTINCT FROM 'control-plane' AND h.binding=application_standard_log_binding(a.id,h.drain_id)
  AND (h.status<>'healthy' OR EXISTS(SELECT 1 FROM instances i WHERE i.id=h.source_instance_id AND i.app_id=a.id))
  AND h.observed_at>clock_timestamp()-make_interval(secs=>sqlc.arg(freshness_seconds)::double precision)
  ORDER BY h.node_id,h.drain_id;
@@ -8324,3 +8324,48 @@ SELECT jsonb_build_object('target',x.target,'receipt',x.receipt,'observed_at',x.
  AND x.target=application_standard_egress_target(x.app_id,x.node_id)
  AND x.observed_at>clock_timestamp()-make_interval(secs=>sqlc.arg(freshness_seconds)::double precision)
  ORDER BY x.node_id;
+
+-- Exact current session, with nonwaiting fencing against refresh and startup.
+-- name: CloseApplicationStandardLogConsumer :one
+WITH current_consumer AS (
+ SELECT c.node_id FROM application_standard_log_consumers c
+ WHERE c.node_id=sqlc.arg(node_id)::uuid AND c.session_id=sqlc.arg(session_id)::uuid AND c.generation=sqlc.arg(generation)::bigint
+ FOR UPDATE NOWAIT
+), closed AS (
+ UPDATE application_standard_log_consumers c SET stopped_at=coalesce(c.stopped_at,clock_timestamp())
+ FROM current_consumer x WHERE c.node_id=x.node_id RETURNING c.node_id,c.session_id,c.generation,c.stopped_at
+)
+SELECT to_jsonb(closed)::jsonb AS closure FROM closed;
+
+-- One MVCC snapshot: missing capabilities and absent reports remain obligations.
+-- name: GetApplicationStandardConsumerRoster :one
+WITH read_clock AS MATERIALIZED (SELECT clock_timestamp() AS read_at),
+ app_scope AS MATERIALIZED (
+ SELECT a.*,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
+ FROM apps a LEFT JOIN app_application_standards e ON e.app_id=a.id
+ WHERE a.id=sqlc.arg(app_id)::uuid AND a.org_id=sqlc.arg(org_id)::uuid AND a.status<>'deleted'
+ ), live AS MATERIALIZED (
+ SELECT i.id,i.node_id,i.deployment_id,i.state FROM instances i JOIN app_scope a ON a.id=i.app_id
+ WHERE i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining')
+ ), members AS (
+ SELECT n.id AS node_id FROM compute_nodes n
+ WHERE n.role IS DISTINCT FROM 'control-plane' AND (n.active OR n.gateway_target_url IS NOT NULL)
+ UNION SELECT l.node_id FROM live l
+ ), roster_nodes AS (
+ SELECT x.node_id,n.id IS NOT NULL AS present,coalesce(n.active,false) AS active,
+ coalesce(n.lifecycle::text,'') AS lifecycle,coalesce(n.role,'') AS role,n.gateway_target_url IS NOT NULL AS gateway_configured,
+ coalesce(n.last_heartbeat_at<=rc.read_at AND n.last_heartbeat_at>=rc.read_at-make_interval(secs=>sqlc.arg(heartbeat_freshness_seconds)::double precision),false) AS heartbeat_fresh,
+ n.id IS NOT NULL AND n.role IS DISTINCT FROM 'control-plane' AND (n.active OR n.gateway_target_url IS NOT NULL OR EXISTS(SELECT 1 FROM live l WHERE l.node_id=x.node_id)) AS logging_required,
+ EXISTS(SELECT 1 FROM live l WHERE l.node_id=x.node_id) AS native_required,
+ coalesce(n.vmmd_incarnation::text,'') AS native_incarnation,CASE WHEN n.vmmd_incarnation IS NULL THEN 0 ELSE n.vmmd_admission_protocol END AS native_protocol,
+ CASE WHEN c.node_id IS NOT NULL THEN jsonb_build_object('node_id',c.node_id::text,'session_id',c.session_id::text,'generation',c.generation) END AS logging_session,
+ c.stopped_at AS logging_stopped_at
+ FROM members x LEFT JOIN compute_nodes n ON n.id=x.node_id LEFT JOIN application_standard_log_consumers c ON c.node_id=x.node_id CROSS JOIN read_clock rc
+ )
+SELECT jsonb_build_object('org_id',a.org_id::text,'app_id',a.id::text,'account_id',a.account_id::text,
+ 'desired_revision',coalesce(a.desired_revision,0),'persisted_revision',coalesce(a.persisted_revision,0),
+ 'effective_hash',coalesce(a.effective_hash,''),'enrollment_state',coalesce(a.enrollment_state,''),
+ 'enrollment_current',application_standard_log_inventory(a.id) IS NOT NULL,'read_at',rc.read_at,
+ 'nodes',coalesce((SELECT jsonb_agg(to_jsonb(n) ORDER BY n.node_id) FROM roster_nodes n),'[]'::jsonb),
+ 'live_instances',coalesce((SELECT jsonb_agg(jsonb_build_object('instance_id',l.id::text,'node_id',l.node_id::text,'deployment_id',l.deployment_id::text,'state',l.state) ORDER BY l.id) FROM live l),'[]'::jsonb))::jsonb AS roster
+ FROM app_scope a CROSS JOIN read_clock rc;

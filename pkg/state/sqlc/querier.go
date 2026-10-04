@@ -142,6 +142,8 @@ type Querier interface {
 	// required so an out-of-order cleanup call cannot hide the path of
 	// an open session that a concurrent PATCH still needs.
 	ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error
+	// Exact current session, with nonwaiting fencing against refresh and startup.
+	CloseApplicationStandardLogConsumer(ctx context.Context, db DBTX, arg CloseApplicationStandardLogConsumerParams) ([]byte, error)
 	CommitManagedReceipt(ctx context.Context, db DBTX, arg CommitManagedReceiptParams) (CommitManagedReceiptRow, error)
 	CommitManagedReceiptReplay(ctx context.Context, db DBTX, arg CommitManagedReceiptReplayParams) (CommitManagedReceiptReplayRow, error)
 	CommitManagedSource(ctx context.Context, db DBTX, arg CommitManagedSourceParams) (CommitManagedSourceRow, error)
@@ -382,6 +384,8 @@ type Querier interface {
 	GetAppErrorSample(ctx context.Context, db DBTX, arg GetAppErrorSampleParams) (GetAppErrorSampleRow, error)
 	GetAppSecretRevocation(ctx context.Context, db DBTX, arg GetAppSecretRevocationParams) (GetAppSecretRevocationRow, error)
 	GetApplicationStandardAssignmentInventory(ctx context.Context, db DBTX, arg GetApplicationStandardAssignmentInventoryParams) (ApplicationStandardAssignment, error)
+	// One MVCC snapshot: missing capabilities and absent reports remain obligations.
+	GetApplicationStandardConsumerRoster(ctx context.Context, db DBTX, arg GetApplicationStandardConsumerRosterParams) ([]byte, error)
 	GetApplicationStandardEnrollment(ctx context.Context, db DBTX, arg GetApplicationStandardEnrollmentParams) (GetApplicationStandardEnrollmentRow, error)
 	GetApplicationStandardLogDeliveryApp(ctx context.Context, db DBTX, arg GetApplicationStandardLogDeliveryAppParams) (pgtype.UUID, error)
 	GetApplicationStandardLogDestination(ctx context.Context, db DBTX, arg GetApplicationStandardLogDestinationParams) (ApplicationStandardLogDestination, error)

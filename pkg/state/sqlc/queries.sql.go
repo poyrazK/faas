@@ -1031,7 +1031,7 @@ func (q *Queries) CancelUploadSession(ctx context.Context, db DBTX, arg CancelUp
 
 const checkApplicationStandardLogConsumer = `-- name: CheckApplicationStandardLogConsumer :one
 SELECT c.node_id FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
- WHERE c.node_id=$1::uuid AND c.session_id=$2::uuid AND c.generation=$3::bigint
+ WHERE c.node_id=$1::uuid AND c.session_id=$2::uuid AND c.generation=$3::bigint AND c.stopped_at IS NULL
  FOR SHARE OF c,n NOWAIT
 `
 
@@ -1970,6 +1970,32 @@ UPDATE upload_sessions
 func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error {
 	_, err := db.Exec(ctx, clearUploadSessionPartPath, id)
 	return err
+}
+
+const closeApplicationStandardLogConsumer = `-- name: CloseApplicationStandardLogConsumer :one
+WITH current_consumer AS (
+ SELECT c.node_id FROM application_standard_log_consumers c
+ WHERE c.node_id=$1::uuid AND c.session_id=$2::uuid AND c.generation=$3::bigint
+ FOR UPDATE NOWAIT
+), closed AS (
+ UPDATE application_standard_log_consumers c SET stopped_at=coalesce(c.stopped_at,clock_timestamp())
+ FROM current_consumer x WHERE c.node_id=x.node_id RETURNING c.node_id,c.session_id,c.generation,c.stopped_at
+)
+SELECT to_jsonb(closed)::jsonb AS closure FROM closed
+`
+
+type CloseApplicationStandardLogConsumerParams struct {
+	NodeID     pgtype.UUID
+	SessionID  pgtype.UUID
+	Generation int64
+}
+
+// Exact current session, with nonwaiting fencing against refresh and startup.
+func (q *Queries) CloseApplicationStandardLogConsumer(ctx context.Context, db DBTX, arg CloseApplicationStandardLogConsumerParams) ([]byte, error) {
+	row := db.QueryRow(ctx, closeApplicationStandardLogConsumer, arg.NodeID, arg.SessionID, arg.Generation)
+	var closure []byte
+	err := row.Scan(&closure)
+	return closure, err
 }
 
 const commitManagedReceipt = `-- name: CommitManagedReceipt :one
@@ -7057,6 +7083,53 @@ func (q *Queries) GetApplicationStandardAssignmentInventory(ctx context.Context,
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getApplicationStandardConsumerRoster = `-- name: GetApplicationStandardConsumerRoster :one
+WITH read_clock AS MATERIALIZED (SELECT clock_timestamp() AS read_at),
+ app_scope AS MATERIALIZED (
+ SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
+ FROM apps a LEFT JOIN app_application_standards e ON e.app_id=a.id
+ WHERE a.id=$1::uuid AND a.org_id=$2::uuid AND a.status<>'deleted'
+ ), live AS MATERIALIZED (
+ SELECT i.id,i.node_id,i.deployment_id,i.state FROM instances i JOIN app_scope a ON a.id=i.app_id
+ WHERE i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining')
+ ), members AS (
+ SELECT n.id AS node_id FROM compute_nodes n
+ WHERE n.role IS DISTINCT FROM 'control-plane' AND (n.active OR n.gateway_target_url IS NOT NULL)
+ UNION SELECT l.node_id FROM live l
+ ), roster_nodes AS (
+ SELECT x.node_id,n.id IS NOT NULL AS present,coalesce(n.active,false) AS active,
+ coalesce(n.lifecycle::text,'') AS lifecycle,coalesce(n.role,'') AS role,n.gateway_target_url IS NOT NULL AS gateway_configured,
+ coalesce(n.last_heartbeat_at<=rc.read_at AND n.last_heartbeat_at>=rc.read_at-make_interval(secs=>$3::double precision),false) AS heartbeat_fresh,
+ n.id IS NOT NULL AND n.role IS DISTINCT FROM 'control-plane' AND (n.active OR n.gateway_target_url IS NOT NULL OR EXISTS(SELECT 1 FROM live l WHERE l.node_id=x.node_id)) AS logging_required,
+ EXISTS(SELECT 1 FROM live l WHERE l.node_id=x.node_id) AS native_required,
+ coalesce(n.vmmd_incarnation::text,'') AS native_incarnation,CASE WHEN n.vmmd_incarnation IS NULL THEN 0 ELSE n.vmmd_admission_protocol END AS native_protocol,
+ CASE WHEN c.node_id IS NOT NULL THEN jsonb_build_object('node_id',c.node_id::text,'session_id',c.session_id::text,'generation',c.generation) END AS logging_session,
+ c.stopped_at AS logging_stopped_at
+ FROM members x LEFT JOIN compute_nodes n ON n.id=x.node_id LEFT JOIN application_standard_log_consumers c ON c.node_id=x.node_id CROSS JOIN read_clock rc
+ )
+SELECT jsonb_build_object('org_id',a.org_id::text,'app_id',a.id::text,'account_id',a.account_id::text,
+ 'desired_revision',coalesce(a.desired_revision,0),'persisted_revision',coalesce(a.persisted_revision,0),
+ 'effective_hash',coalesce(a.effective_hash,''),'enrollment_state',coalesce(a.enrollment_state,''),
+ 'enrollment_current',application_standard_log_inventory(a.id) IS NOT NULL,'read_at',rc.read_at,
+ 'nodes',coalesce((SELECT jsonb_agg(to_jsonb(n) ORDER BY n.node_id) FROM roster_nodes n),'[]'::jsonb),
+ 'live_instances',coalesce((SELECT jsonb_agg(jsonb_build_object('instance_id',l.id::text,'node_id',l.node_id::text,'deployment_id',l.deployment_id::text,'state',l.state) ORDER BY l.id) FROM live l),'[]'::jsonb))::jsonb AS roster
+ FROM app_scope a CROSS JOIN read_clock rc
+`
+
+type GetApplicationStandardConsumerRosterParams struct {
+	AppID                     pgtype.UUID
+	OrgID                     pgtype.UUID
+	HeartbeatFreshnessSeconds float64
+}
+
+// One MVCC snapshot: missing capabilities and absent reports remain obligations.
+func (q *Queries) GetApplicationStandardConsumerRoster(ctx context.Context, db DBTX, arg GetApplicationStandardConsumerRosterParams) ([]byte, error) {
+	row := db.QueryRow(ctx, getApplicationStandardConsumerRoster, arg.AppID, arg.OrgID, arg.HeartbeatFreshnessSeconds)
+	var roster []byte
+	err := row.Scan(&roster)
+	return roster, err
 }
 
 const getApplicationStandardEnrollment = `-- name: GetApplicationStandardEnrollment :one
@@ -13791,7 +13864,7 @@ SELECT (h.binding||jsonb_build_object('node_id',h.node_id::text,'session_id',h.s
  JOIN application_standard_log_consumers c ON c.node_id=h.node_id AND c.session_id=h.session_id AND c.generation=h.generation
  JOIN compute_nodes n ON n.id=h.node_id
  WHERE a.id=$1::uuid AND a.org_id=$2::uuid AND a.status<>'deleted' AND h.org_id=a.org_id
- AND n.active AND n.role IS DISTINCT FROM 'control-plane' AND h.binding=application_standard_log_binding(a.id,h.drain_id)
+ AND c.stopped_at IS NULL AND n.active AND n.role IS DISTINCT FROM 'control-plane' AND h.binding=application_standard_log_binding(a.id,h.drain_id)
  AND (h.status<>'healthy' OR EXISTS(SELECT 1 FROM instances i WHERE i.id=h.source_instance_id AND i.app_id=a.id))
  AND h.observed_at>clock_timestamp()-make_interval(secs=>$3::double precision)
  ORDER BY h.node_id,h.drain_id
@@ -13830,7 +13903,7 @@ SELECT (x.inventory||jsonb_build_object('node_id',x.node_id::text,'session_id',x
  JOIN application_standard_log_consumers c ON c.node_id=x.node_id AND c.session_id=x.session_id AND c.generation=x.generation
  JOIN compute_nodes n ON n.id=x.node_id
  WHERE a.id=$1::uuid AND a.org_id=$2::uuid AND a.status<>'deleted' AND x.org_id=a.org_id
- AND n.active AND n.role IS DISTINCT FROM 'control-plane'
+ AND c.stopped_at IS NULL AND n.active AND n.role IS DISTINCT FROM 'control-plane'
  AND x.inventory=application_standard_log_inventory(a.id)
  AND x.observed_at>clock_timestamp()-make_interval(secs=>$3::double precision)
  ORDER BY x.node_id
@@ -24502,7 +24575,7 @@ WITH registered AS (
  INSERT INTO application_standard_log_consumers(node_id,session_id,generation,registered_at)
  VALUES ($1::uuid,$2::uuid,1,clock_timestamp())
  ON CONFLICT(node_id) DO UPDATE SET session_id=EXCLUDED.session_id,
- generation=application_standard_log_consumers.generation+CASE WHEN application_standard_log_consumers.session_id=EXCLUDED.session_id THEN 0 ELSE 1 END
+ generation=application_standard_log_consumers.generation+CASE WHEN application_standard_log_consumers.session_id=EXCLUDED.session_id THEN 0 ELSE 1 END, stopped_at=NULL
  RETURNING node_id,session_id,generation
 )
 SELECT to_jsonb(registered) AS session FROM registered

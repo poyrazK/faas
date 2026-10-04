@@ -779,3 +779,21 @@ sources and unavailable nodes invalidate earlier reports. These private reports
 are prerequisites for complete convergence and do not release rollout waves or
 advance the application's observed revision. Native and fleet acceptance remain
 open, and the mutation release gate remains disabled.
+
+
+## Required consumers and logging shutdown
+
+A private application roster now lists required logging and native consumers
+from compute nodes and live instance placement. Missing startup reports or
+capabilities stay visible. Draining nodes that still host an instance retain
+obligations, and configured gateway endpoints remain visible after admission
+stops. A single storage snapshot binds membership, placement, current process
+identities and enrollment eligibility without exposing endpoint configuration.
+
+The gateway acknowledges its current startup's shutdown after both source and
+sender workers exit, while holding the durable spool lock. Storage timestamps the
+closure and immediately invalidates that startup's inventory and health reports.
+A replacement uses a new startup session. Missing shutdown acknowledgment cannot
+prove quiescence. The roster and closure are prerequisites for a full observation
+writer; they do not advance observed revisions or release rollout waves. Native,
+fleet and release acceptance remain open, and the mutation gate stays disabled.
