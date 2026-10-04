@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -16,6 +18,8 @@ import (
 // bodyless GET path used by Node's built-in Fetch client. The bridge receives
 // a persistent-stream request, forwards it to a guest handler that waits for
 // two seconds, and must carry AbortSignal.timeout(150) through to that guest.
+// Arm the timeout after all requests reach the guest so client startup and
+// runner scheduling cannot expire a signal before there is a request to cancel.
 // A concurrent fast request verifies that cancelling those streams leaves the
 // shared per-port transport usable.
 func TestNewHandler_NodeFetchAbortSignalCancelsPersistentGuestGET(t *testing.T) {
@@ -32,9 +36,27 @@ func TestNewHandler_NodeFetchAbortSignalCancelsPersistentGuestGET(t *testing.T) 
 	slowStarted := make(chan time.Time, slowRequests)
 	slowAborted := make(chan time.Duration, slowRequests)
 	slowCompleted := make(chan struct{}, slowRequests)
+	var arrived atomic.Int32
+	var startWork sync.Once
+	workReady := make(chan struct{})
 	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/fast" {
 			_, _ = fmt.Fprint(w, "fast-ok")
+			return
+		}
+		if r.URL.Path == "/ready" {
+			if arrived.Load() == slowRequests {
+				startWork.Do(func() { close(workReady) })
+				_, _ = fmt.Fprint(w, "ready")
+			} else {
+				_, _ = fmt.Fprint(w, "waiting")
+			}
+			return
+		}
+		arrived.Add(1)
+		select {
+		case <-workReady:
+		case <-r.Context().Done():
 			return
 		}
 		requestStarted := time.Now()
@@ -76,20 +98,30 @@ func TestNewHandler_NodeFetchAbortSignalCancelsPersistentGuestGET(t *testing.T) 
 
 	script := fmt.Sprintf(`
 const base = process.argv[1];
-const slow = Array.from({length: %d}, async () => {
+const controllers = Array.from({length: %d}, () => new AbortController());
+const slow = controllers.map(async controller => {
   try {
-    await fetch(base + '/slow', {signal: AbortSignal.timeout(150)});
+    await fetch(base + '/slow', {signal: controller.signal});
     throw new Error('slow fetch unexpectedly completed');
   } catch (err) {
     if (err.name !== 'TimeoutError') throw err;
   }
 });
-Promise.all(slow).then(async () => {
+(async () => {
+  const allSlow = Promise.all(slow);
+  while ((await (await fetch(base + '/ready')).text()) !== 'ready') {
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  for (const controller of controllers) {
+    const timeout = AbortSignal.timeout(150);
+    timeout.addEventListener('abort', () => controller.abort(timeout.reason), {once: true});
+  }
+  await allSlow;
   const response = await fetch(base + '/fast');
   const body = await response.text();
   if (!response.ok || body !== 'fast-ok') throw new Error('fast sibling failed: ' + response.status + ' ' + body);
   process.stdout.write('slow fetches timed out; fast sibling completed');
-}).catch(err => {
+})().catch(err => {
   process.stderr.write(err.stack || String(err));
   process.exitCode = 1;
 });
