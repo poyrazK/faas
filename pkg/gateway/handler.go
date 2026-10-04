@@ -8276,6 +8276,9 @@ type statusRecorder struct {
 	trafficResponseCancel    context.CancelFunc
 	trafficBudgetError       bool
 
+	// Capture the final rebound request context when the response commits.
+	trafficResponseCommittedContext context.Context
+
 	// headerOps (ADR-089 / issue #561 PR 4) is the per-request
 	// list of EdgeRuleHeaderOp mutations a kind=headers rule
 	// applied BEFORE the proxy leg. Applied at WriteHeader commit

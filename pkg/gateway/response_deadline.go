@@ -100,7 +100,11 @@ func (s *statusRecorder) commitTrafficResponse(code int) {
 	if s.trafficResponseContext == nil {
 		return
 	}
-	ctx := s.trafficResponseContext()
+	s.trafficResponseCommittedContext = s.trafficResponseContext()
+	s.guardTrafficResponse(s.trafficResponseCommittedContext, code)
+}
+
+func (s *statusRecorder) guardTrafficResponse(ctx context.Context, code int) {
 	stampTrafficSecurity(ctx, s.Header())
 	if s.trafficResponseLongLived != nil && s.trafficResponseLongLived(code) {
 		s.Header().Set(trafficResponseSessionHeader, "long-lived")

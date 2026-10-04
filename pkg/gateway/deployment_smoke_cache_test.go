@@ -197,8 +197,9 @@ func TestDeploymentSmokeNoStoreAtResponseCommit(t *testing.T) {
 func TestDeploymentSmokeNoStoreAfterEarlyHints(t *testing.T) {
 	for _, implicit := range []bool{false, true} {
 		t.Run(map[bool]string{false: "explicit", true: "implicit"}[implicit], func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				rec := &statusRecorder{ResponseWriter: w, deploymentSmoke: true}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				rec := &statusRecorder{ResponseWriter: w, request: r, deploymentSmoke: true, trafficResponseContext: r.Context}
+				defer rec.stopTrafficResponse()
 				rec.WriteHeader(http.StatusEarlyHints)
 				// ReverseProxy clears interim headers before the final response.
 				rec.Header().Del("Cache-Control")
