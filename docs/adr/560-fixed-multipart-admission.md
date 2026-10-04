@@ -17,9 +17,10 @@ Reserve a fixed control multipart session and its full-object write admission
 atomically under account and bucket serialization. Bind the admission identity
 to the session and declared key/size. New fixed sessions persist a private
 immutable flag and database guards require their matching admission at commit.
-Take the bucket's non-key update lock before the account lock, matching
-configuration/lifecycle transactions while allowing account-locked tracked
-writes to acquire bucket foreign-key locks.
+Take the account lock before the bucket's non-key update lock, matching
+configuration/lifecycle transactions and quota admission. The Object Lock
+admission guard requires a bucket SHARE lock beyond the foreign-key KEY SHARE
+lock; the consistent order prevents a deadlock with an existing account owner.
 Retries reuse the accepted session without another reservation or authorization.
 Quota and session-limit failures publish neither session nor grant.
 

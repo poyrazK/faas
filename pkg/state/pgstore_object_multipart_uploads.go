@@ -81,19 +81,19 @@ func (s *PgStore) reserveObjectMultipart(ctx context.Context, upload ObjectMulti
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	// Configuration and lifecycle owners lock the bucket before the account.
-	// NO KEY UPDATE also permits FK KEY SHARE from account-locked writers.
-	_, err = q.ObjectMultipartLockBucket(ctx, tx, sqlc.ObjectMultipartLockBucketParams{
-		ID: mustPgUUID(upload.BucketID), AccountID: mustPgUUID(upload.AccountID), AppID: mustPgUUID(upload.AppID),
-	})
-	if err != nil {
-		return ObjectMultipartUpload{}, mapErr(err)
-	}
+	// Follow configuration and admission's account-before-bucket order. The
+	// Object Lock admission guard needs SHARE beyond the FK's KEY SHARE.
 	if policy != nil {
 		if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(upload.AccountID)); err != nil {
 			return ObjectMultipartUpload{}, mapErr(err)
 		}
 		upload.FixedAdmission = true
+	}
+	_, err = q.ObjectMultipartLockBucket(ctx, tx, sqlc.ObjectMultipartLockBucketParams{
+		ID: mustPgUUID(upload.BucketID), AccountID: mustPgUUID(upload.AccountID), AppID: mustPgUUID(upload.AppID),
+	})
+	if err != nil {
+		return ObjectMultipartUpload{}, mapErr(err)
 	}
 	old, err := q.ObjectMultipartByKey(ctx, tx, sqlc.ObjectMultipartByKeyParams{
 		AccountID: mustPgUUID(upload.AccountID), AppID: mustPgUUID(upload.AppID), BucketID: mustPgUUID(upload.BucketID), ObjectKey: upload.Key,

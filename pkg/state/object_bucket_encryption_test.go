@@ -289,8 +289,8 @@ func assertBucketDefaultSQLFences(t *testing.T, pool *pgxpool.Pool, b state.Obje
 	}
 }
 
-// Configuration must finish while admissions hold the account lock: taking
-// that lock after the bucket lock would create a deadlock with upload work.
+// Configuration waits on admission's account lock without holding the bucket,
+// then preserves guarded rollback after its default is cleared and drained.
 func TestObjectBucketEncryptionPGAccountLockAndRollback(t *testing.T) {
 	st, pool, ctx := pgStoreWithPool(t)
 	b, _ := seedAccounting(t, st)
@@ -300,17 +300,32 @@ func TestObjectBucketEncryptionPGAccountLockAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	var pid int32
+	if err = tx.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = tx.Exec(ctx, `SELECT id FROM accounts WHERE id=$1 FOR UPDATE`, b.AccountID); err != nil {
 		t.Fatal(err)
 	}
-	bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
+	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	e := journalEncryption(b.AccountID)
 	e.Selection.Context = ""
-	if _, err = defaults.RequestObjectBucketEncryption(bounded, b.AccountID, b.AppID, b.ID, e); err != nil {
-		t.Fatal("configuration waited for admission's account lock", err)
+	result := make(chan error, 1)
+	go func() {
+		_, requestErr := defaults.RequestObjectBucketEncryption(bounded, b.AccountID, b.AppID, b.ID, e)
+		result <- requestErr
+	}()
+	waitErr := waitVersioningAccountLock(bounded, pool, pid)
+	if waitErr == nil {
+		_, waitErr = tx.Exec(bounded, "SELECT id FROM object_buckets WHERE id=$1 FOR NO KEY UPDATE", b.ID)
 	}
-	if err = tx.Rollback(ctx); err != nil {
+	if err = tx.Rollback(ctx); err != nil || waitErr != nil {
+		cancel()
+		<-result
+		t.Fatal("configuration inverted account and bucket locks", err, waitErr)
+	}
+	if err = <-result; err != nil {
 		t.Fatal(err)
 	}
 	j, err := defaults.ClaimObjectBucketEncryption(ctx, b.ID, "finish")

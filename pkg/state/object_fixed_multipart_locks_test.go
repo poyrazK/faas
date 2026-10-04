@@ -13,8 +13,8 @@ func TestObjectFixedMultipartAdmissionLocksPG(t *testing.T) {
 	for _, tc := range []struct {
 		name, first, waiter, second string
 	}{
-		{"configuration", "SELECT id FROM object_buckets WHERE id=$1 FOR NO KEY UPDATE", "%FROM object_buckets%FOR NO KEY UPDATE%", "SELECT id FROM accounts WHERE id=$1 FOR UPDATE"},
-		{"tracked_write", "SELECT id FROM accounts WHERE id=$1 FOR UPDATE", "%FROM accounts%FOR UPDATE%", "SELECT id FROM object_buckets WHERE id=$1 FOR KEY SHARE"},
+		{"configuration", "SELECT id FROM accounts WHERE id=$1 FOR UPDATE", "%FROM accounts%FOR UPDATE%", "SELECT id FROM object_buckets WHERE id=$1 FOR NO KEY UPDATE"},
+		{"tracked_write", "SELECT id FROM accounts WHERE id=$1 FOR UPDATE", "%FROM accounts%FOR UPDATE%", "SELECT id FROM object_buckets WHERE id=$1 FOR SHARE"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, pool, _ := pgStoreWithPool(t)
@@ -30,11 +30,7 @@ func TestObjectFixedMultipartAdmissionLocksPG(t *testing.T) {
 			if err = fixture.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
 				t.Fatal(err)
 			}
-			first, second := b.ID, b.AccountID
-			if tc.name == "tracked_write" {
-				first, second = second, first
-			}
-			if _, err = fixture.Exec(ctx, tc.first, first); err != nil {
+			if _, err = fixture.Exec(ctx, tc.first, b.AccountID); err != nil {
 				t.Fatal(err)
 			}
 			candidate := fixedMultipartCandidate(b, tc.name)
@@ -64,7 +60,7 @@ func TestObjectFixedMultipartAdmissionLocksPG(t *testing.T) {
 				}
 			}
 			if err == nil {
-				_, err = fixture.Exec(ctx, tc.second, second)
+				_, err = fixture.Exec(ctx, tc.second, b.ID)
 			}
 			if err == nil {
 				err = fixture.Commit(ctx)

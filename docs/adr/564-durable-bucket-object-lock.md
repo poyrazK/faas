@@ -28,8 +28,8 @@ fresh propagation interval. Physical Object Lock prevents that stale native
 suspension from succeeding. No speculative enablement intent permits this
 exception.
 
-Capacity requests, deletion, lifecycle, notifications and encryption
-configuration also acquire account locks before bucket locks. The database
+Capacity requests, deletion, lifecycle, notifications, fixed multipart admission
+and encryption configuration also acquire account locks before bucket locks. The database
 admission guard takes bucket SHARE, so bucket-before-account mutation order
 would deadlock with an account-locked admission despite a NO KEY UPDATE bucket
 lock. PostgreSQL contention tests exercise each mutation against a raw grant

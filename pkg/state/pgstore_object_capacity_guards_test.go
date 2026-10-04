@@ -117,6 +117,10 @@ func TestObjectBucketMutationRequestsDoNotDeadlockAdmission(t *testing.T) {
 			_, _, err := st.BeginObjectDeletion(ctx, state.ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: uuid.NewString(), BucketID: b.ID, Key: "tracked"}, AccountID: b.AccountID, AppID: b.AppID, Token: "contention"}, accountingPolicy())
 			return err
 		}},
+		{"multipart", func(ctx context.Context, st *state.PgStore, b state.ObjectBucket) error {
+			_, err := st.ReserveAdmittedObjectMultipartUpload(ctx, fixedMultipartCandidate(b, "lock order"), 100, accountingPolicy())
+			return err
+		}},
 		{"versioning", func(ctx context.Context, st *state.PgStore, b state.ObjectBucket) error {
 			_, err := st.RequestObjectBucketVersioning(ctx, b.AccountID, b.AppID, b.ID, "Enabled")
 			return err
