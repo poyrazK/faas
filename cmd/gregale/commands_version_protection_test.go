@@ -36,7 +36,7 @@ func (c *protectionCLIClient) GetObjectVersionProtection(_ context.Context, _, _
 	return api.ObjectVersionProtection{}, nil
 }
 
-// adr: 572
+// adr: 582
 func TestVersionProtectionCLI(t *testing.T) {
 	bucket, version, id := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	until := time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano)

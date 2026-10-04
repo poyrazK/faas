@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 572
+// adr: 582
 func TestObjectVersionProtectionMem(t *testing.T) {
 	m := state.NewMemStore()
 	now := time.Now().UTC()

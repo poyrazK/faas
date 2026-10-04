@@ -34522,7 +34522,7 @@ SELECT deployment_id,app_id,max(expires_at) AS expires_at FROM (
     SELECT deployment_id,app_id,expires_at FROM customer_operation_code_pins
 ) receipts GROUP BY deployment_id,app_id;
 
--- ADR-572: durable exact-version protection.
+-- ADR-582: durable exact-version protection.
 CREATE TABLE IF NOT EXISTS object_version_protection (
  id uuid PRIMARY KEY CHECK(id::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
  bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,

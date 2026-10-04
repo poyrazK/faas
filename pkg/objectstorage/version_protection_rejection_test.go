@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 572
+// adr: 582
 func TestVersionProtectionNativeRejectionMustBePositive(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 )
 
-// adr: 572
+// adr: 582
 func TestVersionProtectionRetryIDMustBeSigned(t *testing.T) {
 	id := uuid.NewString()
 	for _, tc := range []struct {

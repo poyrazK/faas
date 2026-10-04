@@ -18,7 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 572
+// adr: 582
 func TestVersionProtectionControlE2EMem(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	var offset atomic.Int64

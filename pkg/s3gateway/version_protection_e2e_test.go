@@ -24,7 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 572
+// adr: 582
 func TestVersionProtectionSDKE2E(t *testing.T) {
 	for _, tc := range []struct{ pg, null bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
 		pg := tc.pg

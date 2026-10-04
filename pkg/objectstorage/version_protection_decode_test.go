@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 572
+// adr: 582
 func TestVersionProtectionStrictInput(t *testing.T) {
 	for _, body := range []string{`{"id":"id"}`, `{"id":"id","retention":null}`, `{"id":"id","retention":{},"retention":{}}`, `{"id":"id","retention":{"Mode":"COMPLIANCE"}}`, `{"id":"id","retention":{},"bypass":true}`, `{"id":"id","retention":{}} {}`, strings.Repeat(" ", int(api.MaxObjectLockBodyBytes)+1)} {
 		if _, _, err := DecodeObjectVersionProtectionRequest([]byte(body), "retention"); err == nil {

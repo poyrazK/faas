@@ -1,4 +1,4 @@
-# ADR-572 · Manage exact-version retention and legal holds durably
+# ADR-582 · Manage exact-version retention and legal holds durably
 
 - **Status:** Accepted
 - **Date:** 2026-10-04
