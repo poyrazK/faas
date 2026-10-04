@@ -248,6 +248,14 @@ type MemStore struct {
 	reservedIPLeases        map[string]ReservedIP
 	reservedIPInventory     map[string]ReservedIPInventory
 	appDeletionClaims       map[string]struct{}
+	// serviceAddressCursors mirrors app_service_address_cursors (ADR-576):
+	// the last service address index handed out per account.
+	serviceAddressCursors map[string]int
+	// serviceAddressIndex mirrors apps.service_address_index by app ID; it
+	// is not an App field (see Store.AppServiceAddressIndex).
+	serviceAddressIndex map[string]int
+	// serviceAddressReadyAt mirrors compute_nodes.service_address_ready_at.
+	serviceAddressReadyAt map[string]time.Time
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
 	// path index is in-memory only — we walk the map on lookup
@@ -373,7 +381,11 @@ type MemStore struct {
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
+	workflowResumes      map[string][]WorkflowResume
 	workflowRuns         map[string]WorkflowRun
+	workflowSchedules    map[string]WorkflowScheduleCursor
+	automationVersion    int64
+	automations          map[string]Automation
 	workflowSteps        map[string]map[string]WorkflowStep // run_id → step_name → step
 	workflowStepAttempts map[workflowStepAttemptKey]WorkflowStepAttempt
 	workflowEvents       map[string][]WorkflowEvent // run_id → []WorkflowEvent
@@ -417,6 +429,9 @@ type MemStore struct {
 	appWebhookReceiverCooldowns     map[string]time.Time
 	appWebhookRecoveryProbes        map[string]string
 	inboundWebhookEndpoints         map[string]InboundWebhookEndpoint
+	webhookAutomationBindings       map[string]WebhookAutomationBinding
+	webhookAutomationReceipts       map[string]WebhookAutomationReceipt
+	webhookAutomationRevision       int64
 	workflowCallbackWebhookBindings map[string]WorkflowCallbackWebhookBinding
 	queueBindings                   map[string]QueueBinding
 	managedRealtimeEndpoints        map[string]ManagedRealtimeEndpoint
@@ -663,6 +678,7 @@ type MemStore struct {
 	snapshotOrigins          map[string]snapshotOriginRow
 	events                   []Event
 	eventFanout              map[string]*PublishedEventWork
+	eventWorkflowReceipts    map[string]string
 	eventFanoutNextID        int64
 	eventFanoutAttempts      []EventFanoutAttempt
 	eventFanoutAttemptNextID int64
@@ -1116,6 +1132,9 @@ func NewMemStore() *MemStore {
 		reservedIPLeases:        map[string]ReservedIP{},
 		reservedIPInventory:     map[string]ReservedIPInventory{},
 		appDeletionClaims:       map[string]struct{}{},
+		serviceAddressCursors:   map[string]int{},
+		serviceAddressIndex:     map[string]int{},
+		serviceAddressReadyAt:   map[string]time.Time{},
 		githubDeployBranches:    map[string]map[string]string{},
 		githubDeployPolicies:    map[string]GitHubDeployPolicy{},
 		githubBindings:          map[string]GitHubBinding{},
@@ -3693,6 +3712,7 @@ func (m *MemStore) ApplyProjectPlan(
 			a.CPUMillicores = api.DefaultAppCPUMillicores
 		}
 		a.CreatedAt = now
+		m.ensureServiceAddressIndexLocked(&a)
 		m.apps[a.ID] = a
 		insertedApps = append(insertedApps, a)
 	}
@@ -3893,6 +3913,7 @@ func (m *MemStore) ApplyProjectReconcile(
 				tombstone.Status = AppActive
 				tombstone.DeletedAt = nil
 				tombstone.DeleteGraceUntil = nil
+				m.ensureServiceAddressIndexLocked(&tombstone)
 				m.apps[tombstone.ID] = tombstone
 				out.Added = append(out.Added, tombstone)
 				continue
@@ -3919,6 +3940,7 @@ func (m *MemStore) ApplyProjectReconcile(
 			if app.CreatedAt.IsZero() {
 				app.CreatedAt = time.Now()
 			}
+			m.ensureServiceAddressIndexLocked(&app)
 			m.apps[app.ID] = app
 			out.Added = append(out.Added, app)
 		case "update":
@@ -4111,6 +4133,7 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 		return App{}, err
 	}
 	m.ensureAppOrgLocked(&app)
+	m.ensureServiceAddressIndexLocked(&app)
 	m.apps[app.ID] = app
 	return app, nil
 }
@@ -4270,6 +4293,7 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 		return App{}, err
 	}
 	m.ensureAppOrgLocked(&app)
+	m.ensureServiceAddressIndexLocked(&app)
 	m.apps[app.ID] = app
 	return app, nil
 }
@@ -6357,6 +6381,7 @@ func (m *MemStore) restoreAppLocked(id string, limits api.Limits) (App, error) {
 	if err := m.checkServiceCapacityAppLocked(a); err != nil {
 		return App{}, err
 	}
+	m.ensureServiceAddressIndexLocked(&a)
 	m.apps[id] = a
 	delete(m.appDeletionClaims, id)
 	for cronID, cron := range m.crons {
@@ -7082,6 +7107,9 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 	app, ok := m.apps[d.AppID]
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
+	}
+	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
+		return Deployment{}, 0, err
 	}
 	if d.ID != "" {
 		if _, exists := m.deployments[d.ID]; exists {
@@ -8518,6 +8546,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
+		return err
 	}
 	proposal := d
 	proposal.Status = DeployLive
@@ -21536,6 +21567,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		}
 	}
 	delete(m.accounts, id)
+	delete(m.serviceAddressCursors, id)
 	return nil
 }
 

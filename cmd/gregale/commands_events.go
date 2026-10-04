@@ -190,7 +190,7 @@ func cmdEventsPreview(args []string) int {
 		_, _ = fmt.Fprintln(osStdout, "(no enabled subscriptions match this source and type)")
 		return 0
 	}
-	_, _ = fmt.Fprintln(osStdout, "APP\tSUBSCRIPTION\tRESULT\tFILTER")
+	_, _ = fmt.Fprintln(osStdout, "APP\tSUBSCRIPTION\tWORKFLOW\tRESULT\tFILTER")
 	for _, subscription := range resp.Matches {
 		writeEventPreviewSubscription(subscription)
 	}
@@ -208,7 +208,7 @@ func writeEventPreviewSubscription(subscription api.EventPreviewSubscription) {
 	if filter == "" {
 		filter = "{}"
 	}
-	_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\n", subscription.AppSlug, subscription.SubscriptionID, subscription.Reason, filter)
+	_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\n", subscription.AppSlug, subscription.SubscriptionID, subscription.WorkflowName, subscription.Reason, filter)
 }
 
 // cmdEventsDeliveries implements `gregale events deliveries <app>`. It is a

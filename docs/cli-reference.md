@@ -2341,6 +2341,16 @@ Manage durable execution workflows
 
 List workflow runs for an app
 
+### workflows schedules
+
+Inspect recurring workflow schedules and their latest admission
+
+`gregale workflows schedules --app <SLUG>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | application slug | required |
+
 ### workflows run
 
 Trigger a new workflow run

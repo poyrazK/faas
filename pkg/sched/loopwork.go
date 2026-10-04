@@ -54,6 +54,7 @@ const (
 	workJobDispatch          workKind = "job_dispatch"
 	workPrimeRecovery        workKind = "prime_recovery"
 	workWorkflowDispatch     workKind = "workflow_dispatch"
+	workWorkflowSchedules    workKind = "workflow_schedules"
 	workTriggerDispatch      workKind = "trigger_dispatch"
 	workEventFanout          workKind = "event_fanout"
 )
@@ -62,7 +63,7 @@ const (
 var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
-	workWorkflowDispatch, workTriggerDispatch, workEventFanout,
+	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workEventFanout,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -110,6 +111,7 @@ var workSpecs = map[workKind]workSpec{
 	workJobDispatch:          {slots: 1, overflow: overflowDrop},
 	workPrimeRecovery:        {slots: 1, overflow: overflowDrop},
 	workWorkflowDispatch:     {slots: 4, overflow: overflowDrop},
+	workWorkflowSchedules:    {slots: 1, overflow: overflowDrop},
 	workTriggerDispatch:      {slots: 1, overflow: overflowDrop},
 	workEventFanout:          {slots: 1, overflow: overflowDrop},
 }

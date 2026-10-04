@@ -15,7 +15,8 @@ import (
 )
 
 type Config struct {
-	ListenAddr string `toml:"listen_addr"`
+	WorkflowOutboundEnabled bool   `toml:"workflow_outbound_enabled"`
+	ListenAddr              string `toml:"listen_addr"`
 	// MetricsAddr is the private bind address for the operator-only
 	// Prometheus endpoint. Keep it loopback unless a firewall explicitly
 	// restricts the scrape network.
