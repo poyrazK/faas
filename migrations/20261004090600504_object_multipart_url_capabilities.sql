@@ -29,8 +29,10 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN RETURN false;
 END $$;
 
-ALTER TABLE object_storage_s3_credentials DROP CONSTRAINT object_url_credential_shape,
-ADD CONSTRAINT object_url_credential_shape CHECK (
+ALTER TABLE object_storage_s3_credentials DROP CONSTRAINT IF EXISTS object_url_credential_shape;
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_storage_s3_credentials'::regclass AND conname='object_url_credential_shape') THEN
+  ALTER TABLE object_storage_s3_credentials ADD CONSTRAINT object_url_credential_shape CHECK (
   (url_request IS NULL AND url_api_key_id IS NULL AND url_expires_at IS NULL AND url_receipt_id IS NULL) OR
   (url_request IS NOT NULL AND url_expires_at IS NOT NULL AND
    url_expires_at>created_at AND url_expires_at<=created_at+interval '15 minutes' AND
@@ -38,13 +40,18 @@ ADD CONSTRAINT object_url_credential_shape CHECK (
    ((url_request->>'method'='PUT' AND permission='write' AND ((NOT (url_request ? 'multipart') AND url_receipt_id IS NOT NULL) OR (url_request ? 'multipart' AND url_receipt_id IS NULL))) OR
     (url_request->>'method' IN ('GET','HEAD') AND permission='read' AND url_receipt_id IS NULL)))
  );
+ END IF;
+END $$;
 
-ALTER TABLE object_storage_multipart_part_grants
- DROP CONSTRAINT object_storage_multipart_part_grants_max_bytes_check,
- ADD CONSTRAINT object_storage_multipart_part_grants_max_bytes_check CHECK(max_bytes BETWEEN 0 AND 5368709120),
- ADD COLUMN url_credential_id uuid CHECK(url_credential_id IS NULL OR url_credential_id<>'00000000-0000-0000-0000-000000000000'::uuid);
+ALTER TABLE object_storage_multipart_part_grants DROP CONSTRAINT IF EXISTS object_storage_multipart_part_grants_max_bytes_check;
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_storage_multipart_part_grants'::regclass AND conname='object_storage_multipart_part_grants_max_bytes_check') THEN
+  ALTER TABLE object_storage_multipart_part_grants ADD CONSTRAINT object_storage_multipart_part_grants_max_bytes_check CHECK(max_bytes BETWEEN 0 AND 5368709120);
+ END IF;
+END $$;
+ALTER TABLE object_storage_multipart_part_grants ADD COLUMN IF NOT EXISTS url_credential_id uuid CHECK(url_credential_id IS NULL OR url_credential_id<>'00000000-0000-0000-0000-000000000000'::uuid);
 
-CREATE FUNCTION object_url_multipart_matches(c object_storage_s3_credentials,u object_storage_multipart_uploads) RETURNS boolean LANGUAGE sql VOLATILE AS $$
+CREATE OR REPLACE FUNCTION object_url_multipart_matches(c object_storage_s3_credentials,u object_storage_multipart_uploads) RETURNS boolean LANGUAGE sql VOLATILE AS $$
  SELECT c.url_request ? 'multipart' AND c.permission='write' AND c.status='active' AND
  c.account_id=u.account_id AND c.bucket_id=u.bucket_id AND
  c.url_request->>'key'=u.object_key AND c.url_request->'multipart'->>'upload_id'=u.id::text AND
@@ -54,7 +61,7 @@ CREATE FUNCTION object_url_multipart_matches(c object_storage_s3_credentials,u o
  object_url_issuer_live(c.account_id,c.bucket_id,c.url_api_key_id,c.permission,c.url_expires_at);
 $$;
 
-CREATE FUNCTION protect_object_multipart_url_credential() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_multipart_url_credential() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE u object_storage_multipart_uploads;
 BEGIN
  IF NEW.url_request ? 'multipart' THEN
@@ -65,9 +72,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_multipart_url_credential_bound ON object_storage_s3_credentials;
 CREATE TRIGGER object_multipart_url_credential_bound BEFORE INSERT ON object_storage_s3_credentials FOR EACH ROW EXECUTE FUNCTION protect_object_multipart_url_credential();
 
-CREATE FUNCTION protect_object_multipart_url_part() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_multipart_url_part() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE u object_storage_multipart_uploads; c object_storage_s3_credentials; dispatch boolean;
 BEGIN
  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.upload_id FOR UPDATE;
@@ -103,9 +111,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_multipart_url_part_bound ON object_storage_multipart_part_grants;
 CREATE TRIGGER object_multipart_url_part_bound BEFORE INSERT OR UPDATE ON object_storage_multipart_part_grants FOR EACH ROW EXECUTE FUNCTION protect_object_multipart_url_part();
 
-CREATE FUNCTION protect_object_multipart_url_transition() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_multipart_url_transition() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.part_count>0 AND NEW.state IN ('completing','completing_conditional','completed','aborted') AND
   EXISTS(SELECT 1 FROM object_storage_multipart_part_grants WHERE upload_id=NEW.id AND transfer_token IS NOT NULL AND unsafe_until>clock_timestamp()) THEN
@@ -113,6 +122,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_multipart_url_transition_bound ON object_storage_multipart_uploads;
 CREATE TRIGGER object_multipart_url_transition_bound BEFORE UPDATE ON object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION protect_object_multipart_url_transition();
 -- +goose StatementEnd
 

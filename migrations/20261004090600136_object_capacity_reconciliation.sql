@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE object_storage_write_admissions (
+CREATE TABLE IF NOT EXISTS object_storage_write_admissions (
  id uuid PRIMARY KEY, bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
  key_hash text NOT NULL CHECK (length(key_hash)=64),
  kind text NOT NULL CHECK (kind IN ('proxy','multipart')),
@@ -9,11 +9,17 @@ CREATE TABLE object_storage_write_admissions (
  CHECK ((kind='multipart')=(multipart_upload_id IS NOT NULL)),
  CHECK ((state='settled')=(settled_at IS NOT NULL))
 );
-CREATE INDEX object_write_admissions_bucket_idx ON object_storage_write_admissions(bucket_id);
-ALTER TABLE object_storage_key_grants ADD COLUMN reclaimable boolean NOT NULL DEFAULT false,
- ADD COLUMN last_write_id uuid REFERENCES object_storage_write_admissions(id),
- ADD CONSTRAINT object_grant_tracked CHECK (NOT reclaimable OR last_write_id IS NOT NULL);
-CREATE TABLE object_storage_capacity_reconciliations (
+CREATE INDEX IF NOT EXISTS object_write_admissions_bucket_idx ON object_storage_write_admissions(bucket_id);
+ALTER TABLE object_storage_key_grants ADD COLUMN IF NOT EXISTS reclaimable boolean NOT NULL DEFAULT false;
+ALTER TABLE object_storage_key_grants ADD COLUMN IF NOT EXISTS last_write_id uuid REFERENCES object_storage_write_admissions(id);
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_storage_key_grants'::regclass AND conname='object_grant_tracked') THEN
+  ALTER TABLE object_storage_key_grants ADD CONSTRAINT object_grant_tracked CHECK (NOT reclaimable OR last_write_id IS NOT NULL);
+ END IF;
+END $$;
+-- +goose StatementEnd
+CREATE TABLE IF NOT EXISTS object_storage_capacity_reconciliations (
  id uuid PRIMARY KEY, bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
  state text NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting','scanning','completed','cancelled','blocked','failed')),
  lease_token text NOT NULL DEFAULT '', lease_until timestamptz, retry_at timestamptz NOT NULL DEFAULT now(), deadline_at timestamptz NOT NULL,
@@ -27,11 +33,11 @@ CREATE TABLE object_storage_capacity_reconciliations (
  CHECK ((state='scanning')=(lease_until IS NOT NULL)),
  CHECK ((state IN ('completed','cancelled','blocked','failed'))=(finished_at IS NOT NULL))
 );
-CREATE UNIQUE INDEX object_capacity_active_bucket_idx ON object_storage_capacity_reconciliations(bucket_id) WHERE state IN ('waiting','scanning');
-CREATE INDEX object_capacity_due_idx ON object_storage_capacity_reconciliations(retry_at,id) WHERE state IN ('waiting','scanning');
+CREATE UNIQUE INDEX IF NOT EXISTS object_capacity_active_bucket_idx ON object_storage_capacity_reconciliations(bucket_id) WHERE state IN ('waiting','scanning');
+CREATE INDEX IF NOT EXISTS object_capacity_due_idx ON object_storage_capacity_reconciliations(retry_at,id) WHERE state IN ('waiting','scanning');
 -- Older apid replicas must neither bypass the write fence nor upgrade a legacy grant.
 -- +goose StatementBegin
-CREATE FUNCTION fence_object_capacity_write() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION fence_object_capacity_write() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE bid uuid;
 BEGIN
  IF TG_TABLE_NAME='object_buckets' THEN
@@ -55,8 +61,11 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS object_grant_capacity_fence ON object_storage_key_grants;
 CREATE TRIGGER object_grant_capacity_fence BEFORE INSERT OR UPDATE ON object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION fence_object_capacity_write();
+DROP TRIGGER IF EXISTS object_multipart_capacity_fence ON object_storage_multipart_uploads;
 CREATE TRIGGER object_multipart_capacity_fence BEFORE INSERT ON object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION fence_object_capacity_write();
+DROP TRIGGER IF EXISTS object_bucket_capacity_fence ON object_buckets;
 CREATE TRIGGER object_bucket_capacity_fence BEFORE UPDATE ON object_buckets FOR EACH ROW EXECUTE FUNCTION fence_object_capacity_write();
 
 -- +goose Down

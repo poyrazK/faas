@@ -74,6 +74,7 @@ func bucketDefaultEncryptionSelection(args []string) (api.ObjectEncryption, erro
 	if len(args) < 3 {
 		return e, fmt.Errorf("invalid encryption arguments")
 	}
+	options := args[3:]
 	switch args[0] {
 	case "status", "clear":
 		if len(args) == 3 {
@@ -84,15 +85,15 @@ func bucketDefaultEncryptionSelection(args []string) (api.ObjectEncryption, erro
 			return api.ObjectEncryption{Algorithm: "AES256"}, nil
 		}
 	case "aws:kms", "aws:kms:dsse":
-		if len(args) != 4 && len(args) != 5 {
+		if len(options) != 1 && len(options) != 2 {
 			return e, fmt.Errorf("invalid encryption arguments")
 		}
-		e.Algorithm, e.KeyID = args[0], args[3]
-		if len(args) == 5 {
-			if e.Algorithm != "aws:kms" || args[4] != "true" && args[4] != "false" {
+		e.Algorithm, e.KeyID = args[0], options[0]
+		if len(options) == 2 {
+			if e.Algorithm != "aws:kms" || options[1] != "true" && options[1] != "false" {
 				return e, fmt.Errorf("invalid bucket key option")
 			}
-			value := args[4] == "true"
+			value := options[1] == "true"
 			e.BucketKeyEnabled = &value
 		}
 		if e.Valid() {

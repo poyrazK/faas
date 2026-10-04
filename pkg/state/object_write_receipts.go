@@ -63,6 +63,10 @@ func parseObjectWriteReceiptCursor(bucket, status, cursor string) (objectWriteRe
 }
 
 func objectWriteReceiptPage(rows []ObjectUploadCompletion, bucket, status string, limit int) api.ObjectWriteReceiptList {
+	// Keep the allocation bounded here as well as at the public store entry.
+	if limit < 1 || limit > api.ObjectWriteReceiptPageMax {
+		return api.ObjectWriteReceiptList{Items: []api.ObjectWriteReceipt{}}
+	}
 	page := api.ObjectWriteReceiptList{Items: make([]api.ObjectWriteReceipt, 0, min(limit, len(rows)))}
 	for _, c := range rows[:min(limit, len(rows))] {
 		page.Items = append(page.Items, ViewObjectWriteReceipt(c))

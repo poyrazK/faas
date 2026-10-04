@@ -5,22 +5,23 @@
 -- Retain published identities after revocation so old prepared work cannot be
 -- revived by an older writer that reuses an identity. Account deletion owns
 -- cleanup; ordinary credential and bucket deletion must preserve this history.
-CREATE TABLE object_s3_copy_source_epochs (
+CREATE TABLE IF NOT EXISTS object_s3_copy_source_epochs (
  id uuid PRIMARY KEY CHECK(id<>'00000000-0000-0000-0000-000000000000'),
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX object_s3_copy_source_epochs_account ON object_s3_copy_source_epochs(account_id);
-CREATE FUNCTION protect_object_s3_copy_source_epoch() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE INDEX IF NOT EXISTS object_s3_copy_source_epochs_account ON object_s3_copy_source_epochs(account_id);
+CREATE OR REPLACE FUNCTION protect_object_s3_copy_source_epoch() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='UPDATE' OR EXISTS(SELECT 1 FROM accounts WHERE id=OLD.account_id) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Published copy source identities are immutable';
  END IF;
  RETURN OLD;
 END $$;
+DROP TRIGGER IF EXISTS object_copy_source_epoch_bound ON object_s3_copy_source_epochs;
 CREATE TRIGGER object_copy_source_epoch_bound BEFORE UPDATE OR DELETE ON object_s3_copy_source_epochs
  FOR EACH ROW EXECUTE FUNCTION protect_object_s3_copy_source_epoch();
-CREATE TABLE object_s3_copy_source_grants (
+CREATE TABLE IF NOT EXISTS object_s3_copy_source_grants (
  id uuid NOT NULL UNIQUE CHECK(id<>'00000000-0000-0000-0000-000000000000'),
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  credential_id uuid NOT NULL REFERENCES object_storage_s3_credentials(id) ON DELETE CASCADE,
@@ -30,7 +31,7 @@ CREATE TABLE object_s3_copy_source_grants (
  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY(credential_id,source_bucket_id)
 );
-CREATE FUNCTION protect_object_s3_copy_source_grant() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_s3_copy_source_grant() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE c object_storage_s3_credentials; d object_buckets; s object_buckets;
 BEGIN
  SELECT * INTO c FROM object_storage_s3_credentials WHERE id=NEW.credential_id FOR NO KEY UPDATE;
@@ -57,9 +58,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_copy_source_grant_bound ON object_s3_copy_source_grants;
 CREATE TRIGGER object_copy_source_grant_bound BEFORE INSERT OR UPDATE ON object_s3_copy_source_grants
  FOR EACH ROW EXECUTE FUNCTION protect_object_s3_copy_source_grant();
-CREATE FUNCTION record_object_s3_copy_source_epoch() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION record_object_s3_copy_source_epoch() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  -- AFTER runs only for the winning insert/update of an upsert. An idempotent
  -- update of the current identity is valid; every new identity is single use.
@@ -71,10 +73,11 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_copy_source_epoch_recorded ON object_s3_copy_source_grants;
 CREATE TRIGGER object_copy_source_epoch_recorded AFTER INSERT OR UPDATE ON object_s3_copy_source_grants
  FOR EACH ROW EXECUTE FUNCTION record_object_s3_copy_source_epoch();
 
-CREATE FUNCTION assert_object_copy_source_authority(a uuid,destination uuid,subject text,source uuid,key text,epoch uuid)
+CREATE OR REPLACE FUNCTION assert_object_copy_source_authority(a uuid,destination uuid,subject text,source uuid,key text,epoch uuid)
  RETURNS void LANGUAGE plpgsql AS $$
 DECLARE c object_storage_s3_credentials; p object_storage_s3_credentials; g object_s3_copy_source_grants;
 BEGIN
@@ -99,15 +102,18 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Copy source authority changed';
  END IF;
 END $$;
-ALTER TABLE object_upload_completions
- ADD COLUMN source_bucket_id uuid,
- ADD COLUMN source_copy_grant_id uuid,
- ADD CONSTRAINT object_copy_source_provenance CHECK(
+ALTER TABLE object_upload_completions ADD COLUMN IF NOT EXISTS source_bucket_id uuid;
+ALTER TABLE object_upload_completions ADD COLUMN IF NOT EXISTS source_copy_grant_id uuid;
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_upload_completions'::regclass AND conname='object_copy_source_provenance') THEN
+  ALTER TABLE object_upload_completions ADD CONSTRAINT object_copy_source_provenance CHECK(
   (source_bucket_id IS NULL AND source_copy_grant_id IS NULL) OR
   (source_bucket_id IS NOT NULL AND source_copy_grant_id IS NOT NULL AND origin='gateway_copy' AND
    source_bucket_id<>bucket_id AND source_bucket_id<>'00000000-0000-0000-0000-000000000000' AND
    source_copy_grant_id<>'00000000-0000-0000-0000-000000000000'));
-CREATE FUNCTION protect_object_copy_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+ END IF;
+END $$;
+CREATE OR REPLACE FUNCTION protect_object_copy_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='UPDATE' AND OLD.source_bucket_id IS NOT NULL AND
   (NEW.id,NEW.account_id,NEW.app_id,NEW.bucket_id,NEW.subject_id,NEW.origin,NEW.object_key,NEW.bytes) IS DISTINCT FROM
@@ -125,18 +131,22 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_copy_receipt_bound ON object_upload_completions;
 CREATE TRIGGER object_copy_receipt_bound BEFORE INSERT OR UPDATE ON object_upload_completions
  FOR EACH ROW EXECUTE FUNCTION protect_object_copy_receipt();
 
-ALTER TABLE object_storage_multipart_part_grants
- ADD COLUMN source_bucket_id uuid,
- ADD COLUMN source_copy_grant_id uuid,
- ADD COLUMN source_subject_id text NOT NULL DEFAULT '',
- ADD COLUMN source_key text NOT NULL DEFAULT '',
- ADD CONSTRAINT object_multipart_copy_source_provenance CHECK(
+ALTER TABLE object_storage_multipart_part_grants ADD COLUMN IF NOT EXISTS source_bucket_id uuid;
+ALTER TABLE object_storage_multipart_part_grants ADD COLUMN IF NOT EXISTS source_copy_grant_id uuid;
+ALTER TABLE object_storage_multipart_part_grants ADD COLUMN IF NOT EXISTS source_subject_id text NOT NULL DEFAULT '';
+ALTER TABLE object_storage_multipart_part_grants ADD COLUMN IF NOT EXISTS source_key text NOT NULL DEFAULT '';
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_storage_multipart_part_grants'::regclass AND conname='object_multipart_copy_source_provenance') THEN
+  ALTER TABLE object_storage_multipart_part_grants ADD CONSTRAINT object_multipart_copy_source_provenance CHECK(
  (source_bucket_id IS NULL AND source_copy_grant_id IS NULL AND source_subject_id='' AND source_key='') OR
  (source_bucket_id IS NOT NULL AND source_copy_grant_id IS NOT NULL AND source_subject_id<>'' AND source_key<>''));
-CREATE FUNCTION protect_object_multipart_copy_source() RETURNS trigger LANGUAGE plpgsql AS $$
+ END IF;
+END $$;
+CREATE OR REPLACE FUNCTION protect_object_multipart_copy_source() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE u object_storage_multipart_uploads;
 BEGIN
  IF TG_OP='UPDATE' AND
@@ -155,6 +165,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_multipart_copy_source_bound ON object_storage_multipart_part_grants;
 CREATE TRIGGER object_multipart_copy_source_bound BEFORE INSERT OR UPDATE ON object_storage_multipart_part_grants
  FOR EACH ROW EXECUTE FUNCTION protect_object_multipart_copy_source();
 -- +goose StatementEnd

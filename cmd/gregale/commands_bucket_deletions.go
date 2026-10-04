@@ -19,14 +19,15 @@ func cmdBucketDeletions(args []string) int {
 		PrintUsage(osStderr, usage, "bucket")
 		return 1
 	}
-	id := args[len(args)-1]
+	id := args[3]
 	selector := ""
 	key := ""
 	if action == "start" {
+		request := args[4:]
 		key = args[3]
-		id = args[4]
-		if len(args) == 6 {
-			selector = args[5]
+		id = request[0]
+		if len(request) == 2 {
+			selector = request[1]
 			if !validDeletionVersionSelector(selector) {
 				PrintUsage(osStderr, usage, "bucket")
 				return 1

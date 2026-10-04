@@ -1,7 +1,12 @@
 -- +goose Up
-ALTER TABLE object_upload_completions
- ADD COLUMN origin text NOT NULL DEFAULT 'route' CHECK (origin IN ('route','gateway')),
- ADD CONSTRAINT object_upload_gateway_receipt CHECK (origin<>'gateway' OR (route_id IS NULL AND idempotency_key='' AND request_fingerprint='' AND write_phase<>'untracked'));
+ALTER TABLE object_upload_completions ADD COLUMN IF NOT EXISTS origin text NOT NULL DEFAULT 'route' CHECK (origin IN ('route','gateway'));
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_upload_completions'::regclass AND conname='object_upload_gateway_receipt') THEN
+  ALTER TABLE object_upload_completions ADD CONSTRAINT object_upload_gateway_receipt CHECK (origin<>'gateway' OR (route_id IS NULL AND idempotency_key='' AND request_fingerprint='' AND write_phase<>'untracked'));
+ END IF;
+END $$;
+-- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin

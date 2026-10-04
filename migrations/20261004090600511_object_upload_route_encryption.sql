@@ -2,10 +2,10 @@
 
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE object_upload_routes ADD COLUMN encryption_snapshot jsonb NOT NULL DEFAULT '{}'
+ALTER TABLE object_upload_routes ADD COLUMN IF NOT EXISTS encryption_snapshot jsonb NOT NULL DEFAULT '{}'
  CHECK (valid_object_encryption_snapshot(encryption_snapshot,account_id));
 
-CREATE FUNCTION protect_object_route_encryption_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_route_encryption_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE r object_upload_routes;
 BEGIN
  IF NEW.route_id IS NULL THEN RETURN NEW; END IF;
@@ -19,6 +19,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_route_encryption_receipt_bound ON object_upload_completions;
 CREATE TRIGGER object_route_encryption_receipt_bound BEFORE INSERT ON object_upload_completions
  FOR EACH ROW EXECUTE FUNCTION protect_object_route_encryption_receipt();
 -- +goose StatementEnd

@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE object_bucket_encryption (
+CREATE TABLE IF NOT EXISTS object_bucket_encryption (
  bucket_id uuid PRIMARY KEY REFERENCES object_buckets(id) ON DELETE CASCADE,
  account_id uuid NOT NULL, app_id uuid NOT NULL,
  state text NOT NULL CHECK (state IN ('waiting','applying','ready')),
@@ -19,9 +19,9 @@ CREATE TABLE object_bucket_encryption (
   (state<>'applying' AND lease_token='' AND lease_until IS NULL)),
  CHECK (state<>'ready' OR encryption_snapshot=desired_snapshot)
 );
-CREATE INDEX object_bucket_encryption_due ON object_bucket_encryption(retry_at,bucket_id) WHERE state<>'ready';
+CREATE INDEX IF NOT EXISTS object_bucket_encryption_due ON object_bucket_encryption(retry_at,bucket_id) WHERE state<>'ready';
 
-CREATE FUNCTION protect_object_bucket_encryption() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_bucket_encryption() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE b object_buckets;
 BEGIN
  SELECT * INTO b FROM object_buckets WHERE id=coalesce(NEW.bucket_id,OLD.bucket_id);
@@ -57,15 +57,16 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_bucket_encryption_immutable ON object_bucket_encryption;
 CREATE TRIGGER object_bucket_encryption_immutable BEFORE INSERT OR UPDATE OR DELETE ON object_bucket_encryption
  FOR EACH ROW EXECUTE FUNCTION protect_object_bucket_encryption();
 
-ALTER TABLE object_upload_completions ADD COLUMN encryption_default_revision bigint NOT NULL DEFAULT 0
+ALTER TABLE object_upload_completions ADD COLUMN IF NOT EXISTS encryption_default_revision bigint NOT NULL DEFAULT 0
  CHECK (encryption_default_revision BETWEEN 0 AND 9007199254740991 AND (encryption_default_revision=0 OR encryption_snapshot<>'{}'));
-ALTER TABLE object_storage_multipart_uploads ADD COLUMN encryption_default_revision bigint NOT NULL DEFAULT 0
+ALTER TABLE object_storage_multipart_uploads ADD COLUMN IF NOT EXISTS encryption_default_revision bigint NOT NULL DEFAULT 0
  CHECK (encryption_default_revision BETWEEN 0 AND 9007199254740991 AND (encryption_default_revision=0 OR encryption_snapshot<>'{}'));
 
-CREATE FUNCTION require_object_bucket_default(bucket uuid, snapshot jsonb, revision bigint) RETURNS void LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION require_object_bucket_default(bucket uuid, snapshot jsonb, revision bigint) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE p object_bucket_encryption;
 BEGIN
  SELECT * INTO p FROM object_bucket_encryption WHERE bucket_id=bucket FOR SHARE;
@@ -75,7 +76,7 @@ BEGIN
  END IF;
 END $$;
 
-CREATE FUNCTION protect_object_default_snapshot() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_default_snapshot() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='UPDATE' THEN
   IF NEW.encryption_default_revision IS DISTINCT FROM OLD.encryption_default_revision THEN
@@ -90,12 +91,14 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_upload_default_bound ON object_upload_completions;
 CREATE TRIGGER object_upload_default_bound BEFORE INSERT OR UPDATE ON object_upload_completions
  FOR EACH ROW EXECUTE FUNCTION protect_object_default_snapshot();
+DROP TRIGGER IF EXISTS object_multipart_default_bound ON object_storage_multipart_uploads;
 CREATE TRIGGER object_multipart_default_bound BEFORE INSERT OR UPDATE ON object_storage_multipart_uploads
  FOR EACH ROW EXECUTE FUNCTION protect_object_default_snapshot();
 
-CREATE FUNCTION protect_object_default_legacy_write() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_default_legacy_write() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_TABLE_NAME='object_storage_key_grants' THEN
   IF NEW.last_write_id IS NULL THEN PERFORM require_object_bucket_default(NEW.bucket_id,'{}',0); END IF;
@@ -104,8 +107,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_default_key_grant_bound ON object_storage_key_grants;
 CREATE TRIGGER object_default_key_grant_bound BEFORE INSERT ON object_storage_key_grants
  FOR EACH ROW EXECUTE FUNCTION protect_object_default_legacy_write();
+DROP TRIGGER IF EXISTS object_default_write_admission_bound ON object_storage_write_admissions;
 CREATE TRIGGER object_default_write_admission_bound BEFORE INSERT ON object_storage_write_admissions
  FOR EACH ROW EXECUTE FUNCTION protect_object_default_legacy_write();
 
@@ -126,13 +131,14 @@ BEGIN
  RETURN NEW;
 END $$;
 
-CREATE FUNCTION protect_object_bucket_encryption_deletion() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_bucket_encryption_deletion() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.state<>OLD.state AND NEW.state='deleting' AND EXISTS(SELECT 1 FROM object_bucket_encryption WHERE bucket_id=OLD.id AND state<>'ready') THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_encryption_fenced',MESSAGE='Drain encryption configuration before deleting a bucket';
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_bucket_encryption_deletion_bound ON object_buckets;
 CREATE TRIGGER object_bucket_encryption_deletion_bound BEFORE UPDATE ON object_buckets
  FOR EACH ROW EXECUTE FUNCTION protect_object_bucket_encryption_deletion();
 -- +goose StatementEnd

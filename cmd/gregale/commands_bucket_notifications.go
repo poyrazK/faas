@@ -19,7 +19,7 @@ func cmdBucketNotifications(args []string) int {
 	in := api.ObjectBucketNotificationsRequest{}
 	if args[0] == "set" {
 		var err error
-		in, err = readBucketNotificationsFile(args[3])
+		in, err = readBucketNotificationsFile(args[len(args)-1])
 		if err != nil {
 			return printErr("Invalid notifications", err)
 		}

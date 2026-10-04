@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE object_version_references (
+CREATE TABLE IF NOT EXISTS object_version_references (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
  object_key text NOT NULL CHECK(octet_length(object_key) BETWEEN 1 AND 1024 AND object_key !~ '[\x01-\x1f\x7f]'),
@@ -8,9 +8,9 @@ CREATE TABLE object_version_references (
  created_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE(bucket_id,object_key,native_version_id)
 );
-CREATE INDEX object_version_references_observed_idx ON object_version_references(bucket_id) WHERE versions_observed;
+CREATE INDEX IF NOT EXISTS object_version_references_observed_idx ON object_version_references(bucket_id) WHERE versions_observed;
 -- +goose StatementBegin
-CREATE FUNCTION protect_object_version_reference() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_version_reference() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='DELETE' THEN
   IF EXISTS(SELECT 1 FROM object_buckets WHERE id=OLD.bucket_id) THEN
@@ -24,6 +24,7 @@ BEGIN
  NEW.versions_observed:=OLD.versions_observed OR NEW.versions_observed;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_version_reference_identity ON object_version_references;
 CREATE TRIGGER object_version_reference_identity BEFORE UPDATE OR DELETE ON object_version_references FOR EACH ROW EXECUTE FUNCTION protect_object_version_reference();
 CREATE OR REPLACE FUNCTION fence_object_version_reclamation() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE versioned boolean;

@@ -1,6 +1,7 @@
 package faas_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -46,18 +47,18 @@ func TestEncryptedUploadRouteClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	route, err := client.CreateObjectUploadRoute(t.Context(), "demo app", faas.CreateObjectUploadRouteRequest{Name: "files", BucketID: "bucket", Encryption: &faas.ObjectEncryption{Algorithm: "aws:kms", KeyID: key}})
+	route, err := client.CreateObjectUploadRoute(context.Background(), "demo app", faas.CreateObjectUploadRouteRequest{Name: "files", BucketID: "bucket", Encryption: &faas.ObjectEncryption{Algorithm: "aws:kms", KeyID: key}})
 	if err != nil || route.Encryption == nil || route.Encryption.KeyID != key {
 		t.Fatal(route, err)
 	}
-	list, err := client.ListObjectUploadRoutes(t.Context(), "demo app")
+	list, err := client.ListObjectUploadRoutes(context.Background(), "demo app")
 	if err != nil || len(list.Items) != 1 || list.Items[0].Encryption.KeyID != key {
 		t.Fatal(list, err)
 	}
-	if err = client.DeleteObjectUploadRoute(t.Context(), "demo app", "files"); err != nil {
+	if err = client.DeleteObjectUploadRoute(context.Background(), "demo app", "files"); err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := client.GetObjectWriteReceipt(t.Context(), "demo app", "bucket", "receipt")
+	receipt, err := client.GetObjectWriteReceipt(context.Background(), "demo app", "bucket", "receipt")
 	if err != nil || receipt.Encryption == nil || receipt.Encryption.KeyID != key {
 		t.Fatal("receipt lost owned encryption", receipt, err)
 	}

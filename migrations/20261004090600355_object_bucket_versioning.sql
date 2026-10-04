@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE object_bucket_versioning (
+CREATE TABLE IF NOT EXISTS object_bucket_versioning (
  bucket_id uuid PRIMARY KEY REFERENCES object_buckets(id) ON DELETE CASCADE,
  desired_status text NOT NULL DEFAULT '' CHECK(desired_status IN ('','Enabled','Suspended')),
  observed_status text NOT NULL DEFAULT '' CHECK(observed_status IN ('','Enabled','Suspended')),
@@ -22,10 +22,10 @@ CREATE TABLE object_bucket_versioning (
  CHECK(observed_status='' OR versions_required),
  CHECK(state<>'inventory' OR capacity_job_id IS NOT NULL)
 );
-CREATE INDEX object_bucket_versioning_due ON object_bucket_versioning(retry_at,bucket_id) WHERE state<>'ready';
+CREATE INDEX IF NOT EXISTS object_bucket_versioning_due ON object_bucket_versioning(retry_at,bucket_id) WHERE state<>'ready';
 
 -- +goose StatementBegin
-CREATE FUNCTION protect_object_bucket_versioning() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_bucket_versioning() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='UPDATE' THEN
   IF NEW.bucket_id<>OLD.bucket_id OR NEW.revision<OLD.revision OR NEW.revision>OLD.revision+1
@@ -42,9 +42,10 @@ BEGIN
  ) THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Versioning cutover requires propagated configuration and verified version inventory'; END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_bucket_versioning_protected ON object_bucket_versioning;
 CREATE TRIGGER object_bucket_versioning_protected BEFORE INSERT OR UPDATE ON object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION protect_object_bucket_versioning();
 
-CREATE FUNCTION fence_object_versioning_inventory() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION fence_object_versioning_inventory() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE bid uuid; jid uuid;
 BEGIN
  IF TG_TABLE_NAME='object_storage_capacity_reconciliations' THEN
@@ -58,7 +59,9 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_versioning_scan_fence ON object_storage_capacity_reconciliations;
 CREATE TRIGGER object_versioning_scan_fence BEFORE UPDATE ON object_storage_capacity_reconciliations FOR EACH ROW EXECUTE FUNCTION fence_object_versioning_inventory();
+DROP TRIGGER IF EXISTS object_versioning_rebase_fence ON object_storage_bucket_usage;
 CREATE TRIGGER object_versioning_rebase_fence BEFORE UPDATE OF baseline_bytes,baseline_keys,observed_bytes,observed_keys,observed_at,inventory_scope ON object_storage_bucket_usage FOR EACH ROW EXECUTE FUNCTION fence_object_versioning_inventory();
 CREATE OR REPLACE FUNCTION fence_object_capacity_write() RETURNS trigger
     LANGUAGE plpgsql

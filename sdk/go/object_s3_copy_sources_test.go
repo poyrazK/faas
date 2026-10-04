@@ -1,6 +1,7 @@
 package faas_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -46,15 +47,15 @@ func TestCopySourceClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	grant, err := c.SetObjectS3CopySource(t.Context(), "demo/x", "bucket/x", "credential/x", "source/x", faas.SetObjectS3CopySourceRequest{Prefix: "allowed/"})
+	grant, err := c.SetObjectS3CopySource(context.Background(), "demo/x", "bucket/x", "credential/x", "source/x", faas.SetObjectS3CopySourceRequest{Prefix: "allowed/"})
 	if err != nil || grant.SourceBucketID != "source/x" {
 		t.Fatal(grant, err)
 	}
-	list, err := c.ListObjectS3CopySources(t.Context(), "demo/x", "bucket/x", "credential/x")
+	list, err := c.ListObjectS3CopySources(context.Background(), "demo/x", "bucket/x", "credential/x")
 	if err != nil || len(list.Items) != 1 || list.Items[0] != grant {
 		t.Fatal(list, err)
 	}
-	if err = c.DeleteObjectS3CopySource(t.Context(), "demo/x", "bucket/x", "credential/x", "source/x"); err != nil {
+	if err = c.DeleteObjectS3CopySource(context.Background(), "demo/x", "bucket/x", "credential/x", "source/x"); err != nil {
 		t.Fatal(err)
 	}
 	if fmt.Sprint(calls) != "[PUT GET DELETE]" {

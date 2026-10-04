@@ -49,3 +49,24 @@ func TestObjectWriteReceiptCursorTiesAndLiveChanges(t *testing.T) {
 		}
 	}
 }
+
+func TestObjectWriteReceiptPageBounds(t *testing.T) {
+	rows := make([]ObjectUploadCompletion, api.ObjectWriteReceiptPageMax+1)
+	for i := range rows {
+		rows[i] = ObjectUploadCompletion{ID: uuid.NewString(), CreatedAt: time.Now().UTC()}
+	}
+	page := objectWriteReceiptPage(rows, "bucket", "all", api.ObjectWriteReceiptPageMax)
+	if len(page.Items) != api.ObjectWriteReceiptPageMax || cap(page.Items) > api.ObjectWriteReceiptPageMax {
+		t.Fatal("unbounded receipt page", len(page.Items), cap(page.Items))
+	}
+	cursor, err := parseObjectWriteReceiptCursor("bucket", "all", page.NextCursor)
+	if err != nil || cursor.ID != rows[api.ObjectWriteReceiptPageMax-1].ID {
+		t.Fatal("maximum page lost continuation", cursor, err)
+	}
+	for _, limit := range []int{-1, 0, api.ObjectWriteReceiptPageMax + 1, int(^uint(0) >> 1)} {
+		got := objectWriteReceiptPage(rows, "bucket", "all", limit)
+		if got.Items == nil || len(got.Items) != 0 || got.NextCursor != "" {
+			t.Fatal("invalid internal page limit accepted", limit, got)
+		}
+	}
+}

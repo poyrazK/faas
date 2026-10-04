@@ -1,18 +1,48 @@
 -- +goose Up
-ALTER TABLE object_storage_write_admissions ADD COLUMN route_receipt boolean NOT NULL DEFAULT false, ADD CONSTRAINT object_write_route_proxy CHECK (NOT route_receipt OR kind='proxy');
-ALTER TABLE object_upload_completions
- ADD COLUMN write_phase text NOT NULL DEFAULT 'untracked' CHECK (write_phase IN ('untracked','prepared','dispatched','settled')),
- ADD COLUMN recovery_token text NOT NULL DEFAULT '',
- ADD COLUMN recovery_lease_until timestamptz,
- ADD COLUMN recovery_retry_at timestamptz NOT NULL DEFAULT now(),
- ADD CONSTRAINT object_upload_tracked_status CHECK (write_phase='untracked' OR ((write_phase='settled')=(status IN ('completed','failed')) AND status<>'rejected')),
- ADD CONSTRAINT object_upload_recovery_lease CHECK ((recovery_token='')=(recovery_lease_until IS NULL)),
- ADD CONSTRAINT object_upload_recovery_pending CHECK (recovery_lease_until IS NULL OR write_phase='dispatched');
+ALTER TABLE object_storage_write_admissions ADD COLUMN IF NOT EXISTS route_receipt boolean NOT NULL DEFAULT false;
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_storage_write_admissions'::regclass AND conname='object_write_route_proxy') THEN
+  ALTER TABLE object_storage_write_admissions ADD CONSTRAINT object_write_route_proxy CHECK (NOT route_receipt OR kind='proxy');
+ END IF;
+END $$;
+-- +goose StatementEnd
+ALTER TABLE object_upload_completions ADD COLUMN IF NOT EXISTS write_phase text NOT NULL DEFAULT 'untracked' CHECK (write_phase IN ('untracked','prepared','dispatched','settled'));
+ALTER TABLE object_upload_completions ADD COLUMN IF NOT EXISTS recovery_token text NOT NULL DEFAULT '';
+ALTER TABLE object_upload_completions ADD COLUMN IF NOT EXISTS recovery_lease_until timestamptz;
+ALTER TABLE object_upload_completions ADD COLUMN IF NOT EXISTS recovery_retry_at timestamptz NOT NULL DEFAULT now();
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_upload_completions'::regclass AND conname='object_upload_tracked_status') THEN
+  ALTER TABLE object_upload_completions ADD CONSTRAINT object_upload_tracked_status CHECK (write_phase='untracked' OR ((write_phase='settled')=(status IN ('completed','failed')) AND status<>'rejected'));
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_upload_completions'::regclass AND conname='object_upload_recovery_lease') THEN
+  ALTER TABLE object_upload_completions ADD CONSTRAINT object_upload_recovery_lease CHECK ((recovery_token='')=(recovery_lease_until IS NULL));
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_upload_completions'::regclass AND conname='object_upload_recovery_pending') THEN
+  ALTER TABLE object_upload_completions ADD CONSTRAINT object_upload_recovery_pending CHECK (recovery_lease_until IS NULL OR write_phase='dispatched');
+ END IF;
+END $$;
+-- +goose StatementEnd
 -- Preserve recovery records when a route is deleted. Bucket/account deletion still cascades.
-ALTER TABLE object_upload_completions DROP CONSTRAINT object_upload_completions_route_id_fkey;
+ALTER TABLE object_upload_completions DROP CONSTRAINT IF EXISTS object_upload_completions_route_id_fkey;
 ALTER TABLE object_upload_completions ALTER COLUMN route_id DROP NOT NULL;
-ALTER TABLE object_upload_completions ADD CONSTRAINT object_upload_completions_route_id_fkey FOREIGN KEY (route_id) REFERENCES object_upload_routes(id) ON DELETE SET NULL;
-CREATE INDEX object_upload_recovery_due_idx ON object_upload_completions(recovery_retry_at,id) WHERE write_phase IN ('prepared','dispatched');
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_upload_completions'::regclass AND conname='object_upload_completions_route_id_fkey') THEN
+  ALTER TABLE object_upload_completions ADD CONSTRAINT object_upload_completions_route_id_fkey FOREIGN KEY (route_id) REFERENCES object_upload_routes(id) ON DELETE SET NULL;
+ END IF;
+END $$;
+-- +goose StatementEnd
+CREATE INDEX IF NOT EXISTS object_upload_recovery_due_idx ON object_upload_completions(recovery_retry_at,id) WHERE write_phase IN ('prepared','dispatched');
 
 -- +goose Down
 -- +goose StatementBegin

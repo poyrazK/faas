@@ -1,12 +1,12 @@
 -- +goose Up
-CREATE TABLE object_bucket_lifecycle (
+CREATE TABLE IF NOT EXISTS object_bucket_lifecycle (
  bucket_id uuid PRIMARY KEY REFERENCES object_buckets(id) ON DELETE CASCADE,
  revision bigint NOT NULL CHECK(revision>0),
  rules jsonb NOT NULL CHECK(jsonb_typeof(rules)='array' AND jsonb_array_length(rules)<=1000),
  next_scan_at timestamptz NOT NULL,
  updated_at timestamptz NOT NULL
 );
-CREATE TABLE object_lifecycle_scans (
+CREATE TABLE IF NOT EXISTS object_lifecycle_scans (
  id uuid PRIMARY KEY,
  bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
  revision bigint NOT NULL CHECK(revision>0),
@@ -26,11 +26,11 @@ CREATE TABLE object_lifecycle_scans (
  CHECK(updated_at>=created_at),
  CHECK(finished_at IS NULL OR finished_at>=created_at)
 );
-CREATE UNIQUE INDEX object_lifecycle_active_scan ON object_lifecycle_scans(bucket_id) WHERE state='scanning';
-CREATE INDEX object_lifecycle_scan_due ON object_lifecycle_scans(retry_at,bucket_id) WHERE state='scanning';
+CREATE UNIQUE INDEX IF NOT EXISTS object_lifecycle_active_scan ON object_lifecycle_scans(bucket_id) WHERE state='scanning';
+CREATE INDEX IF NOT EXISTS object_lifecycle_scan_due ON object_lifecycle_scans(retry_at,bucket_id) WHERE state='scanning';
 
 -- +goose StatementBegin
-CREATE FUNCTION protect_object_lifecycle_scan() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_lifecycle_scan() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='UPDATE' THEN
   IF NEW.id<>OLD.id OR NEW.bucket_id<>OLD.bucket_id OR NEW.revision<>OLD.revision
@@ -44,8 +44,9 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_lifecycle_scan_protected ON object_lifecycle_scans;
 CREATE TRIGGER object_lifecycle_scan_protected BEFORE UPDATE ON object_lifecycle_scans FOR EACH ROW EXECUTE FUNCTION protect_object_lifecycle_scan();
-CREATE FUNCTION protect_object_lifecycle_policy() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_lifecycle_policy() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.bucket_id<>OLD.bucket_id OR NEW.revision<OLD.revision OR NEW.revision>OLD.revision+1
   OR (NEW.rules<>OLD.rules AND NEW.revision<>OLD.revision+1)
@@ -54,6 +55,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_lifecycle_policy_protected ON object_bucket_lifecycle;
 CREATE TRIGGER object_lifecycle_policy_protected BEFORE UPDATE ON object_bucket_lifecycle FOR EACH ROW EXECUTE FUNCTION protect_object_lifecycle_policy();
 -- +goose StatementEnd
 

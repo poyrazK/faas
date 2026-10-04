@@ -27,8 +27,9 @@ func cmdBucketTags(args []string) int {
 		return 1
 	}
 	selector := ""
+	options := args[4:]
 	if len(args) == count+1 {
-		selector = args[count]
+		selector = options[len(options)-1]
 		if !validDeletionVersionSelector(selector) {
 			PrintUsage(osStderr, usage, "bucket")
 			return 1
@@ -36,7 +37,7 @@ func cmdBucketTags(args []string) int {
 	}
 	tags := map[string]string{}
 	if action == "set" {
-		tags, err = parseBucketTags(args[4])
+		tags, err = parseBucketTags(options[0])
 		if err != nil {
 			return printErr("Invalid tags", err)
 		}

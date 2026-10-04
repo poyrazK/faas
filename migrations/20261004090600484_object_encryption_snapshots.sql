@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-CREATE FUNCTION valid_object_encryption_snapshot(e jsonb, owner uuid) RETURNS boolean
+CREATE OR REPLACE FUNCTION valid_object_encryption_snapshot(e jsonb, owner uuid) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE STRICT AS $$
 DECLARE s jsonb; algorithm text; context_bytes bytea; context_doc json; entries bigint; distinct_entries bigint;
 BEGIN
@@ -46,28 +46,38 @@ EXCEPTION WHEN OTHERS THEN RETURN false;
 END $$;
 -- +goose StatementEnd
 
-ALTER TABLE object_upload_completions
- ADD COLUMN encryption_snapshot jsonb NOT NULL DEFAULT '{}' CHECK (valid_object_encryption_snapshot(encryption_snapshot,account_id)),
- ADD COLUMN encryption_dispatched boolean NOT NULL DEFAULT false,
- ADD COLUMN encryption_verified boolean NOT NULL DEFAULT false,
- ADD CONSTRAINT object_upload_encryption_phase CHECK (
+ALTER TABLE object_upload_completions ADD COLUMN IF NOT EXISTS encryption_snapshot jsonb NOT NULL DEFAULT '{}' CHECK (valid_object_encryption_snapshot(encryption_snapshot,account_id));
+ALTER TABLE object_upload_completions ADD COLUMN IF NOT EXISTS encryption_dispatched boolean NOT NULL DEFAULT false;
+ALTER TABLE object_upload_completions ADD COLUMN IF NOT EXISTS encryption_verified boolean NOT NULL DEFAULT false;
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_upload_completions'::regclass AND conname='object_upload_encryption_phase') THEN
+  ALTER TABLE object_upload_completions ADD CONSTRAINT object_upload_encryption_phase CHECK (
   (encryption_snapshot='{}' OR write_phase IN ('prepared','dispatched','settled')) AND
   (NOT encryption_dispatched OR (encryption_snapshot<>'{}' AND write_phase IN ('dispatched','settled'))) AND
   (NOT encryption_verified OR (encryption_dispatched AND status='completed' AND write_phase='settled')) AND
   (encryption_snapshot='{}' OR status<>'completed' OR encryption_verified)
  );
-ALTER TABLE object_storage_multipart_uploads
- ADD COLUMN encryption_snapshot jsonb NOT NULL DEFAULT '{}' CHECK (valid_object_encryption_snapshot(encryption_snapshot,account_id)),
- ADD COLUMN encryption_lease_token text NOT NULL DEFAULT '' CHECK (octet_length(encryption_lease_token)<=128),
- ADD COLUMN encryption_verified boolean NOT NULL DEFAULT false,
- ADD CONSTRAINT object_multipart_encryption_phase CHECK (
+ END IF;
+END $$;
+-- +goose StatementEnd
+ALTER TABLE object_storage_multipart_uploads ADD COLUMN IF NOT EXISTS encryption_snapshot jsonb NOT NULL DEFAULT '{}' CHECK (valid_object_encryption_snapshot(encryption_snapshot,account_id));
+ALTER TABLE object_storage_multipart_uploads ADD COLUMN IF NOT EXISTS encryption_lease_token text NOT NULL DEFAULT '' CHECK (octet_length(encryption_lease_token)<=128);
+ALTER TABLE object_storage_multipart_uploads ADD COLUMN IF NOT EXISTS encryption_verified boolean NOT NULL DEFAULT false;
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_storage_multipart_uploads'::regclass AND conname='object_multipart_encryption_phase') THEN
+  ALTER TABLE object_storage_multipart_uploads ADD CONSTRAINT object_multipart_encryption_phase CHECK (
   (encryption_lease_token='' OR (encryption_snapshot<>'{}' AND lease_token IS NOT NULL AND encryption_lease_token=lease_token)) AND
   (NOT encryption_verified OR (encryption_snapshot<>'{}' AND state='completed' AND completion_dispatched)) AND
   (encryption_snapshot='{}' OR state<>'completed' OR encryption_verified)
  );
+ END IF;
+END $$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION protect_object_upload_encryption() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_upload_encryption() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='INSERT' THEN
   IF NEW.encryption_snapshot<>'{}' AND (NEW.write_phase<>'prepared' OR NEW.status<>'pending' OR NEW.encryption_dispatched OR NEW.encryption_verified) THEN
@@ -91,10 +101,11 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_upload_encryption_immutable ON object_upload_completions;
 CREATE TRIGGER object_upload_encryption_immutable BEFORE INSERT OR UPDATE ON object_upload_completions
  FOR EACH ROW EXECUTE FUNCTION protect_object_upload_encryption();
 
-CREATE FUNCTION protect_object_multipart_encryption() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_multipart_encryption() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='INSERT' THEN
   IF NEW.encryption_snapshot<>'{}' AND (NEW.state<>'initiating' OR NEW.lease_token IS NOT NULL OR NEW.encryption_lease_token<>'' OR NEW.encryption_verified) THEN
@@ -119,6 +130,7 @@ BEGIN
  IF NEW.lease_token IS NULL THEN NEW.encryption_lease_token:=''; END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_multipart_encryption_immutable ON object_storage_multipart_uploads;
 CREATE TRIGGER object_multipart_encryption_immutable BEFORE INSERT OR UPDATE ON object_storage_multipart_uploads
  FOR EACH ROW EXECUTE FUNCTION protect_object_multipart_encryption();
 -- +goose StatementEnd

@@ -2,10 +2,10 @@
 
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE object_storage_multipart_uploads ADD COLUMN fixed_admission boolean NOT NULL DEFAULT false
+ALTER TABLE object_storage_multipart_uploads ADD COLUMN IF NOT EXISTS fixed_admission boolean NOT NULL DEFAULT false
  CHECK (NOT fixed_admission OR (size_bytes>0 AND part_size_bytes>0 AND part_count>0 AND part_count=(size_bytes+part_size_bytes-1)/part_size_bytes));
 
-CREATE FUNCTION protect_fixed_multipart_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_fixed_multipart_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='DELETE' THEN
   IF OLD.fixed_admission AND OLD.state NOT IN ('completed','aborted') THEN
@@ -20,10 +20,11 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_fixed_multipart_admission_immutable ON object_storage_multipart_uploads;
 CREATE TRIGGER object_fixed_multipart_admission_immutable BEFORE UPDATE OR DELETE ON object_storage_multipart_uploads
  FOR EACH ROW EXECUTE FUNCTION protect_fixed_multipart_admission();
 
-CREATE FUNCTION require_fixed_multipart_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION require_fixed_multipart_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE u object_storage_multipart_uploads;
 BEGIN
  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.id;
@@ -35,11 +36,12 @@ BEGIN
  END IF;
  RETURN NULL;
 END $$;
+DROP TRIGGER IF EXISTS object_fixed_multipart_admission_bound ON object_storage_multipart_uploads;
 CREATE CONSTRAINT TRIGGER object_fixed_multipart_admission_bound AFTER INSERT OR UPDATE ON object_storage_multipart_uploads
  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.fixed_admission AND NEW.state NOT IN ('completed','aborted'))
  EXECUTE FUNCTION require_fixed_multipart_admission();
 
-CREATE FUNCTION preserve_fixed_multipart_capacity() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION preserve_fixed_multipart_capacity() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF EXISTS(SELECT 1 FROM object_storage_multipart_uploads m WHERE m.id=OLD.id AND m.fixed_admission AND m.state NOT IN ('completed','aborted')) THEN
   IF TG_OP='DELETE' THEN
@@ -52,6 +54,7 @@ BEGIN
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_fixed_multipart_capacity_immutable ON object_storage_write_admissions;
 CREATE TRIGGER object_fixed_multipart_capacity_immutable BEFORE UPDATE OR DELETE ON object_storage_write_admissions
  FOR EACH ROW EXECUTE FUNCTION preserve_fixed_multipart_capacity();
 -- +goose StatementEnd

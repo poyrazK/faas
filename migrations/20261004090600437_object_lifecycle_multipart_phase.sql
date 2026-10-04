@@ -2,11 +2,15 @@
 
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE object_lifecycle_scans ADD COLUMN phase text NOT NULL DEFAULT 'objects' CHECK(phase IN ('objects','multipart'));
-ALTER TABLE object_lifecycle_scans ADD COLUMN last_upload_id uuid;
-ALTER TABLE object_lifecycle_scans ADD COLUMN scanned_uploads bigint NOT NULL DEFAULT 0 CHECK(scanned_uploads>=0);
-ALTER TABLE object_lifecycle_scans ADD CONSTRAINT object_lifecycle_multipart_progress CHECK((last_upload_id IS NULL)=(scanned_uploads=0) AND (phase='multipart' OR scanned_uploads=0));
-CREATE INDEX object_lifecycle_multipart_discovery ON object_storage_multipart_uploads(bucket_id,id) WHERE state='active';
+ALTER TABLE object_lifecycle_scans ADD COLUMN IF NOT EXISTS phase text NOT NULL DEFAULT 'objects' CHECK(phase IN ('objects','multipart'));
+ALTER TABLE object_lifecycle_scans ADD COLUMN IF NOT EXISTS last_upload_id uuid;
+ALTER TABLE object_lifecycle_scans ADD COLUMN IF NOT EXISTS scanned_uploads bigint NOT NULL DEFAULT 0 CHECK(scanned_uploads>=0);
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_lifecycle_scans'::regclass AND conname='object_lifecycle_multipart_progress') THEN
+  ALTER TABLE object_lifecycle_scans ADD CONSTRAINT object_lifecycle_multipart_progress CHECK((last_upload_id IS NULL)=(scanned_uploads=0) AND (phase='multipart' OR scanned_uploads=0));
+ END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS object_lifecycle_multipart_discovery ON object_storage_multipart_uploads(bucket_id,id) WHERE state='active';
 
 CREATE OR REPLACE FUNCTION protect_object_lifecycle_scan() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -27,9 +31,11 @@ BEGIN
  RETURN NEW;
 END $$;
 
-ALTER TABLE object_storage_multipart_uploads ADD COLUMN lifecycle_scan_id uuid REFERENCES object_lifecycle_scans(id) DEFERRABLE INITIALLY DEFERRED;
-ALTER TABLE object_storage_multipart_uploads ADD COLUMN lifecycle_binding jsonb NOT NULL DEFAULT '{}';
-ALTER TABLE object_storage_multipart_uploads ADD CONSTRAINT object_multipart_lifecycle_binding CHECK(
+ALTER TABLE object_storage_multipart_uploads ADD COLUMN IF NOT EXISTS lifecycle_scan_id uuid REFERENCES object_lifecycle_scans(id) DEFERRABLE INITIALLY DEFERRED;
+ALTER TABLE object_storage_multipart_uploads ADD COLUMN IF NOT EXISTS lifecycle_binding jsonb NOT NULL DEFAULT '{}';
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_storage_multipart_uploads'::regclass AND conname='object_multipart_lifecycle_binding') THEN
+  ALTER TABLE object_storage_multipart_uploads ADD CONSTRAINT object_multipart_lifecycle_binding CHECK(
  (lifecycle_scan_id IS NULL AND lifecycle_binding='{}') OR
  (lifecycle_scan_id IS NOT NULL AND jsonb_typeof(lifecycle_binding)='object'
   AND lifecycle_binding ?& ARRAY['scan_id','scan_token','rule_id','expected_provider_upload_id','expected_created_at']
@@ -41,8 +47,10 @@ ALTER TABLE object_storage_multipart_uploads ADD CONSTRAINT object_multipart_lif
   AND jsonb_typeof(lifecycle_binding->'expected_created_at')='string' AND lifecycle_binding->>'expected_created_at'<>''
   AND octet_length(lifecycle_binding::text)<=8192 AND state IN ('aborting','aborted'))
 );
+ END IF;
+END $$;
 
-CREATE FUNCTION fence_object_lifecycle_multipart() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION fence_object_lifecycle_multipart() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE aid uuid; allowed boolean;
 BEGIN
  IF TG_OP='INSERT' THEN
@@ -89,6 +97,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_lifecycle_multipart_fence ON object_storage_multipart_uploads;
 CREATE TRIGGER object_lifecycle_multipart_fence BEFORE INSERT OR UPDATE ON object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION fence_object_lifecycle_multipart();
 -- +goose StatementEnd
 

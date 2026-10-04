@@ -52,7 +52,7 @@ func TestControlMultipartClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := t.Context()
+	ctx := context.Background()
 	u, err := c.CreateObjectMultipartUpload(ctx, "demo", "bucket", faas.CreateObjectMultipartUploadRequest{Key: "file", SizeBytes: 3, Encryption: &faas.ObjectEncryption{Algorithm: "aws:kms", KeyID: ownedKey}})
 	if err != nil || u.Encryption == nil || u.Encryption.KeyID != ownedKey {
 		t.Fatal(u, err)

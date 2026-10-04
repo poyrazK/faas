@@ -1,13 +1,31 @@
 -- +goose Up
-ALTER TABLE object_deletions ADD COLUMN target_provider_version_id text NOT NULL DEFAULT '' CHECK(octet_length(target_provider_version_id)<=1024);
-ALTER TABLE object_deletions ADD COLUMN recovery_claimed boolean NOT NULL DEFAULT false;
-ALTER TABLE object_deletions DROP CONSTRAINT object_deletions_selector_check;
-ALTER TABLE object_deletions ADD CONSTRAINT object_deletions_selector_check CHECK(selector IN ('','null') OR selector ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$');
-ALTER TABLE object_deletions ADD CONSTRAINT object_deletions_target_identity CHECK(
+ALTER TABLE object_deletions ADD COLUMN IF NOT EXISTS target_provider_version_id text NOT NULL DEFAULT '' CHECK(octet_length(target_provider_version_id)<=1024);
+ALTER TABLE object_deletions ADD COLUMN IF NOT EXISTS recovery_claimed boolean NOT NULL DEFAULT false;
+ALTER TABLE object_deletions DROP CONSTRAINT IF EXISTS object_deletions_selector_check;
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_deletions'::regclass AND conname='object_deletions_selector_check') THEN
+  ALTER TABLE object_deletions ADD CONSTRAINT object_deletions_selector_check CHECK(selector IN ('','null') OR selector ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$');
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_deletions'::regclass AND conname='object_deletions_target_identity') THEN
+  ALTER TABLE object_deletions ADD CONSTRAINT object_deletions_target_identity CHECK(
  (selector IN ('','null') AND target_provider_version_id='') OR
  (selector NOT IN ('','null') AND target_provider_version_id NOT IN ('','null') AND provider_status='' AND baseline='[]' AND reserved_bytes=0)
 );
-ALTER TABLE object_deletions ADD CONSTRAINT object_deletions_target_completion CHECK(state<>'completed' OR selector IN ('','null') OR (version_id=selector AND provider_version_id=target_provider_version_id));
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_deletions'::regclass AND conname='object_deletions_target_completion') THEN
+  ALTER TABLE object_deletions ADD CONSTRAINT object_deletions_target_completion CHECK(state<>'completed' OR selector IN ('','null') OR (version_id=selector AND provider_version_id=target_provider_version_id));
+ END IF;
+END $$;
+-- +goose StatementEnd
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION protect_object_deletion() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -22,7 +40,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE FUNCTION fence_immutable_object_deletion() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION fence_immutable_object_deletion() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.selector IN ('','null') THEN RETURN NEW; END IF;
  -- Match the service's bucket-before-account admission order. The durable
@@ -37,6 +55,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_immutable_deletion_fence ON object_deletions;
 CREATE TRIGGER object_immutable_deletion_fence BEFORE INSERT ON object_deletions FOR EACH ROW EXECUTE FUNCTION fence_immutable_object_deletion();
 -- +goose StatementEnd
 -- +goose Down

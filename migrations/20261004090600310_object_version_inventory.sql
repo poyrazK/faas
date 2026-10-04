@@ -1,25 +1,34 @@
 -- +goose Up
-ALTER TABLE object_storage_bucket_usage
- ADD COLUMN inventory_scope text NOT NULL DEFAULT 'current' CHECK(inventory_scope IN ('current','all_versions'));
-ALTER TABLE object_storage_capacity_reconciliations
- ADD COLUMN inventory_scope text NOT NULL DEFAULT 'current' CHECK(inventory_scope IN ('current','all_versions')),
- ADD COLUMN inventory_cursor text NOT NULL DEFAULT '' CHECK(octet_length(inventory_cursor)<=8192),
- ADD COLUMN inventory_verified boolean NOT NULL DEFAULT false,
- ADD COLUMN scanned_pages bigint NOT NULL DEFAULT 0 CHECK(scanned_pages BETWEEN 0 AND 1000),
- ADD COLUMN scanned_bytes bigint NOT NULL DEFAULT 0 CHECK(scanned_bytes BETWEEN 0 AND 1152921504606846976),
- ADD COLUMN scanned_versions bigint NOT NULL DEFAULT 0 CHECK(scanned_versions BETWEEN 0 AND 1000000),
- ADD CHECK(NOT inventory_verified OR inventory_scope='all_versions');
-ALTER TABLE object_storage_write_admissions
- ADD COLUMN native_version boolean NOT NULL DEFAULT false,
- ADD COLUMN native_bytes bigint NOT NULL DEFAULT 0 CHECK(native_bytes>=0),
- ADD CHECK(native_version OR native_bytes=0);
-CREATE TABLE object_storage_version_inventory_entries (
+ALTER TABLE object_storage_bucket_usage ADD COLUMN IF NOT EXISTS inventory_scope text NOT NULL DEFAULT 'current' CHECK(inventory_scope IN ('current','all_versions'));
+ALTER TABLE object_storage_capacity_reconciliations ADD COLUMN IF NOT EXISTS inventory_scope text NOT NULL DEFAULT 'current' CHECK(inventory_scope IN ('current','all_versions'));
+ALTER TABLE object_storage_capacity_reconciliations ADD COLUMN IF NOT EXISTS inventory_cursor text NOT NULL DEFAULT '' CHECK(octet_length(inventory_cursor)<=8192);
+ALTER TABLE object_storage_capacity_reconciliations ADD COLUMN IF NOT EXISTS inventory_verified boolean NOT NULL DEFAULT false;
+ALTER TABLE object_storage_capacity_reconciliations ADD COLUMN IF NOT EXISTS scanned_pages bigint NOT NULL DEFAULT 0 CHECK(scanned_pages BETWEEN 0 AND 1000);
+ALTER TABLE object_storage_capacity_reconciliations ADD COLUMN IF NOT EXISTS scanned_bytes bigint NOT NULL DEFAULT 0 CHECK(scanned_bytes BETWEEN 0 AND 1152921504606846976);
+ALTER TABLE object_storage_capacity_reconciliations ADD COLUMN IF NOT EXISTS scanned_versions bigint NOT NULL DEFAULT 0 CHECK(scanned_versions BETWEEN 0 AND 1000000);
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_storage_capacity_reconciliations'::regclass AND conname='object_storage_capacity_reconciliations_check3') THEN
+  ALTER TABLE object_storage_capacity_reconciliations ADD CONSTRAINT object_storage_capacity_reconciliations_check3 CHECK(NOT inventory_verified OR inventory_scope='all_versions');
+ END IF;
+END $$;
+-- +goose StatementEnd
+ALTER TABLE object_storage_write_admissions ADD COLUMN IF NOT EXISTS native_version boolean NOT NULL DEFAULT false;
+ALTER TABLE object_storage_write_admissions ADD COLUMN IF NOT EXISTS native_bytes bigint NOT NULL DEFAULT 0 CHECK(native_bytes>=0);
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_storage_write_admissions'::regclass AND conname='object_storage_write_admissions_check2') THEN
+  ALTER TABLE object_storage_write_admissions ADD CONSTRAINT object_storage_write_admissions_check2 CHECK(native_version OR native_bytes=0);
+ END IF;
+END $$;
+-- +goose StatementEnd
+CREATE TABLE IF NOT EXISTS object_storage_version_inventory_entries (
  job_id uuid NOT NULL REFERENCES object_storage_capacity_reconciliations(id) ON DELETE CASCADE,
  identity_hash text NOT NULL CHECK(identity_hash ~ '^[a-f0-9]{64}$'),
  bytes bigint NOT NULL CHECK(bytes BETWEEN 0 AND 5497558138880),
  PRIMARY KEY(job_id,identity_hash)
 );
-CREATE TABLE object_storage_version_inventory_cursors (
+CREATE TABLE IF NOT EXISTS object_storage_version_inventory_cursors (
  job_id uuid NOT NULL REFERENCES object_storage_capacity_reconciliations(id) ON DELETE CASCADE,
  cursor_hash text NOT NULL CHECK(cursor_hash ~ '^[a-f0-9]{64}$'),
  PRIMARY KEY(job_id,cursor_hash)
@@ -45,7 +54,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE FUNCTION fence_object_native_version_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION fence_object_native_version_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE mode text; bid uuid;
 BEGIN
  bid:=NEW.bucket_id;
@@ -70,12 +79,15 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
-DROP TRIGGER object_version_reclamation_fence ON object_storage_bucket_usage;
+DROP TRIGGER IF EXISTS object_version_reclamation_fence ON object_storage_bucket_usage;
+DROP TRIGGER IF EXISTS object_version_reclamation_fence ON object_storage_bucket_usage;
 CREATE TRIGGER object_version_reclamation_fence
  BEFORE UPDATE OF baseline_bytes,baseline_keys,granted_bytes,granted_keys,observed_bytes,observed_keys,observed_at,inventory_scope ON object_storage_bucket_usage
  FOR EACH ROW EXECUTE FUNCTION fence_object_version_reclamation();
+DROP TRIGGER IF EXISTS object_native_version_write_fence ON object_storage_write_admissions;
 CREATE TRIGGER object_native_version_write_fence BEFORE INSERT ON object_storage_write_admissions
  FOR EACH ROW EXECUTE FUNCTION fence_object_native_version_admission();
+DROP TRIGGER IF EXISTS object_native_version_key_grant_fence ON object_storage_key_grants;
 CREATE TRIGGER object_native_version_key_grant_fence BEFORE INSERT OR UPDATE ON object_storage_key_grants
  FOR EACH ROW EXECUTE FUNCTION fence_object_native_version_admission();
 

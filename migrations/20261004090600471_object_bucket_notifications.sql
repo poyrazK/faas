@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE object_bucket_notifications (
+CREATE TABLE IF NOT EXISTS object_bucket_notifications (
     bucket_id uuid PRIMARY KEY REFERENCES object_buckets(id) ON DELETE CASCADE,
     revision bigint NOT NULL CHECK (revision > 0),
     rules jsonb NOT NULL CHECK (jsonb_typeof(rules) = 'array' AND jsonb_array_length(rules) <= 1000)

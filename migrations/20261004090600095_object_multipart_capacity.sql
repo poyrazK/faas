@@ -1,13 +1,14 @@
 -- +goose Up
 -- +goose StatementBegin
 DO $$ BEGIN
-    IF EXISTS (SELECT 1 FROM object_storage_multipart_uploads
+    IF to_regclass('object_storage_multipart_part_grants') IS NULL
+     AND EXISTS (SELECT 1 FROM object_storage_multipart_uploads
         WHERE part_count=0 AND state IN ('initiating','active','completing','aborting')) THEN
         RAISE EXCEPTION 'Drain active branded S3 multipart uploads before enabling per-part capacity accounting';
     END IF;
 END $$;
 -- +goose StatementEnd
-CREATE TABLE object_storage_multipart_part_grants (
+CREATE TABLE IF NOT EXISTS object_storage_multipart_part_grants (
     upload_id uuid NOT NULL REFERENCES object_storage_multipart_uploads(id) ON DELETE CASCADE,
     part_number integer NOT NULL CHECK (part_number BETWEEN 1 AND 10000),
     max_bytes bigint NOT NULL CHECK (max_bytes > 0 AND max_bytes <= 5368709120),

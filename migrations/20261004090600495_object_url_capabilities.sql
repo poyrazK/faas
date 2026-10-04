@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-CREATE FUNCTION valid_object_url_request(r jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+CREATE OR REPLACE FUNCTION valid_object_url_request(r jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE STRICT AS $$
 DECLARE method text;
 BEGIN
  IF jsonb_typeof(r)<>'object' OR octet_length(r::text)>32768 OR
@@ -20,12 +20,14 @@ EXCEPTION WHEN OTHERS THEN RETURN false;
 END $$;
 -- +goose StatementEnd
 
-ALTER TABLE object_storage_s3_credentials
- ADD COLUMN url_request jsonb CHECK (url_request IS NULL OR valid_object_url_request(url_request)),
- ADD COLUMN url_api_key_id uuid CHECK (url_api_key_id IS NULL OR url_api_key_id<>'00000000-0000-0000-0000-000000000000'::uuid),
- ADD COLUMN url_expires_at timestamptz,
- ADD COLUMN url_receipt_id uuid,
- ADD CONSTRAINT object_url_credential_shape CHECK (
+ALTER TABLE object_storage_s3_credentials ADD COLUMN IF NOT EXISTS url_request jsonb CHECK (url_request IS NULL OR valid_object_url_request(url_request));
+ALTER TABLE object_storage_s3_credentials ADD COLUMN IF NOT EXISTS url_api_key_id uuid CHECK (url_api_key_id IS NULL OR url_api_key_id<>'00000000-0000-0000-0000-000000000000'::uuid);
+ALTER TABLE object_storage_s3_credentials ADD COLUMN IF NOT EXISTS url_expires_at timestamptz;
+ALTER TABLE object_storage_s3_credentials ADD COLUMN IF NOT EXISTS url_receipt_id uuid;
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_storage_s3_credentials'::regclass AND conname='object_url_credential_shape') THEN
+  ALTER TABLE object_storage_s3_credentials ADD CONSTRAINT object_url_credential_shape CHECK (
   (url_request IS NULL AND url_api_key_id IS NULL AND url_expires_at IS NULL AND url_receipt_id IS NULL) OR
   (url_request IS NOT NULL AND url_expires_at IS NOT NULL AND
    url_expires_at>created_at AND url_expires_at<=created_at+interval '15 minutes' AND
@@ -33,17 +35,20 @@ ALTER TABLE object_storage_s3_credentials
    ((url_request->>'method'='PUT' AND permission='write' AND url_receipt_id IS NOT NULL) OR
     (url_request->>'method' IN ('GET','HEAD') AND permission='read' AND url_receipt_id IS NULL)))
  );
-CREATE INDEX object_url_credentials_expiry ON object_storage_s3_credentials(bucket_id,url_expires_at) WHERE url_request IS NOT NULL;
+ END IF;
+END $$;
+-- +goose StatementEnd
+CREATE INDEX IF NOT EXISTS object_url_credentials_expiry ON object_storage_s3_credentials(bucket_id,url_expires_at) WHERE url_request IS NOT NULL;
 
 -- +goose StatementBegin
-CREATE FUNCTION object_url_issuer_live(owner uuid, bucket uuid, issuer uuid, permission text, expiry timestamptz) RETURNS boolean LANGUAGE sql VOLATILE AS $$
+CREATE OR REPLACE FUNCTION object_url_issuer_live(owner uuid, bucket uuid, issuer uuid, permission text, expiry timestamptz) RETURNS boolean LANGUAGE sql VOLATILE AS $$
  SELECT expiry>clock_timestamp() AND EXISTS(SELECT 1 FROM object_buckets b WHERE b.id=bucket AND b.account_id=owner AND b.state='ready') AND
   (issuer IS NULL OR EXISTS(SELECT 1 FROM api_keys k
     WHERE k.id=issuer AND k.account_id=owner AND k.status IN ('active','grace') AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()) AND
     ('admin'=ANY(k.scopes) OR (('storage:'||permission)=ANY(k.scopes) AND EXISTS(SELECT 1 FROM object_storage_access_grants g WHERE g.api_key_id=k.id AND g.account_id=owner AND g.bucket_id=bucket AND (g.permission=permission OR g.permission='read_write'))))));
 $$;
 
-CREATE FUNCTION protect_object_url_credential() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_url_credential() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='UPDATE' AND (NEW.url_request,NEW.url_api_key_id,NEW.url_expires_at,NEW.url_receipt_id) IS DISTINCT FROM (OLD.url_request,OLD.url_api_key_id,OLD.url_expires_at,OLD.url_receipt_id) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_url_capability_fenced',MESSAGE='Signed URL authority is immutable';
@@ -61,9 +66,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_url_credential_immutable ON object_storage_s3_credentials;
 CREATE TRIGGER object_url_credential_immutable BEFORE INSERT OR UPDATE ON object_storage_s3_credentials FOR EACH ROW EXECUTE FUNCTION protect_object_url_credential();
 
-CREATE FUNCTION protect_object_url_write() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_url_write() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE c object_storage_s3_credentials;
 BEGIN
  IF TG_OP='UPDATE' THEN
@@ -102,9 +108,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_url_write_guard ON object_upload_completions;
 CREATE TRIGGER object_url_write_guard BEFORE INSERT OR UPDATE ON object_upload_completions FOR EACH ROW EXECUTE FUNCTION protect_object_url_write();
 
-CREATE FUNCTION object_url_receipt_committed() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION object_url_receipt_committed() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.url_receipt_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM object_upload_completions w JOIN object_buckets b ON b.id=NEW.bucket_id
   WHERE w.id=NEW.url_receipt_id AND w.subject_id=NEW.id::text AND w.account_id=NEW.account_id AND w.bucket_id=NEW.bucket_id AND w.app_id=b.app_id AND w.origin='gateway' AND w.write_phase='prepared' AND w.status='pending') THEN
@@ -112,6 +119,7 @@ BEGIN
  END IF;
  RETURN NULL;
 END $$;
+DROP TRIGGER IF EXISTS object_url_receipt_required ON object_storage_s3_credentials;
 CREATE CONSTRAINT TRIGGER object_url_receipt_required AFTER INSERT ON object_storage_s3_credentials DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION object_url_receipt_committed();
 -- +goose StatementEnd
 

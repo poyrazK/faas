@@ -2,9 +2,11 @@
 
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE object_deletions ADD COLUMN lifecycle_scan_id uuid REFERENCES object_lifecycle_scans(id) DEFERRABLE INITIALLY DEFERRED;
-ALTER TABLE object_deletions ADD COLUMN lifecycle_binding jsonb NOT NULL DEFAULT '{}';
-ALTER TABLE object_deletions ADD CONSTRAINT object_deletion_lifecycle_binding CHECK(
+ALTER TABLE object_deletions ADD COLUMN IF NOT EXISTS lifecycle_scan_id uuid REFERENCES object_lifecycle_scans(id) DEFERRABLE INITIALLY DEFERRED;
+ALTER TABLE object_deletions ADD COLUMN IF NOT EXISTS lifecycle_binding jsonb NOT NULL DEFAULT '{}';
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_deletions'::regclass AND conname='object_deletion_lifecycle_binding') THEN
+  ALTER TABLE object_deletions ADD CONSTRAINT object_deletion_lifecycle_binding CHECK(
  (lifecycle_scan_id IS NULL AND lifecycle_binding='{}') OR
  (lifecycle_scan_id IS NOT NULL AND jsonb_typeof(lifecycle_binding)='object'
   AND lifecycle_binding ?& ARRAY['scan_id','scan_token','rule_id','kind','expected_provider_version_id','expected_last_modified']
@@ -17,9 +19,11 @@ ALTER TABLE object_deletions ADD CONSTRAINT object_deletion_lifecycle_binding CH
   AND octet_length(lifecycle_binding::text)<=8192
   AND ((lifecycle_binding->>'kind'='current' AND selector='') OR (lifecycle_binding->>'kind' IN ('noncurrent','expired_marker') AND selector<>'')))
 );
-CREATE INDEX object_deletion_lifecycle_scan ON object_deletions(lifecycle_scan_id,object_key,id) WHERE lifecycle_scan_id IS NOT NULL;
+ END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS object_deletion_lifecycle_scan ON object_deletions(lifecycle_scan_id,object_key,id) WHERE lifecycle_scan_id IS NOT NULL;
 
-CREATE FUNCTION fence_object_lifecycle_deletion() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION fence_object_lifecycle_deletion() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE aid uuid; allowed boolean;
 BEGIN
  IF TG_OP='UPDATE' AND (NEW.lifecycle_scan_id IS DISTINCT FROM OLD.lifecycle_scan_id OR NEW.lifecycle_binding<>OLD.lifecycle_binding) THEN
@@ -50,6 +54,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_lifecycle_deletion_fence ON object_deletions;
 CREATE TRIGGER object_lifecycle_deletion_fence BEFORE INSERT OR UPDATE ON object_deletions FOR EACH ROW EXECUTE FUNCTION fence_object_lifecycle_deletion();
 -- +goose StatementEnd
 

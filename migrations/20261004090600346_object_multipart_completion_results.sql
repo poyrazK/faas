@@ -1,20 +1,32 @@
 -- +goose Up
-ALTER TABLE object_storage_multipart_uploads
- ADD COLUMN completion_etag text NOT NULL DEFAULT '' CHECK (octet_length(completion_etag)<=256 AND completion_etag !~ '[\x01-\x1f\x7f]' AND (completion_etag='' OR btrim(completion_etag)<>'')),
- ADD COLUMN completion_version_id text NOT NULL DEFAULT '' CHECK (completion_version_id='' OR completion_version_id='null' OR completion_version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
- ADD COLUMN completion_recovery_cursor text NOT NULL DEFAULT '' CHECK (octet_length(completion_recovery_cursor)<=8192 AND completion_recovery_cursor ~ '^[A-Za-z0-9_-]*$'),
- ADD COLUMN completion_versions_observed boolean NOT NULL DEFAULT false,
- ADD COLUMN completion_dispatched boolean NOT NULL DEFAULT false,
- ADD CONSTRAINT object_multipart_result_shape CHECK (
+ALTER TABLE object_storage_multipart_uploads ADD COLUMN IF NOT EXISTS completion_etag text NOT NULL DEFAULT '' CHECK (octet_length(completion_etag)<=256 AND completion_etag !~ '[\x01-\x1f\x7f]' AND (completion_etag='' OR btrim(completion_etag)<>''));
+ALTER TABLE object_storage_multipart_uploads ADD COLUMN IF NOT EXISTS completion_version_id text NOT NULL DEFAULT '' CHECK (completion_version_id='' OR completion_version_id='null' OR completion_version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$');
+ALTER TABLE object_storage_multipart_uploads ADD COLUMN IF NOT EXISTS completion_recovery_cursor text NOT NULL DEFAULT '' CHECK (octet_length(completion_recovery_cursor)<=8192 AND completion_recovery_cursor ~ '^[A-Za-z0-9_-]*$');
+ALTER TABLE object_storage_multipart_uploads ADD COLUMN IF NOT EXISTS completion_versions_observed boolean NOT NULL DEFAULT false;
+-- Existing in-flight completions may have reached the provider before rollout.
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='object_storage_multipart_uploads'::regclass AND attname='completion_dispatched' AND NOT attisdropped) THEN
+  ALTER TABLE object_storage_multipart_uploads ADD COLUMN IF NOT EXISTS completion_dispatched boolean NOT NULL DEFAULT false;
+  UPDATE object_storage_multipart_uploads SET completion_dispatched=true WHERE state IN ('completing','completing_conditional');
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='object_storage_multipart_uploads'::regclass AND conname='object_multipart_result_shape') THEN
+  ALTER TABLE object_storage_multipart_uploads ADD CONSTRAINT object_multipart_result_shape CHECK (
   (state='completed' OR (completion_etag='' AND completion_version_id=''))
   AND (completion_version_id='' OR completion_etag<>'')
   AND (state<>'completed' OR completion_recovery_cursor='')
   AND (state<>'completed' OR NOT completion_dispatched OR completion_etag<>'')
  );
--- Existing in-flight completions may have reached the provider before rollout.
-UPDATE object_storage_multipart_uploads SET completion_dispatched=true WHERE state IN ('completing','completing_conditional');
+ END IF;
+END $$;
+-- +goose StatementEnd
+
 -- +goose StatementBegin
-CREATE FUNCTION protect_object_multipart_result() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_multipart_result() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='INSERT' THEN
   IF NEW.completion_etag<>'' OR NEW.completion_version_id<>'' OR NEW.completion_recovery_cursor<>'' OR NEW.completion_dispatched OR NEW.completion_versions_observed THEN
@@ -40,6 +52,7 @@ BEGIN
  NEW.completion_versions_observed:=OLD.completion_versions_observed OR NEW.completion_versions_observed;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_multipart_result_immutable ON object_storage_multipart_uploads;
 CREATE TRIGGER object_multipart_result_immutable BEFORE INSERT OR UPDATE ON object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION protect_object_multipart_result();
 -- +goose StatementEnd
 

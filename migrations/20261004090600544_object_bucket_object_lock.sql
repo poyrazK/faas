@@ -1,7 +1,7 @@
 -- filename: 20261004090600544_object_bucket_object_lock.sql
 -- +goose Up
 -- +goose StatementBegin
-CREATE FUNCTION valid_object_lock_period(p jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE AS $$
+CREATE OR REPLACE FUNCTION valid_object_lock_period(p jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE AS $$
 DECLARE k text; n numeric;
 BEGIN
  IF jsonb_typeof(p) IS DISTINCT FROM 'object' OR (p ? 'days')=(p ? 'years') THEN RETURN false; END IF;
@@ -12,7 +12,7 @@ BEGIN
  RETURN n>0 AND n<=CASE WHEN k='days' THEN 36500 ELSE 100 END;
 END $$;
 
-CREATE FUNCTION valid_object_lock_configuration(c jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE AS $$
+CREATE OR REPLACE FUNCTION valid_object_lock_configuration(c jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE AS $$
 DECLARE k text; r jsonb; p jsonb;
 BEGIN
  IF jsonb_typeof(c) IS DISTINCT FROM 'object' OR octet_length(c::text)>16384 OR
@@ -29,7 +29,7 @@ BEGIN
  RETURN p<>'{}' OR r ? 'default_event_hold';
 END $$;
 
-CREATE TABLE object_bucket_object_lock (
+CREATE TABLE IF NOT EXISTS object_bucket_object_lock (
  bucket_id uuid PRIMARY KEY REFERENCES object_buckets(id) ON DELETE CASCADE,
  account_id uuid NOT NULL, app_id uuid NOT NULL,
  state text NOT NULL CHECK(state IN ('ready','waiting','applying')),
@@ -53,16 +53,16 @@ CREATE TABLE object_bucket_object_lock (
  CHECK(state<>'ready' OR desired_snapshot='null' OR desired_snapshot=observed_snapshot),
  CHECK(NOT dispatched OR desired_snapshot<>'null')
 );
-CREATE INDEX object_bucket_object_lock_due ON object_bucket_object_lock(retry_at,bucket_id) WHERE state<>'ready';
+CREATE INDEX IF NOT EXISTS object_bucket_object_lock_due ON object_bucket_object_lock(retry_at,bucket_id) WHERE state<>'ready';
 
-CREATE FUNCTION object_lock_versioning_ready(bid uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
+CREATE OR REPLACE FUNCTION object_lock_versioning_ready(bid uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
  SELECT EXISTS(SELECT 1 FROM object_bucket_versioning v JOIN object_storage_capacity_reconciliations c ON c.id=v.capacity_job_id
  WHERE v.bucket_id=bid AND v.state='ready' AND v.desired_status='Enabled' AND v.observed_status='Enabled'
  AND v.versions_required AND v.propagation_until<=now() AND c.bucket_id=bid AND c.state='completed'
  AND c.inventory_scope='all_versions' AND c.inventory_verified AND c.created_at>=v.propagation_until)
 $$;
 
-CREATE FUNCTION object_lock_drained(bid uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
+CREATE OR REPLACE FUNCTION object_lock_drained(bid uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
  SELECT NOT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=bid AND state IN ('prepared','dispatched'))
  AND NOT EXISTS(SELECT 1 FROM object_storage_write_admissions w LEFT JOIN object_storage_multipart_uploads m ON m.id=w.multipart_upload_id
   WHERE w.bucket_id=bid AND ((w.kind='proxy' AND w.state='pending') OR (w.kind='multipart' AND m.state NOT IN ('completed','aborted'))))
@@ -72,7 +72,7 @@ CREATE FUNCTION object_lock_drained(bid uuid) RETURNS boolean LANGUAGE sql STABL
  AND NOT EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=bid AND state IN ('waiting','scanning'))
 $$;
 
-CREATE FUNCTION protect_object_bucket_object_lock() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_bucket_object_lock() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE b object_buckets;
 BEGIN
  SELECT * INTO b FROM object_buckets WHERE id=coalesce(NEW.bucket_id,OLD.bucket_id) FOR NO KEY UPDATE;
@@ -110,11 +110,12 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_bucket_object_lock_protected ON object_bucket_object_lock;
 CREATE TRIGGER object_bucket_object_lock_protected BEFORE INSERT OR UPDATE OR DELETE ON object_bucket_object_lock
  FOR EACH ROW EXECUTE FUNCTION protect_object_bucket_object_lock();
 
 -- Parent cascades must not bypass the permanent journal's deletion guard.
-CREATE FUNCTION protect_object_lock_bucket_history() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_lock_bucket_history() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF EXISTS(SELECT 1 FROM object_bucket_object_lock WHERE bucket_id=OLD.id) THEN
   IF TG_OP='DELETE' THEN
@@ -133,10 +134,11 @@ BEGIN
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_lock_bucket_history_protected ON object_buckets;
 CREATE TRIGGER object_lock_bucket_history_protected BEFORE UPDATE OR DELETE ON object_buckets
  FOR EACH ROW EXECUTE FUNCTION protect_object_lock_bucket_history();
 
-CREATE FUNCTION fence_object_lock_suspension() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION fence_object_lock_suspension() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR NO KEY UPDATE;
  IF NEW.desired_status='Suspended' AND EXISTS(SELECT 1 FROM object_bucket_object_lock WHERE bucket_id=NEW.bucket_id AND (enabled_required OR state<>'ready')) THEN
@@ -144,9 +146,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_lock_suspension_fence ON object_bucket_versioning;
 CREATE TRIGGER object_lock_suspension_fence BEFORE INSERT OR UPDATE ON object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION fence_object_lock_suspension();
 
-CREATE FUNCTION fence_object_lock_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION fence_object_lock_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE bid uuid;
 BEGIN
  IF TG_TABLE_NAME='object_buckets' THEN
@@ -170,10 +173,15 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_lock_write_fence ON object_storage_write_admissions;
 CREATE TRIGGER object_lock_write_fence BEFORE INSERT ON object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION fence_object_lock_admission();
+DROP TRIGGER IF EXISTS object_lock_multipart_fence ON object_storage_multipart_uploads;
 CREATE TRIGGER object_lock_multipart_fence BEFORE INSERT ON object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION fence_object_lock_admission();
+DROP TRIGGER IF EXISTS object_lock_completion_fence ON object_upload_completions;
 CREATE TRIGGER object_lock_completion_fence BEFORE INSERT ON object_upload_completions FOR EACH ROW EXECUTE FUNCTION fence_object_lock_admission();
+DROP TRIGGER IF EXISTS object_lock_key_grant_fence ON object_storage_key_grants;
 CREATE TRIGGER object_lock_key_grant_fence BEFORE INSERT OR UPDATE ON object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION fence_object_lock_admission();
+DROP TRIGGER IF EXISTS object_lock_bucket_deletion_fence ON object_buckets;
 CREATE TRIGGER object_lock_bucket_deletion_fence BEFORE UPDATE ON object_buckets FOR EACH ROW EXECUTE FUNCTION fence_object_lock_admission();
 CREATE OR REPLACE FUNCTION protect_object_bucket_versioning() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

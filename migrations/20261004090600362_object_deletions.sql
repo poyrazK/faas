@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE object_deletions (
+CREATE TABLE IF NOT EXISTS object_deletions (
  id uuid PRIMARY KEY,
  bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE CASCADE,
  object_key text NOT NULL CHECK(octet_length(object_key) BETWEEN 1 AND 1024),
@@ -26,10 +26,10 @@ CREATE TABLE object_deletions (
  CHECK(reserved_bytes=0 OR (selector='' AND provider_status<>'')),
  CHECK(provider_status='Enabled' OR baseline='[]')
 );
-CREATE UNIQUE INDEX object_deletions_active_bucket ON object_deletions(bucket_id) WHERE state IN ('prepared','dispatched');
-CREATE INDEX object_deletions_due ON object_deletions(retry_at,id) WHERE state IN ('prepared','dispatched');
+CREATE UNIQUE INDEX IF NOT EXISTS object_deletions_active_bucket ON object_deletions(bucket_id) WHERE state IN ('prepared','dispatched');
+CREATE INDEX IF NOT EXISTS object_deletions_due ON object_deletions(retry_at,id) WHERE state IN ('prepared','dispatched');
 -- +goose StatementBegin
-CREATE FUNCTION protect_object_deletion() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_deletion() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.id<>OLD.id OR NEW.bucket_id<>OLD.bucket_id OR NEW.object_key<>OLD.object_key OR NEW.selector<>OLD.selector
   OR NEW.created_at<>OLD.created_at OR NEW.provider_status<>OLD.provider_status OR NEW.reserved_bytes<>OLD.reserved_bytes
@@ -40,8 +40,9 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_deletion_protected ON object_deletions;
 CREATE TRIGGER object_deletion_protected BEFORE UPDATE ON object_deletions FOR EACH ROW EXECUTE FUNCTION protect_object_deletion();
-CREATE FUNCTION fence_object_deletion() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION fence_object_deletion() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE bid uuid;
 BEGIN
  IF TG_TABLE_NAME='object_buckets' THEN
@@ -57,12 +58,19 @@ BEGIN
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_deletion_write_fence ON object_storage_write_admissions;
 CREATE TRIGGER object_deletion_write_fence BEFORE INSERT ON object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION fence_object_deletion();
+DROP TRIGGER IF EXISTS object_deletion_grant_fence ON object_storage_key_grants;
 CREATE TRIGGER object_deletion_grant_fence BEFORE INSERT OR UPDATE ON object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION fence_object_deletion();
+DROP TRIGGER IF EXISTS object_deletion_multipart_fence ON object_storage_multipart_uploads;
 CREATE TRIGGER object_deletion_multipart_fence BEFORE INSERT ON object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION fence_object_deletion();
+DROP TRIGGER IF EXISTS object_deletion_bucket_fence ON object_buckets;
 CREATE TRIGGER object_deletion_bucket_fence BEFORE UPDATE OR DELETE ON object_buckets FOR EACH ROW EXECUTE FUNCTION fence_object_deletion();
+DROP TRIGGER IF EXISTS object_deletion_configuration_fence ON object_bucket_versioning;
 CREATE TRIGGER object_deletion_configuration_fence BEFORE INSERT OR UPDATE ON object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION fence_object_deletion();
+DROP TRIGGER IF EXISTS object_deletion_capacity_fence ON object_storage_capacity_reconciliations;
 CREATE TRIGGER object_deletion_capacity_fence BEFORE INSERT OR UPDATE ON object_storage_capacity_reconciliations FOR EACH ROW EXECUTE FUNCTION fence_object_deletion();
+DROP TRIGGER IF EXISTS object_deletion_inventory_fence ON object_storage_bucket_usage;
 CREATE TRIGGER object_deletion_inventory_fence BEFORE UPDATE OF baseline_bytes,baseline_keys,observed_bytes,observed_keys,observed_at,inventory_scope ON object_storage_bucket_usage FOR EACH ROW EXECUTE FUNCTION fence_object_deletion();
 -- +goose StatementEnd
 -- +goose Down
