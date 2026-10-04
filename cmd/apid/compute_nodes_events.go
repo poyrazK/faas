@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apislogs"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -51,10 +50,11 @@ func (s *server) computeNodeEventsHandler(w http.ResponseWriter, r *http.Request
 		defer s.ops.SSEClients().Dec()
 	}
 
-	apislogs.StartSSE(w)
+	w, ctx, cancelStream := startSSEStream(w, r)
+	defer cancelStream()
 	flusher, _ := w.(http.Flusher)
 
-	ch, cancel, err := s.notif.Subscribe(r.Context(), []string{db.NotifyComputeNodeChanged})
+	ch, cancel, err := s.notif.Subscribe(ctx, []string{db.NotifyComputeNodeChanged})
 	if err != nil {
 		// Surface the failure on the wire as a single error
 		// frame, then close the connection. The dashboard's
@@ -73,7 +73,7 @@ func (s *server) computeNodeEventsHandler(w http.ResponseWriter, r *http.Request
 
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case n, ok := <-ch:
 			if !ok {

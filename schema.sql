@@ -6742,6 +6742,148 @@ CREATE TABLE public.custom_domains (
 
 
 --
+-- Name: customer_operation_definitions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_definitions (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    name text NOT NULL,
+    revision text NOT NULL,
+    deployment_id uuid NOT NULL,
+    release_id text DEFAULT ''::text NOT NULL,
+    spec jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT customer_operation_definitions_check CHECK (((spec ->> 'name'::text) = name)),
+    CONSTRAINT customer_operation_definitions_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
+    CONSTRAINT customer_operation_definitions_revision_check CHECK ((revision ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT customer_operation_definitions_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 64))),
+    CONSTRAINT customer_operation_definitions_spec_check CHECK ((jsonb_typeof(spec) = 'object'::text))
+);
+
+
+--
+-- Name: customer_operation_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_events (
+    operation_id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    event_type text NOT NULL,
+    execution_id uuid,
+    attempt integer DEFAULT 0 NOT NULL,
+    data jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_events_attempt_check CHECK ((attempt >= 0)),
+    CONSTRAINT customer_operation_events_data_check CHECK ((jsonb_typeof(data) = 'object'::text)),
+    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'artifact_attached'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
+    CONSTRAINT customer_operation_events_sequence_check CHECK ((sequence > 0))
+);
+
+
+--
+-- Name: customer_operation_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_executions (
+    operation_id uuid NOT NULL,
+    generation integer NOT NULL,
+    invocation_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT customer_operation_executions_generation_check CHECK ((generation > 0))
+);
+
+
+--
+-- Name: customer_operation_idempotency; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_idempotency (
+    scope_digest text NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    fingerprint text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_idempotency_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT customer_operation_idempotency_scope_digest_check CHECK ((scope_digest ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: customer_operation_recoveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_recoveries (
+    operation_id uuid NOT NULL,
+    recovery_id text NOT NULL,
+    fingerprint text NOT NULL,
+    request jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_recoveries_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT customer_operation_recoveries_recovery_id_check CHECK (((octet_length(recovery_id) >= 1) AND (octet_length(recovery_id) <= 128))),
+    CONSTRAINT customer_operation_recoveries_request_check CHECK ((jsonb_typeof(request) = 'object'::text))
+);
+
+
+--
+-- Name: customer_operation_reports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_reports (
+    operation_id uuid NOT NULL,
+    execution_id uuid NOT NULL,
+    attempt integer NOT NULL,
+    report_id text NOT NULL,
+    fingerprint text NOT NULL,
+    CONSTRAINT customer_operation_reports_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT customer_operation_reports_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT customer_operation_reports_report_id_check CHECK (((octet_length(report_id) >= 1) AND (octet_length(report_id) <= 128)))
+);
+
+
+--
+-- Name: customer_operation_stream_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_stream_leases (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: customer_operations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operations (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    definition_id uuid NOT NULL,
+    current_invocation_id uuid NOT NULL,
+    state text NOT NULL,
+    record jsonb NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT customer_operations_check CHECK (((record ->> 'id'::text) = (id)::text)),
+    CONSTRAINT customer_operations_check1 CHECK (((record ->> 'state'::text) = state)),
+    CONSTRAINT customer_operations_check2 CHECK (((record ->> 'account_id'::text) = (account_id)::text)),
+    CONSTRAINT customer_operations_check3 CHECK (((record ->> 'app_id'::text) = (app_id)::text)),
+    CONSTRAINT customer_operations_check4 CHECK (((record ->> 'platform_tenant_id'::text) = (platform_tenant_id)::text)),
+    CONSTRAINT customer_operations_check5 CHECK (((record ->> 'definition_id'::text) = (definition_id)::text)),
+    CONSTRAINT customer_operations_check6 CHECK (((record ->> 'current_invocation_id'::text) = (current_invocation_id)::text)),
+    CONSTRAINT customer_operations_record_check CHECK ((jsonb_typeof(record) = 'object'::text)),
+    CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text])))
+);
+
+
+--
 -- Name: data_upstream_probes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8555,6 +8697,7 @@ CREATE TABLE public.invocations (
     occurrence_id uuid,
     start_deadline_at timestamp with time zone,
     work_decision jsonb,
+    operation_id uuid,
     outcome_code text DEFAULT ''::text NOT NULL,
     environment_id uuid,
     CONSTRAINT invocation_platform_tenant_source CHECK (((platform_tenant_id IS NULL) OR (source = ANY (ARRAY['async_invoke'::text, 'replay'::text, 'queue'::text])))),
@@ -10879,7 +11022,7 @@ CREATE TABLE public.platform_tenant_access_tokens (
     revoked_at timestamp with time zone,
     CONSTRAINT platform_tenant_access_tokens_name_check CHECK (((length(name) >= 1) AND (length(name) <= 64))),
     CONSTRAINT platform_tenant_access_tokens_prefix_check CHECK ((prefix ~ '^fp_tenant_[0-9a-f]{8}$'::text)),
-    CONSTRAINT platform_tenant_access_tokens_scopes_check CHECK (((cardinality(scopes) > 0) AND (scopes <@ ARRAY['platform_tenant:usage:read'::text, 'platform_tenant:statements:read'::text, 'platform_tenant:activation:read'::text, 'platform_tenant:hostnames:manage'::text, 'platform_tenant:credentials:read'::text, 'platform_tenant:credentials:manage'::text, 'platform_tenant:consumers:manage'::text, 'platform_tenant:invocations:read'::text, 'platform_tenant:invocations:manage'::text]))),
+    CONSTRAINT platform_tenant_access_tokens_scopes_check CHECK (((cardinality(scopes) > 0) AND (scopes <@ ARRAY['platform_tenant:usage:read'::text, 'platform_tenant:statements:read'::text, 'platform_tenant:activation:read'::text, 'platform_tenant:hostnames:manage'::text, 'platform_tenant:credentials:read'::text, 'platform_tenant:credentials:manage'::text, 'platform_tenant:consumers:manage'::text, 'platform_tenant:invocations:read'::text, 'platform_tenant:invocations:manage'::text, 'platform_tenant:operations:read'::text, 'platform_tenant:operations:manage'::text]))),
     CONSTRAINT platform_tenant_access_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
 );
 
@@ -15346,6 +15489,86 @@ ALTER TABLE ONLY public.custom_domain_tls_hosts
 
 ALTER TABLE ONLY public.custom_domains
     ADD CONSTRAINT custom_domains_pkey PRIMARY KEY (domain);
+
+
+--
+-- Name: customer_operation_definitions customer_operation_definition_app_id_scope_name_deployment__key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_definitions
+    ADD CONSTRAINT customer_operation_definition_app_id_scope_name_deployment__key UNIQUE (app_id, scope, name, deployment_id);
+
+
+--
+-- Name: customer_operation_definitions customer_operation_definitions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_definitions
+    ADD CONSTRAINT customer_operation_definitions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_operation_events customer_operation_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_events
+    ADD CONSTRAINT customer_operation_events_pkey PRIMARY KEY (operation_id, sequence);
+
+
+--
+-- Name: customer_operation_executions customer_operation_executions_invocation_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_executions
+    ADD CONSTRAINT customer_operation_executions_invocation_id_key UNIQUE (invocation_id);
+
+
+--
+-- Name: customer_operation_executions customer_operation_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_executions
+    ADD CONSTRAINT customer_operation_executions_pkey PRIMARY KEY (operation_id, generation);
+
+
+--
+-- Name: customer_operation_idempotency customer_operation_idempotency_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_idempotency
+    ADD CONSTRAINT customer_operation_idempotency_pkey PRIMARY KEY (scope_digest);
+
+
+--
+-- Name: customer_operation_recoveries customer_operation_recoveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_recoveries
+    ADD CONSTRAINT customer_operation_recoveries_pkey PRIMARY KEY (operation_id, recovery_id);
+
+
+--
+-- Name: customer_operation_reports customer_operation_reports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_reports
+    ADD CONSTRAINT customer_operation_reports_pkey PRIMARY KEY (operation_id, execution_id, attempt, report_id);
+
+
+--
+-- Name: customer_operation_stream_leases customer_operation_stream_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_stream_leases
+    ADD CONSTRAINT customer_operation_stream_leases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_operations customer_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_pkey PRIMARY KEY (id);
 
 
 --
@@ -19919,6 +20142,55 @@ CREATE INDEX custom_domains_unverified_idx ON public.custom_domains USING btree 
 --
 
 CREATE INDEX custom_domains_verification_due_idx ON public.custom_domains USING btree (verification_next_check_at, app_id) WHERE (verified_at IS NULL);
+
+
+--
+-- Name: customer_operation_definitions_route_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX customer_operation_definitions_route_idx ON public.customer_operation_definitions USING btree (deployment_id, ((spec ->> 'method'::text)), ((spec ->> 'path'::text)));
+
+
+--
+-- Name: customer_operation_idempotency_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_idempotency_retention_idx ON public.customer_operation_idempotency USING btree (expires_at);
+
+
+--
+-- Name: customer_operation_stream_leases_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_stream_leases_account_idx ON public.customer_operation_stream_leases USING btree (account_id, expires_at);
+
+
+--
+-- Name: customer_operation_stream_leases_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_stream_leases_retention_idx ON public.customer_operation_stream_leases USING btree (expires_at);
+
+
+--
+-- Name: customer_operations_pending_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_pending_account_idx ON public.customer_operations USING btree (account_id) WHERE (state = ANY (ARRAY['accepted'::text, 'running'::text, 'requires_reconciliation'::text]));
+
+
+--
+-- Name: customer_operations_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_retention_idx ON public.customer_operations USING btree (expires_at);
+
+
+--
+-- Name: customer_operations_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_tenant_idx ON public.customer_operations USING btree (platform_tenant_id, created_at DESC, id DESC);
 
 
 --
@@ -26506,6 +26778,158 @@ ALTER TABLE ONLY public.custom_domains
 
 ALTER TABLE ONLY public.custom_domains
     ADD CONSTRAINT custom_domains_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: customer_operation_definitions customer_operation_definitions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_definitions
+    ADD CONSTRAINT customer_operation_definitions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_definitions customer_operation_definitions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_definitions
+    ADD CONSTRAINT customer_operation_definitions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_definitions customer_operation_definitions_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_definitions
+    ADD CONSTRAINT customer_operation_definitions_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_events customer_operation_events_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_events
+    ADD CONSTRAINT customer_operation_events_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.invocations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: customer_operation_events customer_operation_events_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_events
+    ADD CONSTRAINT customer_operation_events_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_executions customer_operation_executions_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_executions
+    ADD CONSTRAINT customer_operation_executions_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: customer_operation_executions customer_operation_executions_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_executions
+    ADD CONSTRAINT customer_operation_executions_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_idempotency customer_operation_idempotency_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_idempotency
+    ADD CONSTRAINT customer_operation_idempotency_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_idempotency customer_operation_idempotency_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_idempotency
+    ADD CONSTRAINT customer_operation_idempotency_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_recoveries customer_operation_recoveries_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_recoveries
+    ADD CONSTRAINT customer_operation_recoveries_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_reports customer_operation_reports_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_reports
+    ADD CONSTRAINT customer_operation_reports_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.invocations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: customer_operation_reports customer_operation_reports_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_reports
+    ADD CONSTRAINT customer_operation_reports_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_stream_leases customer_operation_stream_leases_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_stream_leases
+    ADD CONSTRAINT customer_operation_stream_leases_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_stream_leases customer_operation_stream_leases_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_stream_leases
+    ADD CONSTRAINT customer_operation_stream_leases_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operations customer_operations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operations customer_operations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operations customer_operations_current_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_current_invocation_id_fkey FOREIGN KEY (current_invocation_id) REFERENCES public.invocations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: customer_operations customer_operations_definition_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_definition_id_fkey FOREIGN KEY (definition_id) REFERENCES public.customer_operation_definitions(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: customer_operations customer_operations_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
 
 
 --

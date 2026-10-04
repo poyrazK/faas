@@ -58,6 +58,10 @@ abort direct connections.
 
 ## Operate
 
+Alerts `FaasCustomDomainTLSAskErrors` (page), `FaasCustomDomainTLSAskOverload`
+and `FaasCustomDomainCertIssuanceFailing` cover this path; see
+`docs/runbooks/FaasCustomDomainTLS.md`.
+
 - `gateway_tls_on_demand_ask_total{decision}` on gatewayd-public's control
   listener counts every check. `deny_error` means the store lookup failed
   (Postgres); certificates already in Caddy's memory keep working, but
