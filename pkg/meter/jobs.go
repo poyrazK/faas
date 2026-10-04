@@ -167,8 +167,32 @@ func (m *JobMetrics) Registry() *prometheus.Registry { return m.reg }
 // persistent failure surfaces as a flood of WARN logs that an
 // operator can alert on.
 func (s *Sampler) SampleJobsAndRoll(ctx context.Context) ([]JobRolledRow, error) {
-	minute := MinuteKey(s.now())
-	instances, err := s.store.ListJobInstances(ctx)
+	observedAt := s.now().UTC()
+	minute := MinuteKey(observedAt)
+	var residency map[string]int64
+	var instances []state.JobBillingInstance
+	var err error
+	exactResidency := false
+	if exact, ok := s.store.(instanceBillingSecondsStore); ok {
+		exactResidency = true
+		windowEnd := observedAt.Truncate(time.Minute)
+		minute = windowEnd.Add(-time.Minute)
+		residency, err = exact.InstanceBillingSeconds(ctx, minute, windowEnd)
+		if err != nil {
+			return nil, fmt.Errorf("meter: job billing residency: %w", err)
+		}
+		windowStore, ok := s.store.(state.JobBillingWindowStore)
+		if !ok {
+			return nil, fmt.Errorf("meter: historical job billing lookup unavailable")
+		}
+		instances, err = windowStore.ListJobInstancesInBillingWindow(ctx, minute, windowEnd)
+	} else {
+		var live []state.Instance
+		live, err = s.store.ListJobInstances(ctx)
+		for _, instance := range live {
+			instances = append(instances, state.JobBillingInstance{Instance: instance})
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("meter: SampleJobsAndRoll list: %w", err)
 	}
@@ -181,7 +205,11 @@ func (s *Sampler) SampleJobsAndRoll(ctx context.Context) ([]JobRolledRow, error)
 	}
 	var out []JobRolledRow
 	for _, ins := range instances {
-		if ins.State == "destroyed" || ins.State == "parked" {
+		seconds := int64(60)
+		if exactResidency {
+			seconds = residency[ins.ID]
+		}
+		if seconds == 0 || (!exactResidency && (ins.State == "destroyed" || ins.State == "parked")) {
 			continue
 		}
 		// Mirror the app path's billable-RAM math (spec §4.7:
@@ -191,14 +219,17 @@ func (s *Sampler) SampleJobsAndRoll(ctx context.Context) ([]JobRolledRow, error)
 		// so BillableRAMMBWithSidecars collapses to its first
 		// arg.
 		admissionMB := api.BillableRAMMBWithSidecars(ins.RAMMB, nil)
-		accountID := s.lookupJobAccountID(ctx, ins.JobID)
+		accountID := ins.AccountID
+		if !exactResidency {
+			accountID = s.lookupJobAccountID(ctx, ins.JobID)
+		}
 		row := JobRolledRow{
 			InstanceID:  ins.ID,
 			JobID:       ins.JobID,
 			AccountID:   accountID,
 			Minute:      minute,
 			AdmissionMB: admissionMB,
-			MBSeconds:   MBSecondsPerMinute(admissionMB),
+			MBSeconds:   int64(admissionMB) * seconds,
 		}
 		if err := appender.AppendJobUsage(ctx, accountID, ins.JobID, ins.ID, minute, row.MBSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
 			return out, err

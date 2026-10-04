@@ -3422,6 +3422,19 @@ $$;
 
 
 --
+-- Name: notify_financial_budget_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.notify_financial_budget_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  PERFORM pg_notify('financial_budget_changed', NEW.account_id::text);
+  RETURN NEW;
+END $$;
+
+
+--
 -- Name: notify_github_deployment_status_changed(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3948,6 +3961,35 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: protect_financial_budget_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_financial_budget_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  -- Account removal may erase its financial data; ordinary policy deletion
+  -- is a revisioned tombstone and never removes the audit trail.
+  IF TG_OP = 'DELETE' AND NOT EXISTS(SELECT 1 FROM accounts WHERE id = OLD.account_id) THEN RETURN OLD; END IF;
+  RAISE EXCEPTION 'financial budget revisions are append-only';
+END $$;
+
+
+--
+-- Name: protect_financial_history(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_financial_history() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'DELETE' AND NOT EXISTS(SELECT 1 FROM accounts WHERE id = OLD.account_id) THEN RETURN OLD; END IF;
+  IF TG_TABLE_NAME = 'financial_price_snapshots' AND TG_OP = 'UPDATE' AND NEW IS NOT DISTINCT FROM OLD THEN RETURN NEW; END IF;
+  RAISE EXCEPTION 'financial history is append-only';
+END $$;
 
 
 --
@@ -4933,6 +4975,89 @@ $$;
 
 
 --
+-- Name: retain_financial_usage_evidence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.retain_financial_usage_evidence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  previous_compute bigint := 0;
+  previous_egress bigint := 0;
+  captured_plan text;
+  captured_attribution jsonb;
+  delta bigint;
+  meter_name text;
+  unit_name text;
+  cumulative bigint;
+  captured_price text;
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    previous_compute := OLD.mb_seconds;
+    previous_egress := OLD.net_tx_bytes;
+  END IF;
+  IF NEW.mb_seconds = previous_compute AND NEW.net_tx_bytes = previous_egress THEN RETURN NEW; END IF;
+  IF NEW.mb_seconds < previous_compute OR NEW.net_tx_bytes < previous_egress THEN
+    RAISE EXCEPTION 'financial usage corrections require retained adjustment lineage';
+  END IF;
+  -- Allocate evidence IDs in account commit order. Without this transaction
+  -- lock, a lower sequence could commit after a paged reader fixed its head.
+  PERFORM pg_advisory_xact_lock(hashtextextended('financial-evidence:' || NEW.account_id::text, 0));
+
+  -- Preserve the first observation's identity even if the live workload is
+  -- renamed, moved or deleted before later network observations arrive.
+  SELECT plan, attribution INTO captured_plan, captured_attribution
+    FROM financial_usage_evidence WHERE account_id = NEW.account_id
+      AND instance_id = NEW.instance_id AND source_start = NEW.minute
+    ORDER BY id LIMIT 1;
+  IF NOT FOUND THEN
+    -- Recorded activations apply to source intervals. In particular, the
+    -- just-closed minute still uses its contract when the live plan changes.
+    SELECT COALESCE((
+      SELECT price.plan FROM financial_price_snapshots price
+      WHERE price.account_id = NEW.account_id AND price.meter = 'compute'
+        AND price.period_start <= NEW.minute AND price.period_end > NEW.minute
+        AND price.effective_from <= NEW.minute
+      ORDER BY price.effective_from DESC, price.recorded_at DESC, price.version
+      LIMIT 1
+    ), account.plan), jsonb_strip_nulls(jsonb_build_object(
+      'app_id', NEW.app_id::text, 'job_id', NEW.job_id::text,
+      'project_id', app.project_id::text, 'deployment_id', instance.deployment_id::text,
+      'environment_id', environment.id::text, 'name', COALESCE(app.slug, job.name)))
+    INTO captured_plan, captured_attribution
+    FROM accounts account
+    LEFT JOIN apps app ON app.id = NEW.app_id AND app.account_id = account.id
+    LEFT JOIN jobs job ON job.id = NEW.job_id AND job.account_id = account.id
+    LEFT JOIN instances instance ON instance.id = NEW.instance_id AND instance.app_id = app.id
+    LEFT JOIN deployments deployment ON deployment.id = instance.deployment_id AND deployment.app_id = app.id
+    LEFT JOIN project_environments environment ON environment.account_id = account.id
+      AND environment.project_id = app.project_id AND environment.slug = deployment.scope
+    WHERE account.id = NEW.account_id;
+    -- Preserve canonical usage behavior for orphan fixtures and late samples
+    -- after account deletion without recreating erased financial history.
+    IF NOT FOUND THEN RETURN NEW; END IF;
+  END IF;
+  FOR meter_name, unit_name, delta, cumulative IN
+    SELECT 'compute', 'mb_seconds', NEW.mb_seconds - previous_compute, NEW.mb_seconds
+    UNION ALL SELECT 'egress', 'interface_bytes', NEW.net_tx_bytes - previous_egress, NEW.net_tx_bytes
+  LOOP
+    IF delta > 0 THEN
+      SELECT version INTO captured_price FROM financial_price_snapshots
+        WHERE account_id = NEW.account_id AND meter = meter_name AND plan = captured_plan
+          AND period_start <= NEW.minute AND period_end > NEW.minute AND effective_from <= NEW.minute
+        ORDER BY effective_from DESC, recorded_at DESC, version LIMIT 1;
+      INSERT INTO financial_usage_evidence(account_id, instance_id, source_id, meter, unit, quantity,
+        source_start, source_end, plan, attribution, price_version)
+      VALUES (NEW.account_id, NEW.instance_id,
+        'usage:' || NEW.instance_id::text || ':' || extract(epoch FROM NEW.minute)::text || ':' || meter_name || ':' || cumulative::text,
+        meter_name, unit_name, delta, NEW.minute, NEW.minute + interval '1 minute', captured_plan, captured_attribution, captured_price);
+    END IF;
+  END LOOP;
+  RETURN NEW;
+END $$;
+
+
+--
 -- Name: retain_object_version_history_latch(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5705,6 +5830,43 @@ BEGIN
  n:=(p->>k)::numeric;
  RETURN n>0 AND n<=CASE WHEN k='days' THEN 36500 ELSE 100 END;
 END $_$;
+
+
+--
+-- Name: validate_financial_evidence_insert(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.validate_financial_evidence_insert() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  original financial_usage_evidence%ROWTYPE;
+  existing financial_usage_evidence%ROWTYPE;
+  remaining numeric;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('financial-evidence:' || NEW.account_id::text, 0));
+  NEW.id := nextval('financial_usage_evidence_id_seq'::regclass);
+  IF NEW.corrects_source_id IS NULL THEN RETURN NEW; END IF;
+  SELECT * INTO existing FROM financial_usage_evidence WHERE account_id = NEW.account_id AND source_id = NEW.source_id;
+  IF FOUND THEN
+    IF (NEW.instance_id,NEW.corrects_source_id,NEW.meter,NEW.unit,NEW.quantity,NEW.source_start,NEW.source_end,NEW.plan,NEW.attribution,NEW.price_version,NEW.adjustment_actor,NEW.adjustment_reason)
+       IS DISTINCT FROM (existing.instance_id,existing.corrects_source_id,existing.meter,existing.unit,existing.quantity,existing.source_start,existing.source_end,existing.plan,existing.attribution,existing.price_version,existing.adjustment_actor,existing.adjustment_reason) THEN
+      RAISE EXCEPTION 'conflicting financial adjustment replay' USING ERRCODE = '23505';
+    END IF;
+    RETURN NEW;
+  END IF;
+  SELECT * INTO original FROM financial_usage_evidence WHERE account_id = NEW.account_id AND source_id = NEW.corrects_source_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'financial correction original not found' USING ERRCODE = '23503'; END IF;
+  IF original.corrects_source_id IS NOT NULL OR NEW.quantity >= 0
+    OR (NEW.instance_id,NEW.meter,NEW.unit,NEW.source_start,NEW.source_end,NEW.plan,NEW.attribution,NEW.price_version)
+       IS DISTINCT FROM (original.instance_id,original.meter,original.unit,original.source_start,original.source_end,original.plan,original.attribution,original.price_version) THEN
+    RAISE EXCEPTION 'invalid financial correction lineage' USING ERRCODE = '23514';
+  END IF;
+  SELECT original.quantity::numeric + COALESCE(sum(quantity::numeric),0) + NEW.quantity::numeric INTO remaining
+    FROM financial_usage_evidence WHERE account_id = NEW.account_id AND corrects_source_id = NEW.corrects_source_id;
+  IF remaining < 0 THEN RAISE EXCEPTION 'financial correction exceeds original usage' USING ERRCODE = '23514'; END IF;
+  RETURN NEW;
+END $$;
 
 
 --
@@ -9420,6 +9582,148 @@ CREATE TABLE public.feature_flag_versions (
     CONSTRAINT feature_flag_versions_restored_from_check CHECK ((restored_from > 0)),
     CONSTRAINT feature_flag_versions_version_check CHECK ((version > 0))
 );
+
+
+--
+-- Name: financial_budget_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_policies (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    spec jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    deleted_at timestamp with time zone,
+    CONSTRAINT financial_budget_policies_check CHECK ((updated_at >= created_at)),
+    CONSTRAINT financial_budget_policies_check1 CHECK (((deleted_at IS NULL) OR (deleted_at >= created_at))),
+    CONSTRAINT financial_budget_policies_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT financial_budget_policies_spec_check CHECK (((jsonb_typeof(spec) = 'object'::text) AND (spec ?& ARRAY['name'::text, 'scope'::text, 'currency'::text, 'meters'::text, 'basis'::text, 'limit_millicents'::text, 'notify_millicents'::text, 'mode'::text, 'action'::text, 'drain_seconds'::text, 'resume_rule'::text, 'enabled'::text]) AND (jsonb_typeof((spec -> 'name'::text)) = 'string'::text) AND ((length((spec ->> 'name'::text)) >= 1) AND (length((spec ->> 'name'::text)) <= 128)) AND (jsonb_typeof((spec -> 'scope'::text)) = 'object'::text) AND (((spec -> 'scope'::text) ->> 'kind'::text) = ANY (ARRAY['account'::text, 'project'::text, 'environment'::text, 'app'::text, 'job'::text])) AND ((spec ->> 'currency'::text) = 'EUR'::text) AND (jsonb_typeof((spec -> 'meters'::text)) = 'array'::text) AND ((jsonb_array_length((spec -> 'meters'::text)) >= 1) AND (jsonb_array_length((spec -> 'meters'::text)) <= 2)) AND ((spec -> 'meters'::text) <@ '["compute", "egress"]'::jsonb) AND ((spec ->> 'basis'::text) = ANY (ARRAY['net_usage'::text, 'gross_usage'::text])) AND (jsonb_typeof((spec -> 'limit_millicents'::text)) = 'number'::text) AND ((((spec ->> 'limit_millicents'::text))::bigint >= 0) AND (((spec ->> 'limit_millicents'::text))::bigint <= '9007199254740991'::bigint)) AND (jsonb_typeof((spec -> 'notify_millicents'::text)) = 'array'::text) AND (jsonb_array_length((spec -> 'notify_millicents'::text)) <= 8) AND ((spec ->> 'mode'::text) = ANY (ARRAY['monitored'::text, 'strict'::text])) AND ((spec ->> 'action'::text) = ANY (ARRAY['notify'::text, 'reject_traffic'::text, 'suspend_background'::text, 'stop_previews'::text, 'suspend_workloads'::text])) AND (jsonb_typeof((spec -> 'drain_seconds'::text)) = 'number'::text) AND ((((spec ->> 'drain_seconds'::text))::integer >= 0) AND (((spec ->> 'drain_seconds'::text))::integer <= 300)) AND ((spec ->> 'resume_rule'::text) = ANY (ARRAY['manual'::text, 'next_period'::text])) AND (jsonb_typeof((spec -> 'enabled'::text)) = 'boolean'::text)))
+);
+
+
+--
+-- Name: financial_budget_revisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_revisions (
+    account_id uuid NOT NULL,
+    policy_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    actor text NOT NULL,
+    mutation text NOT NULL,
+    spec jsonb NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT financial_budget_revisions_actor_check CHECK (((octet_length(actor) >= 1) AND (octet_length(actor) <= 256))),
+    CONSTRAINT financial_budget_revisions_mutation_check CHECK ((mutation = ANY (ARRAY['created'::text, 'updated'::text, 'deleted'::text]))),
+    CONSTRAINT financial_budget_revisions_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT financial_budget_revisions_spec_check CHECK ((jsonb_typeof(spec) = 'object'::text))
+);
+
+
+--
+-- Name: financial_evidence_coverage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_evidence_coverage (
+    singleton boolean DEFAULT true NOT NULL,
+    retained_from timestamp with time zone NOT NULL,
+    CONSTRAINT financial_evidence_coverage_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: financial_price_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_price_snapshots (
+    account_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone NOT NULL,
+    meter text NOT NULL,
+    version text NOT NULL,
+    plan text NOT NULL,
+    effective_from timestamp with time zone NOT NULL,
+    delivery_mode text NOT NULL,
+    price jsonb NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT financial_price_snapshots_check CHECK ((period_end > period_start)),
+    CONSTRAINT financial_price_snapshots_check1 CHECK (((effective_from >= period_start) AND (effective_from < period_end))),
+    CONSTRAINT financial_price_snapshots_delivery_mode_check CHECK ((delivery_mode = ANY (ARRAY['live'::text, 'shadow'::text, 'off'::text]))),
+    CONSTRAINT financial_price_snapshots_meter_check CHECK (((length(meter) >= 1) AND (length(meter) <= 64))),
+    CONSTRAINT financial_price_snapshots_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT financial_price_snapshots_price_check CHECK ((jsonb_typeof(price) = 'object'::text)),
+    CONSTRAINT financial_price_snapshots_version_check CHECK (((length(version) >= 1) AND (length(version) <= 128)))
+);
+
+
+--
+-- Name: financial_sampling_windows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_sampling_windows (
+    minute timestamp with time zone NOT NULL,
+    compute_complete boolean NOT NULL,
+    egress_complete boolean NOT NULL,
+    observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT financial_sampling_windows_minute_check CHECK ((minute = date_trunc('minute'::text, minute)))
+);
+
+
+--
+-- Name: financial_usage_evidence; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_usage_evidence (
+    id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    source_id text NOT NULL,
+    meter text NOT NULL,
+    unit text NOT NULL,
+    quantity bigint NOT NULL,
+    source_start timestamp with time zone NOT NULL,
+    source_end timestamp with time zone NOT NULL,
+    plan text NOT NULL,
+    attribution jsonb NOT NULL,
+    observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    price_version text,
+    corrects_source_id text,
+    adjustment_actor text,
+    adjustment_reason text,
+    CONSTRAINT financial_usage_adjustment_quantity_check CHECK ((((quantity > 0) AND (corrects_source_id IS NULL) AND (adjustment_actor IS NULL) AND (adjustment_reason IS NULL)) OR ((quantity < 0) AND (corrects_source_id IS NOT NULL) AND (corrects_source_id <> source_id) AND (adjustment_actor IS NOT NULL) AND (adjustment_reason IS NOT NULL)))),
+    CONSTRAINT financial_usage_evidence_adjustment_actor_check CHECK (((adjustment_actor IS NULL) OR ((octet_length(adjustment_actor) >= 1) AND (octet_length(adjustment_actor) <= 256)))),
+    CONSTRAINT financial_usage_evidence_adjustment_reason_check CHECK (((adjustment_reason IS NULL) OR ((octet_length(adjustment_reason) >= 1) AND (octet_length(adjustment_reason) <= 512)))),
+    CONSTRAINT financial_usage_evidence_attribution_check CHECK ((jsonb_typeof(attribution) = 'object'::text)),
+    CONSTRAINT financial_usage_evidence_check CHECK ((source_end > source_start)),
+    CONSTRAINT financial_usage_evidence_check1 CHECK ((((meter = 'compute'::text) AND (unit = 'mb_seconds'::text)) OR ((meter = 'egress'::text) AND (unit = 'interface_bytes'::text)))),
+    CONSTRAINT financial_usage_evidence_corrects_source_id_check CHECK (((corrects_source_id IS NULL) OR ((length(corrects_source_id) >= 1) AND (length(corrects_source_id) <= 512)))),
+    CONSTRAINT financial_usage_evidence_meter_check CHECK ((meter = ANY (ARRAY['compute'::text, 'egress'::text]))),
+    CONSTRAINT financial_usage_evidence_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT financial_usage_evidence_price_version_check CHECK (((price_version IS NULL) OR ((length(price_version) >= 1) AND (length(price_version) <= 128)))),
+    CONSTRAINT financial_usage_evidence_source_id_check CHECK (((length(source_id) >= 1) AND (length(source_id) <= 512))),
+    CONSTRAINT financial_usage_evidence_unit_check CHECK ((unit = ANY (ARRAY['mb_seconds'::text, 'interface_bytes'::text])))
+);
+
+
+--
+-- Name: financial_usage_evidence_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.financial_usage_evidence_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: financial_usage_evidence_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.financial_usage_evidence_id_seq OWNED BY public.financial_usage_evidence.id;
 
 
 --
@@ -16283,6 +16587,70 @@ ALTER TABLE ONLY public.feature_flag_versions
 
 
 --
+-- Name: financial_budget_policies financial_budget_policies_account_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_policies
+    ADD CONSTRAINT financial_budget_policies_account_id_id_key UNIQUE (account_id, id);
+
+
+--
+-- Name: financial_budget_policies financial_budget_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_policies
+    ADD CONSTRAINT financial_budget_policies_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: financial_budget_revisions financial_budget_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_revisions
+    ADD CONSTRAINT financial_budget_revisions_pkey PRIMARY KEY (account_id, policy_id, revision);
+
+
+--
+-- Name: financial_evidence_coverage financial_evidence_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_evidence_coverage
+    ADD CONSTRAINT financial_evidence_coverage_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: financial_price_snapshots financial_price_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_price_snapshots
+    ADD CONSTRAINT financial_price_snapshots_pkey PRIMARY KEY (account_id, period_start, meter, version);
+
+
+--
+-- Name: financial_sampling_windows financial_sampling_windows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_sampling_windows
+    ADD CONSTRAINT financial_sampling_windows_pkey PRIMARY KEY (minute);
+
+
+--
+-- Name: financial_usage_evidence financial_usage_evidence_account_id_source_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_usage_evidence
+    ADD CONSTRAINT financial_usage_evidence_account_id_source_id_key UNIQUE (account_id, source_id);
+
+
+--
+-- Name: financial_usage_evidence financial_usage_evidence_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_usage_evidence
+    ADD CONSTRAINT financial_usage_evidence_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: fleet_seal_domain_probe fleet_seal_domain_probe_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20598,6 +20966,34 @@ CREATE INDEX feature_flag_versions_scope ON public.feature_flag_versions USING b
 
 
 --
+-- Name: financial_budget_policies_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_budget_policies_account_idx ON public.financial_budget_policies USING btree (account_id, id) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: financial_usage_account_period_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_usage_account_period_idx ON public.financial_usage_evidence USING btree (account_id, source_start, id);
+
+
+--
+-- Name: financial_usage_adjustment_original_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_usage_adjustment_original_idx ON public.financial_usage_evidence USING btree (account_id, corrects_source_id) WHERE (corrects_source_id IS NOT NULL);
+
+
+--
+-- Name: financial_usage_instance_minute_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_usage_instance_minute_idx ON public.financial_usage_evidence USING btree (instance_id, source_start, id);
+
+
+--
 -- Name: gateway_concurrency_queue_leases_app_expiry_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -24427,6 +24823,48 @@ CREATE TRIGGER executions_status_transition BEFORE UPDATE ON public.executions F
 
 
 --
+-- Name: financial_budget_revisions financial_budget_revision_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_budget_revision_immutable BEFORE DELETE OR UPDATE ON public.financial_budget_revisions FOR EACH ROW EXECUTE FUNCTION public.protect_financial_budget_revision();
+
+
+--
+-- Name: financial_budget_revisions financial_budget_revision_notify; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_budget_revision_notify AFTER INSERT ON public.financial_budget_revisions FOR EACH ROW EXECUTE FUNCTION public.notify_financial_budget_revision();
+
+
+--
+-- Name: financial_usage_evidence financial_evidence_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_evidence_immutable BEFORE DELETE OR UPDATE ON public.financial_usage_evidence FOR EACH ROW EXECUTE FUNCTION public.protect_financial_history();
+
+
+--
+-- Name: financial_usage_evidence financial_evidence_insert_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_evidence_insert_guard BEFORE INSERT ON public.financial_usage_evidence FOR EACH ROW EXECUTE FUNCTION public.validate_financial_evidence_insert();
+
+
+--
+-- Name: financial_price_snapshots financial_price_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_price_immutable BEFORE DELETE OR UPDATE ON public.financial_price_snapshots FOR EACH ROW EXECUTE FUNCTION public.protect_financial_history();
+
+
+--
+-- Name: usage_minutes financial_usage_retention; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_usage_retention AFTER INSERT OR UPDATE ON public.usage_minutes FOR EACH ROW EXECUTE FUNCTION public.retain_financial_usage_evidence();
+
+
+--
 -- Name: deployments github_deployment_status_changed_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -27494,6 +27932,46 @@ ALTER TABLE ONLY public.feature_flag_versions
 
 ALTER TABLE ONLY public.feature_flag_versions
     ADD CONSTRAINT feature_flag_versions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_policies financial_budget_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_policies
+    ADD CONSTRAINT financial_budget_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_revisions financial_budget_revisions_account_id_policy_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_revisions
+    ADD CONSTRAINT financial_budget_revisions_account_id_policy_id_fkey FOREIGN KEY (account_id, policy_id) REFERENCES public.financial_budget_policies(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_price_snapshots financial_price_snapshots_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_price_snapshots
+    ADD CONSTRAINT financial_price_snapshots_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_usage_evidence financial_usage_adjustment_original_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_usage_evidence
+    ADD CONSTRAINT financial_usage_adjustment_original_fk FOREIGN KEY (account_id, corrects_source_id) REFERENCES public.financial_usage_evidence(account_id, source_id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: financial_usage_evidence financial_usage_evidence_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_usage_evidence
+    ADD CONSTRAINT financial_usage_evidence_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
