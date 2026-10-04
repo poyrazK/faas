@@ -92,6 +92,7 @@ type (
 
 	// Custom domains.
 	CustomDomainResponse      = api.CustomDomainResponse
+	DNSRecordInstruction      = api.DNSRecordInstruction
 	CreateCustomDomainRequest = api.CreateCustomDomainRequest
 
 	// Crons.

@@ -1140,6 +1140,21 @@ func (q *Queries) BumpInstanceTailCount(ctx context.Context, db DBTX, arg BumpIn
 	return tail_count, err
 }
 
+const cancelCustomerOperationExecution = `-- name: CancelCustomerOperationExecution :exec
+UPDATE invocations SET state='cancelled',quota_reserved=false,completed_at=$1::timestamptz
+WHERE id=$2::uuid AND state='pending'
+`
+
+type CancelCustomerOperationExecutionParams struct {
+	Now pgtype.Timestamptz
+	ID  pgtype.UUID
+}
+
+func (q *Queries) CancelCustomerOperationExecution(ctx context.Context, db DBTX, arg CancelCustomerOperationExecutionParams) error {
+	_, err := db.Exec(ctx, cancelCustomerOperationExecution, arg.Now, arg.ID)
+	return err
+}
+
 const cancelDeletedOwnerManagedPostgresCutovers = `-- name: CancelDeletedOwnerManagedPostgresCutovers :exec
 UPDATE managed_postgres_cutovers c SET state='cancelling',verified_at=NULL,retry_at=$1::timestamptz,updated_at=$1
 FROM accounts a, apps app WHERE a.id=c.account_id AND app.id=c.app_id
@@ -2447,6 +2462,34 @@ func (q *Queries) CountActiveMirrorSlotLeases(ctx context.Context, db DBTX, rule
 	return column_1, err
 }
 
+const countCustomerOperationDefinitionNames = `-- name: CountCustomerOperationDefinitionNames :one
+SELECT count(DISTINCT name)::bigint FROM customer_operation_definitions
+WHERE app_id = $1::uuid AND scope = $2::text
+`
+
+type CountCustomerOperationDefinitionNamesParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+func (q *Queries) CountCustomerOperationDefinitionNames(ctx context.Context, db DBTX, arg CountCustomerOperationDefinitionNamesParams) (int64, error) {
+	row := db.QueryRow(ctx, countCustomerOperationDefinitionNames, arg.AppID, arg.Scope)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countCustomerOperationStreams = `-- name: CountCustomerOperationStreams :one
+SELECT count(*)::bigint FROM customer_operation_stream_leases WHERE account_id=$1::uuid
+`
+
+func (q *Queries) CountCustomerOperationStreams(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, countCustomerOperationStreams, accountID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countDeployedApps = `-- name: CountDeployedApps :one
 select count(*) from apps where account_id = $1 and status in ('active', 'evicted_cold')
   and not (preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0)
@@ -2547,6 +2590,18 @@ func (q *Queries) CountOpenUploadSessionsByAccountApp(ctx context.Context, db DB
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countPendingCustomerOperations = `-- name: CountPendingCustomerOperations :one
+SELECT count(*)::bigint FROM customer_operations WHERE account_id=$1::uuid
+AND state IN ('accepted','running','requires_reconciliation')
+`
+
+func (q *Queries) CountPendingCustomerOperations(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, countPendingCustomerOperations, accountID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countTriggersByAccount = `-- name: CountTriggersByAccount :one
@@ -3613,6 +3668,127 @@ func (q *Queries) CronByID(ctx context.Context, db DBTX, id pgtype.UUID) (CronBy
 	return i, err
 }
 
+const customerOperationAccountPlan = `-- name: CustomerOperationAccountPlan :one
+SELECT plan::text FROM accounts WHERE id=$1::uuid
+`
+
+func (q *Queries) CustomerOperationAccountPlan(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, customerOperationAccountPlan, accountID)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
+}
+
+const customerOperationCompletionWebhook = `-- name: CustomerOperationCompletionWebhook :one
+SELECT enabled FROM app_webhooks WHERE id=$1::uuid
+ AND account_id=$2::uuid AND app_id=$3::uuid FOR SHARE
+`
+
+type CustomerOperationCompletionWebhookParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) CustomerOperationCompletionWebhook(ctx context.Context, db DBTX, arg CustomerOperationCompletionWebhookParams) (bool, error) {
+	row := db.QueryRow(ctx, customerOperationCompletionWebhook, arg.ID, arg.AccountID, arg.AppID)
+	var enabled bool
+	err := row.Scan(&enabled)
+	return enabled, err
+}
+
+const customerOperationDefinitionNameExists = `-- name: CustomerOperationDefinitionNameExists :one
+SELECT EXISTS(SELECT 1 FROM customer_operation_definitions
+WHERE app_id = $1::uuid AND scope = $2::text AND name = $3::text)
+`
+
+type CustomerOperationDefinitionNameExistsParams struct {
+	AppID pgtype.UUID
+	Scope string
+	Name  string
+}
+
+func (q *Queries) CustomerOperationDefinitionNameExists(ctx context.Context, db DBTX, arg CustomerOperationDefinitionNameExistsParams) (bool, error) {
+	row := db.QueryRow(ctx, customerOperationDefinitionNameExists, arg.AppID, arg.Scope, arg.Name)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const customerOperationDeploymentScope = `-- name: CustomerOperationDeploymentScope :one
+SELECT d.scope FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE d.id = $1::uuid AND a.id = $2::uuid
+AND a.account_id = $3::uuid AND a.status <> 'deleted'
+`
+
+type CustomerOperationDeploymentScopeParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+}
+
+func (q *Queries) CustomerOperationDeploymentScope(ctx context.Context, db DBTX, arg CustomerOperationDeploymentScopeParams) (string, error) {
+	row := db.QueryRow(ctx, customerOperationDeploymentScope, arg.DeploymentID, arg.AppID, arg.AccountID)
+	var scope string
+	err := row.Scan(&scope)
+	return scope, err
+}
+
+const customerOperationIDForInvocation = `-- name: CustomerOperationIDForInvocation :one
+SELECT coalesce(i.operation_id::text,e.operation_id::text,'')::text AS operation_id FROM invocations i
+LEFT JOIN customer_operation_executions e ON e.invocation_id=i.id WHERE i.id=$1::uuid
+`
+
+func (q *Queries) CustomerOperationIDForInvocation(ctx context.Context, db DBTX, invocationID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, customerOperationIDForInvocation, invocationID)
+	var operation_id string
+	err := row.Scan(&operation_id)
+	return operation_id, err
+}
+
+const customerOperationStateMetrics = `-- name: CustomerOperationStateMetrics :many
+SELECT state,count(*)::bigint AS retained_count,min(created_at)::timestamptz AS oldest_created_at
+FROM customer_operations WHERE expires_at>$1::timestamptz
+GROUP BY state ORDER BY state
+`
+
+type CustomerOperationStateMetricsRow struct {
+	State           string
+	RetainedCount   int64
+	OldestCreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) CustomerOperationStateMetrics(ctx context.Context, db DBTX, now pgtype.Timestamptz) ([]CustomerOperationStateMetricsRow, error) {
+	rows, err := db.Query(ctx, customerOperationStateMetrics, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerOperationStateMetricsRow{}
+	for rows.Next() {
+		var i CustomerOperationStateMetricsRow
+		if err := rows.Scan(&i.State, &i.RetainedCount, &i.OldestCreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const customerOperationStreamMetric = `-- name: CustomerOperationStreamMetric :one
+SELECT count(*)::bigint FROM customer_operation_stream_leases WHERE expires_at>$1::timestamptz
+`
+
+func (q *Queries) CustomerOperationStreamMetric(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error) {
+	row := db.QueryRow(ctx, customerOperationStreamMetric, now)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const decrementInstanceTailCount = `-- name: DecrementInstanceTailCount :exec
 update instances
    set tail_count = GREATEST(tail_count - $2, 0)
@@ -3821,6 +3997,72 @@ func (q *Queries) DeleteCustomerAppSecret(ctx context.Context, db DBTX, arg Dele
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteCustomerOperationDefinitionsForOwner = `-- name: DeleteCustomerOperationDefinitionsForOwner :exec
+DELETE FROM customer_operation_definitions WHERE account_id=$1::uuid OR app_id=$2::uuid
+`
+
+type DeleteCustomerOperationDefinitionsForOwnerParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) DeleteCustomerOperationDefinitionsForOwner(ctx context.Context, db DBTX, arg DeleteCustomerOperationDefinitionsForOwnerParams) error {
+	_, err := db.Exec(ctx, deleteCustomerOperationDefinitionsForOwner, arg.AccountID, arg.AppID)
+	return err
+}
+
+const deleteCustomerOperationExecutionsForOwner = `-- name: DeleteCustomerOperationExecutionsForOwner :exec
+DELETE FROM invocations WHERE operation_id IS NOT NULL
+ AND (account_id=$1::uuid OR app_id=$2::uuid)
+`
+
+type DeleteCustomerOperationExecutionsForOwnerParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) DeleteCustomerOperationExecutionsForOwner(ctx context.Context, db DBTX, arg DeleteCustomerOperationExecutionsForOwnerParams) error {
+	_, err := db.Exec(ctx, deleteCustomerOperationExecutionsForOwner, arg.AccountID, arg.AppID)
+	return err
+}
+
+const deleteCustomerOperationReceiptsForOwner = `-- name: DeleteCustomerOperationReceiptsForOwner :exec
+DELETE FROM customer_operation_idempotency WHERE account_id=$1::uuid OR app_id=$2::uuid
+`
+
+type DeleteCustomerOperationReceiptsForOwnerParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) DeleteCustomerOperationReceiptsForOwner(ctx context.Context, db DBTX, arg DeleteCustomerOperationReceiptsForOwnerParams) error {
+	_, err := db.Exec(ctx, deleteCustomerOperationReceiptsForOwner, arg.AccountID, arg.AppID)
+	return err
+}
+
+const deleteCustomerOperationStream = `-- name: DeleteCustomerOperationStream :exec
+DELETE FROM customer_operation_stream_leases WHERE id=$1::uuid
+`
+
+func (q *Queries) DeleteCustomerOperationStream(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteCustomerOperationStream, id)
+	return err
+}
+
+const deleteCustomerOperationsForOwner = `-- name: DeleteCustomerOperationsForOwner :exec
+DELETE FROM customer_operations WHERE account_id=$1::uuid OR app_id=$2::uuid
+`
+
+type DeleteCustomerOperationsForOwnerParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) DeleteCustomerOperationsForOwner(ctx context.Context, db DBTX, arg DeleteCustomerOperationsForOwnerParams) error {
+	_, err := db.Exec(ctx, deleteCustomerOperationsForOwner, arg.AccountID, arg.AppID)
+	return err
 }
 
 const deleteDataUpstreamByID = `-- name: DeleteDataUpstreamByID :exec
@@ -6987,6 +7229,230 @@ func (q *Queries) GetCustomerAppSecretForDeletion(ctx context.Context, db DBTX, 
 	return i, err
 }
 
+const getCustomerOperation = `-- name: GetCustomerOperation :one
+SELECT record FROM customer_operations WHERE id=$1::uuid AND account_id=$2::uuid
+AND ($3::text='' OR platform_tenant_id::text=$3::text)
+`
+
+type GetCustomerOperationParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	TenantID  string
+}
+
+func (q *Queries) GetCustomerOperation(ctx context.Context, db DBTX, arg GetCustomerOperationParams) ([]byte, error) {
+	row := db.QueryRow(ctx, getCustomerOperation, arg.ID, arg.AccountID, arg.TenantID)
+	var record []byte
+	err := row.Scan(&record)
+	return record, err
+}
+
+const getCustomerOperationDefinition = `-- name: GetCustomerOperationDefinition :one
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE id=$1::uuid AND account_id=$2::uuid
+`
+
+type GetCustomerOperationDefinitionParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type GetCustomerOperationDefinitionRow struct {
+	ID           string
+	AccountID    string
+	AppID        string
+	Scope        string
+	Name         string
+	Revision     string
+	DeploymentID string
+	ReleaseID    string
+	Spec         []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) GetCustomerOperationDefinition(ctx context.Context, db DBTX, arg GetCustomerOperationDefinitionParams) (GetCustomerOperationDefinitionRow, error) {
+	row := db.QueryRow(ctx, getCustomerOperationDefinition, arg.ID, arg.AccountID)
+	var i GetCustomerOperationDefinitionRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Scope,
+		&i.Name,
+		&i.Revision,
+		&i.DeploymentID,
+		&i.ReleaseID,
+		&i.Spec,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getCustomerOperationDefinitionForDeployment = `-- name: GetCustomerOperationDefinitionForDeployment :one
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE app_id=$1::uuid AND account_id=$2::uuid
+AND deployment_id=$3::uuid AND name=$4::text
+`
+
+type GetCustomerOperationDefinitionForDeploymentParams struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	DeploymentID pgtype.UUID
+	Name         string
+}
+
+type GetCustomerOperationDefinitionForDeploymentRow struct {
+	ID           string
+	AccountID    string
+	AppID        string
+	Scope        string
+	Name         string
+	Revision     string
+	DeploymentID string
+	ReleaseID    string
+	Spec         []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) GetCustomerOperationDefinitionForDeployment(ctx context.Context, db DBTX, arg GetCustomerOperationDefinitionForDeploymentParams) (GetCustomerOperationDefinitionForDeploymentRow, error) {
+	row := db.QueryRow(ctx, getCustomerOperationDefinitionForDeployment,
+		arg.AppID,
+		arg.AccountID,
+		arg.DeploymentID,
+		arg.Name,
+	)
+	var i GetCustomerOperationDefinitionForDeploymentRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Scope,
+		&i.Name,
+		&i.Revision,
+		&i.DeploymentID,
+		&i.ReleaseID,
+		&i.Spec,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getCustomerOperationDefinitionForRoute = `-- name: GetCustomerOperationDefinitionForRoute :one
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE account_id=$1::uuid AND app_id=$2::uuid
+AND deployment_id=$3::uuid AND spec->>'method'=$4::text AND spec->>'path'=$5::text
+`
+
+type GetCustomerOperationDefinitionForRouteParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Method       string
+	Path         string
+}
+
+type GetCustomerOperationDefinitionForRouteRow struct {
+	ID           string
+	AccountID    string
+	AppID        string
+	Scope        string
+	Name         string
+	Revision     string
+	DeploymentID string
+	ReleaseID    string
+	Spec         []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) GetCustomerOperationDefinitionForRoute(ctx context.Context, db DBTX, arg GetCustomerOperationDefinitionForRouteParams) (GetCustomerOperationDefinitionForRouteRow, error) {
+	row := db.QueryRow(ctx, getCustomerOperationDefinitionForRoute,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.Method,
+		arg.Path,
+	)
+	var i GetCustomerOperationDefinitionForRouteRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Scope,
+		&i.Name,
+		&i.Revision,
+		&i.DeploymentID,
+		&i.ReleaseID,
+		&i.Spec,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getCustomerOperationIdempotency = `-- name: GetCustomerOperationIdempotency :one
+SELECT operation_id::text,fingerprint,expires_at FROM customer_operation_idempotency
+WHERE scope_digest=$1::text AND account_id=$2::uuid
+`
+
+type GetCustomerOperationIdempotencyParams struct {
+	ScopeDigest string
+	AccountID   pgtype.UUID
+}
+
+type GetCustomerOperationIdempotencyRow struct {
+	OperationID string
+	Fingerprint string
+	ExpiresAt   pgtype.Timestamptz
+}
+
+func (q *Queries) GetCustomerOperationIdempotency(ctx context.Context, db DBTX, arg GetCustomerOperationIdempotencyParams) (GetCustomerOperationIdempotencyRow, error) {
+	row := db.QueryRow(ctx, getCustomerOperationIdempotency, arg.ScopeDigest, arg.AccountID)
+	var i GetCustomerOperationIdempotencyRow
+	err := row.Scan(&i.OperationID, &i.Fingerprint, &i.ExpiresAt)
+	return i, err
+}
+
+const getCustomerOperationRecovery = `-- name: GetCustomerOperationRecovery :one
+SELECT fingerprint FROM customer_operation_recoveries
+WHERE operation_id=$1::uuid AND recovery_id=$2::text
+`
+
+type GetCustomerOperationRecoveryParams struct {
+	OperationID pgtype.UUID
+	RecoveryID  string
+}
+
+func (q *Queries) GetCustomerOperationRecovery(ctx context.Context, db DBTX, arg GetCustomerOperationRecoveryParams) (string, error) {
+	row := db.QueryRow(ctx, getCustomerOperationRecovery, arg.OperationID, arg.RecoveryID)
+	var fingerprint string
+	err := row.Scan(&fingerprint)
+	return fingerprint, err
+}
+
+const getCustomerOperationReport = `-- name: GetCustomerOperationReport :one
+SELECT fingerprint FROM customer_operation_reports
+WHERE operation_id=$1::uuid AND execution_id=$2::uuid
+ AND attempt=$3::integer AND report_id=$4::text
+`
+
+type GetCustomerOperationReportParams struct {
+	OperationID pgtype.UUID
+	ExecutionID pgtype.UUID
+	Attempt     int32
+	ReportID    string
+}
+
+func (q *Queries) GetCustomerOperationReport(ctx context.Context, db DBTX, arg GetCustomerOperationReportParams) (string, error) {
+	row := db.QueryRow(ctx, getCustomerOperationReport,
+		arg.OperationID,
+		arg.ExecutionID,
+		arg.Attempt,
+		arg.ReportID,
+	)
+	var fingerprint string
+	err := row.Scan(&fingerprint)
+	return fingerprint, err
+}
+
 const getDataUpstreamByID = `-- name: GetDataUpstreamByID :one
 SELECT
     id, account_id, app_id, source, scope, deployment_scope, kind, host, port,
@@ -7846,6 +8312,246 @@ func (q *Queries) InsertComputeNodeHeartbeat(ctx context.Context, db DBTX, arg I
 		arg.ReceivedAt,
 		arg.LastHeartbeatAt,
 		arg.Source,
+	)
+	return err
+}
+
+const insertCustomerOperation = `-- name: InsertCustomerOperation :exec
+INSERT INTO customer_operations(id,account_id,app_id,platform_tenant_id,definition_id,current_invocation_id,state,record,expires_at,created_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,
+       $5::uuid,$6::uuid,$7::text,
+       $8::jsonb,$9::timestamptz,$10::timestamptz)
+`
+
+type InsertCustomerOperationParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	TenantID     pgtype.UUID
+	DefinitionID pgtype.UUID
+	InvocationID pgtype.UUID
+	State        string
+	Record       []byte
+	ExpiresAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperation(ctx context.Context, db DBTX, arg InsertCustomerOperationParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperation,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.TenantID,
+		arg.DefinitionID,
+		arg.InvocationID,
+		arg.State,
+		arg.Record,
+		arg.ExpiresAt,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const insertCustomerOperationCompletionDelivery = `-- name: InsertCustomerOperationCompletionDelivery :exec
+INSERT INTO app_webhook_deliveries(id,webhook_id,app_id,account_id,event,payload,next_attempt_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,
+ $4::uuid,'operation.finished',$5::jsonb,$6::timestamptz)
+`
+
+type InsertCustomerOperationCompletionDeliveryParams struct {
+	ID        pgtype.UUID
+	WebhookID pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Payload   []byte
+	Now       pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperationCompletionDelivery(ctx context.Context, db DBTX, arg InsertCustomerOperationCompletionDeliveryParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationCompletionDelivery,
+		arg.ID,
+		arg.WebhookID,
+		arg.AppID,
+		arg.AccountID,
+		arg.Payload,
+		arg.Now,
+	)
+	return err
+}
+
+const insertCustomerOperationDefinition = `-- name: InsertCustomerOperationDefinition :one
+INSERT INTO customer_operation_definitions(id, account_id, app_id, scope, name, revision, deployment_id, release_id, spec)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::text,
+       $5::text,$6::text,$7::uuid,$8::text,$9::jsonb)
+RETURNING id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+`
+
+type InsertCustomerOperationDefinitionParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+	Name         string
+	Revision     string
+	DeploymentID pgtype.UUID
+	ReleaseID    string
+	Spec         []byte
+}
+
+type InsertCustomerOperationDefinitionRow struct {
+	ID           string
+	AccountID    string
+	AppID        string
+	Scope        string
+	Name         string
+	Revision     string
+	DeploymentID string
+	ReleaseID    string
+	Spec         []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperationDefinition(ctx context.Context, db DBTX, arg InsertCustomerOperationDefinitionParams) (InsertCustomerOperationDefinitionRow, error) {
+	row := db.QueryRow(ctx, insertCustomerOperationDefinition,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Name,
+		arg.Revision,
+		arg.DeploymentID,
+		arg.ReleaseID,
+		arg.Spec,
+	)
+	var i InsertCustomerOperationDefinitionRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Scope,
+		&i.Name,
+		&i.Revision,
+		&i.DeploymentID,
+		&i.ReleaseID,
+		&i.Spec,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertCustomerOperationEvent = `-- name: InsertCustomerOperationEvent :exec
+INSERT INTO customer_operation_events(operation_id,sequence,event_type,execution_id,attempt,data,created_at)
+VALUES($1::uuid,$2::bigint,$3::text,
+       $4::uuid,$5::integer,$6::jsonb,$7::timestamptz)
+`
+
+type InsertCustomerOperationEventParams struct {
+	OperationID pgtype.UUID
+	Sequence    int64
+	EventType   string
+	ExecutionID pgtype.UUID
+	Attempt     int32
+	Data        []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperationEvent(ctx context.Context, db DBTX, arg InsertCustomerOperationEventParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationEvent,
+		arg.OperationID,
+		arg.Sequence,
+		arg.EventType,
+		arg.ExecutionID,
+		arg.Attempt,
+		arg.Data,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const insertCustomerOperationExecution = `-- name: InsertCustomerOperationExecution :exec
+INSERT INTO customer_operation_executions(operation_id,generation,invocation_id)
+VALUES($1::uuid,$2::integer,$3::uuid)
+`
+
+type InsertCustomerOperationExecutionParams struct {
+	OperationID  pgtype.UUID
+	Generation   int32
+	InvocationID pgtype.UUID
+}
+
+func (q *Queries) InsertCustomerOperationExecution(ctx context.Context, db DBTX, arg InsertCustomerOperationExecutionParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationExecution, arg.OperationID, arg.Generation, arg.InvocationID)
+	return err
+}
+
+const insertCustomerOperationRecovery = `-- name: InsertCustomerOperationRecovery :exec
+INSERT INTO customer_operation_recoveries(operation_id,recovery_id,fingerprint,request,created_at)
+VALUES($1::uuid,$2::text,$3::text,
+ $4::jsonb,$5::timestamptz)
+`
+
+type InsertCustomerOperationRecoveryParams struct {
+	OperationID pgtype.UUID
+	RecoveryID  string
+	Fingerprint string
+	Request     []byte
+	Now         pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperationRecovery(ctx context.Context, db DBTX, arg InsertCustomerOperationRecoveryParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationRecovery,
+		arg.OperationID,
+		arg.RecoveryID,
+		arg.Fingerprint,
+		arg.Request,
+		arg.Now,
+	)
+	return err
+}
+
+const insertCustomerOperationReport = `-- name: InsertCustomerOperationReport :exec
+INSERT INTO customer_operation_reports(operation_id,execution_id,attempt,report_id,fingerprint)
+VALUES($1::uuid,$2::uuid,$3::integer,
+ $4::text,$5::text)
+`
+
+type InsertCustomerOperationReportParams struct {
+	OperationID pgtype.UUID
+	ExecutionID pgtype.UUID
+	Attempt     int32
+	ReportID    string
+	Fingerprint string
+}
+
+func (q *Queries) InsertCustomerOperationReport(ctx context.Context, db DBTX, arg InsertCustomerOperationReportParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationReport,
+		arg.OperationID,
+		arg.ExecutionID,
+		arg.Attempt,
+		arg.ReportID,
+		arg.Fingerprint,
+	)
+	return err
+}
+
+const insertCustomerOperationStream = `-- name: InsertCustomerOperationStream :exec
+INSERT INTO customer_operation_stream_leases(id,account_id,operation_id,expires_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::timestamptz)
+`
+
+type InsertCustomerOperationStreamParams struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	OperationID pgtype.UUID
+	ExpiresAt   pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperationStream(ctx context.Context, db DBTX, arg InsertCustomerOperationStreamParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationStream,
+		arg.ID,
+		arg.AccountID,
+		arg.OperationID,
+		arg.ExpiresAt,
 	)
 	return err
 }
@@ -11732,6 +12438,62 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 	return items, nil
 }
 
+const listCustomerOperationDefinitionsForDeployment = `-- name: ListCustomerOperationDefinitionsForDeployment :many
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE account_id=$1::uuid AND app_id=$2::uuid
+AND deployment_id=$3::uuid ORDER BY name
+`
+
+type ListCustomerOperationDefinitionsForDeploymentParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type ListCustomerOperationDefinitionsForDeploymentRow struct {
+	ID           string
+	AccountID    string
+	AppID        string
+	Scope        string
+	Name         string
+	Revision     string
+	DeploymentID string
+	ReleaseID    string
+	Spec         []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) ListCustomerOperationDefinitionsForDeployment(ctx context.Context, db DBTX, arg ListCustomerOperationDefinitionsForDeploymentParams) ([]ListCustomerOperationDefinitionsForDeploymentRow, error) {
+	rows, err := db.Query(ctx, listCustomerOperationDefinitionsForDeployment, arg.AccountID, arg.AppID, arg.DeploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCustomerOperationDefinitionsForDeploymentRow{}
+	for rows.Next() {
+		var i ListCustomerOperationDefinitionsForDeploymentRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Scope,
+			&i.Name,
+			&i.Revision,
+			&i.DeploymentID,
+			&i.ReleaseID,
+			&i.Spec,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDataUpstreamProbesByHostRegion = `-- name: ListDataUpstreamProbesByHostRegion :many
 SELECT
     id, host_redacted_hash, region, kind, sampled_at, rtt_ms,
@@ -12985,6 +13747,37 @@ func (q *Queries) ListExclusiveWorkPolicies(ctx context.Context, db DBTX, accoun
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listExpiredCustomerOperationExecutions = `-- name: ListExpiredCustomerOperationExecutions :many
+SELECT i.id::text FROM invocations i WHERE i.state='dispatching' AND i.lease_expires_at<=$1::timestamptz
+ AND EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=i.id)
+ORDER BY i.lease_expires_at,i.id LIMIT $2::integer FOR UPDATE SKIP LOCKED
+`
+
+type ListExpiredCustomerOperationExecutionsParams struct {
+	Now       pgtype.Timestamptz
+	PageLimit int32
+}
+
+func (q *Queries) ListExpiredCustomerOperationExecutions(ctx context.Context, db DBTX, arg ListExpiredCustomerOperationExecutionsParams) ([]string, error) {
+	rows, err := db.Query(ctx, listExpiredCustomerOperationExecutions, arg.Now, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var i_id string
+		if err := rows.Scan(&i_id); err != nil {
+			return nil, err
+		}
+		items = append(items, i_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -15040,6 +15833,158 @@ func (q *Queries) LockCreditConsumption(ctx context.Context, db DBTX, providerIn
 	return err
 }
 
+const lockCustomerOperationAccount = `-- name: LockCustomerOperationAccount :one
+SELECT plan::text FROM accounts WHERE id = $1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockCustomerOperationAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationAccount, accountID)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
+}
+
+const lockCustomerOperationClaim = `-- name: LockCustomerOperationClaim :one
+SELECT id::text, app_id::text, account_id::text,
+       coalesce(platform_tenant_id::text,'')::text AS platform_tenant_id,
+       coalesce(instance_id::text,'')::text AS instance_id,
+       state, attempts, lease_expires_at
+FROM invocations WHERE id = $1 FOR UPDATE
+`
+
+type LockCustomerOperationClaimRow struct {
+	ID               string
+	AppID            string
+	AccountID        string
+	PlatformTenantID string
+	InstanceID       string
+	State            string
+	Attempts         int32
+	LeaseExpiresAt   pgtype.Timestamptz
+}
+
+func (q *Queries) LockCustomerOperationClaim(ctx context.Context, db DBTX, id pgtype.UUID) (LockCustomerOperationClaimRow, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationClaim, id)
+	var i LockCustomerOperationClaimRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.AccountID,
+		&i.PlatformTenantID,
+		&i.InstanceID,
+		&i.State,
+		&i.Attempts,
+		&i.LeaseExpiresAt,
+	)
+	return i, err
+}
+
+const lockCustomerOperationDeployment = `-- name: LockCustomerOperationDeployment :one
+SELECT d.status::text FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=$1::uuid AND d.app_id=$2::uuid
+AND a.account_id=$3::uuid AND a.status<>'deleted' FOR SHARE OF a,d
+`
+
+type LockCustomerOperationDeploymentParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+}
+
+func (q *Queries) LockCustomerOperationDeployment(ctx context.Context, db DBTX, arg LockCustomerOperationDeploymentParams) (string, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationDeployment, arg.DeploymentID, arg.AppID, arg.AccountID)
+	var d_status string
+	err := row.Scan(&d_status)
+	return d_status, err
+}
+
+const lockCustomerOperationExecution = `-- name: LockCustomerOperationExecution :one
+SELECT o.record FROM customer_operations o JOIN customer_operation_executions e ON e.operation_id=o.id
+WHERE e.invocation_id=$1::uuid FOR UPDATE OF o
+`
+
+func (q *Queries) LockCustomerOperationExecution(ctx context.Context, db DBTX, invocationID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationExecution, invocationID)
+	var record []byte
+	err := row.Scan(&record)
+	return record, err
+}
+
+const lockCustomerOperationInvocation = `-- name: LockCustomerOperationInvocation :one
+SELECT id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, outcome_code FROM invocations WHERE id=$1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockCustomerOperationInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationInvocation, id)
+	var i Invocation
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.State,
+		&i.Payload,
+		&i.Headers,
+		&i.DueAt,
+		&i.Method,
+		&i.Path,
+		&i.CronID,
+		&i.ScheduledAt,
+		&i.AckUrl,
+		&i.Result,
+		&i.LeaseExpiresAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.InstanceID,
+		&i.Attempts,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.OrgID,
+		&i.Outcome,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ReplayedFromInvocationID,
+		&i.LastReplayedAt,
+		&i.OnSuccessDestinationID,
+		&i.OnFailureDestinationID,
+		&i.QueueName,
+		&i.QuotaReserved,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkExpiresAt,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+		&i.PlatformTenantID,
+		&i.FailureRules,
+		&i.OccurrenceID,
+		&i.StartDeadlineAt,
+		&i.WorkDecision,
+		&i.OperationID,
+		&i.OutcomeCode,
+	)
+	return i, err
+}
+
+const lockCustomerOperationTenant = `-- name: LockCustomerOperationTenant :one
+SELECT status FROM platform_tenants
+WHERE id = $1::uuid AND account_id = $2::uuid FOR SHARE
+`
+
+type LockCustomerOperationTenantParams struct {
+	TenantID  pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockCustomerOperationTenant(ctx context.Context, db DBTX, arg LockCustomerOperationTenantParams) (string, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationTenant, arg.TenantID, arg.AccountID)
+	var status string
+	err := row.Scan(&status)
+	return status, err
+}
+
 const lockDeploymentHostingFailure = `-- name: LockDeploymentHostingFailure :one
 SELECT app_id, status FROM deployments
 WHERE id = $1::uuid
@@ -16750,6 +17695,15 @@ func (q *Queries) NotificationClaimAttempts(ctx context.Context, db DBTX, arg No
 	var attempts int32
 	err := row.Scan(&attempts)
 	return attempts, err
+}
+
+const notifyCustomerOperation = `-- name: NotifyCustomerOperation :exec
+SELECT pg_notify('customer_operation_changed',$1::text)
+`
+
+func (q *Queries) NotifyCustomerOperation(ctx context.Context, db DBTX, operationID string) error {
+	_, err := db.Exec(ctx, notifyCustomerOperation, operationID)
+	return err
 }
 
 const notifyRouteHealthRecovery = `-- name: NotifyRouteHealthRecovery :exec
@@ -19501,6 +20455,38 @@ func (q *Queries) PerAccountRateLimitAggregate(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const pinCustomerOperationDeployment = `-- name: PinCustomerOperationDeployment :exec
+INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
+VALUES($1::uuid,$2::uuid,$3::timestamptz)
+ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(deployment_revision_pins.expires_at,excluded.expires_at)
+`
+
+type PinCustomerOperationDeploymentParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	ExpiresAt    pgtype.Timestamptz
+}
+
+func (q *Queries) PinCustomerOperationDeployment(ctx context.Context, db DBTX, arg PinCustomerOperationDeploymentParams) error {
+	_, err := db.Exec(ctx, pinCustomerOperationDeployment, arg.DeploymentID, arg.AppID, arg.ExpiresAt)
+	return err
+}
+
+const pinCustomerOperationRelease = `-- name: PinCustomerOperationRelease :exec
+UPDATE project_release_sets SET expires_at=greatest(expires_at,$1::timestamptz)
+WHERE id=$2::uuid AND NOT active
+`
+
+type PinCustomerOperationReleaseParams struct {
+	ExpiresAt pgtype.Timestamptz
+	ID        pgtype.UUID
+}
+
+func (q *Queries) PinCustomerOperationRelease(ctx context.Context, db DBTX, arg PinCustomerOperationReleaseParams) error {
+	_, err := db.Exec(ctx, pinCustomerOperationRelease, arg.ExpiresAt, arg.ID)
+	return err
+}
+
 const pinManagedPostgresCutoverDatabases = `-- name: PinManagedPostgresCutoverDatabases :execrows
 UPDATE managed_postgres_databases SET cutover_id=$1::text::uuid
 WHERE id::text=ANY($2::text[]) AND cutover_id IS NULL AND state='ready'
@@ -19580,6 +20566,98 @@ func (q *Queries) ProbeManagedPostgresCredential(ctx context.Context, db DBTX, a
 		&i.DataAccess,
 	)
 	return i, err
+}
+
+const pruneAccountCustomerOperationStreams = `-- name: PruneAccountCustomerOperationStreams :exec
+DELETE FROM customer_operation_stream_leases WHERE account_id=$1::uuid AND expires_at<=$2::timestamptz
+`
+
+type PruneAccountCustomerOperationStreamsParams struct {
+	AccountID pgtype.UUID
+	Now       pgtype.Timestamptz
+}
+
+func (q *Queries) PruneAccountCustomerOperationStreams(ctx context.Context, db DBTX, arg PruneAccountCustomerOperationStreamsParams) error {
+	_, err := db.Exec(ctx, pruneAccountCustomerOperationStreams, arg.AccountID, arg.Now)
+	return err
+}
+
+const pruneCustomerOperationEvents = `-- name: PruneCustomerOperationEvents :execrows
+WITH doomed AS (SELECT e.operation_id,e.sequence FROM customer_operation_events e JOIN customer_operations o ON o.id=e.operation_id
+ WHERE (o.record->>'event_expires_at')::timestamptz<=$1::timestamptz
+ ORDER BY e.created_at,e.operation_id,e.sequence LIMIT $2::integer)
+DELETE FROM customer_operation_events e USING doomed d WHERE e.operation_id=d.operation_id AND e.sequence=d.sequence
+`
+
+type PruneCustomerOperationEventsParams struct {
+	Now       pgtype.Timestamptz
+	PageLimit int32
+}
+
+func (q *Queries) PruneCustomerOperationEvents(ctx context.Context, db DBTX, arg PruneCustomerOperationEventsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneCustomerOperationEvents, arg.Now, arg.PageLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneCustomerOperationIdempotency = `-- name: PruneCustomerOperationIdempotency :execrows
+WITH doomed AS (SELECT scope_digest FROM customer_operation_idempotency WHERE expires_at<=$1::timestamptz
+ ORDER BY expires_at,scope_digest LIMIT $2::integer)
+DELETE FROM customer_operation_idempotency i USING doomed d WHERE i.scope_digest=d.scope_digest
+`
+
+type PruneCustomerOperationIdempotencyParams struct {
+	Now       pgtype.Timestamptz
+	PageLimit int32
+}
+
+func (q *Queries) PruneCustomerOperationIdempotency(ctx context.Context, db DBTX, arg PruneCustomerOperationIdempotencyParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneCustomerOperationIdempotency, arg.Now, arg.PageLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneCustomerOperationStreams = `-- name: PruneCustomerOperationStreams :execrows
+WITH doomed AS (SELECT id FROM customer_operation_stream_leases WHERE expires_at<=$1::timestamptz
+ORDER BY expires_at,id LIMIT $2::integer)
+DELETE FROM customer_operation_stream_leases l USING doomed d WHERE l.id=d.id
+`
+
+type PruneCustomerOperationStreamsParams struct {
+	Now       pgtype.Timestamptz
+	PageLimit int32
+}
+
+func (q *Queries) PruneCustomerOperationStreams(ctx context.Context, db DBTX, arg PruneCustomerOperationStreamsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneCustomerOperationStreams, arg.Now, arg.PageLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneCustomerOperations = `-- name: PruneCustomerOperations :execrows
+WITH doomed AS (SELECT id FROM customer_operations
+ WHERE expires_at<=$1::timestamptz AND state IN ('succeeded','failed','cancelled','requires_reconciliation')
+ ORDER BY expires_at,id LIMIT $2::integer FOR UPDATE SKIP LOCKED)
+DELETE FROM customer_operations o USING doomed d WHERE o.id=d.id
+`
+
+type PruneCustomerOperationsParams struct {
+	Now       pgtype.Timestamptz
+	PageLimit int32
+}
+
+func (q *Queries) PruneCustomerOperations(ctx context.Context, db DBTX, arg PruneCustomerOperationsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneCustomerOperations, arg.Now, arg.PageLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const pruneDataUpstreamProbesOlderThan = `-- name: PruneDataUpstreamProbesOlderThan :exec
@@ -19726,6 +20804,34 @@ func (q *Queries) PublishImagePreparationLayer(ctx context.Context, db DBTX, arg
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const putCustomerOperationIdempotency = `-- name: PutCustomerOperationIdempotency :exec
+INSERT INTO customer_operation_idempotency(scope_digest,account_id,app_id,operation_id,fingerprint,expires_at)
+VALUES($1::text,$2::uuid,$3::uuid,
+       $4::uuid,$5::text,$6::timestamptz)
+ON CONFLICT(scope_digest) DO UPDATE SET operation_id=EXCLUDED.operation_id,fingerprint=EXCLUDED.fingerprint,expires_at=EXCLUDED.expires_at
+`
+
+type PutCustomerOperationIdempotencyParams struct {
+	ScopeDigest string
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	OperationID pgtype.UUID
+	Fingerprint string
+	ExpiresAt   pgtype.Timestamptz
+}
+
+func (q *Queries) PutCustomerOperationIdempotency(ctx context.Context, db DBTX, arg PutCustomerOperationIdempotencyParams) error {
+	_, err := db.Exec(ctx, putCustomerOperationIdempotency,
+		arg.ScopeDigest,
+		arg.AccountID,
+		arg.AppID,
+		arg.OperationID,
+		arg.Fingerprint,
+		arg.ExpiresAt,
+	)
+	return err
 }
 
 const putTCPListenerTLSObservation = `-- name: PutTCPListenerTLSObservation :execrows
@@ -20086,6 +21192,63 @@ func (q *Queries) ReadCanaryRouteGateOwner(ctx context.Context, db DBTX, deploym
 	var i ReadCanaryRouteGateOwnerRow
 	err := row.Scan(&i.AppID, &i.AccountID)
 	return i, err
+}
+
+const readCustomerOperationEvents = `-- name: ReadCustomerOperationEvents :many
+SELECT operation_id::text,sequence,event_type,coalesce(execution_id::text,''::text)::text AS execution_id,attempt,data,created_at
+FROM customer_operation_events WHERE operation_id=$1::uuid AND sequence>$2::bigint
+AND sequence<=$3::bigint
+ORDER BY sequence LIMIT $4::integer
+`
+
+type ReadCustomerOperationEventsParams struct {
+	OperationID    pgtype.UUID
+	AfterSequence  int64
+	LatestSequence int64
+	PageLimit      int32
+}
+
+type ReadCustomerOperationEventsRow struct {
+	OperationID string
+	Sequence    int64
+	EventType   string
+	ExecutionID string
+	Attempt     int32
+	Data        []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ReadCustomerOperationEvents(ctx context.Context, db DBTX, arg ReadCustomerOperationEventsParams) ([]ReadCustomerOperationEventsRow, error) {
+	rows, err := db.Query(ctx, readCustomerOperationEvents,
+		arg.OperationID,
+		arg.AfterSequence,
+		arg.LatestSequence,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadCustomerOperationEventsRow{}
+	for rows.Next() {
+		var i ReadCustomerOperationEventsRow
+		if err := rows.Scan(
+			&i.OperationID,
+			&i.Sequence,
+			&i.EventType,
+			&i.ExecutionID,
+			&i.Attempt,
+			&i.Data,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readExclusiveWorkKey = `-- name: ReadExclusiveWorkKey :one
@@ -21128,6 +22291,31 @@ func (q *Queries) RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg Re
 	return i, err
 }
 
+const recoverExpiredCustomerOperationExecution = `-- name: RecoverExpiredCustomerOperationExecution :exec
+UPDATE invocations SET state=$1::text,quota_reserved=false,due_at=$2::timestamptz,
+ lease_expires_at=NULL,instance_id=NULL,last_error=$3::text,
+ outcome=CASE WHEN $1::text='failed' THEN 'failed' ELSE NULL END,
+ completed_at=CASE WHEN $1::text='failed' THEN $2::timestamptz ELSE completed_at END
+WHERE id=$4::uuid
+`
+
+type RecoverExpiredCustomerOperationExecutionParams struct {
+	State     string
+	Now       pgtype.Timestamptz
+	LastError string
+	ID        pgtype.UUID
+}
+
+func (q *Queries) RecoverExpiredCustomerOperationExecution(ctx context.Context, db DBTX, arg RecoverExpiredCustomerOperationExecutionParams) error {
+	_, err := db.Exec(ctx, recoverExpiredCustomerOperationExecution,
+		arg.State,
+		arg.Now,
+		arg.LastError,
+		arg.ID,
+	)
+	return err
+}
+
 const registerGatewayUsageEvent = `-- name: RegisterGatewayUsageEvent :one
 with inserted as (
   insert into meter_gateway_usage_events (node_id, event_id, instance_id, minute)
@@ -21225,6 +22413,53 @@ type ReleaseUnownedNotificationParams struct {
 
 func (q *Queries) ReleaseUnownedNotification(ctx context.Context, db DBTX, arg ReleaseUnownedNotificationParams) (int64, error) {
 	result, err := db.Exec(ctx, releaseUnownedNotification, arg.ID, arg.ClaimToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const renewCustomerOperationExecution = `-- name: RenewCustomerOperationExecution :execrows
+UPDATE invocations
+SET lease_expires_at = least(now() + $1::integer * interval '1 second', deadline_at)
+WHERE id = $2::uuid AND operation_id IS NOT NULL
+  AND state = 'dispatching' AND attempts = $3::integer
+  AND lease_expires_at > now() AND deadline_at > now()
+`
+
+type RenewCustomerOperationExecutionParams struct {
+	LeaseSeconds int32
+	ID           pgtype.UUID
+	Attempt      int32
+}
+
+func (q *Queries) RenewCustomerOperationExecution(ctx context.Context, db DBTX, arg RenewCustomerOperationExecutionParams) (int64, error) {
+	result, err := db.Exec(ctx, renewCustomerOperationExecution, arg.LeaseSeconds, arg.ID, arg.Attempt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const renewCustomerOperationStream = `-- name: RenewCustomerOperationStream :execrows
+UPDATE customer_operation_stream_leases SET expires_at=$1::timestamptz
+WHERE id=$2::uuid AND account_id=$3::uuid AND expires_at>$4::timestamptz
+`
+
+type RenewCustomerOperationStreamParams struct {
+	ExpiresAt pgtype.Timestamptz
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	Now       pgtype.Timestamptz
+}
+
+func (q *Queries) RenewCustomerOperationStream(ctx context.Context, db DBTX, arg RenewCustomerOperationStreamParams) (int64, error) {
+	result, err := db.Exec(ctx, renewCustomerOperationStream,
+		arg.ExpiresAt,
+		arg.ID,
+		arg.AccountID,
+		arg.Now,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -24426,6 +25661,21 @@ func (q *Queries) SetCommitSourceEnabled(ctx context.Context, db DBTX, arg SetCo
 	return err
 }
 
+const setCustomerOperationExecutionIdentity = `-- name: SetCustomerOperationExecutionIdentity :exec
+UPDATE invocations SET operation_id=$1::uuid
+WHERE id=$2::uuid AND operation_id IS NULL
+`
+
+type SetCustomerOperationExecutionIdentityParams struct {
+	OperationID  pgtype.UUID
+	InvocationID pgtype.UUID
+}
+
+func (q *Queries) SetCustomerOperationExecutionIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationExecutionIdentityParams) error {
+	_, err := db.Exec(ctx, setCustomerOperationExecutionIdentity, arg.OperationID, arg.InvocationID)
+	return err
+}
+
 const setDeploymentFailed = `-- name: SetDeploymentFailed :one
 update deployments
    set status = 'failed', error = $2, error_code = $3,
@@ -24712,6 +25962,33 @@ update orgs set deleted_pending = true, status = 'deleted_pending', updated_at =
 func (q *Queries) SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, softDeleteOrg, id)
 	return err
+}
+
+const stampCustomerOperationExecutionAttempt = `-- name: StampCustomerOperationExecutionAttempt :execrows
+UPDATE invocations SET instance_id=$1::uuid
+WHERE id=$2::uuid AND state='dispatching' AND attempts=$3::integer
+AND lease_expires_at>$4::timestamptz
+AND EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
+`
+
+type StampCustomerOperationExecutionAttemptParams struct {
+	InstanceID pgtype.UUID
+	ID         pgtype.UUID
+	Attempt    int32
+	Now        pgtype.Timestamptz
+}
+
+func (q *Queries) StampCustomerOperationExecutionAttempt(ctx context.Context, db DBTX, arg StampCustomerOperationExecutionAttemptParams) (int64, error) {
+	result, err := db.Exec(ctx, stampCustomerOperationExecutionAttempt,
+		arg.InstanceID,
+		arg.ID,
+		arg.Attempt,
+		arg.Now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const stampSafeReleaseWorkerLease = `-- name: StampSafeReleaseWorkerLease :exec
@@ -25506,6 +26783,31 @@ func (q *Queries) UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams)
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const updateCustomerOperation = `-- name: UpdateCustomerOperation :exec
+UPDATE customer_operations SET current_invocation_id=$1::uuid,
+ state=$2::text,record=$3::jsonb,expires_at=$4::timestamptz
+WHERE id=$5::uuid
+`
+
+type UpdateCustomerOperationParams struct {
+	InvocationID pgtype.UUID
+	State        string
+	Record       []byte
+	ExpiresAt    pgtype.Timestamptz
+	ID           pgtype.UUID
+}
+
+func (q *Queries) UpdateCustomerOperation(ctx context.Context, db DBTX, arg UpdateCustomerOperationParams) error {
+	_, err := db.Exec(ctx, updateCustomerOperation,
+		arg.InvocationID,
+		arg.State,
+		arg.Record,
+		arg.ExpiresAt,
+		arg.ID,
+	)
+	return err
 }
 
 const updateDataUpstreamCircuitBreaker = `-- name: UpdateDataUpstreamCircuitBreaker :exec

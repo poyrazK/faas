@@ -5530,6 +5530,254 @@ SELECT CASE WHEN enabled THEN service_capacity_snapshot()
             ELSE jsonb_build_object('enabled', false) END::jsonb AS snapshot
 FROM service_capacity_policy WHERE singleton;
 
+-- name: LockCustomerOperationAccount :one
+SELECT plan::text FROM accounts WHERE id = sqlc.arg(account_id)::uuid FOR UPDATE;
+
+-- name: CustomerOperationDeploymentScope :one
+SELECT d.scope FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE d.id = sqlc.arg(deployment_id)::uuid AND a.id = sqlc.arg(app_id)::uuid
+AND a.account_id = sqlc.arg(account_id)::uuid AND a.status <> 'deleted';
+
+-- name: LockCustomerOperationTenant :one
+SELECT status FROM platform_tenants
+WHERE id = sqlc.arg(tenant_id)::uuid AND account_id = sqlc.arg(account_id)::uuid FOR SHARE;
+
+-- name: CountCustomerOperationDefinitionNames :one
+SELECT count(DISTINCT name)::bigint FROM customer_operation_definitions
+WHERE app_id = sqlc.arg(app_id)::uuid AND scope = sqlc.arg(scope)::text;
+
+-- name: CustomerOperationDefinitionNameExists :one
+SELECT EXISTS(SELECT 1 FROM customer_operation_definitions
+WHERE app_id = sqlc.arg(app_id)::uuid AND scope = sqlc.arg(scope)::text AND name = sqlc.arg(name)::text);
+
+-- name: InsertCustomerOperationDefinition :one
+INSERT INTO customer_operation_definitions(id, account_id, app_id, scope, name, revision, deployment_id, release_id, spec)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(scope)::text,
+       sqlc.arg(name)::text,sqlc.arg(revision)::text,sqlc.arg(deployment_id)::uuid,sqlc.arg(release_id)::text,sqlc.arg(spec)::jsonb)
+RETURNING id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at;
+
+-- name: GetCustomerOperationDefinition :one
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: GetCustomerOperationDefinitionForDeployment :one
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE app_id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid
+AND deployment_id=sqlc.arg(deployment_id)::uuid AND name=sqlc.arg(name)::text;
+
+-- name: GetCustomerOperationIdempotency :one
+SELECT operation_id::text,fingerprint,expires_at FROM customer_operation_idempotency
+WHERE scope_digest=sqlc.arg(scope_digest)::text AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: PutCustomerOperationIdempotency :exec
+INSERT INTO customer_operation_idempotency(scope_digest,account_id,app_id,operation_id,fingerprint,expires_at)
+VALUES(sqlc.arg(scope_digest)::text,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,
+       sqlc.arg(operation_id)::uuid,sqlc.arg(fingerprint)::text,sqlc.arg(expires_at)::timestamptz)
+ON CONFLICT(scope_digest) DO UPDATE SET operation_id=EXCLUDED.operation_id,fingerprint=EXCLUDED.fingerprint,expires_at=EXCLUDED.expires_at;
+
+-- name: CountPendingCustomerOperations :one
+SELECT count(*)::bigint FROM customer_operations WHERE account_id=sqlc.arg(account_id)::uuid
+AND state IN ('accepted','running','requires_reconciliation');
+
+-- name: InsertCustomerOperation :exec
+INSERT INTO customer_operations(id,account_id,app_id,platform_tenant_id,definition_id,current_invocation_id,state,record,expires_at,created_at)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(tenant_id)::uuid,
+       sqlc.arg(definition_id)::uuid,sqlc.arg(invocation_id)::uuid,sqlc.arg(state)::text,
+       sqlc.arg(record)::jsonb,sqlc.arg(expires_at)::timestamptz,sqlc.arg(created_at)::timestamptz);
+
+-- name: InsertCustomerOperationExecution :exec
+INSERT INTO customer_operation_executions(operation_id,generation,invocation_id)
+VALUES(sqlc.arg(operation_id)::uuid,sqlc.arg(generation)::integer,sqlc.arg(invocation_id)::uuid);
+
+-- name: InsertCustomerOperationEvent :exec
+INSERT INTO customer_operation_events(operation_id,sequence,event_type,execution_id,attempt,data,created_at)
+VALUES(sqlc.arg(operation_id)::uuid,sqlc.arg(sequence)::bigint,sqlc.arg(event_type)::text,
+       sqlc.narg(execution_id)::uuid,sqlc.arg(attempt)::integer,sqlc.arg(data)::jsonb,sqlc.arg(created_at)::timestamptz);
+
+-- name: GetCustomerOperation :one
+SELECT record FROM customer_operations WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid
+AND (sqlc.arg(tenant_id)::text='' OR platform_tenant_id::text=sqlc.arg(tenant_id)::text);
+
+-- name: ReadCustomerOperationEvents :many
+SELECT operation_id::text,sequence,event_type,coalesce(execution_id::text,''::text)::text AS execution_id,attempt,data,created_at
+FROM customer_operation_events WHERE operation_id=sqlc.arg(operation_id)::uuid AND sequence>sqlc.arg(after_sequence)::bigint
+AND sequence<=sqlc.arg(latest_sequence)::bigint
+ORDER BY sequence LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: LockCustomerOperationExecution :one
+SELECT o.record FROM customer_operations o JOIN customer_operation_executions e ON e.operation_id=o.id
+WHERE e.invocation_id=sqlc.arg(invocation_id)::uuid FOR UPDATE OF o;
+
+-- name: UpdateCustomerOperation :exec
+UPDATE customer_operations SET current_invocation_id=sqlc.arg(invocation_id)::uuid,
+ state=sqlc.arg(state)::text,record=sqlc.arg(record)::jsonb,expires_at=sqlc.arg(expires_at)::timestamptz
+WHERE id=sqlc.arg(id)::uuid;
+
+-- name: GetCustomerOperationReport :one
+SELECT fingerprint FROM customer_operation_reports
+WHERE operation_id=sqlc.arg(operation_id)::uuid AND execution_id=sqlc.arg(execution_id)::uuid
+ AND attempt=sqlc.arg(attempt)::integer AND report_id=sqlc.arg(report_id)::text;
+
+-- name: InsertCustomerOperationReport :exec
+INSERT INTO customer_operation_reports(operation_id,execution_id,attempt,report_id,fingerprint)
+VALUES(sqlc.arg(operation_id)::uuid,sqlc.arg(execution_id)::uuid,sqlc.arg(attempt)::integer,
+ sqlc.arg(report_id)::text,sqlc.arg(fingerprint)::text);
+
+-- name: CustomerOperationCompletionWebhook :one
+SELECT enabled FROM app_webhooks WHERE id=sqlc.arg(id)::uuid
+ AND account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid FOR SHARE;
+
+-- name: InsertCustomerOperationCompletionDelivery :exec
+INSERT INTO app_webhook_deliveries(id,webhook_id,app_id,account_id,event,payload,next_attempt_at)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(webhook_id)::uuid,sqlc.arg(app_id)::uuid,
+ sqlc.arg(account_id)::uuid,'operation.finished',sqlc.arg(payload)::jsonb,sqlc.arg(now)::timestamptz);
+
+-- name: NotifyCustomerOperation :exec
+SELECT pg_notify('customer_operation_changed',sqlc.arg(operation_id)::text);
+
+-- name: CustomerOperationAccountPlan :one
+SELECT plan::text FROM accounts WHERE id=sqlc.arg(account_id)::uuid;
+
+-- name: ListExpiredCustomerOperationExecutions :many
+SELECT i.id::text FROM invocations i WHERE i.state='dispatching' AND i.lease_expires_at<=sqlc.arg(now)::timestamptz
+ AND EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=i.id)
+ORDER BY i.lease_expires_at,i.id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE SKIP LOCKED;
+
+-- name: RecoverExpiredCustomerOperationExecution :exec
+UPDATE invocations SET state=sqlc.arg(state)::text,quota_reserved=false,due_at=sqlc.arg(now)::timestamptz,
+ lease_expires_at=NULL,instance_id=NULL,last_error=sqlc.arg(last_error)::text,
+ outcome=CASE WHEN sqlc.arg(state)::text='failed' THEN 'failed' ELSE NULL END,
+ completed_at=CASE WHEN sqlc.arg(state)::text='failed' THEN sqlc.arg(now)::timestamptz ELSE completed_at END
+WHERE id=sqlc.arg(id)::uuid;
+
+-- name: GetCustomerOperationRecovery :one
+SELECT fingerprint FROM customer_operation_recoveries
+WHERE operation_id=sqlc.arg(operation_id)::uuid AND recovery_id=sqlc.arg(recovery_id)::text;
+
+-- name: InsertCustomerOperationRecovery :exec
+INSERT INTO customer_operation_recoveries(operation_id,recovery_id,fingerprint,request,created_at)
+VALUES(sqlc.arg(operation_id)::uuid,sqlc.arg(recovery_id)::text,sqlc.arg(fingerprint)::text,
+ sqlc.arg(request)::jsonb,sqlc.arg(now)::timestamptz);
+
+-- name: CustomerOperationIDForInvocation :one
+SELECT coalesce(i.operation_id::text,e.operation_id::text,'')::text AS operation_id FROM invocations i
+LEFT JOIN customer_operation_executions e ON e.invocation_id=i.id WHERE i.id=sqlc.arg(invocation_id)::uuid;
+
+-- name: PruneCustomerOperationEvents :execrows
+WITH doomed AS (SELECT e.operation_id,e.sequence FROM customer_operation_events e JOIN customer_operations o ON o.id=e.operation_id
+ WHERE (o.record->>'event_expires_at')::timestamptz<=sqlc.arg(now)::timestamptz
+ ORDER BY e.created_at,e.operation_id,e.sequence LIMIT sqlc.arg(page_limit)::integer)
+DELETE FROM customer_operation_events e USING doomed d WHERE e.operation_id=d.operation_id AND e.sequence=d.sequence;
+
+-- name: PruneCustomerOperations :execrows
+WITH doomed AS (SELECT id FROM customer_operations
+ WHERE expires_at<=sqlc.arg(now)::timestamptz AND state IN ('succeeded','failed','cancelled','requires_reconciliation')
+ ORDER BY expires_at,id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE SKIP LOCKED)
+DELETE FROM customer_operations o USING doomed d WHERE o.id=d.id;
+
+-- name: PruneCustomerOperationIdempotency :execrows
+WITH doomed AS (SELECT scope_digest FROM customer_operation_idempotency WHERE expires_at<=sqlc.arg(now)::timestamptz
+ ORDER BY expires_at,scope_digest LIMIT sqlc.arg(page_limit)::integer)
+DELETE FROM customer_operation_idempotency i USING doomed d WHERE i.scope_digest=d.scope_digest;
+
+-- name: CancelCustomerOperationExecution :exec
+UPDATE invocations SET state='cancelled',quota_reserved=false,completed_at=sqlc.arg(now)::timestamptz
+WHERE id=sqlc.arg(id)::uuid AND state='pending';
+
+-- name: StampCustomerOperationExecutionAttempt :execrows
+UPDATE invocations SET instance_id=sqlc.arg(instance_id)::uuid
+WHERE id=sqlc.arg(id)::uuid AND state='dispatching' AND attempts=sqlc.arg(attempt)::integer
+AND lease_expires_at>sqlc.arg(now)::timestamptz
+AND EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id);
+
+-- name: GetCustomerOperationDefinitionForRoute :one
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+AND deployment_id=sqlc.arg(deployment_id)::uuid AND spec->>'method'=sqlc.arg(method)::text AND spec->>'path'=sqlc.arg(path)::text;
+
+-- name: ListCustomerOperationDefinitionsForDeployment :many
+SELECT id::text,account_id::text,app_id::text,scope,name,revision,deployment_id::text,release_id,spec,created_at
+FROM customer_operation_definitions WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+AND deployment_id=sqlc.arg(deployment_id)::uuid ORDER BY name;
+
+-- name: PruneAccountCustomerOperationStreams :exec
+DELETE FROM customer_operation_stream_leases WHERE account_id=sqlc.arg(account_id)::uuid AND expires_at<=sqlc.arg(now)::timestamptz;
+
+-- name: CountCustomerOperationStreams :one
+SELECT count(*)::bigint FROM customer_operation_stream_leases WHERE account_id=sqlc.arg(account_id)::uuid;
+
+-- name: InsertCustomerOperationStream :exec
+INSERT INTO customer_operation_stream_leases(id,account_id,operation_id,expires_at)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(operation_id)::uuid,sqlc.arg(expires_at)::timestamptz);
+
+-- name: RenewCustomerOperationStream :execrows
+UPDATE customer_operation_stream_leases SET expires_at=sqlc.arg(expires_at)::timestamptz
+WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND expires_at>sqlc.arg(now)::timestamptz;
+
+-- name: DeleteCustomerOperationStream :exec
+DELETE FROM customer_operation_stream_leases WHERE id=sqlc.arg(id)::uuid;
+
+-- name: PruneCustomerOperationStreams :execrows
+WITH doomed AS (SELECT id FROM customer_operation_stream_leases WHERE expires_at<=sqlc.arg(now)::timestamptz
+ORDER BY expires_at,id LIMIT sqlc.arg(page_limit)::integer)
+DELETE FROM customer_operation_stream_leases l USING doomed d WHERE l.id=d.id;
+
+-- name: LockCustomerOperationDeployment :one
+SELECT d.status::text FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=sqlc.arg(deployment_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid
+AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted' FOR SHARE OF a,d;
+
+-- name: PinCustomerOperationDeployment :exec
+INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
+VALUES(sqlc.arg(deployment_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(expires_at)::timestamptz)
+ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(deployment_revision_pins.expires_at,excluded.expires_at);
+
+-- name: PinCustomerOperationRelease :exec
+UPDATE project_release_sets SET expires_at=greatest(expires_at,sqlc.arg(expires_at)::timestamptz)
+WHERE id=sqlc.arg(id)::uuid AND NOT active;
+
+-- name: SetCustomerOperationExecutionIdentity :exec
+UPDATE invocations SET operation_id=sqlc.arg(operation_id)::uuid
+WHERE id=sqlc.arg(invocation_id)::uuid AND operation_id IS NULL;
+
+-- name: LockCustomerOperationClaim :one
+SELECT id::text, app_id::text, account_id::text,
+       coalesce(platform_tenant_id::text,'')::text AS platform_tenant_id,
+       coalesce(instance_id::text,'')::text AS instance_id,
+       state, attempts, lease_expires_at
+FROM invocations WHERE id = sqlc.arg(id) FOR UPDATE;
+
+-- name: CustomerOperationStateMetrics :many
+SELECT state,count(*)::bigint AS retained_count,min(created_at)::timestamptz AS oldest_created_at
+FROM customer_operations WHERE expires_at>sqlc.arg(now)::timestamptz
+GROUP BY state ORDER BY state;
+
+-- name: CustomerOperationStreamMetric :one
+SELECT count(*)::bigint FROM customer_operation_stream_leases WHERE expires_at>sqlc.arg(now)::timestamptz;
+
+-- name: LockCustomerOperationInvocation :one
+SELECT * FROM invocations WHERE id=sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: DeleteCustomerOperationsForOwner :exec
+DELETE FROM customer_operations WHERE account_id=sqlc.narg(account_id)::uuid OR app_id=sqlc.narg(app_id)::uuid;
+
+-- name: DeleteCustomerOperationDefinitionsForOwner :exec
+DELETE FROM customer_operation_definitions WHERE account_id=sqlc.narg(account_id)::uuid OR app_id=sqlc.narg(app_id)::uuid;
+
+-- name: DeleteCustomerOperationReceiptsForOwner :exec
+DELETE FROM customer_operation_idempotency WHERE account_id=sqlc.narg(account_id)::uuid OR app_id=sqlc.narg(app_id)::uuid;
+
+-- name: DeleteCustomerOperationExecutionsForOwner :exec
+DELETE FROM invocations WHERE operation_id IS NOT NULL
+ AND (account_id=sqlc.narg(account_id)::uuid OR app_id=sqlc.narg(app_id)::uuid);
+
+-- name: RenewCustomerOperationExecution :execrows
+UPDATE invocations
+SET lease_expires_at = least(now() + sqlc.arg(lease_seconds)::integer * interval '1 second', deadline_at)
+WHERE id = sqlc.arg(id)::uuid AND operation_id IS NOT NULL
+  AND state = 'dispatching' AND attempts = sqlc.arg(attempt)::integer
+  AND lease_expires_at > now() AND deadline_at > now();
+
 -- name: FeatureFlagRequestOutcomes :many
 WITH evidence AS MATERIALIZED (
  SELECT
