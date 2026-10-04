@@ -63,7 +63,7 @@ func (s *server) environmentGitOpsDashboardData(r *http.Request, acct state.Acco
 		}
 		data.Runs = append(data.Runs, view)
 	}
-	if source.ApprovedRevisionID != "" {
+	if source.ApprovedRevisionID != "" && !source.Suspended {
 		store, ok := s.store.(state.EnvironmentGitOpsIntentStore)
 		if !ok {
 			return data, errors.New("environment intent storage unavailable")

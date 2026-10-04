@@ -137,6 +137,27 @@ func TestEnvironmentGitOpsDashboardReviewAdoptionAndHistory(t *testing.T) {
 	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "converged") || !strings.Contains(get.Body.String(), sha) {
 		t.Fatalf("history page: %d %s", get.Code, get.Body.String())
 	}
+	for _, suspended := range []bool{true, false} {
+		source, err = store.EnvironmentGitSource(t.Context(), account.ID, project.ID, "production")
+		if err != nil {
+			t.Fatal(err)
+		}
+		values := url.Values{"expected_generation": {strconv.FormatInt(source.Generation, 10)}, "mode": {"enforce"}}
+		if suspended {
+			values.Set("suspended", "true")
+		}
+		post = gitOpsDashboardPost(t, handler, cookie, get, "controls", values)
+		if post.Code != http.StatusSeeOther {
+			t.Fatalf("suspended=%v controls: %d %s", suspended, post.Code, post.Body.String())
+		}
+		get = dashboardGet(handler, target, cookie)
+		if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "converged") || !strings.Contains(get.Body.String(), `name="suspended"`) {
+			t.Fatalf("suspended=%v status and controls unavailable: %d %s", suspended, get.Code, get.Body.String())
+		}
+		if strings.Contains(get.Body.String(), "Git checks are suspended.") != suspended {
+			t.Fatalf("suspended=%v status does not match source", suspended)
+		}
+	}
 }
 
 func TestEnvironmentGitOpsDashboardRejectsMissingCSRFAndAnonymousAccess(t *testing.T) {
