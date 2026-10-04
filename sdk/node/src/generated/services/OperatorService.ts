@@ -87,7 +87,13 @@ export class OperatorService {
     accountId,
     requestBody,
   }: {
+    /**
+     * Account whose retained usage evidence will be previewed.
+     */
     accountId: string,
+    /**
+     * Normalized retained readings and source attestation for preview.
+     */
     requestBody: ManagedPostgresUsageImportRequest,
   }): CancelablePromise<ManagedPostgresUsageImportResult | Problem> {
     return __request(OpenAPI, {
@@ -112,8 +118,17 @@ export class OperatorService {
     idempotencyKey,
     requestBody,
   }: {
+    /**
+     * Account owning the reviewed database and imported usage.
+     */
     accountId: string,
+    /**
+     * Request replay key; import_id additionally provides permanent receipt deduplication.
+     */
     idempotencyKey: string,
+    /**
+     * Reviewed retained readings with the revision returned by preview.
+     */
     requestBody: ManagedPostgresUsageImportRequest,
   }): CancelablePromise<ManagedPostgresUsageImportResult | Problem> {
     return __request(OpenAPI, {

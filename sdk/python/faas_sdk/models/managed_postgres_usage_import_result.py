@@ -13,6 +13,8 @@ T = TypeVar("T", bound="ManagedPostgresUsageImportResult")
 
 @_attrs_define
 class ManagedPostgresUsageImportResult:
+    """Cost changes and resulting coverage from preview or an immutable applied import receipt."""
+
     import_id: UUID
     database_id: UUID
     revision: str

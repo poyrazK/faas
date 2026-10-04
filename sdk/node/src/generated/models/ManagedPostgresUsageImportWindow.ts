@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ManagedPostgresUsageImportReading } from './ManagedPostgresUsageImportReading.js';
+/**
+ * A complete policy-sized usage window with its actual source observation time.
+ */
 export type ManagedPostgresUsageImportWindow = {
   from: string;
   to: string;

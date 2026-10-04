@@ -2737,8 +2737,10 @@ paths:
         - name: account_id
           in: path
           required: true
+          description: Account whose retained usage evidence will be previewed.
           schema: { type: string, format: uuid }
       requestBody:
+        description: Normalized retained readings and source attestation for preview.
         required: true
         content:
           application/json:
@@ -2765,12 +2767,15 @@ paths:
         - name: account_id
           in: path
           required: true
+          description: Account owning the reviewed database and imported usage.
           schema: { type: string, format: uuid }
         - name: Idempotency-Key
           in: header
           required: true
+          description: Request replay key; import_id additionally provides permanent receipt deduplication.
           schema: { type: string, minLength: 1, maxLength: 256 }
       requestBody:
+        description: Reviewed retained readings with the revision returned by preview.
         required: true
         content:
           application/json:
@@ -31180,6 +31185,7 @@ components:
         correction_required_at: { type: [string, "null"], format: date-time }
         lease_until: { type: [string, "null"], format: date-time }
     ManagedPostgresUsageImportReading:
+      description: One normalized integer meter quantity from retained provider evidence.
       type: object
       additionalProperties: false
       required: [meter, quantity]
@@ -31187,6 +31193,7 @@ components:
         meter: { type: string, enum: [active_seconds, compute_unit_seconds, storage_byte_seconds, history_byte_seconds, egress_bytes, operations] }
         quantity: { type: integer, format: int64, minimum: 0 }
     ManagedPostgresUsageImportWindow:
+      description: A complete policy-sized usage window with its actual source observation time.
       type: object
       additionalProperties: false
       required: [from, to, observed_at, readings]
@@ -31200,6 +31207,7 @@ components:
           maxItems: 6
           items: { $ref: '#/components/schemas/ManagedPostgresUsageImportReading' }
     ManagedPostgresUsageImportRequest:
+      description: Operator-attested retained usage for a known independently accounted database.
       type: object
       additionalProperties: false
       required: [import_id, database_id, evidence_reference, evidence_sha256, reason, windows]
@@ -31217,6 +31225,7 @@ components:
           items: { $ref: '#/components/schemas/ManagedPostgresUsageImportWindow' }
         expected_revision: { type: string, pattern: '^[a-f0-9]{64}$', description: "Omit for preview; required for apply." }
     ManagedPostgresUsageImportResult:
+      description: Cost changes and resulting coverage from preview or an immutable applied import receipt.
       type: object
       required: [import_id, database_id, revision, applied, window_count, previous_cost_millicents, imported_cost_millicents, cost_delta_millicents, collected_from, collected_until, observed_at]
       properties:

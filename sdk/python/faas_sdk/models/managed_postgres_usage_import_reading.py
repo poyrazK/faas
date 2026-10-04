@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ManagedPostgresUsageImportReading")
 
 @_attrs_define
 class ManagedPostgresUsageImportReading:
+    """One normalized integer meter quantity from retained provider evidence."""
+
     meter: ManagedPostgresUsageImportReadingMeter
     quantity: int
 

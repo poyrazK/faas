@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ManagedPostgresUsageImportWindow")
 
 @_attrs_define
 class ManagedPostgresUsageImportWindow:
+    """A complete policy-sized usage window with its actual source observation time."""
+
     from_: datetime.datetime
     to: datetime.datetime
     observed_at: datetime.datetime

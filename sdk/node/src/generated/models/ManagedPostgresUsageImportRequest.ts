@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ManagedPostgresUsageImportWindow } from './ManagedPostgresUsageImportWindow.js';
+/**
+ * Operator-attested retained usage for a known independently accounted database.
+ */
 export type ManagedPostgresUsageImportRequest = {
   /**
    * Durable request identity; preserve across retries.

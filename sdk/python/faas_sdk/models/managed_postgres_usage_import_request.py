@@ -17,6 +17,8 @@ T = TypeVar("T", bound="ManagedPostgresUsageImportRequest")
 
 @_attrs_define
 class ManagedPostgresUsageImportRequest:
+    """Operator-attested retained usage for a known independently accounted database."""
+
     import_id: UUID
     """Durable request identity; preserve across retries."""
     database_id: UUID

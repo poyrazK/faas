@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Cost changes and resulting coverage from preview or an immutable applied import receipt.
+ */
 export type ManagedPostgresUsageImportResult = {
   import_id: string;
   database_id: string;
