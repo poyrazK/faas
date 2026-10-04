@@ -2172,6 +2172,61 @@ func (q *Queries) ClaimProjectEnvironmentClonePostgresVerification(ctx context.C
 	return i, err
 }
 
+const claimProjectEnvironmentClonePostgresVerificationAttempt = `-- name: ClaimProjectEnvironmentClonePostgresVerificationAttempt :one
+UPDATE project_environment_clone_postgres_verification_attempts v SET state='verifying',request_started_at=clock_timestamp()
+WHERE v.operation_id=$1::uuid AND v.source_database_id=$2::uuid AND v.database_oid=$3::bigint AND v.verification_id=$4::uuid AND v.state='reserved'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=v.operation_id AND o.status='capturing' AND o.revision=$5::bigint
+ AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp()) RETURNING v.operation_id, v.source_database_id, v.database_oid, v.original_verification_id, v.attempt, v.verification_id, v.previous_attempt, v.previous_verification_id, v.previous_opened_at, v.previous_closed_at, v.key_id, v.reserved_bytes, v.state, v.request_started_at, v.window_opened_at, v.target_database_oid, v.fingerprint, v.ciphertext, v.ciphertext_sha256, v.compared_at, v.native_closed_at, v.verified_at, v.failed_at, v.created_at
+`
+
+type ClaimProjectEnvironmentClonePostgresVerificationAttemptParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	DatabaseOid      int64
+	VerificationID   pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) ClaimProjectEnvironmentClonePostgresVerificationAttempt(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresVerificationAttemptParams) (ProjectEnvironmentClonePostgresVerificationAttempt, error) {
+	row := db.QueryRow(ctx, claimProjectEnvironmentClonePostgresVerificationAttempt,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.DatabaseOid,
+		arg.VerificationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresVerificationAttempt
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.DatabaseOid,
+		&i.OriginalVerificationID,
+		&i.Attempt,
+		&i.VerificationID,
+		&i.PreviousAttempt,
+		&i.PreviousVerificationID,
+		&i.PreviousOpenedAt,
+		&i.PreviousClosedAt,
+		&i.KeyID,
+		&i.ReservedBytes,
+		&i.State,
+		&i.RequestStartedAt,
+		&i.WindowOpenedAt,
+		&i.TargetDatabaseOid,
+		&i.Fingerprint,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.ComparedAt,
+		&i.NativeClosedAt,
+		&i.VerifiedAt,
+		&i.FailedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const claimServiceRecovery = `-- name: ClaimServiceRecovery :one
 INSERT INTO service_recovery(app_id, revision, claim_token, lease_until, status, next_attempt_at, updated_at)
 SELECT a.id, $1::text, $2::uuid, $3::timestamptz,
@@ -8486,6 +8541,23 @@ func (q *Queries) HasExclusiveSnapshotOwner(ctx context.Context, db DBTX, instan
 	return exists, err
 }
 
+const hasProjectEnvironmentClonePostgresVerificationAttempts = `-- name: HasProjectEnvironmentClonePostgresVerificationAttempts :one
+SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_verification_attempts WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3)
+`
+
+type HasProjectEnvironmentClonePostgresVerificationAttemptsParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	DatabaseOid      int64
+}
+
+func (q *Queries) HasProjectEnvironmentClonePostgresVerificationAttempts(ctx context.Context, db DBTX, arg HasProjectEnvironmentClonePostgresVerificationAttemptsParams) (bool, error) {
+	row := db.QueryRow(ctx, hasProjectEnvironmentClonePostgresVerificationAttempts, arg.OperationID, arg.SourceDatabaseID, arg.DatabaseOid)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const incrementAppError = `-- name: IncrementAppError :one
 
 INSERT INTO app_errors (
@@ -10629,6 +10701,94 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresVerification(ctx context.
 		&i.ComparedAt,
 		&i.NativeClosedAt,
 		&i.VerifiedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertProjectEnvironmentClonePostgresVerificationAttempt = `-- name: InsertProjectEnvironmentClonePostgresVerificationAttempt :one
+INSERT INTO project_environment_clone_postgres_verification_attempts(operation_id,source_database_id,database_oid,original_verification_id,attempt,verification_id,
+ previous_attempt,previous_verification_id,previous_opened_at,previous_closed_at,key_id,reserved_bytes,state,request_started_at,window_opened_at,target_database_oid,native_closed_at,failed_at,created_at)
+SELECT $1::uuid,$2::uuid,$3::bigint,$4::uuid,$5::smallint,$6::uuid,
+ $7::smallint,$8::uuid,$9::timestamptz,$10::timestamptz,
+ $11::text,$12::bigint,$13::text,$14::timestamptz,$15::timestamptz,
+ $16::bigint,$17::timestamptz,
+ CASE WHEN $13::text='failed' THEN clock_timestamp() ELSE NULL END,coalesce($18::timestamptz,clock_timestamp())
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$1::uuid AND o.status='capturing' AND o.revision=$19::bigint
+ AND o.lease_token::text=$20::text AND o.lease_until>clock_timestamp()) RETURNING operation_id, source_database_id, database_oid, original_verification_id, attempt, verification_id, previous_attempt, previous_verification_id, previous_opened_at, previous_closed_at, key_id, reserved_bytes, state, request_started_at, window_opened_at, target_database_oid, fingerprint, ciphertext, ciphertext_sha256, compared_at, native_closed_at, verified_at, failed_at, created_at
+`
+
+type InsertProjectEnvironmentClonePostgresVerificationAttemptParams struct {
+	OperationID            pgtype.UUID
+	SourceDatabaseID       pgtype.UUID
+	DatabaseOid            int64
+	OriginalVerificationID pgtype.UUID
+	Attempt                int16
+	VerificationID         pgtype.UUID
+	PreviousAttempt        pgtype.Int2
+	PreviousVerificationID pgtype.UUID
+	PreviousOpenedAt       pgtype.Timestamptz
+	PreviousClosedAt       pgtype.Timestamptz
+	KeyID                  string
+	ReservedBytes          int64
+	State                  string
+	RequestStartedAt       pgtype.Timestamptz
+	WindowOpenedAt         pgtype.Timestamptz
+	TargetDatabaseOid      pgtype.Int8
+	NativeClosedAt         pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+	ExpectedRevision       int64
+	WorkerToken            string
+}
+
+func (q *Queries) InsertProjectEnvironmentClonePostgresVerificationAttempt(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresVerificationAttemptParams) (ProjectEnvironmentClonePostgresVerificationAttempt, error) {
+	row := db.QueryRow(ctx, insertProjectEnvironmentClonePostgresVerificationAttempt,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.DatabaseOid,
+		arg.OriginalVerificationID,
+		arg.Attempt,
+		arg.VerificationID,
+		arg.PreviousAttempt,
+		arg.PreviousVerificationID,
+		arg.PreviousOpenedAt,
+		arg.PreviousClosedAt,
+		arg.KeyID,
+		arg.ReservedBytes,
+		arg.State,
+		arg.RequestStartedAt,
+		arg.WindowOpenedAt,
+		arg.TargetDatabaseOid,
+		arg.NativeClosedAt,
+		arg.CreatedAt,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresVerificationAttempt
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.DatabaseOid,
+		&i.OriginalVerificationID,
+		&i.Attempt,
+		&i.VerificationID,
+		&i.PreviousAttempt,
+		&i.PreviousVerificationID,
+		&i.PreviousOpenedAt,
+		&i.PreviousClosedAt,
+		&i.KeyID,
+		&i.ReservedBytes,
+		&i.State,
+		&i.RequestStartedAt,
+		&i.WindowOpenedAt,
+		&i.TargetDatabaseOid,
+		&i.Fingerprint,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.ComparedAt,
+		&i.NativeClosedAt,
+		&i.VerifiedAt,
+		&i.FailedAt,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -25632,6 +25792,61 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresVerification(ctx context.Co
 	return i, err
 }
 
+const readProjectEnvironmentClonePostgresVerificationAttempts = `-- name: ReadProjectEnvironmentClonePostgresVerificationAttempts :many
+SELECT operation_id, source_database_id, database_oid, original_verification_id, attempt, verification_id, previous_attempt, previous_verification_id, previous_opened_at, previous_closed_at, key_id, reserved_bytes, state, request_started_at, window_opened_at, target_database_oid, fingerprint, ciphertext, ciphertext_sha256, compared_at, native_closed_at, verified_at, failed_at, created_at FROM project_environment_clone_postgres_verification_attempts WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3 ORDER BY attempt FOR UPDATE
+`
+
+type ReadProjectEnvironmentClonePostgresVerificationAttemptsParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	DatabaseOid      int64
+}
+
+func (q *Queries) ReadProjectEnvironmentClonePostgresVerificationAttempts(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresVerificationAttemptsParams) ([]ProjectEnvironmentClonePostgresVerificationAttempt, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentClonePostgresVerificationAttempts, arg.OperationID, arg.SourceDatabaseID, arg.DatabaseOid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentClonePostgresVerificationAttempt{}
+	for rows.Next() {
+		var i ProjectEnvironmentClonePostgresVerificationAttempt
+		if err := rows.Scan(
+			&i.OperationID,
+			&i.SourceDatabaseID,
+			&i.DatabaseOid,
+			&i.OriginalVerificationID,
+			&i.Attempt,
+			&i.VerificationID,
+			&i.PreviousAttempt,
+			&i.PreviousVerificationID,
+			&i.PreviousOpenedAt,
+			&i.PreviousClosedAt,
+			&i.KeyID,
+			&i.ReservedBytes,
+			&i.State,
+			&i.RequestStartedAt,
+			&i.WindowOpenedAt,
+			&i.TargetDatabaseOid,
+			&i.Fingerprint,
+			&i.Ciphertext,
+			&i.CiphertextSha256,
+			&i.ComparedAt,
+			&i.NativeClosedAt,
+			&i.VerifiedAt,
+			&i.FailedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readProjectEnvironmentCloneProductionValueScope = `-- name: ReadProjectEnvironmentCloneProductionValueScope :one
 SELECT coalesce((CASE
   WHEN EXISTS (SELECT 1 FROM project_release_sets rs
@@ -27837,6 +28052,192 @@ func (q *Queries) RecordProjectEnvironmentClonePostgresSnapshotRestoreDeletionOp
 		&i.DeleteOperationIds,
 		&i.AdoptedDatabaseID,
 		&i.AdoptedAt,
+	)
+	return i, err
+}
+
+const recordProjectEnvironmentClonePostgresVerificationAttemptClosure = `-- name: RecordProjectEnvironmentClonePostgresVerificationAttemptClosure :one
+UPDATE project_environment_clone_postgres_verification_attempts v SET state='verified',native_closed_at=$1::timestamptz,verified_at=clock_timestamp()
+WHERE v.operation_id=$2::uuid AND v.source_database_id=$3::uuid AND v.database_oid=$4::bigint AND v.verification_id=$5::uuid AND v.state='compared'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=v.operation_id AND o.status='capturing' AND o.revision=$6::bigint
+ AND o.lease_token::text=$7::text AND o.lease_until>clock_timestamp()) RETURNING v.operation_id, v.source_database_id, v.database_oid, v.original_verification_id, v.attempt, v.verification_id, v.previous_attempt, v.previous_verification_id, v.previous_opened_at, v.previous_closed_at, v.key_id, v.reserved_bytes, v.state, v.request_started_at, v.window_opened_at, v.target_database_oid, v.fingerprint, v.ciphertext, v.ciphertext_sha256, v.compared_at, v.native_closed_at, v.verified_at, v.failed_at, v.created_at
+`
+
+type RecordProjectEnvironmentClonePostgresVerificationAttemptClosureParams struct {
+	NativeClosedAt   pgtype.Timestamptz
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	DatabaseOid      int64
+	VerificationID   pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) RecordProjectEnvironmentClonePostgresVerificationAttemptClosure(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresVerificationAttemptClosureParams) (ProjectEnvironmentClonePostgresVerificationAttempt, error) {
+	row := db.QueryRow(ctx, recordProjectEnvironmentClonePostgresVerificationAttemptClosure,
+		arg.NativeClosedAt,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.DatabaseOid,
+		arg.VerificationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresVerificationAttempt
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.DatabaseOid,
+		&i.OriginalVerificationID,
+		&i.Attempt,
+		&i.VerificationID,
+		&i.PreviousAttempt,
+		&i.PreviousVerificationID,
+		&i.PreviousOpenedAt,
+		&i.PreviousClosedAt,
+		&i.KeyID,
+		&i.ReservedBytes,
+		&i.State,
+		&i.RequestStartedAt,
+		&i.WindowOpenedAt,
+		&i.TargetDatabaseOid,
+		&i.Fingerprint,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.ComparedAt,
+		&i.NativeClosedAt,
+		&i.VerifiedAt,
+		&i.FailedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const recordProjectEnvironmentClonePostgresVerificationAttemptFailure = `-- name: RecordProjectEnvironmentClonePostgresVerificationAttemptFailure :one
+UPDATE project_environment_clone_postgres_verification_attempts v SET state='failed',window_opened_at=$1::timestamptz,
+ target_database_oid=$2::bigint,native_closed_at=$3::timestamptz,failed_at=clock_timestamp()
+WHERE v.operation_id=$4::uuid AND v.source_database_id=$5::uuid AND v.database_oid=$6::bigint AND v.verification_id=$7::uuid AND v.state='verifying'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=v.operation_id AND o.status='capturing' AND o.revision=$8::bigint
+ AND o.lease_token::text=$9::text AND o.lease_until>clock_timestamp()) RETURNING v.operation_id, v.source_database_id, v.database_oid, v.original_verification_id, v.attempt, v.verification_id, v.previous_attempt, v.previous_verification_id, v.previous_opened_at, v.previous_closed_at, v.key_id, v.reserved_bytes, v.state, v.request_started_at, v.window_opened_at, v.target_database_oid, v.fingerprint, v.ciphertext, v.ciphertext_sha256, v.compared_at, v.native_closed_at, v.verified_at, v.failed_at, v.created_at
+`
+
+type RecordProjectEnvironmentClonePostgresVerificationAttemptFailureParams struct {
+	WindowOpenedAt    pgtype.Timestamptz
+	TargetDatabaseOid int64
+	NativeClosedAt    pgtype.Timestamptz
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	DatabaseOid       int64
+	VerificationID    pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       string
+}
+
+func (q *Queries) RecordProjectEnvironmentClonePostgresVerificationAttemptFailure(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresVerificationAttemptFailureParams) (ProjectEnvironmentClonePostgresVerificationAttempt, error) {
+	row := db.QueryRow(ctx, recordProjectEnvironmentClonePostgresVerificationAttemptFailure,
+		arg.WindowOpenedAt,
+		arg.TargetDatabaseOid,
+		arg.NativeClosedAt,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.DatabaseOid,
+		arg.VerificationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresVerificationAttempt
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.DatabaseOid,
+		&i.OriginalVerificationID,
+		&i.Attempt,
+		&i.VerificationID,
+		&i.PreviousAttempt,
+		&i.PreviousVerificationID,
+		&i.PreviousOpenedAt,
+		&i.PreviousClosedAt,
+		&i.KeyID,
+		&i.ReservedBytes,
+		&i.State,
+		&i.RequestStartedAt,
+		&i.WindowOpenedAt,
+		&i.TargetDatabaseOid,
+		&i.Fingerprint,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.ComparedAt,
+		&i.NativeClosedAt,
+		&i.VerifiedAt,
+		&i.FailedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const recordProjectEnvironmentClonePostgresVerificationAttemptMatch = `-- name: RecordProjectEnvironmentClonePostgresVerificationAttemptMatch :one
+UPDATE project_environment_clone_postgres_verification_attempts v SET state='compared',window_opened_at=$1::timestamptz,
+ target_database_oid=$2::bigint,fingerprint=$3::text,ciphertext=$4::bytea,
+ ciphertext_sha256=$5::text,compared_at=clock_timestamp()
+WHERE v.operation_id=$6::uuid AND v.source_database_id=$7::uuid AND v.database_oid=$8::bigint AND v.verification_id=$9::uuid AND v.state='verifying'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=v.operation_id AND o.status='capturing' AND o.revision=$10::bigint
+ AND o.lease_token::text=$11::text AND o.lease_until>clock_timestamp()) RETURNING v.operation_id, v.source_database_id, v.database_oid, v.original_verification_id, v.attempt, v.verification_id, v.previous_attempt, v.previous_verification_id, v.previous_opened_at, v.previous_closed_at, v.key_id, v.reserved_bytes, v.state, v.request_started_at, v.window_opened_at, v.target_database_oid, v.fingerprint, v.ciphertext, v.ciphertext_sha256, v.compared_at, v.native_closed_at, v.verified_at, v.failed_at, v.created_at
+`
+
+type RecordProjectEnvironmentClonePostgresVerificationAttemptMatchParams struct {
+	WindowOpenedAt    pgtype.Timestamptz
+	TargetDatabaseOid int64
+	Fingerprint       string
+	Ciphertext        []byte
+	CiphertextSha256  string
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	DatabaseOid       int64
+	VerificationID    pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       string
+}
+
+func (q *Queries) RecordProjectEnvironmentClonePostgresVerificationAttemptMatch(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresVerificationAttemptMatchParams) (ProjectEnvironmentClonePostgresVerificationAttempt, error) {
+	row := db.QueryRow(ctx, recordProjectEnvironmentClonePostgresVerificationAttemptMatch,
+		arg.WindowOpenedAt,
+		arg.TargetDatabaseOid,
+		arg.Fingerprint,
+		arg.Ciphertext,
+		arg.CiphertextSha256,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.DatabaseOid,
+		arg.VerificationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresVerificationAttempt
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.DatabaseOid,
+		&i.OriginalVerificationID,
+		&i.Attempt,
+		&i.VerificationID,
+		&i.PreviousAttempt,
+		&i.PreviousVerificationID,
+		&i.PreviousOpenedAt,
+		&i.PreviousClosedAt,
+		&i.KeyID,
+		&i.ReservedBytes,
+		&i.State,
+		&i.RequestStartedAt,
+		&i.WindowOpenedAt,
+		&i.TargetDatabaseOid,
+		&i.Fingerprint,
+		&i.Ciphertext,
+		&i.CiphertextSha256,
+		&i.ComparedAt,
+		&i.NativeClosedAt,
+		&i.VerifiedAt,
+		&i.FailedAt,
+		&i.CreatedAt,
 	)
 	return i, err
 }

@@ -150,6 +150,9 @@ const (
 	// Total native verification attempts per original database, including the
 	// first window. Retries keep closed history and need separate worker admission.
 	PostgresCopyVerificationAttemptsMax = 3
+	// Includes the original proof and two subordinate retry holds. Parent FKs
+	// retain the charged contents owner until all attempt evidence is retired.
+	PostgresCopyVerificationBytesPerAccountMax = PostgresCopyContentsManifestsPerAccountMax * PostgresCopyVerificationAttemptsMax * PostgresCopyVerificationCiphertextMaxBytes
 )
 
 // Operator-configurable object-storage preview safeguards, not plan allowances

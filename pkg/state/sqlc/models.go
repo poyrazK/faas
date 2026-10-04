@@ -4090,6 +4090,33 @@ type ProjectEnvironmentClonePostgresVerification struct {
 	CreatedAt                       pgtype.Timestamptz
 }
 
+type ProjectEnvironmentClonePostgresVerificationAttempt struct {
+	OperationID            pgtype.UUID
+	SourceDatabaseID       pgtype.UUID
+	DatabaseOid            int64
+	OriginalVerificationID pgtype.UUID
+	Attempt                int16
+	VerificationID         pgtype.UUID
+	PreviousAttempt        pgtype.Int2
+	PreviousVerificationID pgtype.UUID
+	PreviousOpenedAt       pgtype.Timestamptz
+	PreviousClosedAt       pgtype.Timestamptz
+	KeyID                  string
+	ReservedBytes          int64
+	State                  string
+	RequestStartedAt       pgtype.Timestamptz
+	WindowOpenedAt         pgtype.Timestamptz
+	TargetDatabaseOid      pgtype.Int8
+	Fingerprint            pgtype.Text
+	Ciphertext             []byte
+	CiphertextSha256       pgtype.Text
+	ComparedAt             pgtype.Timestamptz
+	NativeClosedAt         pgtype.Timestamptz
+	VerifiedAt             pgtype.Timestamptz
+	FailedAt               pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+}
+
 type ProjectEnvironmentClonePostgresWriteFence struct {
 	OperationID              pgtype.UUID
 	SourceDatabaseID         pgtype.UUID

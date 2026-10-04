@@ -8227,6 +8227,50 @@ WHERE v.operation_id=sqlc.arg(operation_id)::uuid AND v.source_database_id=sqlc.
  AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=v.operation_id AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
  AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING v.*;
 
+-- name: ReadProjectEnvironmentClonePostgresVerificationAttempts :many
+SELECT * FROM project_environment_clone_postgres_verification_attempts WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3 ORDER BY attempt FOR UPDATE;
+
+-- name: HasProjectEnvironmentClonePostgresVerificationAttempts :one
+SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_verification_attempts WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3);
+
+-- name: InsertProjectEnvironmentClonePostgresVerificationAttempt :one
+INSERT INTO project_environment_clone_postgres_verification_attempts(operation_id,source_database_id,database_oid,original_verification_id,attempt,verification_id,
+ previous_attempt,previous_verification_id,previous_opened_at,previous_closed_at,key_id,reserved_bytes,state,request_started_at,window_opened_at,target_database_oid,native_closed_at,failed_at,created_at)
+SELECT sqlc.arg(operation_id)::uuid,sqlc.arg(source_database_id)::uuid,sqlc.arg(database_oid)::bigint,sqlc.arg(original_verification_id)::uuid,sqlc.arg(attempt)::smallint,sqlc.arg(verification_id)::uuid,
+ sqlc.narg(previous_attempt)::smallint,sqlc.narg(previous_verification_id)::uuid,sqlc.narg(previous_opened_at)::timestamptz,sqlc.narg(previous_closed_at)::timestamptz,
+ sqlc.arg(key_id)::text,sqlc.arg(reserved_bytes)::bigint,sqlc.arg(state)::text,sqlc.narg(request_started_at)::timestamptz,sqlc.narg(window_opened_at)::timestamptz,
+ sqlc.narg(target_database_oid)::bigint,sqlc.narg(native_closed_at)::timestamptz,
+ CASE WHEN sqlc.arg(state)::text='failed' THEN clock_timestamp() ELSE NULL END,coalesce(sqlc.narg(created_at)::timestamptz,clock_timestamp())
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+ AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING *;
+
+-- name: ClaimProjectEnvironmentClonePostgresVerificationAttempt :one
+UPDATE project_environment_clone_postgres_verification_attempts v SET state='verifying',request_started_at=clock_timestamp()
+WHERE v.operation_id=sqlc.arg(operation_id)::uuid AND v.source_database_id=sqlc.arg(source_database_id)::uuid AND v.database_oid=sqlc.arg(database_oid)::bigint AND v.verification_id=sqlc.arg(verification_id)::uuid AND v.state='reserved'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=v.operation_id AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+ AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING v.*;
+
+-- name: RecordProjectEnvironmentClonePostgresVerificationAttemptMatch :one
+UPDATE project_environment_clone_postgres_verification_attempts v SET state='compared',window_opened_at=sqlc.arg(window_opened_at)::timestamptz,
+ target_database_oid=sqlc.arg(target_database_oid)::bigint,fingerprint=sqlc.arg(fingerprint)::text,ciphertext=sqlc.arg(ciphertext)::bytea,
+ ciphertext_sha256=sqlc.arg(ciphertext_sha256)::text,compared_at=clock_timestamp()
+WHERE v.operation_id=sqlc.arg(operation_id)::uuid AND v.source_database_id=sqlc.arg(source_database_id)::uuid AND v.database_oid=sqlc.arg(database_oid)::bigint AND v.verification_id=sqlc.arg(verification_id)::uuid AND v.state='verifying'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=v.operation_id AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+ AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING v.*;
+
+-- name: RecordProjectEnvironmentClonePostgresVerificationAttemptClosure :one
+UPDATE project_environment_clone_postgres_verification_attempts v SET state='verified',native_closed_at=sqlc.arg(native_closed_at)::timestamptz,verified_at=clock_timestamp()
+WHERE v.operation_id=sqlc.arg(operation_id)::uuid AND v.source_database_id=sqlc.arg(source_database_id)::uuid AND v.database_oid=sqlc.arg(database_oid)::bigint AND v.verification_id=sqlc.arg(verification_id)::uuid AND v.state='compared'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=v.operation_id AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+ AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING v.*;
+
+-- name: RecordProjectEnvironmentClonePostgresVerificationAttemptFailure :one
+UPDATE project_environment_clone_postgres_verification_attempts v SET state='failed',window_opened_at=sqlc.arg(window_opened_at)::timestamptz,
+ target_database_oid=sqlc.arg(target_database_oid)::bigint,native_closed_at=sqlc.arg(native_closed_at)::timestamptz,failed_at=clock_timestamp()
+WHERE v.operation_id=sqlc.arg(operation_id)::uuid AND v.source_database_id=sqlc.arg(source_database_id)::uuid AND v.database_oid=sqlc.arg(database_oid)::bigint AND v.verification_id=sqlc.arg(verification_id)::uuid AND v.state='verifying'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=v.operation_id AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
+ AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING v.*;
+
 -- name: CountProjectEnvironmentClonePostgresContents :one
 SELECT count(*)::bigint AS count,coalesce(sum(reserved_bytes),0)::bigint AS bytes FROM project_environment_clone_postgres_contents WHERE account_id=$1;
 

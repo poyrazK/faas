@@ -124,6 +124,7 @@ type Querier interface {
 	ClaimProjectEnvironmentClonePostgresSnapshotRequest(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresSnapshotRequestParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequest(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequestParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	ClaimProjectEnvironmentClonePostgresVerification(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresVerificationParams) (ProjectEnvironmentClonePostgresVerification, error)
+	ClaimProjectEnvironmentClonePostgresVerificationAttempt(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresVerificationAttemptParams) (ProjectEnvironmentClonePostgresVerificationAttempt, error)
 	ClaimServiceRecovery(ctx context.Context, db DBTX, arg ClaimServiceRecoveryParams) (ServiceRecovery, error)
 	// Persist ownership before returning. SKIP LOCKED alone would release the
 	// claim at statement end and let another scheduler deliver the same row.
@@ -461,6 +462,7 @@ type Querier interface {
 	// force-close), add a separate GetUploadSessionForUpdate :one.
 	GetUploadSession(ctx context.Context, db DBTX, id string) (UploadSession, error)
 	HasExclusiveSnapshotOwner(ctx context.Context, db DBTX, instanceID string) (bool, error)
+	HasProjectEnvironmentClonePostgresVerificationAttempts(ctx context.Context, db DBTX, arg HasProjectEnvironmentClonePostgresVerificationAttemptsParams) (bool, error)
 	// ---------------------------------------------------------------------------
 	// ADR-096 customer-facing automatic error grouping.
 	// Tables live in migrations/00222_app_errors.sql. gatewayd-internal
@@ -580,6 +582,7 @@ type Querier interface {
 	InsertProjectEnvironmentClonePostgresSnapshotRestore(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresSnapshotRestoreParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	InsertProjectEnvironmentClonePostgresTargetSQLPins(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresTargetSQLPinsParams) (ProjectEnvironmentClonePostgresTargetSqlPin, error)
 	InsertProjectEnvironmentClonePostgresVerification(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresVerificationParams) (ProjectEnvironmentClonePostgresVerification, error)
+	InsertProjectEnvironmentClonePostgresVerificationAttempt(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresVerificationAttemptParams) (ProjectEnvironmentClonePostgresVerificationAttempt, error)
 	InsertProjectEnvironmentCloneProjectConfiguration(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneProjectConfigurationParams) (int64, error)
 	InsertProjectEnvironmentCloneSidecarLayer(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSidecarLayerParams) error
 	InsertProjectEnvironmentCloneSidecarSignal(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSidecarSignalParams) error
@@ -1384,6 +1387,7 @@ type Querier interface {
 	ReadProjectEnvironmentClonePostgresSnapshotRestore(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresSnapshotRestoreParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	ReadProjectEnvironmentClonePostgresTargetSQLPins(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresTargetSQLPinsParams) (ProjectEnvironmentClonePostgresTargetSqlPin, error)
 	ReadProjectEnvironmentClonePostgresVerification(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresVerificationParams) (ProjectEnvironmentClonePostgresVerification, error)
+	ReadProjectEnvironmentClonePostgresVerificationAttempts(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresVerificationAttemptsParams) ([]ProjectEnvironmentClonePostgresVerificationAttempt, error)
 	// Empty scope means that an active graph has an invalid or missing member.
 	ReadProjectEnvironmentCloneProductionValueScope(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneProductionValueScopeParams) (string, error)
 	ReadProjectEnvironmentCloneProjectConfiguration(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneProjectConfigurationParams) (ReadProjectEnvironmentCloneProjectConfigurationRow, error)
@@ -1501,6 +1505,9 @@ type Querier interface {
 	RecordProjectEnvironmentClonePostgresSnapshotRestore(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresSnapshotRestoreParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	RecordProjectEnvironmentClonePostgresSnapshotRestoreCleanupIdentity(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresSnapshotRestoreCleanupIdentityParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	RecordProjectEnvironmentClonePostgresSnapshotRestoreDeletionOperations(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresSnapshotRestoreDeletionOperationsParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
+	RecordProjectEnvironmentClonePostgresVerificationAttemptClosure(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresVerificationAttemptClosureParams) (ProjectEnvironmentClonePostgresVerificationAttempt, error)
+	RecordProjectEnvironmentClonePostgresVerificationAttemptFailure(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresVerificationAttemptFailureParams) (ProjectEnvironmentClonePostgresVerificationAttempt, error)
+	RecordProjectEnvironmentClonePostgresVerificationAttemptMatch(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresVerificationAttemptMatchParams) (ProjectEnvironmentClonePostgresVerificationAttempt, error)
 	RecordProjectEnvironmentClonePostgresVerificationClosure(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresVerificationClosureParams) (ProjectEnvironmentClonePostgresVerification, error)
 	RecordProjectEnvironmentClonePostgresVerificationMatch(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresVerificationMatchParams) (ProjectEnvironmentClonePostgresVerification, error)
 	// The request-ID journal is independent from sampled request telemetry. Only

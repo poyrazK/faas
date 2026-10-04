@@ -6079,3 +6079,73 @@ verified owner. Mixed-version reader rollout also needs qualification before
 production wiring. Provider isolation, PostgreSQL 14/15 and every remaining full
 stage requirement remain pending; the public full database/object clone gate
 remains closed.
+
+
+### Durable verification failure and retry admission (2026-10-04)
+
+The control plane now retains closed unmatched attempts in the subordinate
+`project_environment_clone_postgres_verification_attempts` ledger. Its first row
+records the original owner's exact native opening and closure, target SQL OID,
+original recipient and reservation, and control-plane failure time. Recording
+this row requires the original opaque preparation and an authenticated native
+closure for that owner and ordinal. A zero, foreign or metadata-only closure
+cannot admit a retry. The original verification remains immutable in `verifying`;
+its row, timestamps and original manifest/import/child SQL pins are preserved.
+Once failure history exists, original claim, comparison and closure mutations
+are fenced. `failed` means closed without durable matched evidence, rather than
+an attestation that data is equal or that the original import executed.
+
+Each retry reserves a new owner before claiming dispatch. It binds the original
+scope, contents ciphertext and manifest fingerprint, original import owner and
+start, child SQL pins, database plan, archive reservation and physical target
+fingerprint through its retained parent. The next ordinal stores its immediate
+failed predecessor owner and exact native opening/closure. The table's ordinal
+ceiling and self/parent foreign keys retain the consecutive lineage; every read
+also authenticates the complete chain, timestamps, recipient and byte holds.
+Operation and parent locks serialize competing owners. Lease token/revision and
+the control-plane clock are checked after locks, in SQL mutations, and before
+commit. Handoff retains the original owners and reservations. Reads remain
+available for authenticated compensation; new admission and mutations require
+capturing state and a prepared target.
+
+A compared or verified owner cannot become failed or authorize another attempt.
+A committed comparison whose response was lost therefore recovers its first
+ciphertext, rather than being interpreted as retry permission. New matched
+ciphertext is capped by that attempt's immutable hold and binds its owner, native
+opening, original import, manifest and target. Verified publication requires an
+actual authenticated retained match and exact opaque native closure for the
+current ordinal. Existing proof and closure responses are idempotent and preserve
+first timestamps; metadata envelopes alone cannot publish verification.
+
+The maximum remains three total attempts, including the original, with at most
+two new 16 KiB proof holds per charged contents owner. The existing 4,096 contents
+owner account ceiling and restrictive parent foreign keys bound original plus
+retry proof holds at 192 MiB. The derived ceiling is named
+`PostgresCopyVerificationBytesPerAccountMax` in `pkg/api/limits.go`. The first
+failed history row reuses the original reservation and does not duplicate its
+ciphertext charge. This is retained proof storage admission only. It grants no
+CPU, row-read, digest spool, object-storage or billing entitlement; native history
+and all held proof/parent storage still require qualified retirement.
+
+Local PostgreSQL 16 qualification includes concurrent reservation and claim,
+immutable owner/key/budget and first ciphertext, changed parent/predecessor
+rejection, stale leases and expiry while waiting on an attempt lock, the total
+attempt ceiling, actual migration replay/empty round trip/owned downgrade guards,
+and complete clone schema coverage. APID integration contracts use actual source
+contents, an encrypted pg_dump archive restored in an independent cluster,
+a failed child provider postcheck, authenticated close-only recovery, two newly
+owned native attempts, successful independent data comparison and exact current
+closure. The successful closure cannot be reused as failure/retry evidence;
+retained original history and import dispatch are unchanged. Provider receipts
+remain synthetic fixtures, not paid provider permission qualification.
+
+These interfaces and composition contracts do not yet wire automatic APID worker
+or stage coordinator retry dispatch. That worker still needs durable failed-owner
+recovery, exact never-opened versus uncertain native dispatch classification,
+original-key handoff, current-attempt provider checks, CPU/spool/billing admission
+and complete cleanup. The original private worker remains first-attempt only.
+Mixed-version rollout, PostgreSQL 14/15, provider isolation, the common config/data
+cut and all source writer closure, complete data/schema/globals strategies,
+final authority, object copying, full coordinator and production-preserving
+promotion/rollback remain required. The public full database/object clone gate
+remains closed.

@@ -272,7 +272,8 @@ func cloneVerificationMigrationParts(t *testing.T) (string, string) {
 	if len(parts) != 2 {
 		t.Fatal("missing Down")
 	}
-	return strings.TrimPrefix(parts[0], "-- +goose Up"), parts[1]
+	attemptUp, attemptDown := cloneVerificationAttemptMigrationParts(t)
+	return strings.TrimPrefix(parts[0], "-- +goose Up") + "\n" + attemptUp, attemptDown + "\n" + parts[1]
 }
 
 func TestPgClonePostgresVerificationMigrationRoundTripAndOwnedDownRefusal(t *testing.T) {

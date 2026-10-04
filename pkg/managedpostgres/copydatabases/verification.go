@@ -34,6 +34,7 @@ func (c VerificationClosure) GoString() string { return c.String() }
 func (c VerificationClosure) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct{ Closed bool }{!c.closedAt.IsZero()})
 }
+func (c VerificationClosure) OpenedAt() time.Time     { return c.openedAt }
 func (c VerificationClosure) ClosedAt() time.Time     { return c.closedAt }
 func (c VerificationClosure) AttemptForWorker() int32 { return c.attempt }
 

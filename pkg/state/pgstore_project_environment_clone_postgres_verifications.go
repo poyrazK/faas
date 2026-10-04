@@ -178,6 +178,15 @@ func (s *PgStore) mutateCloneVerification(ctx context.Context, l ProjectEnvironm
 		return zero, false, ErrConflict
 	}
 	q, dispatch := new(sqlc.Queries), false
+	if action != "read" {
+		retained, e := q.HasProjectEnvironmentClonePostgresVerificationAttempts(ctx, tx, sqlc.HasProjectEnvironmentClonePostgresVerificationAttemptsParams{OperationID: mustPgUUID(v.Scope.OperationID), SourceDatabaseID: mustPgUUID(id), DatabaseOid: int64(oid)})
+		if e != nil {
+			return zero, false, mapErr(e)
+		}
+		if retained {
+			return zero, false, ErrConflict
+		}
+	}
 	switch action {
 	case "read":
 	case "claim":
@@ -207,7 +216,7 @@ func (s *PgStore) mutateCloneVerification(ctx context.Context, l ProjectEnvironm
 		imported, _ := uuid.Parse(v.ImportID)
 		if (v.State != "compared" && v.State != "verified") || targetErr != nil || target != completed.Target || fpErr != nil || fp != v.TargetFingerprint ||
 			completed.Manifest.Fingerprint() != v.ManifestFingerprint || !completed.Match.Matches(completed.Manifest, completed.Target, v.Sealed) ||
-			!completed.Closure.MatchesForWorker(completed.Preparation, imported, owner, v.Sealed.OpenedAt) {
+			completed.Closure.AttemptForWorker() != 1 || !completed.Closure.MatchesForWorker(completed.Preparation, imported, owner, v.Sealed.OpenedAt) {
 			return zero, false, ErrConflict
 		}
 		if v.State == "compared" {
