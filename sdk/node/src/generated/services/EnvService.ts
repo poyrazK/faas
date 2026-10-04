@@ -2,9 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppEnvExportResponse } from '../models/AppEnvExportResponse.js';
 import type { AppEnvListResponse } from '../models/AppEnvListResponse.js';
 import type { AppEnvResponse } from '../models/AppEnvResponse.js';
 import type { EnvDiffResponse } from '../models/EnvDiffResponse.js';
+import type { ExportAppEnvRequest } from '../models/ExportAppEnvRequest.js';
 import type { PutAppEnvRequest } from '../models/PutAppEnvRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -100,6 +102,68 @@ export class EnvService {
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Explicitly export plaintext environment values from one app scope.
+   * Requires admin or env:write and the session MFA gate. The body must
+   * acknowledge that downloaded values may be sensitive. Returns only
+   * mutable plaintext app_envs in one scope; never reads sealed secrets,
+   * deployment manifests, or image defaults. Omitted scope means default;
+   * __all__ is rejected. Metadata GET responses continue to omit values.
+   * Responses use Cache-Control no-store. This endpoint never persists
+   * an idempotency response containing plaintext. Audit records contain
+   * app ID, scope and count only, never values.
+   *
+   * @returns AppEnvExportResponse Plaintext values from the explicitly selected app and scope.
+   * @throws ApiError
+   */
+  public static exportAppEnv({
+    slug,
+    requestBody,
+    scope,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: ExportAppEnvRequest,
+    /**
+     * Env-var scope (ADR-090). A domain-valid slug (3..40 chars,
+     * lowercase alnum + dash, no leading/trailing dash) — e.g.
+     * `default`, `staging`, `prod-eu`. Or the reserved sentinel
+     * `__all__` on GET only, which returns the nested
+     * `env_by_scope` response shape (every scope on the app).
+     * Omitted = `scope=default` (pre-PR-B behavior).
+     *
+     */
+    scope?: string,
+  }): CancelablePromise<AppEnvExportResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/env-export',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Missing acknowledgement, malformed body, or invalid/reserved scope.`,
+        401: `code: unauthorized`,
+        403: `Env write permission or session MFA is required.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });

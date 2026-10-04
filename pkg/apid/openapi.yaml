@@ -12923,6 +12923,53 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/env-export:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/EnvScope'
+    post:
+      tags: [env]
+      operationId: exportAppEnv
+      summary: Explicitly export plaintext environment values from one app scope.
+      description: |
+        Requires admin or env:write and the session MFA gate. The body must
+        acknowledge that downloaded values may be sensitive. Returns only
+        mutable plaintext app_envs in one scope; never reads sealed secrets,
+        deployment manifests, or image defaults. Omitted scope means default;
+        __all__ is rejected. Metadata GET responses continue to omit values.
+        Responses use Cache-Control no-store. This endpoint never persists
+        an idempotency response containing plaintext. Audit records contain
+        app ID, scope and count only, never values.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExportAppEnvRequest' }
+      responses:
+        '200':
+          description: Plaintext values from the explicitly selected app and scope.
+          headers:
+            Cache-Control:
+              schema: { type: string, enum: [no-store] }
+              description: Plaintext responses must not be stored by caches.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppEnvExportResponse' }
+        '400':
+          description: Missing acknowledgement, malformed body, or invalid/reserved scope.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Env write permission or session MFA is required.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/env/{key}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -41109,6 +41156,28 @@ components:
       required: [value]
       properties:
         value: { type: string, description: 'Plaintext env-var value. Stored as-is; do NOT use this surface for credentials.', example: "debug" }
+
+    ExportAppEnvRequest:
+      description: Explicit acknowledgement required before downloading potentially sensitive plaintext env values.
+      type: object
+      required: [acknowledge_sensitive_values]
+      properties:
+        acknowledge_sensitive_values:
+          type: boolean
+          enum: [true]
+          description: Explicit acknowledgement that plaintext downloaded values may be sensitive.
+
+    AppEnvExportResponse:
+      description: Mutable plaintext environment values from one authorized app scope, excluding sealed secrets.
+      type: object
+      required: [app_slug, scope, values]
+      properties:
+        app_slug: { type: string }
+        scope: { type: string }
+        values:
+          type: object
+          additionalProperties: { type: string }
+          description: Mutable plaintext env values only. Never includes sealed secrets.
 
     AppEnvResponse:
       description: "An env var envelope: key name + scope + timestamps. The plaintext value never appears here."

@@ -2927,6 +2927,7 @@ func (s *server) handler() http.Handler {
 	// handlers_env.go. env:write is NOT MFA-gated because env vars are
 	// explicitly non-sensitive runtime config — the secret surface is
 	// the credential store and stays MFA-locked.
+	mux.HandleFunc("POST /v1/apps/{slug}/env-export", s.authLimited(s.requireMFA(s.requireScope(api.ScopesEnvWriteSurface...)(s.exportAppEnv))))
 	mux.HandleFunc("GET /v1/apps/{slug}/env", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listEnv)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/env/{key}", s.authLimited(s.requireScope(api.ScopesEnvWriteSurface...)(s.setEnv)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/env/{key}", s.authLimited(s.requireScope(api.ScopesEnvWriteSurface...)(s.deleteEnv)))
