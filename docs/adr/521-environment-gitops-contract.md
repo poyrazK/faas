@@ -2208,3 +2208,48 @@ output, independence from later source writes and owned producer death; their
 runtime execution awaits current-head CI. Native output/publication integration,
 dedicated capture/restore/leak acceptance and all graph/serving enablement gates
 remain outstanding.
+
+### Original memory and device output ownership — 2026-10-04
+
+The capture Manager now carries a private output permit only after durable
+capture start, while retaining the original incoming lock and live operation
+flight. The permit freezes the incoming frame, capture record and physical
+PID/start-time incarnation. Ordinary boot context cannot authorize a live
+output producer. Final capture publication also rechecks that same process,
+so an altered PID or start time cannot borrow a completed capture receipt.
+
+The native Linux backend can prepare two separate empty anonymous disk inodes
+for memory and device state using `O_TMPFILE`, `O_EXCL` and close-on-exec handles.
+The disk profile accepts ext4/XFS/Btrfs and refuses tmpfs, RAMFS, overlay, NFS and
+unknown filesystems. Output names derive only from the original canonical
+capture ID and the two supported kinds. Before file production, the boundary
+checks original local daemon ownership, exact live physical identity, full
+lease, current incoming authority/deadline and the unchanged incomplete capture
+start record.
+
+Each output uses the existing durable image-source epoch, anchor and writable
+jail-bind journal. Its reference retains the original preparation identity;
+the separate capture permit supplies the required live process identity.
+Ordinary image staging remains prepared-only. Producer descriptors close before
+source and physical locks release. An interrupted reference prevents replacement
+production, a second-output failure retains the first output, and resource
+removal cannot be acknowledged until original output binds and anchors retire.
+Legacy in-memory bind and materialisation maps confer no ownership.
+
+The complete portable FCVM race suite passes 833 top-level tests / 1,724 cases,
+with no skips. It covers changed capture/process/lease authority, expired and
+revoked attempts, all six journal acknowledgement boundaries, partial output
+preparation, descriptor-close uncertainty and revocation waiting for retained
+locks. A test fixture initially attempted restart inventory while retaining its
+incoming lock; it now releases the capture lock before that separate inventory
+operation. New ordinary Linux tests check real anonymous independent outputs,
+descriptor closure, placement refusal and producer death. A dedicated native
+fixture interrupts real anchor and jail-bind acknowledgements; it has not run
+without the dedicated native KVM host and does not capture a Firecracker VM.
+
+This completes output preparation and ownership primitives. The real native
+snapshot preflight and generic snapshot entry points remain closed. Capture
+still needs retained output readers, storage temporary-file/publication
+ownership, pause/freeze/resume integration and actual capture/restore/leak proof.
+Production qualification polling, durable completion/graph receipts and whole
+environment serving/enforcement acceptance remain outstanding.

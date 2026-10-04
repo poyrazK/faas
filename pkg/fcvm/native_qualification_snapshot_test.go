@@ -66,6 +66,14 @@ func qualificationCaptureFixture(t *testing.T) (*Manager, *nativeQualificationJo
 	captureVMM := &qualificationCaptureVMM{recoveryVMMFixture: m.vmm.(*recoveryVMMFixture)}
 	captureVMM.capture = func(ctx context.Context, got Lease, spec SnapshotSpec) (SnapshotInfo, error) {
 		calls.Add(1)
+		permit, ok := ctx.Value(nativeSnapshotCaptureContextKey{}).(nativeSnapshotCapturePermit)
+		if !ok || permit.Physical != physical || permit.Incoming.Execution != frame || !permit.Capture.CompletedAt.IsZero() {
+			return SnapshotInfo{}, errors.New("capture omitted original process-bound output capability")
+		}
+		started, err := j.readCapture(permit.Incoming)
+		if err != nil || started != permit.Capture {
+			return SnapshotInfo{}, errors.Join(err, errors.New("output capability preceded durable capture start"))
+		}
 		if !sameNativePhysicalLease(got, lease) || !spec.ResumeBeforePublish || spec.BeforeCheckpoint || spec.StageMemPath != "" || spec.VMStatePath != "" {
 			return SnapshotInfo{}, errors.New("capture did not preserve original lease or storage-only specification")
 		}
@@ -212,7 +220,7 @@ func TestNativeQualificationSnapshotRejectsChangedOriginalAuthorityBeforeEffects
 }
 
 func TestNativeQualificationSnapshotUncertaintyCannotRecapture(t *testing.T) {
-	for _, failure := range []string{"capture", "resume", "bytes", "physical_changed", "backing_publish"} {
+	for _, failure := range []string{"capture", "resume", "bytes", "physical_changed", "physical_pid", "physical_start_time", "backing_publish"} {
 		t.Run(failure, func(t *testing.T) {
 			m, j, frame, ctx, v, calls := qualificationCaptureFixture(t)
 			capture := v.capture
@@ -225,12 +233,19 @@ func TestNativeQualificationSnapshotUncertaintyCannotRecapture(t *testing.T) {
 					v.fakeVMM.resumeErr = errors.New("resume failed")
 				case "bytes":
 					info.VMStateBytes = 0
-				case "physical_changed":
+				case "physical_changed", "physical_pid", "physical_start_time":
 					physical, err := j.owner.read(frame.InstanceID)
 					if err != nil {
 						return SnapshotInfo{}, err
 					}
-					physical.Generation = uuid.NewString()
+					switch failure {
+					case "physical_changed":
+						physical.Generation = uuid.NewString()
+					case "physical_pid":
+						physical.PID++
+					case "physical_start_time":
+						physical.StartTime++
+					}
 					if err := j.owner.write(physical); err != nil {
 						return SnapshotInfo{}, err
 					}

@@ -82,10 +82,10 @@ func createNativeImageRootMarker(root string, owner nativeLaunchRecord) error {
 }
 
 func (b linuxNativeImageSources) Prepare(owner nativeLaunchRecord, root, source, name string, preferLink bool) (prepared nativeImagePreparation, err error) {
-	if !filepath.IsAbs(source) || filepath.Clean(source) != source || name == "" || name == "." || name == ".." || filepath.Base(name) != name || strings.ContainsAny(name, "\\\x00") || filepath.Base(filepath.Dir(root)) != owner.Lease.Instance || filepath.Base(root) != "root" || filepath.Dir(filepath.Dir(filepath.Dir(root))) != b.base || !nativeExecutableName(filepath.Base(filepath.Dir(filepath.Dir(root))), "firecracker") {
+	if !filepath.IsAbs(source) || filepath.Clean(source) != source {
 		return nil, errors.New("native image source: image placement differs from the original jail")
 	}
-	rootFile, err := os.OpenFile(root, os.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	rootFile, rootStat, err := b.prepareRoot(owner, root, name)
 	if err != nil {
 		return nil, err
 	}
@@ -94,19 +94,6 @@ func (b linuxNativeImageSources) Prepare(owner nativeLaunchRecord, root, source,
 			err = errors.Join(err, rootFile.Close())
 		}
 	}()
-	var rootStat unix.Stat_t
-	if err := unix.Fstat(int(rootFile.Fd()), &rootStat); err != nil {
-		return nil, err
-	}
-	if rootStat.Uid != uint32(os.Geteuid()) || rootStat.Mode&0o022 != 0 {
-		return nil, errors.New("native image source: prepared jail is not controlled by vmmd")
-	}
-	if _, err := os.Lstat(filepath.Join(root, name)); !errors.Is(err, os.ErrNotExist) {
-		return nil, errors.Join(err, errors.New("native image source: target already exists"))
-	}
-	if err := createNativeImageRootMarker(root, owner); err != nil {
-		return nil, err
-	}
 	input, err := os.OpenFile(source, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
@@ -120,6 +107,32 @@ func (b linuxNativeImageSources) Prepare(owner nativeLaunchRecord, root, source,
 		return nil, errors.Join(err, input.Close())
 	}
 	return &linuxNativeImagePreparation{source: input, root: rootFile, identity: identity, namespace: namespace, link: preferLink && uint64(rootStat.Dev) == identity.Device, owner: owner}, nil
+}
+
+func (b linuxNativeImageSources) prepareRoot(owner nativeLaunchRecord, root, name string) (file *os.File, stat unix.Stat_t, err error) {
+	if name == "" || name == "." || name == ".." || filepath.Base(name) != name || strings.ContainsAny(name, "\\\x00") || filepath.Base(filepath.Dir(root)) != owner.Lease.Instance || filepath.Base(root) != "root" || filepath.Dir(filepath.Dir(filepath.Dir(root))) != b.base || !nativeExecutableName(filepath.Base(filepath.Dir(filepath.Dir(root))), "firecracker") {
+		return nil, stat, errors.New("native image source: image placement differs from the original jail")
+	}
+	file, err = os.OpenFile(root, os.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, stat, err
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, file.Close())
+			file = nil
+		}
+	}()
+	if err = unix.Fstat(int(file.Fd()), &stat); err != nil {
+		return file, stat, err
+	}
+	if stat.Uid != uint32(os.Geteuid()) || stat.Mode&0o022 != 0 {
+		return file, stat, errors.New("native image source: prepared jail is not controlled by vmmd")
+	}
+	if _, err := os.Lstat(filepath.Join(root, name)); !errors.Is(err, os.ErrNotExist) {
+		return file, stat, errors.Join(err, errors.New("native image source: target already exists"))
+	}
+	return file, stat, createNativeImageRootMarker(root, owner)
 }
 
 func nativeImagePlaceholder(path string) (nativeLoopIdentity, error) {

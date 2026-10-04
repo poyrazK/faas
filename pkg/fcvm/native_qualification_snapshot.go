@@ -70,7 +70,8 @@ func (m *Manager) CaptureEnvironmentQualification(ctx context.Context, frame sta
 	if err := m.checkLiveAdmission(ctx, inst); err != nil {
 		return proof, err
 	}
-	if err := j.requireSnapshotPhysical(ctx, incoming); err != nil {
+	physical, err := j.snapshotPhysical(ctx, incoming)
+	if err != nil {
 		return proof, err
 	}
 	capture, err := j.readCapture(incoming)
@@ -92,6 +93,7 @@ func (m *Manager) CaptureEnvironmentQualification(ctx context.Context, frame sta
 	if err := j.writeCapture(incoming, capture); err != nil {
 		return proof, err
 	}
+	ctx = nativeSnapshotCaptureContext(ctx, incoming, capture, physical)
 	keys := qualificationSnapshotProof(incoming, SnapshotInfo{})
 	info, err := m.warmSnapshotInstance(ctx, inst, SnapshotSpec{StorageKey: keys.StorageKey, VMStateStorageKey: keys.VMStateStorageKey})
 	if err != nil {
@@ -140,21 +142,29 @@ func (j *nativeQualificationJournal) snapshotAuthority(ctx context.Context, fram
 }
 
 func (j *nativeQualificationJournal) requireSnapshotPhysical(ctx context.Context, incoming nativeQualificationRecord) (result error) {
+	_, result = j.snapshotPhysical(ctx, incoming)
+	return result
+}
+
+func (j *nativeQualificationJournal) snapshotPhysical(ctx context.Context, incoming nativeQualificationRecord) (physical nativeLaunchRecord, result error) {
 	lock, err := j.owner.lock(ctx, incoming.Execution.InstanceID)
 	if err != nil {
-		return err
+		return physical, err
 	}
 	defer func() { result = errors.Join(result, lock.Close()) }()
-	physical, err := j.owner.read(incoming.Execution.InstanceID)
+	physical, err = j.owner.read(incoming.Execution.InstanceID)
 	if err != nil {
-		return err
+		return physical, err
 	}
 	if physical.Generation != incoming.NativeGeneration || physical.KernelBootID != incoming.KernelBootID ||
 		!sameNativePhysicalLease(physical.Lease, incoming.NativeLease) || !physical.Authorized || physical.PID <= 0 || physical.StartTime == 0 ||
 		physical.Revoked || physical.ExitConfirmed || physical.ResourcesRemoved {
-		return state.ErrConflict
+		return physical, state.ErrConflict
 	}
-	return ctx.Err()
+	if permit, ok := ctx.Value(nativeSnapshotCaptureContextKey{}).(nativeSnapshotCapturePermit); ok && (permit.Incoming != incoming || !sameNativeSnapshotProcess(physical, permit.Physical)) {
+		return physical, state.ErrConflict
+	}
+	return physical, ctx.Err()
 }
 
 func (m *Manager) qualificationSnapshotBacking(instance string) (BackingIdentity, error) {

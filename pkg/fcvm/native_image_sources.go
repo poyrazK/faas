@@ -307,6 +307,17 @@ func (j *nativeImageSourceJournal) stageWritable(ctx context.Context, expected n
 }
 
 func (j *nativeImageSourceJournal) stagePrepared(ctx context.Context, expected nativeLaunchRecord, root, name string, readOnly bool, addPerms uint32, prepare func(nativeLaunchRecord) (nativeImagePreparation, error)) (staged string, err error) {
+	return j.stageOwned(ctx, expected, root, name, readOnly, addPerms, func(owner nativeLaunchRecord) (nativeLaunchRecord, error) {
+		if owner.Authorized || owner.Revoked || owner.ResourcesRemoved {
+			return owner, errors.New("native image source: prepared producer authority changed")
+		}
+		return owner, nil
+	}, prepare)
+}
+
+// Only explicit, private producers may supply a different authority check.
+// Ordinary staging retains the prepared-only check above.
+func (j *nativeImageSourceJournal) stageOwned(ctx context.Context, expected nativeLaunchRecord, root, name string, readOnly bool, addPerms uint32, authority func(nativeLaunchRecord) (nativeLaunchRecord, error), prepare func(nativeLaunchRecord) (nativeImagePreparation, error)) (staged string, err error) {
 	vmLock, err := j.owner.lock(ctx, expected.Lease.Instance)
 	if err != nil {
 		return "", err
@@ -316,8 +327,12 @@ func (j *nativeImageSourceJournal) stagePrepared(ctx context.Context, expected n
 	if err != nil {
 		return "", err
 	}
-	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) || owner.Authorized || owner.Revoked || owner.ResourcesRemoved {
+	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) {
 		return "", errors.New("native image source: prepared producer authority changed")
+	}
+	referenceOwner, err := authority(owner)
+	if err != nil {
+		return "", err
 	}
 	loops := nativeLoopMountJournal{owner: j.owner, backend: j.owner.loopMounts}
 	if err := loops.requireRetired(owner); err != nil {
@@ -344,7 +359,7 @@ func (j *nativeImageSourceJournal) stagePrepared(ctx context.Context, expected n
 	if err := j.requireUnusedTarget(owner, root, name); err != nil {
 		return "", err
 	}
-	preparation, err := prepare(owner)
+	preparation, err := prepare(referenceOwner)
 	if err != nil {
 		if preparation != nil {
 			err = errors.Join(err, preparation.Close())
@@ -398,7 +413,7 @@ func (j *nativeImageSourceJournal) stagePrepared(ctx context.Context, expected n
 			return "", err
 		}
 	}
-	ref := nativeImageReference{ID: uuid.NewString(), Owner: owner, Root: root, Name: name, ReadOnly: readOnly, AddPerms: addPerms, Link: preparation.PreferLink()}
+	ref := nativeImageReference{ID: uuid.NewString(), Owner: referenceOwner, Root: root, Name: name, ReadOnly: readOnly, AddPerms: addPerms, Link: preparation.PreferLink()}
 	record.References = append(record.References, ref)
 	record.Desired, err = desiredNativeImageMetadata(record)
 	if err != nil {
