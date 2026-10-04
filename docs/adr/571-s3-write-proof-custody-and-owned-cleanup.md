@@ -1,4 +1,4 @@
-# ADR-568 · Retain pending write proof and finish owned bucket cleanup
+# ADR-571 · Retain pending write proof and finish owned bucket cleanup
 
 - **Status:** Accepted
 - **Date:** 2026-10-04

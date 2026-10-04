@@ -3,6 +3,7 @@ package objectstorage
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"io"
 	"net/http"
 
@@ -36,7 +37,7 @@ func (c bucketDeleteProofClient) Do(request *http.Request) (*http.Response, erro
 		Codes   []string `xml:"Code"`
 	}
 	decoder := xml.NewDecoder(bytes.NewReader(data))
-	if decoder.Decode(&document) == nil && decoder.Decode(new(any)) == io.EOF && len(document.Codes) == 1 && document.Codes[0] == "NoSuchBucket" {
+	if decoder.Decode(&document) == nil && errors.Is(decoder.Decode(new(any)), io.EOF) && len(document.Codes) == 1 && document.Codes[0] == "NoSuchBucket" {
 		*c.missing = true
 	}
 	response.Body = io.NopCloser(bytes.NewReader(data))

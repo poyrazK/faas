@@ -1933,7 +1933,7 @@ production provider qualification remain deployment work.
 
 ## Owned bucket and expired-account cleanup
 
-[ADR-568](adr/568-s3-write-proof-custody-and-owned-cleanup.md) connects account
+[ADR-571](adr/571-s3-write-proof-custody-and-owned-cleanup.md) connects account
 grace to the existing bucket deletion worker. Developer/clone buckets and all
 buckets of an expired deletion-pending account remain sealed during cleanup.
 Accepted writes, live multipart sessions and configuration/deletion jobs must
