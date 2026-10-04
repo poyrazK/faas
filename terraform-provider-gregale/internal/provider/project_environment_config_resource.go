@@ -138,7 +138,7 @@ func (r *projectEnvironmentConfigResource) Create(ctx context.Context, req resou
 		resp.Diagnostics.AddAttributeError(path.Root("values"), "Invalid project environment configuration", err.Error())
 		return
 	}
-	out, err := r.client.updateProjectEnvironmentConfig(ctx, plan.ProjectSlug.ValueString(), plan.Environment.ValueString(), projectEnvironmentConfigRequest{Values: values})
+	out, err := r.client.updateOwnedConfig(ctx, plan.ProjectSlug.ValueString(), plan.Environment.ValueString(), values)
 	if err != nil {
 		appendClientError(&resp.Diagnostics, "Could not configure Gregale project environment", err)
 		return
@@ -158,11 +158,23 @@ func (r *projectEnvironmentConfigResource) Read(ctx context.Context, req resourc
 	}
 	out, err := r.client.getProjectEnvironmentConfig(ctx, state.ProjectSlug.ValueString(), state.Environment.ValueString())
 	if isNotFound(err) {
+		if err := r.client.configOwnership(ctx, state.ProjectSlug.ValueString(), state.Environment.ValueString(), json.RawMessage(state.Values.ValueString()), true); err != nil && !isNotFound(err) {
+			appendClientError(&resp.Diagnostics, "Could not release Terraform configuration ownership", err)
+			return
+		}
 		resp.State.RemoveResource(ctx)
 		return
 	}
 	if err != nil {
 		appendClientError(&resp.Diagnostics, "Could not read Gregale project environment configuration", err)
+		return
+	}
+	if err := r.client.configOwnership(ctx, state.ProjectSlug.ValueString(), state.Environment.ValueString(), out.Values, false); err != nil {
+		appendClientError(&resp.Diagnostics, "Could not reserve Terraform field ownership", err)
+		return
+	}
+	if err := r.client.releaseRemovedConfigOwnership(ctx, state.ProjectSlug.ValueString(), state.Environment.ValueString(), json.RawMessage(state.Values.ValueString()), out.Values); err != nil {
+		appendClientError(&resp.Diagnostics, "Could not release removed Terraform configuration ownership", err)
 		return
 	}
 	resp.Diagnostics.Append(setProjectEnvironmentConfigModel(ctx, &resp.State, out, state)...)
@@ -183,7 +195,7 @@ func (r *projectEnvironmentConfigResource) Update(ctx context.Context, req resou
 		resp.Diagnostics.AddAttributeError(path.Root("values"), "Invalid project environment configuration", err.Error())
 		return
 	}
-	out, err := r.client.updateProjectEnvironmentConfig(ctx, plan.ProjectSlug.ValueString(), plan.Environment.ValueString(), projectEnvironmentConfigRequest{Values: values})
+	out, err := r.client.updateOwnedConfig(ctx, plan.ProjectSlug.ValueString(), plan.Environment.ValueString(), values)
 	if err != nil {
 		appendClientError(&resp.Diagnostics, "Could not update Gregale project environment configuration", err)
 		return
@@ -201,7 +213,7 @@ func (r *projectEnvironmentConfigResource) Delete(ctx context.Context, req resou
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	_, err := r.client.updateProjectEnvironmentConfig(ctx, state.ProjectSlug.ValueString(), state.Environment.ValueString(), projectEnvironmentConfigRequest{Values: json.RawMessage(`{}`)})
+	_, err := r.client.updateOwnedConfig(ctx, state.ProjectSlug.ValueString(), state.Environment.ValueString(), json.RawMessage(`{}`))
 	if err != nil && !isNotFound(err) {
 		appendClientError(&resp.Diagnostics, "Could not reset Gregale project environment configuration", err)
 	}

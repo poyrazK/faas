@@ -2211,6 +2211,16 @@
     "kind": "configuration"
   },
   {
+    "table": "environment_external_field_owners",
+    "columns": [
+      "environment_id",
+      "field_path",
+      "manager_id",
+      "resource"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "environment_git_revision_approvals",
     "columns": [
       "approved_generation",
@@ -2242,6 +2252,7 @@
       "approval_policy",
       "approved_revision_id",
       "created_at",
+      "detached",
       "environment_id",
       "generation",
       "id",

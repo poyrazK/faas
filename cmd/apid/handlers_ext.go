@@ -2295,6 +2295,34 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(target, app))
 }
 
+// zeroTrafficRollbackCandidates lists, newest first, the app's live
+// deployments receiving 0% traffic: explicit rollback targets that the default
+// rollback cannot choose between. A traffic split followed by `traffic
+// promote` leaves the former production deployment in this state rather than
+// superseded. The list is advisory; a read error just omits it.
+func (s *server) zeroTrafficRollbackCandidates(ctx context.Context, appID string) []string {
+	const scan = 50
+	deployments, err := s.store.ListDeploymentsForApp(ctx, appID, scan, 0)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, d := range deployments {
+		if d.Status != state.DeployLive || d.TrafficPercent != 0 {
+			continue
+		}
+		ref := d.ID
+		if d.Revision > 0 {
+			ref = fmt.Sprintf("v%d", d.Revision)
+		}
+		out = append(out, ref)
+		if len(out) == 5 {
+			break
+		}
+	}
+	return out
+}
+
 // rollbackAppCore performs the shared rollback state transition for the REST
 // and dashboard surfaces. The caller owns authentication and app lookup;
 // this helper owns target selection, notifications, and audit records so the
@@ -2348,7 +2376,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	} else {
 		target, err = s.store.LatestSupersededDeployment(ctx, app.ID)
 		if err != nil {
-			return state.Deployment{}, api.ErrNoRollbackTarget()
+			return state.Deployment{}, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
 		}
 	}
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {

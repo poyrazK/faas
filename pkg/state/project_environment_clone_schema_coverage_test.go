@@ -17,6 +17,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"app_environment_secret_ref_suppressions": CloneSchemaConfiguration,
 		"app_environment_workload_intents":        CloneSchemaConfiguration,
 		"environment_git_sources":                 CloneSchemaConfiguration,
+		"environment_external_field_owners":       CloneSchemaConfiguration,
 		"environment_desired_revisions":           CloneSchemaConfiguration,
 		"environment_managed_fields":              CloneSchemaConfiguration,
 		"environment_management_overrides":        CloneSchemaConfiguration,

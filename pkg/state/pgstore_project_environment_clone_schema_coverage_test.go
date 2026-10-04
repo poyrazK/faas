@@ -51,6 +51,7 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 		t.Fatalf("schema inventory is incomplete: %d/%d %v", len(coverage.Tables), len(policies), err)
 	}
 	for _, want := range []state.ProjectEnvironmentCloneCoverageBlocker{
+		{Table: "environment_external_field_owners", Code: "isolated_strategy_unavailable"},
 		{Table: "queue_bindings", Code: "isolated_strategy_unavailable"},
 		{Table: "financial_budget_policies", Code: "isolated_strategy_unavailable"},
 		{Table: "financial_budget_revisions", Code: "isolated_strategy_unavailable"},

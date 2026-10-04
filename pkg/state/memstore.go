@@ -141,6 +141,7 @@ type MemStore struct {
 	operationData               *operationMemory
 	operationCodePins           map[string]time.Time
 	qualificationExecutions     map[string]EnvironmentQualificationExecutionStatus
+	environmentExternalOwners   map[string]environmentExternalFieldOwner
 	environmentGitOps           map[string]*environmentGitOpsMemory
 	financialEvidence           []FinancialUsageRecord
 	financialSamplingWindows    map[time.Time]financialSamplingWindow

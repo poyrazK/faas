@@ -56,7 +56,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 568 | [Git-owned environment intent and continuous reconciliation](568-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, field ownership, durable effects, and scoped runtime convergence |
+| 568 | [Git-owned environment intent and continuous reconciliation](568-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, scoped ownership and binding retirement, bounded reports, durable effects, and scoped runtime convergence |
 | 576 | [Private TCP addressing between services](576-private-tcp-service-addressing.md) | proposed | Account-scoped service addresses in 198.19.0.0/16 give non-HTTP protocols natural-port private reachability through a node-local TCP proxy |
 | 520 | [Self-hosted TLS for customer custom domains](520-self-hosted-custom-domain-tls.md) | proposed | Caddy on-demand certificates gated by gatewayd-public's ask endpoint; durable per-wildcard issuance budget; no CDN in the customer-domain path |
 | 580 | [Control-plane role convergence in CD](580-control-plane-convergence-in-cd.md) | proposed | CD runs the control-plane bootstrap play before release activation whenever a hash of its inputs (roles, inventory, operator vars) changes |

@@ -11,6 +11,9 @@ import type { CreateEnvironmentGitSourceRequest } from '../models/CreateEnvironm
 import type { CreateProjectEnvironmentApprovalRequest } from '../models/CreateProjectEnvironmentApprovalRequest.js';
 import type { CreateProjectEnvironmentQualificationRequest } from '../models/CreateProjectEnvironmentQualificationRequest.js';
 import type { CreateProjectEnvironmentRequest } from '../models/CreateProjectEnvironmentRequest.js';
+import type { DetachEnvironmentGitSourceRequest } from '../models/DetachEnvironmentGitSourceRequest.js';
+import type { EnvironmentFieldOwnershipRequest } from '../models/EnvironmentFieldOwnershipRequest.js';
+import type { EnvironmentFieldOwnershipResponse } from '../models/EnvironmentFieldOwnershipResponse.js';
 import type { EnvironmentGitOpsOverrideRequest } from '../models/EnvironmentGitOpsOverrideRequest.js';
 import type { EnvironmentGitOpsPlan } from '../models/EnvironmentGitOpsPlan.js';
 import type { EnvironmentGitOpsStatusResponse } from '../models/EnvironmentGitOpsStatusResponse.js';
@@ -46,6 +49,7 @@ import type { ProjectSourceRefScanRequest } from '../models/ProjectSourceRefScan
 import type { ProjectSummaryResponse } from '../models/ProjectSummaryResponse.js';
 import type { PromoteProjectEnvironmentRequest } from '../models/PromoteProjectEnvironmentRequest.js';
 import type { PublishProjectReleaseSetRequest } from '../models/PublishProjectReleaseSetRequest.js';
+import type { RebindEnvironmentGitSourceRequest } from '../models/RebindEnvironmentGitSourceRequest.js';
 import type { RemoveEnvironmentGitOpsOverrideRequest } from '../models/RemoveEnvironmentGitOpsOverrideRequest.js';
 import type { ReplaceProjectEnvironmentQueueBindingsRequest } from '../models/ReplaceProjectEnvironmentQueueBindingsRequest.js';
 import type { UpdateProjectEnvironmentConfigRequest } from '../models/UpdateProjectEnvironmentConfigRequest.js';
@@ -687,7 +691,7 @@ export class ProjectsService {
     });
   }
   /**
-   * Update report, enforce, pruning, and suspension controls.
+   * Update report, pruning, and suspension controls. Enforce is unavailable in preview.
    * @returns EnvironmentGitSource Update report, enforce, pruning, and suspension controls. result.
    * @throws ApiError
    */
@@ -723,6 +727,202 @@ export class ProjectsService {
         'slug': slug,
         'environment': environment,
       },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Release Git ownership while preserving values and retired binding history.
+   * @returns void
+   * @throws ApiError
+   */
+  public static detachEnvironmentGitSource({
+    slug,
+    environment,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    requestBody: DetachEnvironmentGitSourceRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/source',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Retire the binding and create a verified report source requiring fresh approval.
+   * @returns EnvironmentGitSource Replacement source requiring a new definition review and ownership adoption.
+   * @throws ApiError
+   */
+  public static rebindEnvironmentGitSource({
+    slug,
+    environment,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    requestBody: RebindEnvironmentGitSourceRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<EnvironmentGitSource> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/source/rebind',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Reserve scoped Terraform variable, source or configuration fields against Git adoption.
+   * @returns EnvironmentFieldOwnershipResponse Scoped fields were reserved, or the request targets legacy unscoped intent.
+   * @throws ApiError
+   */
+  public static claimEnvironmentFieldOwnership({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: EnvironmentFieldOwnershipRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<EnvironmentFieldOwnershipResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/environment-field-ownership',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Release scoped Terraform field ownership without changing values.
+   * @returns EnvironmentFieldOwnershipResponse The specified ownership claims were released; values were preserved.
+   * @throws ApiError
+   */
+  public static releaseEnvironmentFieldOwnership({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: EnvironmentFieldOwnershipRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<EnvironmentFieldOwnershipResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/environment-field-ownership',
       headers: {
         'Idempotency-Key': idempotencyKey,
       },

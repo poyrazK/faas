@@ -18168,7 +18168,7 @@ paths:
       tags:
       - projects
       operationId: updateEnvironmentGitSource
-      summary: Update report, enforce, pruning, and suspension controls.
+      summary: Update report, pruning, and suspension controls. Enforce is unavailable in preview.
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -18185,6 +18185,139 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EnvironmentGitSource'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      tags: [projects]
+      operationId: detachEnvironmentGitSource
+      summary: Release Git ownership while preserving values and retired binding history.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DetachEnvironmentGitSourceRequest'
+      responses:
+        '204':
+          description: The binding was retired; values and audit evidence are preserved.
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/source/rebind:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags: [projects]
+      operationId: rebindEnvironmentGitSource
+      summary: Retire the binding and create a verified report source requiring fresh approval.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RebindEnvironmentGitSourceRequest'
+      responses:
+        '201':
+          description: Replacement source requiring a new definition review and ownership adoption.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentGitSource'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/environment-field-ownership:
+    put:
+      tags: [projects]
+      operationId: claimEnvironmentFieldOwnership
+      summary: Reserve scoped Terraform variable, source or configuration fields against Git adoption.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvironmentFieldOwnershipRequest'
+      responses:
+        '200':
+          description: Scoped fields were reserved, or the request targets legacy unscoped intent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentFieldOwnershipResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      tags: [projects]
+      operationId: releaseEnvironmentFieldOwnership
+      summary: Release scoped Terraform field ownership without changing values.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvironmentFieldOwnershipRequest'
+      responses:
+        '200':
+          description: The specified ownership claims were released; values were preserved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentFieldOwnershipResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -27695,6 +27828,62 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    DetachEnvironmentGitSourceRequest:
+      type: object
+      description: Release this binding's Git ownership at the supplied generation while retaining its history.
+      additionalProperties: false
+      required: [expected_generation]
+      properties:
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 0
+    RebindEnvironmentGitSourceRequest:
+      type: object
+      description: Replace a Git binding with a fresh report-only source that requires a new approval.
+      additionalProperties: false
+      required: [expected_generation, manifest_path]
+      properties:
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 0
+        ref:
+          type: string
+        manifest_path:
+          type: string
+        approval_policy:
+          type: string
+          enum: [manual, protected_branch]
+    EnvironmentFieldOwnershipRequest:
+      type: object
+      additionalProperties: false
+      required: [environment, paths, manager]
+      description: Specify exactly one of app or project. App fields use variables/KEY or source; project fields use configuration/KEY. Terraform must claim before writes and release after deletion. Claims contain no values.
+      properties:
+        app:
+          type: string
+        project:
+          type: string
+        environment:
+          type: string
+        paths:
+          type: array
+          minItems: 1
+          maxItems: 1024
+          items:
+            type: string
+        manager:
+          type: string
+          enum: [terraform]
+    EnvironmentFieldOwnershipResponse:
+      type: object
+      description: Result of claiming or releasing Terraform ownership of environment fields.
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [claimed, released, unscoped]
     CreateEnvironmentGitSourceRequest:
       type: object
       description: Select a Git definition in the project repository; repository identities are verified by
@@ -27710,7 +27899,6 @@ components:
           type: string
           enum:
           - report
-          - enforce
           default: report
         approval_policy:
           type: string
@@ -27997,6 +28185,9 @@ components:
           type: string
         source:
           $ref: '#/components/schemas/EnvironmentGitSourceSpec'
+        detached:
+          type: boolean
+          description: Retired binding; excluded from current source lookup and controllers.
         suspended:
           type: boolean
         generation:
@@ -28139,7 +28330,6 @@ components:
           type: string
           enum:
           - report
-          - enforce
         prune:
           type: boolean
         suspended:
