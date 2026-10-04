@@ -71,7 +71,7 @@ func TestPreviewSecurityCommandGates(t *testing.T) {
 				t.Fatal(err)
 			}
 			row := findPreviewReportRoute(t, report, "POST /checkout")
-			if report.Version != 5 || report.Security.Status != "available" || report.Outcome != test.outcome || row.SecurityCompatibility == nil || row.SecurityCompatibility.Status != test.status || row.RequestCompatibility.Status != "no_supported_breaks" || row.RequestContractChanged || reads.Load() != 6 {
+			if report.Version != 6 || report.Security.Status != "available" || report.Outcome != test.outcome || row.SecurityCompatibility == nil || row.SecurityCompatibility.Status != test.status || row.RequestCompatibility.Status != "no_supported_breaks" || row.RequestContractChanged || reads.Load() != 8 {
 				t.Fatalf("report %+v; row %+v; reads %d", report, row, reads.Load())
 			}
 			if strings.Contains(output.String(), "private") {
@@ -118,16 +118,17 @@ func TestPreviewSecurityUnavailableAndOutcomePrecedence(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Security.Status != "unavailable" || !containsPreviewRequestReason(report.ReviewPriorities[0].Reasons, "request_comparison_unavailable") {
+	if report.Security.Status != "unavailable" {
 		t.Fatal(report)
 	}
-	found := false
+	foundRequest, foundSecurity := false, false
 	for _, review := range report.ReviewPriorities {
+		foundRequest = foundRequest || containsPreviewRequestReason(review.Reasons, "request_comparison_unavailable")
 		if containsPreviewRequestReason(review.Reasons, "security_comparison_unavailable") {
-			found = true
+			foundSecurity = true
 		}
 	}
-	if !found {
+	if !foundRequest || !foundSecurity {
 		t.Fatal(report.ReviewPriorities)
 	}
 	for _, outcome := range []string{"breaking_changes", "request_breaking_changes", "test_failures", "policy_violations"} {

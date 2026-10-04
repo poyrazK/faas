@@ -29,6 +29,7 @@ type previewRouteReport struct {
 	Outcome               string                           `json:"outcome"`
 	Contract              previewReportEvidence            `json:"contract"`
 	Policy                previewReportEvidence            `json:"policy"`
+	PolicyDrift           previewRoutePolicyDriftEvidence  `json:"policy_drift"`
 	Performance           previewReportEvidence            `json:"performance"`
 	Requests              previewReportEvidence            `json:"requests"`
 	Security              previewReportEvidence            `json:"security"`
@@ -46,6 +47,9 @@ type previewRouteReport struct {
 	baselineSource        previewDeploymentSource
 	candidateSource       previewDeploymentSource
 	candidateContract     *openapidiff.Spec
+	candidateEdgeRules    []api.EdgeRuleResponse
+	candidateRulesErr     error
+	candidateRulesLoaded  bool
 }
 
 type previewReportEvidence struct {
@@ -70,6 +74,7 @@ type previewReportRoute struct {
 	NextActions            []string                    `json:"next_actions"`
 	RequestCompatibility   *openapidiff.RequestRoute   `json:"request_compatibility,omitempty"`
 	SecurityCompatibility  *openapidiff.SecurityRoute  `json:"security_compatibility,omitempty"`
+	PolicyDrift            *previewRoutePolicyDrift    `json:"policy_drift,omitempty"`
 	SourceImpact           *previewRouteSource         `json:"source_impact,omitempty"`
 	CustomerImpact         *previewRouteCustomerImpact `json:"customer_impact,omitempty"`
 }
@@ -98,7 +103,7 @@ type previewReportTraffic struct {
 }
 
 func cmdPreviewReport(args []string) int {
-	flags, pos := splitArgsForFlags(args, "fail-on-breaking", "fail-on-request-breaking", "fail-on-security-regression", "fail-on-incomplete", "fail-on-requirements", "customer-details")
+	flags, pos := splitArgsForFlags(args, "fail-on-breaking", "fail-on-request-breaking", "fail-on-security-regression", "fail-on-policy-drift", "fail-on-incomplete", "fail-on-requirements", "customer-details")
 	fs := newFlagSet("preview report", flag.ContinueOnError)
 	format := fs.String("format", "text", "report format: text or markdown (or use --json)")
 	since := fs.String("since", "24h", "traffic lookback duration")
@@ -109,6 +114,7 @@ func cmdPreviewReport(args []string) int {
 	requirements := fs.String("requirements", "", "versioned route requirements YAML or JSON file")
 	failRequestBreaking := fs.Bool("fail-on-request-breaking", false, "exit 1 for known request-contract restrictions")
 	failSecurity := fs.Bool("fail-on-security-regression", false, "exit 1 for known reductions in declared authentication requirements")
+	failPolicyDrift := fs.Bool("fail-on-policy-drift", false, "exit 1 for changed or incomplete route rule policy comparison")
 	failBreaking := fs.Bool("fail-on-breaking", false, "exit 1 for known response-contract breaks")
 	failIncomplete := fs.Bool("fail-on-incomplete", false, "exit 1 when evidence is missing or needs review")
 	failRequirements := fs.Bool("fail-on-requirements", false, "exit 1 for violated or unknown route requirements")
@@ -116,7 +122,7 @@ func cmdPreviewReport(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 || !validCLISlug(pos[0]) || (*format != "text" && *format != "markdown") || (jsonOutput && *format != "text") {
-		PrintUsage(osStderr, "usage: gregale preview report <preview-slug> [--format text|markdown] [--since 24h] [--customer-details] [--source-impact PATH] [--test-report PATH] [--requirements PATH] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-incomplete] [--fail-on-requirements]", "preview")
+		PrintUsage(osStderr, "usage: gregale preview report <preview-slug> [--format text|markdown] [--since 24h] [--customer-details] [--source-impact PATH] [--test-report PATH] [--requirements PATH] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-policy-drift] [--fail-on-incomplete] [--fail-on-requirements]", "preview")
 		return 1
 	}
 	if d, err := time.ParseDuration(*since); err != nil || d <= 0 {
@@ -182,7 +188,7 @@ func cmdPreviewReport(args []string) int {
 	} else {
 		renderPreviewRouteReport(osStdout, report, *format == "markdown")
 	}
-	if (*failSecurity && previewReportHasSecurityRegressions(report)) || (*failRequestBreaking && (previewReportHasRequestBreaks(report) || previewReportHasSecurityBreaks(report))) || (*failBreaking && previewReportHasBreaks(report)) || (*failIncomplete && report.Outcome != "no_findings") ||
+	if (*failSecurity && previewReportHasSecurityRegressions(report)) || (*failPolicyDrift && previewReportHasPolicyDrift(report)) || (*failRequestBreaking && (previewReportHasRequestBreaks(report) || previewReportHasSecurityBreaks(report))) || (*failBreaking && previewReportHasBreaks(report)) || (*failIncomplete && report.Outcome != "no_findings") ||
 		(*failRequirements && report.Requirements.Status != "satisfied") {
 		return 1
 	}
@@ -198,7 +204,7 @@ func collectPreviewRouteReport(ctx context.Context, client *api.Client, slug, ba
 		return previewRouteReport{}, errors.New("preview has no accessible parent app")
 	}
 	report := previewRouteReport{
-		Version: 5, Preview: preview.App.Slug, Parent: preview.Parent.Slug,
+		Version: 6, Preview: preview.App.Slug, Parent: preview.Parent.Slug,
 		GeneratedAt: time.Now().UTC(), BaselineSelection: "latest_live_parent",
 		Requests:  previewReportEvidence{Status: "unavailable", Reason: "captured_documents_missing"},
 		Security:  previewReportEvidence{Status: "unavailable", Reason: "captured_documents_missing"},
@@ -252,6 +258,10 @@ func collectPreviewRouteReport(ctx context.Context, client *api.Client, slug, ba
 	}
 	policy, policyErr := client.PreviewAppOpenAPIPolicy(ctx, slug)
 	attachPreviewReportPolicy(&report, policy, policyErr)
+	baselineRules, baselineRulesErr := client.ListEdgeRulesForApp(ctx, report.Parent)
+	candidateRules, candidateRulesErr := client.ListEdgeRulesForApp(ctx, report.Preview)
+	report.candidateEdgeRules, report.candidateRulesErr, report.candidateRulesLoaded = candidateRules, candidateRulesErr, true
+	attachPreviewRoutePolicyDrift(&report, baselineRules, candidateRules, baselineRulesErr, candidateRulesErr)
 	beforeTraffic, beforeErr := client.GetAppRequestAnalytics(ctx, report.Parent, since)
 	afterTraffic, afterErr := client.GetAppRequestAnalytics(ctx, report.Preview, since)
 	attachPreviewReportTraffic(&report, beforeTraffic, afterTraffic, beforeErr, afterErr)

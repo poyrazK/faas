@@ -268,14 +268,18 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		*p.dest = SafeFloat(v)
 	}
 
-	// 5. Error rate %.
-	errQ := PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, appID, rng),
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, appID, rng))
-	if v, err := fetcher.QueryScalar(ctx, errQ); err == nil {
-		resp.ErrorRatePct = SafePercent(v)
-	} else {
-		return degradedFromErr(resp, err, log, "error_rate")
+	// 5. Error rate %. A ratio over an idle window has no denominator, and
+	// PercentRatioQuery then returns no sample; an app with no requests has
+	// a zero error rate, not unavailable telemetry.
+	if resp.RequestCount > 0 {
+		errQ := PercentRatioQuery(
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, appID, rng),
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, appID, rng))
+		if v, err := fetcher.QueryScalar(ctx, errQ); err == nil {
+			resp.ErrorRatePct = SafePercent(v)
+		} else {
+			return degradedFromErr(resp, err, log, "error_rate")
+		}
 	}
 	// 5b. Remaining API-availability error budget. This is derived from the
 	// same bounded request population as ErrorRatePct, so it adds no query or
@@ -303,14 +307,16 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		}
 	}
 
-	// 6. Cold start %.
-	coldQ := PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, appID, rng),
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng))
-	if v, err := fetcher.QueryScalar(ctx, coldQ); err == nil {
-		resp.ColdStartPct = SafePercent(v)
-	} else {
-		return degradedFromErr(resp, err, log, "cold_start")
+	// 6. Cold start % (idle-safe like the error rate).
+	if resp.RequestCount > 0 {
+		coldQ := PercentRatioQuery(
+			fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, appID, rng),
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng))
+		if v, err := fetcher.QueryScalar(ctx, coldQ); err == nil {
+			resp.ColdStartPct = SafePercent(v)
+		} else {
+			return degradedFromErr(resp, err, log, "cold_start")
+		}
 	}
 
 	// 7. Fleet wake p95 (the unlabeled gateway_wake_latency_seconds).
