@@ -43,8 +43,22 @@ func TestNativeCleanupBindFailuresRetainMetadataAndRestoreModesOnRetry(t *testin
 			if err := os.WriteFile(mount, nil, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			v.bindMounts["old"] = []ephemeralBind{{source: source, mountpoint: mount}}
-			v.bindSourceModes[source] = bindSourceMode{refs: 1, mode: 0o600}
+			handle, err := os.Open(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = handle.Close() })
+			info, err := handle.Stat()
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity, err := resourceFileID(info)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := bindSourceKey{path: source, file: identity}
+			v.bindMounts["old"] = []ephemeralBind{{source: source, mountpoint: mount, file: identity, tracked: true}}
+			v.bindSourceModes[key] = bindSourceMode{refs: 1, mode: 0o600, file: identity, handle: handle}
 			mounted := true
 			v.nativeRecovery.mounts = func(string) ([]string, error) {
 				if mounted {
@@ -63,30 +77,88 @@ func TestNativeCleanupBindFailuresRetainMetadataAndRestoreModesOnRetry(t *testin
 				return nil
 			}
 			if failure == "source_mode" {
-				if err := os.Remove(source); err != nil {
-					t.Fatal(err)
-				}
+				entry := v.bindSourceModes[key]
+				entry.handle = nil
+				v.bindSourceModes[key] = entry
 			}
 			if err := v.unmountNativeBinds(t.Context(), "old", filepath.Dir(root)); err == nil {
 				t.Fatal("uncertain bind cleanup acknowledged")
 			}
-			if len(v.bindMounts["old"]) != 1 || v.bindSourceModes[source].refs != 1 {
+			if len(v.bindMounts["old"]) != 1 || v.bindSourceModes[key].refs != 1 {
 				t.Fatal("failure discarded recovery metadata")
 			}
 			if failure == "source_mode" {
-				if err := os.WriteFile(source, nil, 0o644); err != nil {
-					t.Fatal(err)
-				}
+				entry := v.bindSourceModes[key]
+				entry.handle = handle
+				v.bindSourceModes[key] = entry
 			}
 			v.nativeRecovery.unmount = func(context.Context, string) error { mounted = false; return nil }
 			if err := v.unmountNativeBinds(t.Context(), "old", filepath.Dir(root)); err != nil {
 				t.Fatal(err)
 			}
-			info, err := os.Stat(source)
+			info, err = os.Stat(source)
 			if err != nil || info.Mode().Perm() != 0o600 || len(v.bindMounts["old"]) != 0 || len(v.bindSourceModes) != 0 {
 				t.Fatal("retry did not finish owned cleanup")
 			}
 		})
+	}
+}
+
+func TestNativeCleanupRestoresPinnedSourceAfterCacheReplacement(t *testing.T) {
+	_, v, _ := nativeManagerFixture(t)
+	root := filepath.Join(v.chrootBase, v.fcName, "old", "root")
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "source")
+	if err := os.WriteFile(source, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handle, err := os.Open(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	info, err := handle.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := resourceFileID(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mount := filepath.Join(root, "image")
+	if err := os.WriteFile(mount, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v.bindMounts["old"] = []ephemeralBind{{source: source, mountpoint: mount, file: identity, tracked: true}}
+	v.bindSourceModes[bindSourceKey{path: source, file: identity}] = bindSourceMode{refs: 1, mode: 0o600, file: identity, handle: handle}
+	held := source + ".held"
+	if err := os.Rename(source, held); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("refreshed"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	mounted := true
+	v.nativeRecovery.mounts = func(string) ([]string, error) {
+		if mounted {
+			return []string{mount}, nil
+		}
+		return nil, nil
+	}
+	v.nativeRecovery.unmount = func(context.Context, string) error { mounted = false; return nil }
+	if err := v.unmountNativeBinds(t.Context(), "old", filepath.Dir(root)); err != nil {
+		t.Fatal(err)
+	}
+	for path, mode := range map[string]os.FileMode{held: 0o600, source: 0o640} {
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != mode {
+			t.Fatalf("source mode after cleanup: path=%s want=%v err=%v", path, mode, err)
+		}
+	}
+	if len(v.bindMounts["old"]) != 0 || len(v.bindSourceModes) != 0 {
+		t.Fatal("owned bind references survived cleanup")
 	}
 }
 

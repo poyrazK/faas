@@ -176,8 +176,10 @@ func (v *JailerVMM) unmountNativeBinds(ctx context.Context, instance, root strin
 		if err := os.Remove(b.mountpoint); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		if err := v.releaseNativeBindSource(b.source); err != nil {
-			return err
+		if !b.released {
+			if err := v.releaseBindSource(b.source, b.file); err != nil {
+				return fmt.Errorf("native recovery: restore bind source mode: %w", err)
+			}
 		}
 		v.mu.Lock()
 		v.bindMounts[instance] = v.bindMounts[instance][:i]
@@ -193,24 +195,5 @@ func (v *JailerVMM) unmountNativeBinds(ctx context.Context, instance, root strin
 	v.mu.Lock()
 	delete(v.bindMounts, instance)
 	v.mu.Unlock()
-	return nil
-}
-
-func (v *JailerVMM) releaseNativeBindSource(source string) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	state, found := v.bindSourceModes[source]
-	if !found {
-		return nil
-	}
-	if state.refs > 1 {
-		state.refs--
-		v.bindSourceModes[source] = state
-		return nil
-	}
-	if err := os.Chmod(source, state.mode); err != nil {
-		return fmt.Errorf("native recovery: restore bind source mode: %w", err)
-	}
-	delete(v.bindSourceModes, source)
 	return nil
 }

@@ -43,6 +43,10 @@ func TestPark_RuntimeConfigChange(t *testing.T) {
 				if err := store.MarkAppRuntimeConfigChanged(ctx, app.ID); err != nil {
 					t.Fatal(err)
 				}
+				// Freshness is anchored on the wake's UUIDv7 admission time,
+				// which has millisecond precision; a change in the same
+				// millisecond is conservatively treated as concurrent.
+				time.Sleep(2 * time.Millisecond)
 			}
 			insID := primeRunPlusFrameworkReady(t, store, vmm, notif, e, app.ID, dep.ID)
 			if tc.changeAfter {

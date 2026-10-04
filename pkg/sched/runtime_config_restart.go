@@ -302,7 +302,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 }
 
 func runtimeConfigInstanceStale(instance state.Instance, boundary time.Time) bool {
-	return !instance.StartedAt.After(boundary)
+	return !runtimeConfigResolvedAt(instance).After(boundary)
 }
 
 func runtimeConfigResident(instance state.Instance) bool {

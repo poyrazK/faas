@@ -8644,6 +8644,36 @@ CREATE TABLE public.customer_operation_reports (
 
 
 --
+-- Name: customer_operation_result_blobs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_result_blobs (
+    id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    generation integer NOT NULL,
+    execution_id uuid NOT NULL,
+    attempt integer NOT NULL,
+    report_id text NOT NULL,
+    fingerprint text NOT NULL,
+    storage_key text NOT NULL,
+    size_bytes bigint NOT NULL,
+    state text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    CONSTRAINT customer_operation_result_blobs_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT customer_operation_result_blobs_check CHECK ((storage_key = ((((('operation-results/'::text || (account_id)::text) || '/'::text) || (operation_id)::text) || '/'::text) || (id)::text))),
+    CONSTRAINT customer_operation_result_blobs_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT customer_operation_result_blobs_generation_check CHECK ((generation > 0)),
+    CONSTRAINT customer_operation_result_blobs_report_id_check CHECK (((octet_length(report_id) >= 1) AND (octet_length(report_id) <= 128))),
+    CONSTRAINT customer_operation_result_blobs_size_bytes_check CHECK ((size_bytes >= 0)),
+    CONSTRAINT customer_operation_result_blobs_state_check CHECK ((state = ANY (ARRAY['staging'::text, 'retained'::text, 'deleting'::text])))
+);
+
+
+--
 -- Name: customer_operation_stream_leases; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16238,6 +16268,22 @@ ALTER TABLE ONLY public.customer_operation_reports
 
 
 --
+-- Name: customer_operation_result_blobs customer_operation_result_blobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_result_blobs
+    ADD CONSTRAINT customer_operation_result_blobs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_operation_result_blobs customer_operation_result_blobs_storage_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_result_blobs
+    ADD CONSTRAINT customer_operation_result_blobs_storage_key_key UNIQUE (storage_key);
+
+
+--
 -- Name: customer_operation_stream_leases customer_operation_stream_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20390,6 +20436,27 @@ CREATE UNIQUE INDEX customer_operation_definitions_route_idx ON public.customer_
 --
 
 CREATE INDEX customer_operation_idempotency_retention_idx ON public.customer_operation_idempotency USING btree (expires_at);
+
+
+--
+-- Name: customer_operation_result_blobs_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_result_blobs_account_idx ON public.customer_operation_result_blobs USING btree (account_id);
+
+
+--
+-- Name: customer_operation_result_blobs_cleanup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_result_blobs_cleanup_idx ON public.customer_operation_result_blobs USING btree (next_attempt_at, expires_at);
+
+
+--
+-- Name: customer_operation_result_blobs_operation_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_result_blobs_operation_idx ON public.customer_operation_result_blobs USING btree (operation_id);
 
 
 --

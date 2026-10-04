@@ -6057,6 +6057,57 @@ FROM service_capacity_policy WHERE singleton;
 -- name: LockCustomerOperationAccount :one
 SELECT plan::text FROM accounts WHERE id = sqlc.arg(account_id)::uuid FOR UPDATE;
 
+-- name: CustomerOperationBlobUsage :one
+SELECT count(*)::bigint AS blob_count, COALESCE(sum(size_bytes),0)::bigint AS bytes
+FROM customer_operation_result_blobs WHERE account_id = sqlc.arg(account_id)::uuid;
+
+-- name: CustomerOperationBlobMetrics :many
+SELECT state, count(*)::bigint AS blob_count, COALESCE(sum(size_bytes),0)::bigint AS bytes
+FROM customer_operation_result_blobs GROUP BY state;
+
+-- name: InsertCustomerOperationBlob :exec
+INSERT INTO customer_operation_result_blobs
+(id,operation_id,account_id,generation,execution_id,attempt,report_id,fingerprint,storage_key,size_bytes,state,expires_at,next_attempt_at)
+VALUES (sqlc.arg(id)::uuid,sqlc.arg(operation_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(generation)::integer,
+sqlc.arg(execution_id)::uuid,sqlc.arg(attempt)::integer,sqlc.arg(report_id)::text,sqlc.arg(fingerprint)::text,
+sqlc.arg(storage_key)::text,sqlc.arg(size_bytes)::bigint,'staging',sqlc.arg(expires_at)::timestamptz,sqlc.arg(expires_at)::timestamptz);
+
+-- name: LockCustomerOperationBlob :one
+SELECT * FROM customer_operation_result_blobs WHERE id = sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: CustomerOperationBlobByKey :one
+SELECT * FROM customer_operation_result_blobs WHERE storage_key = sqlc.arg(storage_key)::text;
+
+-- name: RetainCustomerOperationBlob :execrows
+UPDATE customer_operation_result_blobs SET state = 'retained'
+WHERE id = sqlc.arg(id)::uuid AND state = 'staging' AND expires_at > sqlc.arg(now)::timestamptz;
+
+-- name: ClaimCustomerOperationBlobCleanup :one
+WITH candidate AS (
+ SELECT b.id FROM customer_operation_result_blobs b
+ WHERE b.next_attempt_at <= sqlc.arg(now)::timestamptz
+ AND (b.lease_until IS NULL OR b.lease_until <= sqlc.arg(now)::timestamptz)
+ AND (b.state = 'deleting' OR (b.state = 'staging' AND b.expires_at <= sqlc.arg(now)::timestamptz)
+ OR (b.state = 'retained' AND NOT EXISTS (
+  SELECT 1 FROM customer_operations o WHERE o.id = b.operation_id
+  AND (o.expires_at > sqlc.arg(now)::timestamptz OR o.state IN ('accepted','running'))
+  AND EXISTS (SELECT 1 FROM jsonb_each_text(COALESCE(o.record->'artifact_storage_keys','{}'::jsonb)) k WHERE k.value = b.storage_key)
+ )))
+ ORDER BY b.next_attempt_at,b.id FOR UPDATE OF b SKIP LOCKED LIMIT 1
+)
+UPDATE customer_operation_result_blobs b SET state = 'deleting', lease_token = sqlc.arg(lease_token)::text,
+lease_until = sqlc.arg(lease_until)::timestamptz
+FROM candidate c WHERE b.id = c.id RETURNING b.*;
+
+-- name: RetryCustomerOperationBlobCleanup :execrows
+UPDATE customer_operation_result_blobs SET lease_token = '',lease_until = NULL,next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz
+WHERE id = sqlc.arg(id)::uuid AND state = 'deleting' AND lease_token = sqlc.arg(lease_token)::text
+AND lease_until > sqlc.arg(now)::timestamptz;
+
+-- name: CompleteCustomerOperationBlobCleanup :execrows
+DELETE FROM customer_operation_result_blobs WHERE id = sqlc.arg(id)::uuid AND state = 'deleting'
+AND lease_token = sqlc.arg(lease_token)::text AND lease_until > sqlc.arg(now)::timestamptz;
+
 -- name: CustomerOperationDeploymentScope :one
 SELECT d.scope FROM deployments d JOIN apps a ON a.id = d.app_id
 WHERE d.id = sqlc.arg(deployment_id)::uuid AND a.id = sqlc.arg(app_id)::uuid

@@ -154,8 +154,11 @@ type JailerVMM struct {
 	// The source mode is restored after the VM exits.
 	bindMounts map[string][]ephemeralBind
 	// bindSourceModes reference-counts temporary source permission widening
-	// when multiple VMs bind the same shared base image concurrently.
-	bindSourceModes map[string]bindSourceMode
+	// when multiple VMs bind the same shared base image concurrently. It is
+	// keyed by path and inode: the artifact cache can rename a refreshed file
+	// over a path while a running VM still holds the old inode, and the next
+	// boot must bind the new file rather than fail.
+	bindSourceModes map[bindSourceKey]bindSourceMode
 	// wakePhaseMetrics is the vmmd wake registry (ADR-098 C11), shared with
 	// the Manager. Optional; every observation site is nil-safe.
 	wakePhaseMetrics *WakePhaseMetrics
@@ -193,6 +196,13 @@ type ephemeralBind struct {
 	target     *resourceFileIdentity // Placeholder behind the bind, before mounting.
 	tracked    bool                  // Image bind intent; TUN in the child namespace is separate.
 	released   bool                  // Permission reference released; journal retirement may still fail.
+}
+
+// bindSourceKey names one bound source file: its path and the inode that was
+// at the path when it was bound.
+type bindSourceKey struct {
+	path string
+	file resourceFileIdentity
 }
 
 type bindSourceMode struct {
@@ -579,7 +589,7 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		rings:                    make(map[string]*logbuf.Ring),
 		materialisedTmp:          make(map[string][]string),
 		bindMounts:               make(map[string][]ephemeralBind),
-		bindSourceModes:          make(map[string]bindSourceMode),
+		bindSourceModes:          make(map[bindSourceKey]bindSourceMode),
 		restorePrefetch:          newRestorePrefetchStore(),
 		preBoot:                  newPreBootLedger(),
 	}
@@ -5074,25 +5084,16 @@ func (v *JailerVMM) bindImageForOwner(ctx context.Context, owner nativeLaunchRec
 			return "", err
 		}
 	}
-	if state, ok := v.bindSourceModes[src]; ok {
-		if state.file != identity {
-			v.mu.Unlock()
-			return "", errors.New("bind source replaced while referenced")
-		}
-		if state.handle == nil {
-			v.mu.Unlock()
-			return "", errors.New("bind source handle unavailable")
-		}
-		state.refs++
-		v.bindSourceModes[src] = state
-		_ = sourceFile.Close()
-		sourceFile = state.handle
-		keepSourceFile = true
-	} else {
-		// Register before chmod: a failed metadata fsync still needs cleanup.
-		v.bindSourceModes[src] = bindSourceMode{mode: mode, refs: 1, file: identity, handle: sourceFile}
-		keepSourceFile = true
+	handle, err := v.retainBindSourceLocked(bindSourceKey{path: src, file: identity}, mode, sourceFile)
+	if err != nil {
+		v.mu.Unlock()
+		return "", err
 	}
+	if handle != sourceFile {
+		_ = sourceFile.Close()
+		sourceFile = handle
+	}
+	keepSourceFile = true
 	v.bindMounts[instance] = append(v.bindMounts[instance], ephemeralBind{source: src, mountpoint: dst, mode: mode, file: identity, tracked: true})
 	err = chmodResourceFile(sourceFile, identity, fi.Mode().Perm()|addPerms)
 	v.mu.Unlock()
@@ -5158,23 +5159,45 @@ func (v *JailerVMM) bindImageForOwner(ctx context.Context, owner nativeLaunchRec
 	return name, nil
 }
 
+// retainBindSourceLocked takes a reference on the bound source file and
+// returns the handle that pins its inode: the existing one when this path and
+// inode are already bound, otherwise opened (which the entry now owns).
+// Register before chmod: a failed metadata fsync still needs cleanup. A file
+// the cache renamed over a path another VM still binds is a different key,
+// so the next boot binds the refreshed file instead of failing with "bind
+// source replaced while referenced" (production rc.236: a cold boot of a
+// second instance failed after its layer was refreshed). v.mu must be held.
+func (v *JailerVMM) retainBindSourceLocked(key bindSourceKey, mode os.FileMode, opened *os.File) (*os.File, error) {
+	if state, ok := v.bindSourceModes[key]; ok {
+		if state.handle == nil {
+			return nil, errors.New("bind source handle unavailable")
+		}
+		state.refs++
+		v.bindSourceModes[key] = state
+		return state.handle, nil
+	}
+	v.bindSourceModes[key] = bindSourceMode{mode: mode, refs: 1, file: key.file, handle: opened}
+	return opened, nil
+}
+
 // Keep the final reference until mode restoration and its fsync succeed.
 // Serialize restoration with a new bind, including aliases of the same inode.
-func (v *JailerVMM) releaseBindSource(src string) error {
+func (v *JailerVMM) releaseBindSource(src string, file resourceFileIdentity) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	state, ok := v.bindSourceModes[src]
+	key := bindSourceKey{path: src, file: file}
+	state, ok := v.bindSourceModes[key]
 	if !ok {
 		return nil
 	}
 	if state.refs > 1 {
 		state.refs--
-		v.bindSourceModes[src] = state
+		v.bindSourceModes[key] = state
 		return nil
 	}
 	shared := false
-	for path, other := range v.bindSourceModes {
-		if path != src && other.file == state.file && other.refs > 0 {
+	for other, otherState := range v.bindSourceModes {
+		if other != key && otherState.file == state.file && otherState.refs > 0 {
 			shared = true
 			break
 		}
@@ -5206,7 +5229,7 @@ func (v *JailerVMM) releaseBindSource(src string) error {
 					return errors.New("bind source mode restoration waits for unknown owner")
 				}
 				// No permission change is needed; leave the foreign owner's mode intact.
-				delete(v.bindSourceModes, src)
+				delete(v.bindSourceModes, key)
 				return state.handle.Close()
 			}
 		}
@@ -5214,7 +5237,7 @@ func (v *JailerVMM) releaseBindSource(src string) error {
 			return fmt.Errorf("restore bind source mode: %w", err)
 		}
 	}
-	delete(v.bindSourceModes, src)
+	delete(v.bindSourceModes, key)
 	if state.handle != nil {
 		return state.handle.Close()
 	}
@@ -5558,7 +5581,7 @@ func (v *JailerVMM) unmountBindMounts(instance string) error {
 			return fmt.Errorf("remove bind target: %w", removeErr)
 		}
 		if !b.released {
-			if err := v.releaseBindSource(b.source); err != nil {
+			if err := v.releaseBindSource(b.source, b.file); err != nil {
 				return err
 			}
 			v.mu.Lock()
