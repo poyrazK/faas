@@ -9972,7 +9972,9 @@ source_database_id = EXCLUDED.source_database_id, collected_from = NULL, collect
 observed_at = NULL, updated_at = now();
 
 -- name: ListManagedPostgresAccountingCoverage :many
-SELECT d.state, (d.accounting_required AND NULLIF(d.provider_resource_id, '') IS NULL)::boolean AS unresolved,
+SELECT d.id AS database_id, d.name, d.state, d.accounting_required,
+(NULLIF(d.provider_resource_id, '') IS NOT NULL)::boolean AS identity_known, d.lease_until,
+COALESCE(source.id, d.id)::uuid AS accounting_database_id, COALESCE(source.created_at, d.created_at)::timestamptz AS accounting_created_at, (d.accounting_required AND NULLIF(d.provider_resource_id, '') IS NULL)::boolean AS unresolved,
 COALESCE(source.state, d.state)::text AS accounting_state,
 (CASE WHEN source.id IS NULL THEN d.deleted_at ELSE source.deleted_at END)::timestamptz AS ended_at, COALESCE(c.window_seconds, 0)::bigint AS window_seconds,
 COALESCE(s.collected_from, c.collected_from)::timestamptz AS collected_from,
@@ -9989,7 +9991,8 @@ LEFT JOIN LATERAL (SELECT * FROM managed_postgres_usage_coverage WHERE database_
 LEFT JOIN managed_postgres_databases source ON source.id = c.source_database_id
 LEFT JOIN managed_postgres_usage_coverage s ON s.database_id = c.source_database_id AND s.window_seconds = c.window_seconds
 WHERE d.account_id = sqlc.arg(account_id)::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL OR d.accounting_required)
-ORDER BY d.id;
+AND (sqlc.narg(after_id)::uuid IS NULL OR d.id > sqlc.narg(after_id)::uuid)
+ORDER BY d.id LIMIT sqlc.narg(page_limit)::integer;
 
 -- ADR-581: persist an irreversible accounting obligation before provider I/O.
 -- name: BeginManagedPostgresAccounting :execrows

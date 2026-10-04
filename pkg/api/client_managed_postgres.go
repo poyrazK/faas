@@ -4,7 +4,25 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strconv"
 )
+
+func (c *Client) ListManagedPostgresAccountingDiagnostics(ctx context.Context, accountID, afterID string, limit int) (ManagedPostgresAccountingDiagnosticsResponse, error) {
+	var out ManagedPostgresAccountingDiagnosticsResponse
+	query := url.Values{}
+	if afterID != "" {
+		query.Set("after", afterID)
+	}
+	if limit != 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/admin/managed-postgres/accounting/" + url.PathEscape(accountID)
+	if len(query) > 0 {
+		path += "?" + query.Encode()
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
 
 func (c *Client) GetManagedPostgresUsage(ctx context.Context) (ManagedPostgresUsageResponse, error) {
 	var out ManagedPostgresUsageResponse

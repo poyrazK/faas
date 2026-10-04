@@ -635,6 +635,8 @@ export type { LogQueryEvent } from './models/LogQueryEvent.js';
 export type { MagicLinkSignupRequest } from './models/MagicLinkSignupRequest.js';
 export type { ManagedExecutionWorkflowArtifactInput } from './models/ManagedExecutionWorkflowArtifactInput.js';
 export type { ManagedExecutionWorkflowResponse } from './models/ManagedExecutionWorkflowResponse.js';
+export type { ManagedPostgresAccountingDiagnostic } from './models/ManagedPostgresAccountingDiagnostic.js';
+export type { ManagedPostgresAccountingDiagnosticsResponse } from './models/ManagedPostgresAccountingDiagnosticsResponse.js';
 export type { ManagedPostgresBinding } from './models/ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './models/ManagedPostgresBindingList.js';
 export type { ManagedPostgresCutover } from './models/ManagedPostgresCutover.js';
