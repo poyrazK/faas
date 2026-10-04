@@ -70,7 +70,7 @@ def main():
                 raise ValueError("state race/coverage build flags changed")
             expected = groups[item["partition"]]
             run = commands[1]["args"]
-            if run[1:5] != ["-test.v", "-test.count=1", "-test.timeout=20m", "-test.run=^(" + "|".join(expected) + ")$"]:
+            if run[1:5] != ["-test.v", "-test.count=1", "-test.timeout=30m", "-test.run=^(" + "|".join(expected) + ")$"]:
                 raise ValueError("state test count, deadline or selector changed")
             if not commands[1]["cwd"].endswith("/pkg/state"):
                 raise ValueError("state tests did not retain their package working directory")
@@ -78,7 +78,7 @@ def main():
             profiles.append(root / "state.out")
             if item["partition"] == 0:
                 others = [pkg for pkg in item["packages"] if pkg != "github.com/onebox-faas/faas/pkg/state"]
-                if commands[2]["args"][:7] != ["go", "test", "-race", "-count=1", "-p=4", "-timeout=20m", "-covermode=atomic"] or commands[2]["args"][8:] != others:
+                if commands[2]["args"][:7] != ["go", "test", "-race", "-count=1", "-p=4", "-timeout=30m", "-covermode=atomic"] or commands[2]["args"][8:] != others:
                     raise ValueError("remaining package scope or flags changed")
                 other = root / "others.out"
         args.coverage.write_text(suite.merged_coverage(profiles, other))

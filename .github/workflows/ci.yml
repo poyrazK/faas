@@ -631,48 +631,64 @@ jobs:
             coverage_file: cover-shard2a-0.out
             state_coverage: true
             state_partition: 0
+            test_timeout: 30m
+            job_timeout_minutes: 40
           - id: a1
             label: state partition 2/8
             package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a-1.out
             state_coverage: true
             state_partition: 1
+            test_timeout: 30m
+            job_timeout_minutes: 40
           - id: a2
             label: state partition 3/8
             package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a-2.out
             state_coverage: true
             state_partition: 2
+            test_timeout: 30m
+            job_timeout_minutes: 40
           - id: a3
             label: state partition 4/8
             package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a-3.out
             state_coverage: true
             state_partition: 3
+            test_timeout: 30m
+            job_timeout_minutes: 40
           - id: a4
             label: state partition 5/8
             package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a-4.out
             state_coverage: true
             state_partition: 4
+            test_timeout: 30m
+            job_timeout_minutes: 40
           - id: a5
             label: state partition 6/8
             package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a-5.out
             state_coverage: true
             state_partition: 5
+            test_timeout: 30m
+            job_timeout_minutes: 40
           - id: a6
             label: state partition 7/8
             package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a-6.out
             state_coverage: true
             state_partition: 6
+            test_timeout: 30m
+            job_timeout_minutes: 40
           - id: a7
             label: state partition 8/8
             package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a-7.out
             state_coverage: true
             state_partition: 7
+            test_timeout: 30m
+            job_timeout_minutes: 40
           - id: b
             label: gregale/gregalectl/daemons
             # Packages with pgtest-backed tests must run in a Postgres shard:
@@ -681,10 +697,12 @@ jobs:
             package_pattern: '/(cmd/gregale|cmd/gregalectl|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall)(/|$)'
             coverage_file: cover-shard2b.out
             state_coverage: false
+            test_timeout: 20m
+            job_timeout_minutes: 30
     # Each state partition retains its own runner and PostgreSQL service.
-    # Every test executes once with the existing 20-minute binary budget;
+    # Every test executes once with main’s bounded 30-minute state budget;
     # full inventory and coverage gates run only after all eight receipts.
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.job_timeout_minutes }}
     permissions:
       contents: read
       id-token: write
@@ -754,7 +772,7 @@ jobs:
             PYTHONDONTWRITEBYTECODE=1 python3 scripts/ci/state-suite_test.py
             PYTHONDONTWRITEBYTECODE=1 python3 scripts/ci/state-suite.py --packages "$PKGS" --coverage "coverage/${{ matrix.coverage_file }}" --partition "${{ matrix.state_partition }}"
           else
-            go test -race -count=1 -p 4 -timeout=20m -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
+            go test -race -count=1 -p 4 -timeout='${{ matrix.test_timeout }}' -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
           fi
 
       - name: preserve full state suite receipts

@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -944,7 +945,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		failureNodeID = localNode.ID
 	}
-	failureReports, err := wireFailureReports(failureNodeID, mgr, cfg, deps, log)
+	// The schedd client mTLS material is loaded further down, after the
+	// node verifier exists; delivery reads it through this reference.
+	var failureReportTLS atomic.Pointer[tls.Config]
+	failureReports, err := wireFailureReports(failureNodeID, mgr, cfg, deps, failureReportTLS.Load, log)
 	if err != nil {
 		return err
 	}
@@ -1424,6 +1428,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	scheddClientRotator.Set(scheddClientTLS)
 	deps.scheddClientTLS = scheddClientTLS
+	failureReportTLS.Store(scheddClientTLS)
 	// Framework-ready replies are read through each VM's Firecracker bridge.
 	mgr.WithFrameworkReadyStamper(&frameworkReadyReporter{target: deps.scheddTarget, tlsConfig: deps.scheddClientTLS})
 	mgr.WithFrameworkReadyReader(func(ctx context.Context, instance string) (frameworkready.Status, error) {

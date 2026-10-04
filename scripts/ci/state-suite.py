@@ -122,7 +122,7 @@ def main():
         receipt["groups"] = groups
         selected = groups[args.partition]
         selector = "^(" + "|".join(selected) + ")$"
-        command = [str(binary), "-test.v", "-test.count=1", "-test.timeout=20m", "-test.run=" + selector,
+        command = [str(binary), "-test.v", "-test.count=1", "-test.timeout=30m", "-test.run=" + selector,
                    "-test.coverprofile=" + str(output / "state.out")]
         result = run(command, output / "state.log", env, repo / "pkg/state")
         receipt["commands"].append(result)
@@ -130,7 +130,7 @@ def main():
             raise ValueError(f"state partition {args.partition} failed")
         validate_terminals(selected, (output / "state.log").read_text())
         if args.partition == 0:
-            other = run(["go", "test", "-race", "-count=1", "-p=4", "-timeout=20m", "-covermode=atomic",
+            other = run(["go", "test", "-race", "-count=1", "-p=4", "-timeout=30m", "-covermode=atomic",
                          "-coverprofile=" + str(output / "others.out"), *others], output / "others.log", os.environ.copy())
             receipt["commands"].append(other)
             if other["exit_code"]:

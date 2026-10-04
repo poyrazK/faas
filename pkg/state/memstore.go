@@ -181,13 +181,29 @@ type MemStore struct {
 	objectBuckets               map[string]ObjectBucket
 	objectUsage                 map[string]ObjectBucketUsage
 	objectGrants                map[string]map[string]int64
+	objectTrackedGrants         map[string]map[string]bool
+	objectWriteAdmissions       map[string]objectWriteAdmission
+	objectCapacityJobs          map[string]ObjectCapacityReconciliation
+	objectBucketVersioning      map[string]ObjectBucketVersioning
+	objectBucketEncryption      map[string]ObjectBucketEncryption
+	objectBucketObjectLock      map[string]ObjectBucketObjectLock
+	objectLifecyclePolicies     map[string]ObjectLifecyclePolicy
+	objectNotifications         map[string]api.ObjectBucketNotifications
+	objectLifecycleScans        map[string]ObjectLifecycleScan
+	objectDeletions             map[string]ObjectDeletion
+	objectVersionReferences     map[string]ObjectVersionIdentity
+	objectVersionReferenceIDs   map[string]string
+	objectVersionObservations   map[string]bool
 	objectReports               []api.ObjectStorageUsageReport
 	objectCustomerReportsV2     []api.ObjectStorageCustomerUsageReportV2
 	objectAuthorizations        map[string]int64
 	objectProviderRequests      map[string]int64
 	objectAccessGrants          map[string]ObjectBucketAccessGrant
 	objectS3Credentials         map[string]ObjectS3Credential
+	objectS3CopySources         map[string]ObjectS3CopySource
 	objectMultipartUploads      map[string]ObjectMultipartUpload
+	objectMultipartPartGrants   map[string]map[int32]int64
+	objectMultipartTransfers    map[string]map[int32]multipartPartTransfer
 	objectUploadRoutes          map[string]ObjectUploadRoute
 	objectUploadCompletions     map[string]ObjectUploadCompletion
 	outboundIntegrationOffers   map[string]OutboundIntegrationOffer
@@ -6567,6 +6583,8 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	for key, v := range m.objectBuckets {
 		if v.AppID == id {
 			delete(m.objectBuckets, key)
+			delete(m.objectBucketObjectLock, key)
+			delete(m.objectNotifications, key)
 		}
 	}
 	filteredUsage := m.usage[:0]
@@ -20914,8 +20932,46 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for bucketID, b := range m.objectBuckets {
 		if b.AccountID == id {
 			delete(m.objectBuckets, bucketID)
+			delete(m.objectBucketObjectLock, bucketID)
 			delete(m.objectUsage, bucketID)
 			delete(m.objectGrants, bucketID)
+			delete(m.objectTrackedGrants, bucketID)
+			for identity, v := range m.objectVersionReferences {
+				if identity == versionReferenceIdentity(bucketID, v) {
+					delete(m.objectVersionReferences, identity)
+					delete(m.objectVersionReferenceIDs, v.ID)
+				}
+			}
+			delete(m.objectVersionObservations, bucketID)
+			delete(m.objectBucketVersioning, bucketID)
+			delete(m.objectLifecyclePolicies, bucketID)
+			delete(m.objectNotifications, bucketID)
+			for scanID, scan := range m.objectLifecycleScans {
+				if scan.BucketID == bucketID {
+					delete(m.objectLifecycleScans, scanID)
+				}
+			}
+			for writeID, w := range m.objectWriteAdmissions {
+				if w.BucketID == bucketID {
+					delete(m.objectWriteAdmissions, writeID)
+				}
+			}
+		}
+	}
+	for receiptID, receipt := range m.objectUploadCompletions {
+		if receipt.AccountID == id {
+			delete(m.objectUploadCompletions, receiptID)
+		}
+	}
+	for routeID, route := range m.objectUploadRoutes {
+		if route.AccountID == id {
+			delete(m.objectUploadRoutes, routeID)
+		}
+	}
+
+	for jobID, j := range m.objectCapacityJobs {
+		if j.AccountID == id {
+			delete(m.objectCapacityJobs, jobID)
 		}
 	}
 	for grantKey, grant := range m.objectAccessGrants {
@@ -20928,9 +20984,16 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 			delete(m.objectS3Credentials, credentialID)
 		}
 	}
+	for grantKey, grant := range m.objectS3CopySources {
+		if grant.AccountID == id {
+			delete(m.objectS3CopySources, grantKey)
+		}
+	}
 	for uploadID, upload := range m.objectMultipartUploads {
 		if upload.AccountID == id {
 			delete(m.objectMultipartUploads, uploadID)
+			delete(m.objectMultipartPartGrants, uploadID)
+			delete(m.objectMultipartTransfers, uploadID)
 		}
 	}
 	reports := m.objectReports[:0]

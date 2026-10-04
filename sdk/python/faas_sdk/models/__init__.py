@@ -1090,6 +1090,7 @@ from .list_job_runs_response import ListJobRunsResponse
 from .list_job_task_attempts_response import ListJobTaskAttemptsResponse
 from .list_job_tasks_response import ListJobTasksResponse
 from .list_jobs_response import ListJobsResponse
+from .list_object_write_receipts_status import ListObjectWriteReceiptsStatus
 from .list_operator_runtime_config_response_200 import ListOperatorRuntimeConfigResponse200
 from .list_operator_runtime_config_revisions_response_200 import ListOperatorRuntimeConfigRevisionsResponse200
 from .list_org_activity_actor_type import ListOrgActivityActorType
@@ -1207,8 +1208,50 @@ from .object_bucket_access_grant import ObjectBucketAccessGrant
 from .object_bucket_access_grant_key_status import ObjectBucketAccessGrantKeyStatus
 from .object_bucket_access_grant_list import ObjectBucketAccessGrantList
 from .object_bucket_access_grant_permission import ObjectBucketAccessGrantPermission
+from .object_bucket_encryption import ObjectBucketEncryption
+from .object_bucket_encryption_request import ObjectBucketEncryptionRequest
+from .object_bucket_encryption_state import ObjectBucketEncryptionState
+from .object_bucket_lifecycle import ObjectBucketLifecycle
+from .object_bucket_lifecycle_request import ObjectBucketLifecycleRequest
 from .object_bucket_list import ObjectBucketList
+from .object_bucket_list_upload_profile import ObjectBucketListUploadProfile
+from .object_bucket_notifications import ObjectBucketNotifications
+from .object_bucket_notifications_request import ObjectBucketNotificationsRequest
+from .object_bucket_object_lock import ObjectBucketObjectLock
+from .object_bucket_object_lock_configuration import ObjectBucketObjectLockConfiguration
+from .object_bucket_object_lock_last_error_code import ObjectBucketObjectLockLastErrorCode
+from .object_bucket_object_lock_request import ObjectBucketObjectLockRequest
+from .object_bucket_object_lock_state import ObjectBucketObjectLockState
 from .object_bucket_state import ObjectBucketState
+from .object_bucket_versioning import ObjectBucketVersioning
+from .object_bucket_versioning_desired_status import ObjectBucketVersioningDesiredStatus
+from .object_bucket_versioning_observed_status import ObjectBucketVersioningObservedStatus
+from .object_bucket_versioning_request import ObjectBucketVersioningRequest
+from .object_bucket_versioning_request_status import ObjectBucketVersioningRequestStatus
+from .object_bucket_versioning_state import ObjectBucketVersioningState
+from .object_capacity_reconciliation import ObjectCapacityReconciliation
+from .object_capacity_reconciliation_inventory_scope import ObjectCapacityReconciliationInventoryScope
+from .object_capacity_reconciliation_state import ObjectCapacityReconciliationState
+from .object_deletion import ObjectDeletion
+from .object_deletion_last_error_code import ObjectDeletionLastErrorCode
+from .object_deletion_request import ObjectDeletionRequest
+from .object_deletion_state import ObjectDeletionState
+from .object_encryption import ObjectEncryption
+from .object_encryption_algorithm import ObjectEncryptionAlgorithm
+from .object_encryption_capabilities import ObjectEncryptionCapabilities
+from .object_encryption_capabilities_algorithms_item import ObjectEncryptionCapabilitiesAlgorithmsItem
+from .object_lifecycle_expiration import ObjectLifecycleExpiration
+from .object_lifecycle_filter import ObjectLifecycleFilter
+from .object_lifecycle_filter_tags import ObjectLifecycleFilterTags
+from .object_lifecycle_noncurrent_expiration import ObjectLifecycleNoncurrentExpiration
+from .object_lifecycle_rule import ObjectLifecycleRule
+from .object_lifecycle_rule_status import ObjectLifecycleRuleStatus
+from .object_lifecycle_scan import ObjectLifecycleScan
+from .object_lifecycle_scan_phase import ObjectLifecycleScanPhase
+from .object_lifecycle_scan_state import ObjectLifecycleScanState
+from .object_lock_capabilities import ObjectLockCapabilities
+from .object_lock_default_retention import ObjectLockDefaultRetention
+from .object_lock_default_retention_mode import ObjectLockDefaultRetentionMode
 from .object_multipart_completed_part import ObjectMultipartCompletedPart
 from .object_multipart_part import ObjectMultipartPart
 from .object_multipart_part_list import ObjectMultipartPartList
@@ -1216,6 +1259,11 @@ from .object_multipart_part_sign_request import ObjectMultipartPartSignRequest
 from .object_multipart_upload import ObjectMultipartUpload
 from .object_multipart_upload_list import ObjectMultipartUploadList
 from .object_multipart_upload_state import ObjectMultipartUploadState
+from .object_notification_rule import ObjectNotificationRule
+from .object_notification_rule_events_item import ObjectNotificationRuleEventsItem
+from .object_retention_period import ObjectRetentionPeriod
+from .object_s3_copy_source import ObjectS3CopySource
+from .object_s3_copy_source_list import ObjectS3CopySourceList
 from .object_s3_credential import ObjectS3Credential
 from .object_s3_credential_list import ObjectS3CredentialList
 from .object_s3_credential_permission import ObjectS3CredentialPermission
@@ -1239,8 +1287,18 @@ from .object_storage_usage import ObjectStorageUsage
 from .object_storage_usage_report import ObjectStorageUsageReport
 from .object_storage_usage_response import ObjectStorageUsageResponse
 from .object_storage_usage_response_billing_mode import ObjectStorageUsageResponseBillingMode
+from .object_tagging_request import ObjectTaggingRequest
+from .object_tagging_request_tags import ObjectTaggingRequestTags
+from .object_tagging_result import ObjectTaggingResult
+from .object_tagging_result_tags import ObjectTaggingResultTags
 from .object_upload_route import ObjectUploadRoute
 from .object_upload_route_list import ObjectUploadRouteList
+from .object_version_delete_result import ObjectVersionDeleteResult
+from .object_write_receipt import ObjectWriteReceipt
+from .object_write_receipt_error_code import ObjectWriteReceiptErrorCode
+from .object_write_receipt_list import ObjectWriteReceiptList
+from .object_write_receipt_operation import ObjectWriteReceiptOperation
+from .object_write_receipt_status import ObjectWriteReceiptStatus
 from .obs_health_response import ObsHealthResponse
 from .obs_health_response_operator_intent_outcome_missing_total import (
     ObsHealthResponseOperatorIntentOutcomeMissingTotal,
@@ -2041,6 +2099,7 @@ from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
+from .set_object_s3_copy_source_request import SetObjectS3CopySourceRequest
 from .set_password_request import SetPasswordRequest
 from .set_platform_tenant_consumer_provisioning_policy_request import SetPlatformTenantConsumerProvisioningPolicyRequest
 from .set_platform_tenant_credential_policy_request import SetPlatformTenantCredentialPolicyRequest
@@ -3375,6 +3434,7 @@ __all__ = (
     "ListJobsResponse",
     "ListJobTaskAttemptsResponse",
     "ListJobTasksResponse",
+    "ListObjectWriteReceiptsStatus",
     "ListOperatorRuntimeConfigResponse200",
     "ListOperatorRuntimeConfigRevisionsResponse200",
     "ListOrgActivityActorType",
@@ -3490,8 +3550,50 @@ __all__ = (
     "ObjectBucketAccessGrantKeyStatus",
     "ObjectBucketAccessGrantList",
     "ObjectBucketAccessGrantPermission",
+    "ObjectBucketEncryption",
+    "ObjectBucketEncryptionRequest",
+    "ObjectBucketEncryptionState",
+    "ObjectBucketLifecycle",
+    "ObjectBucketLifecycleRequest",
     "ObjectBucketList",
+    "ObjectBucketListUploadProfile",
+    "ObjectBucketNotifications",
+    "ObjectBucketNotificationsRequest",
+    "ObjectBucketObjectLock",
+    "ObjectBucketObjectLockConfiguration",
+    "ObjectBucketObjectLockLastErrorCode",
+    "ObjectBucketObjectLockRequest",
+    "ObjectBucketObjectLockState",
     "ObjectBucketState",
+    "ObjectBucketVersioning",
+    "ObjectBucketVersioningDesiredStatus",
+    "ObjectBucketVersioningObservedStatus",
+    "ObjectBucketVersioningRequest",
+    "ObjectBucketVersioningRequestStatus",
+    "ObjectBucketVersioningState",
+    "ObjectCapacityReconciliation",
+    "ObjectCapacityReconciliationInventoryScope",
+    "ObjectCapacityReconciliationState",
+    "ObjectDeletion",
+    "ObjectDeletionLastErrorCode",
+    "ObjectDeletionRequest",
+    "ObjectDeletionState",
+    "ObjectEncryption",
+    "ObjectEncryptionAlgorithm",
+    "ObjectEncryptionCapabilities",
+    "ObjectEncryptionCapabilitiesAlgorithmsItem",
+    "ObjectLifecycleExpiration",
+    "ObjectLifecycleFilter",
+    "ObjectLifecycleFilterTags",
+    "ObjectLifecycleNoncurrentExpiration",
+    "ObjectLifecycleRule",
+    "ObjectLifecycleRuleStatus",
+    "ObjectLifecycleScan",
+    "ObjectLifecycleScanPhase",
+    "ObjectLifecycleScanState",
+    "ObjectLockCapabilities",
+    "ObjectLockDefaultRetention",
+    "ObjectLockDefaultRetentionMode",
     "ObjectMultipartCompletedPart",
     "ObjectMultipartPart",
     "ObjectMultipartPartList",
@@ -3499,6 +3601,11 @@ __all__ = (
     "ObjectMultipartUpload",
     "ObjectMultipartUploadList",
     "ObjectMultipartUploadState",
+    "ObjectNotificationRule",
+    "ObjectNotificationRuleEventsItem",
+    "ObjectRetentionPeriod",
+    "ObjectS3CopySource",
+    "ObjectS3CopySourceList",
     "ObjectS3Credential",
     "ObjectS3CredentialList",
     "ObjectS3CredentialPermission",
@@ -3522,8 +3629,18 @@ __all__ = (
     "ObjectStorageUsageReport",
     "ObjectStorageUsageResponse",
     "ObjectStorageUsageResponseBillingMode",
+    "ObjectTaggingRequest",
+    "ObjectTaggingRequestTags",
+    "ObjectTaggingResult",
+    "ObjectTaggingResultTags",
     "ObjectUploadRoute",
     "ObjectUploadRouteList",
+    "ObjectVersionDeleteResult",
+    "ObjectWriteReceipt",
+    "ObjectWriteReceiptErrorCode",
+    "ObjectWriteReceiptList",
+    "ObjectWriteReceiptOperation",
+    "ObjectWriteReceiptStatus",
     "ObsHealthResponse",
     "ObsHealthResponseOperatorIntentOutcomeMissingTotal",
     "ObsHealthResponseTraceIdCompletenessRatio",
@@ -4276,6 +4393,7 @@ __all__ = (
     "SetGraceWindowRequest",
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
+    "SetObjectS3CopySourceRequest",
     "SetPasswordRequest",
     "SetPlatformTenantConsumerProvisioningPolicyRequest",
     "SetPlatformTenantCredentialPolicyRequest",
