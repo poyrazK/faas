@@ -34,7 +34,8 @@ func cloneVerificationAttemptMigrationParts(t *testing.T) (string, string) {
 	if len(parts) != 2 {
 		t.Fatal("missing Down")
 	}
-	return parts[0], parts[1]
+	readUp, readDown := cloneVerificationReadBudgetMigrationParts(t)
+	return parts[0] + "\n" + readUp, readDown + "\n" + parts[1]
 }
 
 // An explicitly opaque SQL ledger fixture, never a native closure capability.

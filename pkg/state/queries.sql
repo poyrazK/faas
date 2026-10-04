@@ -8271,6 +8271,29 @@ WHERE v.operation_id=sqlc.arg(operation_id)::uuid AND v.source_database_id=sqlc.
  AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=v.operation_id AND o.status='capturing' AND o.revision=sqlc.arg(expected_revision)::bigint
  AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING v.*;
 
+-- name: ReadProjectEnvironmentClonePostgresVerificationReadBudget :one
+SELECT * FROM project_environment_clone_postgres_verification_read_budgets WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3 FOR UPDATE;
+
+-- name: ReadProjectEnvironmentClonePostgresVerificationReadAllocations :many
+SELECT * FROM project_environment_clone_postgres_verification_read_debits WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3 ORDER BY attempt FOR UPDATE;
+
+-- name: CountProjectEnvironmentClonePostgresVerificationReadBudgets :one
+SELECT count(*)::bigint AS count,coalesce(sum(read_bytes),0)::bigint AS bytes FROM project_environment_clone_postgres_verification_read_budgets WHERE account_id=$1;
+
+-- name: InsertProjectEnvironmentClonePostgresVerificationReadBudget :one
+INSERT INTO project_environment_clone_postgres_verification_read_budgets(operation_id,source_database_id,database_oid,original_verification_id,account_id,project_id,read_bytes,sort_memory_bytes,sort_disk_bytes)
+SELECT sqlc.arg(operation_id)::uuid,sqlc.arg(source_database_id)::uuid,sqlc.arg(database_oid)::bigint,sqlc.arg(original_verification_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,
+ sqlc.arg(read_bytes)::bigint,sqlc.arg(sort_memory_bytes)::bigint,sqlc.arg(sort_disk_bytes)::bigint
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='capturing' AND o.account_id=sqlc.arg(account_id)::uuid AND o.project_id=sqlc.arg(project_id)::uuid
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING *;
+
+-- name: InsertProjectEnvironmentClonePostgresVerificationReadAllocation :one
+INSERT INTO project_environment_clone_postgres_verification_read_debits(operation_id,source_database_id,database_oid,original_verification_id,attempt,verification_id,retry_attempt,retry_verification_id,read_bytes,sort_memory_bytes,sort_disk_bytes)
+SELECT sqlc.arg(operation_id)::uuid,sqlc.arg(source_database_id)::uuid,sqlc.arg(database_oid)::bigint,sqlc.arg(original_verification_id)::uuid,sqlc.arg(attempt)::smallint,sqlc.arg(verification_id)::uuid,
+ sqlc.narg(retry_attempt)::smallint,sqlc.narg(retry_verification_id)::uuid,sqlc.arg(read_bytes)::bigint,sqlc.arg(sort_memory_bytes)::bigint,sqlc.arg(sort_disk_bytes)::bigint
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=sqlc.arg(operation_id)::uuid AND o.status='capturing'
+ AND o.revision=sqlc.arg(expected_revision)::bigint AND o.lease_token::text=sqlc.arg(worker_token)::text AND o.lease_until>clock_timestamp()) RETURNING *;
+
 -- name: CountProjectEnvironmentClonePostgresContents :one
 SELECT count(*)::bigint AS count,coalesce(sum(reserved_bytes),0)::bigint AS bytes FROM project_environment_clone_postgres_contents WHERE account_id=$1;
 

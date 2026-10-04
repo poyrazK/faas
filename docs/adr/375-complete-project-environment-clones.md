@@ -6219,3 +6219,62 @@ object copying, mixed-version rollout, PostgreSQL 14/15 and provider isolation,
 and production-preserving promotion/rollback. This private worker publishes only
 subordinate verification evidence. The public full database/object clone gate
 remains closed.
+
+### Durable verification read credits (2026-10-04)
+
+The control plane now retains an aggregate planned read reservation per original
+verification owner and immutable debits for its consecutive native attempts.
+Reservation must precede the first claim: an original owner that has already
+started, failed or compared without a hold cannot receive retroactive credits.
+The reservation authenticates original contents, import, database preparation,
+physical target, scope and all retained attempt history. Existing reservations
+recover their original identity, caps and creation time; they cannot expand or
+reset their consumed credits.
+
+Account admission locks the operation, account and then child ownership rows.
+It charges every retained aggregate reservation, including uncertain or failed
+work. The existing 4,096 contents-owner ceiling also bounds reservation count.
+`PostgresCopyVerificationReadBytesPerDatabaseMax` allows at most three 1 TiB
+attempts, while `PostgresCopyVerificationReadBytesPerAccountMax` limits aggregate
+planned read holds to 128 TiB. These are temporary structural safety ceilings in
+`pkg/api/limits.go`, separate from storage entitlements and monetary billing.
+Callers may choose lower count and byte limits. Replaying a charged reservation
+does not count it twice.
+
+A new debit requires the current claimed verification owner and the next
+consecutive ordinal. Original dispatch requires no failed history; retries must
+be the latest claimed subordinate owner. Each debit consumes its complete planned
+maximum before dispatch, up to 1 TiB, and must fit the aggregate remaining credits.
+Its sort memory and disk caps must fit the original reservation and the existing
+8 MiB memory and 64 GiB disk bounds. Lost debit responses recover the exact first
+owner, quantities and timestamp, including after proof advancement or closure.
+Changing those values, skipping a debit, retroactively charging an older failed
+owner or spending beyond the retained aggregate is rejected. No uncertain debit
+is refunded. Lease authority is checked again after lock waits and before commit;
+failed calls expose no budget metadata.
+
+Restrictive foreign keys retain the original verification and exact retry
+owners. Budget and debit reads re-authenticate their parents, account/project,
+consecutive ownership, time ordering and aggregate arithmetic. Empty downgrade
+and replay are supported; any owned reservation prevents destructive downgrade.
+Both tables are explicitly operational in clone schema coverage. The debit table
+uses `project_environment_clone_postgres_verification_read_debits` to stay within
+PostgreSQL's 63-byte identifier limit.
+
+Local PostgreSQL 16 contracts qualify concurrent reservation/debit and immutable
+replay, retained charges through three closed attempts, aggregate exhaustion,
+fixed sort caps, legacy/advanced/unknown-dispatch refusal, corrupt parents and
+ledger rejection, lease handoff/expiry after a budget lock, migration replay,
+empty round trip/owned downgrade guards and complete clone schema coverage.
+These ledger tests use explicit opaque ownership fixtures. The existing APID
+contracts separately qualify actual native closures and data comparisons.
+
+This foundation does not yet wire the private verification workers to these
+reservations. Production readers must be fenced during rollout and every new
+comparison must consume the corresponding immutable debit. Host/CPU admission,
+actual aggregate spool capacity, placement, backoff, measured usage, billing and
+qualified retirement remain required. The full stage coordinator, common
+config/data cut and source writer closure, complete schema/data/globals and final
+authority, object copying, provider isolation and PostgreSQL 14/15 qualification,
+and production-preserving promotion/rollback remain incomplete. The public full
+database/object clone gate remains closed.

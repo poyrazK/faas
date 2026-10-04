@@ -2870,6 +2870,22 @@ func (q *Queries) CountProjectEnvironmentClonePostgresCopyReaders(ctx context.Co
 	return count, err
 }
 
+const countProjectEnvironmentClonePostgresVerificationReadBudgets = `-- name: CountProjectEnvironmentClonePostgresVerificationReadBudgets :one
+SELECT count(*)::bigint AS count,coalesce(sum(read_bytes),0)::bigint AS bytes FROM project_environment_clone_postgres_verification_read_budgets WHERE account_id=$1
+`
+
+type CountProjectEnvironmentClonePostgresVerificationReadBudgetsRow struct {
+	Count int64
+	Bytes int64
+}
+
+func (q *Queries) CountProjectEnvironmentClonePostgresVerificationReadBudgets(ctx context.Context, db DBTX, accountID pgtype.UUID) (CountProjectEnvironmentClonePostgresVerificationReadBudgetsRow, error) {
+	row := db.QueryRow(ctx, countProjectEnvironmentClonePostgresVerificationReadBudgets, accountID)
+	var i CountProjectEnvironmentClonePostgresVerificationReadBudgetsRow
+	err := row.Scan(&i.Count, &i.Bytes)
+	return i, err
+}
+
 const countTriggersByAccount = `-- name: CountTriggersByAccount :one
 select count(*) from triggers t
 join apps a on a.id = t.app_id
@@ -10789,6 +10805,116 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresVerificationAttempt(ctx c
 		&i.NativeClosedAt,
 		&i.VerifiedAt,
 		&i.FailedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertProjectEnvironmentClonePostgresVerificationReadAllocation = `-- name: InsertProjectEnvironmentClonePostgresVerificationReadAllocation :one
+INSERT INTO project_environment_clone_postgres_verification_read_debits(operation_id,source_database_id,database_oid,original_verification_id,attempt,verification_id,retry_attempt,retry_verification_id,read_bytes,sort_memory_bytes,sort_disk_bytes)
+SELECT $1::uuid,$2::uuid,$3::bigint,$4::uuid,$5::smallint,$6::uuid,
+ $7::smallint,$8::uuid,$9::bigint,$10::bigint,$11::bigint
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$1::uuid AND o.status='capturing'
+ AND o.revision=$12::bigint AND o.lease_token::text=$13::text AND o.lease_until>clock_timestamp()) RETURNING operation_id, source_database_id, database_oid, original_verification_id, attempt, verification_id, retry_attempt, retry_verification_id, read_bytes, sort_memory_bytes, sort_disk_bytes, created_at
+`
+
+type InsertProjectEnvironmentClonePostgresVerificationReadAllocationParams struct {
+	OperationID            pgtype.UUID
+	SourceDatabaseID       pgtype.UUID
+	DatabaseOid            int64
+	OriginalVerificationID pgtype.UUID
+	Attempt                int16
+	VerificationID         pgtype.UUID
+	RetryAttempt           pgtype.Int2
+	RetryVerificationID    pgtype.UUID
+	ReadBytes              int64
+	SortMemoryBytes        int64
+	SortDiskBytes          int64
+	ExpectedRevision       int64
+	WorkerToken            string
+}
+
+func (q *Queries) InsertProjectEnvironmentClonePostgresVerificationReadAllocation(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresVerificationReadAllocationParams) (ProjectEnvironmentClonePostgresVerificationReadDebit, error) {
+	row := db.QueryRow(ctx, insertProjectEnvironmentClonePostgresVerificationReadAllocation,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.DatabaseOid,
+		arg.OriginalVerificationID,
+		arg.Attempt,
+		arg.VerificationID,
+		arg.RetryAttempt,
+		arg.RetryVerificationID,
+		arg.ReadBytes,
+		arg.SortMemoryBytes,
+		arg.SortDiskBytes,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresVerificationReadDebit
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.DatabaseOid,
+		&i.OriginalVerificationID,
+		&i.Attempt,
+		&i.VerificationID,
+		&i.RetryAttempt,
+		&i.RetryVerificationID,
+		&i.ReadBytes,
+		&i.SortMemoryBytes,
+		&i.SortDiskBytes,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertProjectEnvironmentClonePostgresVerificationReadBudget = `-- name: InsertProjectEnvironmentClonePostgresVerificationReadBudget :one
+INSERT INTO project_environment_clone_postgres_verification_read_budgets(operation_id,source_database_id,database_oid,original_verification_id,account_id,project_id,read_bytes,sort_memory_bytes,sort_disk_bytes)
+SELECT $1::uuid,$2::uuid,$3::bigint,$4::uuid,$5::uuid,$6::uuid,
+ $7::bigint,$8::bigint,$9::bigint
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$1::uuid AND o.status='capturing' AND o.account_id=$5::uuid AND o.project_id=$6::uuid
+ AND o.revision=$10::bigint AND o.lease_token::text=$11::text AND o.lease_until>clock_timestamp()) RETURNING operation_id, source_database_id, database_oid, original_verification_id, account_id, project_id, read_bytes, sort_memory_bytes, sort_disk_bytes, created_at
+`
+
+type InsertProjectEnvironmentClonePostgresVerificationReadBudgetParams struct {
+	OperationID            pgtype.UUID
+	SourceDatabaseID       pgtype.UUID
+	DatabaseOid            int64
+	OriginalVerificationID pgtype.UUID
+	AccountID              pgtype.UUID
+	ProjectID              pgtype.UUID
+	ReadBytes              int64
+	SortMemoryBytes        int64
+	SortDiskBytes          int64
+	ExpectedRevision       int64
+	WorkerToken            string
+}
+
+func (q *Queries) InsertProjectEnvironmentClonePostgresVerificationReadBudget(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresVerificationReadBudgetParams) (ProjectEnvironmentClonePostgresVerificationReadBudget, error) {
+	row := db.QueryRow(ctx, insertProjectEnvironmentClonePostgresVerificationReadBudget,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.DatabaseOid,
+		arg.OriginalVerificationID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.ReadBytes,
+		arg.SortMemoryBytes,
+		arg.SortDiskBytes,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresVerificationReadBudget
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.DatabaseOid,
+		&i.OriginalVerificationID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.ReadBytes,
+		&i.SortMemoryBytes,
+		&i.SortDiskBytes,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -25845,6 +25971,77 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresVerificationAttempts(ctx co
 		return nil, err
 	}
 	return items, nil
+}
+
+const readProjectEnvironmentClonePostgresVerificationReadAllocations = `-- name: ReadProjectEnvironmentClonePostgresVerificationReadAllocations :many
+SELECT operation_id, source_database_id, database_oid, original_verification_id, attempt, verification_id, retry_attempt, retry_verification_id, read_bytes, sort_memory_bytes, sort_disk_bytes, created_at FROM project_environment_clone_postgres_verification_read_debits WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3 ORDER BY attempt FOR UPDATE
+`
+
+type ReadProjectEnvironmentClonePostgresVerificationReadAllocationsParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	DatabaseOid      int64
+}
+
+func (q *Queries) ReadProjectEnvironmentClonePostgresVerificationReadAllocations(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresVerificationReadAllocationsParams) ([]ProjectEnvironmentClonePostgresVerificationReadDebit, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentClonePostgresVerificationReadAllocations, arg.OperationID, arg.SourceDatabaseID, arg.DatabaseOid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentClonePostgresVerificationReadDebit{}
+	for rows.Next() {
+		var i ProjectEnvironmentClonePostgresVerificationReadDebit
+		if err := rows.Scan(
+			&i.OperationID,
+			&i.SourceDatabaseID,
+			&i.DatabaseOid,
+			&i.OriginalVerificationID,
+			&i.Attempt,
+			&i.VerificationID,
+			&i.RetryAttempt,
+			&i.RetryVerificationID,
+			&i.ReadBytes,
+			&i.SortMemoryBytes,
+			&i.SortDiskBytes,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readProjectEnvironmentClonePostgresVerificationReadBudget = `-- name: ReadProjectEnvironmentClonePostgresVerificationReadBudget :one
+SELECT operation_id, source_database_id, database_oid, original_verification_id, account_id, project_id, read_bytes, sort_memory_bytes, sort_disk_bytes, created_at FROM project_environment_clone_postgres_verification_read_budgets WHERE operation_id=$1 AND source_database_id=$2 AND database_oid=$3 FOR UPDATE
+`
+
+type ReadProjectEnvironmentClonePostgresVerificationReadBudgetParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	DatabaseOid      int64
+}
+
+func (q *Queries) ReadProjectEnvironmentClonePostgresVerificationReadBudget(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresVerificationReadBudgetParams) (ProjectEnvironmentClonePostgresVerificationReadBudget, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentClonePostgresVerificationReadBudget, arg.OperationID, arg.SourceDatabaseID, arg.DatabaseOid)
+	var i ProjectEnvironmentClonePostgresVerificationReadBudget
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.DatabaseOid,
+		&i.OriginalVerificationID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.ReadBytes,
+		&i.SortMemoryBytes,
+		&i.SortDiskBytes,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const readProjectEnvironmentCloneProductionValueScope = `-- name: ReadProjectEnvironmentCloneProductionValueScope :one

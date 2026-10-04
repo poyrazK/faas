@@ -4117,6 +4117,34 @@ type ProjectEnvironmentClonePostgresVerificationAttempt struct {
 	CreatedAt              pgtype.Timestamptz
 }
 
+type ProjectEnvironmentClonePostgresVerificationReadBudget struct {
+	OperationID            pgtype.UUID
+	SourceDatabaseID       pgtype.UUID
+	DatabaseOid            int64
+	OriginalVerificationID pgtype.UUID
+	AccountID              pgtype.UUID
+	ProjectID              pgtype.UUID
+	ReadBytes              int64
+	SortMemoryBytes        int64
+	SortDiskBytes          int64
+	CreatedAt              pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresVerificationReadDebit struct {
+	OperationID            pgtype.UUID
+	SourceDatabaseID       pgtype.UUID
+	DatabaseOid            int64
+	OriginalVerificationID pgtype.UUID
+	Attempt                int16
+	VerificationID         pgtype.UUID
+	RetryAttempt           pgtype.Int2
+	RetryVerificationID    pgtype.UUID
+	ReadBytes              int64
+	SortMemoryBytes        int64
+	SortDiskBytes          int64
+	CreatedAt              pgtype.Timestamptz
+}
+
 type ProjectEnvironmentClonePostgresWriteFence struct {
 	OperationID              pgtype.UUID
 	SourceDatabaseID         pgtype.UUID

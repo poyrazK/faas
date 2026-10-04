@@ -150,6 +150,10 @@ const (
 	// Total native verification attempts per original database, including the
 	// first window. Retries keep closed history and need separate worker admission.
 	PostgresCopyVerificationAttemptsMax = 3
+	// Structural planned read-credit ceilings. Separate from measured resource
+	// usage, worker placement, storage entitlements and monetary billing.
+	PostgresCopyVerificationReadBytesPerDatabaseMax int64 = PostgresCopyVerificationAttemptsMax * PostgresCopyArchiveMaxBytes
+	PostgresCopyVerificationReadBytesPerAccountMax  int64 = PostgresCopyArchiveBytesPerAccountMax
 	// Includes the original proof and two subordinate retry holds. Parent FKs
 	// retain the charged contents owner until all attempt evidence is retired.
 	PostgresCopyVerificationBytesPerAccountMax = PostgresCopyContentsManifestsPerAccountMax * PostgresCopyVerificationAttemptsMax * PostgresCopyVerificationCiphertextMaxBytes

@@ -11090,6 +11090,56 @@ CREATE TABLE public.project_environment_clone_postgres_verification_attempts (
 
 
 --
+-- Name: project_environment_clone_postgres_verification_read_budgets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_verification_read_budgets (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    original_verification_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    read_bytes bigint NOT NULL,
+    sort_memory_bytes bigint NOT NULL,
+    sort_disk_bytes bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres_veri_sort_memory_bytes_check CHECK (((sort_memory_bytes >= 32) AND (sort_memory_bytes <= 8388608))),
+    CONSTRAINT project_environment_clone_postgres_verifi_sort_disk_bytes_check CHECK (((sort_disk_bytes >= 32) AND (sort_disk_bytes <= '68719476736'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verifica_database_oid_check2 CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verificati_created_at_check2 CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_verificatio_read_bytes_check CHECK (((read_bytes >= 1) AND (read_bytes <= '3298534883328'::bigint)))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_debits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_verification_read_debits (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    original_verification_id uuid NOT NULL,
+    attempt smallint NOT NULL,
+    verification_id uuid NOT NULL,
+    retry_attempt smallint,
+    retry_verification_id uuid,
+    read_bytes bigint NOT NULL,
+    sort_memory_bytes bigint NOT NULL,
+    sort_disk_bytes bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres_ver_sort_memory_bytes_check1 CHECK (((sort_memory_bytes >= 32) AND (sort_memory_bytes <= 8388608))),
+    CONSTRAINT project_environment_clone_postgres_verif_sort_disk_bytes_check1 CHECK (((sort_disk_bytes >= 32) AND (sort_disk_bytes <= '68719476736'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verifica_database_oid_check3 CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verificati_created_at_check3 CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_verificati_read_bytes_check1 CHECK (((read_bytes >= 1) AND (read_bytes <= '1099511627776'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verification_r_attempt_check CHECK (((attempt >= 1) AND (attempt <= 3))),
+    CONSTRAINT project_environment_clone_postgres_verification_read_debi_check CHECK ((((attempt = 1) AND (verification_id = original_verification_id) AND (retry_attempt IS NULL) AND (retry_verification_id IS NULL)) OR ((attempt > 1) AND (verification_id <> original_verification_id) AND (retry_attempt IS NOT NULL) AND (retry_attempt = attempt) AND (retry_verification_id IS NOT NULL) AND (retry_verification_id = verification_id))))
+);
+
+
+--
 -- Name: project_environment_clone_postgres_verifications; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16023,6 +16073,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_verification_attempts
 
 
 --
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_pos_operation_id_source_database_key2; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_pos_operation_id_source_database_key2 UNIQUE (operation_id, source_database_id, database_oid, original_verification_id);
+
+
+--
 -- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_owner_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16183,6 +16241,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_membership_plans
 
 
 --
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_postgres_original_verification_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_postgres_original_verification_id_key UNIQUE (original_verification_id);
+
+
+--
 -- Name: project_environment_clone_postgres_role_plans project_environment_clone_postgres_role__target_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16255,6 +16321,14 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_verification_attempts
 
 
 --
+-- Name: project_environment_clone_postgres_verification_read_debits project_environment_clone_postgres_verific_verification_id_key2; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_debits
+    ADD CONSTRAINT project_environment_clone_postgres_verific_verification_id_key2 UNIQUE (verification_id);
+
+
+--
 -- Name: project_environment_clone_postgres_verifications project_environment_clone_postgres_verifica_verification_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16268,6 +16342,22 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_verification_attempts
     ADD CONSTRAINT project_environment_clone_postgres_verification_attempts_pkey PRIMARY KEY (operation_id, source_database_id, database_oid, attempt);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_postgres_verification_read_budge_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_postgres_verification_read_budge_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_debits project_environment_clone_postgres_verification_read_debit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_debits
+    ADD CONSTRAINT project_environment_clone_postgres_verification_read_debit_pkey PRIMARY KEY (operation_id, source_database_id, database_oid, attempt);
 
 
 --
@@ -26768,6 +26858,30 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_verification_attempts
 
 
 --
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_po_operation_id_source_databas_fkey22; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey22 FOREIGN KEY (operation_id, source_database_id, database_oid, original_verification_id) REFERENCES public.project_environment_clone_postgres_verifications(operation_id, source_database_id, database_oid, verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_debits project_environment_clone_po_operation_id_source_databas_fkey23; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_debits
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey23 FOREIGN KEY (operation_id, source_database_id, database_oid, original_verification_id) REFERENCES public.project_environment_clone_postgres_verification_read_budgets(operation_id, source_database_id, database_oid, original_verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_debits project_environment_clone_po_operation_id_source_databas_fkey24; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_debits
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey24 FOREIGN KEY (operation_id, source_database_id, database_oid, retry_attempt, retry_verification_id) REFERENCES public.project_environment_clone_postgres_verification_attempts(operation_id, source_database_id, database_oid, attempt, verification_id);
+
+
+--
 -- Name: project_environment_clone_postgres_copy_targets project_environment_clone_po_operation_id_source_database_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27157,6 +27271,22 @@ ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
     ADD CONSTRAINT project_environment_clone_postgres_target_sql_p_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_postgres_verificatio_account_id_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_postgres_verificatio_account_id_fkey1 FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_postgres_verificatio_project_id_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_postgres_verificatio_project_id_fkey1 FOREIGN KEY (project_id) REFERENCES public.projects(id);
 
 
 --
