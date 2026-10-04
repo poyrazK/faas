@@ -16,7 +16,7 @@ type queueBindingListClient interface {
 func cmdQueueBindingList(client queueBindingListClient, args []string) int {
 	fs := newFlagSet("queue bindings list", flag.ContinueOnError)
 	includeRetired := fs.Bool("include-retired", false, "include retained binding UUIDs for reviewed recovery")
-	flags, pos := splitArgsForFlags(args)
+	flags, pos := splitArgsForFlags(args, "include-retired")
 	if err := fs.Parse(flags); err != nil || len(pos) != 1 {
 		PrintUsage(osStdout, "usage: gregale queue bindings list <slug> [--include-retired]", "queue")
 		return 1
