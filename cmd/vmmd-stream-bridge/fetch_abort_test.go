@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -16,6 +18,8 @@ import (
 // bodyless GET path used by Node's built-in Fetch client. The bridge receives
 // a persistent-stream request, forwards it to a guest handler that waits for
 // two seconds, and must carry AbortSignal.timeout(150) through to that guest.
+// Arm the timeout signals after all guest requests are active so cold Node
+// startup or connection setup cannot consume the cancellation test's budget.
 // A concurrent fast request verifies that cancelling those streams leaves the
 // shared per-port transport usable.
 func TestNewHandler_NodeFetchAbortSignalCancelsPersistentGuestGET(t *testing.T) {
@@ -29,21 +33,34 @@ func TestNewHandler_NodeFetchAbortSignalCancelsPersistentGuestGET(t *testing.T) 
 	started := 0
 	aborted := 0
 	completed := 0
-	slowStarted := make(chan time.Time, slowRequests)
-	slowAborted := make(chan time.Duration, slowRequests)
+	slowStarted := make(chan struct{}, slowRequests)
+	slowAborted := make(chan time.Time, slowRequests)
 	slowCompleted := make(chan struct{}, slowRequests)
+	allSlowStarted := make(chan struct{})
+	startSlowWork := make(chan struct{})
+	var activeSlow atomic.Int32
+	var startWorkOnce sync.Once
+	var slowWorkStarted time.Time
 	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/fast" {
 			_, _ = fmt.Fprint(w, "fast-ok")
 			return
 		}
-		requestStarted := time.Now()
-		slowStarted <- requestStarted
+		slowStarted <- struct{}{}
+		if activeSlow.Add(1) == slowRequests {
+			close(allSlowStarted)
+		}
+		select {
+		case <-startSlowWork:
+		case <-r.Context().Done():
+			slowAborted <- time.Now()
+			return
+		}
 		timer := time.NewTimer(2 * time.Second)
 		defer timer.Stop()
 		select {
 		case <-r.Context().Done():
-			slowAborted <- time.Since(requestStarted)
+			slowAborted <- time.Now()
 		case <-timer.C:
 			slowCompleted <- struct{}{}
 			_, _ = fmt.Fprint(w, "slow-completed")
@@ -63,6 +80,18 @@ func TestNewHandler_NodeFetchAbortSignalCancelsPersistentGuestGET(t *testing.T) 
 	t.Cleanup(pool.closeIdleConnections)
 	inner := newHandlerWithPool(guestIP, uint16(guestPort), time.Now().Add(10*time.Second), pool)
 	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ready" {
+			select {
+			case <-allSlowStarted:
+				startWorkOnce.Do(func() {
+					slowWorkStarted = time.Now()
+					close(startSlowWork)
+				})
+				_, _ = fmt.Fprint(w, "ready")
+			case <-r.Context().Done():
+			}
+			return
+		}
 		// ForwardHTTPStream supplies these private wire headers to the
 		// persistent bridge. Set them here to exercise the same dispatch and
 		// pooled transport without needing a VM or gRPC server in this test.
@@ -76,15 +105,24 @@ func TestNewHandler_NodeFetchAbortSignalCancelsPersistentGuestGET(t *testing.T) 
 
 	script := fmt.Sprintf(`
 const base = process.argv[1];
-const slow = Array.from({length: %d}, async () => {
+const controllers = Array.from({length: %d}, () => new AbortController());
+const slow = controllers.map(async controller => {
   try {
-    await fetch(base + '/slow', {signal: AbortSignal.timeout(150)});
+    await fetch(base + '/slow', {signal: controller.signal});
     throw new Error('slow fetch unexpectedly completed');
   } catch (err) {
     if (err.name !== 'TimeoutError') throw err;
   }
 });
-Promise.all(slow).then(async () => {
+const armTimeouts = (async () => {
+  const response = await fetch(base + '/ready');
+  if (!response.ok || await response.text() !== 'ready') throw new Error('guest readiness barrier failed');
+  for (const controller of controllers) {
+    const timeout = AbortSignal.timeout(150);
+    timeout.addEventListener('abort', () => controller.abort(timeout.reason), {once: true});
+  }
+})();
+Promise.all([armTimeouts, Promise.all(slow)]).then(async () => {
   const response = await fetch(base + '/fast');
   const body = await response.text();
   if (!response.ok || body !== 'fast-ok') throw new Error('fast sibling failed: ' + response.status + ' ' + body);
@@ -106,17 +144,15 @@ Promise.all(slow).then(async () => {
 
 	abortDeadline := time.NewTimer(time.Second)
 	defer abortDeadline.Stop()
-	var firstSlowStarted time.Time
+	<-startSlowWork // Synchronize the timestamp published by the ready handler.
 	for started < slowRequests || aborted < slowRequests {
 		select {
-		case at := <-slowStarted:
+		case <-slowStarted:
 			started++
-			if firstSlowStarted.IsZero() || at.Before(firstSlowStarted) {
-				firstSlowStarted = at
-			}
-		case latency := <-slowAborted:
+		case at := <-slowAborted:
 			aborted++
-			if latency > maxGuestAbortLatency {
+			latency := at.Sub(slowWorkStarted)
+			if latency < 0 || latency > maxGuestAbortLatency {
 				t.Fatalf("guest cancellation latency = %s, want <= %s", latency, maxGuestAbortLatency)
 			}
 		case <-slowCompleted:
@@ -130,7 +166,7 @@ Promise.all(slow).then(async () => {
 	// Keep the guest alive through the original two-second work window. If
 	// the signal was dropped at any layer, the guest would complete during
 	// this period even though Node had already rejected the fetch promises.
-	remaining := time.Until(firstSlowStarted.Add(2300 * time.Millisecond))
+	remaining := time.Until(slowWorkStarted.Add(2300 * time.Millisecond))
 	if remaining > 0 {
 		select {
 		case <-slowCompleted:
