@@ -2763,6 +2763,23 @@ type ObjectLifecycleScan struct {
 	ScannedUploads int64
 }
 
+type ObjectS3CopySourceEpoch struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
+type ObjectS3CopySourceGrant struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	CredentialID   pgtype.UUID
+	BucketID       pgtype.UUID
+	SourceBucketID pgtype.UUID
+	Prefix         string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type ObjectStorageAccessGrant struct {
 	AccountID  pgtype.UUID
 	BucketID   pgtype.UUID
@@ -2883,13 +2900,17 @@ type ObjectStorageKeyGrant struct {
 }
 
 type ObjectStorageMultipartPartGrant struct {
-	UploadID        pgtype.UUID
-	PartNumber      int32
-	MaxBytes        int64
-	CleanupTracked  bool
-	TransferToken   pgtype.Text
-	UnsafeUntil     pgtype.Timestamptz
-	UrlCredentialID pgtype.UUID
+	UploadID          pgtype.UUID
+	PartNumber        int32
+	MaxBytes          int64
+	CleanupTracked    bool
+	TransferToken     pgtype.Text
+	UnsafeUntil       pgtype.Timestamptz
+	UrlCredentialID   pgtype.UUID
+	SourceBucketID    pgtype.UUID
+	SourceCopyGrantID pgtype.UUID
+	SourceSubjectID   string
+	SourceKey         string
 }
 
 type ObjectStorageMultipartUpload struct {
@@ -3041,6 +3062,8 @@ type ObjectUploadCompletion struct {
 	EncryptionDispatched      bool
 	EncryptionVerified        bool
 	EncryptionDefaultRevision int64
+	SourceBucketID            pgtype.UUID
+	SourceCopyGrantID         pgtype.UUID
 }
 
 type ObjectUploadRoute struct {

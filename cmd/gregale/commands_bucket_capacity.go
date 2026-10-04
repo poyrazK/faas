@@ -9,6 +9,9 @@ import (
 )
 
 func cmdBucket(args []string) int {
+	if len(args) > 0 && args[0] == "copy-sources" {
+		return cmdBucketCopySources(args[1:])
+	}
 	if len(args) > 0 && args[0] == "encryption" {
 		return cmdBucketDefaultEncryption(args[1:])
 	}

@@ -106,7 +106,7 @@ func (p *S3) CopyEncryptedObject(ctx context.Context, bucket, receipt string, r 
 	if err := p.CheckEncryptionKey(ctx, e); err != nil {
 		return CopyObjectResult{}, errors.Join(ErrWriteRejected, err)
 	}
-	return p.copyEncryptedObject(ctx, bucket, receipt, r, source, c, &e)
+	return p.copyEncryptedObject(ctx, bucket, bucket, receipt, r, source, c, &e)
 }
 
 func (p *S3) EnsureEncryptedMultipart(ctx context.Context, bucket string, r MultipartCreateRequest, e ResolvedObjectEncryption) (string, error) {

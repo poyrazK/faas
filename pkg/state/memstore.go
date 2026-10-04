@@ -182,6 +182,7 @@ type MemStore struct {
 	objectProviderRequests    map[string]int64
 	objectAccessGrants        map[string]ObjectBucketAccessGrant
 	objectS3Credentials       map[string]ObjectS3Credential
+	objectS3CopySources       map[string]ObjectS3CopySource
 	objectMultipartUploads    map[string]ObjectMultipartUpload
 	objectMultipartPartGrants map[string]map[int32]int64
 	objectMultipartTransfers  map[string]map[int32]multipartPartTransfer
@@ -20507,6 +20508,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for credentialID, credential := range m.objectS3Credentials {
 		if credential.AccountID == id {
 			delete(m.objectS3Credentials, credentialID)
+		}
+	}
+	for grantKey, grant := range m.objectS3CopySources {
+		if grant.AccountID == id {
+			delete(m.objectS3CopySources, grantKey)
 		}
 	}
 	for uploadID, upload := range m.objectMultipartUploads {

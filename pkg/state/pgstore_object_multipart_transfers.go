@@ -26,7 +26,7 @@ func (s *PgStore) BeginObjectMultipartPart(ctx context.Context, account, bucket,
 	if token == "" || len(token) > 128 || part < 1 || part > api.MaxMultipartParts || size < 1 || size > api.MaxObjectSinglePutBytes || maxObject < 1 || maxObject > api.MaxObjectUploadBytes {
 		return ErrConflict
 	}
-	return s.admitMultipartCapacity(ctx, account, bucket, id, "", part, size, maxObject, p, token, nil)
+	return s.admitMultipartCapacity(ctx, account, bucket, id, "", part, size, maxObject, p, token, nil, nil)
 }
 
 func (s *PgStore) SettleObjectMultipartPart(ctx context.Context, account, id string, part int32, token string) error {
@@ -45,7 +45,7 @@ func (s *PgStore) PrepareObjectMultipartCompletion(ctx context.Context, u Object
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	prep := multipartCompletionPreparation{defaultRevision: u.EncryptionDefaultRevision, encryption: u.Encryption, token: token, revision: u.PartRevision, parts: parts, conditions: u.CompletionConditions}
-	err := s.admitMultipartCapacity(ctx, u.AccountID, u.BucketID, u.ID, u.Key, 0, size, 0, p, "", &prep)
+	err := s.admitMultipartCapacity(ctx, u.AccountID, u.BucketID, u.ID, u.Key, 0, size, 0, p, "", &prep, nil)
 	return prep.upload, err
 }
 
@@ -123,4 +123,13 @@ func (s *PgStore) RejectObjectMultipartCompletion(ctx context.Context, id, token
 		return ErrConflict
 	}
 	return nil
+}
+
+var _ ObjectCrossBucketMultipartStore = (*PgStore)(nil)
+
+func (s *PgStore) BeginObjectCrossBucketMultipartPart(ctx context.Context, account, bucket, id, token string, part int32, size, maxObject int64, p api.ObjectStoragePolicy, source ObjectMultipartCopySource) error {
+	if token == "" || len(token) > 128 || !validMultipartCopyAuthority(source, bucket) || part < 1 || part > api.MaxMultipartParts || size < 1 || size > api.MaxObjectSinglePutBytes || maxObject < 1 || maxObject > api.MaxObjectUploadBytes {
+		return ErrConflict
+	}
+	return s.admitMultipartCapacity(ctx, account, bucket, id, "", part, size, maxObject, p, token, nil, &source)
 }

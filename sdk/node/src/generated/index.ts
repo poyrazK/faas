@@ -593,6 +593,8 @@ export type { ObjectMultipartPartSignRequest } from './models/ObjectMultipartPar
 export type { ObjectMultipartUpload } from './models/ObjectMultipartUpload.js';
 export type { ObjectMultipartUploadList } from './models/ObjectMultipartUploadList.js';
 export type { ObjectNotificationRule } from './models/ObjectNotificationRule.js';
+export type { ObjectS3CopySource } from './models/ObjectS3CopySource.js';
+export type { ObjectS3CopySourceList } from './models/ObjectS3CopySourceList.js';
 export type { ObjectS3Credential } from './models/ObjectS3Credential.js';
 export type { ObjectS3CredentialList } from './models/ObjectS3CredentialList.js';
 export type { ObjectS3CredentialSecret } from './models/ObjectS3CredentialSecret.js';
@@ -938,6 +940,7 @@ export type { SetAppStaticEgressIPRequest } from './models/SetAppStaticEgressIPR
 export type { SetDeploymentAliasRequest } from './models/SetDeploymentAliasRequest.js';
 export type { SetGraceWindowRequest } from './models/SetGraceWindowRequest.js';
 export type { SetObjectBucketAccessGrantRequest } from './models/SetObjectBucketAccessGrantRequest.js';
+export type { SetObjectS3CopySourceRequest } from './models/SetObjectS3CopySourceRequest.js';
 export type { SetPasswordRequest } from './models/SetPasswordRequest.js';
 export type { SetPlatformTenantConsumerProvisioningPolicyRequest } from './models/SetPlatformTenantConsumerProvisioningPolicyRequest.js';
 export type { SetPlatformTenantCredentialPolicyRequest } from './models/SetPlatformTenantCredentialPolicyRequest.js';

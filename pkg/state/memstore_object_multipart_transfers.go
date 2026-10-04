@@ -112,3 +112,24 @@ func (m *MemStore) RejectObjectMultipartCompletion(_ context.Context, id, token,
 	m.objectMultipartUploads[id] = u
 	return nil
 }
+
+var _ ObjectCrossBucketMultipartStore = (*MemStore)(nil)
+
+func (m *MemStore) BeginObjectCrossBucketMultipartPart(_ context.Context, account, bucket, id, token string, part int32, size, maxObject int64, p api.ObjectStoragePolicy, source ObjectMultipartCopySource) error {
+	if token == "" || len(token) > 128 || !validMultipartCopyAuthority(source, bucket) {
+		return ErrConflict
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, _, err := m.resolveObjectS3CopySourceLocked(account, source.SubjectID, source.BucketID, source.Key)
+	if err != nil || g.ID != source.GrantID || g.BucketID != bucket {
+		return ErrConflict
+	}
+	if err = m.admitMultipartPartLocked(account, bucket, id, token, part, size, maxObject, p); err != nil {
+		return err
+	}
+	transfer := m.objectMultipartTransfers[id][part]
+	transfer.copySource = source
+	m.objectMultipartTransfers[id][part] = transfer
+	return nil
+}

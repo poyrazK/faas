@@ -20,8 +20,9 @@ func (h *Handler) checkCopySource(w http.ResponseWriter, r *http.Request, req re
 	if source.ProviderVersionID == "" || source.ProviderVersionID == "null" {
 		return true
 	}
-	// A native source proves that current-object accounting is insufficient.
-	// Admit its destination only against a verified retained-version baseline.
+	// A native source proves that its current-object accounting is insufficient.
+	// Verify the source retained-version baseline; destination admission separately
+	// selects its own inventory mode. Same-bucket copy shares both ledgers.
 	st, ok := h.store.(state.ObjectVersionInventoryStore)
 	if !ok {
 		h.providerError(w, r, req, objectstorage.ErrUnsupported, key)

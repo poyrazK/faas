@@ -589,6 +589,8 @@ export type { ObjectMultipartPartSignRequest } from './ObjectMultipartPartSignRe
 export type { ObjectMultipartUpload } from './ObjectMultipartUpload.js';
 export type { ObjectMultipartUploadList } from './ObjectMultipartUploadList.js';
 export type { ObjectNotificationRule } from './ObjectNotificationRule.js';
+export type { ObjectS3CopySource } from './ObjectS3CopySource.js';
+export type { ObjectS3CopySourceList } from './ObjectS3CopySourceList.js';
 export type { ObjectS3Credential } from './ObjectS3Credential.js';
 export type { ObjectS3CredentialList } from './ObjectS3CredentialList.js';
 export type { ObjectS3CredentialSecret } from './ObjectS3CredentialSecret.js';
@@ -933,6 +935,7 @@ export type { SetAppStaticEgressIPRequest } from './SetAppStaticEgressIPRequest.
 export type { SetDeploymentAliasRequest } from './SetDeploymentAliasRequest.js';
 export type { SetGraceWindowRequest } from './SetGraceWindowRequest.js';
 export type { SetObjectBucketAccessGrantRequest } from './SetObjectBucketAccessGrantRequest.js';
+export type { SetObjectS3CopySourceRequest } from './SetObjectS3CopySourceRequest.js';
 export type { SetPasswordRequest } from './SetPasswordRequest.js';
 export type { SetPlatformTenantConsumerProvisioningPolicyRequest } from './SetPlatformTenantConsumerProvisioningPolicyRequest.js';
 export type { SetPlatformTenantCredentialPolicyRequest } from './SetPlatformTenantCredentialPolicyRequest.js';

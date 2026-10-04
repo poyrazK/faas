@@ -53,6 +53,7 @@ func (m *MemStore) admitMultipartPartLocked(account, bucket, id, token string, p
 	}
 	if token != "" {
 		transfer.token, transfer.unsafeUntil = token, now.Add(multipartTransferWindow())
+		transfer.copySource = ObjectMultipartCopySource{}
 		if !exists && old == 0 {
 			transfer.tracked = true
 		}

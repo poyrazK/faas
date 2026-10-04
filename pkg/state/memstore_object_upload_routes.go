@@ -89,7 +89,7 @@ func (m *MemStore) DeleteObjectUploadRoute(_ context.Context, accountID, appID, 
 }
 
 func (m *MemStore) RecordObjectUploadCompletion(_ context.Context, completion ObjectUploadCompletion) (ObjectUploadCompletion, error) {
-	if !completion.Encryption.Empty() || !completion.VerifiedEncryption.Empty() || completion.ID == "" || completion.RouteID == "" || completion.Key == "" || completion.Bytes < 0 {
+	if !emptyCopySourceProvenance(completion) || !completion.Encryption.Empty() || !completion.VerifiedEncryption.Empty() || completion.ID == "" || completion.RouteID == "" || completion.Key == "" || completion.Bytes < 0 {
 		return ObjectUploadCompletion{}, ErrConflict
 	}
 	m.mu.Lock()
@@ -108,7 +108,7 @@ func (m *MemStore) RecordObjectUploadCompletion(_ context.Context, completion Ob
 }
 
 func (m *MemStore) CreateObjectUploadIntent(_ context.Context, intent ObjectUploadCompletion) (ObjectUploadCompletion, error) {
-	if !intent.Encryption.Empty() || !intent.VerifiedEncryption.Empty() || intent.ID == "" || intent.RouteID == "" || intent.Key == "" || intent.Bytes < 0 || intent.IdempotencyKey == "" || intent.RequestFingerprint == "" || intent.Status != "pending" {
+	if !emptyCopySourceProvenance(intent) || !intent.Encryption.Empty() || !intent.VerifiedEncryption.Empty() || intent.ID == "" || intent.RouteID == "" || intent.Key == "" || intent.Bytes < 0 || intent.IdempotencyKey == "" || intent.RequestFingerprint == "" || intent.Status != "pending" {
 		return ObjectUploadCompletion{}, ErrConflict
 	}
 	m.mu.Lock()

@@ -46,16 +46,16 @@ type ObjectTrackedGatewayCopyStore interface {
 }
 
 func validTrackedObjectUpload(c ObjectUploadCompletion) bool {
-	if _, err := uuid.Parse(c.RouteID); err != nil || c.Origin != "" && c.Origin != "route" || c.SourceKey != "" || c.SourceETag != "" {
+	if _, err := uuid.Parse(c.RouteID); err != nil || c.Origin != "" && c.Origin != "route" || c.SourceKey != "" || c.SourceETag != "" || !emptyCopySourceProvenance(c) {
 		return false
 	}
 	return validTrackedUploadIdentity(c)
 }
 func validTrackedGatewayUpload(c ObjectUploadCompletion) bool {
-	return validGatewayReceiptShape(c) && c.SourceKey == "" && c.SourceETag == "" && (c.Origin == "" || c.Origin == "gateway") && validTrackedUploadIdentity(c)
+	return validGatewayReceiptShape(c) && c.SourceKey == "" && c.SourceETag == "" && emptyCopySourceProvenance(c) && (c.Origin == "" || c.Origin == "gateway") && validTrackedUploadIdentity(c)
 }
 func validTrackedGatewayCopy(c ObjectUploadCompletion) bool {
-	return validGatewayReceiptShape(c) && (c.Origin == "" || c.Origin == "gateway_copy") && c.SourceKey != "" && len(c.SourceKey) <= 1024 && validObjectUploadETag(c.SourceETag) && validTrackedUploadIdentity(c)
+	return validCopySourceProvenance(c) && validGatewayReceiptShape(c) && (c.Origin == "" || c.Origin == "gateway_copy") && c.SourceKey != "" && len(c.SourceKey) <= 1024 && validObjectUploadETag(c.SourceETag) && validTrackedUploadIdentity(c)
 }
 func validGatewayReceiptShape(c ObjectUploadCompletion) bool {
 	return c.RouteID == "" && c.IdempotencyKey == "" && c.RequestFingerprint == ""
@@ -99,4 +99,26 @@ func validTrackedUploadRetry(code string) bool {
 
 func validTrackedUploadCursor(c ObjectUploadCompletion) bool {
 	return len(c.RecoveryCursor) <= api.ObjectUploadHistoryCursorMaxBytes && utf8.ValidString(c.RecoveryCursor) && !strings.ContainsRune(c.RecoveryCursor, 0)
+}
+
+func emptyCopySourceProvenance(c ObjectUploadCompletion) bool {
+	return c.SourceBucketID == "" && c.SourceCopyGrantID == ""
+}
+func validCopySourceProvenance(c ObjectUploadCompletion) bool {
+	if emptyCopySourceProvenance(c) {
+		return true
+	}
+	for _, id := range []string{c.SourceBucketID, c.SourceCopyGrantID, c.SubjectID} {
+		parsed, err := uuid.Parse(id)
+		if err != nil || parsed == uuid.Nil || parsed.String() != id {
+			return false
+		}
+	}
+	return c.SourceBucketID != c.BucketID
+}
+func sameCopySourceProvenance(a, b ObjectUploadCompletion) bool {
+	if a.SourceBucketID != "" && (a.ID != b.ID || a.AccountID != b.AccountID || a.AppID != b.AppID || a.BucketID != b.BucketID || a.SubjectID != b.SubjectID || a.Origin != b.Origin || a.Key != b.Key || a.Bytes != b.Bytes) {
+		return false
+	}
+	return a.SourceBucketID == b.SourceBucketID && a.SourceCopyGrantID == b.SourceCopyGrantID && a.SourceKey == b.SourceKey && a.SourceETag == b.SourceETag
 }

@@ -7840,6 +7840,8 @@ const (
 	ObjectBucketEncryptionRetry                  = 30 * time.Second
 	ObjectBucketEncryptionOperationTimeout       = time.Minute
 	ObjectBucketEncryptionBatch            int32 = 50
+	MaxObjectS3CopySourcesPerCredential          = 32
+	MaxObjectCopySourcePrefixBytes               = 1024
 	MaxObjectBucketEncryptionBodyBytes     int64 = 16 << 10
 	MaxObjectBucketEncryptionRevision      int64 = 1<<53 - 1
 )

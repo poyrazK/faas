@@ -1435,6 +1435,68 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources:
+    parameters:
+      - { name: slug, description: Destination app slug., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Destination bucket UUID., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: credential, description: Owned destination writer credential UUID., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listObjectS3CopySources
+      summary: List copy-only source grants
+      description: Requires storage:manage and destination write authority. Grants never permit ordinary source reads or listing with the destination S3 key. At most 32 source buckets may be granted per credential.
+      tags: [storage]
+      responses:
+        '200':
+          description: Owned source grants without private grant identities
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectS3CopySourceList' }
+        default:
+          description: Copy source listing unavailable or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources/{source}:
+    parameters:
+      - { name: slug, description: App containing the destination bucket., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket receiving copied objects., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: credential, description: Destination S3 credential receiving source authority., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: source, description: "Owned source bucket UUID, including across apps.", in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      operationId: setObjectS3CopySource
+      summary: Grant an owned bucket as a copy source
+      description: Requires storage:manage, destination write and source read authority. Both buckets must be ready on the same native S3 placement. The prefix is literal and at most 1024 UTF-8 bytes. Identical retries preserve authority; changing or recreating a grant invalidates prepared copies. Signed URL credentials and rotation stages cannot acquire grants. CopySource uses the source bucket UUID followed by the encoded object key.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetObjectS3CopySourceRequest' }
+      responses:
+        '200':
+          description: Persisted copy source grant
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectS3CopySource' }
+        default:
+          description: Copy source grant invalid, unsupported, at limit, or denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: deleteObjectS3CopySource
+      summary: Revoke a copy-only source grant
+      description: Requires storage:manage and destination write authority. Prevents new copy dispatch while preserving already dispatched completion and recovery. Cleanup remains available for revoked destination credentials and disabled S3 ingress.
+      tags: [storage]
+      responses:
+        '204': { description: Copy source grant revoked }
+        default:
+          description: Copy source revocation denied or grant missing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/compute-bindings:
     parameters:
       - { name: slug, description: App receiving the sealed storage connection settings., in: path, required: true, schema: { type: string } }
@@ -24687,6 +24749,30 @@ components:
       required: [permission]
       properties:
         permission: { type: string, enum: [read, write, read_write] }
+    ObjectS3CopySource:
+      type: object
+      description: Public copy-only authority for an owned source bucket. Placement and grant epoch are private.
+      required: [source_bucket_id, prefix, created_at, updated_at]
+      properties:
+        source_bucket_id: { type: string, format: uuid }
+        prefix: { type: string, maxLength: 1024, description: Literal allowed source key prefix, bounded to 1024 UTF-8 bytes. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ObjectS3CopySourceList:
+      type: object
+      description: Copy source grants for one owned destination credential.
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObjectS3CopySource' }
+    SetObjectS3CopySourceRequest:
+      type: object
+      description: Exact source key prefix. Empty or omitted prefix grants all keys in the owned source bucket solely for copy.
+      additionalProperties: false
+      properties:
+        prefix: { type: string, default: '', maxLength: 1024 }
     ObjectS3Credential:
       description: Bucket-scoped Gregale S3 credential metadata. The secret access key is never included in this shape.
       type: object

@@ -19,16 +19,16 @@ func (s *PgStore) AdmitObjectMultipartPart(ctx context.Context, account, bucket,
 	if part < 1 || part > api.MaxMultipartParts || size < 1 || size > api.MaxObjectSinglePutBytes || maxObject < 1 || maxObject > api.MaxObjectUploadBytes {
 		return ErrConflict
 	}
-	return s.admitMultipartCapacity(ctx, account, bucket, id, "", part, size, maxObject, p, "", nil)
+	return s.admitMultipartCapacity(ctx, account, bucket, id, "", part, size, maxObject, p, "", nil, nil)
 }
 func (s *PgStore) AdmitObjectMultipartCompletion(ctx context.Context, account, bucket, id, key string, size int64, p api.ObjectStoragePolicy) error {
 	if size < 1 || size > api.MaxObjectUploadBytes {
 		return ErrConflict
 	}
-	return s.admitMultipartCapacity(ctx, account, bucket, id, key, 0, size, 0, p, "", nil)
+	return s.admitMultipartCapacity(ctx, account, bucket, id, key, 0, size, 0, p, "", nil, nil)
 }
 
-func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, id, key string, part int32, size, maxObject int64, p api.ObjectStoragePolicy, token string, preparation *multipartCompletionPreparation) error {
+func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, id, key string, part int32, size, maxObject int64, p api.ObjectStoragePolicy, token string, preparation *multipartCompletionPreparation, source *ObjectMultipartCopySource) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -37,6 +37,15 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 	q := sqlc.New()
 	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
 		return mapErr(err)
+	}
+	if source != nil {
+		rows, e := q.ObjectCopySourceLockBuckets(ctx, tx, sqlc.ObjectCopySourceLockBucketsParams{AccountID: mustPgUUID(account), DestinationBucket: mustPgUUID(bucket), SourceBucket: mustPgUUID(source.BucketID)})
+		if e != nil {
+			return mapErr(e)
+		}
+		if len(rows) != 2 {
+			return ErrConflict
+		}
 	}
 	row, err := q.ObjectMultipartCapacityLock(ctx, tx, sqlc.ObjectMultipartCapacityLockParams{ID: mustPgUUID(id), AccountID: mustPgUUID(account), BucketID: mustPgUUID(bucket)})
 	if err != nil {
@@ -134,11 +143,13 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 		}
 		if token == "" {
 			err = q.ObjectMultipartPartGrantUpsert(ctx, tx, sqlc.ObjectMultipartPartGrantUpsertParams{UploadID: mustPgUUID(id), PartNumber: part, MaxBytes: size})
+		} else if source != nil {
+			err = q.ObjectMultipartCopyPartBegin(ctx, tx, sqlc.ObjectMultipartCopyPartBeginParams{UploadID: mustPgUUID(id), PartNumber: part, MaxBytes: size, TransferToken: pgtype.Text{String: token, Valid: true}, WindowSeconds: int32(multipartTransferWindow() / time.Second), SourceBucketID: mustPgUUID(source.BucketID), SourceCopyGrantID: mustPgUUID(source.GrantID), SourceSubjectID: source.SubjectID, SourceKey: source.Key})
 		} else {
 			err = q.ObjectMultipartPartBegin(ctx, tx, sqlc.ObjectMultipartPartBeginParams{UploadID: mustPgUUID(id), PartNumber: part, MaxBytes: size, TransferToken: pgtype.Text{String: token, Valid: true}, Column5: int32(multipartTransferWindow() / time.Second)})
 		}
 		if err != nil {
-			return err
+			return mapErr(err)
 		}
 		if err = q.ObjectMultipartPartRevision(ctx, tx, mustPgUUID(id)); err != nil {
 			return err

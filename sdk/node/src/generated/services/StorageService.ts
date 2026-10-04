@@ -28,6 +28,8 @@ import type { ObjectMultipartPartList } from '../models/ObjectMultipartPartList.
 import type { ObjectMultipartPartSignRequest } from '../models/ObjectMultipartPartSignRequest.js';
 import type { ObjectMultipartUpload } from '../models/ObjectMultipartUpload.js';
 import type { ObjectMultipartUploadList } from '../models/ObjectMultipartUploadList.js';
+import type { ObjectS3CopySource } from '../models/ObjectS3CopySource.js';
+import type { ObjectS3CopySourceList } from '../models/ObjectS3CopySourceList.js';
 import type { ObjectS3CredentialList } from '../models/ObjectS3CredentialList.js';
 import type { ObjectS3CredentialSecret } from '../models/ObjectS3CredentialSecret.js';
 import type { ObjectSignedRequest } from '../models/ObjectSignedRequest.js';
@@ -44,6 +46,7 @@ import type { ObjectWriteReceipt } from '../models/ObjectWriteReceipt.js';
 import type { ObjectWriteReceiptList } from '../models/ObjectWriteReceiptList.js';
 import type { Problem } from '../models/Problem.js';
 import type { SetObjectBucketAccessGrantRequest } from '../models/SetObjectBucketAccessGrantRequest.js';
+import type { SetObjectS3CopySourceRequest } from '../models/SetObjectS3CopySourceRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -417,6 +420,126 @@ export class StorageService {
         'slug': slug,
         'bucket': bucket,
         'credential': credential,
+      },
+    });
+  }
+  /**
+   * List copy-only source grants
+   * Requires storage:manage and destination write authority. Grants never permit ordinary source reads or listing with the destination S3 key. At most 32 source buckets may be granted per credential.
+   * @returns ObjectS3CopySourceList Owned source grants without private grant identities
+   * @returns Problem Copy source listing unavailable or access denied
+   * @throws ApiError
+   */
+  public static listObjectS3CopySources({
+    slug,
+    bucket,
+    credential,
+  }: {
+    /**
+     * Destination app slug.
+     */
+    slug: string,
+    /**
+     * Destination bucket UUID.
+     */
+    bucket: string,
+    /**
+     * Owned destination writer credential UUID.
+     */
+    credential: string,
+  }): CancelablePromise<ObjectS3CopySourceList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'credential': credential,
+      },
+    });
+  }
+  /**
+   * Grant an owned bucket as a copy source
+   * Requires storage:manage, destination write and source read authority. Both buckets must be ready on the same native S3 placement. The prefix is literal and at most 1024 UTF-8 bytes. Identical retries preserve authority; changing or recreating a grant invalidates prepared copies. Signed URL credentials and rotation stages cannot acquire grants. CopySource uses the source bucket UUID followed by the encoded object key.
+   * @returns ObjectS3CopySource Persisted copy source grant
+   * @returns Problem Copy source grant invalid, unsupported, at limit, or denied
+   * @throws ApiError
+   */
+  public static setObjectS3CopySource({
+    slug,
+    bucket,
+    credential,
+    source,
+    requestBody,
+  }: {
+    /**
+     * App containing the destination bucket.
+     */
+    slug: string,
+    /**
+     * Bucket receiving copied objects.
+     */
+    bucket: string,
+    /**
+     * Destination S3 credential receiving source authority.
+     */
+    credential: string,
+    /**
+     * Owned source bucket UUID, including across apps.
+     */
+    source: string,
+    requestBody: SetObjectS3CopySourceRequest,
+  }): CancelablePromise<ObjectS3CopySource | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources/{source}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'credential': credential,
+        'source': source,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Revoke a copy-only source grant
+   * Requires storage:manage and destination write authority. Prevents new copy dispatch while preserving already dispatched completion and recovery. Cleanup remains available for revoked destination credentials and disabled S3 ingress.
+   * @returns Problem Copy source revocation denied or grant missing
+   * @throws ApiError
+   */
+  public static deleteObjectS3CopySource({
+    slug,
+    bucket,
+    credential,
+    source,
+  }: {
+    /**
+     * App containing the destination bucket.
+     */
+    slug: string,
+    /**
+     * Bucket receiving copied objects.
+     */
+    bucket: string,
+    /**
+     * Destination S3 credential receiving source authority.
+     */
+    credential: string,
+    /**
+     * Owned source bucket UUID, including across apps.
+     */
+    source: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources/{source}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'credential': credential,
+        'source': source,
       },
     });
   }

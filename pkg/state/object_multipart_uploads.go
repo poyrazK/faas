@@ -182,6 +182,7 @@ type ObjectMultipartTransferStore interface {
 }
 
 type multipartPartTransfer struct {
+	copySource  ObjectMultipartCopySource
 	token       string
 	unsafeUntil time.Time
 	tracked     bool
@@ -211,4 +212,16 @@ func cloneObjectMultipartUpload(u ObjectMultipartUpload) ObjectMultipartUpload {
 	u.Metadata = cloneObjectMultipartMetadata(u.Metadata)
 	u.Encryption = u.Encryption.Clone()
 	return u
+}
+
+// ObjectMultipartCopySource captures private authority before the single native
+// part attempt. Begin is the durable dispatch point, atomic with byte admission.
+type ObjectMultipartCopySource struct{ SubjectID, BucketID, GrantID, Key string }
+type ObjectCrossBucketMultipartStore interface {
+	ObjectMultipartTransferStore
+	BeginObjectCrossBucketMultipartPart(context.Context, string, string, string, string, int32, int64, int64, api.ObjectStoragePolicy, ObjectMultipartCopySource) error
+}
+
+func validMultipartCopyAuthority(s ObjectMultipartCopySource, destination string) bool {
+	return s.Key != "" && validObjectCopySourcePrefix(s.Key) && validCopySourceProvenance(ObjectUploadCompletion{BucketID: destination, SourceBucketID: s.BucketID, SourceCopyGrantID: s.GrantID, SubjectID: s.SubjectID}) && s.BucketID != ""
 }

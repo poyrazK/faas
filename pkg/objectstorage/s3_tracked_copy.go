@@ -108,10 +108,10 @@ func (p *S3) CopyDateConditionalTrackedObject(ctx context.Context, bucket, recei
 }
 
 func (p *S3) CopyConditionalTrackedObject(ctx context.Context, bucket, receipt string, r CopyObjectRequest, source CopySourceSnapshot, conditions CopySourceConditions) (CopyObjectResult, error) {
-	return p.copyEncryptedObject(ctx, bucket, receipt, r, source, conditions, nil)
+	return p.copyEncryptedObject(ctx, bucket, bucket, receipt, r, source, conditions, nil)
 }
 
-func (p *S3) copyEncryptedObject(ctx context.Context, bucket, receipt string, r CopyObjectRequest, source CopySourceSnapshot, conditions CopySourceConditions, encryption *ResolvedObjectEncryption) (CopyObjectResult, error) {
+func (p *S3) copyEncryptedObject(ctx context.Context, sourceBucket, bucket, receipt string, r CopyObjectRequest, source CopySourceSnapshot, conditions CopySourceConditions, encryption *ResolvedObjectEncryption) (CopyObjectResult, error) {
 	if _, err := uuid.Parse(receipt); err != nil || ctx.Err() != nil || !validCopySource(source) || ValidateObjectMetadata(r.Metadata) != nil || r.SourceProviderVersionID != "" && r.SourceProviderVersionID != source.ProviderVersionID {
 		return CopyObjectResult{}, errors.Join(ErrWriteRejected, ErrInvalid)
 	}
@@ -125,7 +125,7 @@ func (p *S3) copyEncryptedObject(ctx context.Context, bucket, receipt string, r 
 		r.Metadata.Tags = tags
 		r.MetadataDirective = "REPLACE"
 	}
-	in, err := copyObjectInput(bucket, bucket, r)
+	in, err := copyObjectInput(sourceBucket, bucket, r)
 	if err != nil {
 		return CopyObjectResult{}, errors.Join(ErrWriteRejected, err)
 	}
@@ -135,7 +135,7 @@ func (p *S3) copyEncryptedObject(ctx context.Context, bucket, receipt string, r 
 	}
 	in.Metadata[ReservedUploadReceiptMetadataKey] = receipt
 	applyCopyEncryption(in, encryption)
-	in.CopySource = aws.String(trackedCopySource(bucket, r.SourceKey, source))
+	in.CopySource = aws.String(trackedCopySource(sourceBucket, r.SourceKey, source))
 	in.CopySourceIfMatch = trackedCopySourceMatch(source, conditions)
 	in.CopySourceIfNoneMatch = stringPtrOrNil(conditions.IfNoneMatch)
 	in.CopySourceIfModifiedSince = conditions.IfModifiedSince

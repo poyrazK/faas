@@ -222,6 +222,8 @@ type requestContext struct {
 	streaming        *awsChunkedReader
 	encryptionConfig objectstorage.EncryptionConfig
 	encryption       objectstorage.ResolvedObjectEncryption
+	copySource       *state.ObjectBucket
+	copyGrantID      string
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -673,22 +675,27 @@ func (h *Handler) writeAWSChunkedError(w http.ResponseWriter, r *http.Request, r
 }
 
 func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, req requestContext, destinationKey string) {
-	if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
+	if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
 		return
 	}
 	if !h.validCopyBody(w, r, req) {
 		return
 	}
 	source, err := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
-	if err != nil || source.Bucket != req.bucket.Name {
+	if err != nil {
 		writeS3Error(w, http.StatusNotFound, "NoSuchKey", "The specified copy source does not exist.", r.URL.Path, req.requestID)
+		return
+	}
+	var authorized bool
+	req, authorized = h.authorizeGatewayCopySource(w, r, req, source, false)
+	if !authorized {
 		return
 	}
 	copy, ok := gatewayCopyRequest(w, r, req, source.Key, destinationKey)
 	if !ok {
 		return
 	}
-	copy.SourceProviderVersionID, ok = h.resolveCopyVersion(w, r, req, source, false)
+	copy.SourceProviderVersionID, ok = h.resolveCopyVersion(w, r, copySourceContext(req), source, false)
 	if !ok {
 		return
 	}

@@ -562,6 +562,38 @@ $$;
 
 
 --
+-- Name: assert_object_copy_source_authority(uuid, uuid, text, uuid, text, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.assert_object_copy_source_authority(a uuid, destination uuid, subject text, source uuid, key text, epoch uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE c object_storage_s3_credentials; p object_storage_s3_credentials; g object_s3_copy_source_grants;
+BEGIN
+ IF subject !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Invalid copy subject';
+ END IF;
+ SELECT * INTO c FROM object_storage_s3_credentials WHERE id=subject::uuid FOR SHARE;
+ IF c.id IS NULL OR c.account_id<>a OR c.bucket_id<>destination OR c.status<>'active' OR
+  c.permission NOT IN ('write','read_write') OR c.url_request IS NOT NULL THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Copy writer is unavailable';
+ END IF;
+ SELECT * INTO p FROM object_storage_s3_credentials WHERE id=coalesce(c.rotation_parent_id,c.id) FOR SHARE;
+ SELECT * INTO g FROM object_s3_copy_source_grants WHERE credential_id=p.id AND source_bucket_id=source FOR SHARE;
+ IF p.id IS NULL OR p.account_id<>a OR p.bucket_id<>destination OR p.status<>'active' OR
+  p.permission NOT IN ('write','read_write') OR p.url_request IS NOT NULL OR g.id IS NULL OR
+  g.id<>epoch OR g.account_id<>a OR g.bucket_id<>destination OR key='' OR octet_length(key)>1024 OR
+  left(key,length(g.prefix))<>g.prefix OR key ~ E'[\\r\\n]' OR
+  NOT EXISTS(SELECT 1 FROM object_buckets d JOIN object_buckets s ON s.id=source
+    WHERE d.id=destination AND d.account_id=a AND s.account_id=a AND d.state='ready' AND s.state='ready'
+    AND (d.backend_id,d.backend_fingerprint)=(s.backend_id,s.backend_fingerprint)) OR
+  EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id IN (destination,source) AND state IN ('prepared','dispatched')) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Copy source authority changed';
+ END IF;
+END $_$;
+
+
+--
 -- Name: bind_job_run_image_snapshot(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3419,6 +3451,32 @@ END $$;
 
 
 --
+-- Name: protect_object_copy_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_copy_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND OLD.source_bucket_id IS NOT NULL AND
+  (NEW.id,NEW.account_id,NEW.app_id,NEW.bucket_id,NEW.subject_id,NEW.origin,NEW.object_key,NEW.bytes) IS DISTINCT FROM
+  (OLD.id,OLD.account_id,OLD.app_id,OLD.bucket_id,OLD.subject_id,OLD.origin,OLD.object_key,OLD.bytes) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Cross-copy receipt ownership is immutable';
+ END IF;
+ IF TG_OP='UPDATE' AND (NEW.source_bucket_id,NEW.source_copy_grant_id,NEW.source_key,NEW.source_etag)
+  IS DISTINCT FROM (OLD.source_bucket_id,OLD.source_copy_grant_id,OLD.source_key,OLD.source_etag) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Copy receipt source is immutable';
+ END IF;
+ IF NEW.source_bucket_id IS NOT NULL AND (TG_OP='INSERT' OR
+  (OLD.write_phase='prepared' AND NEW.write_phase='dispatched')) THEN
+  PERFORM assert_object_copy_source_authority(NEW.account_id,NEW.bucket_id,NEW.subject_id,
+   NEW.source_bucket_id,NEW.source_key,NEW.source_copy_grant_id);
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: protect_object_default_legacy_write(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3517,6 +3575,33 @@ BEGIN
    OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(OLD.rules) r WHERE r->>'status'='Enabled' AND r ? 'abort_incomplete_multipart_days')))
   OR (OLD.state<>'scanning' AND NEW IS DISTINCT FROM OLD) THEN
    RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Lifecycle scan identity and progress cannot be rewritten';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_multipart_copy_source(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_multipart_copy_source() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE u object_storage_multipart_uploads;
+BEGIN
+ IF TG_OP='UPDATE' AND
+  (NEW.source_bucket_id,NEW.source_copy_grant_id,NEW.source_subject_id,NEW.source_key) IS DISTINCT FROM
+  (OLD.source_bucket_id,OLD.source_copy_grant_id,OLD.source_subject_id,OLD.source_key) AND
+  (NEW.transfer_token IS NULL OR NEW.transfer_token IS NOT DISTINCT FROM OLD.transfer_token) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Dispatched part copy source is immutable';
+ END IF;
+ IF NEW.source_bucket_id IS NOT NULL AND (TG_OP='INSERT' OR NEW.transfer_token IS DISTINCT FROM OLD.transfer_token) AND NEW.transfer_token IS NOT NULL THEN
+  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.upload_id;
+  IF u.id IS NULL OR u.state<>'active' OR u.expires_at<=clock_timestamp() OR NEW.source_bucket_id=u.bucket_id THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Copy destination session is unavailable';
+  END IF;
+  PERFORM assert_object_copy_source_authority(u.account_id,u.bucket_id,NEW.source_subject_id,
+   NEW.source_bucket_id,NEW.source_key,NEW.source_copy_grant_id);
  END IF;
  RETURN NEW;
 END $$;
@@ -3704,6 +3789,56 @@ BEGIN
    ((NEW.account_id,NEW.app_id,NEW.bucket_id) IS DISTINCT FROM (r.account_id,r.app_id,r.bucket_id) OR
     NEW.encryption_snapshot IS DISTINCT FROM r.encryption_snapshot OR NEW.encryption_default_revision<>0 OR NEW.write_phase<>'prepared' OR NEW.status<>'pending')) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_route_encryption_fenced',MESSAGE='Route writes require the current captured encryption policy';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_s3_copy_source_epoch(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_s3_copy_source_epoch() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' OR EXISTS(SELECT 1 FROM accounts WHERE id=OLD.account_id) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Published copy source identities are immutable';
+ END IF;
+ RETURN OLD;
+END $$;
+
+
+--
+-- Name: protect_object_s3_copy_source_grant(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_s3_copy_source_grant() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE c object_storage_s3_credentials; d object_buckets; s object_buckets;
+BEGIN
+ SELECT * INTO c FROM object_storage_s3_credentials WHERE id=NEW.credential_id FOR NO KEY UPDATE;
+ IF NOT FOUND OR c.account_id<>NEW.account_id OR c.bucket_id<>NEW.bucket_id OR
+ c.status<>'active' OR c.permission NOT IN ('write','read_write') OR c.url_request IS NOT NULL OR c.rotation_parent_id IS NOT NULL THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Copy source grants require an owned destination writer';
+ END IF;
+ SELECT * INTO d FROM object_buckets WHERE id=NEW.bucket_id;
+ SELECT * INTO s FROM object_buckets WHERE id=NEW.source_bucket_id;
+ IF d.id IS NULL OR s.id IS NULL OR d.account_id<>NEW.account_id OR s.account_id<>NEW.account_id OR
+ d.state<>'ready' OR s.state<>'ready' OR (d.backend_id,d.backend_fingerprint) IS DISTINCT FROM (s.backend_id,s.backend_fingerprint) OR
+ EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id IN (d.id,s.id) AND state IN ('prepared','dispatched')) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Copy sources require owned ready buckets on one placement';
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  IF (NEW.account_id,NEW.credential_id,NEW.bucket_id,NEW.source_bucket_id,NEW.created_at) IS DISTINCT FROM
+   (OLD.account_id,OLD.credential_id,OLD.bucket_id,OLD.source_bucket_id,OLD.created_at) OR
+   (NEW.prefix IS DISTINCT FROM OLD.prefix AND NEW.id=OLD.id) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Copy source ownership and grant epochs are immutable';
+  END IF;
+ ELSIF NOT EXISTS(SELECT 1 FROM object_s3_copy_source_grants WHERE credential_id=c.id AND source_bucket_id=s.id) AND
+  (SELECT count(*) FROM object_s3_copy_source_grants WHERE credential_id=c.id)>=32 THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Copy source grant limit exceeded';
  END IF;
  RETURN NEW;
 END $$;
@@ -3938,6 +4073,26 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: record_object_s3_copy_source_epoch(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_object_s3_copy_source_epoch() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ -- AFTER runs only for the winning insert/update of an upsert. An idempotent
+ -- update of the current identity is valid; every new identity is single use.
+ IF TG_OP='INSERT' OR NEW.id IS DISTINCT FROM OLD.id THEN
+  INSERT INTO object_s3_copy_source_epochs(id,account_id) VALUES(NEW.id,NEW.account_id) ON CONFLICT DO NOTHING;
+  IF NOT FOUND THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Copy source identity was already published';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -9231,6 +9386,37 @@ CREATE TABLE public.object_lifecycle_scans (
 
 
 --
+-- Name: object_s3_copy_source_epochs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_s3_copy_source_epochs (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_s3_copy_source_epochs_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: object_s3_copy_source_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_s3_copy_source_grants (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    credential_id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    source_bucket_id uuid NOT NULL,
+    prefix text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_s3_copy_source_grants_check CHECK ((source_bucket_id <> bucket_id)),
+    CONSTRAINT object_s3_copy_source_grants_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT object_s3_copy_source_grants_prefix_check CHECK (((octet_length(prefix) <= 1024) AND (prefix !~ '[\r\n]'::text)))
+);
+
+
+--
 -- Name: object_storage_access_grants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9473,6 +9659,11 @@ CREATE TABLE public.object_storage_multipart_part_grants (
     transfer_token text,
     unsafe_until timestamp with time zone,
     url_credential_id uuid,
+    source_bucket_id uuid,
+    source_copy_grant_id uuid,
+    source_subject_id text DEFAULT ''::text NOT NULL,
+    source_key text DEFAULT ''::text NOT NULL,
+    CONSTRAINT object_multipart_copy_source_provenance CHECK ((((source_bucket_id IS NULL) AND (source_copy_grant_id IS NULL) AND (source_subject_id = ''::text) AND (source_key = ''::text)) OR ((source_bucket_id IS NOT NULL) AND (source_copy_grant_id IS NOT NULL) AND (source_subject_id <> ''::text) AND (source_key <> ''::text)))),
     CONSTRAINT object_multipart_transfer_pair CHECK ((((transfer_token IS NULL) AND (unsafe_until IS NULL)) OR ((transfer_token IS NOT NULL) AND ((length(transfer_token) >= 1) AND (length(transfer_token) <= 128)) AND (unsafe_until IS NOT NULL) AND isfinite(unsafe_until)))),
     CONSTRAINT object_storage_multipart_part_grants_max_bytes_check CHECK (((max_bytes >= 0) AND (max_bytes <= '5368709120'::bigint))),
     CONSTRAINT object_storage_multipart_part_grants_part_number_check CHECK (((part_number >= 1) AND (part_number <= 10000))),
@@ -9620,6 +9811,9 @@ CREATE TABLE public.object_upload_completions (
     encryption_dispatched boolean DEFAULT false NOT NULL,
     encryption_verified boolean DEFAULT false NOT NULL,
     encryption_default_revision bigint DEFAULT 0 NOT NULL,
+    source_bucket_id uuid,
+    source_copy_grant_id uuid,
+    CONSTRAINT object_copy_source_provenance CHECK ((((source_bucket_id IS NULL) AND (source_copy_grant_id IS NULL)) OR ((source_bucket_id IS NOT NULL) AND (source_copy_grant_id IS NOT NULL) AND (origin = 'gateway_copy'::text) AND (source_bucket_id <> bucket_id) AND (source_bucket_id <> '00000000-0000-0000-0000-000000000000'::uuid) AND (source_copy_grant_id <> '00000000-0000-0000-0000-000000000000'::uuid)))),
     CONSTRAINT object_upload_completion_version_outcome CHECK (((version_id = ''::text) OR ((write_phase = 'settled'::text) AND (status = 'completed'::text)))),
     CONSTRAINT object_upload_completion_version_shape CHECK (((version_id = ''::text) OR (version_id = 'null'::text) OR (version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
     CONSTRAINT object_upload_completions_bytes_check CHECK ((bytes >= 0)),
@@ -14150,6 +14344,30 @@ ALTER TABLE ONLY public.object_lifecycle_scans
 
 
 --
+-- Name: object_s3_copy_source_epochs object_s3_copy_source_epochs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_s3_copy_source_epochs
+    ADD CONSTRAINT object_s3_copy_source_epochs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_s3_copy_source_grants object_s3_copy_source_grants_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_s3_copy_source_grants
+    ADD CONSTRAINT object_s3_copy_source_grants_id_key UNIQUE (id);
+
+
+--
+-- Name: object_s3_copy_source_grants object_s3_copy_source_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_s3_copy_source_grants
+    ADD CONSTRAINT object_s3_copy_source_grants_pkey PRIMARY KEY (credential_id, source_bucket_id);
+
+
+--
 -- Name: object_storage_access_grants object_storage_access_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18539,6 +18757,13 @@ CREATE INDEX object_lifecycle_scan_due ON public.object_lifecycle_scans USING bt
 
 
 --
+-- Name: object_s3_copy_source_epochs_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_s3_copy_source_epochs_account ON public.object_s3_copy_source_epochs USING btree (account_id);
+
+
+--
 -- Name: object_storage_access_grants_key_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21038,6 +21263,34 @@ CREATE TRIGGER object_bucket_versioning_protected BEFORE INSERT OR UPDATE ON pub
 
 
 --
+-- Name: object_upload_completions object_copy_receipt_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_copy_receipt_bound BEFORE INSERT OR UPDATE ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.protect_object_copy_receipt();
+
+
+--
+-- Name: object_s3_copy_source_epochs object_copy_source_epoch_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_copy_source_epoch_bound BEFORE DELETE OR UPDATE ON public.object_s3_copy_source_epochs FOR EACH ROW EXECUTE FUNCTION public.protect_object_s3_copy_source_epoch();
+
+
+--
+-- Name: object_s3_copy_source_grants object_copy_source_epoch_recorded; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_copy_source_epoch_recorded AFTER INSERT OR UPDATE ON public.object_s3_copy_source_grants FOR EACH ROW EXECUTE FUNCTION public.record_object_s3_copy_source_epoch();
+
+
+--
+-- Name: object_s3_copy_source_grants object_copy_source_grant_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_copy_source_grant_bound BEFORE INSERT OR UPDATE ON public.object_s3_copy_source_grants FOR EACH ROW EXECUTE FUNCTION public.protect_object_s3_copy_source_grant();
+
+
+--
 -- Name: object_storage_key_grants object_default_key_grant_bound; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21182,6 +21435,13 @@ CREATE TRIGGER object_multipart_capacity_fence BEFORE INSERT ON public.object_st
 --
 
 CREATE TRIGGER object_multipart_completion_conditions_immutable BEFORE UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.fence_object_multipart_completion_conditions();
+
+
+--
+-- Name: object_storage_multipart_part_grants object_multipart_copy_source_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_copy_source_bound BEFORE INSERT OR UPDATE ON public.object_storage_multipart_part_grants FOR EACH ROW EXECUTE FUNCTION public.protect_object_multipart_copy_source();
 
 
 --
@@ -23843,6 +24103,46 @@ ALTER TABLE ONLY public.object_deletions
 
 ALTER TABLE ONLY public.object_lifecycle_scans
     ADD CONSTRAINT object_lifecycle_scans_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_s3_copy_source_epochs object_s3_copy_source_epochs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_s3_copy_source_epochs
+    ADD CONSTRAINT object_s3_copy_source_epochs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_s3_copy_source_grants object_s3_copy_source_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_s3_copy_source_grants
+    ADD CONSTRAINT object_s3_copy_source_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_s3_copy_source_grants object_s3_copy_source_grants_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_s3_copy_source_grants
+    ADD CONSTRAINT object_s3_copy_source_grants_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_s3_copy_source_grants object_s3_copy_source_grants_credential_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_s3_copy_source_grants
+    ADD CONSTRAINT object_s3_copy_source_grants_credential_id_fkey FOREIGN KEY (credential_id) REFERENCES public.object_storage_s3_credentials(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_s3_copy_source_grants object_s3_copy_source_grants_source_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_s3_copy_source_grants
+    ADD CONSTRAINT object_s3_copy_source_grants_source_bucket_id_fkey FOREIGN KEY (source_bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --

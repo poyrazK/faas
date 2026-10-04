@@ -88,6 +88,9 @@ func (m *MemStore) DispatchTrackedObjectUpload(_ context.Context, account, bucke
 	if credential, exists := m.objectS3Credentials[c.SubjectID]; exists && credential.URL != nil && (!validObjectURLReceipt(credential, c) || !m.objectURLCredentialLiveLocked(credential)) {
 		return cloneObjectUploadCompletion(c), ErrConflict
 	}
+	if !m.validCopyReceiptAuthorityLocked(c) {
+		return cloneObjectUploadCompletion(c), ErrConflict
+	}
 	c.WritePhase = ObjectUploadDispatched
 	c.RecoveryRetryAt = m.clock().Add(api.ObjectUploadRecoveryRetry)
 	m.objectUploadCompletions[id] = c
@@ -207,7 +210,7 @@ func (m *MemStore) RetryTrackedObjectUploadRecovery(_ context.Context, c ObjectU
 	if !ok || old.AccountID != c.AccountID || old.BucketID != c.BucketID {
 		return ErrNotFound
 	}
-	if old.EncryptionDefaultRevision != c.EncryptionDefaultRevision || !old.Encryption.Equal(c.Encryption) || !validTrackedUploadRecovery(old, m.clock()) || old.RecoveryToken != c.RecoveryToken {
+	if !sameCopySourceProvenance(old, c) || old.EncryptionDefaultRevision != c.EncryptionDefaultRevision || !old.Encryption.Equal(c.Encryption) || !validTrackedUploadRecovery(old, m.clock()) || old.RecoveryToken != c.RecoveryToken {
 		return ErrConflict
 	}
 	old.RecoveryToken = ""
@@ -260,6 +263,17 @@ func (m *MemStore) beginTrackedGatewayWrite(c ObjectUploadCompletion, p api.Obje
 	if b.State != "ready" {
 		return cloneObjectUploadCompletion(c), ErrConflict
 	}
+	if !m.validCopyReceiptAuthorityLocked(c) {
+		return cloneObjectUploadCompletion(c), ErrConflict
+	}
 	out, _, err := m.beginTrackedUploadLocked(c, p, true)
 	return out, err
+}
+
+func (m *MemStore) validCopyReceiptAuthorityLocked(c ObjectUploadCompletion) bool {
+	if emptyCopySourceProvenance(c) {
+		return true
+	}
+	g, _, err := m.resolveObjectS3CopySourceLocked(c.AccountID, c.SubjectID, c.SourceBucketID, c.SourceKey)
+	return err == nil && g.ID == c.SourceCopyGrantID && g.BucketID == c.BucketID
 }

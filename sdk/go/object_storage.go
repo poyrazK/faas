@@ -4,6 +4,9 @@ import "github.com/poyrazK/faas/sdk/go/internal/api"
 
 // The bucket catalog advertises the configured transfer contract.
 type (
+	ObjectS3CopySource                   = api.ObjectS3CopySource
+	ObjectS3CopySourceList               = api.ObjectS3CopySourceList
+	SetObjectS3CopySourceRequest         = api.SetObjectS3CopySourceRequest
 	ObjectWriteReceipt                   = api.ObjectWriteReceipt
 	ObjectWriteReceiptList               = api.ObjectWriteReceiptList
 	ObjectUploadRoute                    = api.ObjectUploadRoute

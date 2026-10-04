@@ -1123,6 +1123,8 @@ from .object_multipart_upload_list import ObjectMultipartUploadList
 from .object_multipart_upload_state import ObjectMultipartUploadState
 from .object_notification_rule import ObjectNotificationRule
 from .object_notification_rule_events_item import ObjectNotificationRuleEventsItem
+from .object_s3_copy_source import ObjectS3CopySource
+from .object_s3_copy_source_list import ObjectS3CopySourceList
 from .object_s3_credential import ObjectS3Credential
 from .object_s3_credential_list import ObjectS3CredentialList
 from .object_s3_credential_permission import ObjectS3CredentialPermission
@@ -1771,6 +1773,7 @@ from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
+from .set_object_s3_copy_source_request import SetObjectS3CopySourceRequest
 from .set_password_request import SetPasswordRequest
 from .set_platform_tenant_consumer_provisioning_policy_request import SetPlatformTenantConsumerProvisioningPolicyRequest
 from .set_platform_tenant_credential_policy_request import SetPlatformTenantCredentialPolicyRequest
@@ -3117,6 +3120,8 @@ __all__ = (
     "ObjectMultipartUploadState",
     "ObjectNotificationRule",
     "ObjectNotificationRuleEventsItem",
+    "ObjectS3CopySource",
+    "ObjectS3CopySourceList",
     "ObjectS3Credential",
     "ObjectS3CredentialList",
     "ObjectS3CredentialPermission",
@@ -3717,6 +3722,7 @@ __all__ = (
     "SetGraceWindowRequest",
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
+    "SetObjectS3CopySourceRequest",
     "SetPasswordRequest",
     "SetPlatformTenantConsumerProvisioningPolicyRequest",
     "SetPlatformTenantCredentialPolicyRequest",

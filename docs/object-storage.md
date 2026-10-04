@@ -388,6 +388,55 @@ baseline. A customer If-Match combined only with If-Unmodified-Since can use
 a mutable source because S3 gives that ETag predicate precedence. Other
 independently restrictive dates on mutable/null sources return 501. See
 [ADR-399](adr/399-immutable-s3-copy-sources-and-date-conditions.md).
+Cross-bucket copies use an explicit copy-only source grant on the destination
+S3 credential. Both buckets must belong to the same account and be ready on the
+same native S3 placement. Source bucket UUIDs remain unambiguous across apps
+with equal bucket names. Other placements/providers return an unsupported
+response. UUID selectors take precedence over names. If a bucket's name is
+itself a canonical UUID, use its bucket ID for a same-bucket copy. Other
+same-bucket names keep their current behavior.
+
+```sh
+gregale bucket copy-sources grant <destination-app> <destination-bucket-id> <credential-id> <source-bucket-id> 'allowed/'
+gregale bucket copy-sources list <destination-app> <destination-bucket-id> <credential-id>
+gregale bucket copy-sources revoke <destination-app> <destination-bucket-id> <credential-id> <source-bucket-id>
+```
+
+Use `CopySource: "<source-bucket-id>/allowed/object"` in CopyObject or
+UploadPartCopy; URL-encode the object key and append an owned public
+`?versionId=<source-version-id>` when selecting a version. This source grant
+permits copy operations only. The destination credential still cannot GET,
+HEAD, list or modify the source. The destination needs write permission;
+same-bucket copies continue to require read and write permission.
+
+The control API exposes GET `/s3-credentials/{credential}/copy-sources` and
+PUT/DELETE `/s3-credentials/{credential}/copy-sources/{source}` under the owned
+destination bucket route. PUT accepts `{ "prefix": "allowed/" }`; an empty
+prefix allows all source keys for copy. Grants are limited to 32 source buckets
+per credential, with literal prefixes at most 1024 UTF-8 bytes. Creating or
+changing a grant requires `storage:manage`, destination write and source read
+bucket authority. Listing and revocation require destination write authority;
+cleanup remains possible for revoked credentials and disabled S3 ingress.
+Go, Node and Python clients expose the corresponding typed methods.
+
+Identical updates preserve the grant. Changing a prefix or revoking and
+recreating a grant invalidates prepared copies. Grant and credential authority
+are checked atomically with ordinary copy admission and again at dispatch.
+Multipart copy checks the captured grant while atomically admitting copied
+bytes and claiming the single native part attempt. Already dispatched work
+retains completion/recovery authority after revocation. Managed credential
+rotation resolves the parent's current grants; signed URL credentials and
+rotation stages cannot independently acquire grants.
+
+Copies retain exact source version/ETag and metadata semantics. A versioned
+source requires its verified all-version inventory baseline; destination quota
+uses the destination's own inventory mode. Ordinary copies capture destination
+default encryption at admission, and parts retain session encryption. Source
+HEAD requests are metered to the source, and native copies to the destination.
+Recovery probes destination completion proof and never repeats an uncertain
+copy or source read. On an unversioned destination, loss of completion proof
+through overwrite/deletion retains the existing conservative pending contract.
+
 Multipart listing uses standard key/upload
 markers and excludes completed history. Unsupported listing options return 501.
 
@@ -640,6 +689,12 @@ The `accounting` object in the same provider-registry JSON sets uniform
 operator limits. It does not add an enable flag or account allowlist. Missing
 or null policy keeps metadata/cleanup usable but blocks new signed URLs.
 Policy changes require restarting API replicas with identical config.
+
+Copy-source grants have a separate fixed ceiling of 32 source buckets per
+destination credential. The API reports `copy_sources_per_credential` with
+`limit` and `observed` values when an additional grant exceeds that ceiling.
+Removing a grant frees one slot; narrowing or replacing its prefix uses the
+existing slot. Each literal UTF-8 prefix is limited to 1024 bytes.
 
 Example safety values **only**, not approved pricing or plan allowances:
 
@@ -1703,7 +1758,7 @@ native operation enforces its effective permissions.
 
 Set the SDK's `ServerSideEncryption` to `AES256`, `aws:kms` or `aws:kms:dsse`.
 For KMS, set `SSEKMSKeyId` to the returned `arn:gregale:kms:...` reference.
-Ordinary PUT, same-bucket copy and multipart initialization capture this
+Ordinary PUT, supported copies and multipart initialization capture this
 selection before dispatch. KMS bucket keys default explicitly to false; a KMS
 request may explicitly enable them. DSSE rejects bucket-key directives. Optional
 `SSEKMSEncryptionContext` accepts canonical base64 of a bounded JSON object of

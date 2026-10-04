@@ -5140,7 +5140,7 @@ INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_byte
 VALUES ($1,$2,$3,true,$4,clock_timestamp()+($5::int * interval '1 second'))
 ON CONFLICT (upload_id,part_number) DO UPDATE
 SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes),
-transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until;
+transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until,source_bucket_id=NULL,source_copy_grant_id=NULL,source_subject_id='',source_key='';
 
 -- name: ObjectMultipartPartRevision :exec
 UPDATE object_storage_multipart_uploads SET part_revision=part_revision+1,updated_at=clock_timestamp() WHERE id=$1;
@@ -5319,8 +5319,8 @@ SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id
 
 -- name: ObjectGatewayUploadInsert :one
 INSERT INTO object_upload_completions
- (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,source_key,source_etag,encryption_snapshot,recovery_retry_at,encryption_default_revision)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared',sqlc.arg(origin)::text,sqlc.arg(source_key)::text,sqlc.arg(source_etag)::text,sqlc.arg(encryption_snapshot)::jsonb,now()+make_interval(secs=>sqlc.arg(retry_seconds)::int),sqlc.arg(encryption_default_revision)::bigint) RETURNING *;
+ (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,source_key,source_etag,source_bucket_id,source_copy_grant_id,encryption_snapshot,recovery_retry_at,encryption_default_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared',sqlc.arg(origin)::text,sqlc.arg(source_key)::text,sqlc.arg(source_etag)::text,sqlc.narg(source_bucket_id)::uuid,sqlc.narg(source_copy_grant_id)::uuid,sqlc.arg(encryption_snapshot)::jsonb,now()+make_interval(secs=>sqlc.arg(retry_seconds)::int),sqlc.arg(encryption_default_revision)::bigint) RETURNING *;
 
 -- name: ObjectWriteReceiptGet :one
 SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND write_phase <> 'untracked';
@@ -5512,3 +5512,52 @@ DELETE FROM object_upload_routes WHERE account_id=$1 AND app_id=$2 AND name=$3;
 
 -- name: ObjectUploadIntentGet :one
 SELECT * FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3;
+
+-- name: ObjectCopySourceLockBuckets :many
+SELECT * FROM object_buckets WHERE account_id=$1 AND id IN (sqlc.arg(destination_bucket)::uuid,sqlc.arg(source_bucket)::uuid)
+ ORDER BY id FOR NO KEY UPDATE;
+
+-- name: ObjectCopySourceCredentialLock :one
+SELECT * FROM object_storage_s3_credentials WHERE id=$1 AND account_id=$2 AND bucket_id=$3
+ AND rotation_parent_id IS NULL AND url_request IS NULL FOR NO KEY UPDATE;
+
+-- name: ObjectCopySourcesList :many
+SELECT * FROM object_s3_copy_source_grants WHERE account_id=$1 AND bucket_id=$2 AND credential_id=$3 ORDER BY source_bucket_id;
+
+-- name: ObjectCopySourceGet :one
+SELECT * FROM object_s3_copy_source_grants WHERE credential_id=$1 AND source_bucket_id=$2;
+
+-- name: ObjectCopySourceCount :one
+SELECT count(*) FROM object_s3_copy_source_grants WHERE credential_id=$1;
+
+-- name: ObjectCopySourceUpsert :one
+INSERT INTO object_s3_copy_source_grants(id,account_id,bucket_id,credential_id,source_bucket_id,prefix)
+ VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(credential_id,source_bucket_id) DO UPDATE
+ SET id=EXCLUDED.id,prefix=EXCLUDED.prefix,updated_at=now() RETURNING *;
+
+-- name: ObjectCopySourceDelete :execrows
+DELETE FROM object_s3_copy_source_grants WHERE account_id=$1 AND bucket_id=$2 AND credential_id=$3 AND source_bucket_id=$4;
+
+-- name: ObjectCopySourceResolve :one
+SELECT sqlc.embed(g), sqlc.embed(s) FROM object_storage_s3_credentials c
+ JOIN object_storage_s3_credentials p ON p.id=coalesce(c.rotation_parent_id,c.id)
+ JOIN object_s3_copy_source_grants g ON g.credential_id=p.id
+ JOIN object_buckets d ON d.id=c.bucket_id JOIN object_buckets s ON s.id=g.source_bucket_id
+ WHERE c.id=sqlc.arg(credential_id)::uuid AND c.account_id=sqlc.arg(account_id)::uuid AND c.status='active'
+ AND c.permission IN ('write','read_write') AND c.url_request IS NULL
+ AND p.account_id=c.account_id AND p.bucket_id=c.bucket_id AND p.status='active' AND p.permission IN ('write','read_write') AND p.url_request IS NULL
+ AND g.account_id=c.account_id AND g.bucket_id=c.bucket_id AND g.source_bucket_id=sqlc.arg(source_bucket_id)::uuid
+ AND s.account_id=c.account_id AND d.account_id=c.account_id AND s.state='ready' AND d.state='ready'
+ AND (s.backend_id,s.backend_fingerprint)=(d.backend_id,d.backend_fingerprint)
+ AND left(sqlc.arg(object_key)::text,length(g.prefix))=g.prefix
+ AND NOT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id IN (s.id,d.id) AND state IN ('prepared','dispatched'));
+
+-- name: ObjectMultipartCopyPartBegin :exec
+INSERT INTO object_storage_multipart_part_grants(upload_id,part_number,max_bytes,cleanup_tracked,transfer_token,unsafe_until,source_bucket_id,source_copy_grant_id,source_subject_id,source_key)
+ VALUES($1,$2,$3,true,$4,clock_timestamp()+make_interval(secs=>sqlc.arg(window_seconds)::int),sqlc.arg(source_bucket_id)::uuid,sqlc.arg(source_copy_grant_id)::uuid,sqlc.arg(source_subject_id)::text,sqlc.arg(source_key)::text)
+ ON CONFLICT(upload_id,part_number) DO UPDATE SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes),
+ transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until,source_bucket_id=EXCLUDED.source_bucket_id,
+ source_copy_grant_id=EXCLUDED.source_copy_grant_id,source_subject_id=EXCLUDED.source_subject_id,source_key=EXCLUDED.source_key;
+
+-- name: ObjectCopySourceOwnedBucket :one
+SELECT * FROM object_buckets WHERE account_id=$1 AND id=$2 AND state<>'deleted';

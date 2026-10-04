@@ -52,6 +52,8 @@ type ObjectUploadCompletion struct {
 	Origin                   string
 	SourceKey                string
 	SourceETag               string
+	SourceBucketID           string `json:"-"`
+	SourceCopyGrantID        string `json:"-"`
 	WritePhase               string
 	RecoveryToken            string
 	RecoveryLeaseUntil       time.Time

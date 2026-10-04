@@ -996,6 +996,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_versioning.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_encryption.go"),
+		filepath.Join(root, "pkg", "api", "object_s3_copy_sources.go"),
 		filepath.Join(root, "pkg", "api", "object_lifecycle.go"),
 		filepath.Join(root, "pkg", "api", "object_notifications.go"),
 		filepath.Join(root, "pkg", "api", "object_version_delete.go"),

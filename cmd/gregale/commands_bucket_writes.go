@@ -60,8 +60,8 @@ func parseBucketWrites(args []string) (bucketWritesOptions, error) {
 	if _, err := uuid.Parse(o.bucket); err != nil {
 		return o, err
 	}
-	fs := flag.NewFlagSet("bucket writes", flag.ContinueOnError)
-	fs.SetOutput(osStderr)
+	fs := newFlagSet("bucket writes", flag.ContinueOnError)
+	setFlagOutput(fs, osStderr)
 	flags := args[3:]
 	switch o.action {
 	case "list":

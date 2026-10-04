@@ -12147,6 +12147,341 @@ func (q *Queries) ObjectCapacitySave(ctx context.Context, db DBTX, arg ObjectCap
 	return err
 }
 
+const objectCopySourceCount = `-- name: ObjectCopySourceCount :one
+SELECT count(*) FROM object_s3_copy_source_grants WHERE credential_id=$1
+`
+
+func (q *Queries) ObjectCopySourceCount(ctx context.Context, db DBTX, credentialID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, objectCopySourceCount, credentialID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const objectCopySourceCredentialLock = `-- name: ObjectCopySourceCredentialLock :one
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials WHERE id=$1 AND account_id=$2 AND bucket_id=$3
+ AND rotation_parent_id IS NULL AND url_request IS NULL FOR NO KEY UPDATE
+`
+
+type ObjectCopySourceCredentialLockParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectCopySourceCredentialLock(ctx context.Context, db DBTX, arg ObjectCopySourceCredentialLockParams) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectCopySourceCredentialLock, arg.ID, arg.AccountID, arg.BucketID)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
+		&i.RotationParentID,
+		&i.RotationWakeID,
+		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
+	)
+	return i, err
+}
+
+const objectCopySourceDelete = `-- name: ObjectCopySourceDelete :execrows
+DELETE FROM object_s3_copy_source_grants WHERE account_id=$1 AND bucket_id=$2 AND credential_id=$3 AND source_bucket_id=$4
+`
+
+type ObjectCopySourceDeleteParams struct {
+	AccountID      pgtype.UUID
+	BucketID       pgtype.UUID
+	CredentialID   pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) ObjectCopySourceDelete(ctx context.Context, db DBTX, arg ObjectCopySourceDeleteParams) (int64, error) {
+	result, err := db.Exec(ctx, objectCopySourceDelete,
+		arg.AccountID,
+		arg.BucketID,
+		arg.CredentialID,
+		arg.SourceBucketID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectCopySourceGet = `-- name: ObjectCopySourceGet :one
+SELECT id, account_id, credential_id, bucket_id, source_bucket_id, prefix, created_at, updated_at FROM object_s3_copy_source_grants WHERE credential_id=$1 AND source_bucket_id=$2
+`
+
+type ObjectCopySourceGetParams struct {
+	CredentialID   pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) ObjectCopySourceGet(ctx context.Context, db DBTX, arg ObjectCopySourceGetParams) (ObjectS3CopySourceGrant, error) {
+	row := db.QueryRow(ctx, objectCopySourceGet, arg.CredentialID, arg.SourceBucketID)
+	var i ObjectS3CopySourceGrant
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.CredentialID,
+		&i.BucketID,
+		&i.SourceBucketID,
+		&i.Prefix,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const objectCopySourceLockBuckets = `-- name: ObjectCopySourceLockBuckets :many
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets WHERE account_id=$1 AND id IN ($2::uuid,$3::uuid)
+ ORDER BY id FOR NO KEY UPDATE
+`
+
+type ObjectCopySourceLockBucketsParams struct {
+	AccountID         pgtype.UUID
+	DestinationBucket pgtype.UUID
+	SourceBucket      pgtype.UUID
+}
+
+func (q *Queries) ObjectCopySourceLockBuckets(ctx context.Context, db DBTX, arg ObjectCopySourceLockBucketsParams) ([]ObjectBucket, error) {
+	rows, err := db.Query(ctx, objectCopySourceLockBuckets, arg.AccountID, arg.DestinationBucket, arg.SourceBucket)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucket{}
+	for rows.Next() {
+		var i ObjectBucket
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Scope,
+			&i.Region,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.State,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.LastErrorCode,
+			&i.PublicRead,
+			&i.ServeAt,
+			&i.EnvironmentCloneSourceBucketID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectCopySourceOwnedBucket = `-- name: ObjectCopySourceOwnedBucket :one
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets WHERE account_id=$1 AND id=$2 AND state<>'deleted'
+`
+
+type ObjectCopySourceOwnedBucketParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) ObjectCopySourceOwnedBucket(ctx context.Context, db DBTX, arg ObjectCopySourceOwnedBucketParams) (ObjectBucket, error) {
+	row := db.QueryRow(ctx, objectCopySourceOwnedBucket, arg.AccountID, arg.ID)
+	var i ObjectBucket
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Scope,
+		&i.Region,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
+		&i.EnvironmentCloneSourceBucketID,
+	)
+	return i, err
+}
+
+const objectCopySourceResolve = `-- name: ObjectCopySourceResolve :one
+SELECT g.id, g.account_id, g.credential_id, g.bucket_id, g.source_bucket_id, g.prefix, g.created_at, g.updated_at, s.id, s.account_id, s.app_id, s.name, s.scope, s.region, s.backend_id, s.backend_fingerprint, s.physical_name, s.state, s.lease_token, s.lease_until, s.created_at, s.updated_at, s.attempt_count, s.retry_at, s.last_error_code, s.public_read, s.serve_at, s.environment_clone_source_bucket_id FROM object_storage_s3_credentials c
+ JOIN object_storage_s3_credentials p ON p.id=coalesce(c.rotation_parent_id,c.id)
+ JOIN object_s3_copy_source_grants g ON g.credential_id=p.id
+ JOIN object_buckets d ON d.id=c.bucket_id JOIN object_buckets s ON s.id=g.source_bucket_id
+ WHERE c.id=$1::uuid AND c.account_id=$2::uuid AND c.status='active'
+ AND c.permission IN ('write','read_write') AND c.url_request IS NULL
+ AND p.account_id=c.account_id AND p.bucket_id=c.bucket_id AND p.status='active' AND p.permission IN ('write','read_write') AND p.url_request IS NULL
+ AND g.account_id=c.account_id AND g.bucket_id=c.bucket_id AND g.source_bucket_id=$3::uuid
+ AND s.account_id=c.account_id AND d.account_id=c.account_id AND s.state='ready' AND d.state='ready'
+ AND (s.backend_id,s.backend_fingerprint)=(d.backend_id,d.backend_fingerprint)
+ AND left($4::text,length(g.prefix))=g.prefix
+ AND NOT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id IN (s.id,d.id) AND state IN ('prepared','dispatched'))
+`
+
+type ObjectCopySourceResolveParams struct {
+	CredentialID   pgtype.UUID
+	AccountID      pgtype.UUID
+	SourceBucketID pgtype.UUID
+	ObjectKey      string
+}
+
+type ObjectCopySourceResolveRow struct {
+	ObjectS3CopySourceGrant ObjectS3CopySourceGrant
+	ObjectBucket            ObjectBucket
+}
+
+func (q *Queries) ObjectCopySourceResolve(ctx context.Context, db DBTX, arg ObjectCopySourceResolveParams) (ObjectCopySourceResolveRow, error) {
+	row := db.QueryRow(ctx, objectCopySourceResolve,
+		arg.CredentialID,
+		arg.AccountID,
+		arg.SourceBucketID,
+		arg.ObjectKey,
+	)
+	var i ObjectCopySourceResolveRow
+	err := row.Scan(
+		&i.ObjectS3CopySourceGrant.ID,
+		&i.ObjectS3CopySourceGrant.AccountID,
+		&i.ObjectS3CopySourceGrant.CredentialID,
+		&i.ObjectS3CopySourceGrant.BucketID,
+		&i.ObjectS3CopySourceGrant.SourceBucketID,
+		&i.ObjectS3CopySourceGrant.Prefix,
+		&i.ObjectS3CopySourceGrant.CreatedAt,
+		&i.ObjectS3CopySourceGrant.UpdatedAt,
+		&i.ObjectBucket.ID,
+		&i.ObjectBucket.AccountID,
+		&i.ObjectBucket.AppID,
+		&i.ObjectBucket.Name,
+		&i.ObjectBucket.Scope,
+		&i.ObjectBucket.Region,
+		&i.ObjectBucket.BackendID,
+		&i.ObjectBucket.BackendFingerprint,
+		&i.ObjectBucket.PhysicalName,
+		&i.ObjectBucket.State,
+		&i.ObjectBucket.LeaseToken,
+		&i.ObjectBucket.LeaseUntil,
+		&i.ObjectBucket.CreatedAt,
+		&i.ObjectBucket.UpdatedAt,
+		&i.ObjectBucket.AttemptCount,
+		&i.ObjectBucket.RetryAt,
+		&i.ObjectBucket.LastErrorCode,
+		&i.ObjectBucket.PublicRead,
+		&i.ObjectBucket.ServeAt,
+		&i.ObjectBucket.EnvironmentCloneSourceBucketID,
+	)
+	return i, err
+}
+
+const objectCopySourceUpsert = `-- name: ObjectCopySourceUpsert :one
+INSERT INTO object_s3_copy_source_grants(id,account_id,bucket_id,credential_id,source_bucket_id,prefix)
+ VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(credential_id,source_bucket_id) DO UPDATE
+ SET id=EXCLUDED.id,prefix=EXCLUDED.prefix,updated_at=now() RETURNING id, account_id, credential_id, bucket_id, source_bucket_id, prefix, created_at, updated_at
+`
+
+type ObjectCopySourceUpsertParams struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	BucketID       pgtype.UUID
+	CredentialID   pgtype.UUID
+	SourceBucketID pgtype.UUID
+	Prefix         string
+}
+
+func (q *Queries) ObjectCopySourceUpsert(ctx context.Context, db DBTX, arg ObjectCopySourceUpsertParams) (ObjectS3CopySourceGrant, error) {
+	row := db.QueryRow(ctx, objectCopySourceUpsert,
+		arg.ID,
+		arg.AccountID,
+		arg.BucketID,
+		arg.CredentialID,
+		arg.SourceBucketID,
+		arg.Prefix,
+	)
+	var i ObjectS3CopySourceGrant
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.CredentialID,
+		&i.BucketID,
+		&i.SourceBucketID,
+		&i.Prefix,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const objectCopySourcesList = `-- name: ObjectCopySourcesList :many
+SELECT id, account_id, credential_id, bucket_id, source_bucket_id, prefix, created_at, updated_at FROM object_s3_copy_source_grants WHERE account_id=$1 AND bucket_id=$2 AND credential_id=$3 ORDER BY source_bucket_id
+`
+
+type ObjectCopySourcesListParams struct {
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	CredentialID pgtype.UUID
+}
+
+func (q *Queries) ObjectCopySourcesList(ctx context.Context, db DBTX, arg ObjectCopySourcesListParams) ([]ObjectS3CopySourceGrant, error) {
+	rows, err := db.Query(ctx, objectCopySourcesList, arg.AccountID, arg.BucketID, arg.CredentialID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectS3CopySourceGrant{}
+	for rows.Next() {
+		var i ObjectS3CopySourceGrant
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.CredentialID,
+			&i.BucketID,
+			&i.SourceBucketID,
+			&i.Prefix,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const objectDeletionActive = `-- name: ObjectDeletionActive :one
 SELECT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=$1 AND state IN ('prepared','dispatched'))::boolean AS active
 `
@@ -12320,8 +12655,8 @@ func (q *Queries) ObjectDeletionSave(ctx context.Context, db DBTX, arg ObjectDel
 
 const objectGatewayUploadInsert = `-- name: ObjectGatewayUploadInsert :one
 INSERT INTO object_upload_completions
- (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,source_key,source_etag,encryption_snapshot,recovery_retry_at,encryption_default_revision)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared',$10::text,$11::text,$12::text,$13::jsonb,now()+make_interval(secs=>$14::int),$15::bigint) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision
+ (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,source_key,source_etag,source_bucket_id,source_copy_grant_id,encryption_snapshot,recovery_retry_at,encryption_default_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared',$10::text,$11::text,$12::text,$13::uuid,$14::uuid,$15::jsonb,now()+make_interval(secs=>$16::int),$17::bigint) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id
 `
 
 type ObjectGatewayUploadInsertParams struct {
@@ -12337,6 +12672,8 @@ type ObjectGatewayUploadInsertParams struct {
 	Origin                    string
 	SourceKey                 string
 	SourceEtag                string
+	SourceBucketID            pgtype.UUID
+	SourceCopyGrantID         pgtype.UUID
 	EncryptionSnapshot        []byte
 	RetrySeconds              int32
 	EncryptionDefaultRevision int64
@@ -12356,6 +12693,8 @@ func (q *Queries) ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg Ob
 		arg.Origin,
 		arg.SourceKey,
 		arg.SourceEtag,
+		arg.SourceBucketID,
+		arg.SourceCopyGrantID,
 		arg.EncryptionSnapshot,
 		arg.RetrySeconds,
 		arg.EncryptionDefaultRevision,
@@ -12392,6 +12731,8 @@ func (q *Queries) ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg Ob
 		&i.EncryptionDispatched,
 		&i.EncryptionVerified,
 		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
 	)
 	return i, err
 }
@@ -13098,6 +13439,41 @@ func (q *Queries) ObjectMultipartClearTransfers(ctx context.Context, db DBTX, up
 	return err
 }
 
+const objectMultipartCopyPartBegin = `-- name: ObjectMultipartCopyPartBegin :exec
+INSERT INTO object_storage_multipart_part_grants(upload_id,part_number,max_bytes,cleanup_tracked,transfer_token,unsafe_until,source_bucket_id,source_copy_grant_id,source_subject_id,source_key)
+ VALUES($1,$2,$3,true,$4,clock_timestamp()+make_interval(secs=>$5::int),$6::uuid,$7::uuid,$8::text,$9::text)
+ ON CONFLICT(upload_id,part_number) DO UPDATE SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes),
+ transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until,source_bucket_id=EXCLUDED.source_bucket_id,
+ source_copy_grant_id=EXCLUDED.source_copy_grant_id,source_subject_id=EXCLUDED.source_subject_id,source_key=EXCLUDED.source_key
+`
+
+type ObjectMultipartCopyPartBeginParams struct {
+	UploadID          pgtype.UUID
+	PartNumber        int32
+	MaxBytes          int64
+	TransferToken     pgtype.Text
+	WindowSeconds     int32
+	SourceBucketID    pgtype.UUID
+	SourceCopyGrantID pgtype.UUID
+	SourceSubjectID   string
+	SourceKey         string
+}
+
+func (q *Queries) ObjectMultipartCopyPartBegin(ctx context.Context, db DBTX, arg ObjectMultipartCopyPartBeginParams) error {
+	_, err := db.Exec(ctx, objectMultipartCopyPartBegin,
+		arg.UploadID,
+		arg.PartNumber,
+		arg.MaxBytes,
+		arg.TransferToken,
+		arg.WindowSeconds,
+		arg.SourceBucketID,
+		arg.SourceCopyGrantID,
+		arg.SourceSubjectID,
+		arg.SourceKey,
+	)
+	return err
+}
+
 const objectMultipartCount = `-- name: ObjectMultipartCount :one
 SELECT count(*) FROM object_storage_multipart_uploads
 WHERE bucket_id=$1 AND state IN ('initiating','active','completing','completing_conditional','aborting')
@@ -13554,7 +13930,7 @@ INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_byte
 VALUES ($1,$2,$3,true,$4,clock_timestamp()+($5::int * interval '1 second'))
 ON CONFLICT (upload_id,part_number) DO UPDATE
 SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes),
-transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until
+transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until,source_bucket_id=NULL,source_copy_grant_id=NULL,source_subject_id='',source_key=''
 `
 
 type ObjectMultipartPartBeginParams struct {
@@ -15241,7 +15617,7 @@ func (q *Queries) ObjectTrackedGrantUpsert(ctx context.Context, db DBTX, arg Obj
 
 const objectTrackedUploadClaim = `-- name: ObjectTrackedUploadClaim :one
 UPDATE object_upload_completions SET recovery_token=$2,recovery_lease_until=now()+make_interval(secs=>$3::int)
- WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision
+ WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id
 `
 
 type ObjectTrackedUploadClaimParams struct {
@@ -15284,13 +15660,15 @@ func (q *Queries) ObjectTrackedUploadClaim(ctx context.Context, db DBTX, arg Obj
 		&i.EncryptionDispatched,
 		&i.EncryptionVerified,
 		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
 	)
 	return i, err
 }
 
 const objectTrackedUploadDispatch = `-- name: ObjectTrackedUploadDispatch :one
 UPDATE object_upload_completions SET write_phase='dispatched', encryption_dispatched=(encryption_snapshot<>'{}'), recovery_retry_at=now()+make_interval(secs=>$4::int)
- WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND write_phase='prepared' RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision
+ WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND write_phase='prepared' RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id
 `
 
 type ObjectTrackedUploadDispatchParams struct {
@@ -15339,12 +15717,14 @@ func (q *Queries) ObjectTrackedUploadDispatch(ctx context.Context, db DBTX, arg 
 		&i.EncryptionDispatched,
 		&i.EncryptionVerified,
 		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
 	)
 	return i, err
 }
 
 const objectTrackedUploadDue = `-- name: ObjectTrackedUploadDue :many
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision FROM object_upload_completions WHERE write_phase IN ('prepared','dispatched') AND recovery_retry_at<=now()
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE write_phase IN ('prepared','dispatched') AND recovery_retry_at<=now()
  AND (recovery_lease_until IS NULL OR recovery_lease_until<=now()) ORDER BY recovery_retry_at,id LIMIT $1
 `
 
@@ -15388,6 +15768,8 @@ func (q *Queries) ObjectTrackedUploadDue(ctx context.Context, db DBTX, limit int
 			&i.EncryptionDispatched,
 			&i.EncryptionVerified,
 			&i.EncryptionDefaultRevision,
+			&i.SourceBucketID,
+			&i.SourceCopyGrantID,
 		); err != nil {
 			return nil, err
 		}
@@ -15403,7 +15785,7 @@ const objectTrackedUploadFinish = `-- name: ObjectTrackedUploadFinish :one
 UPDATE object_upload_completions SET status=$2,etag=$3,error_code=$4,encryption_verified=$5::boolean,write_phase='settled',recovery_token='',recovery_lease_until=NULL,recovery_cursor='',
 	version_id=$6::text,
  recovery_versions_observed=recovery_versions_observed OR $7::boolean
- WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision
+ WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id
 `
 
 type ObjectTrackedUploadFinishParams struct {
@@ -15458,12 +15840,14 @@ func (q *Queries) ObjectTrackedUploadFinish(ctx context.Context, db DBTX, arg Ob
 		&i.EncryptionDispatched,
 		&i.EncryptionVerified,
 		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
 	)
 	return i, err
 }
 
 const objectTrackedUploadGet = `-- name: ObjectTrackedUploadGet :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
 `
 
 type ObjectTrackedUploadGetParams struct {
@@ -15506,6 +15890,8 @@ func (q *Queries) ObjectTrackedUploadGet(ctx context.Context, db DBTX, arg Objec
 		&i.EncryptionDispatched,
 		&i.EncryptionVerified,
 		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
 	)
 	return i, err
 }
@@ -15513,7 +15899,7 @@ func (q *Queries) ObjectTrackedUploadGet(ctx context.Context, db DBTX, arg Objec
 const objectTrackedUploadInsert = `-- name: ObjectTrackedUploadInsert :one
 INSERT INTO object_upload_completions
  (id,route_id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,idempotency_key,request_fingerprint,status,write_phase,encryption_snapshot,recovery_retry_at,encryption_default_revision)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending','prepared',$13::jsonb,now()+make_interval(secs=>$14::int),$15::bigint) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending','prepared',$13::jsonb,now()+make_interval(secs=>$14::int),$15::bigint) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id
 `
 
 type ObjectTrackedUploadInsertParams struct {
@@ -15584,12 +15970,14 @@ func (q *Queries) ObjectTrackedUploadInsert(ctx context.Context, db DBTX, arg Ob
 		&i.EncryptionDispatched,
 		&i.EncryptionVerified,
 		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
 	)
 	return i, err
 }
 
 const objectTrackedUploadReplay = `-- name: ObjectTrackedUploadReplay :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3 AND account_id=$4 AND app_id=$5
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3 AND account_id=$4 AND app_id=$5
 `
 
 type ObjectTrackedUploadReplayParams struct {
@@ -15640,6 +16028,8 @@ func (q *Queries) ObjectTrackedUploadReplay(ctx context.Context, db DBTX, arg Ob
 		&i.EncryptionDispatched,
 		&i.EncryptionVerified,
 		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
 	)
 	return i, err
 }
@@ -15835,7 +16225,7 @@ func (q *Queries) ObjectURLMultipartCredential(ctx context.Context, db DBTX, id 
 }
 
 const objectUploadIntentGet = `-- name: ObjectUploadIntentGet :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3
 `
 
 type ObjectUploadIntentGetParams struct {
@@ -15878,12 +16268,14 @@ func (q *Queries) ObjectUploadIntentGet(ctx context.Context, db DBTX, arg Object
 		&i.EncryptionDispatched,
 		&i.EncryptionVerified,
 		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
 	)
 	return i, err
 }
 
 const objectUploadReceiptGet = `-- name: ObjectUploadReceiptGet :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND route_id IS NOT DISTINCT FROM $4 AND subject_id=$5
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND route_id IS NOT DISTINCT FROM $4 AND subject_id=$5
 `
 
 type ObjectUploadReceiptGetParams struct {
@@ -15934,6 +16326,8 @@ func (q *Queries) ObjectUploadReceiptGet(ctx context.Context, db DBTX, arg Objec
 		&i.EncryptionDispatched,
 		&i.EncryptionVerified,
 		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
 	)
 	return i, err
 }
@@ -16787,7 +17181,7 @@ func (q *Queries) ObjectWriteInsert(ctx context.Context, db DBTX, arg ObjectWrit
 }
 
 const objectWriteReceiptGet = `-- name: ObjectWriteReceiptGet :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND write_phase <> 'untracked'
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND write_phase <> 'untracked'
 `
 
 type ObjectWriteReceiptGetParams struct {
@@ -16836,12 +17230,14 @@ func (q *Queries) ObjectWriteReceiptGet(ctx context.Context, db DBTX, arg Object
 		&i.EncryptionDispatched,
 		&i.EncryptionVerified,
 		&i.EncryptionDefaultRevision,
+		&i.SourceBucketID,
+		&i.SourceCopyGrantID,
 	)
 	return i, err
 }
 
 const objectWriteReceiptsList = `-- name: ObjectWriteReceiptsList :many
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
  AND status=$4::text
  AND (created_at,id) < (coalesce($5::timestamptz,'infinity'::timestamptz),coalesce($6::uuid,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
  ORDER BY created_at DESC,id DESC LIMIT $7::int
@@ -16905,6 +17301,8 @@ func (q *Queries) ObjectWriteReceiptsList(ctx context.Context, db DBTX, arg Obje
 			&i.EncryptionDispatched,
 			&i.EncryptionVerified,
 			&i.EncryptionDefaultRevision,
+			&i.SourceBucketID,
+			&i.SourceCopyGrantID,
 		); err != nil {
 			return nil, err
 		}
@@ -16917,7 +17315,7 @@ func (q *Queries) ObjectWriteReceiptsList(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectWriteReceiptsListAll = `-- name: ObjectWriteReceiptsListAll :many
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag, recovery_cursor, recovery_versions_observed, version_id, encryption_snapshot, encryption_dispatched, encryption_verified, encryption_default_revision, source_bucket_id, source_copy_grant_id FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
  AND (created_at,id) < (coalesce($4::timestamptz,'infinity'::timestamptz),coalesce($5::uuid,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
  ORDER BY created_at DESC,id DESC LIMIT $6::int
 `
@@ -16978,6 +17376,8 @@ func (q *Queries) ObjectWriteReceiptsListAll(ctx context.Context, db DBTX, arg O
 			&i.EncryptionDispatched,
 			&i.EncryptionVerified,
 			&i.EncryptionDefaultRevision,
+			&i.SourceBucketID,
+			&i.SourceCopyGrantID,
 		); err != nil {
 			return nil, err
 		}

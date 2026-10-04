@@ -314,30 +314,41 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name: "bucket", DocSlug: "object-storage", Short: "Manage object encryption keys, tags, versioning, lifecycle rules, deletion receipts and capacity",
-		Subcommands: []cliSub{{Name: "reconcile", Short: "Start, inspect or cancel a fenced capacity inventory", Subcommands: []cliSub{
-			{Name: "start", Short: "Pause writes and request capacity reconciliation", Positionals: []string{"<app>", "<bucket-id>"}},
-			{Name: "status", Short: "Show reconciliation progress and reclaimed capacity", Positionals: []string{"<app>", "<bucket-id>", "<job-id>"}},
-			{Name: "cancel", Short: "Cancel reconciliation and resume writes", Positionals: []string{"<app>", "<bucket-id>", "<job-id>"}},
-		}}, {Name: "writes", Short: "Inspect tracked writes and await recovery", Subcommands: []cliSub{
-			{Name: "list", Short: "List pending writes or recent completed and failed receipts", Positionals: []string{"<app>", "<bucket-id>"}, Flags: []cliFlag{
-				{Name: "status", Short: "pending (default), completed, failed or all", Value: "STATUS"},
-				{Name: "limit", Short: "page size (default 50, maximum 100)", Value: "N"},
-				{Name: "cursor", Short: "next page cursor", Value: "TOKEN"},
-			}},
-			{Name: "status", Short: "Read a tracked write receipt", Positionals: []string{"<app>", "<bucket-id>", "<receipt-id>"}},
-			{Name: "wait", Short: "Poll until completed or failed; pending timeout retains the receipt", Positionals: []string{"<app>", "<bucket-id>", "<receipt-id>"}, Flags: []cliFlag{
-				{Name: "timeout", Short: "maximum wait (default 5m)", Value: "DURATION"},
-				{Name: "poll-interval", Short: "time between reads (default 5s, minimum 1s)", Value: "DURATION"},
-			}},
-		}}, {Name: "tags", Short: "Read, replace or clear tags on current or selected data", Subcommands: []cliSub{
-			{Name: "get", Short: "Read object tags", Positionals: []string{"<app>", "<bucket-id>", "<key>", "[version-id|null]"}},
-			{Name: "set", Short: "Replace the complete tag set", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<URL-encoded-tags>", "[version-id|null]"}},
-			{Name: "clear", Short: "Remove all object tags", Positionals: []string{"<app>", "<bucket-id>", "<key>", "[version-id|null]"}},
-		}}, {Name: "deletions", Short: "Create or inspect durable object deletions", Subcommands: []cliSub{
-			{Name: "start", Short: "Delete current data or an owned version with a retry identity", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<request-id>", "[version-id|null]"}},
-			{Name: "status", Short: "Show a persisted deletion receipt", Positionals: []string{"<app>", "<bucket-id>", "<request-id>"}},
-		}}, {Name: "version-delete", Short: "Permanently delete an owned immutable version or marker", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<version-id>"}},
+		Name: "bucket", DocSlug: "object-storage", Short: "Manage object encryption, copy sources, tags, versioning, lifecycle rules, receipts and capacity",
+		Subcommands: []cliSub{{Name: "copy-sources", Short: "Manage copy-only owned source grants", Subcommands: []cliSub{
+			{Name: "list", Short: "List source grants for a destination credential", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>"}},
+			{Name: "grant", Short: "Allow copying an owned source bucket or prefix", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>", "[prefix]"}},
+			{Name: "revoke", Short: "Prevent new copy dispatch from a source", Positionals: []string{"<app>", "<bucket-id>", "<credential-id>", "<source-bucket-id>"}},
+		}}, {Name: "encryption-keys", Short: "List owned encryption capabilities and key references", Positionals: []string{"<app>", "<bucket-id>"}},
+			{Name: "encryption", Short: "Inspect or configure verified bucket encryption defaults", Subcommands: []cliSub{
+				{Name: "status", Short: "Show durable encryption progress", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "clear", Short: "Remove the default for new writes", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "AES256", Short: "Set provider AES256 encryption", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "aws:kms", Short: "Set owned KMS encryption", Positionals: []string{"<app>", "<bucket-id>", "<owned-key-ref>", "[bucket-key-enabled]"}},
+				{Name: "aws:kms:dsse", Short: "Set owned dual-layer KMS encryption", Positionals: []string{"<app>", "<bucket-id>", "<owned-key-ref>"}},
+			}}, {Name: "reconcile", Short: "Start, inspect or cancel a fenced capacity inventory", Subcommands: []cliSub{
+				{Name: "start", Short: "Pause writes and request capacity reconciliation", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "status", Short: "Show reconciliation progress and reclaimed capacity", Positionals: []string{"<app>", "<bucket-id>", "<job-id>"}},
+				{Name: "cancel", Short: "Cancel reconciliation and resume writes", Positionals: []string{"<app>", "<bucket-id>", "<job-id>"}},
+			}}, {Name: "writes", Short: "Inspect tracked writes and await recovery", Subcommands: []cliSub{
+				{Name: "list", Short: "List pending writes or recent completed and failed receipts", Positionals: []string{"<app>", "<bucket-id>"}, Flags: []cliFlag{
+					{Name: "status", Short: "pending (default), completed, failed or all", Value: "STATUS"},
+					{Name: "limit", Short: "page size (default 50, maximum 100)", Value: "N"},
+					{Name: "cursor", Short: "next page cursor", Value: "TOKEN"},
+				}},
+				{Name: "status", Short: "Read a tracked write receipt", Positionals: []string{"<app>", "<bucket-id>", "<receipt-id>"}},
+				{Name: "wait", Short: "Poll until completed or failed; pending timeout retains the receipt", Positionals: []string{"<app>", "<bucket-id>", "<receipt-id>"}, Flags: []cliFlag{
+					{Name: "timeout", Short: "maximum wait (default 5m)", Value: "DURATION"},
+					{Name: "poll-interval", Short: "time between reads (default 5s, minimum 1s)", Value: "DURATION"},
+				}},
+			}}, {Name: "tags", Short: "Read, replace or clear tags on current or selected data", Subcommands: []cliSub{
+				{Name: "get", Short: "Read object tags", Positionals: []string{"<app>", "<bucket-id>", "<key>", "[version-id|null]"}},
+				{Name: "set", Short: "Replace the complete tag set", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<URL-encoded-tags>", "[version-id|null]"}},
+				{Name: "clear", Short: "Remove all object tags", Positionals: []string{"<app>", "<bucket-id>", "<key>", "[version-id|null]"}},
+			}}, {Name: "deletions", Short: "Create or inspect durable object deletions", Subcommands: []cliSub{
+				{Name: "start", Short: "Delete current data or an owned version with a retry identity", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<request-id>", "[version-id|null]"}},
+				{Name: "status", Short: "Show a persisted deletion receipt", Positionals: []string{"<app>", "<bucket-id>", "<request-id>"}},
+			}}, {Name: "version-delete", Short: "Permanently delete an owned immutable version or marker", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<version-id>"}},
 			{Name: "lifecycle", Short: "Manage lifecycle rules and discovery progress", Subcommands: []cliSub{
 				{Name: "get", Short: "Read the complete lifecycle policy", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "set", Short: "Replace rules from a JSON file or stdin", Positionals: []string{"<app>", "<bucket-id>", "<JSON-file|->"}},

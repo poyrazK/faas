@@ -21,6 +21,9 @@ func (p *S3) CopyDateConditionalMultipartPart(ctx context.Context, bucket string
 }
 
 func (p *S3) CopyMultipartPart(ctx context.Context, bucket string, r MultipartPartCopyRequest, source CopySourceSnapshot) (CopyObjectResult, error) {
+	return p.copyMultipartPart(ctx, bucket, bucket, r, source)
+}
+func (p *S3) copyMultipartPart(ctx context.Context, sourceBucket, bucket string, r MultipartPartCopyRequest, source CopySourceSnapshot) (CopyObjectResult, error) {
 	if bucket == "" || !ValidKey(r.SourceKey) || !ValidKey(r.Key) || r.ProviderUploadID == "" || r.PartNumber < 1 || r.PartNumber > api.MaxMultipartParts || ctx.Err() != nil || !validCopySourceSize(source, api.MaxObjectUploadBytes) || r.SourceProviderVersionID != "" && r.SourceProviderVersionID != source.ProviderVersionID {
 		return CopyObjectResult{}, errors.Join(ErrWriteRejected, ErrInvalid)
 	}
@@ -32,7 +35,7 @@ func (p *S3) CopyMultipartPart(ctx context.Context, bucket string, r MultipartPa
 	}
 	out, err := p.client.UploadPartCopy(ctx, &s3.UploadPartCopyInput{
 		Bucket: aws.String(bucket), Key: aws.String(r.Key), UploadId: aws.String(r.ProviderUploadID),
-		PartNumber: aws.Int32(r.PartNumber), CopySource: aws.String(trackedCopySource(bucket, r.SourceKey, source)),
+		PartNumber: aws.Int32(r.PartNumber), CopySource: aws.String(trackedCopySource(sourceBucket, r.SourceKey, source)),
 		CopySourceIfMatch: trackedCopySourceMatch(source, r.Conditions), CopySourceIfNoneMatch: stringPtrOrNil(r.Conditions.IfNoneMatch),
 		CopySourceIfModifiedSince: r.Conditions.IfModifiedSince, CopySourceIfUnmodifiedSince: r.Conditions.IfUnmodifiedSince,
 		CopySourceRange: stringPtrOrNil(r.Range.String()),
