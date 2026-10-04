@@ -4583,6 +4583,23 @@ func ErrNoRollbackTarget() *Problem {
 		WithDocs(docsBase + "/deploys#rollback")
 }
 
+// ErrNoRollbackTargetWithCandidates is ErrNoRollbackTarget for an app whose
+// earlier deployments are still live at 0% traffic. That is the state a
+// traffic split leaves after `traffic promote`. Those deployments can be
+// rolled back to explicitly, but a default rollback won't pick one: it cannot
+// tell a former production deployment from a staged preview that never served.
+// The detail names them, newest first, and gives the explicit command.
+func ErrNoRollbackTargetWithCandidates(appSlug string, revisions []string) *Problem {
+	if len(revisions) == 0 {
+		return ErrNoRollbackTarget()
+	}
+	return NewProblem(http.StatusConflict, CodeNoRollbackTarget,
+		"Choose a rollback target",
+		fmt.Sprintf("no deployment was superseded, but these deployments are live at 0%% traffic: %s. Roll back to one explicitly: gregale rollback %s --to %s",
+			strings.Join(revisions, ", "), appSlug, revisions[0])).
+		WithDocs(docsBase + "/deploys#rollback")
+}
+
 // ErrRollbackTargetNotFound is returned by POST /v1/apps/{slug}/rollback when
 // the caller passes an explicit target_deployment_id (SAFE-RELEASES-G) that
 // does not match any deployment of this app, or does not exist. The detail
