@@ -13784,6 +13784,46 @@ func (q *Queries) ListApplicationStandardLogDestinations(ctx context.Context, db
 	return items, nil
 }
 
+const listApplicationStandardLogHealth = `-- name: ListApplicationStandardLogHealth :many
+SELECT (h.binding||jsonb_build_object('node_id',h.node_id::text,'session_id',h.session_id::text,'generation',h.generation,'event_revision',h.event_revision,
+ 'status',h.status,'reason',h.reason,'source_instance_id',coalesce(h.source_instance_id::text,''),'sequence',h.sequence,'event_at',h.event_at,'observed_at',h.observed_at))::jsonb AS observation
+ FROM application_standard_log_health h JOIN apps a ON a.id=h.app_id
+ JOIN application_standard_log_consumers c ON c.node_id=h.node_id AND c.session_id=h.session_id AND c.generation=h.generation
+ JOIN compute_nodes n ON n.id=h.node_id
+ WHERE a.id=$1::uuid AND a.org_id=$2::uuid AND a.status<>'deleted' AND h.org_id=a.org_id
+ AND n.active AND n.role IS DISTINCT FROM 'control-plane' AND h.binding=application_standard_log_binding(a.id,h.drain_id)
+ AND (h.status<>'healthy' OR EXISTS(SELECT 1 FROM instances i WHERE i.id=h.source_instance_id AND i.app_id=a.id))
+ AND h.observed_at>clock_timestamp()-make_interval(secs=>$3::double precision)
+ ORDER BY h.node_id,h.drain_id
+`
+
+type ListApplicationStandardLogHealthParams struct {
+	AppID            pgtype.UUID
+	OrgID            pgtype.UUID
+	FreshnessSeconds float64
+}
+
+// These are current reports, never an inferred roster or a whole-app acknowledgment.
+func (q *Queries) ListApplicationStandardLogHealth(ctx context.Context, db DBTX, arg ListApplicationStandardLogHealthParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listApplicationStandardLogHealth, arg.AppID, arg.OrgID, arg.FreshnessSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var observation []byte
+		if err := rows.Scan(&observation); err != nil {
+			return nil, err
+		}
+		items = append(items, observation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listApplicationStandardLogInventories = `-- name: ListApplicationStandardLogInventories :many
 SELECT (x.inventory||jsonb_build_object('node_id',x.node_id::text,'session_id',x.session_id::text,'generation',x.generation,'observed_at',x.observed_at))::jsonb AS observation
  FROM application_standard_log_inventories x JOIN apps a ON a.id=x.app_id
@@ -24120,6 +24160,56 @@ func (q *Queries) RecordApplicationStandardLogDelivery(ctx context.Context, db D
 		arg.EffectiveHash,
 		arg.ResourceConfigHash,
 		arg.DrainConfigHash,
+		arg.Sequence,
+	)
+	var observation []byte
+	err := row.Scan(&observation)
+	return observation, err
+}
+
+const recordApplicationStandardLogHealth = `-- name: RecordApplicationStandardLogHealth :one
+WITH recorded AS (
+ INSERT INTO application_standard_log_health(app_id,org_id,drain_id,node_id,session_id,generation,binding,event_revision,status,reason,source_instance_id,sequence,event_at,observed_at)
+ VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,
+ $6::bigint,$7::jsonb,$8::bigint,$9::text,$10::text,
+ $11::uuid,$12::bigint,clock_timestamp(),clock_timestamp())
+ ON CONFLICT(app_id,drain_id,node_id) DO UPDATE SET org_id=EXCLUDED.org_id,session_id=EXCLUDED.session_id,generation=EXCLUDED.generation,
+ binding=EXCLUDED.binding,event_revision=EXCLUDED.event_revision,status=EXCLUDED.status,reason=EXCLUDED.reason,
+ source_instance_id=EXCLUDED.source_instance_id,sequence=EXCLUDED.sequence,observed_at=EXCLUDED.observed_at
+ RETURNING app_id, org_id, drain_id, node_id, session_id, generation, binding, event_revision, status, reason, source_instance_id, sequence, event_at, observed_at
+)
+SELECT (binding||jsonb_build_object('node_id',node_id::text,'session_id',session_id::text,'generation',generation,'event_revision',event_revision,
+ 'status',status,'reason',reason,'source_instance_id',coalesce(source_instance_id::text,''),'sequence',sequence,'event_at',event_at,'observed_at',observed_at))::jsonb AS observation FROM recorded
+`
+
+type RecordApplicationStandardLogHealthParams struct {
+	AppID            pgtype.UUID
+	OrgID            pgtype.UUID
+	DrainID          pgtype.UUID
+	NodeID           pgtype.UUID
+	SessionID        pgtype.UUID
+	Generation       int64
+	Binding          []byte
+	EventRevision    int64
+	Status           string
+	Reason           string
+	SourceInstanceID pgtype.UUID
+	Sequence         int64
+}
+
+func (q *Queries) RecordApplicationStandardLogHealth(ctx context.Context, db DBTX, arg RecordApplicationStandardLogHealthParams) ([]byte, error) {
+	row := db.QueryRow(ctx, recordApplicationStandardLogHealth,
+		arg.AppID,
+		arg.OrgID,
+		arg.DrainID,
+		arg.NodeID,
+		arg.SessionID,
+		arg.Generation,
+		arg.Binding,
+		arg.EventRevision,
+		arg.Status,
+		arg.Reason,
+		arg.SourceInstanceID,
 		arg.Sequence,
 	)
 	var observation []byte

@@ -192,6 +192,7 @@ func (m *MemStore) eraseStandardLogInventoriesLocked(appID string) {
 }
 
 func (m *MemStore) eraseStandardLogConsumerNodeLocked(nodeID string) {
+	m.eraseStandardLogHealthLocked("", "", nodeID)
 	delete(m.applicationStandardLogConsumers, canonicalStandardUUID(nodeID))
 	for key, s := range m.applicationStandardLogConsumerSessions {
 		if sameStandardUUID(s.NodeID, nodeID) {

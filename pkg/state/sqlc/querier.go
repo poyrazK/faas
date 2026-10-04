@@ -843,6 +843,8 @@ type Querier interface {
 	ListApplicationStandardExceptions(ctx context.Context, db DBTX, arg ListApplicationStandardExceptionsParams) ([][]byte, error)
 	ListApplicationStandardLogDeliveries(ctx context.Context, db DBTX, arg ListApplicationStandardLogDeliveriesParams) ([][]byte, error)
 	ListApplicationStandardLogDestinations(ctx context.Context, db DBTX, arg ListApplicationStandardLogDestinationsParams) ([]ApplicationStandardLogDestination, error)
+	// These are current reports, never an inferred roster or a whole-app acknowledgment.
+	ListApplicationStandardLogHealth(ctx context.Context, db DBTX, arg ListApplicationStandardLogHealthParams) ([][]byte, error)
 	// Fresh current-node facts only; missing nodes are never inferred from this list.
 	ListApplicationStandardLogInventories(ctx context.Context, db DBTX, arg ListApplicationStandardLogInventoriesParams) ([][]byte, error)
 	ListApplicationStandardPublishers(ctx context.Context, db DBTX, arg ListApplicationStandardPublishersParams) ([]ApplicationStandardPublisher, error)
@@ -1438,6 +1440,7 @@ type Querier interface {
 	RecordAppSecretRevocationAck(ctx context.Context, db DBTX, arg RecordAppSecretRevocationAckParams) (int64, error)
 	RecordApplicationStandardEgress(ctx context.Context, db DBTX, arg RecordApplicationStandardEgressParams) ([]byte, error)
 	RecordApplicationStandardLogDelivery(ctx context.Context, db DBTX, arg RecordApplicationStandardLogDeliveryParams) ([]byte, error)
+	RecordApplicationStandardLogHealth(ctx context.Context, db DBTX, arg RecordApplicationStandardLogHealthParams) ([]byte, error)
 	RecordApplicationStandardLogInventory(ctx context.Context, db DBTX, arg RecordApplicationStandardLogInventoryParams) ([]byte, error)
 	RecordApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg RecordApplicationStandardSnapshotCaptureParams) (int64, error)
 	RecordInstanceApplicationStandardPromotionReceipt(ctx context.Context, db DBTX, arg RecordInstanceApplicationStandardPromotionReceiptParams) (int64, error)

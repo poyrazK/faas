@@ -127,6 +127,6 @@ func (m *appLogDrainManager) runLogDrainWorker(ctx context.Context, w *appLogDra
 	var joined sync.WaitGroup
 	joined.Add(2)
 	go func() { defer joined.Done(); sender.Run(ctx) }()
-	go func() { defer joined.Done(); m.streamWorker(ctx, w.spec, sender) }()
+	go func() { defer joined.Done(); m.streamWorker(ctx, w.spec, sender, w.standardHealth) }()
 	go func() { joined.Wait(); close(w.done) }()
 }

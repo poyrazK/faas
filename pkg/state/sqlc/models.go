@@ -1040,6 +1040,23 @@ type ApplicationStandardLogDestination struct {
 	CreatedAt        pgtype.Timestamptz
 }
 
+type ApplicationStandardLogHealth struct {
+	AppID            pgtype.UUID
+	OrgID            pgtype.UUID
+	DrainID          pgtype.UUID
+	NodeID           pgtype.UUID
+	SessionID        pgtype.UUID
+	Generation       int64
+	Binding          []byte
+	EventRevision    int64
+	Status           string
+	Reason           string
+	SourceInstanceID pgtype.UUID
+	Sequence         int64
+	EventAt          pgtype.Timestamptz
+	ObservedAt       pgtype.Timestamptz
+}
+
 type ApplicationStandardLogInventory struct {
 	AppID      pgtype.UUID
 	OrgID      pgtype.UUID

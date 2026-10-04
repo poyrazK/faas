@@ -38,6 +38,10 @@ type inventoryGatewayFixture struct {
 }
 
 func newInventoryGatewayFixture(t *testing.T, s inventoryGatewayTestStore) inventoryGatewayFixture {
+	return newInventoryGatewayFixtureWithTarget(t, s, "https://logs.example.com")
+}
+
+func newInventoryGatewayFixtureWithTarget(t *testing.T, s inventoryGatewayTestStore, target string) inventoryGatewayFixture {
 	t.Helper()
 	ctx := t.Context()
 	owner, err := s.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{Email: "inventory-gateway@example.com", Plan: api.PlanPro})
@@ -45,7 +49,7 @@ func newInventoryGatewayFixture(t *testing.T, s inventoryGatewayTestStore) inven
 		t.Fatal(err)
 	}
 	f := inventoryGatewayFixture{s: s, owner: owner}
-	f.company, err = s.CreateApplicationStandardLogDestination(ctx, state.ApplicationStandardLogDestinationCreate{OrgID: owner.PersonalOrg.ID, ActorID: owner.Account.ID, Name: "company", Kind: "http_json", TargetURL: "https://logs.example.com", AuthHeaderSealed: []byte("good")})
+	f.company, err = s.CreateApplicationStandardLogDestination(ctx, state.ApplicationStandardLogDestinationCreate{OrgID: owner.PersonalOrg.ID, ActorID: owner.Account.ID, Name: "company", Kind: "http_json", TargetURL: target, AuthHeaderSealed: []byte("good")})
 	if err != nil {
 		t.Fatal(err)
 	}

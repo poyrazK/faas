@@ -2002,3 +2002,54 @@ This decision was originally numbered ADR-435 on the application-standards
 branch. It is renumbered because the integrated preview-route-report decision
 also uses 435. Earlier application-standards code comments and preserved migration
 headers using ADR-435 refer to this decision; frozen history is not rewritten.
+
+## Current-process logging health evidence
+
+The first successful standard-bound delivery remains a historical private fact.
+It cannot certify current provider health: the same sender can subsequently
+retry, exhaust its queue, or observe missing source records. The legacy health
+row is also insufficient because it is shared across nodes and is not bound to
+the standard projection or gateway startup session.
+
+Add a distinct private per-application, drain and gateway-node health fact. Its
+binding includes desired revision, effective hash, organization-owned resource
+identity/configuration digest and the exact physical sender digest. The existing
+gateway startup UUID and monotonically fenced generation identify the reporter.
+Sender callbacks report unknown/idle before delivery, healthy/delivered only
+after real HTTP success and durable queue acknowledgment, and bounded degraded
+reason codes for retries, failed delivery, queue faults, durable losses, source
+gaps and unavailable source streams. Reports contain neither log content nor
+provider errors, URLs or credentials. A successful retry can repair a transient
+failure; a later delivery cannot repair records already lost by the same worker.
+Durable dead-letter counts reestablish loss when a worker opens its queue.
+A durable enqueue refusal retains the source cursor for retry and reports a
+transient queue fault; the legacy dropped counter alone does not prove lost logs.
+
+A worker retains one current event, rather than a report per log line. Events
+increase when the outcome changes. Storage rejects an older event or a different
+payload using the same event number within the same binding and startup session.
+A new current binding or startup can begin its event sequence again. The bounded
+signed event counter fails closed with a reporter-exhausted outcome. PostgreSQL
+owns both clocks: periodic refresh advances reporter freshness while preserving
+the last outcome-change time. A heartbeat is not another successful delivery.
+
+The gateway refresh uses the existing two-second budget and a sorted rotating
+worker cursor. The spool lease, current startup session and live worker are
+required. Superseded gateways stop reporting. Memory and PostgreSQL recheck
+current parents, application/project ownership, unexpired exceptions, enabled
+sender configuration, resource binding, reporter session and node eligibility;
+healthy events also require an existing source instance belonging to the app.
+PostgreSQL guards raw writes with the nonwaiting controls fence and parent,
+resource, reporter, fact and source locks. Private facts disappear from current
+reads after 90 seconds without refresh, on source erasure for a healthy event,
+or immediately when their binding/session becomes stale. Application, drain and
+node erasure removes the retained facts.
+
+These reports describe the last outcome observed by a current process. They do
+not probe a quiet provider, assert its future availability, establish a fleet
+roster, cover every instance or advance whole-application observation. Quiet
+services retain unknown provider health and separate loaded-inventory evidence;
+no synthetic customer log is emitted. Cross-application endpoint health, full
+consumer convergence, rollout wave release, native KVM enforcement/recovery and
+release activation remain separate acceptance requirements. The mutation gate
+remains disabled.

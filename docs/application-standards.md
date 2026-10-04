@@ -763,3 +763,19 @@ A node acknowledgment alone does not advance the application's observed revision
 or release a rollout wave. Complete fleet/consumer convergence and native Linux
 amd64 root/KVM enforcement, recovery and leakcheck acceptance remain required.
 The mutation release gate remains disabled.
+
+## Logging health reporting
+
+Standard-managed log senders now retain private health reports tied to their
+exact configuration, gateway node and startup session. Real delivery callbacks
+report success, retries and failures; queue loss and source gaps remain degraded
+when later logs succeed. An older success cannot overwrite a newer failure.
+Storage verifies current ownership, installed revision and exception deadlines.
+
+Periodic refresh keeps the reporter current for 90 seconds and preserves when
+the outcome last changed. It does not make a quiet destination successful or
+produce synthetic customer logs. Restarts, changed standards, erased healthy
+sources and unavailable nodes invalidate earlier reports. These private reports
+are prerequisites for complete convergence and do not release rollout waves or
+advance the application's observed revision. Native and fleet acceptance remain
+open, and the mutation release gate remains disabled.

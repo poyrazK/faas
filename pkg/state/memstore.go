@@ -174,6 +174,7 @@ type MemStore struct {
 	applicationStandardLogConsumers            map[string]ApplicationStandardLogConsumerSession
 	applicationStandardLogConsumerSessions     map[string]ApplicationStandardLogConsumerSession
 	applicationStandardLogInventories          map[string]ApplicationStandardLogInventoryObservation
+	applicationStandardLogHealth               map[string]ApplicationStandardLogHealthObservation
 	applicationStandardEgressObservations      map[string]ApplicationStandardEgressObservation
 	applicationStandardReviewPlans             map[string]ApplicationStandardReviewPlan
 	applicationStandardOperations              map[string]ApplicationStandardOperation

@@ -8269,6 +8269,33 @@ SELECT (x.inventory||jsonb_build_object('node_id',x.node_id::text,'session_id',x
  ORDER BY x.node_id;
 
 
+-- name: RecordApplicationStandardLogHealth :one
+WITH recorded AS (
+ INSERT INTO application_standard_log_health(app_id,org_id,drain_id,node_id,session_id,generation,binding,event_revision,status,reason,source_instance_id,sequence,event_at,observed_at)
+ VALUES(sqlc.arg(app_id)::uuid,sqlc.arg(org_id)::uuid,sqlc.arg(drain_id)::uuid,sqlc.arg(node_id)::uuid,sqlc.arg(session_id)::uuid,
+ sqlc.arg(generation)::bigint,sqlc.arg(binding)::jsonb,sqlc.arg(event_revision)::bigint,sqlc.arg(status)::text,sqlc.arg(reason)::text,
+ sqlc.narg(source_instance_id)::uuid,sqlc.arg(sequence)::bigint,clock_timestamp(),clock_timestamp())
+ ON CONFLICT(app_id,drain_id,node_id) DO UPDATE SET org_id=EXCLUDED.org_id,session_id=EXCLUDED.session_id,generation=EXCLUDED.generation,
+ binding=EXCLUDED.binding,event_revision=EXCLUDED.event_revision,status=EXCLUDED.status,reason=EXCLUDED.reason,
+ source_instance_id=EXCLUDED.source_instance_id,sequence=EXCLUDED.sequence,observed_at=EXCLUDED.observed_at
+ RETURNING *
+)
+SELECT (binding||jsonb_build_object('node_id',node_id::text,'session_id',session_id::text,'generation',generation,'event_revision',event_revision,
+ 'status',status,'reason',reason,'source_instance_id',coalesce(source_instance_id::text,''),'sequence',sequence,'event_at',event_at,'observed_at',observed_at))::jsonb AS observation FROM recorded;
+
+-- These are current reports, never an inferred roster or a whole-app acknowledgment.
+-- name: ListApplicationStandardLogHealth :many
+SELECT (h.binding||jsonb_build_object('node_id',h.node_id::text,'session_id',h.session_id::text,'generation',h.generation,'event_revision',h.event_revision,
+ 'status',h.status,'reason',h.reason,'source_instance_id',coalesce(h.source_instance_id::text,''),'sequence',h.sequence,'event_at',h.event_at,'observed_at',h.observed_at))::jsonb AS observation
+ FROM application_standard_log_health h JOIN apps a ON a.id=h.app_id
+ JOIN application_standard_log_consumers c ON c.node_id=h.node_id AND c.session_id=h.session_id AND c.generation=h.generation
+ JOIN compute_nodes n ON n.id=h.node_id
+ WHERE a.id=sqlc.arg(app_id)::uuid AND a.org_id=sqlc.arg(org_id)::uuid AND a.status<>'deleted' AND h.org_id=a.org_id
+ AND n.active AND n.role IS DISTINCT FROM 'control-plane' AND h.binding=application_standard_log_binding(a.id,h.drain_id)
+ AND (h.status<>'healthy' OR EXISTS(SELECT 1 FROM instances i WHERE i.id=h.source_instance_id AND i.app_id=a.id))
+ AND h.observed_at>clock_timestamp()-make_interval(secs=>sqlc.arg(freshness_seconds)::double precision)
+ ORDER BY h.node_id,h.drain_id;
+
 -- name: ListPendingApplicationStandardEgress :many
 WITH serving AS (
  SELECT DISTINCT i.app_id,i.node_id FROM instances i WHERE i.node_id IS NOT NULL

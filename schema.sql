@@ -1296,6 +1296,59 @@ $$;
 
 
 --
+-- Name: application_standard_log_health_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_health_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE actual jsonb;
+BEGIN
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||NEW.app_id::text,0)) THEN
+  RAISE EXCEPTION 'logging health projection is busy' USING ERRCODE='55P03';
+ END IF;
+ PERFORM h.app_id FROM application_standard_log_health h
+  WHERE h.app_id=NEW.app_id AND h.drain_id=NEW.drain_id AND h.node_id=NEW.node_id FOR UPDATE NOWAIT;
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+  JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,acct,e NOWAIT;
+ PERFORM d.id FROM app_log_drains d JOIN application_standard_control_bindings b ON b.app_id=d.app_id AND b.field='log_destinations' AND b.physical_id=d.id::text
+  JOIN application_standard_log_destinations r ON r.id=b.resource_id
+  WHERE d.app_id=NEW.app_id AND d.id=NEW.drain_id FOR SHARE OF d,b,r NOWAIT;
+ PERFORM c.node_id FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
+  WHERE c.node_id=NEW.node_id FOR SHARE OF c,n NOWAIT;
+ IF NOT EXISTS(SELECT 1 FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
+  WHERE c.node_id=NEW.node_id AND c.session_id=NEW.session_id AND c.generation=NEW.generation
+   AND n.active AND n.role IS DISTINCT FROM 'control-plane') THEN
+  RAISE EXCEPTION 'logging health consumer changed' USING ERRCODE='55000';
+ END IF;
+ IF NEW.status='healthy' THEN
+  PERFORM i.id FROM instances i WHERE i.id=NEW.source_instance_id AND i.app_id=NEW.app_id FOR SHARE NOWAIT;
+  IF NOT FOUND THEN RAISE EXCEPTION 'logging health source changed' USING ERRCODE='40001'; END IF;
+ END IF;
+ actual:=application_standard_log_binding(NEW.app_id,NEW.drain_id);
+ IF actual IS NULL OR actual<>NEW.binding OR actual->>'org_id'<>NEW.org_id::text THEN
+  RAISE EXCEPTION 'logging health binding changed' USING ERRCODE='40001';
+ END IF;
+ NEW.observed_at:=clock_timestamp();
+ NEW.event_at:=NEW.observed_at;
+ IF TG_OP='UPDATE' THEN
+  IF (NEW.app_id,NEW.drain_id,NEW.node_id) IS DISTINCT FROM (OLD.app_id,OLD.drain_id,OLD.node_id) THEN
+   RAISE EXCEPTION 'logging health identity changed' USING ERRCODE='40001';
+  END IF;
+  IF NEW.binding=OLD.binding AND NEW.session_id=OLD.session_id AND NEW.generation=OLD.generation THEN
+   IF NEW.event_revision<OLD.event_revision OR (NEW.event_revision=OLD.event_revision AND
+    (NEW.status,NEW.reason,NEW.source_instance_id,NEW.sequence) IS DISTINCT FROM (OLD.status,OLD.reason,OLD.source_instance_id,OLD.sequence)) THEN
+    RAISE EXCEPTION 'logging health event superseded' USING ERRCODE='GS001';
+   END IF;
+   IF NEW.event_revision=OLD.event_revision THEN NEW.event_at:=OLD.event_at; END IF;
+  END IF;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: application_standard_log_inventory(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9132,6 +9185,40 @@ CREATE TABLE public.application_standard_log_destinations (
     CONSTRAINT application_standard_log_destinations_kind_check CHECK ((kind = ANY (ARRAY['http_json'::text, 'otlp'::text]))),
     CONSTRAINT application_standard_log_destinations_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128))),
     CONSTRAINT application_standard_log_destinations_target_url_check CHECK (((target_url ~~ 'https://%'::text) AND (octet_length(target_url) <= 2048)))
+);
+
+
+--
+-- Name: application_standard_log_health; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_log_health (
+    app_id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    drain_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    binding jsonb NOT NULL,
+    event_revision bigint NOT NULL,
+    status text NOT NULL,
+    reason text NOT NULL,
+    source_instance_id uuid,
+    sequence bigint NOT NULL,
+    event_at timestamp with time zone NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    CONSTRAINT application_standard_log_health_binding_check CHECK ((jsonb_typeof(binding) = 'object'::text)),
+    CONSTRAINT application_standard_log_health_check CHECK (((event_revision < '9223372036854775807'::bigint) OR ((status = 'degraded'::text) AND (reason = 'reporter_exhausted'::text)))),
+    CONSTRAINT application_standard_log_health_check1 CHECK ((((status = 'healthy'::text) AND (reason = 'delivered'::text) AND (source_instance_id IS NOT NULL) AND (sequence > 0)) OR ((status = 'unknown'::text) AND (reason = 'idle'::text) AND (source_instance_id IS NULL) AND (sequence = 0)) OR ((status = 'degraded'::text) AND (reason <> ALL (ARRAY['idle'::text, 'delivered'::text])) AND (source_instance_id IS NULL) AND (sequence = 0)))),
+    CONSTRAINT application_standard_log_health_event_at_check CHECK ((event_at > '1970-01-01 02:00:00+02'::timestamp with time zone)),
+    CONSTRAINT application_standard_log_health_event_revision_check CHECK ((event_revision > 0)),
+    CONSTRAINT application_standard_log_health_generation_check CHECK ((generation > 0)),
+    CONSTRAINT application_standard_log_health_observed_at_check CHECK ((observed_at > '1970-01-01 02:00:00+02'::timestamp with time zone)),
+    CONSTRAINT application_standard_log_health_reason_check CHECK ((reason = ANY (ARRAY['idle'::text, 'delivered'::text, 'retrying'::text, 'delivery_failed'::text, 'queue_fault'::text, 'records_lost'::text, 'source_gap'::text, 'stream_unavailable'::text, 'reporter_exhausted'::text]))),
+    CONSTRAINT application_standard_log_health_sequence_check CHECK ((sequence >= 0)),
+    CONSTRAINT application_standard_log_health_session_id_check CHECK ((session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT application_standard_log_health_source_instance_id_check CHECK ((source_instance_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT application_standard_log_health_status_check CHECK ((status = ANY (ARRAY['unknown'::text, 'healthy'::text, 'degraded'::text])))
 );
 
 
@@ -17138,6 +17225,14 @@ ALTER TABLE ONLY public.application_standard_log_destinations
 
 ALTER TABLE ONLY public.application_standard_log_destinations
     ADD CONSTRAINT application_standard_log_destinations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: application_standard_log_health application_standard_log_health_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_health
+    ADD CONSTRAINT application_standard_log_health_pkey PRIMARY KEY (app_id, drain_id, node_id);
 
 
 --
@@ -25901,6 +25996,13 @@ CREATE TRIGGER application_standard_log_destination_immutable BEFORE DELETE OR U
 
 
 --
+-- Name: application_standard_log_health application_standard_log_health_current; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_health_current BEFORE INSERT OR UPDATE ON public.application_standard_log_health FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_health_guard();
+
+
+--
 -- Name: application_standard_log_inventories application_standard_log_inventory_current; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28210,6 +28312,38 @@ ALTER TABLE ONLY public.application_standard_log_deliveries
 
 ALTER TABLE ONLY public.application_standard_log_destinations
     ADD CONSTRAINT application_standard_log_destinations_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_health application_standard_log_health_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_health
+    ADD CONSTRAINT application_standard_log_health_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_health application_standard_log_health_drain_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_health
+    ADD CONSTRAINT application_standard_log_health_drain_id_fkey FOREIGN KEY (drain_id) REFERENCES public.app_log_drains(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_health application_standard_log_health_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_health
+    ADD CONSTRAINT application_standard_log_health_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_health application_standard_log_health_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_health
+    ADD CONSTRAINT application_standard_log_health_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
 
 
 --

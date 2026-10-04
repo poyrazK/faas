@@ -151,6 +151,7 @@ func (m *MemStore) ListApplicationStandardLogDeliveries(ctx context.Context, org
 }
 
 func (m *MemStore) eraseStandardLogDeliveriesLocked(appID string) {
+	m.eraseStandardLogHealthLocked(appID, "", "")
 	for key, r := range m.applicationStandardLogDeliveries {
 		if sameStandardUUID(r.AppID, appID) {
 			delete(m.applicationStandardLogDeliveries, key)
@@ -159,6 +160,7 @@ func (m *MemStore) eraseStandardLogDeliveriesLocked(appID string) {
 }
 
 func (m *MemStore) eraseStandardLogDrainDeliveriesLocked(drainID string) {
+	m.eraseStandardLogHealthLocked("", drainID, "")
 	for key, r := range m.applicationStandardLogDeliveries {
 		if sameStandardUUID(r.DrainID, drainID) {
 			delete(m.applicationStandardLogDeliveries, key)
