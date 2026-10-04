@@ -149,3 +149,35 @@ func (s *server) startOnDemandTLSProbe(ctx context.Context, log *slog.Logger, do
 		}
 	}()
 }
+
+// onDemandTLSAdvice replaces the doctor's TLS-check copy for custom domains
+// served by ADR-520's edge. There the certificate is issued on the first
+// HTTPS connection and the customer can act only on DNS, CAA records and
+// proxies; the cert-engine wording describes tenant surfaces, which keep it.
+// ok is false when the default copy already fits.
+func onDemandTLSAdvice(d state.CustomDomain, obs state.DomainDoctorObservation) (detail, remediation string, ok bool) {
+	if !api.CustomDomainTLSOnDemand() || obs.SurfaceID != "" {
+		return "", "", false
+	}
+	target := customDomainTarget()
+	pointAtEdge := "Make sure " + d.Domain + " resolves straight to " + target +
+		" (DNS only, no CDN proxy) and that any CAA records allow letsencrypt.org; Gregale retries automatically."
+	switch obs.CertState {
+	case certStatusPending:
+		return "certificate not issued yet",
+			"Gregale requests it on the first HTTPS connection once " + d.Domain + " resolves to " + target + "; check again in a minute.", true
+	case certStatusFailed:
+		return "certificate issuance failed: " + obs.LastError, pointAtEdge, true
+	case certStatusDialFailed:
+		return "HTTPS check on port 443 failed: " + obs.LastError, pointAtEdge, true
+	case certStatusCDN:
+		return "a CDN or proxy answers for " + d.Domain + " with its own certificate",
+			"Turn off the proxy for this record (DNS only) so it resolves to " + target + ".", true
+	case "", "none":
+		if d.Verified() {
+			return "certificate pending issuance",
+				"Gregale requests it on the first HTTPS connection once " + d.Domain + " resolves to " + target + ".", true
+		}
+	}
+	return "", "", false
+}

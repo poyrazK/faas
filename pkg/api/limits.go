@@ -38,6 +38,53 @@ const (
 	OCIHealthcheckDurationMaxSeconds   = int64((1<<63 - 1) / time.Second)
 )
 
+// Operations protocol limits apply before customer schemas are evaluated.
+const (
+	OperationJSONMaxDepth                      = 64
+	OperationJSONMaxNumberBytes                = 256
+	OperationJSONMaxExponent                   = 10000
+	OperationNameMaxBytes                      = 64
+	OperationPathMaxBytes                      = 2048
+	OperationIdempotencyKeyMaxBytes            = 128
+	OperationReportIDMaxBytes                  = 128
+	OperationRecoveryEvidenceMaxBytes          = 4096
+	OperationEventsPageMax                     = 100
+	OperationRetentionPageMax                  = 500
+	OperationDefinitionBodyMaxBytes            = 140000
+	OperationReportBodyMaxBytes                = 16384
+	OperationRecoveryBodyOverheadBytes         = 8192
+	OperationSubmissionMaxBytes                = 1 << 20
+	OperationStartBodyOverheadBytes            = 1024
+	OperationArtifactNameMaxBytes              = 128
+	OperationArtifactKeyMaxBytes               = 1024
+	OperationArtifactURIMaxBytes               = 2048
+	OperationArtifactSpoolMaxBytes       int64 = 256 << 20
+	OperationArtifactTransfersPerAccount       = 4
+	OperationArtifactTransfersPerNode          = 8
+	OperationArtifactTransferTimeout           = 30 * time.Second
+)
+
+// OperationPlanLimits bounds durable control-plane state independently from
+// VM admission. Existing asynchronous execution quotas continue to apply.
+type OperationPlanLimits struct {
+	Allowed                     bool
+	DefinitionsPerApp           int
+	PendingPerAccount           int
+	ReportsPerOperation         int
+	RecoveriesPerOperation      int
+	ReportBytes                 int
+	SchemaBytes                 int
+	ProgressStages              int
+	SubscriptionsPerAccount     int
+	ReportMinIntervalMS         int
+	ResultRetentionSeconds      int
+	EventRetentionSeconds       int
+	IdempotencyRetentionSeconds int
+	ArtifactsPerOperation       int
+	ArtifactMaxBytes            int64
+	ArtifactTotalMaxBytes       int64
+}
+
 // A restore hook is on the wake critical path. Keep its customer timeout
 // below the host's five-second resume deadline, including transport overhead.
 const (
@@ -212,6 +259,17 @@ const (
 	MaxExclusiveRequestBytes       = 2 << 20
 	MaxExclusiveErrorBytes         = 1024
 	MaxExclusiveInspectionRows     = 100
+
+	OperationStreamLease           = 30 * time.Second
+	OperationStreamRenewInterval   = 10 * time.Second
+	OperationStreamAuthInterval    = time.Second
+	OperationStreamPollInterval    = 5 * time.Second
+	OperationStreamMaxDuration     = 5 * time.Minute
+	OperationMetricsReadTimeout    = 5 * time.Second
+	OperationStreamWriteTimeout    = 5 * time.Second
+	OperationStreamReleaseTimeout  = 2 * time.Second
+	OperationExecutionLeaseMax     = 2 * time.Minute
+	OperationExecutionRenewTimeout = 5 * time.Second
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
@@ -447,7 +505,8 @@ const (
 // reference. Add a field here (never a literal elsewhere) when a new limit
 // appears, and cover it in limits_test.go.
 type Limits struct {
-	Plan Plan
+	Operations OperationPlanLimits
+	Plan       Plan
 
 	// Deploy-time quotas (enforced by apid before work happens, spec §4.2).
 	DeployedApps int // max apps in state active|evicted_cold
@@ -2382,6 +2441,7 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       5,
 		MaxSourceBytesPerInvocation: 64 * 1024,
 		AsyncInvokeAllowed:          true,
+		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 604800, EventRetentionSeconds: 86400, IdempotencyRetentionSeconds: 2592000, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20},
 		// Hobby: 3 attempts. Tight on the cheap tier — a worker that
 		// keeps re-trying a bad payload would otherwise burn the
 		// per-app rps budget and starve the rest of the queue.
@@ -2796,6 +2856,7 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       50,
 		MaxSourceBytesPerInvocation: 256 * 1024,
 		AsyncInvokeAllowed:          true,
+		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 2592000, EventRetentionSeconds: 604800, IdempotencyRetentionSeconds: 7776000, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20},
 		// Pro: 10 attempts. Trades tolerance against "a poisoned row
 		// churns indefinitely". At 10 retries a transient downstream
 		// flap has plenty of room, while a permanently-bad payload
@@ -3175,6 +3236,7 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       1_000_000,
 		MaxSourceBytesPerInvocation: 1024 * 1024,
 		AsyncInvokeAllowed:          true,
+		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7776000, EventRetentionSeconds: 2592000, IdempotencyRetentionSeconds: 15552000, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20},
 		// Scale: 25 attempts. The highest tier gets the most
 		// tolerance so an upstream outage lasting a few minutes
 		// doesn't dump the queue into dead_letter on a single bad

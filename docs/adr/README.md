@@ -497,3 +497,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-498: Advisory production route budgets and saved incidents](498-production-route-monitoring.md) — continuously evaluate serving-route budgets and retain bounded incidents
 - [ADR-499: Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) — attribute incidents to request-time tenant or consumer cohorts with bounded recovery tracking
 - [ADR-530: Private TCP addressing between services](530-private-tcp-service-addressing.md)
+
+## Customer operation decisions
+
+- [ADR-521: customer operations above execution ledgers](521-customer-operations.md) — typed application contracts, customer ownership, separate business and delivery outcomes, and controlled recovery

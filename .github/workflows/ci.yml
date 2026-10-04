@@ -643,7 +643,7 @@ jobs:
     # database per fixture, so the test binary has a strict 20-minute budget.
     # Allow headroom for race compilation, coverage, PostgreSQL contract gates,
     # and artifact upload after the main suite completes.
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: read
       id-token: write
@@ -709,7 +709,10 @@ jobs:
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '${{ matrix.package_pattern }}')
           test -n "$PKGS"
           printf '%s\n' "$PKGS"
-          go test -race -count=1 -p 4 -timeout=20m -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
+          # pkg/state alone measured 812-1129 s against the old 20m budget on
+          # main (runs 37159406697, 37188638566, 37165712111), so ordinary
+          # runner variance tipped it into a timeout without any test hanging.
+          go test -race -count=1 -p 4 -timeout=25m -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
 
       - name: pkg/state coverage gate
         if: ${{ matrix.state_coverage }}

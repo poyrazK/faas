@@ -1169,8 +1169,11 @@ type DomainPageItem struct {
 	CertExpiresAt    string
 	CertLastError    string
 	DNSLastCheckedAt string
-	DoctorURL        string
-	Doctor           *DomainDoctorSummary
+	// DNSRecords are the records to publish (ADR-520): the TXT ownership
+	// proof, the routing CNAME, and A/AAAA alternatives for a zone apex.
+	DNSRecords []api.DNSRecordInstruction
+	DoctorURL  string
+	Doctor     *DomainDoctorSummary
 }
 
 // DomainDoctorSummary is the latest cached doctor result. The page does not
