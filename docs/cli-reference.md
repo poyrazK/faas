@@ -4186,7 +4186,13 @@ Set / clear the account&#39;s overage cap (--clear | &lt;cents&gt;)
 
 Park an app cold (kill all live instances)
 
-`gregale park`
+`gregale park <slug>`
+
+Examples:
+
+```sh
+gregale park my-api
+```
 
 
 ## plan
@@ -4943,7 +4949,20 @@ Per-route throttle recommendations + dry-run preview (gregale throttle-suggestio
 
 Wake a parked app (pulls out of snapshot)
 
-`gregale wake`
+`gregale wake <slug> [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the requested wake to reach running |  |
+| `--timeout <DURATION>` | maximum time to wait for the requested wake (default 1m) |  |
+| `--poll-interval <DURATION>` | interval between instance status checks (default 250ms) |  |
+
+Examples:
+
+```sh
+gregale wake my-api
+gregale wake --wait --timeout 2m my-api
+```
 
 
 ## traffic
