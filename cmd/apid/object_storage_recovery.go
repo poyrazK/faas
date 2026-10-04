@@ -49,8 +49,13 @@ func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBuck
 			err = backend.Provider.CreateBucket(callCtx, b.PhysicalName)
 		}
 	} else {
-		if b.EnvironmentCloneSourceBucketID != "" {
+		var owned bool
+		owned, err = s.ownedBucketCleanupRequired(callCtx, b)
+		if err == nil && owned {
 			err = emptyOwnedObjectBucket(callCtx, backend.Provider, b.PhysicalName)
+			if errors.Is(err, objectstorage.ErrNotFound) {
+				err = nil
+			}
 		}
 		if err == nil {
 			err = backend.Provider.DeleteBucket(callCtx, b.PhysicalName)
@@ -76,15 +81,33 @@ func (s *server) executeBucketOperation(ctx context.Context, st state.ObjectBuck
 	return err
 }
 
+func (s *server) ownedBucketCleanupRequired(ctx context.Context, bucket state.ObjectBucket) (bool, error) {
+	if bucket.EnvironmentCloneSourceBucketID != "" {
+		return true, nil
+	}
+	app, err := s.store.AppByID(ctx, bucket.AppID)
+	if err != nil {
+		return false, err
+	}
+	if app.AccountID != bucket.AccountID {
+		return false, state.ErrConflict
+	}
+	return app.PreviewOfSlug != "" && app.PreviewPrNumber == 0, nil
+}
+
 // emptyOwnedObjectBucket removes objects only after the caller has identified
-// an app-owned physical bucket from its durable placement record.
+// an app-owned physical bucket and claimed its durable deletion fence. Current
+// object deletion cannot reclaim versioned/protected buckets safely.
 func emptyOwnedObjectBucket(ctx context.Context, provider objectstorage.Provider, physicalName string) error {
+	if err := ownedBucketCleanupPreflight(ctx, provider, physicalName); err != nil {
+		return err
+	}
 	for range api.ObjectStorageInventoryMaxPages {
 		page, err := provider.ListObjects(ctx, physicalName, "", "", 1000)
 		if err != nil {
 			return err
 		}
-		if len(page.Items) > 1000 || (len(page.Items) == 0 && page.NextCursor != "") {
+		if len(page.Items) > api.MaxObjectS3ListItems || len(page.CommonPrefixes) != 0 || (len(page.Items) == 0 && page.NextCursor != "") {
 			return objectstorage.ErrInvalid
 		}
 		if len(page.Items) == 0 {
@@ -100,6 +123,28 @@ func emptyOwnedObjectBucket(ctx context.Context, provider objectstorage.Provider
 		}
 	}
 	return objectstorage.ErrUnavailable
+}
+
+func ownedBucketCleanupPreflight(ctx context.Context, provider objectstorage.Provider, physicalName string) error {
+	if native, ok := provider.(objectstorage.BucketVersioningProvider); ok {
+		versioning, err := native.GetBucketVersioning(ctx, physicalName)
+		if err != nil {
+			return err
+		}
+		if versioning.Status != "" {
+			return objectstorage.ErrUnsupported
+		}
+	}
+	if native, ok := provider.(objectstorage.BucketObjectLockProvider); ok {
+		protection, err := native.GetBucketObjectLock(ctx, physicalName)
+		if err != nil {
+			return err
+		}
+		if protection.Enabled {
+			return objectstorage.ErrUnsupported
+		}
+	}
+	return nil
 }
 
 func (s *server) retryBucketOperation(ctx context.Context, st state.ObjectBucketStore, b state.ObjectBucket, cause error) error {

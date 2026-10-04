@@ -439,7 +439,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 ## S3 service decisions
 
 - [ADR-530: S3 compatibility and multipart capacity admission](530-s3-compatibility-and-multipart-capacity.md)
-- [ADR-531: S3 multipart transfer fencing and cleanup](531-s3-multipart-transfer-fencing-and-cleanup.md)
+- [ADR-568: S3 multipart transfer fencing and cleanup](568-s3-multipart-transfer-fencing-and-cleanup.md)
 - [ADR-532: Conditional S3 multipart completion](532-conditional-s3-multipart-completion.md)
 - [ADR-533: Safe object capacity reconciliation](533-safe-object-capacity-reconciliation.md)
 - [ADR-534: Recoverable application object uploads](534-recoverable-application-object-uploads.md)

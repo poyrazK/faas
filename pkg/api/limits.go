@@ -8203,6 +8203,10 @@ const (
 	MaxObjectS3UploadMarkerBytes = 128
 )
 
+// Allows a maximum-size native listing (including escaped 4096-byte upload IDs)
+// while bounding SDK metadata decoding. Object GET payloads stream separately.
+const MaxObjectProviderMetadataResponseBytes int64 = 32 << 20
+
 // Versioning transitions fence writes through provider propagation and inventory.
 const (
 	ObjectBucketVersioningPropagation        = 15 * time.Minute

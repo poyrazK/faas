@@ -2357,6 +2357,37 @@ END $$;
 
 
 --
+-- Name: fence_object_bucket_pending_writes(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_bucket_pending_writes() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bid uuid; bucket_state text;
+BEGIN
+ IF TG_TABLE_NAME='object_storage_write_admissions' THEN
+  SELECT state INTO bucket_state FROM object_buckets WHERE id=NEW.bucket_id FOR SHARE;
+  IF bucket_state IS DISTINCT FROM 'ready' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_pending_write_fenced',MESSAGE='Bucket cleanup fences new write admission';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF TG_OP='DELETE' THEN bid:=OLD.id;
+ ELSE
+  IF NEW.state NOT IN ('deleting','deleted') THEN RETURN NEW; END IF;
+  bid:=NEW.id;
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_storage_write_admissions w WHERE w.bucket_id=bid AND w.state='pending'
+  AND (w.multipart_upload_id IS NULL OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads m
+   WHERE m.id=w.multipart_upload_id AND m.state IN ('initiating','active','completing','completing_conditional','aborting')))) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_pending_write_fenced',MESSAGE='Settle accepted writes before bucket cleanup';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: fence_object_capacity_write(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -24697,6 +24728,13 @@ CREATE TRIGGER object_bucket_object_lock_protected BEFORE INSERT OR DELETE OR UP
 
 
 --
+-- Name: object_buckets object_bucket_pending_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_pending_write_fence BEFORE DELETE OR UPDATE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.fence_object_bucket_pending_writes();
+
+
+--
 -- Name: object_bucket_versioning object_bucket_versioning_protected; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25072,6 +25110,13 @@ CREATE TRIGGER object_versioning_rebase_fence BEFORE UPDATE OF baseline_bytes, b
 --
 
 CREATE TRIGGER object_versioning_scan_fence BEFORE UPDATE ON public.object_storage_capacity_reconciliations FOR EACH ROW EXECUTE FUNCTION public.fence_object_versioning_inventory();
+
+
+--
+-- Name: object_storage_write_admissions object_write_bucket_cleanup_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_write_bucket_cleanup_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_object_bucket_pending_writes();
 
 
 --

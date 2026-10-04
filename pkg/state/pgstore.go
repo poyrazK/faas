@@ -25411,7 +25411,7 @@ func mapErr(err error) error {
 				return ErrInvalidArgument
 			}
 			if pgErr.ConstraintName == "object_copy_source_fenced" || pgErr.ConstraintName == "object_bucket_default_fenced" || pgErr.ConstraintName == "object_bucket_encryption_fenced" || pgErr.ConstraintName == "object_fixed_multipart_admission_fenced" || pgErr.ConstraintName == "object_upload_route_encryption_fenced" || pgErr.ConstraintName == "object_url_capability_fenced" || pgErr.ConstraintName == "object_deletion_fenced" || pgErr.ConstraintName == "object_capacity_write_fenced" ||
-				pgErr.ConstraintName == "app_has_object_buckets" ||
+				pgErr.ConstraintName == "object_bucket_pending_write_fenced" || pgErr.ConstraintName == "app_has_object_buckets" ||
 				pgErr.ConstraintName == "app_secret_managed_postgres_owner" {
 				return ErrConflict
 			}

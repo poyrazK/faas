@@ -53,13 +53,20 @@ incomplete listing retains both the cleanup fence and part-byte reservation;
 subsequent verified cleanup releases the reservation. No live provider tests
 are part of this acceptance.
 
-The next hardening priorities remain stronger retained proof for uncertain
-mutable/unversioned operations and coordinated cleanup of retained/protected
-versions. A further adapter pass should bound metadata response bytes before
-SDK deserialization, in addition to the decoded entry counts checked here.
-Object Lock enrollment stays disabled until its per-version protection and
-cleanup paths are qualified. Feature parity work such as replication, SSE-C
-and cross-placement transfers remains separately scoped below.
+The follow-up audit covers those remaining hardening priorities:
+
+| Finding | Hardening | Remaining work |
+| --- | --- | --- |
+| Native metadata bodies were decoded without a wire-byte budget | Bound every native S3 metadata/error body to 32 MiB before SDK decoding. This admits maximum-size escaped upload listings. Close rejected upstream bodies; successful object GETs retain streaming and HEAD lengths remain object sizes. Oversized mutation acknowledgments remain uncertain, including any observed native-version accounting fence. | Provider qualification remains separate from local acceptance. |
+| Current unencrypted write proof accepted ambiguous headers | Apply exact ETag/receipt header and native version/delete-marker validation to every encryption profile, write acknowledgment, including brokered gateway PUTs. Existing multipart current-object version validation is preserved. | Unversioned or mutable/null proof may still be overwritten or deleted. Absence or elapsed time cannot settle it; durable retained proof is still required. |
+| Developer cleanup removed data before claiming the bucket | Claim before provider contact, block pending write admissions atomically in memory/PostgreSQL, and preserve this guard for older SQL writers with an append-only migration. Recovery recognizes developer buckets after restart and persists failed cleanup retries. | Legacy untracked signed writers cannot be retroactively fenced at their provider. |
+| Current-object cleanup could create markers in versioned buckets while leaving retained data | Read native versioning/protection before automated developer/clone cleanup. Enabled, Suspended, protected or unreadable configurations defer before object deletion and retain the bucket owner/fence. | Implement durable, paginated, exact-version cleanup with retention/legal-hold checks, proof draining and all-version accounting. Account grace deletion currently preserves active bucket ownership but does not orchestrate these jobs. |
+
+These changes harden evidence handling and cleanup admission; they do not add
+retained proof or protected recursive deletion. Object Lock enrollment stays
+disabled until per-version protection and cleanup paths are qualified. Feature
+parity work such as replication, SSE-C and cross-placement transfers remains
+separately scoped below.
 
 | Area | Required behavior | Status / acceptance evidence |
 | --- | --- | --- |

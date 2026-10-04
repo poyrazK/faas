@@ -128,6 +128,7 @@ func TestGatewayTrackedPutOutcomes(t *testing.T) {
 		name                                       string
 		status                                     int
 		etag                                       string
+		headers                                    http.Header
 		transport, metrics, sign, dispatch, finish bool
 		wantStatus                                 int
 		wantPhase, wantReceipt                     string
@@ -138,6 +139,13 @@ func TestGatewayTrackedPutOutcomes(t *testing.T) {
 		{name: "timeout", status: 408, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
 		{name: "missing etag", status: 200, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
 		{name: "invalid etag", status: 200, etag: strings.Repeat("x", api.MaxObjectWriteETagBytes+1), wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
+		{name: "duplicate etag", status: 200, headers: http.Header{"Etag": {`"etag"`, `"other"`}}, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
+		{name: "duplicate version", status: 200, etag: `"etag"`, headers: http.Header{"X-Amz-Version-Id": {"native", "other"}}, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
+		{name: "oversized version", status: 200, etag: `"etag"`, headers: http.Header{"X-Amz-Version-Id": {strings.Repeat("v", api.ObjectProviderVersionIDMaxBytes+1)}}, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
+		{name: "delete marker", status: 200, etag: `"etag"`, headers: http.Header{"X-Amz-Delete-Marker": {"true"}}, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
+		{name: "invalid marker", status: 200, etag: `"etag"`, headers: http.Header{"X-Amz-Delete-Marker": {"unknown"}}, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
+		{name: "duplicate marker", status: 200, etag: `"etag"`, headers: http.Header{"X-Amz-Delete-Marker": {"false", "false"}}, wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
+		{name: "control in etag", status: 200, etag: "etag\x00", wantStatus: 503, wantPhase: state.ObjectUploadDispatched, wantReceipt: "pending"},
 		{name: "condition rejected", status: 412, wantStatus: 412, wantPhase: state.ObjectUploadSettled, wantReceipt: "failed"},
 		{name: "metric failure", metrics: true, wantStatus: 503, wantPhase: state.ObjectUploadSettled, wantReceipt: "failed"},
 		{name: "sign failure", sign: true, wantStatus: 503, wantPhase: state.ObjectUploadSettled, wantReceipt: "failed"},
@@ -158,7 +166,11 @@ func TestGatewayTrackedPutOutcomes(t *testing.T) {
 				if tc.transport {
 					return nil, errors.New("lost")
 				}
-				return &http.Response{StatusCode: tc.status, Header: http.Header{"Etag": []string{tc.etag}}, Body: io.NopCloser(strings.NewReader("private provider response"))}, nil
+				headers := http.Header{"Etag": []string{tc.etag}}
+				for key, values := range tc.headers {
+					headers[key] = values
+				}
+				return &http.Response{StatusCode: tc.status, Header: headers, Body: io.NopCloser(strings.NewReader("private provider response"))}, nil
 			})
 			st.dispatchLost = tc.dispatch
 			st.finishLost = tc.finish

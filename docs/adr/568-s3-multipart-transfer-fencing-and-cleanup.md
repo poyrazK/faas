@@ -1,9 +1,12 @@
-# ADR-531: S3 multipart transfer fencing and cleanup
+# ADR-568: S3 multipart transfer fencing and cleanup
 
 Date: 2026-10-01
 Status: Accepted
 
 ## Context
+
+Renumbered from ADR-531 on 2026-10-04 to resolve the runtime-base convergence
+collision after the S3 merge. The decision is unchanged.
 
 ADR-530 reserves provider part storage before a branded UploadPart. Aborted
 reservations remain charged because a provider abort can race with an arriving
@@ -90,3 +93,11 @@ legacy defaults, and rollback guards.
 Reference: [AWS AbortMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html)
 requires checking ListParts and notes that in-flight parts can require repeated
 aborts before storage is freed.
+
+Post-merge bucket cleanup must claim its durable deletion fence before touching
+developer/clone data. Pending write admissions block the claim; PostgreSQL also
+rejects older direct SQL deletion/cascade and late admission across the fence.
+The normal bucket recovery worker recognizes developer buckets after restart.
+Native Enabled/Suspended versioning, Object Lock or unreadable configuration
+defers automated emptying before any current-object mutation. Durable protected
+version cleanup and retained write-proof draining remain follow-up work.

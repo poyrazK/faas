@@ -46,6 +46,7 @@ func NewS3(c BackendConfig, getenv func(string) string) (Provider, error) {
 		attribute.String("gregale.binding.type", "object_storage"),
 		attribute.String("gregale.binding.provider", "s3"),
 	)
+	httpClient.Transport = s3ResponseTransport{base: httpClient.Transport}
 	client := s3.New(s3.Options{
 		Region:                     c.S3Region,
 		BaseEndpoint:               aws.String(c.Endpoint),
@@ -311,7 +312,7 @@ func (p *S3) writeObjectEncrypted(ctx context.Context, bucket, key string, body 
 		}
 		return UploadResult{}, normalize(err)
 	}
-	if out == nil || !validUploadETag(aws.ToString(out.ETag)) || !validEncryptionResponse(out.ResultMetadata, encryption) {
+	if out == nil || !validUploadETag(aws.ToString(out.ETag)) || !validTrackedProofHeaders(out.ResultMetadata, ReservedUploadReceiptMetadataKey) || !validCopySnapshotVersion(out.ResultMetadata, aws.ToString(out.VersionId), "") || multipartResultIsMarker(out.ResultMetadata) || !validEncryptionResponse(out.ResultMetadata, encryption) {
 		return UploadResult{}, ErrUnavailable
 	}
 	return UploadResult{Encryption: publicObjectEncryption(encryption), ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}, nil
