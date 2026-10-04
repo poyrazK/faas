@@ -4200,8 +4200,11 @@ paths:
         Requires personal directory-account deploy-write access and verified email.
         Persists an immutable image, increasing generation and complete verified
         target snapshot before regional I/O. Keys indexed by region authorize
-        this request only and are never retained. Pending regions require their
-        keys to resume; matching UUID/image retries keep the original snapshot.
+        this request only and are never retained. They establish six-day scoped
+        consent sealed by directory apid before registration. Background recovery
+        and later releases reuse active consent without admin keys; missing or
+        expired consent requires renewed keys. Matching UUID/image retries keep
+        the original snapshot. Missing sealing identities fail closed.
         Redirects are refused. The request is bounded to 16384 bytes and 90 seconds,
         with at most 32 targets and four concurrent regions. Timeouts remain
         pending; retry the same UUID/image to recover regional acceptance receipts.
@@ -4227,7 +4230,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Changed immutable image or protocol allocation bound.
+          description: Changed immutable image or release/delegation protocol bound; limit errors include limit, observed and docs_url.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -30881,7 +30884,7 @@ components:
         app_slug: { type: string }
     PutGlobalImageReleaseRequest:
       type: object
-      description: Request-driven global image release. Regional keys are never stored or returned.
+      description: Global image release with sealed scoped consent and background recovery. Regional admin keys are never stored or returned.
       additionalProperties: false
       required: [image]
       properties:
@@ -30894,7 +30897,7 @@ components:
           type: object
           writeOnly: true
           maxProperties: 32
-          description: Regional account-admin keys indexed by region, supplied only for pending regions to resume.
+          description: Request-only regional account-admin keys indexed by region, supplied to establish or renew scoped consent. Active consent supports recovery and later releases without these keys.
           additionalProperties: { type: string }
     GlobalImageReleaseResponse:
       type: object

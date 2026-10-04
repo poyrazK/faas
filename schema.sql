@@ -2120,6 +2120,22 @@ $$;
 
 
 --
+-- Name: enqueue_global_release_recovery(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enqueue_global_release_recovery(a uuid, o uuid, s text) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM assert_global_directory_scope();
+ INSERT INTO global_release_recovery_work(global_app_id,account_id,global_app_slug) VALUES(a,o,s)
+ ON CONFLICT(global_app_id) DO UPDATE SET wake_id=gen_random_uuid(),next_attempt_at=clock_timestamp()
+ WHERE global_release_recovery_work.account_id=o AND global_release_recovery_work.global_app_slug=s;
+END;
+$$;
+
+
+--
 -- Name: enqueue_platform_tenant_customer_lifecycle_webhooks(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3893,6 +3909,90 @@ $$;
 
 
 --
+-- Name: protect_global_recovery_work(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_global_recovery_work() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM assert_global_directory_scope();
+ IF TG_OP='TRUNCATE' THEN RAISE EXCEPTION 'recovery work retained' USING ERRCODE='23514',CONSTRAINT='global_delegation_identity'; END IF;
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM global_release_delegations WHERE global_app_id=OLD.global_app_id AND status IN ('pending','active','revoking'))
+   OR EXISTS(SELECT 1 FROM global_image_release_targets t JOIN global_apps a ON a.id=t.global_app_id JOIN global_image_releases r ON r.global_app_id=t.global_app_id AND r.release_id=t.release_id
+     WHERE a.id=OLD.global_app_id AND r.generation=a.desired_release_generation AND t.outcome='pending') THEN
+   RAISE EXCEPTION 'revocation work retained' USING ERRCODE='23514',CONSTRAINT='global_delegation_identity';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF TG_OP='INSERT' AND NOT EXISTS(SELECT 1 FROM global_apps WHERE id=NEW.global_app_id AND account_id=NEW.account_id AND slug=NEW.global_app_slug)
+   AND NOT EXISTS(SELECT 1 FROM global_release_delegations WHERE global_app_id=NEW.global_app_id AND account_id=NEW.account_id AND global_app_slug=NEW.global_app_slug) THEN
+  RAISE EXCEPTION 'recovery owner required' USING ERRCODE='23514',CONSTRAINT='global_delegation_identity';
+ END IF;
+ IF TG_OP='UPDATE' AND (NEW.global_app_id,NEW.account_id,NEW.global_app_slug) IS DISTINCT FROM (OLD.global_app_id,OLD.account_id,OLD.global_app_slug) THEN
+  RAISE EXCEPTION 'recovery identity immutable' USING ERRCODE='23514',CONSTRAINT='global_delegation_identity';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: protect_global_release_delegation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_global_release_delegation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE owner uuid; slug text; n bigint;
+BEGIN
+ PERFORM assert_global_directory_scope();
+ IF TG_OP='TRUNCATE' THEN
+  RAISE EXCEPTION 'delegation history retained' USING ERRCODE='23514',CONSTRAINT='global_delegation_identity';
+ END IF;
+ IF TG_OP='DELETE' THEN
+  IF OLD.status NOT IN ('revoked','expired') THEN
+   RAISE EXCEPTION 'revocation work retained' USING ERRCODE='23514',CONSTRAINT='global_delegation_identity';
+  END IF;
+  RETURN OLD;
+ END IF;
+ SELECT account_id,global_apps.slug INTO owner,slug FROM global_apps WHERE id=NEW.global_app_id FOR UPDATE;
+ IF TG_OP='INSERT' THEN
+  IF owner IS DISTINCT FROM NEW.account_id OR slug IS DISTINCT FROM NEW.global_app_slug OR NEW.status<>'pending' THEN
+   RAISE EXCEPTION 'current delegation owner required' USING ERRCODE='23514',CONSTRAINT='global_delegation_identity';
+  END IF;
+  NEW.created_at=clock_timestamp();
+  SELECT count(*) INTO n FROM global_release_delegations WHERE global_app_id=NEW.global_app_id AND status IN ('pending','active','revoking') AND expires_at>clock_timestamp();
+  IF n>=1024 THEN RAISE EXCEPTION 'delegation bound' USING ERRCODE='23514',CONSTRAINT='global_delegation_limit',DETAIL=(n+1)::text; END IF;
+ ELSE
+  IF (NEW.id,NEW.global_app_id,NEW.account_id,NEW.global_app_slug,NEW.cell_id,NEW.region,NEW.cell_generation,NEW.api_base,NEW.regional_account_id,NEW.regional_app_id,NEW.regional_app_slug,NEW.token_sha256,NEW.expires_at,NEW.created_at)
+   IS DISTINCT FROM (OLD.id,OLD.global_app_id,OLD.account_id,OLD.global_app_slug,OLD.cell_id,OLD.region,OLD.cell_generation,OLD.api_base,OLD.regional_account_id,OLD.regional_app_id,OLD.regional_app_slug,OLD.token_sha256,OLD.expires_at,OLD.created_at)
+   OR (NEW.sealed_credential IS DISTINCT FROM OLD.sealed_credential AND NOT (NEW.status IN ('revoked','expired') AND NEW.sealed_credential IS NULL))
+   OR (OLD.status IN ('revoked','expired') AND NEW.status<>OLD.status)
+   OR (OLD.status='revoking' AND NEW.status IN ('pending','active')) OR (OLD.status='active' AND NEW.status='pending') THEN
+   RAISE EXCEPTION 'delegation identity and retirement immutable' USING ERRCODE='23514',CONSTRAINT='global_delegation_identity';
+  END IF;
+ END IF;
+ IF NEW.status='expired' AND NEW.expires_at>clock_timestamp() THEN
+  RAISE EXCEPTION 'expiry not reached' USING ERRCODE='23514',CONSTRAINT='global_delegation_identity';
+ END IF;
+ IF NEW.status IN ('pending','active') THEN
+  IF owner IS DISTINCT FROM NEW.account_id OR NEW.expires_at<=clock_timestamp() THEN
+   RAISE EXCEPTION 'delegation no longer usable' USING ERRCODE='23514',CONSTRAINT='global_directory_stale_cell';
+  END IF;
+  PERFORM 1 FROM global_directory_cells WHERE id=NEW.cell_id AND enabled AND generation=NEW.cell_generation AND api_base=NEW.api_base FOR SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'delegation cell changed' USING ERRCODE='23514',CONSTRAINT='global_directory_stale_cell'; END IF;
+  PERFORM 1 FROM global_app_targets WHERE global_app_id=NEW.global_app_id AND region=NEW.region AND cell_id=NEW.cell_id AND cell_generation=NEW.cell_generation
+   AND regional_account_id=NEW.regional_account_id AND regional_app_id=NEW.regional_app_id AND regional_app_slug=NEW.regional_app_slug;
+  IF NOT FOUND THEN RAISE EXCEPTION 'delegation binding changed' USING ERRCODE='23514',CONSTRAINT='global_directory_stale_cell'; END IF;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: protect_regional_image_release_head(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4192,6 +4292,22 @@ $$;
 
 
 --
+-- Name: reject_regional_cell_with_delegations(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reject_regional_cell_with_delegations() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM global_release_delegations) OR EXISTS(SELECT 1 FROM global_release_recovery_work) THEN
+  RAISE EXCEPTION 'directory recovery state exists' USING ERRCODE='23514',CONSTRAINT='global_directory_scope';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: reject_reserved_app_slug_allocation(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4264,6 +4380,27 @@ CREATE FUNCTION public.reserved_ip_leases_set_updated_at() RETURNS trigger
 BEGIN
   NEW.updated_at = now();
   RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: retire_global_release_delegations(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.retire_global_release_delegations() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_TABLE_NAME='global_apps' THEN
+  UPDATE global_release_delegations SET status='revoking' WHERE global_app_id=OLD.id AND status IN ('pending','active');
+ ELSIF TG_OP='DELETE' THEN
+  UPDATE global_release_delegations SET status='revoking' WHERE global_app_id=OLD.global_app_id AND region=OLD.region AND status IN ('pending','active');
+ ELSIF (NEW.cell_generation,NEW.cell_id,NEW.regional_account_id,NEW.regional_app_id,NEW.regional_app_slug)
+   IS DISTINCT FROM (OLD.cell_generation,OLD.cell_id,OLD.regional_account_id,OLD.regional_app_id,OLD.regional_app_slug) THEN
+  UPDATE global_release_delegations SET status='revoking' WHERE global_app_id=OLD.global_app_id AND region=OLD.region AND status IN ('pending','active');
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END;
 $$;
 
@@ -5134,6 +5271,40 @@ END $$;
 
 
 --
+-- Name: wake_global_delegation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.wake_global_delegation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_TABLE_NAME='global_image_releases' THEN
+  PERFORM enqueue_global_release_recovery(a.id,a.account_id,a.slug) FROM global_apps a WHERE a.id=NEW.global_app_id;
+ ELSE
+  PERFORM enqueue_global_release_recovery(NEW.global_app_id,NEW.account_id,NEW.global_app_slug);
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: wake_retired_global_delegation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.wake_retired_global_delegation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status='revoking' AND OLD.status<>NEW.status THEN
+  PERFORM enqueue_global_release_recovery(NEW.global_app_id,NEW.account_id,NEW.global_app_slug);
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: workflow_due_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5172,6 +5343,8 @@ BEGIN
 END;
 $$;
 
+
+SET default_tablespace = '';
 
 SET default_table_access_method = heap;
 
@@ -8960,6 +9133,64 @@ CREATE TABLE public.global_image_releases (
     CONSTRAINT global_image_releases_generation_check CHECK (((generation >= 1) AND (generation <= '9007199254740991'::bigint))),
     CONSTRAINT global_image_releases_image_ref_check CHECK ((((length(image_ref) >= 1) AND (length(image_ref) <= 2048)) AND (image_ref ~ '^.+@sha256:[0-9a-f]{64}$'::text))),
     CONSTRAINT global_image_releases_release_id_check CHECK ((release_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: global_release_delegations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_release_delegations (
+    id uuid NOT NULL,
+    global_app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    global_app_slug text NOT NULL,
+    cell_id uuid NOT NULL,
+    region text NOT NULL,
+    cell_generation bigint NOT NULL,
+    api_base text NOT NULL,
+    regional_account_id uuid NOT NULL,
+    regional_app_id uuid NOT NULL,
+    regional_app_slug text NOT NULL,
+    token_sha256 bytea NOT NULL,
+    sealed_credential bytea,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    CONSTRAINT global_release_delegations_account_id_check CHECK ((account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_release_delegations_api_base_check CHECK (((length(api_base) <= 2048) AND (api_base ~ '^https://([a-z0-9.-]+|\[[0-9a-f:]+\])(:[0-9]{1,5})?$'::text))),
+    CONSTRAINT global_release_delegations_cell_generation_check CHECK ((cell_generation > 0)),
+    CONSTRAINT global_release_delegations_cell_id_check CHECK ((cell_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_release_delegations_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '7 days'::interval)))),
+    CONSTRAINT global_release_delegations_check1 CHECK ((((status = ANY (ARRAY['pending'::text, 'active'::text, 'revoking'::text])) AND (sealed_credential IS NOT NULL) AND ((octet_length(sealed_credential) >= 1) AND (octet_length(sealed_credential) <= 4096)) AND (SUBSTRING(sealed_credential FROM 1 FOR 22) = convert_to(('age-encryption.org/v1'::text || chr(10)), 'UTF8'::name))) OR ((status = ANY (ARRAY['revoked'::text, 'expired'::text])) AND (sealed_credential IS NULL)))),
+    CONSTRAINT global_release_delegations_global_app_id_check CHECK ((global_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_release_delegations_global_app_slug_check CHECK (((length(global_app_slug) >= 3) AND (length(global_app_slug) <= 40))),
+    CONSTRAINT global_release_delegations_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_release_delegations_region_check CHECK ((((length(region) >= 1) AND (length(region) <= 63)) AND (region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text))),
+    CONSTRAINT global_release_delegations_regional_account_id_check CHECK ((regional_account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_release_delegations_regional_app_id_check CHECK ((regional_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_release_delegations_regional_app_slug_check CHECK (((length(regional_app_slug) >= 3) AND (length(regional_app_slug) <= 40))),
+    CONSTRAINT global_release_delegations_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'active'::text, 'revoking'::text, 'revoked'::text, 'expired'::text]))),
+    CONSTRAINT global_release_delegations_token_sha256_check CHECK ((octet_length(token_sha256) = 32))
+);
+
+
+--
+-- Name: global_release_recovery_work; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.global_release_recovery_work (
+    global_app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    global_app_slug text NOT NULL,
+    wake_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    claim_id uuid,
+    claim_until timestamp with time zone,
+    cursor_id uuid,
+    CONSTRAINT global_release_recovery_work_check CHECK ((((claim_id IS NULL) AND (claim_until IS NULL)) OR ((claim_id IS NOT NULL) AND (claim_until IS NOT NULL)))),
+    CONSTRAINT global_release_recovery_work_check1 CHECK (((global_app_id <> '00000000-0000-0000-0000-000000000000'::uuid) AND (account_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT global_release_recovery_work_global_app_slug_check CHECK (((length(global_app_slug) >= 3) AND (length(global_app_slug) <= 40)))
 );
 
 
@@ -15287,6 +15518,22 @@ ALTER TABLE ONLY public.global_image_releases
 
 
 --
+-- Name: global_release_delegations global_release_delegations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_release_delegations
+    ADD CONSTRAINT global_release_delegations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: global_release_recovery_work global_release_recovery_work_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_release_recovery_work
+    ADD CONSTRAINT global_release_recovery_work_pkey PRIMARY KEY (global_app_id);
+
+
+--
 -- Name: goose_db_version goose_db_version_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19367,6 +19614,27 @@ CREATE INDEX github_webhook_deliveries_due_idx ON public.github_webhook_deliveri
 
 
 --
+-- Name: global_delegation_current; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX global_delegation_current ON public.global_release_delegations USING btree (global_app_id, region) WHERE (status = ANY (ARRAY['pending'::text, 'active'::text]));
+
+
+--
+-- Name: global_delegation_recovery; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX global_delegation_recovery ON public.global_release_delegations USING btree (global_app_id, status, created_at);
+
+
+--
+-- Name: global_recovery_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX global_recovery_due ON public.global_release_recovery_work USING btree (next_attempt_at, claim_until);
+
+
+--
 -- Name: inbound_webhook_endpoints_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22895,6 +23163,13 @@ CREATE TRIGGER global_account_cell_bindings_guard BEFORE INSERT OR DELETE OR UPD
 
 
 --
+-- Name: global_apps global_app_delegation_retirement; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_app_delegation_retirement BEFORE DELETE ON public.global_apps FOR EACH ROW EXECUTE FUNCTION public.retire_global_release_delegations();
+
+
+--
 -- Name: global_app_targets global_app_targets_allocation_lock; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22923,6 +23198,34 @@ CREATE TRIGGER global_apps_release_head_guard BEFORE INSERT OR UPDATE OF desired
 
 
 --
+-- Name: global_release_delegations global_delegation_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_delegation_guard BEFORE INSERT OR DELETE OR UPDATE ON public.global_release_delegations FOR EACH ROW EXECUTE FUNCTION public.protect_global_release_delegation();
+
+
+--
+-- Name: global_release_delegations global_delegation_retirement_wakeup; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_delegation_retirement_wakeup AFTER UPDATE ON public.global_release_delegations FOR EACH ROW EXECUTE FUNCTION public.wake_retired_global_delegation();
+
+
+--
+-- Name: global_release_delegations global_delegation_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_delegation_truncate BEFORE TRUNCATE ON public.global_release_delegations FOR EACH STATEMENT EXECUTE FUNCTION public.protect_global_release_delegation();
+
+
+--
+-- Name: global_release_delegations global_delegation_wakeup; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_delegation_wakeup AFTER INSERT ON public.global_release_delegations FOR EACH ROW EXECUTE FUNCTION public.wake_global_delegation();
+
+
+--
 -- Name: global_directory_cells global_directory_cells_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22944,6 +23247,13 @@ CREATE TRIGGER global_image_release_targets_truncate_guard BEFORE TRUNCATE ON pu
 
 
 --
+-- Name: global_image_releases global_image_release_wakeup; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_image_release_wakeup AFTER INSERT ON public.global_image_releases FOR EACH ROW EXECUTE FUNCTION public.wake_global_delegation();
+
+
+--
 -- Name: global_image_releases global_image_releases_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22955,6 +23265,27 @@ CREATE TRIGGER global_image_releases_guard BEFORE INSERT OR DELETE OR UPDATE ON 
 --
 
 CREATE TRIGGER global_image_releases_truncate_guard BEFORE TRUNCATE ON public.global_image_releases FOR EACH STATEMENT EXECUTE FUNCTION public.protect_global_image_release();
+
+
+--
+-- Name: global_release_recovery_work global_recovery_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_recovery_guard BEFORE INSERT OR DELETE OR UPDATE ON public.global_release_recovery_work FOR EACH ROW EXECUTE FUNCTION public.protect_global_recovery_work();
+
+
+--
+-- Name: global_release_recovery_work global_recovery_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_recovery_truncate BEFORE TRUNCATE ON public.global_release_recovery_work FOR EACH STATEMENT EXECUTE FUNCTION public.protect_global_recovery_work();
+
+
+--
+-- Name: global_app_targets global_target_delegation_retirement; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_target_delegation_retirement BEFORE DELETE OR UPDATE ON public.global_app_targets FOR EACH ROW EXECUTE FUNCTION public.retire_global_release_delegations();
 
 
 --
@@ -23326,6 +23657,13 @@ CREATE TRIGGER prune_pr_preview_set_on_root_delete AFTER UPDATE OF status ON pub
 --
 
 CREATE TRIGGER queue_work_receipt_reconciliation AFTER UPDATE OF state ON public.invocations FOR EACH ROW WHEN (((old.state = 'pending'::text) AND (new.source = 'queue'::text) AND (new.state = ANY (ARRAY['superseded'::text, 'cancelled'::text, 'expired'::text])))) EXECUTE FUNCTION public.reconcile_queue_work_receipt();
+
+
+--
+-- Name: control_plane_cells regional_cell_delegation_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_cell_delegation_scope BEFORE INSERT OR UPDATE ON public.control_plane_cells FOR EACH ROW EXECUTE FUNCTION public.reject_regional_cell_with_delegations();
 
 
 --

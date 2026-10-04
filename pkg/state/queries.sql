@@ -6546,3 +6546,43 @@ RETURNING *;
 -- name: RevokeRegionalReleaseGrant :one
 UPDATE regional_release_grants SET status='revoked',revoked_at=COALESCE(revoked_at,clock_timestamp())
 WHERE id=sqlc.arg(grant_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND cell_id=sqlc.arg(cell_id)::uuid AND account_id=sqlc.arg(account_id)::uuid RETURNING *;
+
+-- ADR-482: immutable sealed authority and restart-safe recovery claims.
+-- name: InsertGlobalDelegation :one
+INSERT INTO global_release_delegations(id,global_app_id,account_id,global_app_slug,cell_id,region,cell_generation,api_base,regional_account_id,regional_app_id,regional_app_slug,token_sha256,sealed_credential,expires_at)
+VALUES(sqlc.arg(grant_id)::uuid,sqlc.arg(global_app_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(slug)::text,sqlc.arg(cell_id)::uuid,sqlc.arg(region)::text,sqlc.arg(cell_generation)::bigint,sqlc.arg(api_base)::text,sqlc.arg(regional_account_id)::uuid,sqlc.arg(regional_app_id)::uuid,sqlc.arg(regional_app_slug)::text,sqlc.arg(token_sha256)::bytea,sqlc.arg(sealed_credential)::bytea,sqlc.arg(expires_at)::timestamptz) RETURNING *;
+
+-- name: ReadGlobalDelegation :one
+SELECT * FROM global_release_delegations WHERE id=sqlc.arg(grant_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND global_app_id=sqlc.arg(global_app_id)::uuid;
+
+-- name: LiveGlobalDelegation :one
+SELECT * FROM global_release_delegations WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND region=sqlc.arg(region)::text AND status IN ('pending','active');
+
+-- name: ExpireGlobalDelegations :exec
+UPDATE global_release_delegations SET status='expired',sealed_credential=NULL WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND status IN ('pending','active','revoking') AND expires_at<=clock_timestamp();
+
+-- name: SetGlobalDelegationStatus :execrows
+UPDATE global_release_delegations SET status=sqlc.arg(status)::text,
+ sealed_credential=CASE WHEN sqlc.arg(status)::text IN ('revoked','expired') THEN NULL ELSE sealed_credential END
+WHERE id=sqlc.arg(grant_id)::uuid AND global_app_id=sqlc.arg(global_app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: ListRecoveryDelegations :many
+SELECT * FROM global_release_delegations WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND status IN ('pending','active','revoking') ORDER BY id;
+
+-- name: ClaimGlobalRecovery :many
+WITH candidates AS (
+ SELECT global_app_id FROM global_release_recovery_work WHERE next_attempt_at<=clock_timestamp() AND (claim_until IS NULL OR claim_until<=clock_timestamp())
+ ORDER BY next_attempt_at LIMIT sqlc.arg(batch_limit)::integer FOR UPDATE SKIP LOCKED
+), claimed AS (
+ UPDATE global_release_recovery_work w SET claim_id=sqlc.arg(claim_id)::uuid,claim_until=clock_timestamp()+make_interval(secs=>sqlc.arg(lease_seconds)::integer)
+ FROM candidates c WHERE w.global_app_id=c.global_app_id RETURNING w.*
+)
+SELECT c.global_app_id::text AS global_app_id,c.account_id::text AS account_id,c.global_app_slug,
+ c.claim_id::text AS claim_id,c.wake_id::text AS wake_id,COALESCE(c.cursor_id::text,'')::text AS cursor_id,COALESCE(r.release_id::text,'')::text AS release_id
+FROM claimed c LEFT JOIN global_apps a ON a.id=c.global_app_id AND a.account_id=c.account_id
+LEFT JOIN global_image_releases r ON r.global_app_id=a.id AND r.generation=a.desired_release_generation;
+
+-- name: FinishGlobalRecovery :execrows
+UPDATE global_release_recovery_work SET claim_id=NULL,claim_until=NULL,cursor_id=NULLIF(sqlc.arg(cursor_id)::text,'')::uuid,
+ next_attempt_at=CASE WHEN wake_id=sqlc.arg(wake_id)::uuid THEN clock_timestamp()+make_interval(secs=>sqlc.arg(retry_seconds)::integer) ELSE next_attempt_at END
+WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND claim_id=sqlc.arg(claim_id)::uuid;

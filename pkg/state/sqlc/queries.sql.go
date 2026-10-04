@@ -1018,6 +1018,64 @@ func (q *Queries) ClaimBuildVMCleanupOnNode(ctx context.Context, db DBTX, arg Cl
 	return items, nil
 }
 
+const claimGlobalRecovery = `-- name: ClaimGlobalRecovery :many
+WITH candidates AS (
+ SELECT global_app_id FROM global_release_recovery_work WHERE next_attempt_at<=clock_timestamp() AND (claim_until IS NULL OR claim_until<=clock_timestamp())
+ ORDER BY next_attempt_at LIMIT $1::integer FOR UPDATE SKIP LOCKED
+), claimed AS (
+ UPDATE global_release_recovery_work w SET claim_id=$2::uuid,claim_until=clock_timestamp()+make_interval(secs=>$3::integer)
+ FROM candidates c WHERE w.global_app_id=c.global_app_id RETURNING w.global_app_id, w.account_id, w.global_app_slug, w.wake_id, w.next_attempt_at, w.claim_id, w.claim_until, w.cursor_id
+)
+SELECT c.global_app_id::text AS global_app_id,c.account_id::text AS account_id,c.global_app_slug,
+ c.claim_id::text AS claim_id,c.wake_id::text AS wake_id,COALESCE(c.cursor_id::text,'')::text AS cursor_id,COALESCE(r.release_id::text,'')::text AS release_id
+FROM claimed c LEFT JOIN global_apps a ON a.id=c.global_app_id AND a.account_id=c.account_id
+LEFT JOIN global_image_releases r ON r.global_app_id=a.id AND r.generation=a.desired_release_generation
+`
+
+type ClaimGlobalRecoveryParams struct {
+	BatchLimit   int32
+	ClaimID      pgtype.UUID
+	LeaseSeconds int32
+}
+
+type ClaimGlobalRecoveryRow struct {
+	GlobalAppID   string
+	AccountID     string
+	GlobalAppSlug string
+	ClaimID       string
+	WakeID        string
+	CursorID      string
+	ReleaseID     string
+}
+
+func (q *Queries) ClaimGlobalRecovery(ctx context.Context, db DBTX, arg ClaimGlobalRecoveryParams) ([]ClaimGlobalRecoveryRow, error) {
+	rows, err := db.Query(ctx, claimGlobalRecovery, arg.BatchLimit, arg.ClaimID, arg.LeaseSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimGlobalRecoveryRow{}
+	for rows.Next() {
+		var i ClaimGlobalRecoveryRow
+		if err := rows.Scan(
+			&i.GlobalAppID,
+			&i.AccountID,
+			&i.GlobalAppSlug,
+			&i.ClaimID,
+			&i.WakeID,
+			&i.CursorID,
+			&i.ReleaseID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const claimNextQueuedBuildOnNode = `-- name: ClaimNextQueuedBuildOnNode :one
 UPDATE builds SET status = 'running', started_at = now(),
     builder_node_id = (SELECT n.id FROM compute_nodes n WHERE n.name = $1::text)
@@ -5729,6 +5787,15 @@ func (q *Queries) ExecutionWorkflowSummary(ctx context.Context, db DBTX, arg Exe
 	return i, err
 }
 
+const expireGlobalDelegations = `-- name: ExpireGlobalDelegations :exec
+UPDATE global_release_delegations SET status='expired',sealed_credential=NULL WHERE global_app_id=$1::uuid AND status IN ('pending','active','revoking') AND expires_at<=clock_timestamp()
+`
+
+func (q *Queries) ExpireGlobalDelegations(ctx context.Context, db DBTX, globalAppID pgtype.UUID) error {
+	_, err := db.Exec(ctx, expireGlobalDelegations, globalAppID)
+	return err
+}
+
 const expireOrgInvitations = `-- name: ExpireOrgInvitations :execrows
 update org_invitations
 set revoked_at = now()
@@ -5981,6 +6048,34 @@ func (q *Queries) FinishDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg
 		arg.HttpStatus,
 		arg.ID,
 		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishGlobalRecovery = `-- name: FinishGlobalRecovery :execrows
+UPDATE global_release_recovery_work SET claim_id=NULL,claim_until=NULL,cursor_id=NULLIF($1::text,'')::uuid,
+ next_attempt_at=CASE WHEN wake_id=$2::uuid THEN clock_timestamp()+make_interval(secs=>$3::integer) ELSE next_attempt_at END
+WHERE global_app_id=$4::uuid AND claim_id=$5::uuid
+`
+
+type FinishGlobalRecoveryParams struct {
+	CursorID     string
+	WakeID       pgtype.UUID
+	RetrySeconds int32
+	GlobalAppID  pgtype.UUID
+	ClaimID      pgtype.UUID
+}
+
+func (q *Queries) FinishGlobalRecovery(ctx context.Context, db DBTX, arg FinishGlobalRecoveryParams) (int64, error) {
+	result, err := db.Exec(ctx, finishGlobalRecovery,
+		arg.CursorID,
+		arg.WakeID,
+		arg.RetrySeconds,
+		arg.GlobalAppID,
+		arg.ClaimID,
 	)
 	if err != nil {
 		return 0, err
@@ -7378,6 +7473,68 @@ type InsertGlobalAccountCellBindingParams struct {
 func (q *Queries) InsertGlobalAccountCellBinding(ctx context.Context, db DBTX, arg InsertGlobalAccountCellBindingParams) error {
 	_, err := db.Exec(ctx, insertGlobalAccountCellBinding, arg.AccountID, arg.CellID, arg.RegionalAccountID)
 	return err
+}
+
+const insertGlobalDelegation = `-- name: InsertGlobalDelegation :one
+INSERT INTO global_release_delegations(id,global_app_id,account_id,global_app_slug,cell_id,region,cell_generation,api_base,regional_account_id,regional_app_id,regional_app_slug,token_sha256,sealed_credential,expires_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid,$6::text,$7::bigint,$8::text,$9::uuid,$10::uuid,$11::text,$12::bytea,$13::bytea,$14::timestamptz) RETURNING id, global_app_id, account_id, global_app_slug, cell_id, region, cell_generation, api_base, regional_account_id, regional_app_id, regional_app_slug, token_sha256, sealed_credential, expires_at, created_at, status
+`
+
+type InsertGlobalDelegationParams struct {
+	GrantID           pgtype.UUID
+	GlobalAppID       pgtype.UUID
+	AccountID         pgtype.UUID
+	Slug              string
+	CellID            pgtype.UUID
+	Region            string
+	CellGeneration    int64
+	ApiBase           string
+	RegionalAccountID pgtype.UUID
+	RegionalAppID     pgtype.UUID
+	RegionalAppSlug   string
+	TokenSha256       []byte
+	SealedCredential  []byte
+	ExpiresAt         pgtype.Timestamptz
+}
+
+// ADR-482: immutable sealed authority and restart-safe recovery claims.
+func (q *Queries) InsertGlobalDelegation(ctx context.Context, db DBTX, arg InsertGlobalDelegationParams) (GlobalReleaseDelegation, error) {
+	row := db.QueryRow(ctx, insertGlobalDelegation,
+		arg.GrantID,
+		arg.GlobalAppID,
+		arg.AccountID,
+		arg.Slug,
+		arg.CellID,
+		arg.Region,
+		arg.CellGeneration,
+		arg.ApiBase,
+		arg.RegionalAccountID,
+		arg.RegionalAppID,
+		arg.RegionalAppSlug,
+		arg.TokenSha256,
+		arg.SealedCredential,
+		arg.ExpiresAt,
+	)
+	var i GlobalReleaseDelegation
+	err := row.Scan(
+		&i.ID,
+		&i.GlobalAppID,
+		&i.AccountID,
+		&i.GlobalAppSlug,
+		&i.CellID,
+		&i.Region,
+		&i.CellGeneration,
+		&i.ApiBase,
+		&i.RegionalAccountID,
+		&i.RegionalAppID,
+		&i.RegionalAppSlug,
+		&i.TokenSha256,
+		&i.SealedCredential,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.Status,
+	)
+	return i, err
 }
 
 const insertInvoiceHistorySnapshot = `-- name: InsertInvoiceHistorySnapshot :one
@@ -13126,6 +13283,52 @@ func (q *Queries) ListRecentEventsForAccount(ctx context.Context, db DBTX, arg L
 	return items, nil
 }
 
+const listRecoveryDelegations = `-- name: ListRecoveryDelegations :many
+SELECT id, global_app_id, account_id, global_app_slug, cell_id, region, cell_generation, api_base, regional_account_id, regional_app_id, regional_app_slug, token_sha256, sealed_credential, expires_at, created_at, status FROM global_release_delegations WHERE global_app_id=$1::uuid AND account_id=$2::uuid AND status IN ('pending','active','revoking') ORDER BY id
+`
+
+type ListRecoveryDelegationsParams struct {
+	GlobalAppID pgtype.UUID
+	AccountID   pgtype.UUID
+}
+
+func (q *Queries) ListRecoveryDelegations(ctx context.Context, db DBTX, arg ListRecoveryDelegationsParams) ([]GlobalReleaseDelegation, error) {
+	rows, err := db.Query(ctx, listRecoveryDelegations, arg.GlobalAppID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GlobalReleaseDelegation{}
+	for rows.Next() {
+		var i GlobalReleaseDelegation
+		if err := rows.Scan(
+			&i.ID,
+			&i.GlobalAppID,
+			&i.AccountID,
+			&i.GlobalAppSlug,
+			&i.CellID,
+			&i.Region,
+			&i.CellGeneration,
+			&i.ApiBase,
+			&i.RegionalAccountID,
+			&i.RegionalAppID,
+			&i.RegionalAppSlug,
+			&i.TokenSha256,
+			&i.SealedCredential,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRequestTelemetryByApp = `-- name: ListRequestTelemetryByApp :many
 SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at, wake_id, instance_id,
@@ -14081,6 +14284,39 @@ func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID str
 		return nil, err
 	}
 	return items, nil
+}
+
+const liveGlobalDelegation = `-- name: LiveGlobalDelegation :one
+SELECT id, global_app_id, account_id, global_app_slug, cell_id, region, cell_generation, api_base, regional_account_id, regional_app_id, regional_app_slug, token_sha256, sealed_credential, expires_at, created_at, status FROM global_release_delegations WHERE global_app_id=$1::uuid AND region=$2::text AND status IN ('pending','active')
+`
+
+type LiveGlobalDelegationParams struct {
+	GlobalAppID pgtype.UUID
+	Region      string
+}
+
+func (q *Queries) LiveGlobalDelegation(ctx context.Context, db DBTX, arg LiveGlobalDelegationParams) (GlobalReleaseDelegation, error) {
+	row := db.QueryRow(ctx, liveGlobalDelegation, arg.GlobalAppID, arg.Region)
+	var i GlobalReleaseDelegation
+	err := row.Scan(
+		&i.ID,
+		&i.GlobalAppID,
+		&i.AccountID,
+		&i.GlobalAppSlug,
+		&i.CellID,
+		&i.Region,
+		&i.CellGeneration,
+		&i.ApiBase,
+		&i.RegionalAccountID,
+		&i.RegionalAppID,
+		&i.RegionalAppSlug,
+		&i.TokenSha256,
+		&i.SealedCredential,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.Status,
+	)
+	return i, err
 }
 
 const lockBuildCompletionClaim = `-- name: LockBuildCompletionClaim :one
@@ -18784,6 +19020,40 @@ func (q *Queries) ReadGlobalAccountCellBinding(ctx context.Context, db DBTX, arg
 	return regional_account_id, err
 }
 
+const readGlobalDelegation = `-- name: ReadGlobalDelegation :one
+SELECT id, global_app_id, account_id, global_app_slug, cell_id, region, cell_generation, api_base, regional_account_id, regional_app_id, regional_app_slug, token_sha256, sealed_credential, expires_at, created_at, status FROM global_release_delegations WHERE id=$1::uuid AND account_id=$2::uuid AND global_app_id=$3::uuid
+`
+
+type ReadGlobalDelegationParams struct {
+	GrantID     pgtype.UUID
+	AccountID   pgtype.UUID
+	GlobalAppID pgtype.UUID
+}
+
+func (q *Queries) ReadGlobalDelegation(ctx context.Context, db DBTX, arg ReadGlobalDelegationParams) (GlobalReleaseDelegation, error) {
+	row := db.QueryRow(ctx, readGlobalDelegation, arg.GrantID, arg.AccountID, arg.GlobalAppID)
+	var i GlobalReleaseDelegation
+	err := row.Scan(
+		&i.ID,
+		&i.GlobalAppID,
+		&i.AccountID,
+		&i.GlobalAppSlug,
+		&i.CellID,
+		&i.Region,
+		&i.CellGeneration,
+		&i.ApiBase,
+		&i.RegionalAccountID,
+		&i.RegionalAppID,
+		&i.RegionalAppSlug,
+		&i.TokenSha256,
+		&i.SealedCredential,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.Status,
+	)
+	return i, err
+}
+
 const readGlobalImageRelease = `-- name: ReadGlobalImageRelease :one
 SELECT a.id::text AS global_app_id, a.account_id::text AS account_id,
     r.release_id::text AS release_id, r.generation, a.desired_release_generation,
@@ -22280,6 +22550,32 @@ type SetExclusiveCaptureBarrierParams struct {
 func (q *Queries) SetExclusiveCaptureBarrier(ctx context.Context, db DBTX, arg SetExclusiveCaptureBarrierParams) error {
 	_, err := db.Exec(ctx, setExclusiveCaptureBarrier, arg.Blocked, arg.InstanceID)
 	return err
+}
+
+const setGlobalDelegationStatus = `-- name: SetGlobalDelegationStatus :execrows
+UPDATE global_release_delegations SET status=$1::text,
+ sealed_credential=CASE WHEN $1::text IN ('revoked','expired') THEN NULL ELSE sealed_credential END
+WHERE id=$2::uuid AND global_app_id=$3::uuid AND account_id=$4::uuid
+`
+
+type SetGlobalDelegationStatusParams struct {
+	Status      string
+	GrantID     pgtype.UUID
+	GlobalAppID pgtype.UUID
+	AccountID   pgtype.UUID
+}
+
+func (q *Queries) SetGlobalDelegationStatus(ctx context.Context, db DBTX, arg SetGlobalDelegationStatusParams) (int64, error) {
+	result, err := db.Exec(ctx, setGlobalDelegationStatus,
+		arg.Status,
+		arg.GrantID,
+		arg.GlobalAppID,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setInvoiceDetailLifecycle = `-- name: SetInvoiceDetailLifecycle :exec

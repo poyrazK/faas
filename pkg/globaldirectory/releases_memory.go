@@ -55,6 +55,7 @@ func (s *MemoryStore) PlanRelease(_ context.Context, owner, slug, releaseID, ima
 	}
 	s.releases[app.ID][releaseID] = copyRelease(r)
 	s.releaseHeads[app.ID] = r.Generation
+	s.wake(app)
 	return r, nil
 }
 

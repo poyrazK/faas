@@ -20,10 +20,12 @@ type MemoryStore struct {
 	targets         map[string]map[string]Target
 	releases        map[string]map[string]Release
 	releaseHeads    map[string]int64
+	delegations     map[string]Delegation
+	recovery        map[string]memoryRecovery
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{cells: make(map[string]Cell), apps: make(map[string]App), accountBindings: make(map[string]string), targets: make(map[string]map[string]Target), releases: make(map[string]map[string]Release), releaseHeads: make(map[string]int64)}
+	return &MemoryStore{cells: make(map[string]Cell), apps: make(map[string]App), accountBindings: make(map[string]string), targets: make(map[string]map[string]Target), releases: make(map[string]map[string]Release), releaseHeads: make(map[string]int64), delegations: make(map[string]Delegation), recovery: make(map[string]memoryRecovery)}
 }
 
 func (s *MemoryStore) CheckScope(context.Context) error { return nil }
@@ -44,6 +46,11 @@ func (s *MemoryStore) PutCell(_ context.Context, c Cell) (Cell, error) {
 		c.Generation = old.Generation
 		if old.APIBase != c.APIBase || old.Enabled != c.Enabled {
 			c.Generation++
+			for _, g := range s.delegations {
+				if g.Binding.CellID == c.ID {
+					s.retireDelegations(g.GlobalAppID, g.Binding.Region)
+				}
+			}
 		}
 	}
 	s.cells[c.Region] = c
@@ -162,6 +169,9 @@ func (s *MemoryStore) AttachTarget(_ context.Context, accountID, slug string, bi
 	}
 	target := Target{Binding: binding, GlobalAppID: app.ID, VerifiedAt: time.Now().UTC(), APIBase: cell.APIBase, CellEnabled: cell.Enabled, RegistryGeneration: cell.Generation}
 	s.accountBindings[mapKey] = binding.RegionalAccountID
+	if old, ok := s.targets[app.ID][binding.Region]; ok && old.Binding != binding {
+		s.retireDelegations(app.ID, binding.Region)
+	}
 	s.targets[app.ID][binding.Region] = target
 	return target, nil
 }
@@ -193,6 +203,7 @@ func (s *MemoryStore) DetachTarget(_ context.Context, accountID, slug, region st
 	if _, ok := s.targets[app.ID][region]; !ok {
 		return ErrNotFound
 	}
+	s.retireDelegations(app.ID, region)
 	delete(s.targets[app.ID], region)
 	return nil
 }

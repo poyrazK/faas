@@ -12,11 +12,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// Reconciler uses request-only regional keys. Durable state contains no key.
+// Reconciler exchanges request-only admin keys for sealed regional consent.
 // It never calls regional VM services or publishes readiness/ingress.
 type Reconciler struct {
-	Store    Store
-	Verifier Verifier
+	Store       Store
+	Verifier    Verifier
+	Delegations *DelegationService
 }
 
 func (c Reconciler) Resume(ctx context.Context, owner, slug, releaseID string, keys map[string]string) (Release, error) {
@@ -66,15 +67,32 @@ func (c Reconciler) resumeTarget(ctx context.Context, owner, slug string, r Rele
 		}
 		return err
 	}
+	if c.Delegations != nil {
+		var err error
+		key, err = c.Delegations.Credential(ctx, owner, slug, r, target, key)
+		if err != nil {
+			if errors.Is(err, ErrStaleCell) {
+				return c.Store.RecordReleaseResult(ctx, owner, slug, r.ReleaseID, target.Region, ReleaseResult{Outcome: ReleaseBlocked, Diagnostic: DiagnosticIdentity})
+			}
+			var bound *DelegationLimitError
+			if errors.As(err, &bound) || errors.Is(err, ErrDelegationSealed) || errors.Is(err, ErrSuperseded) {
+				return err
+			}
+			return c.Store.RecordReleaseResult(ctx, owner, slug, r.ReleaseID, target.Region, ReleaseResult{Outcome: ReleasePending, Diagnostic: DiagnosticRejected})
+		}
+	}
 	if key == "" {
 		return nil
+	}
+	if err := c.checkDispatch(ctx, owner, slug, r, target); err != nil {
+		return err
 	}
 	cell := Cell{ID: target.CellID, Region: target.Region, APIBase: target.APIBase, Generation: target.CellGeneration, Enabled: true}
 	proof, err := c.Verifier.Verify(ctx, cell, target.RegionalAppSlug, key)
 	result := ReleaseResult{Outcome: ReleasePending, Diagnostic: DiagnosticRejected}
 	if err == nil && proof == target.Binding {
 		// A directory change during the proof must not redirect dispatch.
-		if err := c.Store.CheckReleaseTarget(ctx, owner, slug, r.ReleaseID, target.Region); err != nil {
+		if err := c.checkDispatch(ctx, owner, slug, r, target); err != nil {
 			return err
 		}
 		result = c.regionalReceipt(ctx, owner, slug, r, target, key)
@@ -86,11 +104,21 @@ func (c Reconciler) resumeTarget(ctx context.Context, owner, slug string, r Rele
 	return err
 }
 
+func (c Reconciler) checkDispatch(ctx context.Context, owner, slug string, r Release, target ReleaseTarget) error {
+	if c.Delegations != nil {
+		return c.Delegations.CheckCredential(ctx, owner, slug, r, target)
+	}
+	return c.Store.CheckReleaseTarget(ctx, owner, slug, r.ReleaseID, target.Region)
+}
+
 func (c Reconciler) regionalReceipt(ctx context.Context, owner, slug string, r Release, target ReleaseTarget, key string) ReleaseResult {
 	path := target.APIBase + "/v1/cells/" + target.CellID + "/apps/" + target.RegionalAppID + "/image-releases/" + r.ReleaseID
+	if c.checkDispatch(ctx, owner, slug, r, target) != nil {
+		return ReleaseResult{Outcome: ReleasePending, Diagnostic: DiagnosticRejected}
+	}
 	receipt, status, diagnostic := c.fetchReceipt(ctx, http.MethodGet, path, key, nil)
 	if status == http.StatusNotFound {
-		if err := c.Store.CheckReleaseTarget(ctx, owner, slug, r.ReleaseID, target.Region); err != nil {
+		if err := c.checkDispatch(ctx, owner, slug, r, target); err != nil {
 			return ReleaseResult{Outcome: ReleasePending, Diagnostic: DiagnosticRejected}
 		}
 		// The same release identity and ordering are used after every uncertain try.

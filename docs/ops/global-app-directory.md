@@ -224,17 +224,18 @@ the `all_selected_regions` default policy.
 
 <a id="global-image-releases"></a>
 
-## Request-driven global image releases (ADR-480)
+## Global image releases (ADR-480, ADR-482)
 
 Submit `PUT /v1/global-apps/{slug}/image-releases/{release_id}` with a digest-pinned
 `image` and optional `regional_api_keys` object indexed by region. The directory
 persists every selected verified target and one increasing generation before
 network I/O. A missing/stale target set rejects allocation atomically. Use the
-same UUID and image to resume after a timeout or directory restart; only pending
-regions need their independently issued account-admin keys. These keys remain
-request-only. GET reads the durable journal without regional calls.
+same UUID and image after a timeout or directory restart. Supply regional
+account-admin keys to establish or renew consent; the directory never stores
+these keys. Subsequent releases and receipt recovery reuse an active scoped
+delegation. GET reads the durable journal without regional calls.
 
-`pending` requires a resume request, `accepted` records durable intent in every
+`pending` is retried by the recovery worker while scoped consent is usable, `accepted` records durable intent in every
 snapshotted region, `expired` means a regional receipt survived deployment
 collection, and `blocked` means a snapshot no longer matches the selected binding
 or registry. A newer release reports older work as `superseded`. Target changes
@@ -243,8 +244,8 @@ Requests cap at 32 targets, 16 KiB and 90 seconds with four concurrent regions;
 regional calls cap at ten seconds and redirects are refused. These are protocol
 bounds, not global capacity grants.
 
-This stage uses explicit request-driven recovery. Scoped sealed delegation is
-required for unattended reconciliation. Global runtime quota, shared-org identity,
+Unattended recovery uses the sealed regional delegation described below.
+Global runtime quota, shared-org identity,
 health/ingress publication, managed data and secret placement and native KVM
 recovery acceptance remain separate completion gates.
 
@@ -254,7 +255,7 @@ next requested generation. A rejected allocation writes no release or target.
 
 <a id="regional-delegation"></a>
 
-## Regional release delegation (ADR-481)
+## Regional release delegation (ADR-481, ADR-482)
 
 A caller mints a `fp_release_` token and fixed grant UUID before contacting the
 cell. It must seal the token and bound identity before registering its SHA-256
@@ -273,5 +274,29 @@ token cannot authenticate. An account-admin key can inspect and repeat revocatio
 The deployment transaction checks the grant again after authentication, with the
 app locked, before accepting intent. Ownership changes invalidate old grants.
 
-This regional boundary enables directory sealing and a recovery worker; those
-components are still required before unattended reconciliation is available.
+Directory apid seals the scoped token and complete immutable binding with its
+fleet age identity before registration. Set `FAAS_FLEET_AGE_IDENTITY_PATH` (or the
+existing host identity fallback) when enabling the global directory. Startup
+refuses missing sealing identities. Current and previous identities support
+rotation; retain an identity until all delegations sealed with it expire.
+Directory consent lasts six days and requires a new request-admin key to renew.
+A missing or unknown key fails closed and leaves the durable journal intact.
+
+The work queue claims at most two apps for a two-minute lease. Each app has a
+90-second deadline, at most four regional release requests in parallel, and a
+separate pool of four revocation workers. A durable cursor visits at most 32
+retained delegations per app per pass. Failed work retries after 30 seconds;
+new release or retirement wakes are preserved when an old claim finishes.
+
+Detach, binding re-verification and global-app/account deletion retain a
+revocation outbox. Only DELETE uses the immutable old regional origin. A matching
+terminal response or expiry erases ciphertext; a 401 or lost response keeps work
+until expiry. Temporary owner/backend lookup failures prevent dispatch and retain
+consent. A confirmed inactive owner retires consent. Regional authentication
+backend failures return 503. Regional receipt transactions remain the final
+revocation and expiry authority for already-dispatched requests.
+
+A directory app retains at most 1024 live, unexpired delegations, including
+revocation work. `global_delegation_limit` (409) includes `limit`, `observed`, and
+`docs_url`. This history survives owner deletion so unreachable regions cannot
+silently discard outstanding revocation.

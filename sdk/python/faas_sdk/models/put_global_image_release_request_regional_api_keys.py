@@ -11,7 +11,10 @@ T = TypeVar("T", bound="PutGlobalImageReleaseRequestRegionalApiKeys")
 
 @_attrs_define
 class PutGlobalImageReleaseRequestRegionalApiKeys:
-    """Regional account-admin keys indexed by region, supplied only for pending regions to resume."""
+    """Request-only regional account-admin keys indexed by region, supplied to establish or renew scoped consent. Active
+    consent supports recovery and later releases without these keys.
+
+    """
 
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict, repr=False)
 

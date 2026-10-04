@@ -1,5 +1,5 @@
 // Package globaldirectory owns the durable global-to-regional app directory
-// contract (ADR-476). Only apid mutates intent; this package never holds keys.
+// contract (ADR-476). Only apid mutates intent; ADR-482 retains scoped ciphertext.
 package globaldirectory
 
 import (

@@ -61,3 +61,11 @@ regions. Keys and remote error bodies are never included in those diagnostics.
 
 `regional_release_grant_limit` (409): the active, unexpired regional grant count
 exceeds the per-app protocol bound. Includes `limit`, `observed` and `docs_url`.
+
+Directory regional consent returns `global_delegation_limit` (409) when the next
+live journal would exceed 1024 delegations for one global app, including pending
+revocations. It includes `limit`, `observed`, and
+`docs_url=https://gregale.dev/docs/global-app-directory#regional-delegation`.
+Wait for revocation or expiry before issuing more consent. Missing sealing
+identities or temporary regional authentication backend failures return 503;
+these failures do not prove that a delegation has been revoked.

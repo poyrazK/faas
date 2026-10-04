@@ -53,6 +53,10 @@ func regionalReleaseRoute(r *http.Request, key state.APIKey) bool {
 	}
 }
 func regionalReleaseUnauthorized(w http.ResponseWriter, err error) {
+	if err != nil && !errors.Is(err, state.ErrNotFound) && !errors.Is(err, state.ErrAPIKeyExpired) && !errors.Is(err, state.ErrAPIKeyRevoked) {
+		api.WriteProblem(w, api.ErrCapacity("Regional release authentication is temporarily unavailable."))
+		return
+	}
 	setBearerChallenge(w, "invalid_token")
 	switch {
 	case errors.Is(err, state.ErrAPIKeyExpired):

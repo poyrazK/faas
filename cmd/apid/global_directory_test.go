@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+
 	"errors"
+	"filippo.io/age"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +23,11 @@ func globalDirectoryHarness(t *testing.T) testEnv {
 	t.Helper()
 	e := setup(t, api.PlanPro)
 	e.s.globalDirectory = globaldirectory.NewMemoryStore()
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.s.globalDelegationKeys = globaldirectory.DelegationKeys{Identities: []*age.X25519Identity{identity}}
 	e.h = e.s.handler()
 	return e
 }

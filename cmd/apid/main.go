@@ -52,6 +52,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/eventretention"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/globaldirectory"
 	"github.com/onebox-faas/faas/pkg/grace"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/logarchive"
@@ -705,6 +706,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// block short-circuits to nil when pool is nil.
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
+		go srv.runGlobalReleaseRecovery(ctx)
 		go srv.runSafeReleaseEmergencyAbort(ctx)
 		go srv.runObjectStorageRecovery(ctx)
 		go srv.runObjectStorageAccounting(ctx)
@@ -1742,6 +1744,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// sealed under the previous key. The single-identity SetMFAIdentity
 	// stays wired for backward compat with the existing tests.
 	identityPath := deps.getenv("FAAS_FLEET_AGE_IDENTITY_PATH")
+	var globalReleaseIdentities []*age.X25519Identity
 	if identityPath == "" {
 		identityPath = deps.getenv("FAAS_HOST_AGE_IDENTITY_PATH")
 	}
@@ -1786,8 +1789,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					"previous", identities[1].Recipient().String())
 			}
 		}
+		globalReleaseIdentities = append([]*age.X25519Identity{ident}, identities...)
 	} else {
 		log.Warn("FAAS_HOST_AGE_IDENTITY_PATH unset — MFA /confirm, /verify, /disable, /recover will return 503")
+	}
+	if srv.globalDirectory != nil {
+		srv.globalDelegationKeys = globaldirectory.DelegationKeys{Identities: globalReleaseIdentities}
+		if !srv.globalDelegationKeys.Available() {
+			return fmt.Errorf("apid: global directory requires a fleet age identity for regional delegation recovery")
+		}
 	}
 
 	// ADR-117 PR-C: load the host HMAC key so sealAndPersist

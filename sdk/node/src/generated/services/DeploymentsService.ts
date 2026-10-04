@@ -43,8 +43,11 @@ export class DeploymentsService {
    * Requires personal directory-account deploy-write access and verified email.
    * Persists an immutable image, increasing generation and complete verified
    * target snapshot before regional I/O. Keys indexed by region authorize
-   * this request only and are never retained. Pending regions require their
-   * keys to resume; matching UUID/image retries keep the original snapshot.
+   * this request only and are never retained. They establish six-day scoped
+   * consent sealed by directory apid before registration. Background recovery
+   * and later releases reuse active consent without admin keys; missing or
+   * expired consent requires renewed keys. Matching UUID/image retries keep
+   * the original snapshot. Missing sealing identities fail closed.
    * Redirects are refused. The request is bounded to 16384 bytes and 90 seconds,
    * with at most 32 targets and four concurrent regions. Timeouts remain
    * pending; retry the same UUID/image to recover regional acceptance receipts.
@@ -83,7 +86,7 @@ export class DeploymentsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `Changed immutable image or protocol allocation bound.`,
+        409: `Changed immutable image or release/delegation protocol bound; limit errors include limit, observed and docs_url.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

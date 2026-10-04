@@ -2,6 +2,7 @@ package main
 
 // adr: 480
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,10 +41,10 @@ func TestGlobalImageReleaseTwoCellsResponseLossAndResume(t *testing.T) {
 		configureCellDeploymentTest(t, regional.store, regional.s, region)
 		local := seedCellDeploymentApp(t, regional.store, regional.acct, "regional-release-shop", uuid.NewString(), region)
 		cellServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("Authorization") != "Bearer "+regional.key {
+			if r.Header.Get("Authorization") != "Bearer "+regional.key && !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer "+api.RegionalReleaseTokenPrefix) {
 				t.Error("cross-region credential")
 			}
-			if r.Method == http.MethodPut {
+			if r.Method == http.MethodPut && strings.Contains(r.URL.Path, "image-releases") {
 				dispatches.Add(1)
 			}
 			regional.h.ServeHTTP(w, r)
@@ -73,11 +74,9 @@ func TestGlobalImageReleaseTwoCellsResponseLossAndResume(t *testing.T) {
 		t.Fatalf("partial: %+v %v calls=%d", first, err, dispatches.Load())
 	}
 	pending := 0
-	resumeKeys := map[string]string{}
 	for _, target := range first.Targets {
 		if target.Outcome == "pending" {
 			pending++
-			resumeKeys[target.Region] = keys[target.Region]
 			if target.Diagnostic != "regional_unavailable" {
 				t.Fatalf("unsanitized diagnostic: %+v", target)
 			}
@@ -90,11 +89,16 @@ func TestGlobalImageReleaseTwoCellsResponseLossAndResume(t *testing.T) {
 	if pending != 1 {
 		t.Fatalf("pending %d", pending)
 	}
-	// Rebuild HTTP wiring; each request creates a fresh stateless reconciler.
+	// Rebuild recovery wiring: only the sealed journal and age identity survive.
+	worker := globaldirectory.Recovery{Service: directory.s.globalReleaseService()}
+	if err := worker.Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// Rebuild HTTP wiring as well; the resume request carries no admin keys.
 	restartServer := httptest.NewServer(directory.s.handler())
 	defer restartServer.Close()
 	client = api.NewClient(restartServer.URL, directory.key).SetCompletionCache(nil)
-	req.RegionalAPIKeys = resumeKeys
+	req.RegionalAPIKeys = nil
 	resumed, err := client.PutGlobalImageRelease(t.Context(), app.Slug, id, req)
 	if err != nil || resumed.Status != "accepted" || resumed.Generation != 1 || dispatches.Load() != 2 {
 		t.Fatalf("resume duplicated work: %+v %v calls=%d", resumed, err, dispatches.Load())
@@ -110,12 +114,12 @@ func TestGlobalImageReleaseTwoCellsResponseLossAndResume(t *testing.T) {
 	}
 	req.RegionalAPIKeys = nil
 	next, err := client.PutGlobalImageRelease(t.Context(), app.Slug, uuid.NewString(), req)
-	if err != nil || next.Generation != 2 || next.Status != "pending" {
+	if err != nil || next.Generation != 2 || next.Status != "accepted" {
 		t.Fatalf("next: %+v %v", next, err)
 	}
 	req.RegionalAPIKeys = keys
 	old, err := client.PutGlobalImageRelease(t.Context(), app.Slug, id, req)
-	if err != nil || old.Status != "superseded" || dispatches.Load() != 2 {
+	if err != nil || old.Status != "superseded" || dispatches.Load() != 4 {
 		t.Fatalf("old request dispatched: %+v %v", old, err)
 	}
 	rec := directory.do(t, http.MethodGet, "/v1/global-apps/"+app.Slug+"/image-releases/"+id, nil, nil)
@@ -202,5 +206,48 @@ func TestGlobalImageReleaseLimitMetadata(t *testing.T) {
 				t.Fatalf("limit metadata: %d %s", w.Code, w.Body)
 			}
 		})
+	}
+}
+
+func TestGlobalImageReleaseSealingUnavailableBeforeIntent(t *testing.T) {
+	e := globalDirectoryHarness(t)
+	app, err := e.s.globalDirectory.CreateApp(t.Context(), e.acct.ID, "sealed-unavailable", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.s.globalDelegationKeys = globaldirectory.DelegationKeys{}
+	id := uuid.NewString()
+	rec := e.do(t, http.MethodPut, "/v1/global-apps/"+app.Slug+"/image-releases/"+id, api.PutGlobalImageReleaseRequest{Image: cellImageRequest().Image}, nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if _, err := e.s.globalDirectory.GetRelease(t.Context(), e.acct.ID, app.Slug, id); !errors.Is(err, globaldirectory.ErrNotFound) {
+		t.Fatalf("intent allocated: %v", err)
+	}
+}
+func TestGlobalReleaseOwnerBackendFailureIsRetryable(t *testing.T) {
+	e := globalDirectoryHarness(t)
+	e.s.store = globalOwnerFailureStore{Store: e.store}
+	if err := e.s.globalReleaseOwner(t.Context(), e.acct.ID); err == nil || errors.Is(err, globaldirectory.ErrDelegationOwnerInactive) {
+		t.Fatalf("backend failure retired consent: %v", err)
+	}
+}
+
+type globalOwnerFailureStore struct{ state.Store }
+
+func (s globalOwnerFailureStore) AccountByID(context.Context, string) (state.Account, error) {
+	return state.Account{}, errors.New("temporary account backend failure")
+}
+
+func TestGlobalDelegationLimitMetadata(t *testing.T) {
+	rec := httptest.NewRecorder()
+	bound := &globaldirectory.DelegationLimitError{Limit: api.GlobalDelegationsPerAppMax, Observed: api.GlobalDelegationsPerAppMax + 1}
+	(&server{}).globalImageReleaseError(rec, httptest.NewRequest(http.MethodPut, "/", nil), state.Account{}, fmt.Errorf("consent: %w", bound))
+	var body api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusConflict || body.Code != api.CodeGlobalDelegationLimit || api.StatusForCode(body.Code) != rec.Code || body.Limit == nil || *body.Limit != bound.Limit || body.Observed == nil || *body.Observed != bound.Observed || body.DocsURL != "https://gregale.dev/docs/global-app-directory#regional-delegation" {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 }

@@ -17,11 +17,15 @@ T = TypeVar("T", bound="PutGlobalImageReleaseRequest")
 
 @_attrs_define
 class PutGlobalImageReleaseRequest:
-    """Request-driven global image release. Regional keys are never stored or returned."""
+    """Global image release with sealed scoped consent and background recovery. Regional admin keys are never stored or
+    returned.
+
+    """
 
     image: str
     regional_api_keys: PutGlobalImageReleaseRequestRegionalApiKeys | Unset = _attrs_field(default=UNSET, repr=False)
-    """Regional account-admin keys indexed by region, supplied only for pending regions to resume."""
+    """Request-only regional account-admin keys indexed by region, supplied to establish or renew scoped consent.
+    Active consent supports recovery and later releases without these keys."""
 
     def to_dict(self) -> dict[str, Any]:
         image = self.image

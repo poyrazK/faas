@@ -1,6 +1,6 @@
 package main
 
-// adr: 480
+// adr: 480, 482
 import (
 	"context"
 	"encoding/json"
@@ -15,6 +15,10 @@ import (
 
 func (s *server) putGlobalImageRelease(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.globalDirectoryAvailable(w) {
+		return
+	}
+	service := s.globalReleaseServiceForRequest(w, r, acct)
+	if service == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.GlobalImageReleaseRequestTimeout)
@@ -32,7 +36,7 @@ func (s *server) putGlobalImageRelease(w http.ResponseWriter, r *http.Request, a
 		s.globalImageReleaseError(w, r, acct, err)
 		return
 	}
-	coordinator := globaldirectory.Reconciler{Store: s.globalDirectory, Verifier: s.globalVerifier}
+	coordinator := globaldirectory.Reconciler{Store: s.globalDirectory, Verifier: s.globalVerifier, Delegations: service}
 	release, err := coordinator.Resume(ctx, acct.ID, slug, releaseID, req.RegionalAPIKeys)
 	if err != nil {
 		s.globalImageReleaseError(w, r, acct, err)
@@ -82,9 +86,12 @@ func validGlobalReleaseKeys(keys map[string]string) bool {
 
 func (s *server) globalImageReleaseError(w http.ResponseWriter, r *http.Request, acct state.Account, err error) {
 	var bound *globaldirectory.ReleaseLimitError
+	var delegationBound *globaldirectory.DelegationLimitError
 	switch {
 	case errors.Is(err, globaldirectory.ErrNoTargets):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeGlobalImageReleaseNoTargets, "No selected regions", "Attach at least one verified regional app before allocating a release."))
+	case errors.As(err, &delegationBound):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeGlobalDelegationLimit, "Regional delegation bound reached", "Wait for retained regional delegations to be revoked or expire before issuing more consent.").WithLimit(delegationBound.Limit, delegationBound.Observed).WithDocs("https://gregale.dev/docs/global-app-directory#regional-delegation"))
 	case errors.As(err, &bound):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeGlobalImageReleaseLimit, "Global release bound reached", "The selected target count or global generation exceeds the documented protocol bounds.").WithLimit(bound.Limit, bound.Observed).WithDocs("https://gregale.dev/docs/global-app-directory#global-image-releases"))
 	default:

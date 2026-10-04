@@ -3,12 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Request-driven global image release. Regional keys are never stored or returned.
+ * Global image release with sealed scoped consent and background recovery. Regional admin keys are never stored or returned.
  */
 export type PutGlobalImageReleaseRequest = {
   image: string;
   /**
-   * Regional account-admin keys indexed by region, supplied only for pending regions to resume.
+   * Request-only regional account-admin keys indexed by region, supplied to establish or renew scoped consent. Active consent supports recovery and later releases without these keys.
    */
   regional_api_keys?: Record<string, string>;
 };

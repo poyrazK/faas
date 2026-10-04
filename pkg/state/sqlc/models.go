@@ -2161,6 +2161,36 @@ type GlobalImageReleaseTarget struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+type GlobalReleaseDelegation struct {
+	ID                pgtype.UUID
+	GlobalAppID       pgtype.UUID
+	AccountID         pgtype.UUID
+	GlobalAppSlug     string
+	CellID            pgtype.UUID
+	Region            string
+	CellGeneration    int64
+	ApiBase           string
+	RegionalAccountID pgtype.UUID
+	RegionalAppID     pgtype.UUID
+	RegionalAppSlug   string
+	TokenSha256       []byte
+	SealedCredential  []byte
+	ExpiresAt         pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	Status            string
+}
+
+type GlobalReleaseRecoveryWork struct {
+	GlobalAppID   pgtype.UUID
+	AccountID     pgtype.UUID
+	GlobalAppSlug string
+	WakeID        pgtype.UUID
+	NextAttemptAt pgtype.Timestamptz
+	ClaimID       pgtype.UUID
+	ClaimUntil    pgtype.Timestamptz
+	CursorID      pgtype.UUID
+}
+
 type GooseDbVersion struct {
 	ID        int32
 	VersionID int64

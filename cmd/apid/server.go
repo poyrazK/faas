@@ -58,6 +58,7 @@ type server struct {
 	regionalComputeEnabled bool
 	globalDirectory        globaldirectory.Store
 	globalVerifier         globaldirectory.Verifier
+	globalDelegationKeys   globaldirectory.DelegationKeys
 	controlPlaneCell       db.CellIdentity
 	flagsWorkloadVerifier  *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).

@@ -110,8 +110,11 @@ def sync_detailed(
      Requires personal directory-account deploy-write access and verified email.
     Persists an immutable image, increasing generation and complete verified
     target snapshot before regional I/O. Keys indexed by region authorize
-    this request only and are never retained. Pending regions require their
-    keys to resume; matching UUID/image retries keep the original snapshot.
+    this request only and are never retained. They establish six-day scoped
+    consent sealed by directory apid before registration. Background recovery
+    and later releases reuse active consent without admin keys; missing or
+    expired consent requires renewed keys. Matching UUID/image retries keep
+    the original snapshot. Missing sealing identities fail closed.
     Redirects are refused. The request is bounded to 16384 bytes and 90 seconds,
     with at most 32 targets and four concurrent regions. Timeouts remain
     pending; retry the same UUID/image to recover regional acceptance receipts.
@@ -121,8 +124,8 @@ def sync_detailed(
     Args:
         slug (str):
         release_id (UUID):
-        body (PutGlobalImageReleaseRequest): Request-driven global image release. Regional keys
-            are never stored or returned.
+        body (PutGlobalImageReleaseRequest): Global image release with sealed scoped consent and
+            background recovery. Regional admin keys are never stored or returned.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,8 +160,11 @@ def sync(
      Requires personal directory-account deploy-write access and verified email.
     Persists an immutable image, increasing generation and complete verified
     target snapshot before regional I/O. Keys indexed by region authorize
-    this request only and are never retained. Pending regions require their
-    keys to resume; matching UUID/image retries keep the original snapshot.
+    this request only and are never retained. They establish six-day scoped
+    consent sealed by directory apid before registration. Background recovery
+    and later releases reuse active consent without admin keys; missing or
+    expired consent requires renewed keys. Matching UUID/image retries keep
+    the original snapshot. Missing sealing identities fail closed.
     Redirects are refused. The request is bounded to 16384 bytes and 90 seconds,
     with at most 32 targets and four concurrent regions. Timeouts remain
     pending; retry the same UUID/image to recover regional acceptance receipts.
@@ -168,8 +174,8 @@ def sync(
     Args:
         slug (str):
         release_id (UUID):
-        body (PutGlobalImageReleaseRequest): Request-driven global image release. Regional keys
-            are never stored or returned.
+        body (PutGlobalImageReleaseRequest): Global image release with sealed scoped consent and
+            background recovery. Regional admin keys are never stored or returned.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -199,8 +205,11 @@ async def asyncio_detailed(
      Requires personal directory-account deploy-write access and verified email.
     Persists an immutable image, increasing generation and complete verified
     target snapshot before regional I/O. Keys indexed by region authorize
-    this request only and are never retained. Pending regions require their
-    keys to resume; matching UUID/image retries keep the original snapshot.
+    this request only and are never retained. They establish six-day scoped
+    consent sealed by directory apid before registration. Background recovery
+    and later releases reuse active consent without admin keys; missing or
+    expired consent requires renewed keys. Matching UUID/image retries keep
+    the original snapshot. Missing sealing identities fail closed.
     Redirects are refused. The request is bounded to 16384 bytes and 90 seconds,
     with at most 32 targets and four concurrent regions. Timeouts remain
     pending; retry the same UUID/image to recover regional acceptance receipts.
@@ -210,8 +219,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         release_id (UUID):
-        body (PutGlobalImageReleaseRequest): Request-driven global image release. Regional keys
-            are never stored or returned.
+        body (PutGlobalImageReleaseRequest): Global image release with sealed scoped consent and
+            background recovery. Regional admin keys are never stored or returned.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -244,8 +253,11 @@ async def asyncio(
      Requires personal directory-account deploy-write access and verified email.
     Persists an immutable image, increasing generation and complete verified
     target snapshot before regional I/O. Keys indexed by region authorize
-    this request only and are never retained. Pending regions require their
-    keys to resume; matching UUID/image retries keep the original snapshot.
+    this request only and are never retained. They establish six-day scoped
+    consent sealed by directory apid before registration. Background recovery
+    and later releases reuse active consent without admin keys; missing or
+    expired consent requires renewed keys. Matching UUID/image retries keep
+    the original snapshot. Missing sealing identities fail closed.
     Redirects are refused. The request is bounded to 16384 bytes and 90 seconds,
     with at most 32 targets and four concurrent regions. Timeouts remain
     pending; retry the same UUID/image to recover regional acceptance receipts.
@@ -255,8 +267,8 @@ async def asyncio(
     Args:
         slug (str):
         release_id (UUID):
-        body (PutGlobalImageReleaseRequest): Request-driven global image release. Regional keys
-            are never stored or returned.
+        body (PutGlobalImageReleaseRequest): Global image release with sealed scoped consent and
+            background recovery. Regional admin keys are never stored or returned.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

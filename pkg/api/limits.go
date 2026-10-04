@@ -51,6 +51,22 @@ const (
 	GlobalImageReleaseConcurrentTargets = 4
 )
 
+// ADR-482: sealed regional delegation and bounded apid recovery.
+const (
+	GlobalDelegationConsentAttempts     = 2
+	GlobalDelegationLifetime            = 6 * 24 * time.Hour
+	GlobalDelegationPlaintextMaxBytes   = 2048
+	GlobalDelegationCiphertextMaxBytes  = 4096
+	GlobalDelegationsPerAppMax          = 1024
+	GlobalRecoveryBatchApps             = GlobalRecoveryConcurrentApps
+	GlobalRecoveryConcurrentApps        = 2
+	GlobalRecoveryDelegationsPerApp     = 32
+	GlobalRecoveryConcurrentRevocations = 4
+	GlobalRecoveryInterval              = 30 * time.Second
+	GlobalRecoveryLease                 = 2 * time.Minute
+	GlobalRecoveryAppTimeout            = 90 * time.Second
+)
+
 // OCI healthcheck image durations are nanoseconds. Docker permits zero for
 // inheritance and otherwise requires at least one millisecond.
 const (

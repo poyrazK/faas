@@ -105,6 +105,7 @@ type Querier interface {
 	CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg CheckExclusiveWorkRuntimeParams) (string, error)
 	ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg ClaimAutomaticRouteCheckParams) ([]byte, error)
 	ClaimBuildVMCleanupOnNode(ctx context.Context, db DBTX, arg ClaimBuildVMCleanupOnNodeParams) ([]ClaimBuildVMCleanupOnNodeRow, error)
+	ClaimGlobalRecovery(ctx context.Context, db DBTX, arg ClaimGlobalRecoveryParams) ([]ClaimGlobalRecoveryRow, error)
 	ClaimNextQueuedBuildOnNode(ctx context.Context, db DBTX, arg ClaimNextQueuedBuildOnNodeParams) (Build, error)
 	ClaimQueuedBuildOnNode(ctx context.Context, db DBTX, arg ClaimQueuedBuildOnNodeParams) (Build, error)
 	ClaimServiceRecovery(ctx context.Context, db DBTX, arg ClaimServiceRecoveryParams) (ServiceRecovery, error)
@@ -323,6 +324,7 @@ type Querier interface {
 	// makes retries/recovery harmless.
 	ExecutionUsageRecord(ctx context.Context, db DBTX, executionID pgtype.UUID) error
 	ExecutionWorkflowSummary(ctx context.Context, db DBTX, arg ExecutionWorkflowSummaryParams) (ExecutionWorkflowSummaryRow, error)
+	ExpireGlobalDelegations(ctx context.Context, db DBTX, globalAppID pgtype.UUID) error
 	ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt pgtype.Timestamptz) (int64, error)
 	// Marks a single session as expired after the reaper removes its
 	// .part file. Split into a separate query from ReapExpiredUploadSessions
@@ -343,6 +345,7 @@ type Querier interface {
 	// Two matches mean an invoice ID collides with another invoice's charge ID.
 	FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg FindInvoiceIDsByProviderKeyParams) ([]pgtype.UUID, error)
 	FinishDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg FinishDevBridgeWebhookReplayParams) (int64, error)
+	FinishGlobalRecovery(ctx context.Context, db DBTX, arg FinishGlobalRecoveryParams) (int64, error)
 	// Single oldest request row for one fingerprint, used by the
 	// UI's "what does this look like" preview. Returns
 	// headers_sample + redactions for the wire-side "we redacted
@@ -511,6 +514,8 @@ type Querier interface {
 	InsertExclusiveWorkOperation(ctx context.Context, db DBTX, arg InsertExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)
 	InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg InsertFeatureFlagVersionParams) (FeatureFlagVersion, error)
 	InsertGlobalAccountCellBinding(ctx context.Context, db DBTX, arg InsertGlobalAccountCellBindingParams) error
+	// ADR-482: immutable sealed authority and restart-safe recovery claims.
+	InsertGlobalDelegation(ctx context.Context, db DBTX, arg InsertGlobalDelegationParams) (GlobalReleaseDelegation, error)
 	InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error)
 	// Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 	// Returns the full row (with created_at server-stamped).
@@ -920,6 +925,7 @@ type Querier interface {
 	// per-account projections; the broader ?actor + ?subject filter
 	// shape lives on ListAllEventsPaged.
 	ListRecentEventsForAccount(ctx context.Context, db DBTX, arg ListRecentEventsForAccountParams) ([]ListRecentEventsForAccountRow, error)
+	ListRecoveryDelegations(ctx context.Context, db DBTX, arg ListRecoveryDelegationsParams) ([]GlobalReleaseDelegation, error)
 	// Canonical read pattern: "give me the last N requests for this app".
 	// Backs GET /v1/apps/{slug}/debug/requests. Uses
 	// request_telemetry_app_received_idx. The (since, until) pair is
@@ -959,6 +965,7 @@ type Querier interface {
 	// type. (commit 6 of the issue #757 mega-PR.)
 	ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListTriggersForAppRow, error)
 	ListUDPListenersForApp(ctx context.Context, db DBTX, appID string) ([]AppUdpListener, error)
+	LiveGlobalDelegation(ctx context.Context, db DBTX, arg LiveGlobalDelegationParams) (GlobalReleaseDelegation, error)
 	LockBuildCompletionClaim(ctx context.Context, db DBTX, arg LockBuildCompletionClaimParams) (LockBuildCompletionClaimRow, error)
 	LockBuildCompletionDeployment(ctx context.Context, db DBTX, id pgtype.UUID) (LockBuildCompletionDeploymentRow, error)
 	LockCanaryRouteGateApp(ctx context.Context, db DBTX, appID string) (string, error)
@@ -1217,6 +1224,7 @@ type Querier interface {
 	ReadExclusiveWorkPolicy(ctx context.Context, db DBTX, arg ReadExclusiveWorkPolicyParams) (ExclusiveWorkPolicy, error)
 	ReadExclusiveWorkReplay(ctx context.Context, db DBTX, arg ReadExclusiveWorkReplayParams) (ExclusiveWorkOperation, error)
 	ReadGlobalAccountCellBinding(ctx context.Context, db DBTX, arg ReadGlobalAccountCellBindingParams) (string, error)
+	ReadGlobalDelegation(ctx context.Context, db DBTX, arg ReadGlobalDelegationParams) (GlobalReleaseDelegation, error)
 	ReadGlobalImageRelease(ctx context.Context, db DBTX, arg ReadGlobalImageReleaseParams) (ReadGlobalImageReleaseRow, error)
 	// A single statement reads the pointer and its complete membership together.
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)
@@ -1462,6 +1470,7 @@ type Querier interface {
 	// the state query keeps legacy NULL rows distinct from explicit opt-outs.
 	SetDeploymentSecretReloadSignal(ctx context.Context, db DBTX, arg SetDeploymentSecretReloadSignalParams) (int64, error)
 	SetExclusiveCaptureBarrier(ctx context.Context, db DBTX, arg SetExclusiveCaptureBarrierParams) error
+	SetGlobalDelegationStatus(ctx context.Context, db DBTX, arg SetGlobalDelegationStatusParams) (int64, error)
 	// The caller retains the natural-key upsert's row lock in the same transaction.
 	SetInvoiceDetailLifecycle(ctx context.Context, db DBTX, arg SetInvoiceDetailLifecycleParams) error
 	SetInvoiceEnrichment(ctx context.Context, db DBTX, arg SetInvoiceEnrichmentParams) error
