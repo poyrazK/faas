@@ -122,7 +122,9 @@ type privateTCPDial struct {
 }
 
 // privateTCPDialFrom asks a caller app to dial host:port from inside its guest.
-func privateTCPDialFrom(t *testing.T, h *e2etest.Harness, callerSlug, host string, port int, payload string) privateTCPDial {
+// Pro apps default to bearer public auth, so the request carries the caller
+// account's key.
+func privateTCPDialFrom(t *testing.T, h *e2etest.Harness, key, callerSlug, host string, port int, payload string) privateTCPDial {
 	t.Helper()
 	query := url.Values{"host": {host}, "port": {strconv.Itoa(port)}, "payload": {payload}}
 	req, err := http.NewRequest(http.MethodGet, h.GatewayURL+"/dial?"+query.Encode(), nil)
@@ -130,6 +132,7 @@ func privateTCPDialFrom(t *testing.T, h *e2etest.Harness, callerSlug, host strin
 		t.Fatal(err)
 	}
 	req.Host = callerSlug + ".apps.test.example"
+	req.Header.Set("Authorization", "Bearer "+key)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	resp, err := h.HTTPClient().Do(req.WithContext(ctx))
@@ -139,8 +142,8 @@ func privateTCPDialFrom(t *testing.T, h *e2etest.Harness, callerSlug, host strin
 	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	var out privateTCPDial
-	if err := json.Unmarshal(body, &out); err != nil {
-		t.Fatalf("dial response from %s (status %d) is not JSON: %s", callerSlug, resp.StatusCode, body)
+	if err := json.Unmarshal(body, &out); err != nil || (resp.StatusCode != http.StatusOK && out.Error == "") {
+		t.Fatalf("dial response from %s (status %d) is not the dialer's: %s", callerSlug, resp.StatusCode, body)
 	}
 	out.status = resp.StatusCode
 	return out
@@ -217,7 +220,7 @@ func TestPrivateServiceTCPMetal(t *testing.T) {
 
 	// Natural port, by name, to a parked internal target: DNS hands the
 	// caller the service address, and the connection wakes the target.
-	got := privateTCPDialFrom(t, h, caller.Slug, cache.Slug+".svc.gregale", 5432, "hello-private-tcp")
+	got := privateTCPDialFrom(t, h, key, caller.Slug, cache.Slug+".svc.gregale", 5432, "hello-private-tcp")
 	if got.status != http.StatusOK || got.Reply != "tcp-echo:hello-private-tcp" {
 		t.Fatalf("private TCP to %s.svc.gregale:5432 = %+v, want the echoed payload", cache.Slug, got)
 	}
@@ -227,7 +230,7 @@ func TestPrivateServiceTCPMetal(t *testing.T) {
 	tcpMetalWaitMetric(t, ctx, h.GatewayControlURL, `gatewayd_internal_service_tcp_sessions_completed_total{outcome="success"}`, 1)
 
 	// An undeclared port is refused before any byte reaches the guest.
-	if undeclared := privateTCPDialFrom(t, h, caller.Slug, cache.Slug+".svc.gregale", 6000, "nope"); undeclared.status == http.StatusOK {
+	if undeclared := privateTCPDialFrom(t, h, key, caller.Slug, cache.Slug+".svc.gregale", 6000, "nope"); undeclared.status == http.StatusOK {
 		t.Fatalf("undeclared port 6000 was forwarded: %+v", undeclared)
 	}
 	tcpMetalWaitMetric(t, ctx, h.GatewayControlURL, `gatewayd_internal_service_tcp_sessions_rejected_total{reason="undeclared_port"}`, 1)
@@ -238,6 +241,9 @@ func TestPrivateServiceTCPMetal(t *testing.T) {
 		t.Fatal(err)
 	}
 	publicReq.Host = cache.Slug + ".apps.test.example"
+	// With the owner's key, so a refusal is the visibility gate rather
+	// than the bearer default.
+	publicReq.Header.Set("Authorization", "Bearer "+key)
 	if resp, err := h.HTTPClient().Do(publicReq); err == nil {
 		_ = resp.Body.Close()
 		if resp.StatusCode < 400 {
@@ -248,11 +254,11 @@ func TestPrivateServiceTCPMetal(t *testing.T) {
 	// Another account cannot use the name or the address.
 	otherKey := h.SeedAccount(ctx, api.PlanPro)
 	stranger := deployPrivateTCPApp(t, ctx, h, pool, otherKey, api.CreateAppRequest{Slug: "stranger-" + suffix}, NodeFixtureTCPDialer(t))
-	byName := privateTCPDialFrom(t, h, stranger.Slug, cache.Slug+".svc.gregale", 5432, "leak")
+	byName := privateTCPDialFrom(t, h, otherKey, stranger.Slug, cache.Slug+".svc.gregale", 5432, "leak")
 	if byName.status == http.StatusOK || byName.Resolved == want.String() || strings.Contains(byName.Reply, "leak") {
 		t.Fatalf("another account reached %s by name: %+v", cache.Slug, byName)
 	}
-	byAddress := privateTCPDialFrom(t, h, stranger.Slug, want.String(), 5432, "leak")
+	byAddress := privateTCPDialFrom(t, h, otherKey, stranger.Slug, want.String(), 5432, "leak")
 	if byAddress.status == http.StatusOK || strings.Contains(byAddress.Reply, "leak") {
 		t.Fatalf("another account reached %s at %s: %+v", cache.Slug, want, byAddress)
 	}
