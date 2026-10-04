@@ -55,7 +55,7 @@ func TestPgOperationPrivatePinsBackfillPreservesPublicDeadlines(t *testing.T) {
 	if _, err := pool.Exec(ctx, `TRUNCATE customer_operation_code_pins`); err != nil {
 		t.Fatal(err)
 	}
-	migration, err := migrations.FS.ReadFile("20261001032905231_operation_private_code_pins.sql")
+	migration, err := migrations.FS.ReadFile("20261004123650815_operation_private_code_pins.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

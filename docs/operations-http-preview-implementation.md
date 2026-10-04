@@ -70,9 +70,10 @@ retained under `operations-checks-20261001/staged-release-20261004/evidence`.
 The state slice is tracked in [PR #4173](https://github.com/poyrazK/faas/pull/4173).
 Fresh applicable CI against main must pass before landing. Before enabling the
 preview, real-handler HTTP and SDK acceptance must pass with the default
-admission switch off, a bounded opt-in path, and documented rollback. The two
-code-retention migration IDs also appear in development drafts #3973 and #3979;
-those drafts remain preserved and must not introduce duplicate schema changes.
+admission switch off, a bounded opt-in path, and documented rollback. The code-retention migrations use fresh generated IDs
+`20261004123536799` and `20261004123650815`. They replace this slice's former
+IDs claimed by preserved drafts #3973 and #3979. Those drafts must be reconciled
+before landing any duplicate schema changes.
 
 The original full implementation worktree remains preserved with its pending
 main merge. Native Job and workflow adapters, KVM qualification, and leakcheck

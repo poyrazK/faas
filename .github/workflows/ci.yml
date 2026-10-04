@@ -709,7 +709,20 @@ jobs:
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '${{ matrix.package_pattern }}')
           test -n "$PKGS"
           printf '%s\n' "$PKGS"
-          go test -race -count=1 -p 4 -timeout=20m -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
+          cover_args=()
+          if [[ '${{ matrix.id }}' == 'a' ]]; then
+            python3 -m unittest discover -s scripts/ci -p 'test_normalize_go_cover_profile.py'
+            # ADR-521: acceptance lives outside pkg/state and must credit the
+            # state methods it exercises. Generated SQLC is outside the floor.
+            COVERPKGS=$(printf '%s\n' "$PKGS" | grep -v '/pkg/state/sqlc$' | paste -sd, -)
+            cover_args=(-coverpkg="$COVERPKGS")
+          fi
+          go test -race -count=1 -p 4 -timeout=20m "${cover_args[@]}" -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
+          if [[ '${{ matrix.id }}' == 'a' ]]; then
+            # Go emits repeated blocks for packages covered by several test
+            # binaries. Count their union before the existing coverage gates.
+            python3 scripts/ci/normalize_go_cover_profile.py "coverage/${{ matrix.coverage_file }}"
+          fi
 
       - name: pkg/state coverage gate
         if: ${{ matrix.state_coverage }}
