@@ -36358,6 +36358,9 @@ components:
         protocol:
           type: string
           enum: [tcp, udp]
+        internal:
+          type: boolean
+          description: "Internal-only listener: never public; same-account services reach it at the private service address (ADR-576)."
 
     TCPListenerResponse:
       description: "One app-owned raw TCP listener with a stable public endpoint."

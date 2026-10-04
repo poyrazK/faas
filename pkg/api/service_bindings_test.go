@@ -154,8 +154,10 @@ func TestStandaloneServiceBindingProjection(t *testing.T) {
 		"CUSTOM":                        "kept",
 		"GREGALE_SERVICE_OLD_URL":       "stale",
 		"GREGALE_SERVICE_OLD_HTTPS_URL": "stale",
+		"GREGALE_SERVICE_OLD_HOST":      "stale",
 	}, bindings)
-	if len(env) != 5 || env["CUSTOM"] != "kept" || env["GREGALE_SERVICE_OLD_URL"] != "" ||
+	if len(env) != 7 || env["CUSTOM"] != "kept" || env["GREGALE_SERVICE_OLD_URL"] != "" || env["GREGALE_SERVICE_OLD_HOST"] != "" ||
+		env["GREGALE_SERVICE_BILLING_HOST"] != "billing.svc.gregale" ||
 		env["GREGALE_SERVICE_BILLING_URL"] != "http://billing.svc.gregale:10081" ||
 		env["GREGALE_SERVICE_BILLING_HTTPS_URL"] != "https://billing.internal" ||
 		env["GREGALE_SERVICE_IDENTITY_HTTPS_URL"] != "https://identity.internal" {
@@ -185,6 +187,7 @@ func TestServiceBindingEnvHTTPSFirstKeepsHTTPSAlias(t *testing.T) {
 	want := map[string]string{
 		"GREGALE_SERVICE_BILLING_URL":       "https://billing.internal",
 		"GREGALE_SERVICE_BILLING_HTTPS_URL": "https://billing.internal",
+		"GREGALE_SERVICE_BILLING_HOST":      "billing.svc.gregale",
 		"CUSTOM":                            "kept",
 	}
 	if !reflect.DeepEqual(got, want) {
