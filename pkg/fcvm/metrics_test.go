@@ -3,7 +3,9 @@ package fcvm
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -128,12 +130,45 @@ func TestDashboardGaugesCacheTTSuppressesRefreshes(t *testing.T) {
 	}
 }
 
-// TestDefaultLvFcUsedPctEmptyName guards the bad-input path. The
-// closure must return a non-nil error, not panic.
-func TestDefaultLvFcUsedPctEmptyName(t *testing.T) {
-	_, err := DefaultLvFcUsedPct("")(context.Background())
-	if err == nil {
-		t.Error("empty lv name: expected error, got nil")
+// TestDefaultFcVolumeUsedPct reads a real filesystem and reports no data
+// (NaN plus an error) when the volume root is unusable.
+func TestDefaultFcVolumeUsedPct(t *testing.T) {
+	tests := []struct {
+		name    string
+		root    string
+		wantErr bool
+	}{
+		{name: "existing root", root: t.TempDir()},
+		{name: "empty root", root: "", wantErr: true},
+		{name: "missing root", root: filepath.Join(t.TempDir(), "missing"), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pct, err := DefaultFcVolumeUsedPct(tt.root)(context.Background())
+			if tt.wantErr {
+				if err == nil || !math.IsNaN(pct) {
+					t.Fatalf("DefaultFcVolumeUsedPct(%q) = %v, %v; want NaN and an error", tt.root, pct, err)
+				}
+				return
+			}
+			if err != nil || pct < 0 || pct > 100 {
+				t.Fatalf("DefaultFcVolumeUsedPct(%q) = %v, %v; want a percentage in [0, 100]", tt.root, pct, err)
+			}
+		})
+	}
+}
+
+// TestDashboardGaugesLvFcNoDataUntilFirstRead pins the production failure:
+// a probe that never succeeds must export NaN ("no data"), not "0% used",
+// so a dashboard shows the gap instead of a healthy-looking volume.
+func TestDashboardGaugesLvFcNoDataUntilFirstRead(t *testing.T) {
+	g := NewDashboardGauges(DashboardMetrics{
+		LvFcUsedPct: func(context.Context) (float64, error) {
+			return math.NaN(), errors.New("no volume")
+		},
+	}).WithTTL(0)
+	if got := g.lvPct(); !math.IsNaN(got) {
+		t.Fatalf("lv_fc_used_pct with a failing probe = %v, want NaN", got)
 	}
 }
 

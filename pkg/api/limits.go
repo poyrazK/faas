@@ -3794,11 +3794,11 @@ const (
 	// firecracker upgrade doesn't pay an extra cold boot. 7 days is the
 	// v1 box's typical reset cycle.
 	SnapshotStaleRetention = 7 * 24 * time.Hour
-	// LvFcName is the LVM logical volume apps + snapshots live on (spec §8).
-	// Schedd's dashboard gauge shells out to `lvs -o data_percent <LvFcName>`
-	// to populate `fcvm_lv_fc_used_pct`. Empty on dev/macOS — the
-	// DefaultLvFcUsedPct closure returns 0 and the gauge degrades to "no data".
-	LvFcName = "lv-fc"
+	// FcVolumeRoot is where the spec §8 lv-fc volume (app layers +
+	// snapshots) is mounted. Schedd statfs-es it to populate
+	// `fcvm_lv_fc_used_pct`; the gauge reports no data where the path is
+	// missing (dev/macOS).
+	FcVolumeRoot = "/srv/fc"
 
 	// Characterization boot (ADR-051 §"Characterization window"). On the
 	// first cold boot of a new deployment, guest-init observes what the
