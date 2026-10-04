@@ -45,6 +45,27 @@ Stale or blocked receipts are rejected. Re-run the preview after changing releva
 
 An operator must opt apid into continuous reports with `FAAS_ENVIRONMENT_GIT_DRIFT_REPORTING_ENABLED=true`. Reporting is disabled by default and never claims enforcement work or performs workload activation. Git source polling defaults on; `FAAS_ENVIRONMENT_GIT_SOURCE_POLLING_ENABLED=false` disables it. A source outage retains the last approved definition and is reported separately from drift.
 
+Finishing a report preserves a pending wakeup when intent changed after its final
+observation. The next worker poll can claim that source immediately, including
+after an observation failure. Changes included in the final observation keep the
+normal reporting cadence. A plan using a temporary override schedules its next
+check no later than that override's expiry; an override that expires during the
+run triggers a fresh check at the next poll. Completed reports remain historical
+observations, and do not certify changes made after their observed intent version.
+
+## Next implementation steps
+
+1. Complete held workload preparation for functions, new workload creation and
+   inherited non-image source provenance. Keep candidate creation idempotent and
+   bind it to the original environment UUID, app identity and approved commit.
+2. Add scoped service-binding adapters using qualified target identities and
+   authorization policies, with no fallback to another environment.
+3. Complete qualification receipts, smoke checks and capture/restore evidence,
+   including native snapshot publication and dedicated KVM recovery acceptance.
+4. Add graph activation and serving convergence evidence, then qualify the
+   continuous enforcement worker against complete API/worker/queue environments,
+   superseded revisions, source outages, override expiry and process restarts.
+
 ## Execution gates
 
 Production qualification polling, graph activation and continuous enforcement are not enabled by this preview. Native process recovery remains an explicit vmmd opt-in (`native_process_recovery`, default `false`). The native capture backend rejects unsupported snapshot publication before pause or capture effects.

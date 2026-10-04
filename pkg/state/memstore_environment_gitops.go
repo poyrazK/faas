@@ -295,6 +295,11 @@ func (m *MemStore) FinishEnvironmentGitOps(_ context.Context, lease EnvironmentG
 	run.Status, run.Plan, run.Steps, run.ErrorCode, run.CompletedAt = status, append(json.RawMessage(nil), plan...), append(json.RawMessage(nil), steps...), errorCode, &completed
 	memory.runs[run.ID] = run
 	pruneGitOpsMemoryReports(memory, now)
+	overrides := make([]environmentsync.Override, 0, len(memory.overrides))
+	for _, override := range memory.overrides {
+		overrides = append(overrides, override)
+	}
+	next = gitOpsNextAttempt(lease, plan, memory.source.IntentVersion, overrides, now, next)
 	memory.lease, memory.next = nil, next.UTC()
 	if status == "converged" {
 		memory.source.AppliedRevisionID = memory.source.ApprovedRevisionID

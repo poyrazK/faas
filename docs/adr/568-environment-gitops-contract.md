@@ -2279,3 +2279,19 @@ attempts too, so repeated process crashes cannot grow history indefinitely.
 Foreign field ownership requests are bounded to 1,024 paths in the API limits
 registry. These limits do not prune approval provenance or native execution
 journals.
+
+### Report scheduling hardening — 2026-10-05
+
+Run completion compares the current intent version under the source authority
+lock with the final plan's observation. A newer write leaves the next attempt
+immediately due instead of overwriting its wakeup with the periodic interval.
+Failures without a complete plan use the claim's intent version. A write already
+included in the final observation does not require an extra attempt. Stale
+convergence still cannot advance the applied revision.
+
+Override expiry is a time-dependent planning change without a new intent write.
+Completion bounds the next attempt by the earliest override used by the plan;
+expiry during the attempt leaves the next check immediately due. Expired records
+that a fresh plan no longer uses do not create an unbounded retry loop. Both
+memory and PostgreSQL stores use the same scheduling rules, while retaining the
+existing lease, generation, approved-revision and historical-report fences.

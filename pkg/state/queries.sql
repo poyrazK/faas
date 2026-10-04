@@ -5838,6 +5838,12 @@ DELETE FROM environment_management_overrides o USING environment_git_sources s
 WHERE o.environment_id = s.environment_id AND s.id = sqlc.arg(source_id)::uuid
 AND o.resource = sqlc.arg(resource)::text AND o.field_path = sqlc.arg(field_path)::text;
 
+-- name: ListEnvironmentGitOpsOverrideExpirations :many
+SELECT o.resource, o.field_path, o.expires_at
+FROM environment_management_overrides o JOIN environment_managed_fields f
+ON f.environment_id = o.environment_id AND f.resource = o.resource AND f.field_path = o.field_path
+WHERE f.source_id = sqlc.arg(source_id)::uuid;
+
 -- name: RecordEnvironmentGitOpsEvent :exec
 INSERT INTO environment_gitops_events(source_id, actor, kind, details)
 VALUES (sqlc.arg(source_id)::uuid, sqlc.arg(actor)::text, sqlc.arg(kind)::text, sqlc.arg(details)::jsonb);

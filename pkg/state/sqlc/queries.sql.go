@@ -17135,6 +17135,39 @@ func (q *Queries) ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUd
 	return items, nil
 }
 
+const listEnvironmentGitOpsOverrideExpirations = `-- name: ListEnvironmentGitOpsOverrideExpirations :many
+SELECT o.resource, o.field_path, o.expires_at
+FROM environment_management_overrides o JOIN environment_managed_fields f
+ON f.environment_id = o.environment_id AND f.resource = o.resource AND f.field_path = o.field_path
+WHERE f.source_id = $1::uuid
+`
+
+type ListEnvironmentGitOpsOverrideExpirationsRow struct {
+	Resource  string
+	FieldPath string
+	ExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListEnvironmentGitOpsOverrideExpirations(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]ListEnvironmentGitOpsOverrideExpirationsRow, error) {
+	rows, err := db.Query(ctx, listEnvironmentGitOpsOverrideExpirations, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEnvironmentGitOpsOverrideExpirationsRow{}
+	for rows.Next() {
+		var i ListEnvironmentGitOpsOverrideExpirationsRow
+		if err := rows.Scan(&i.Resource, &i.FieldPath, &i.ExpiresAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnvironmentGitOpsRuns = `-- name: ListEnvironmentGitOpsRuns :many
 SELECT r.id, r.source_id, r.revision_id, r.generation, r.lease_token, r.status, r.plan, r.steps, r.error_code, r.started_at, r.completed_at FROM environment_gitops_runs r
 JOIN environment_git_sources s ON s.id = r.source_id

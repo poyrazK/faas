@@ -1069,6 +1069,7 @@ type Querier interface {
 	// (the column is JSONB; empty/null means "no filter").
 	ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error)
 	ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUdpListener, error)
+	ListEnvironmentGitOpsOverrideExpirations(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]ListEnvironmentGitOpsOverrideExpirationsRow, error)
 	ListEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg ListEnvironmentGitOpsRunsParams) ([]EnvironmentGitopsRun, error)
 	// Discovery does not authorize cleanup. Recheck under the original request
 	// and immutable frame locks before any native retirement RPC.
