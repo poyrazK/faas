@@ -10413,6 +10413,18 @@ CREATE TABLE public.custom_domains (
 
 
 --
+-- Name: customer_operation_code_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_code_pins (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_code_pins_expires_at_check CHECK (isfinite(expires_at))
+);
+
+
+--
 -- Name: customer_operation_definitions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10546,18 +10558,6 @@ CREATE TABLE public.customer_operation_result_blobs (
 
 
 --
--- Name: customer_operation_stream_leases; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.customer_operation_stream_leases (
-    id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    operation_id uuid NOT NULL,
-    expires_at timestamp with time zone NOT NULL
-);
-
-
---
 -- Name: customer_operations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10581,6 +10581,82 @@ CREATE TABLE public.customer_operations (
     CONSTRAINT customer_operations_check6 CHECK (((record ->> 'current_invocation_id'::text) = (current_invocation_id)::text)),
     CONSTRAINT customer_operations_record_check CHECK ((jsonb_typeof(record) = 'object'::text)),
     CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text])))
+);
+
+
+--
+-- Name: project_release_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_release_members (
+    release_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL
+);
+
+
+--
+-- Name: project_release_sets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_release_sets (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    active boolean DEFAULT false NOT NULL,
+    ttl_seconds integer NOT NULL,
+    expires_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_release_set_expiry_state CHECK (((active AND (expires_at IS NULL)) OR ((NOT active) AND (expires_at IS NOT NULL)))),
+    CONSTRAINT project_release_sets_ttl_seconds_check CHECK (((ttl_seconds >= 1) AND (ttl_seconds <= 604800)))
+);
+
+
+--
+-- Name: customer_operation_retained_release_refs; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.customer_operation_retained_release_refs AS
+ SELECT DISTINCT rs.id AS release_id
+   FROM (((((public.customer_operations o
+     JOIN public.customer_operation_definitions def ON (((def.id = o.definition_id) AND (def.account_id = o.account_id) AND (def.app_id = o.app_id) AND ((def.deployment_id)::text = (o.record ->> 'deployment_id'::text)) AND (def.scope = (o.record ->> 'scope'::text)))))
+     JOIN public.apps a ON (((a.id = def.app_id) AND (a.account_id = o.account_id) AND (a.status <> 'deleted'::text))))
+     JOIN public.deployments d ON (((d.id = def.deployment_id) AND (d.app_id = def.app_id) AND (d.scope = def.scope))))
+     JOIN public.project_release_sets rs ON ((((rs.id)::text = (o.record ->> 'release_id'::text)) AND (rs.account_id = o.account_id) AND (rs.project_id = a.project_id) AND (rs.environment_slug = def.scope))))
+     JOIN public.project_release_members source ON (((source.release_id = rs.id) AND (source.app_id = def.app_id) AND (source.deployment_id = def.deployment_id))))
+  WHERE ((o.state = ANY (ARRAY['accepted'::text, 'running'::text])) OR (o.expires_at > now()));
+
+
+--
+-- Name: customer_operation_retained_deployment_refs; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.customer_operation_retained_deployment_refs AS
+ SELECT DISTINCT def.deployment_id
+   FROM (((public.customer_operations o
+     JOIN public.customer_operation_definitions def ON (((def.id = o.definition_id) AND (def.account_id = o.account_id) AND (def.app_id = o.app_id) AND ((def.deployment_id)::text = (o.record ->> 'deployment_id'::text)) AND (def.scope = (o.record ->> 'scope'::text)))))
+     JOIN public.apps a ON (((a.id = def.app_id) AND (a.account_id = o.account_id) AND (a.status <> 'deleted'::text))))
+     JOIN public.deployments d ON (((d.id = def.deployment_id) AND (d.app_id = def.app_id) AND (d.scope = def.scope))))
+  WHERE ((o.state = ANY (ARRAY['accepted'::text, 'running'::text])) OR (o.expires_at > now()))
+UNION
+ SELECT rm.deployment_id
+   FROM ((((public.customer_operation_retained_release_refs retained
+     JOIN public.project_release_sets rs ON ((rs.id = retained.release_id)))
+     JOIN public.project_release_members rm ON ((rm.release_id = rs.id)))
+     JOIN public.apps a ON (((a.id = rm.app_id) AND (a.account_id = rs.account_id) AND (a.project_id = rs.project_id) AND (a.status <> 'deleted'::text))))
+     JOIN public.deployments d ON (((d.id = rm.deployment_id) AND (d.app_id = a.id) AND (d.scope = rs.environment_slug))));
+
+
+--
+-- Name: customer_operation_stream_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_stream_leases (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL
 );
 
 
@@ -10794,6 +10870,38 @@ ALTER TABLE public.deployment_audit ALTER COLUMN id ADD GENERATED ALWAYS AS IDEN
 
 
 --
+-- Name: deployment_revision_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_revision_pins (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: deployment_code_pin_deadlines; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.deployment_code_pin_deadlines AS
+ SELECT deployment_id,
+    app_id,
+    max(expires_at) AS expires_at
+   FROM ( SELECT deployment_revision_pins.deployment_id,
+            deployment_revision_pins.app_id,
+            deployment_revision_pins.expires_at
+           FROM public.deployment_revision_pins
+        UNION ALL
+         SELECT customer_operation_code_pins.deployment_id,
+            customer_operation_code_pins.app_id,
+            customer_operation_code_pins.expires_at
+           FROM public.customer_operation_code_pins) receipts
+  GROUP BY deployment_id, app_id;
+
+
+--
 -- Name: deployment_image_preparations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10881,18 +10989,6 @@ CREATE TABLE public.deployment_openapi_snapshots (
     CONSTRAINT deployment_openapi_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
     CONSTRAINT deployment_openapi_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT deployment_openapi_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
-);
-
-
---
--- Name: deployment_revision_pins; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.deployment_revision_pins (
-    deployment_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    expires_at timestamp with time zone NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -17213,35 +17309,6 @@ CREATE TABLE public.project_environment_workload_specs (
 
 
 --
--- Name: project_release_members; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.project_release_members (
-    release_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    deployment_id uuid NOT NULL
-);
-
-
---
--- Name: project_release_sets; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.project_release_sets (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    project_id uuid NOT NULL,
-    environment_slug text NOT NULL,
-    active boolean DEFAULT false NOT NULL,
-    ttl_seconds integer NOT NULL,
-    expires_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT project_release_set_expiry_state CHECK (((active AND (expires_at IS NULL)) OR ((NOT active) AND (expires_at IS NOT NULL)))),
-    CONSTRAINT project_release_sets_ttl_seconds_check CHECK (((ttl_seconds >= 1) AND (ttl_seconds <= 604800)))
-);
-
-
---
 -- Name: projects; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -20013,6 +20080,14 @@ ALTER TABLE ONLY public.custom_domain_tls_hosts
 
 ALTER TABLE ONLY public.custom_domains
     ADD CONSTRAINT custom_domains_pkey PRIMARY KEY (domain);
+
+
+--
+-- Name: customer_operation_code_pins customer_operation_code_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_code_pins
+    ADD CONSTRAINT customer_operation_code_pins_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -25165,6 +25240,20 @@ CREATE INDEX custom_domains_verification_due_idx ON public.custom_domains USING 
 
 
 --
+-- Name: customer_operation_code_pins_app_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_code_pins_app_expiry_idx ON public.customer_operation_code_pins USING btree (app_id, expires_at);
+
+
+--
+-- Name: customer_operation_code_pins_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_code_pins_expiry_idx ON public.customer_operation_code_pins USING btree (expires_at);
+
+
+--
 -- Name: customer_operation_definitions_route_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -25214,10 +25303,24 @@ CREATE INDEX customer_operation_stream_leases_retention_idx ON public.customer_o
 
 
 --
+-- Name: customer_operations_definition_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_definition_retention_idx ON public.customer_operations USING btree (definition_id, expires_at);
+
+
+--
 -- Name: customer_operations_pending_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX customer_operations_pending_account_idx ON public.customer_operations USING btree (account_id) WHERE (state = ANY (ARRAY['accepted'::text, 'running'::text, 'requires_reconciliation'::text]));
+
+
+--
+-- Name: customer_operations_release_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_release_retention_idx ON public.customer_operations USING btree (((record ->> 'release_id'::text)), expires_at);
 
 
 --
@@ -25526,6 +25629,13 @@ CREATE INDEX deployments_failed_error_code_idx ON public.deployments USING btree
 --
 
 CREATE INDEX deployments_live_traffic_idx ON public.deployments USING btree (app_id) INCLUDE (traffic_percent, id) WHERE (status = 'live'::text);
+
+
+--
+-- Name: deployments_operation_code_pin_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX deployments_operation_code_pin_owner_idx ON public.deployments USING btree (id, app_id);
 
 
 --
@@ -32993,6 +33103,22 @@ ALTER TABLE ONLY public.custom_domains
 
 ALTER TABLE ONLY public.custom_domains
     ADD CONSTRAINT custom_domains_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: customer_operation_code_pins customer_operation_code_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_code_pins
+    ADD CONSTRAINT customer_operation_code_pins_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_code_pins customer_operation_code_pins_owner_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_code_pins
+    ADD CONSTRAINT customer_operation_code_pins_owner_fk FOREIGN KEY (deployment_id, app_id) REFERENCES public.deployments(id, app_id) ON DELETE CASCADE;
 
 
 --

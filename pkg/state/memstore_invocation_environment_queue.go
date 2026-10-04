@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/google/uuid"
+	"time"
 )
 
 var _ ProjectEnvironmentQueueInvocationStore = (*MemStore)(nil)
@@ -82,7 +83,7 @@ func (m *MemStore) invocationQueuePinLocked(inv Invocation, deploymentID string,
 	env, app := m.projectEnvironments[inv.EnvironmentID], m.apps[inv.AppID]
 	if release != "" {
 		set, ok := m.projectReleaseSets[release]
-		if !ok || set.AccountID != app.AccountID || set.ProjectID != app.ProjectID || set.EnvironmentSlug != env.Slug || (requireLive && !releaseUsable(set)) {
+		if !ok || set.AccountID != app.AccountID || set.ProjectID != app.ProjectID || set.EnvironmentSlug != env.Slug || (requireLive && !releasePubliclyUsable(set, time.Now())) {
 			return false
 		}
 		revision = releaseMemberForApp(set, inv.AppID)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -214,7 +215,7 @@ func (m *MemStore) validateInvocationEnvironmentClaimLocked(inv Invocation) erro
 		set, exists := m.projectReleaseSets[release]
 		app := m.apps[inv.AppID]
 		env := m.projectEnvironments[inv.EnvironmentID]
-		if !exists || set.AccountID != app.AccountID || set.ProjectID != app.ProjectID || set.EnvironmentSlug != env.Slug || !releaseUsable(set) {
+		if !exists || set.AccountID != app.AccountID || set.ProjectID != app.ProjectID || set.EnvironmentSlug != env.Slug || !releasePubliclyUsable(set, time.Now()) {
 			return ErrInvocationEnvironmentWorkIsolation
 		}
 		dep, ok = m.deployments[releaseMemberForApp(set, inv.AppID)]
