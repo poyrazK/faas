@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -263,6 +264,12 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	}
 	vmstatePath, vmstateStorageKey := e.snapshotStateLocators(placement.NodeID, snap)
 	restoreCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput{haveSnap: true, snapKey: snap.StorageKey}))
+	spec, err = e.prepareRegionalRuntimeLaunch(restoreCtx, placement.NodeID, ins.ID, wakeID, runtimequota.CapacityWarm, spec)
+	if err != nil {
+		cancel()
+		cleanup("regional_launch_failed")
+		return err
+	}
 	out, err := paused.CreatePausedFromSnapshot(restoreCtx, placement.NodeID, ins.ID, spec, SnapshotRef{
 		DeploymentID: dep.ID, FCVersion: snap.FCVersion, StorageKey: snap.StorageKey,
 		VMStatePath: vmstatePath, VMStateStorageKey: vmstateStorageKey,

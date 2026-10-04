@@ -95,15 +95,7 @@ func (s *PgStore) ReserveRegionalRuntimeServingSeat(ctx context.Context, seat ru
 		if err = checkCurrentRegionalCapacity(ctx, tx, q, p); err != nil {
 			return RegionalRuntimeServingSeatReceipt{}, err
 		}
-		claims, err := json.Marshal(seat)
-		if err != nil {
-			return RegionalRuntimeServingSeatReceipt{}, err
-		}
-		row, err := q.InsertRegionalRuntimeServingSeat(ctx, tx, sqlc.InsertRegionalRuntimeServingSeatParams{AppID: uuidToPgtype(app), AllocationID: uuidToPgtype(p.Grant.AllocationID), SeatID: uuidToPgtype(seat.ID), PermitID: uuidToPgtype(p.ID), Generation: p.Grant.Generation, DeploymentID: uuidToPgtype(p.DeploymentID), Rollout: seat.Rollout, SeatClaims: claims})
-		if err != nil {
-			return RegionalRuntimeServingSeatReceipt{}, err
-		}
-		return regionalServingSeatRow(row)
+		return insertRegionalServingSeat(ctx, tx, q, seat)
 	})
 }
 
@@ -185,4 +177,18 @@ func (s *PgStore) applyRegionalRuntimeServingSeatStop(ctx context.Context, stop 
 		}
 		return regionalServingSeatRow(row)
 	})
+}
+
+func insertRegionalServingSeat(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, seat runtimequota.ServingSeat) (RegionalRuntimeServingSeatReceipt, error) {
+	p := seat.Permit
+	app := p.Grant.Binding.RegionalAppID
+	claims, err := json.Marshal(seat)
+	if err != nil {
+		return RegionalRuntimeServingSeatReceipt{}, err
+	}
+	row, err := q.InsertRegionalRuntimeServingSeat(ctx, tx, sqlc.InsertRegionalRuntimeServingSeatParams{AppID: uuidToPgtype(app), AllocationID: uuidToPgtype(p.Grant.AllocationID), SeatID: uuidToPgtype(seat.ID), PermitID: uuidToPgtype(p.ID), Generation: p.Grant.Generation, DeploymentID: uuidToPgtype(p.DeploymentID), Rollout: seat.Rollout, SeatClaims: claims})
+	if err != nil {
+		return RegionalRuntimeServingSeatReceipt{}, err
+	}
+	return regionalServingSeatRow(row)
 }

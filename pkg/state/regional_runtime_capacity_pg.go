@@ -194,15 +194,7 @@ func (s *PgStore) ReserveRegionalRuntimeCapacity(ctx context.Context, p runtimeq
 		if err = checkCurrentRegionalCapacity(ctx, tx, q, p); err != nil {
 			return RegionalRuntimeCapacityReceipt{}, err
 		}
-		claims, err := json.Marshal(p)
-		if err != nil {
-			return RegionalRuntimeCapacityReceipt{}, err
-		}
-		row, err := q.InsertRegionalRuntimeCapacity(ctx, tx, sqlc.InsertRegionalRuntimeCapacityParams{AppID: uuidToPgtype(p.Grant.Binding.RegionalAppID), AllocationID: uuidToPgtype(p.Grant.AllocationID), PermitID: uuidToPgtype(p.ID), Generation: p.Grant.Generation, InstanceID: uuidToPgtype(p.InstanceID), RunID: uuidToPgtype(p.RunID), DeploymentID: uuidToPgtype(p.DeploymentID), NodeID: uuidToPgtype(p.NodeID), HostEpochID: uuidToPgtype(p.HostEpochID), Kind: p.Kind, PermitClaims: claims})
-		if err != nil {
-			return RegionalRuntimeCapacityReceipt{}, err
-		}
-		return regionalCapacityRow(row)
+		return insertRegionalCapacity(ctx, tx, q, p)
 	})
 }
 
@@ -277,4 +269,16 @@ func (s *PgStore) applyRegionalRuntimeCapacityStop(ctx context.Context, stop run
 		}
 		return regionalCapacityRow(row)
 	})
+}
+
+func insertRegionalCapacity(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, p runtimequota.CapacityPermit) (RegionalRuntimeCapacityReceipt, error) {
+	claims, err := json.Marshal(p)
+	if err != nil {
+		return RegionalRuntimeCapacityReceipt{}, err
+	}
+	row, err := q.InsertRegionalRuntimeCapacity(ctx, tx, sqlc.InsertRegionalRuntimeCapacityParams{AppID: uuidToPgtype(p.Grant.Binding.RegionalAppID), AllocationID: uuidToPgtype(p.Grant.AllocationID), PermitID: uuidToPgtype(p.ID), Generation: p.Grant.Generation, InstanceID: uuidToPgtype(p.InstanceID), RunID: uuidToPgtype(p.RunID), DeploymentID: uuidToPgtype(p.DeploymentID), NodeID: uuidToPgtype(p.NodeID), HostEpochID: uuidToPgtype(p.HostEpochID), Kind: p.Kind, PermitClaims: claims})
+	if err != nil {
+		return RegionalRuntimeCapacityReceipt{}, err
+	}
+	return regionalCapacityRow(row)
 }

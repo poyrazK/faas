@@ -47,6 +47,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/hostport"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -3657,7 +3658,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// rpcEndedAt; the error duration is already surfaced via the
 	// events.BootFailed - events.BootStarted math.
 	rpcStartedAt := time.Now().UTC()
-	err = checkRegionalRuntimeQuota(bootCtx, e.store, bootInput.appID)
+	bootInput.spec, err = e.prepareRegionalRuntimeLaunch(bootCtx, bootInput.nodeID, bootInput.insID, bootInput.wakeID, runtimequota.CapacityServing, bootInput.spec)
 	if err == nil && bootInput.haveSnap && bootInput.snapKey != "" {
 		// #96 / ADR-025 axis 2: read the storage key the snap row
 		// carries (imaged stamps it from the snapshot_written
@@ -6022,7 +6023,11 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	bootCtx, pcancel := context.WithTimeout(ctx, e.budgetFor(state.StateColdBooting))
 	defer pcancel()
 	var out *WakeOutcome
-	err = checkRegionalRuntimeQuota(bootCtx, e.store, appID)
+	purpose := runtimequota.CapacityServing
+	if spec.PrimeOnly {
+		purpose = runtimequota.CapacityPrime
+	}
+	spec, err = e.prepareRegionalRuntimeLaunch(bootCtx, placement.NodeID, ins.ID, primeWakeID, purpose, spec)
 	if err == nil {
 		out, err = e.vmm.CreateColdBoot(bootCtx, placement.NodeID, ins.ID, spec)
 	}
