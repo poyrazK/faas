@@ -418,6 +418,31 @@ func (*Provider) Update(context.Context, managedpostgres.UpdateRequest) (managed
 	return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
 }
 
+func (p *Provider) Discover(ctx context.Context, request managedpostgres.ResourceDiscoveryRequest) (string, error) {
+	if request.ResourceID == "" || len(request.ResourceID) > 255 {
+		return "", managedpostgres.ErrInvalid
+	}
+	if request.RestoreSourceResourceID != "" {
+		source, err := parseResourceRef(request.RestoreSourceResourceID)
+		if err != nil {
+			return "", err
+		}
+		candidate, err := p.findBranch(ctx, source.projectID, p.restoreBranchName(request.ResourceID))
+		if err != nil {
+			return "", err
+		}
+		if candidate.ID == "" {
+			return "", managedpostgres.ErrNotFound
+		}
+		return (resourceRef{projectID: source.projectID, branchID: candidate.ID}).String(), nil
+	}
+	identity, err := p.findProject(ctx, p.projectName(request.ResourceID))
+	if err == nil && identity == "" {
+		err = managedpostgres.ErrNotFound
+	}
+	return identity, err
+}
+
 func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteRequest) (managedpostgres.DeleteResult, error) {
 	if request.IdempotencyKey == "" || (request.ProviderResourceID == "" && request.ResourceID == "") {
 		return managedpostgres.DeleteResult{}, managedpostgres.ErrInvalid
@@ -459,12 +484,14 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 			return managedpostgres.DeleteResult{}, managedpostgres.ErrInvalid
 		}
 		var err error
-		providerResourceID, err = p.findProject(ctx, p.projectName(request.ResourceID))
+		providerResourceID, err = p.Discover(ctx, managedpostgres.ResourceDiscoveryRequest{
+			ResourceID: request.ResourceID, RestoreSourceResourceID: request.RestoreSourceResourceID,
+		})
+		if errors.Is(err, managedpostgres.ErrNotFound) {
+			return managedpostgres.DeleteResult{Done: true}, nil
+		}
 		if err != nil {
 			return managedpostgres.DeleteResult{}, err
-		}
-		if providerResourceID == "" {
-			return managedpostgres.DeleteResult{Done: true}, nil
 		}
 	}
 	ref, err := parseResourceRef(providerResourceID)

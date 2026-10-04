@@ -52,6 +52,10 @@ func (p *fakeProvider) Inspect(_ context.Context, providerResourceID string) (Ob
 	return ObservedDatabase{ProviderResourceID: providerResourceID, Status: p.inspectStatus, Spec: testSpec()}, nil
 }
 
+func (*fakeProvider) Discover(_ context.Context, request ResourceDiscoveryRequest) (string, error) {
+	return "upstream-" + request.ResourceID, nil
+}
+
 func (*fakeProvider) Update(_ context.Context, _ UpdateRequest) (ObservedDatabase, error) {
 	return ObservedDatabase{}, ErrUnsupported
 }
@@ -267,7 +271,7 @@ func TestCreateUsesCustomerReservationLimit(t *testing.T) {
 	}
 }
 
-// adr: 581
+// adr: 583
 func TestRestoreCreatesIndependentDurableTargetAndIsIdempotent(t *testing.T) {
 	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
 	registry, store := testRegistry(t, provider, nil), NewMemoryStore()
@@ -485,7 +489,7 @@ func TestDeleteRejectsActiveBindingBeforeProviderCall(t *testing.T) {
 	}
 }
 
-func TestDeleteLetsProviderDiscoverAnUnpersistedUpstreamResource(t *testing.T) {
+func TestDeleteUnattemptedReservationDoesNotCallProvider(t *testing.T) {
 	provider := &fakeProvider{capabilities: testCapabilities(), deleteDone: true}
 	registry := testRegistry(t, provider, nil)
 	store := NewMemoryStore()
@@ -507,7 +511,7 @@ func TestDeleteLetsProviderDiscoverAnUnpersistedUpstreamResource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if deleted.State != StateDeleted || provider.deleteCalls != 1 || provider.lastDelete.ResourceID != database.ID || provider.lastDelete.ProviderResourceID != "" {
+	if deleted.State != StateDeleted || deleted.AccountingRequired || provider.deleteCalls != 0 {
 		t.Fatalf("deleted = %+v; request = %+v; calls = %d", deleted, provider.lastDelete, provider.deleteCalls)
 	}
 }

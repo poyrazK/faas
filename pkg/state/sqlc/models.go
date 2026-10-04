@@ -3266,6 +3266,7 @@ type ManagedPostgresDatabase struct {
 	EnvironmentCloneOperationID pgtype.UUID
 	DataResourceID              pgtype.Text
 	CloneResourceRole           string
+	AccountingRequired          bool
 }
 
 type ManagedPostgresHealth struct {

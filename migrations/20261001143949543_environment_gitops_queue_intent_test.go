@@ -59,7 +59,7 @@ func TestMigrationEnvironmentGitOpsQueueIntentReplayRetainsIdentity(t *testing.T
 	if err := store.AdoptEnvironmentGitOps(ctx, account.ID, source.ID, preview.Hash); err != nil {
 		t.Fatal(err)
 	}
-	invocation, err := store.EnqueueInvocation(ctx, state.Invocation{AccountID: account.ID, AppID: app.ID, Source: state.InvocationQueue, QueueName: "orders", QueueBindingID: binding.Binding.ID, DueAt: time.Now()})
+	invocation, err := store.EnqueueInvocation(ctx, state.Invocation{AccountID: account.ID, AppID: app.ID, Source: state.InvocationQueue, QueueName: "orders", QueueBindingID: binding.Binding.ID, DeploymentScope: binding.Binding.DeploymentScope, EnvironmentID: binding.Binding.EnvironmentID, DueAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}

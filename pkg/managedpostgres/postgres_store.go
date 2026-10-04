@@ -339,7 +339,7 @@ func validateReservation(database Database, limit int) error {
 		!validFingerprint.MatchString(database.BackendFingerprint) ||
 		database.DesiredGeneration < 1 || database.ObservedGeneration != 0 ||
 		database.CreatedAt.IsZero() || database.UpdatedAt.IsZero() ||
-		database.ProviderResourceID != "" || database.DataResourceID != "" || database.LeaseToken != "" || database.DeletedAt != nil || database.EnvironmentCloneOperationID != "" {
+		database.ProviderResourceID != "" || database.DataResourceID != "" || database.LeaseToken != "" || database.DeletedAt != nil || database.EnvironmentCloneOperationID != "" || database.AccountingRequired {
 		return ErrInvalid
 	}
 	if database.RestoreSourceDatabaseID == "" && database.RestoreSourceResourceID == "" && database.RestorePointInTime.IsZero() {

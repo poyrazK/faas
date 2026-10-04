@@ -228,20 +228,43 @@ func (s *MemoryStore) ClaimDelete(_ context.Context, accountID, databaseID, leas
 	return cloneDatabase(database), nil
 }
 
+func (s *MemoryStore) BeginAccounting(ctx context.Context, databaseID, leaseToken string, now time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if databaseID == "" || leaseToken == "" || now.IsZero() {
+		return ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	database, ok := s.databases[databaseID]
+	if !ok || database.State != StateProvisioning || database.LeaseToken != leaseToken || !database.LeaseUntil.After(now) {
+		return ErrConflict
+	}
+	database.AccountingRequired = true
+	database.UpdatedAt = now
+	s.databases[databaseID] = database
+	return nil
+}
+
 func (s *MemoryStore) RecordProviderResource(_ context.Context, databaseID, leaseToken, providerResourceID string, now time.Time) error {
+	if databaseID == "" || leaseToken == "" || providerResourceID == "" || now.IsZero() {
+		return ErrInvalid
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	database, ok := s.databases[databaseID]
 	if !ok {
 		return ErrNotFound
 	}
-	if database.State != StateProvisioning || database.LeaseToken != leaseToken || !database.LeaseUntil.After(now) || providerResourceID == "" {
+	if (database.State != StateProvisioning && database.State != StateDeleting) || database.LeaseToken != leaseToken || !database.LeaseUntil.After(now) {
 		return ErrConflict
 	}
 	if database.ProviderResourceID != "" && database.ProviderResourceID != providerResourceID {
 		return ErrConflict
 	}
 	database.ProviderResourceID = providerResourceID
+	database.AccountingRequired = true
 	database.UpdatedAt = now
 	s.databases[databaseID] = database
 	return nil

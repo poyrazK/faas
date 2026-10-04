@@ -3703,6 +3703,7 @@
     "table": "managed_postgres_databases",
     "columns": [
       "account_id",
+      "accounting_required",
       "attempt_count",
       "availability",
       "backend_fingerprint",

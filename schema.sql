@@ -4731,6 +4731,23 @@ $$;
 
 
 --
+-- Name: guard_managed_postgres_accounting_intent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_accounting_intent() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.accounting_required AND NOT NEW.accounting_required THEN
+        RAISE EXCEPTION 'managed postgres accounting obligation cannot be cleared'
+            USING ERRCODE = '23514', CONSTRAINT = 'managed_postgres_accounting_intent_retained';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_managed_postgres_admission_fence(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14107,6 +14124,7 @@ CREATE TABLE public.managed_postgres_databases (
     environment_clone_operation_id uuid,
     data_resource_id text,
     clone_resource_role text DEFAULT 'target'::text NOT NULL,
+    accounting_required boolean DEFAULT true NOT NULL,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -31087,6 +31105,13 @@ CREATE TRIGGER guard_environment_workload_instance BEFORE INSERT OR DELETE OR UP
 --
 
 CREATE TRIGGER guard_environment_workload_qualification_request BEFORE INSERT OR DELETE OR UPDATE ON public.environment_workload_qualification_requests FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_qualification_request();
+
+
+--
+-- Name: managed_postgres_databases guard_managed_postgres_accounting_intent; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_managed_postgres_accounting_intent BEFORE UPDATE OF accounting_required ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_accounting_intent();
 
 
 --

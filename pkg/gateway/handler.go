@@ -5679,7 +5679,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ADR-581: resolve source-host readiness before route substitution. Once
+	// ADR-583: resolve source-host readiness before route substitution. Once
 	// ready, the ADR-089 route matcher may select another app whose auth,
 	// admission and proxy settings apply to the rest of the request.
 	var (
@@ -7696,8 +7696,15 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 						SourceIP: auditSourceIPFrom(r),
 					}
 				}
-				err := h.usageOutbox.Enqueue(usageEvent)
-				if err != nil {
+				if unattributedUsage(usageEvent) {
+					// ADR-234 amendment: an anonymous request with no tenant,
+					// audit, or discovery evidence only bumped the
+					// __anonymous__ minute aggregate, which nothing reads.
+					// Skipping it removes a write transaction per request.
+					// Marking it outboxed keeps the debugger fallback from
+					// writing the same fact.
+					row.UsageOutboxed = true
+				} else if err := h.usageOutbox.Enqueue(usageEvent); err != nil {
 					h.metrics.IncUsageOutboxFailure()
 					h.log.Error("consumer usage outbox append failed", "err", err, "event_id", row.EventID)
 				} else {
