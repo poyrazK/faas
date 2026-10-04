@@ -82,9 +82,26 @@ func (s *server) publishEvent(w http.ResponseWriter, r *http.Request, acct state
 	// outbox row even when this notification is missed or the payload is large.
 	_ = s.notif.Notify(r.Context(), db.NotifyEventPublished, "1")
 
+	s.writePublishedEventReceipt(w, r, acct, envelope)
+}
+
+func (s *server) writePublishedEventReceipt(w http.ResponseWriter, r *http.Request, acct state.Account, envelope events.Envelope) {
+	store, ok := s.store.(state.EventReceiptAcceptanceStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("event receipt acceptance store"))
+		return
+	}
+	acceptedAt, err := store.EventReceiptAcceptedAt(r.Context(), acct.ID, envelope.Source, envelope.ID)
+	if err != nil {
+		s.log.ErrorContext(r.Context(), "read published event acceptance", "err", err)
+		api.WriteProblem(w, api.ErrCapacity("failed to read event acceptance; retry the same source and id"))
+		return
+	}
+	w.Header().Set("Location", eventReceiptURL(envelope.Source, envelope.ID))
 	writeJSON(w, http.StatusAccepted, api.PublishEventResponse{
+		ReceiptURL: eventReceiptURL(envelope.Source, envelope.ID),
 		ID:         envelope.ID,
-		AcceptedAt: time.Now().UTC(),
+		AcceptedAt: acceptedAt,
 		AccountID:  acct.ID,
 	})
 }

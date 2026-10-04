@@ -65,6 +65,7 @@ func (r *PublishEventRequest) UnmarshalJSON(data []byte) error {
 
 // PublishEventResponse confirms durable acceptance of one event envelope.
 type PublishEventResponse struct {
+	ReceiptURL string    `json:"receipt_url"`
 	ID         string    `json:"id"`
 	AcceptedAt time.Time `json:"accepted_at"`
 	AccountID  string    `json:"account_id"`
@@ -11731,4 +11732,75 @@ type EgressFlowLogEntry struct {
 type EgressFlowLogResponse struct {
 	Flows     []EgressFlowLogEntry `json:"flows"`
 	Truncated bool                 `json:"truncated"`
+}
+
+// EventReceiptPageMax bounds recipient pages on the event receipt read surface.
+const EventReceiptPageMax = 200
+
+// EventReceiptResponse separates acceptance, routing, and handler execution.
+type EventReceiptResponse struct {
+	EventID          string                          `json:"event_id"`
+	EventSource      string                          `json:"event_source"`
+	EventType        string                          `json:"event_type"`
+	SchemaVersion    string                          `json:"schema_version,omitempty"`
+	AcceptedAt       time.Time                       `json:"accepted_at"`
+	RoutingSettledAt *time.Time                      `json:"routing_settled_at,omitempty"`
+	RetainUntil      *time.Time                      `json:"retain_until,omitempty"`
+	SnapshotCaptured bool                            `json:"snapshot_captured"`
+	RoutingMode      string                          `json:"routing_mode"`
+	RecipientCount   int                             `json:"recipient_count"`
+	RoutingSummary   map[string]int                  `json:"routing_summary"`
+	Recipients       []EventReceiptRecipientResponse `json:"recipients"`
+	NextAfter        string                          `json:"next_after,omitempty"`
+}
+
+type EventReceiptRecipientResponse struct {
+	SubscriptionID       string                            `json:"subscription_id"`
+	AppID                string                            `json:"app_id"`
+	AppSlug              string                            `json:"app_slug,omitempty"`
+	Routing              EventReceiptRoutingResponse       `json:"routing"`
+	Execution            *EventReceiptExecutionResponse    `json:"execution,omitempty"`
+	Cancellation         *EventReceiptCancellationResponse `json:"cancellation,omitempty"`
+	ExecutionUnavailable string                            `json:"execution_unavailable,omitempty"`
+	RecoveryActions      []EventReceiptRecoveryAction      `json:"recovery_actions"`
+	FanoutHistoryURL     string                            `json:"fanout_history_url,omitempty"`
+}
+
+type EventReceiptRoutingResponse struct {
+	State              string     `json:"state"`
+	Attempts           int        `json:"attempts"`
+	Generation         *int64     `json:"generation,omitempty"`
+	GenerationAttempts *int       `json:"generation_attempts,omitempty"`
+	NextAttemptAt      *time.Time `json:"next_attempt_at,omitempty"`
+	LeaseUntil         *time.Time `json:"lease_until,omitempty"`
+	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
+	LastError          string     `json:"last_error,omitempty"`
+	FailureCode        string     `json:"failure_code,omitempty"`
+	Retryable          bool       `json:"retryable"`
+	ReplayCount        int64      `json:"replay_count"`
+	LastReplayedAt     *time.Time `json:"last_replayed_at,omitempty"`
+}
+
+type EventReceiptExecutionResponse struct {
+	InvocationID     string     `json:"invocation_id"`
+	State            string     `json:"state"`
+	Attempts         int        `json:"attempts"`
+	ReplayGeneration int64      `json:"replay_generation"`
+	NextAttemptAt    *time.Time `json:"next_attempt_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	CompletedAt      *time.Time `json:"completed_at,omitempty"`
+	LastError        string     `json:"last_error,omitempty"`
+}
+
+type EventReceiptCancellationResponse struct {
+	ReceiptID      string    `json:"receipt_id"`
+	CancelledCount int64     `json:"cancelled_count"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type EventReceiptRecoveryAction struct {
+	Kind   string                           `json:"kind"`
+	Method string                           `json:"method"`
+	URL    string                           `json:"url"`
+	Body   *ReplayEventFanoutFailureRequest `json:"body,omitempty"`
 }

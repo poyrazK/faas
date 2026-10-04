@@ -7112,3 +7112,17 @@ func (c *Client) PutAppCustomMetric(ctx context.Context, slug, name string, valu
 func (c *Client) DeleteAppCustomMetric(ctx context.Context, slug, name string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/custom-metrics/"+name, nil, nil)
 }
+
+// GetEventReceipt reads one account-scoped event identity and a bounded page
+// of acceptance-time recipients. Pass NextAfter verbatim for another page.
+func (c *Client) GetEventReceipt(ctx context.Context, source, id, after string, limit int) (EventReceiptResponse, error) {
+	var out EventReceiptResponse
+	query := url.Values{"source": {source}, "id": {id}}
+	if after != "" {
+		query.Set("after", after)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	return out, c.do(ctx, "GET", "/v1/events/receipt?"+query.Encode(), nil, &out)
+}

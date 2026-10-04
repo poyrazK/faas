@@ -2960,7 +2960,9 @@ paths:
         different type, schema version, or data returns 409. Older snake_case input attribute
         names remain accepted during migration. API keys require
         `events:publish`, `deploy:write`, or `admin`.
-        Matching and delivery are asynchronous follow-up work.
+        Matching and delivery are asynchronous follow-up work. The Location header
+        and receipt_url point to GET /v1/events/receipt for delivery evidence.
+        Identical identity retries return the original accepted_at timestamp.
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -2982,6 +2984,41 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/events/receipt:
+    get:
+      tags: [events]
+      operationId: getEventReceipt
+      summary: Inspect acceptance, routing, and execution for one event.
+      description: |
+        Requires apps:read or admin. Reads the retained account/source/id receipt
+        and a bounded page of immutable acceptance-time recipients. Routing
+        counts cover the entire snapshot, including recipients without invocations.
+        Enqueued routing does not imply handler success: keyed cancellation can
+        produce a cancellation receipt instead. The original deterministic
+        invocation is shown when retained; generic invocation replays create new
+        rows in app delivery history. Recovery actions require their existing
+        write scopes and are revalidated when called. Legacy receipts without
+        snapshots report snapshot_captured=false and cannot reconstruct recipients.
+        Pages follow acceptance order while outcomes may change between requests.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: source, in: query, required: true, description: Published event source paired with the required ID for this receipt lookup., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: id, in: query, required: true, description: Published event ID paired with the required source for this receipt lookup., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: after, in: query, description: 'Opaque next_after cursor bound to account, source, ID, and retained receipt. Mismatched or stale cursors return 400.', schema: { type: string, maxLength: 8192 } }
+        - { name: limit, in: query, description: Maximum recipients in this page., schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+      responses:
+        '200':
+          description: Current receipt evidence and recipient page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReceiptResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /v1/event-schemas:
     post:
@@ -37554,11 +37591,12 @@ components:
       description: Durable acceptance receipt for a published internal event.
       type: object
       additionalProperties: false
-      required: [id, accepted_at, account_id]
+      required: [id, accepted_at, account_id, receipt_url]
       properties:
         id: { type: string }
         accepted_at: { type: string, format: date-time }
         account_id: { type: string, format: uuid }
+        receipt_url: { type: string, format: uri-reference, description: Account-authenticated relative URL for this event receipt. }
 
     RegisterEventSchemaRequest:
       description: Immutable event schema registration request.
@@ -37745,6 +37783,109 @@ components:
           type: array
           items: { $ref: '#/components/schemas/EventFanoutAttemptResponse' }
         next_before: { type: string, description: Opaque cursor bound to the app, event identity, and optional recipient filter. }
+
+    EventReceiptResponse:
+      description: Acceptance and routing evidence with a bounded recipient page; execution is a separate lifecycle.
+      type: object
+      additionalProperties: false
+      required: [event_id, event_source, event_type, accepted_at, snapshot_captured, routing_mode, recipient_count, routing_summary, recipients]
+      properties:
+        event_id: { type: string }
+        event_source: { type: string }
+        event_type: { type: string }
+        schema_version: { type: string }
+        accepted_at: { type: string, format: date-time, description: First durable acceptance time, preserved on identical retries. }
+        routing_settled_at: { type: string, format: date-time, description: All routing candidates settled, including filtered and failed outcomes; absent while routing is active. }
+        retain_until: { type: string, format: date-time, description: 'Settled receipt retention boundary, 30 days after routing settled. Absent for active routing.' }
+        snapshot_captured: { type: boolean, description: False means legacy recipient membership is unknown, rather than an empty matching set. }
+        routing_mode: { type: string, enum: [event, recipient], description: Whole-event legacy routing or independent recipient leases. }
+        recipient_count: { type: integer, minimum: 0, description: Total captured candidates across all pages; unknown when snapshot_captured=false. }
+        routing_summary:
+          description: Counts across all captured recipients by current routing checkpoint state.
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+        recipients:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/EventReceiptRecipientResponse' }
+        next_after: { type: string, description: Opaque cursor for the next acceptance-ordered recipient page. }
+
+    EventReceiptRecipientResponse:
+      description: One captured recipient with independent routing and original invocation or cancellation evidence.
+      type: object
+      additionalProperties: false
+      required: [subscription_id, app_id, routing, recovery_actions]
+      properties:
+        subscription_id: { type: string, description: Immutable captured subscription or notification identifier. }
+        app_id: { type: string, format: uuid }
+        app_slug: { type: string, description: Current slug when the target still belongs to the authenticated account. }
+        routing: { $ref: '#/components/schemas/EventReceiptRoutingResponse' }
+        execution: { $ref: '#/components/schemas/EventReceiptExecutionResponse' }
+        cancellation: { $ref: '#/components/schemas/EventReceiptCancellationResponse' }
+        execution_unavailable:
+          type: string
+          enum: [not_enqueued, record_unavailable, cancel_pending]
+          description: No original invocation was found; record_unavailable after enqueue may reflect independent retention and is not a success claim.
+        recovery_actions:
+          type: array
+          items: { $ref: '#/components/schemas/EventReceiptRecoveryAction' }
+          description: Applicable selective recovery requests; empty when no action is currently eligible. Authorization and state are checked again on POST.
+        fanout_history_url: { type: string, format: uri-reference, description: Account-authenticated routing and replay history for this recipient. }
+
+    EventReceiptRoutingResponse:
+      description: Recipient routing checkpoint and lifetime attempts; execution attempts are separate.
+      type: object
+      additionalProperties: false
+      required: [state, attempts, retryable, replay_count]
+      properties:
+        state: { type: string, enum: [pending, processing, filtered, enqueued, failed] }
+        attempts: { type: integer, minimum: 0, description: Lifetime routing attempts, including replay generations. }
+        generation: { type: integer, format: int64, minimum: 1, description: Independent routing generation; absent on legacy whole-event receipts. }
+        generation_attempts: { type: integer, minimum: 0, description: Attempts used in the current independent routing budget. }
+        next_attempt_at: { type: string, format: date-time, description: Scheduled pending routing retry, not a dispatch guarantee. }
+        lease_until: { type: string, format: date-time, description: Independent routing claim expiry; no claim token is exposed. }
+        updated_at: { type: string, format: date-time }
+        last_error: { type: string }
+        failure_code: { type: string }
+        retryable: { type: boolean }
+        replay_count: { type: integer, format: int64, minimum: 0 }
+        last_replayed_at: { type: string, format: date-time }
+
+    EventReceiptExecutionResponse:
+      description: Current retained state of the original deterministic delivery invocation. New generic replay rows appear in app delivery history.
+      type: object
+      additionalProperties: false
+      required: [invocation_id, state, attempts, replay_generation, created_at]
+      properties:
+        invocation_id: { type: string, format: uuid }
+        state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, superseded, expired, dead_letter] }
+        attempts: { type: integer, minimum: 0 }
+        replay_generation: { type: integer, format: int64, minimum: 0, description: Original invocation budget generation, updated by in-place dead-letter replay. }
+        next_attempt_at: { type: string, format: date-time, description: Next pending invocation due time; dispatch may be delayed by admission. }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        last_error: { type: string }
+
+    EventReceiptCancellationResponse:
+      description: Durable work-policy cancel_pending operation receipt, which creates no handler invocation.
+      type: object
+      additionalProperties: false
+      required: [receipt_id, cancelled_count, created_at]
+      properties:
+        receipt_id: { type: string, format: uuid }
+        cancelled_count: { type: integer, format: int64, minimum: 0 }
+        created_at: { type: string, format: date-time }
+
+    EventReceiptRecoveryAction:
+      description: Selective recovery request through an existing authorized endpoint. GET receipt inspection never performs this action.
+      type: object
+      additionalProperties: false
+      required: [kind, method, url]
+      properties:
+        kind: { type: string, enum: [routing_replay, handler_replay, dead_letter_replay] }
+        method: { type: string, enum: [POST] }
+        url: { type: string, format: uri-reference }
+        body: { $ref: '#/components/schemas/ReplayEventFanoutFailureRequest' }
 
     EventDeliveryListResponse:
       description: App-scoped event invocation and fanout failure history, each ordered newest first.

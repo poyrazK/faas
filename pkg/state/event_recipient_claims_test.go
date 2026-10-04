@@ -25,6 +25,9 @@ type recipientClaimTestStore interface {
 	state.EventFanoutReplayBatchStore
 	state.EventFanoutAttemptHistoryStore
 	state.PublishedEventRetentionStore
+	state.EventReceiptStore
+	state.EventReceiptAcceptanceStore
+	state.WorkCancellationStore
 }
 
 // ADR-581: adopting a replayed legacy receipt starts a new routing budget;

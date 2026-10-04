@@ -604,7 +604,8 @@ See [ADR-581](adr/581-independent-event-recipient-routing.md) for rollout and
 rollback requirements.
 
 Publish acceptance means the event is durably stored. A recipient marked
-`enqueued` has an invocation; the receipt is `delivered` when all routing
+`enqueued` has been handled by routing; normally it has an invocation, while
+work-policy `cancel_pending` creates a cancellation receipt instead; the receipt is `delivered` when all routing
 candidates settle, including terminal failures. Handler completion is tracked
 by the invocation lifecycle. Handler execution is at least once: use an
 idempotency key or version check for side effects. Gregale does not promise
@@ -676,6 +677,42 @@ gregale events deliveries APP --state failed --json
 
 This is useful after a deploy or manifest change: it shows the normalized
 source, type, filter, and enabled state that the router will use.
+
+Inspect one published event across every captured consumer:
+
+```bash
+gregale events inspect --source billing.stripe --id evt-123
+gregale events inspect --source billing.stripe --id evt-123 --json
+```
+
+Publish returns a `receipt_url` and `Location` header for
+`GET /v1/events/receipt?source=SOURCE&id=ID`. Identical publish retries keep the
+original `accepted_at`. The receipt includes every source/type candidate captured
+at acceptance, even before an invocation exists, and separates routing from
+handler execution. Whole-snapshot counts cover pending, processing, filtered,
+enqueued, and failed recipients. Handler outcomes preserve cancellation,
+supersession, expiry, and dead letters. A `cancel_pending` operation reports its
+cancellation receipt rather than a handler invocation.
+
+Use `--limit` (1–200, default 100) and `--after` with `next_after` for larger
+fanouts. Pagination follows captured recipient order even during retries or
+replay; outcomes can change between pages. `routing_settled_at` means routing
+has settled, including failures, and `retain_until` is thirty days later. These
+fields are absent while routing is active. Legacy receipts without snapshots
+report `snapshot_captured=false`; their membership cannot be reconstructed.
+Whole-event routing exposes retained checkpoints, so a pending recipient can
+still have an active parent worker.
+
+Each recipient includes its routing attempts, retry time, error, replay count,
+and routing history URL, plus the retained original invocation or cancellation.
+`record_unavailable` means the original execution record was not found after
+routing; it does not assert success. Execution records have independent
+retention. The JSON response supplies applicable selective recovery requests;
+calling them requires the existing write scopes and rechecks current eligibility.
+Routing replay and in-place dead-letter replay remain visible on the original
+receipt. Generic handler replay creates a new invocation, visible in app delivery
+history. Captured target IDs remain, but current metadata and recovery actions
+are unavailable when the target no longer belongs to the account.
 
 After publishing, use `events deliveries` to see the matching event id,
 delivery state, attempt count, and last lifecycle timestamp without searching

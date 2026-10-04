@@ -44,8 +44,9 @@ retain their existing whole-event replay restrictions.
 
 ## Public semantics
 
-- Publish acceptance acknowledges durable routing intent. `enqueued` means an
-  invocation exists; parent `delivered` means all routing candidates settled.
+- Publish acceptance acknowledges durable routing intent. `enqueued` means routing
+  was handled, producing an invocation or a work-policy cancellation receipt
+  (see ADR-582); parent `delivered` means all routing candidates settled.
   Neither means the application handler completed.
 - Handler retries, dead letters, and invocation replay keep their existing
   lifecycle. Pre-invocation routing failures remain visible in event deliveries

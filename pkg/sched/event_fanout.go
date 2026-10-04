@@ -203,8 +203,7 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 			})
 		}
 	}
-	identity, _ := json.Marshal([4]string{envelope.AccountID, envelope.Source, envelope.ID, row.ID})
-	invocationID := uuid.NewSHA1(uuid.NameSpaceURL, identity).String()
+	invocationID := state.PublishedEventInvocationID(envelope.AccountID, envelope.Source, envelope.ID, row.ID)
 	if !requireActiveApp || !row.WorkSnapshotCaptured {
 		if cancellations, ok := l.engine.store.(state.WorkCancellationStore); ok {
 			if _, lookupErr := cancellations.WorkCancellationByID(ctx, invocationID); lookupErr == nil {

@@ -69,7 +69,8 @@ func (e *Envelope) UnmarshalJSON(data []byte) error {
 const (
 	CloudEventsSpecVersion = "1.0"
 	JSONDataContentType    = "application/json"
-	maxEnvelopeString      = 256
+	// EnvelopeStringMax bounds event identity strings in ingress and receipt queries.
+	EnvelopeStringMax = 256
 )
 
 // Normalize fills server-owned defaults and validates the complete envelope.
@@ -115,10 +116,10 @@ func (e Envelope) Validate() error {
 	if e.SpecVersion != CloudEventsSpecVersion {
 		return fmt.Errorf("specversion must be %q", CloudEventsSpecVersion)
 	}
-	if e.ID == "" || len(e.ID) > maxEnvelopeString {
+	if e.ID == "" || len(e.ID) > EnvelopeStringMax {
 		return errors.New("id is required and must be at most 256 characters")
 	}
-	if e.Source == "" || len(e.Source) > maxEnvelopeString {
+	if e.Source == "" || len(e.Source) > EnvelopeStringMax {
 		return errors.New("source is required and must be at most 256 characters")
 	}
 	if _, err := url.Parse(e.Source); err != nil || strings.ContainsAny(e.Source, " \t\r\n\"<>\\^`{|}") {
@@ -129,7 +130,7 @@ func (e Envelope) Validate() error {
 			return errors.New("source must be a valid URI-reference")
 		}
 	}
-	if e.Type == "" || len(e.Type) > maxEnvelopeString {
+	if e.Type == "" || len(e.Type) > EnvelopeStringMax {
 		return errors.New("type is required and must be at most 256 characters")
 	}
 	if len(e.SchemaVersion) > 64 {
