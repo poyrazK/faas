@@ -125,7 +125,9 @@ long outage. Every tail window must be observed beyond the three-window horizon;
 one successful correction cannot conceal another failed one. Completed terminal
 evidence remains valid across time and month rollover and stops provider reads.
 Missing final history continues to block new reservations. Restore descendants
-keep shared-root coverage, including when both child and root are deleted.
+inherit shared-root coverage and its accounting lifecycle, including when both
+child and root are deleted. A deleted child of a live root retains active
+aggregate freshness without introducing an independent final-window wait.
 See [ADR-569](../adr/569-managed-postgres-terminal-usage-coverage.md).
 
 This closes the reproduced bypass for catalog rows with known provider IDs.

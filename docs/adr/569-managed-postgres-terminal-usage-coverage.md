@@ -29,8 +29,10 @@
   correction tail are covered. With hourly policy the correction horizon ends
   three hours after the final window closes. Ready database counts continue to
   report ready resources; a zero-ready account can correctly report stale usage.
-  Restore descendants continue to reference their root aggregate through
-  deletion, with no independent provider reads or duplicate quantities.
+  Restore descendants inherit their root aggregate's accounting lifecycle
+  and endpoint through deletion, with no independent provider reads or duplicate
+  quantities. Deleting a child of a live root keeps the active aggregate's
+  freshness requirement; it does not introduce a separate final-window wait.
 - **Rejected alternatives:** Dropping tombstones or counting missing history as
   zero admits accounts with unrecorded consumption. Waiting for usage before
   destroying compute prolongs resource spend. Requiring tombstones to keep up

@@ -204,6 +204,13 @@ func (c *UsageCollector) prepareUsageCollection(ctx context.Context, database Da
 		return work
 	}
 	work.backend = backend
+	if database.RestoreSourceDatabaseID != "" && backend.Capabilities.RestoreUsageIncludedInSource {
+		// A restore descendant shares its root's aggregate and accounting
+		// endpoint, never an independent provider request or shutdown window.
+		work.included = true
+		work.err = c.recordSharedUsage(ctx, database)
+		return work
+	}
 	if database.State == StateDeleted {
 		if database.DeletedAt == nil {
 			work.err = ErrUsageStale
@@ -215,13 +222,6 @@ func (c *UsageCollector) prepareUsageCollection(ctx context.Context, database Da
 			work.err = ErrUsageStale
 			return work
 		}
-	}
-	if database.RestoreSourceDatabaseID != "" && backend.Capabilities.RestoreUsageIncludedInSource {
-		// A restore descendant shares its root's aggregate, never an independent
-		// provider request or ledger quantity.
-		work.included = true
-		work.err = c.recordSharedUsage(ctx, database)
-		return work
 	}
 	progress, err := c.store.UsageProgress(ctx, database.AccountID, database.ID, c.policy.Window)
 	if err != nil {

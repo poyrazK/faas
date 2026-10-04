@@ -268,14 +268,16 @@ func TestUsageRetiredRestoresKeepSharedRootAccounting(t *testing.T) {
 				retirementDelete(t, store, child, now, true)
 				if deleteRoot {
 					retirementDelete(t, store, root, now.Add(time.Minute), true)
+					now = time.Date(2026, 10, 4, 17, 0, 0, 0, time.UTC)
 				}
-				now = time.Date(2026, 10, 4, 17, 0, 0, 0, time.UTC)
+				// A deleted child of a live root inherits the active aggregate's
+				// freshness immediately, including inside its shutdown window.
 				collector, _ := NewUsageCollector(registry, store, UsageCollectorOptions{BatchSize: 1, Now: func() time.Time { return now }})
 				summary, err := collector.Collect(ctx)
 				if err != nil || summary.Discovered != 2 || summary.IncludedInSourceUsage != 1 {
 					t.Fatalf("retired restore lost root coverage: %+v, %v", summary, err)
 				}
-				want := int64(7 * 60)
+				want := int64(3 * 60)
 				if deleteRoot {
 					want = 4 * 60
 				}

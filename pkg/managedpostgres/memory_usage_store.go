@@ -151,19 +151,23 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 				snapshot.ReadyDatabases++
 			}
 			var progress UsageProgress
+			accountingDatabase := database
 			for key, candidate := range s.usageProgress {
 				if key.databaseID == database.ID && candidate.UpdatedAt.After(progress.UpdatedAt) {
 					progress = candidate
 				}
 			}
 			if progress.SourceDatabaseID != "" {
+				if source, ok := s.databases[progress.SourceDatabaseID]; ok {
+					accountingDatabase = source
+				}
 				progress = s.usageProgressLocked(progress.SourceDatabaseID, progress.Window)
 			} else {
 				progress = s.usageProgressLocked(database.ID, progress.Window)
 			}
-			progress.Terminal = database.State == StateDeleted
-			if database.DeletedAt != nil {
-				progress.EndedAt = *database.DeletedAt
+			progress.Terminal = accountingDatabase.State == StateDeleted
+			if accountingDatabase.DeletedAt != nil {
+				progress.EndedAt = *accountingDatabase.DeletedAt
 			}
 			snapshot.Databases = append(snapshot.Databases, progress)
 		}

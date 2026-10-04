@@ -240,8 +240,8 @@ func (s *PostgresStore) UsageSnapshot(ctx context.Context, accountID string, per
 			row.CollectedFrom, row.CollectedUntil, row.ObservedAt,
 			pgtype.Text{String: row.SourceDatabaseID, Valid: row.SourceDatabaseID != ""})
 		progress.CorrectionObservedAt = row.CorrectionObservedAt.Time
-		progress.Terminal = row.State == string(StateDeleted)
-		progress.EndedAt = row.DeletedAt.Time
+		progress.Terminal = row.AccountingState == string(StateDeleted)
+		progress.EndedAt = row.EndedAt.Time
 		if len(snapshot.Databases) == 0 || progress.ObservedAt.Before(snapshot.LastObservedAt) {
 			snapshot.LastObservedAt = progress.ObservedAt
 		}

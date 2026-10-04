@@ -8366,7 +8366,8 @@ source_database_id = EXCLUDED.source_database_id, collected_from = NULL, collect
 observed_at = NULL, updated_at = now();
 
 -- name: ListManagedPostgresAccountingCoverage :many
-SELECT d.state, d.deleted_at, COALESCE(c.window_seconds, 0)::bigint AS window_seconds,
+SELECT d.state, COALESCE(source.state, d.state)::text AS accounting_state,
+(CASE WHEN source.id IS NULL THEN d.deleted_at ELSE source.deleted_at END)::timestamptz AS ended_at, COALESCE(c.window_seconds, 0)::bigint AS window_seconds,
 COALESCE(s.collected_from, c.collected_from)::timestamptz AS collected_from,
 COALESCE(s.collected_until, c.collected_until)::timestamptz AS collected_until,
 COALESCE(s.observed_at, c.observed_at)::timestamptz AS observed_at,
@@ -8378,6 +8379,7 @@ COALESCE(s.observed_at, c.observed_at)::timestamptz AS observed_at,
 FROM managed_postgres_databases d
 LEFT JOIN LATERAL (SELECT * FROM managed_postgres_usage_coverage WHERE database_id = d.id
  ORDER BY updated_at DESC, window_seconds DESC LIMIT 1) c ON true
+LEFT JOIN managed_postgres_databases source ON source.id = c.source_database_id
 LEFT JOIN managed_postgres_usage_coverage s ON s.database_id = c.source_database_id AND s.window_seconds = c.window_seconds
 WHERE d.account_id = sqlc.arg(account_id)::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL)
 ORDER BY d.id;

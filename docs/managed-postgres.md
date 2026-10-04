@@ -408,7 +408,9 @@ replay leaves admission stale; a newer successful window cannot hide it.
 
 After that bounded evidence is complete, the tombstone needs no provider calls
 and never ages into staleness merely because it has been deleted. Restore
-children retain their root's aggregate coverage without duplicate consumption.
+children inherit their root's accounting lifecycle and endpoint without duplicate
+consumption. Deleting a branch of a live root keeps the root's active freshness
+requirement; the branch introduces no separate final-window wait.
 Ready counts remain lifecycle counts, so usage can be stale with zero ready
 databases. This protects the guardrail; it does not establish final invoice
 settlement or qualify Neon history after project deletion. Unavailable history
