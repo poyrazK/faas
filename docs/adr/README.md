@@ -57,8 +57,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 520 | [Self-hosted TLS for customer custom domains](520-self-hosted-custom-domain-tls.md) | proposed | Caddy on-demand certificates gated by gatewayd-public's ask endpoint; durable per-wildcard issuance budget; no CDN in the customer-domain path |
+| 531 | [Runtime base convergence](531-runtime-base-convergence.md) | proposed | Keep each node's cached runtime base byte-identical to its shared publication so ADR-510 snapshots restore on any node |
 | 510 | [Snapshot backing image identity](510-snapshot-backing-image-identity.md) | proposed | Restore only onto the kernel and read-only base a capture was taken with; refuse and cold-boot otherwise |
 | 516 | [Replay recent managed PostgreSQL usage corrections](516-managed-postgres-usage-correction-replay.md) | accepted | Recover missing windows first, bound recent revision replay, and reject unsafe collection windows |
+| 565 | [Managed PostgreSQL fleet usage recovery](565-managed-postgres-fleet-usage-recovery.md) | accepted | Recover one window per database per round across the fleet before correction replay, using durable observation order |
 | 529 | [Bindings gate at traffic promotion](529-binding-gated-promotion.md) | accepted | Require evidence and atomically fence traffic promotion on observed revisions |
 | 528 | [Deployment selection for bindings verification](528-deployment-binding-verification.md) | accepted | Probe the exact deployment artifact with its scoped runtime configuration |
 | 527 | [Bindings preflight policy](527-binding-preflight-policy.md) | accepted | Apply configurable readiness, age, rotation and runtime gates |
@@ -434,6 +436,44 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-285: atomic object-storage binding creation](285-atomic-object-storage-binding-creation.md) — commit the S3 credential and six managed secrets together
 - [ADR-286: runtime freshness for object-storage binding creation](286-object-storage-binding-create-runtime-freshness.md) — stamp runtime configuration and stale snapshots in the binding creation transaction
 - [ADR-287: atomic object-storage binding revocation](287-atomic-object-storage-binding-revocation.md) — revoke both keys, remove managed secrets, and invalidate runtime snapshots in one transaction
+
+## S3 service decisions
+
+- [ADR-530: S3 compatibility and multipart capacity admission](530-s3-compatibility-and-multipart-capacity.md)
+- [ADR-531: S3 multipart transfer fencing and cleanup](531-s3-multipart-transfer-fencing-and-cleanup.md)
+- [ADR-532: Conditional S3 multipart completion](532-conditional-s3-multipart-completion.md)
+- [ADR-533: Safe object capacity reconciliation](533-safe-object-capacity-reconciliation.md)
+- [ADR-534: Recoverable application object uploads](534-recoverable-application-object-uploads.md)
+- [ADR-535: Recoverable S3 gateway PUTs](535-recoverable-s3-gateway-puts.md)
+- [ADR-536: Recoverable S3 gateway copies](536-recoverable-s3-gateway-copies.md)
+- [ADR-537: Customer object write receipts](537-customer-object-write-receipts.md)
+- [ADR-538: S3 multipart copy and source ETag conditions](538-s3-multipart-copy-and-source-etag-conditions.md)
+- [ADR-539: Historical S3 write receipt recovery](539-historical-s3-write-receipt-recovery.md)
+- [ADR-540: Native S3 version capacity inventory](540-native-s3-version-capacity-inventory.md)
+- [ADR-541: Immutable S3 copy sources and date conditions](541-immutable-s3-copy-sources-and-date-conditions.md)
+- [ADR-542: Customer S3 version identities and reads](542-customer-s3-version-identities-and-reads.md)
+- [ADR-543: Customer-selected S3 copy sources](543-customer-selected-s3-copy-sources.md)
+- [ADR-544: Durable S3 multipart completion identities](544-durable-s3-multipart-completion-identities.md)
+- [ADR-545: Durable bucket versioning configuration](545-durable-bucket-versioning-configuration.md)
+- [ADR-546: Permanent immutable S3 version deletion](546-immutable-s3-version-deletion.md)
+- [ADR-547: Durable ordinary and mutable null S3 deletion](547-durable-s3-mutable-deletion.md)
+- [ADR-548: Coordinate immutable deletion with version inventory](548-immutable-deletion-inventory-coordination.md)
+- [ADR-549: Tag current and retained object versions](549-version-specific-object-tagging.md)
+- [ADR-550: Durable object lifecycle discovery and expiration](550-durable-object-lifecycle.md)
+- [ADR-551: Atomic object mutation events](551-atomic-object-mutation-events.md)
+- [ADR-552: Owned S3 notification destinations](552-owned-s3-notification-destinations.md)
+- [ADR-553: Bounded production object transfers](553-bounded-production-object-transfers.md)
+- [ADR-554: Owned key bindings and native S3 encryption](554-owned-key-bindings-and-native-s3-encryption.md)
+- [ADR-555: Durable object encryption journals](555-durable-object-encryption-journals.md)
+- [ADR-556: Customer S3 encryption and owned response metadata](556-customer-s3-encryption.md)
+- [ADR-557: Branded object URL capabilities with one write receipt](557-branded-object-url-capabilities.md)
+- [ADR-558: Branded control multipart uploads](558-branded-control-multipart-uploads.md)
+- [ADR-559: Owned encryption on upload routes](559-owned-encryption-on-upload-routes.md)
+- [ADR-560: Atomic fixed multipart admission](560-fixed-multipart-admission.md)
+- [ADR-561: Bucket default encryption](561-bucket-default-encryption.md)
+- [ADR-562: Owned cross-bucket copy sources](562-owned-cross-bucket-copy-sources.md)
+- [ADR-563: Native Object Lock protocol and versioning lock order](563-native-object-lock-protocol.md)
+- [ADR-564: Durable owned bucket Object Lock](564-durable-bucket-object-lock.md)
 
 ## Snapshot restore optimization decisions
 

@@ -109,11 +109,14 @@ func (f *fakeRunner) ran(substr string) bool {
 
 // fakeVMM records calls and can be told to fail Boot/Restore/Snapshot.
 type fakeVMM struct {
-	mu            sync.Mutex
-	bootErr       error
-	restoreErr    error
-	snapErr       error
-	killErr       error
+	mu         sync.Mutex
+	bootErr    error
+	restoreErr error
+	snapErr    error
+	killErr    error
+	// snapshotHook runs after Snapshot records the capture, outside v.mu,
+	// so a test can model JailerVMM.Snapshot killing Firecracker itself.
+	snapshotHook  func(Lease)
 	killed        []string
 	restored      []string
 	restoreSpecs  []RestoreSpec
@@ -630,7 +633,11 @@ func TestWakeRestore_ResumeHookErrorFallsBackToColdBoot(t *testing.T) {
 func (v *fakeVMM) Snapshot(_ context.Context, l Lease, _ SnapshotSpec) (SnapshotInfo, error) {
 	v.mu.Lock()
 	v.snapshotted = append(v.snapshotted, l.Instance)
+	hook := v.snapshotHook
 	v.mu.Unlock()
+	if hook != nil {
+		hook(l)
+	}
 	return SnapshotInfo{MemBytes: 4096}, v.snapErr
 }
 
