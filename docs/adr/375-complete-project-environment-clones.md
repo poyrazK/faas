@@ -6149,3 +6149,73 @@ cut and all source writer closure, complete data/schema/globals strategies,
 final authority, object copying, full coordinator and production-preserving
 promotion/rollback remain required. The public full database/object clone gate
 remains closed.
+
+### APID owned verification retry worker (2026-10-04)
+
+The private `projectEnvironmentClonePostgresVerificationWithRetries` worker now
+composes original verification, durable failed-attempt history, new-owner
+reservation/claim and the native retry protocol. Each invocation makes at most
+one new target comparison. A failed comparison returns its error after fresh
+close-only recovery and, when lease/key/provider authority remains valid,
+recording the exact native closure as failed. Subsequent invocations select the
+retained head and reserve the next distinct owner. The original import dispatch,
+source manifest, preparation, physical target, first owner and closed history
+remain preserved. The total attempt ceiling is enforced by the control plane and
+native protocol; exhausting it cannot create another SQL window or data read.
+
+An original undispatched reservation or lost claim response resumes its original
+first dispatch through the already qualified first-window protocol. An original
+SQL window whose opening response was lost is recovered and closed without a
+comparison, then retained as failed before any next owner is admitted. Existing
+retry intent is inspected close-only first. A missing retry row is reported only
+after complete bootstrap provider postchecks succeed. The worker separately
+recovers the actual opaque predecessor closure, binds its ordinal and exact
+opening/closure to retained failed history, and supplies that capability and the
+fresh claimed owner to native first dispatch under the shared bootstrap lock.
+Missing-row metadata alone never grants opening authority. A held retry window
+is closed and retained as failed without re-running its callback; another
+invocation may admit its successor.
+
+Original and retry comparisons share a worker helper. It requires the actual
+native access identity for the expected ordinal, verification owner and original
+import, and the pinned SQL target. Borrowed child access uses the native read-only
+repeatable-read helper, original retained manifest, fresh parent/lease/native
+and provider placement checks, rollback and complete child provider postchecks.
+Only then is its sealed match persisted while the native window remains open.
+Each authorization checks the original owner, complete attempt history and exact
+child SQL pins. After comparison publication it expects the new retained state.
+Exact current native closure, bootstrap provider postchecks and final ownership
+checks precede verified publication. Every failing worker path returns zero
+proof metadata, including a store that returns an already committed row with an
+error.
+
+Recovery re-reads durable state before recording failure. Lost committed match
+and closure responses therefore recover their first ciphertext and timestamps
+close-only, with no source/target data read, import redispatch or new owner.
+Compared and verified owners remain ineligible for failed-attempt admission.
+Handoff retains the held recipient and requires the original keys for manifest,
+preparation and matched proof recovery; changing the configured current recipient
+cannot replace retained ciphertext. Cancellation or lease loss during reads
+quiesces/closes native access but prevents control-plane publication. A later
+fresh lease records its exact closed unmatched owner, and a subsequent invocation
+can admit a new bounded attempt. Damaged manifests, ciphertext, original parents
+or native lineage cannot become verified proof.
+
+Local PostgreSQL 16 contracts exercise real encrypted archive restoration and
+independent original-manifest comparisons, successful original/retry replay,
+uncertain original import state, all original/retry reservation/claim/match/
+closure response losses, lost failed-attempt publication, committed native
+opening/closure reply losses, actual row differences and read-budget exhaustion,
+provider failures including a missing row before failed bootstrap postchecks,
+original-key rotation/handoff, damaged retained proof/parents, and cancellation
+or handoff during actual retry reads. Original first-worker and native/store
+composition contracts remain included. Provider receipts are synthetic owned
+fixtures; this qualification does not establish paid-provider permissions.
+
+The full stage coordinator still requires production CPU/row-read/spool/billing
+admission, dispatch/backoff policy, source writer closure and a common config/data
+cut, full schema/globals/data strategies and final authority, durable retirement,
+object copying, mixed-version rollout, PostgreSQL 14/15 and provider isolation,
+and production-preserving promotion/rollback. This private worker publishes only
+subordinate verification evidence. The public full database/object clone gate
+remains closed.

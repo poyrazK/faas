@@ -139,48 +139,13 @@ func (s *server) projectEnvironmentClonePostgresVerification(ctx context.Context
 				var err error
 				closure, err = prepared.receipt.WithVerificationAccess(ctx, conn, exports, importID, verificationID, authorize,
 					func(ctx context.Context, access copydatabases.VerificationTarget) error {
-						target, err := access.TargetForWorker()
-						binding, bindingErr := access.IdentityForWorker()
-						if err != nil || bindingErr != nil || target != actual || binding.OwnerID != verificationID || binding.ImportID != importID {
-							return managedpostgres.ErrConflict
-						}
-						var matched copycontents.Match
-						err = s.managedPostgres.WithSnapshotCopyTargetDatabaseSQL(ctx, clonePostgresSnapshotDefinition(source), childRequest,
-							func(ctx context.Context, selected *pgx.Conn, _ managedpostgres.SnapshotCopyTargetSQLIdentity) error {
-								placement := func(ctx context.Context, got *pgx.Conn, target copyarchive.RestoreTarget) error {
-									if got != selected || target != actual {
-										return managedpostgres.ErrConflict
-									}
-									if err := authorize(ctx, prepared.bootstrap); err != nil {
-										return err
-									}
-									observed, err := s.managedPostgres.FindSnapshotCopyTarget(ctx, clonePostgresSnapshotDefinition(source), childRequest.Preparation)
-									if err == nil && !observed.Prepared {
-										err = managedpostgres.ErrUnavailable
-									}
-									if err == nil {
-										err = authorize(ctx, prepared.bootstrap)
-									}
-									return err
-								}
-								return access.WithReadOnly(ctx, selected, placement, func(ctx context.Context, tx pgx.Tx) error {
-									var err error
-									matched, err = manifest.CompareTarget(ctx, tx, target, cfg, placement)
-									return err
-								})
+						var err error
+						retained, err = s.projectEnvironmentClonePostgresCompare(ctx, source, prepared.bootstrap, childRequest, manifest, actual, verificationID, importID, 1, recipient, identities, cfg, authorize, access,
+							func(ctx context.Context, sealed copycontents.SealedMatch) (copycontents.SealedMatch, error) {
+								var err error
+								owner, err = verifications.RecordProjectEnvironmentClonePostgresVerificationMatch(ctx, l, id, oid, sealed)
+								return owner.Sealed, err
 							})
-						if err != nil {
-							return err
-						}
-						sealed, err := copycontents.SealMatch(recipient, manifest, actual, verificationID, importID, binding.OpenedAt, matched)
-						if err != nil {
-							return err
-						}
-						owner, err = verifications.RecordProjectEnvironmentClonePostgresVerificationMatch(ctx, l, id, oid, sealed)
-						if err != nil {
-							return err
-						}
-						retained, err = copycontents.OpenMatch(identities, manifest, actual, verificationID, importID, owner.Sealed)
 						return err
 					})
 				return err

@@ -142,6 +142,10 @@ func (v *verificationWorkerFixture) importData(t *testing.T, uncertain bool) {
 		if err != nil || owner.State != "verifying" {
 			return nil, errors.New("verification child borrow preceded durable claim")
 		}
+		history, err := v.store.ProjectEnvironmentClonePostgresVerificationAttemptsForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
+		if err != nil || len(history) > 0 && history[len(history)-1].State != "verifying" {
+			return nil, errors.New("verification child borrow preceded current attempt claim")
+		}
 		cfg := x.targetRoot.Config().Copy()
 		cfg.Database, cfg.Password = selected, "verification-fixture-password"
 		cfg.RuntimeParams = map[string]string{"default_transaction_read_only": "off", "search_path": "pg_catalog"}
