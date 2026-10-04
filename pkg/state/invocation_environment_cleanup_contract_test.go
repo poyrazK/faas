@@ -20,7 +20,7 @@ func testInvocationEnvironmentOwner(t *testing.T, store invocationWorkEnvironmen
 	t.Helper()
 	f := seedInvocationWorkEnvironment(t, store)
 	ctx := t.Context()
-	stage, err := store.EnqueueInvocation(ctx, f.request(t, store, "staging"))
+	stage, err := store.EnqueueInvocation(ctx, f.request(t.Context(), t, store, "staging"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func testInvocationEnvironmentOwner(t *testing.T, store invocationWorkEnvironmen
 			case "foreign_marker":
 				changed.EnvironmentID = uuid.NewString()
 			case "production_pin":
-				prod := f.request(t, store, "production")
+				prod := f.request(t.Context(), t, store, "production")
 				changed.Headers = prod.Headers
 			}
 			if _, _, err := state.ResolveInvocationVersion(ctx, store, changed); !errors.Is(err, state.ErrInvocationEnvironmentWorkIsolation) {
@@ -57,7 +57,7 @@ func testInvocationEnvironmentOwner(t *testing.T, store invocationWorkEnvironmen
 			}
 		})
 	}
-	prod, err := store.EnqueueInvocation(ctx, f.request(t, store, "production"))
+	prod, err := store.EnqueueInvocation(ctx, f.request(t.Context(), t, store, "production"))
 	if err != nil || prod.EnvironmentID != "" {
 		t.Fatalf("production ownership changed: %+v, %v", prod, err)
 	}
@@ -77,7 +77,7 @@ func testInvocationEnvironmentCleanupDrainsIdleWork(t *testing.T, store invocati
 	var stageRows []state.Invocation
 	for _, scope := range []string{"production", "empty-stage", "staging"} {
 		for n := 0; n < 2; n++ {
-			row, err := store.EnqueueKeyedInvocation(ctx, f.request(t, store, scope), f.latest, "s:same")
+			row, err := store.EnqueueKeyedInvocation(ctx, f.request(t.Context(), t, store, scope), f.latest, "s:same")
 			if err != nil {
 				t.Fatalf("idle cleanup setup: %v", err)
 			}
@@ -86,11 +86,11 @@ func testInvocationEnvironmentCleanupDrainsIdleWork(t *testing.T, store invocati
 			}
 		}
 	}
-	plain, err := store.EnqueueInvocation(ctx, f.request(t, store, "staging"))
+	plain, err := store.EnqueueInvocation(ctx, f.request(t.Context(), t, store, "staging"))
 	if err != nil {
 		t.Fatalf("idle cleanup setup: %v", err)
 	}
-	finished, err := store.EnqueueKeyedInvocation(ctx, f.request(t, store, "staging"), f.serial, "s:finished", "s:customer")
+	finished, err := store.EnqueueKeyedInvocation(ctx, f.request(t.Context(), t, store, "staging"), f.serial, "s:finished", "s:customer")
 	if err != nil {
 		t.Fatalf("idle cleanup setup: %v", err)
 	}
@@ -114,7 +114,7 @@ func testInvocationEnvironmentCleanupDrainsIdleWork(t *testing.T, store invocati
 		}
 	}
 	for _, scope := range []string{"production", "empty-stage"} {
-		row, err := store.EnqueueKeyedInvocation(ctx, f.request(t, store, scope), f.latest, "s:same")
+		row, err := store.EnqueueKeyedInvocation(ctx, f.request(t.Context(), t, store, scope), f.latest, "s:same")
 		if err != nil || row.WorkSequence != 3 {
 			t.Fatalf("%s lane altered by stage cleanup: sequence=%d, %v", scope, row.WorkSequence, err)
 		}
@@ -133,7 +133,7 @@ func testInvocationEnvironmentCleanupWaitsForRunningWork(t *testing.T, store inv
 	t.Helper()
 	f := seedInvocationWorkEnvironment(t, store)
 	ctx := t.Context()
-	row, err := store.EnqueueKeyedInvocation(ctx, f.request(t, store, "staging"), f.serial, "s:running", "s:customer")
+	row, err := store.EnqueueKeyedInvocation(ctx, f.request(t.Context(), t, store, "staging"), f.serial, "s:running", "s:customer")
 	if err != nil {
 		t.Fatal(err)
 	}

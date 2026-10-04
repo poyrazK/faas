@@ -40,9 +40,9 @@ type fixture struct {
 	ordinaryOID, templateOID                        uint32
 }
 
-func run(t *testing.T, c *pgx.Conn, sql string, args ...any) {
+func run(ctx context.Context, t *testing.T, c *pgx.Conn, sql string, args ...any) {
 	t.Helper()
-	if _, err := c.Exec(t.Context(), sql, args...); err != nil {
+	if _, err := c.Exec(ctx, sql, args...); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -123,15 +123,15 @@ func newFixtureConfigured(t *testing.T, configure func(*fixture)) *fixture {
 		}
 	})
 	for _, root := range []*pgx.Conn{f.sourceRoot, f.targetRoot} {
-		run(t, root, "CREATE ROLE "+pgx.Identifier{f.owner}.Sanitize()+" LOGIN CREATEROLE CREATEDB")
-		run(t, root, "CREATE ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" NOLOGIN")
-		run(t, root, "CREATE DATABASE "+pgx.Identifier{f.bootstrap}.Sanitize()+" OWNER "+pgx.Identifier{f.owner}.Sanitize())
+		run(t.Context(), t, root, "CREATE ROLE "+pgx.Identifier{f.owner}.Sanitize()+" LOGIN CREATEROLE CREATEDB")
+		run(t.Context(), t, root, "CREATE ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" NOLOGIN")
+		run(t.Context(), t, root, "CREATE DATABASE "+pgx.Identifier{f.bootstrap}.Sanitize()+" OWNER "+pgx.Identifier{f.owner}.Sanitize())
 	}
-	run(t, f.sourceRoot, "CREATE DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" OWNER "+pgx.Identifier{f.dataOwner}.Sanitize()+" TEMPLATE template0 CONNECTION LIMIT 7")
-	run(t, f.sourceRoot, "CREATE DATABASE "+pgx.Identifier{f.template}.Sanitize()+" OWNER "+pgx.Identifier{f.dataOwner}.Sanitize()+" TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'und' ICU_RULES '&a < b' IS_TEMPLATE true ALLOW_CONNECTIONS false CONNECTION LIMIT 3")
-	run(t, f.sourceRoot, "REVOKE ALL ON DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" FROM PUBLIC")
-	run(t, f.sourceRoot, "ALTER DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" SET timezone TO 'Europe/Istanbul'")
-	run(t, f.sourceRoot, "ALTER ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" IN DATABASE "+pgx.Identifier{f.template}.Sanitize()+" SET app.clone_secret TO 'retained-private-stage-value'")
+	run(t.Context(), t, f.sourceRoot, "CREATE DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" OWNER "+pgx.Identifier{f.dataOwner}.Sanitize()+" TEMPLATE template0 CONNECTION LIMIT 7")
+	run(t.Context(), t, f.sourceRoot, "CREATE DATABASE "+pgx.Identifier{f.template}.Sanitize()+" OWNER "+pgx.Identifier{f.dataOwner}.Sanitize()+" TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'und' ICU_RULES '&a < b' IS_TEMPLATE true ALLOW_CONNECTIONS false CONNECTION LIMIT 3")
+	run(t.Context(), t, f.sourceRoot, "REVOKE ALL ON DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" FROM PUBLIC")
+	run(t.Context(), t, f.sourceRoot, "ALTER DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" SET timezone TO 'Europe/Istanbul'")
+	run(t.Context(), t, f.sourceRoot, "ALTER ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" IN DATABASE "+pgx.Identifier{f.template}.Sanitize()+" SET app.clone_secret TO 'retained-private-stage-value'")
 	for _, pair := range []struct {
 		root *pgx.Conn
 		out  **pgx.Conn
@@ -225,25 +225,25 @@ func (f *fixture) prepare(t *testing.T, id uint32) Receipt {
 	}
 	return r
 }
-func (f *fixture) exists(t *testing.T, name string) bool {
+func (f *fixture) exists(ctx context.Context, t *testing.T, name string) bool {
 	t.Helper()
 	var b bool
-	if err := f.targetRoot.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname=$1)", name).Scan(&b); err != nil {
+	if err := f.targetRoot.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname=$1)", name).Scan(&b); err != nil {
 		t.Fatal(err)
 	}
 	return b
 }
-func (f *fixture) state(t *testing.T, id uint32) string {
+func (f *fixture) state(ctx context.Context, t *testing.T, id uint32) string {
 	t.Helper()
 	cfg := f.targetRoot.Config().Copy()
 	cfg.Database = f.bootstrap
-	c, err := pgx.ConnectConfig(t.Context(), cfg)
+	c, err := pgx.ConnectConfig(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close(context.Background())
 	var state string
-	_ = c.QueryRow(t.Context(), "SELECT state FROM gregale_copy_databases.databases WHERE source_oid=$1::oid", id).Scan(&state)
+	_ = c.QueryRow(ctx, "SELECT state FROM gregale_copy_databases.databases WHERE source_oid=$1::oid", id).Scan(&state)
 	return state
 }
 
@@ -350,7 +350,7 @@ func TestCopyDatabasesRejectIncompleteAndUnpinnedPlans(t *testing.T) {
 	if _, err := Prepare(t.Context(), f.target, f.exports, f.plan, f.ordinaryOID, nil); !errors.Is(err, pgerrors.ErrInvalid) {
 		t.Fatal(err)
 	}
-	if f.exists(t, f.ordinary) {
+	if f.exists(t.Context(), t, f.ordinary) {
 		t.Fatal("rejected planning mutated target")
 	}
 }
@@ -408,7 +408,7 @@ func TestCopyDatabasesOriginalSealedRecoveryAndTampering(t *testing.T) {
 	if !bytes.Equal(raw, after) {
 		t.Fatal("private plan aliases caller data")
 	}
-	run(t, f.sourceRoot, "ALTER DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" CONNECTION LIMIT 13")
+	run(t.Context(), t, f.sourceRoot, "ALTER DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" CONNECTION LIMIT 13")
 	if _, err = Open([]*age.X25519Identity{old}, f.exports, f.pins, s); err != nil {
 		t.Fatal("recovery reread live source", err)
 	}
@@ -424,14 +424,14 @@ func TestCopyDatabasesRecoverCreatingAndCommittedReplyLoss(t *testing.T) {
 			f := newFixture(t)
 			var failed bool
 			authorize := func(ctx context.Context, target copyarchive.RestoreTarget) error {
-				if !failed && f.exists(t, f.ordinary) && f.state(t, f.ordinaryOID) == phase {
+				if !failed && f.exists(ctx, t, f.ordinary) && f.state(ctx, t, f.ordinaryOID) == phase {
 					failed = true
 					return pgerrors.ErrUnavailable
 				}
 				return f.authorize(ctx, target)
 			}
 			r, err := Prepare(t.Context(), f.target, f.exports, f.plan, f.ordinaryOID, authorize)
-			if !errors.Is(err, pgerrors.ErrUnavailable) || !r.CreatedAt().IsZero() || !failed || !f.exists(t, f.ordinary) {
+			if !errors.Is(err, pgerrors.ErrUnavailable) || !r.CreatedAt().IsZero() || !failed || !f.exists(t.Context(), t, f.ordinary) {
 				t.Fatal("lost reply returned success or removed owned database", err)
 			}
 			var beforeOID uint32
@@ -458,22 +458,22 @@ func TestCopyDatabasesClaimRollbackAndMissingCreateRecovery(t *testing.T) {
 			authorize := func(ctx context.Context, target copyarchive.RestoreTarget) error {
 				// A second connection cannot see an uncommitted claim. The dedicated
 				// connection's transaction status identifies the claim commit boundary.
-				state := f.state(t, f.ordinaryOID)
-				if !failed && !f.exists(t, f.ordinary) && ((committed && state == "creating") || (!committed && state == "reserved" && f.target.PgConn().TxStatus() == 'T')) {
+				state := f.state(ctx, t, f.ordinaryOID)
+				if !failed && !f.exists(ctx, t, f.ordinary) && ((committed && state == "creating") || (!committed && state == "reserved" && f.target.PgConn().TxStatus() == 'T')) {
 					failed = true
 					return pgerrors.ErrUsageStale
 				}
 				return f.authorize(ctx, target)
 			}
 			r, err := Prepare(t.Context(), f.target, f.exports, f.plan, f.ordinaryOID, authorize)
-			if !errors.Is(err, pgerrors.ErrUsageStale) || !r.CreatedAt().IsZero() || !failed || f.exists(t, f.ordinary) {
+			if !errors.Is(err, pgerrors.ErrUsageStale) || !r.CreatedAt().IsZero() || !failed || f.exists(t.Context(), t, f.ordinary) {
 				t.Fatal("claim boundary performed unauthorized DDL", err)
 			}
 			want := "reserved"
 			if committed {
 				want = "creating"
 			}
-			if f.state(t, f.ordinaryOID) != want {
+			if f.state(t.Context(), t, f.ordinaryOID) != want {
 				t.Fatal("claim was not durably preserved or rolled back")
 			}
 			f.prepare(t, f.ordinaryOID)
@@ -488,7 +488,7 @@ func TestCopyDatabasesStaleLockWaiterAndConcurrentRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer second.Close(context.Background())
-	run(t, second, "SELECT pg_advisory_lock(hashtext('gregale copy role seed v1'),0)")
+	run(t.Context(), t, second, "SELECT pg_advisory_lock(hashtext('gregale copy role seed v1'),0)")
 	var stale atomic.Bool
 	entered := make(chan struct{}, 1)
 	done := make(chan error, 1)
@@ -527,11 +527,11 @@ func TestCopyDatabasesStaleLockWaiterAndConcurrentRecovery(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	stale.Store(true)
-	run(t, second, "SELECT pg_advisory_unlock(hashtext('gregale copy role seed v1'),0)")
+	run(t.Context(), t, second, "SELECT pg_advisory_unlock(hashtext('gregale copy role seed v1'),0)")
 	if e := <-done; !errors.Is(e, pgerrors.ErrUsageStale) {
 		t.Fatal(e)
 	}
-	if f.exists(t, f.ordinary) {
+	if f.exists(t.Context(), t, f.ordinary) {
 		t.Fatal("stale waiter created a database")
 	}
 	results := make(chan Receipt, 2)
@@ -560,24 +560,24 @@ func TestCopyDatabasesRejectDriftSharedJournalAndMissingCompleted(t *testing.T) 
 			f := newFixture(t)
 			switch kind {
 			case "extra database":
-				run(t, f.targetRoot, "CREATE DATABASE "+pgx.Identifier{f.template}.Sanitize())
+				run(t.Context(), t, f.targetRoot, "CREATE DATABASE "+pgx.Identifier{f.template}.Sanitize())
 			case "role drift":
-				run(t, f.targetRoot, "ALTER ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" CREATEDB")
+				run(t.Context(), t, f.targetRoot, "ALTER ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" CREATEDB")
 			case "shared journal":
 				f.prepare(t, f.templateOID)
-				run(t, f.target, "GRANT USAGE ON SCHEMA gregale_copy_databases TO PUBLIC")
+				run(t.Context(), t, f.target, "GRANT USAGE ON SCHEMA gregale_copy_databases TO PUBLIC")
 			case "database drift":
 				f.prepare(t, f.templateOID)
-				run(t, f.targetRoot, "ALTER DATABASE "+pgx.Identifier{f.template}.Sanitize()+" ALLOW_CONNECTIONS true")
+				run(t.Context(), t, f.targetRoot, "ALTER DATABASE "+pgx.Identifier{f.template}.Sanitize()+" ALLOW_CONNECTIONS true")
 			case "missing completed":
 				f.prepare(t, f.ordinaryOID)
-				run(t, f.targetRoot, "DROP DATABASE "+pgx.Identifier{f.ordinary}.Sanitize())
+				run(t.Context(), t, f.targetRoot, "DROP DATABASE "+pgx.Identifier{f.ordinary}.Sanitize())
 			}
 			r, err := Prepare(t.Context(), f.target, f.exports, f.plan, f.ordinaryOID, f.authorize)
 			if !errors.Is(err, pgerrors.ErrConflict) || !r.CreatedAt().IsZero() {
 				t.Fatal("unqualified target drift accepted", err)
 			}
-			if f.exists(t, f.ordinary) {
+			if f.exists(t.Context(), t, f.ordinary) {
 				t.Fatal("rejected target still created/recreated database")
 			}
 		})
@@ -611,7 +611,7 @@ func TestCopyDatabasesRecoveredSeedProofRequiresActualTargetJournal(t *testing.T
 		t.Fatal("metadata recovery should defer physical proof", err)
 	}
 	r, err := Prepare(t.Context(), f.target, f.exports, opened, f.ordinaryOID, f.authorize)
-	if !errors.Is(err, pgerrors.ErrConflict) || !r.CreatedAt().IsZero() || f.exists(t, f.ordinary) {
+	if !errors.Is(err, pgerrors.ErrConflict) || !r.CreatedAt().IsZero() || f.exists(t.Context(), t, f.ordinary) {
 		t.Fatal("substituted seed journal authorized DDL", err)
 	}
 }

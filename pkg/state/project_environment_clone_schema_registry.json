@@ -1522,6 +1522,105 @@
     ]
   },
   {
+    "table": "customer_operation_definitions",
+    "kind": "configuration",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "deployment_id",
+      "id",
+      "name",
+      "release_id",
+      "revision",
+      "scope",
+      "spec"
+    ]
+  },
+  {
+    "table": "customer_operation_events",
+    "kind": "operational",
+    "columns": [
+      "attempt",
+      "created_at",
+      "data",
+      "event_type",
+      "execution_id",
+      "operation_id",
+      "sequence"
+    ]
+  },
+  {
+    "table": "customer_operation_executions",
+    "kind": "operational",
+    "columns": [
+      "created_at",
+      "generation",
+      "invocation_id",
+      "operation_id"
+    ]
+  },
+  {
+    "table": "customer_operation_idempotency",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "app_id",
+      "expires_at",
+      "fingerprint",
+      "operation_id",
+      "scope_digest"
+    ]
+  },
+  {
+    "table": "customer_operation_recoveries",
+    "kind": "operational",
+    "columns": [
+      "created_at",
+      "fingerprint",
+      "operation_id",
+      "recovery_id",
+      "request"
+    ]
+  },
+  {
+    "table": "customer_operation_reports",
+    "kind": "operational",
+    "columns": [
+      "attempt",
+      "execution_id",
+      "fingerprint",
+      "operation_id",
+      "report_id"
+    ]
+  },
+  {
+    "table": "customer_operation_stream_leases",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "expires_at",
+      "id",
+      "operation_id"
+    ]
+  },
+  {
+    "table": "customer_operations",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "current_invocation_id",
+      "definition_id",
+      "expires_at",
+      "id",
+      "platform_tenant_id",
+      "record",
+      "state"
+    ]
+  },
+  {
     "table": "data_upstream_probes",
     "kind": "operational",
     "columns": [
@@ -2693,6 +2792,7 @@
       "occurrence_id",
       "on_failure_destination_id",
       "on_success_destination_id",
+      "operation_id",
       "org_id",
       "outcome",
       "outcome_code",

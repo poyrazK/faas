@@ -154,7 +154,7 @@ func localTargetSQLFixtureForDatabase(t *testing.T, name string) (*targetSQLFixt
 		t.Fatal(err)
 	}
 	if !exists {
-		if _, err := admin.Exec(t.Context(), "CREATE ROLE "+pgx.Identifier{maintenanceSourceRole}.Sanitize()+" LOGIN"); err != nil {
+		if _, err := admin.Exec(t.Context(), "CREATE ROLE "+pgx.Identifier{maintenanceSourceRole}.Sanitize()+" LOGIN PASSWORD 'private-target-password'"); err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {
@@ -218,6 +218,7 @@ func TestSnapshotCopyTargetDatabaseSQLAuthenticatesLiteralSelectionWritesAndClos
 	}
 	selected := cfg.Copy()
 	selected.Database, selected.User = f.request.Target.DatabaseName, maintenanceSourceRole
+	selected.Password = "private-target-password"
 	selected.RuntimeParams = map[string]string{"default_transaction_read_only": "on"}
 	conn, err := pgx.ConnectConfig(t.Context(), selected)
 	if err != nil {

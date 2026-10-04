@@ -38,7 +38,7 @@ func TestPgRuntimePublicationRejectsCorruptPinnedSettings(t *testing.T) {
 			if _, err := store.PublishOwnedInstanceRuntime(ctx, p); !errors.Is(err, state.ErrConflict) {
 				t.Fatalf("corrupt deployed settings published: %v", err)
 			}
-			assertRuntimePublicationUnchanged(t, store, p)
+			assertRuntimePublicationUnchanged(t.Context(), t, store, p)
 		})
 	}
 }
@@ -130,7 +130,7 @@ func TestPgRuntimePublicationWaitsForConfigurationEdits(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("publication stuck after variable writer committed")
 			}
-			assertRuntimePublicationUnchanged(t, store, p)
+			assertRuntimePublicationUnchanged(t.Context(), t, store, p)
 		})
 	}
 }

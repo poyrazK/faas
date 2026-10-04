@@ -15,13 +15,13 @@ type environmentAppClient struct {
 
 func (c environmentAppClient) GetApp(ctx context.Context, slug string) (api.AppResponse, error) {
 	if c.environment != "" {
-		app, revision, err := c.Client.GetAppInEnvironmentRevision(ctx, slug, c.environment)
+		app, revision, err := c.GetAppInEnvironmentRevision(ctx, slug, c.environment)
 		if err == nil && c.revision != nil {
 			*c.revision = revision
 		}
 		return app, err
 	}
-	return c.Client.GetApp(ctx, slug)
+	return c.GetApp(ctx, slug)
 }
 
 func (c environmentAppClient) UpdateApp(ctx context.Context, slug string, request api.UpdateAppRequest) (api.AppResponse, error) {
@@ -30,13 +30,13 @@ func (c environmentAppClient) UpdateApp(ctx context.Context, slug string, reques
 		if c.revision != nil && *c.revision >= 0 {
 			revision = *c.revision
 		} else {
-			_, observed, err := c.Client.GetAppInEnvironmentRevision(ctx, slug, c.environment)
+			_, observed, err := c.GetAppInEnvironmentRevision(ctx, slug, c.environment)
 			if err != nil {
 				return api.AppResponse{}, err
 			}
 			revision = observed
 		}
-		return c.Client.UpdateAppInEnvironmentAtRevision(ctx, slug, c.environment, revision, request)
+		return c.UpdateAppInEnvironmentAtRevision(ctx, slug, c.environment, revision, request)
 	}
-	return c.Client.UpdateApp(ctx, slug, request)
+	return c.UpdateApp(ctx, slug, request)
 }

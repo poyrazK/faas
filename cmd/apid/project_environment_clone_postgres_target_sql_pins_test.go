@@ -68,7 +68,7 @@ func targetSQLPinsWorkerFixture(t *testing.T) (cloneCoordinatorFixture, *targetS
 		if err != nil {
 			return zero, err
 		}
-		defer func() { _ = conn.Close(context.Background()) }()
+		defer func(cleanupCtx context.Context) { _ = conn.Close(context.WithoutCancel(cleanupCtx)) }(ctx)
 		var i managedpostgres.SnapshotCopyTargetSQLIdentity
 		if err := conn.QueryRow(ctx, `SELECT current_setting('server_version_num')::int/10000,current_database(),current_user,d.oid,r.oid
  FROM pg_catalog.pg_database d,pg_catalog.pg_roles r WHERE d.datname=current_database() AND r.rolname=current_user`).Scan(&i.PostgresMajor, &i.DatabaseName, &i.RoleName, &i.DatabaseOID, &i.RoleOID); err != nil {

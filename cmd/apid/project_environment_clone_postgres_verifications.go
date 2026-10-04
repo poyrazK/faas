@@ -139,7 +139,8 @@ func (s *server) projectEnvironmentClonePostgresVerification(ctx context.Context
 	}
 	var retained copycontents.RetainedMatch
 	var closure copydatabases.VerificationClosure
-	if owner.State == "compared" || owner.State == "verified" {
+	switch owner.State {
+	case "compared", "verified":
 		retained, err = copycontents.OpenMatch(identities, manifest, actual, verificationID, importID, owner.Sealed)
 		if err != nil {
 			return zero, err
@@ -150,7 +151,7 @@ func (s *server) projectEnvironmentClonePostgresVerification(ctx context.Context
 				closure, err = prepared.receipt.CloseVerificationAccess(ctx, conn, exports, importID, verificationID, authorize)
 				return err
 			})
-	} else if owner.State == "verifying" {
+	case "verifying":
 		err = s.managedPostgres.WithSnapshotCopyTargetDatabaseSQL(ctx, clonePostgresSnapshotDefinition(source), bootstrapRequest,
 			func(ctx context.Context, conn *pgx.Conn, _ managedpostgres.SnapshotCopyTargetSQLIdentity) error {
 				var err error
@@ -175,7 +176,7 @@ func (s *server) projectEnvironmentClonePostgresVerification(ctx context.Context
 					})
 				return err
 			})
-	} else {
+	default:
 		return zero, managedpostgres.ErrConflict
 	}
 	if err != nil {

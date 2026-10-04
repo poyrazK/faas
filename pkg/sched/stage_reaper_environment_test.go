@@ -175,7 +175,7 @@ func TestReaperPolicyFailureAndLostLifetimeDoNotAuthorizeScaleIn(t *testing.T) {
 			if reason == "read-failure" {
 				store = unavailableReaperPolicyStore{f.store}
 			} else {
-				f.recreateStage(t)
+				f.recreateStage(t.Context(), t)
 			}
 			loop := NewLoop(nil, newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0"), testLog())
 			now := time.Now()

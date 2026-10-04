@@ -331,31 +331,6 @@ func databaseNullableUUID(value string) pgtype.UUID {
 	return id
 }
 
-func nullableUUID(value string) any {
-	if value == "" {
-		return nil
-	}
-	parsed, err := postgresUUID(value)
-	if err != nil {
-		return nil
-	}
-	return parsed
-}
-
-func nullableText(value string) any {
-	if value == "" {
-		return nil
-	}
-	return value
-}
-
-func nullableTime(value time.Time) any {
-	if value.IsZero() {
-		return nil
-	}
-	return value
-}
-
 func validateReservation(database Database, limit int) error {
 	validFingerprint := regexp.MustCompile(`^[a-f0-9]{64}$`)
 	if limit < 1 || limit > 100 || database.ID == "" || database.AccountID == "" ||

@@ -561,7 +561,9 @@ func (s *server) deleteBucketObject(w http.ResponseWriter, r *http.Request, acct
 		bucketProblem(w, err)
 		return
 	}
-	if err := objectstorageactivity.Run(r.Context(), s.store, b, func() error { return provider.DeleteObject(r.Context(), b.PhysicalName, key) }); err != nil {
+	if err := objectstorageactivity.Run(r.Context(), s.store, b, func(mutationCtx context.Context) error {
+		return provider.DeleteObject(mutationCtx, b.PhysicalName, key)
+	}); err != nil {
 		bucketProblem(w, err)
 		return
 	}

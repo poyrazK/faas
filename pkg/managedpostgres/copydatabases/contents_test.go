@@ -25,7 +25,7 @@ func contentsFixture(t *testing.T, extra string) (*fixture, Receipt, copyinvento
 	t.Helper()
 	f := newFixtureConfigured(t, func(f *fixture) {
 		for _, root := range []*pgx.Conn{f.sourceRoot, f.targetRoot} {
-			run(t, root, "GRANT "+pgx.Identifier{f.dataOwner}.Sanitize()+" TO "+pgx.Identifier{f.owner}.Sanitize()+" WITH INHERIT TRUE, SET TRUE")
+			run(t.Context(), t, root, "GRANT "+pgx.Identifier{f.dataOwner}.Sanitize()+" TO "+pgx.Identifier{f.owner}.Sanitize()+" WITH INHERIT TRUE, SET TRUE")
 		}
 		cfg := f.source.Config().Copy()
 		cfg.Database = f.ordinary
@@ -34,7 +34,7 @@ func contentsFixture(t *testing.T, extra string) (*fixture, Receipt, copyinvento
 			t.Fatal(e)
 		}
 		defer c.Close(context.Background())
-		run(t, c, `CREATE SCHEMA app;
+		run(t.Context(), t, c, `CREATE SCHEMA app;
    CREATE TYPE app.mood AS ENUM ('sad','ha"ppy','secret\nlabel');
    CREATE DOMAIN app.amount AS numeric(18,4);
    CREATE TYPE app.detail AS (label text, values integer[], mood app.mood);
@@ -56,7 +56,7 @@ func contentsFixture(t *testing.T, extra string) (*fixture, Receipt, copyinvento
    SELECT lo_from_bytea(424242,decode(repeat('ab',2097153),'hex'));
    `)
 		if extra != "" {
-			run(t, c, extra)
+			run(t.Context(), t, c, extra)
 		}
 	})
 	r := f.prepare(t, f.ordinaryOID)
@@ -129,17 +129,17 @@ func contentsRestore(t *testing.T, f *fixture, r Receipt, d copyinventory.Databa
 	}
 	return imported
 }
-func contentsTargetMutation(t *testing.T, f *fixture, r Receipt, sql string) {
+func contentsTargetMutation(ctx context.Context, t *testing.T, f *fixture, r Receipt, sql string) {
 	t.Helper()
 	target, _ := r.TargetForWorker()
 	cfg := f.targetRoot.Config().Copy()
 	cfg.Database = target.DatabaseName
-	c, e := pgx.ConnectConfig(t.Context(), cfg)
+	c, e := pgx.ConnectConfig(ctx, cfg)
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer c.Close(context.Background())
-	run(t, c, sql)
+	run(ctx, t, c, sql)
 }
 
 func TestCopyDatabaseContentsIndependentManifestVerifiesRealArchiveAndOriginalKeyHandoff(t *testing.T) {
@@ -198,7 +198,7 @@ func TestCopyDatabaseContentsIndependentManifestVerifiesRealArchiveAndOriginalKe
 	var match copycontents.Match
 	closure, e := r.WithVerificationAccess(t.Context(), f.target, f.exports, imported, uuid.New(), f.authorize, func(ctx context.Context, access VerificationTarget) error {
 		target, _ := access.TargetForWorker()
-		c := maintenanceChild(t, f, target)
+		c := maintenanceChild(ctx, t, f, target)
 		defer c.Close(context.Background())
 		return access.WithReadOnly(ctx, c, verificationPlacement(f, c, target), func(ctx context.Context, tx pgx.Tx) error {
 			var e error
@@ -256,9 +256,9 @@ func TestCopyDatabaseContentsDetectsChangedRowsDuplicatesSequenceAndLargeObjects
 			}
 			imported := contentsRestore(t, f, r, d, source)
 			closure, e := r.WithVerificationAccess(t.Context(), f.target, f.exports, imported, uuid.New(), f.authorize, func(ctx context.Context, access VerificationTarget) error {
-				contentsTargetMutation(t, f, r, mutation)
+				contentsTargetMutation(ctx, t, f, r, mutation)
 				target, _ := access.TargetForWorker()
-				c := maintenanceChild(t, f, target)
+				c := maintenanceChild(ctx, t, f, target)
 				defer c.Close(context.Background())
 				return access.WithReadOnly(ctx, c, verificationPlacement(f, c, target), func(ctx context.Context, tx pgx.Tx) error {
 					match, e := manifest.CompareTarget(ctx, tx, target, cfg, verificationPlacement(f, c, target))
@@ -284,7 +284,7 @@ func TestCopyDatabaseContentsDetectsStoredMaterializedRowsOmittedByDump(t *testi
 	imported := contentsRestore(t, f, r, d, source)
 	_, e = r.WithVerificationAccess(t.Context(), f.target, f.exports, imported, uuid.New(), f.authorize, func(ctx context.Context, access VerificationTarget) error {
 		target, _ := access.TargetForWorker()
-		c := maintenanceChild(t, f, target)
+		c := maintenanceChild(ctx, t, f, target)
 		defer c.Close(context.Background())
 		return access.WithReadOnly(ctx, c, verificationPlacement(f, c, target), func(ctx context.Context, tx pgx.Tx) error {
 			match, e := manifest.CompareTarget(ctx, tx, target, cfg, verificationPlacement(f, c, target))
@@ -316,9 +316,9 @@ func TestCopyDatabaseContentsRejectsPolicyFilteredRowsAndForeignTablesBeforeData
 					t.Fatal(e)
 				}
 				if mode == "foreign" {
-					run(t, c, "CREATE EXTENSION postgres_fdw; CREATE SERVER external FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host 'invalid.example',dbname 'external'); CREATE FOREIGN TABLE app.external_rows(id int) SERVER external")
+					run(t.Context(), t, c, "CREATE EXTENSION postgres_fdw; CREATE SERVER external FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host 'invalid.example',dbname 'external'); CREATE FOREIGN TABLE app.external_rows(id int) SERVER external")
 				} else {
-					run(t, c, "CREATE EXTENSION hstore WITH SCHEMA app; CREATE TABLE app.unqualified(value app.hstore)")
+					run(t.Context(), t, c, "CREATE EXTENSION hstore WITH SCHEMA app; CREATE TABLE app.unqualified(value app.hstore)")
 				}
 				_ = c.Close(context.Background())
 			}
@@ -329,7 +329,7 @@ func TestCopyDatabaseContentsRejectsPolicyFilteredRowsAndForeignTablesBeforeData
 				if e != nil {
 					t.Fatal(e)
 				}
-				run(t, c, "CREATE TABLE app.unqualified(value regproc)")
+				run(t.Context(), t, c, "CREATE TABLE app.unqualified(value regproc)")
 				_ = c.Close(context.Background())
 			}
 			manifest, e := copycontents.Capture(t.Context(), source, d, cfg, contentsSourcePlacement(f, source, d))

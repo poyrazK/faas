@@ -187,12 +187,13 @@ func (s *PgStore) mutateCloneCopyReader(ctx context.Context, lease ProjectEnviro
 		if op.Status != CloneOperationCompensating {
 			return r, false, ErrConflict
 		}
-		if action == "begin" {
+		switch action {
+		case "begin":
 			if r.State != "deleting" && r.State != "retired" {
 				_, err = q.BeginProjectEnvironmentClonePostgresCopyReaderCleanup(ctx, tx, sqlc.BeginProjectEnvironmentClonePostgresCopyReaderCleanupParams{
 					OperationID: mustPgUUID(op.ID), SourceDatabaseID: mustPgUUID(sourceID), ExpectedStatus: string(op.Status), ExpectedRevision: op.Revision, WorkerToken: lease.Token})
 			}
-		} else if action == "delete_claim" {
+		case "delete_claim":
 			if r.State != "deleting" || r.EndpointID == "" {
 				return r, false, ErrConflict
 			}
@@ -201,7 +202,7 @@ func (s *PgStore) mutateCloneCopyReader(ctx context.Context, lease ProjectEnviro
 					OperationID: mustPgUUID(op.ID), SourceDatabaseID: mustPgUUID(sourceID), ExpectedStatus: string(op.Status), ExpectedRevision: op.Revision, WorkerToken: lease.Token})
 				dispatch = true
 			}
-		} else {
+		default:
 			err = mutateCloneCopyReaderProofTx(ctx, tx, lease, r, proof, action == "finish")
 		}
 	default:

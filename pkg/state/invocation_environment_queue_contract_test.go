@@ -23,9 +23,9 @@ type environmentQueueInvocationTestStore interface {
 	RequeueExpiredInvocations(context.Context, time.Time, int) (int, error)
 }
 
-func enqueueStageQueue(t *testing.T, store environmentQueueInvocationTestStore, f queueConsumerFixture) state.Invocation {
+func enqueueStageQueue(ctx context.Context, t *testing.T, store environmentQueueInvocationTestStore, f queueConsumerFixture) state.Invocation {
 	t.Helper()
-	inv, err := store.EnqueueProjectEnvironmentQueueInvocation(t.Context(), f.account.ID, f.project.ID, f.dep.ID, "orders", state.Invocation{Method: "POST", Path: "/orders", Payload: []byte(`{"order":1}`)})
+	inv, err := store.EnqueueProjectEnvironmentQueueInvocation(ctx, f.account.ID, f.project.ID, f.dep.ID, "orders", state.Invocation{Method: "POST", Path: "/orders", Payload: []byte(`{"order":1}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func testEnvironmentQueueAdmission(t *testing.T, store environmentQueueInvocatio
 			t.Fatalf("injected input admitted: %+v", input)
 		}
 	}
-	inv := enqueueStageQueue(t, store, f)
+	inv := enqueueStageQueue(t.Context(), t, store, f)
 	owner, err := store.InvocationEnvironmentQueueAdmission(ctx, inv.ID)
 	if err != nil || owner.EnvironmentID != set.EnvironmentID || owner.RuntimeSetID != set.ID || owner.ConsumerID != set.Consumers[0].ID || owner.WorkloadSpecID != f.spec.ID || owner.SettingsHash != f.spec.Hash ||
 		owner.DefinitionHash != set.Consumers[0].DefinitionHash || owner.DeploymentID != f.dep.ID || inv.EnvironmentID != set.EnvironmentID || !owner.AdmittedAt.Equal(inv.CreatedAt) || inv.Source != state.InvocationQueue || inv.QueueName != "orders" {
@@ -114,7 +114,7 @@ func testEnvironmentQueueAdmission(t *testing.T, store environmentQueueInvocatio
 	if _, err := state.ReplaceEnvironmentQueueBindings(ctx, store, f.app, "stage", f.spec.Revision, bindings); err != nil {
 		t.Fatal(err)
 	}
-	next := enqueueStageQueue(t, store, f)
+	next := enqueueStageQueue(t.Context(), t, store, f)
 	var policy api.RetryPolicyDTO
 	if json.Unmarshal(next.RetryPolicyJSON, &policy) != nil || policy.MaxAttempts != 4 {
 		t.Fatalf("desired edit rewrote pinned retry: %s", next.RetryPolicyJSON)
@@ -162,7 +162,7 @@ func testEnvironmentQueueClaims(t *testing.T, store environmentQueueInvocationTe
 	}
 	var rows []state.Invocation
 	for range 8 {
-		rows = append(rows, enqueueStageQueue(t, store, f))
+		rows = append(rows, enqueueStageQueue(t.Context(), t, store, f))
 	}
 	var won atomic.Int32
 	var wg sync.WaitGroup
@@ -187,7 +187,7 @@ func testEnvironmentQueueClaims(t *testing.T, store environmentQueueInvocationTe
 	if err != nil || cur != 2 {
 		t.Fatalf("cap failures leaked quota: %d %v", cur, err)
 	}
-	pending := enqueueStageQueue(t, store, f)
+	pending := enqueueStageQueue(t.Context(), t, store, f)
 	if _, err := store.ClaimInvocationWithCap(ctx, pending.ID, "", 30, 4); !errors.Is(err, state.ErrQuotaExceeded) {
 		t.Fatalf("expired unreaped leases freed consumer slots: %v", err)
 	}
@@ -220,7 +220,7 @@ func testEnvironmentQueueClaims(t *testing.T, store environmentQueueInvocationTe
 		t.Fatal(err)
 	}
 	f.dep = newer
-	second := enqueueStageQueue(t, store, f)
+	second := enqueueStageQueue(t.Context(), t, store, f)
 	if _, err := store.ClaimInvocationWithCap(ctx, second.ID, "", 30, 4); !errors.Is(err, state.ErrQuotaExceeded) {
 		t.Fatalf("rollout bypassed logical queue concurrency: %v", err)
 	}
@@ -248,7 +248,7 @@ func testEnvironmentQueueMessageCleanup(t *testing.T, store environmentQueueInvo
 	if _, err := store.PrepareProjectEnvironmentQueueConsumers(ctx, f.account.ID, f.project.ID, f.dep.ID); err != nil {
 		t.Fatal(err)
 	}
-	inv := enqueueStageQueue(t, store, f)
+	inv := enqueueStageQueue(t.Context(), t, store, f)
 	if _, err := store.ClaimInvocationWithCap(ctx, inv.ID, "", 30, 4); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +318,7 @@ func testEnvironmentQueueAdmissionClasses(t *testing.T, store environmentQueueIn
 			if _, err := store.PrepareProjectEnvironmentQueueConsumers(ctx, f.account.ID, f.project.ID, f.dep.ID); err != nil {
 				t.Fatal(err)
 			}
-			inv := enqueueStageQueue(t, store, f)
+			inv := enqueueStageQueue(t.Context(), t, store, f)
 			if _, version, err := state.ResolveInvocationVersion(ctx, store, inv); err != nil || version.DeploymentID != f.dep.ID {
 				t.Fatalf("definition class/mode lost pinned delivery: %+v %v", version, err)
 			}
@@ -342,7 +342,7 @@ func testEnvironmentQueuePartitions(t *testing.T, store environmentQueueInvocati
 		t.Fatal(err)
 	}
 	for range 2 {
-		inv := enqueueStageQueue(t, store, f)
+		inv := enqueueStageQueue(t.Context(), t, store, f)
 		if _, err := store.ClaimInvocationWithCap(ctx, inv.ID, "", 30, 3); err != nil {
 			t.Fatal(err)
 		}
@@ -368,7 +368,7 @@ func testEnvironmentQueuePartitions(t *testing.T, store environmentQueueInvocati
 		t.Fatal(err)
 	}
 	f.dep = other
-	sibling := enqueueStageQueue(t, store, f)
+	sibling := enqueueStageQueue(t.Context(), t, store, f)
 	if _, err := store.ClaimInvocationWithCap(ctx, sibling.ID, "", 30, 3); !errors.Is(err, state.ErrQuotaExceeded) {
 		t.Fatalf("sibling bypassed global account quota: %v", err)
 	}

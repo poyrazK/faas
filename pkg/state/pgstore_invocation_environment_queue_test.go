@@ -76,7 +76,7 @@ func TestPgEnvironmentQueueClaimsRejectCorruptedOwnershipWithoutQuota(t *testing
 			if _, err := s.PrepareProjectEnvironmentQueueConsumers(ctx, f.account.ID, f.project.ID, f.dep.ID); err != nil {
 				t.Fatal(err)
 			}
-			inv := enqueueStageQueue(t, s, f)
+			inv := enqueueStageQueue(t.Context(), t, s, f)
 			if _, err := pool.Exec(ctx, change, inv.ID); err != nil {
 				t.Fatal(err)
 			}

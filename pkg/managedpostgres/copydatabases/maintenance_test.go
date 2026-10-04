@@ -25,17 +25,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
 
-func maintenanceChild(t *testing.T, f *fixture, target copyarchive.RestoreTarget) *pgx.Conn {
+func maintenanceChild(ctx context.Context, t *testing.T, f *fixture, target copyarchive.RestoreTarget) *pgx.Conn {
 	t.Helper()
 	cfg := f.target.Config().Copy()
 	cfg.Database = target.DatabaseName
-	c, err := pgx.ConnectConfig(t.Context(), cfg)
+	c, err := pgx.ConnectConfig(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return c
 }
-func maintenanceStatus(t *testing.T, f *fixture, id uint32) (bool, bool, int32, string) {
+func maintenanceStatus(ctx context.Context, t *testing.T, f *fixture, id uint32) (bool, bool, int32, string) {
 	t.Helper()
 	var allow, template bool
 	var limit int32
@@ -44,22 +44,22 @@ func maintenanceStatus(t *testing.T, f *fixture, id uint32) (bool, bool, int32, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = f.targetRoot.QueryRow(t.Context(), "SELECT datallowconn,datistemplate,datconnlimit FROM pg_database WHERE oid=$1", d.OID).Scan(&allow, &template, &limit); err != nil {
+	if err = f.targetRoot.QueryRow(ctx, "SELECT datallowconn,datistemplate,datconnlimit FROM pg_database WHERE oid=$1", d.OID).Scan(&allow, &template, &limit); err != nil {
 		t.Fatal(err)
 	}
 	cfg := f.targetRoot.Config().Copy()
 	cfg.Database = f.bootstrap
-	c, err := pgx.ConnectConfig(t.Context(), cfg)
+	c, err := pgx.ConnectConfig(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close(context.Background())
+	defer c.Close(context.WithoutCancel(ctx))
 	var exists bool
-	if err = c.QueryRow(t.Context(), "SELECT to_regclass('gregale_copy_database_maintenance.windows') IS NOT NULL").Scan(&exists); err != nil {
+	if err = c.QueryRow(ctx, "SELECT to_regclass('gregale_copy_database_maintenance.windows') IS NOT NULL").Scan(&exists); err != nil {
 		t.Fatal(err)
 	}
 	if exists {
-		err = c.QueryRow(t.Context(), "SELECT state FROM gregale_copy_database_maintenance.windows WHERE source_oid=$1", id).Scan(&state)
+		err = c.QueryRow(ctx, "SELECT state FROM gregale_copy_database_maintenance.windows WHERE source_oid=$1", id).Scan(&state)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatal(err)
 		}
@@ -74,7 +74,7 @@ func assertMaintenanceOriginal(t *testing.T, f *fixture, r Receipt) {
 }
 func existingClosedTemplate(t *testing.T, f *fixture) {
 	t.Helper()
-	run(t, f.targetRoot, "CREATE DATABASE "+pgx.Identifier{f.template}.Sanitize()+" OWNER "+pgx.Identifier{f.owner}.Sanitize()+" TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'und' ICU_RULES '&a < b' IS_TEMPLATE true ALLOW_CONNECTIONS false CONNECTION LIMIT 0")
+	run(t.Context(), t, f.targetRoot, "CREATE DATABASE "+pgx.Identifier{f.template}.Sanitize()+" OWNER "+pgx.Identifier{f.owner}.Sanitize()+" TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'und' ICU_RULES '&a < b' IS_TEMPLATE true ALLOW_CONNECTIONS false CONNECTION LIMIT 0")
 }
 
 func TestCopyDatabaseMaintenancePreservesClosedZeroLimitAndUnsetACL(t *testing.T) {
@@ -84,7 +84,7 @@ func TestCopyDatabaseMaintenancePreservesClosedZeroLimitAndUnsetACL(t *testing.T
 				if existing {
 					existingClosedTemplate(t, f)
 				} else {
-					run(t, f.sourceRoot, "ALTER DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" CONNECTION LIMIT 0")
+					run(t.Context(), t, f.sourceRoot, "ALTER DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" CONNECTION LIMIT 0")
 				}
 			})
 			id := f.ordinaryOID
@@ -99,13 +99,13 @@ func TestCopyDatabaseMaintenancePreservesClosedZeroLimitAndUnsetACL(t *testing.T
 			dispatch, calls := uuid.New(), 0
 			closure, err := r.WithMaintenance(t.Context(), f.target, f.exports, dispatch, f.authorize, func(ctx context.Context, target copyarchive.RestoreTarget) error {
 				calls++
-				allow, template, limit, state := maintenanceStatus(t, f, id)
+				allow, template, limit, state := maintenanceStatus(ctx, t, f, id)
 				if !allow || template || limit != api.PostgresCopyMaintenanceConnections || state != "open" {
 					t.Fatal("worker admission not isolated")
 				}
-				c := maintenanceChild(t, f, target)
-				defer c.Close(context.Background())
-				second := maintenanceChild(t, f, target)
+				c := maintenanceChild(ctx, t, f, target)
+				defer c.Close(context.WithoutCancel(ctx))
+				second := maintenanceChild(ctx, t, f, target)
 				defer second.Close(context.Background())
 				thirdCfg := c.Config().Copy()
 				third, e := pgx.ConnectConfig(ctx, thirdCfg)
@@ -130,7 +130,7 @@ func TestCopyDatabaseMaintenancePreservesClosedZeroLimitAndUnsetACL(t *testing.T
 				t.Fatalf("private maintenance: %v", err)
 			}
 			assertMaintenanceOriginal(t, f, r)
-			allow, template, limit, state := maintenanceStatus(t, f, id)
+			allow, template, limit, state := maintenanceStatus(t.Context(), t, f, id)
 			if allow || template != d.Template || limit != d.ConnectionLimit || state != "closed" {
 				t.Fatal("original admission/template/limit not restored")
 			}
@@ -161,12 +161,12 @@ func TestCopyDatabaseMaintenanceRejectsOtherLoginAndOwnerAssumption(t *testing.T
 		t.Run(fmt.Sprintf("membership_%t", membership), func(t *testing.T) {
 			f := newFixtureConfigured(t, func(f *fixture) {
 				for _, root := range []*pgx.Conn{f.sourceRoot, f.targetRoot} {
-					run(t, root, "ALTER ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" LOGIN NOINHERIT")
+					run(t.Context(), t, root, "ALTER ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" LOGIN NOINHERIT")
 				}
 				if membership {
 					existingClosedTemplate(t, f)
-					run(t, f.targetRoot, "REVOKE ALL ON DATABASE "+pgx.Identifier{f.template}.Sanitize()+" FROM PUBLIC")
-					run(t, f.targetRoot, "GRANT "+pgx.Identifier{f.owner}.Sanitize()+" TO "+pgx.Identifier{f.dataOwner}.Sanitize()+" WITH INHERIT FALSE, SET TRUE")
+					run(t.Context(), t, f.targetRoot, "REVOKE ALL ON DATABASE "+pgx.Identifier{f.template}.Sanitize()+" FROM PUBLIC")
+					run(t.Context(), t, f.targetRoot, "GRANT "+pgx.Identifier{f.owner}.Sanitize()+" TO "+pgx.Identifier{f.dataOwner}.Sanitize()+" WITH INHERIT FALSE, SET TRUE")
 				}
 			})
 			id := f.ordinaryOID
@@ -179,7 +179,7 @@ func TestCopyDatabaseMaintenanceRejectsOtherLoginAndOwnerAssumption(t *testing.T
 			if got != (MaintenanceClosure{}) || !errors.Is(err, pgerrors.ErrUnsupported) || calls != 0 {
 				t.Fatalf("foreign login admitted: %v", err)
 			}
-			allow, _, _, state := maintenanceStatus(t, f, id)
+			allow, _, _, state := maintenanceStatus(t.Context(), t, f, id)
 			if allow || state != "" {
 				t.Fatal("unsupported admission left a window")
 			}
@@ -187,7 +187,7 @@ func TestCopyDatabaseMaintenanceRejectsOtherLoginAndOwnerAssumption(t *testing.T
 			// Memberships are independent of role seed attributes; cleanup the explicit
 			// fixture membership before its role teardown.
 			if membership {
-				run(t, f.targetRoot, "REVOKE "+pgx.Identifier{f.owner}.Sanitize()+" FROM "+pgx.Identifier{f.dataOwner}.Sanitize())
+				run(t.Context(), t, f.targetRoot, "REVOKE "+pgx.Identifier{f.owner}.Sanitize()+" FROM "+pgx.Identifier{f.dataOwner}.Sanitize())
 			}
 		})
 	}
@@ -211,9 +211,9 @@ func TestCopyDatabaseMaintenanceFailureCancellationAndExpiredLeaseClose(t *testi
 			}
 			got, err := r.WithMaintenance(ctx, f.target, f.exports, dispatch, authorize, func(ctx context.Context, target copyarchive.RestoreTarget) error {
 				calls++
-				c := maintenanceChild(t, f, target)
-				defer c.Close(context.Background())
-				run(t, c, "CREATE TABLE public.committed_before_worker_reply(id integer)")
+				c := maintenanceChild(ctx, t, f, target)
+				defer c.Close(context.WithoutCancel(ctx))
+				run(ctx, t, c, "CREATE TABLE public.committed_before_worker_reply(id integer)")
 				if e := c.Close(context.Background()); e != nil {
 					t.Fatal(e)
 				}
@@ -238,7 +238,7 @@ func TestCopyDatabaseMaintenanceFailureCancellationAndExpiredLeaseClose(t *testi
 			if got != (MaintenanceClosure{}) || !errors.Is(err, want) || strings.Contains(fmt.Sprint(err), "private-") {
 				t.Fatal("uncertain write supplied closure or diagnostic", err)
 			}
-			allow, _, _, state := maintenanceStatus(t, f, f.ordinaryOID)
+			allow, _, _, state := maintenanceStatus(t.Context(), t, f, f.ordinaryOID)
 			if allow {
 				t.Fatal("failed dispatch left admission open")
 			}
@@ -309,7 +309,7 @@ func TestCopyDatabaseMaintenanceQuiescesBeforeSessionAndCatalogueFailure(t *test
 			got, err := r.WithMaintenance(t.Context(), f.target, f.exports, dispatch, f.authorize, func(ctx context.Context, target copyarchive.RestoreTarget) error {
 				switch mode {
 				case "worker_session":
-					leaked = maintenanceChild(t, f, target)
+					leaked = maintenanceChild(ctx, t, f, target)
 				case "foreign_session":
 					cfg := f.targetRoot.Config().Copy()
 					cfg.Database = target.DatabaseName
@@ -319,16 +319,16 @@ func TestCopyDatabaseMaintenanceQuiescesBeforeSessionAndCatalogueFailure(t *test
 						t.Fatal(e)
 					}
 				case "role_drift":
-					run(t, f.targetRoot, "ALTER ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" LOGIN")
+					run(ctx, t, f.targetRoot, "ALTER ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" LOGIN")
 				case "database_drift":
-					run(t, f.targetRoot, "ALTER DATABASE template1 CONNECTION LIMIT 23")
+					run(ctx, t, f.targetRoot, "ALTER DATABASE template1 CONNECTION LIMIT 23")
 				}
 				return nil
 			})
 			if got != (MaintenanceClosure{}) || !errors.Is(err, pgerrors.ErrConflict) {
 				t.Fatal("drift/leaked session returned closure", err)
 			}
-			allow, template, limit, state := maintenanceStatus(t, f, f.ordinaryOID)
+			allow, template, limit, state := maintenanceStatus(t.Context(), t, f, f.ordinaryOID)
 			if allow || template || limit != api.PostgresCopyMaintenanceConnections || state != "closing" {
 				t.Fatal("closure verified before quiescing")
 			}
@@ -342,10 +342,10 @@ func TestCopyDatabaseMaintenanceQuiescesBeforeSessionAndCatalogueFailure(t *test
 				}
 			}
 			if mode == "role_drift" {
-				run(t, f.targetRoot, "ALTER ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" NOLOGIN")
+				run(t.Context(), t, f.targetRoot, "ALTER ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" NOLOGIN")
 			}
 			if mode == "database_drift" {
-				run(t, f.targetRoot, "ALTER DATABASE template1 CONNECTION LIMIT -1")
+				run(t.Context(), t, f.targetRoot, "ALTER DATABASE template1 CONNECTION LIMIT -1")
 			}
 			closure, e := r.CloseMaintenance(t.Context(), f.target, f.exports, dispatch, f.authorize)
 			if e != nil || closure.ClosedAt().IsZero() {
@@ -363,7 +363,7 @@ func TestCopyDatabaseMaintenanceRejectsMissingAndChangedOwnershipWithoutRepair(t
 	if got, err := r.CloseMaintenance(t.Context(), f.target, f.exports, dispatch, f.authorize); got != (MaintenanceClosure{}) || !errors.Is(err, pgerrors.ErrConflict) {
 		t.Fatal("missing window fabricated closure", err)
 	}
-	_, _, _, state := maintenanceStatus(t, f, f.ordinaryOID)
+	_, _, _, state := maintenanceStatus(t.Context(), t, f, f.ordinaryOID)
 	if state != "" {
 		t.Fatal("missing recovery installed journal")
 	}
@@ -401,16 +401,16 @@ func TestCopyDatabaseMaintenanceRejectsMissingAndChangedOwnershipWithoutRepair(t
 			}
 			switch damage {
 			case "timestamp":
-				run(t, f.target, "UPDATE gregale_copy_database_maintenance.windows SET preparation_created_at=$1", r.createdAt)
+				run(t.Context(), t, f.target, "UPDATE gregale_copy_database_maintenance.windows SET preparation_created_at=$1", r.createdAt)
 			case "plan":
 				fp, _ := preparationPlanFingerprint(r.plan)
-				run(t, f.target, "UPDATE gregale_copy_database_maintenance.windows SET plan_fingerprint=$1", fp)
+				run(t.Context(), t, f.target, "UPDATE gregale_copy_database_maintenance.windows SET plan_fingerprint=$1", fp)
 			case "shared":
-				run(t, f.target, "REVOKE USAGE ON SCHEMA gregale_copy_database_maintenance FROM PUBLIC")
+				run(t.Context(), t, f.target, "REVOKE USAGE ON SCHEMA gregale_copy_database_maintenance FROM PUBLIC")
 			case "extra_relation":
-				run(t, f.target, "DROP TABLE gregale_copy_database_maintenance.extra")
+				run(t.Context(), t, f.target, "DROP TABLE gregale_copy_database_maintenance.extra")
 			case "missing_active_index":
-				run(t, f.target, "CREATE UNIQUE INDEX windows_one_active ON gregale_copy_database_maintenance.windows ((1)) WHERE state IN ('open','closing')")
+				run(t.Context(), t, f.target, "CREATE UNIQUE INDEX windows_one_active ON gregale_copy_database_maintenance.windows ((1)) WHERE state IN ('open','closing')")
 			}
 		})
 	}
@@ -511,7 +511,7 @@ func TestCopyDatabaseMaintenanceRestoresAuthenticatedArchiveAndIsolatesData(t *t
 		// Ordinary creator can restore original object ownership without superuser
 		// or owner suppression. This explicit local authority is not provider proof.
 		for _, root := range []*pgx.Conn{f.sourceRoot, f.targetRoot} {
-			run(t, root, "GRANT "+pgx.Identifier{f.dataOwner}.Sanitize()+" TO "+pgx.Identifier{f.owner}.Sanitize()+" WITH INHERIT TRUE, SET TRUE")
+			run(t.Context(), t, root, "GRANT "+pgx.Identifier{f.dataOwner}.Sanitize()+" TO "+pgx.Identifier{f.owner}.Sanitize()+" WITH INHERIT TRUE, SET TRUE")
 		}
 		cfg := f.sourceRoot.Config().Copy()
 		cfg.Database = f.ordinary
@@ -519,9 +519,9 @@ func TestCopyDatabaseMaintenanceRestoresAuthenticatedArchiveAndIsolatesData(t *t
 		if e != nil {
 			t.Fatal(e)
 		}
-		defer c.Close(context.Background())
-		run(t, c, "SET ROLE "+pgx.Identifier{f.dataOwner}.Sanitize())
-		run(t, c, "CREATE SCHEMA app; CREATE TABLE app.events(id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,value text NOT NULL); INSERT INTO app.events(value) VALUES ('original production row'); CREATE FUNCTION app.count_events() RETURNS bigint LANGUAGE SQL AS 'SELECT count(*) FROM app.events'; REVOKE ALL ON TABLE app.events FROM PUBLIC")
+		defer c.Close(context.WithoutCancel(t.Context()))
+		run(t.Context(), t, c, "SET ROLE "+pgx.Identifier{f.dataOwner}.Sanitize())
+		run(t.Context(), t, c, "CREATE SCHEMA app; CREATE TABLE app.events(id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,value text NOT NULL); INSERT INTO app.events(value) VALUES ('original production row'); CREATE FUNCTION app.count_events() RETURNS bigint LANGUAGE SQL AS 'SELECT count(*) FROM app.events'; REVOKE ALL ON TABLE app.events FROM PUBLIC")
 	})
 	r := f.prepare(t, f.ordinaryOID)
 	dispatch := uuid.New()
@@ -563,7 +563,7 @@ func TestCopyDatabaseMaintenanceRestoresAuthenticatedArchiveAndIsolatesData(t *t
 		if err != nil {
 			return err
 		}
-		defer c.Close(context.Background())
+		defer c.Close(context.WithoutCancel(ctx))
 		placement := func(ctx context.Context, conn *pgx.Conn, got copyarchive.RestoreTarget) error {
 			if conn != c || got != target || conn.Config().Host != f.targetRoot.Config().Host || conn.Config().Host == source.Config().Host {
 				return pgerrors.ErrConflict
@@ -610,8 +610,8 @@ func TestCopyDatabaseMaintenanceRestoresAuthenticatedArchiveAndIsolatesData(t *t
 		if e != nil {
 			return e
 		}
-		c := maintenanceChild(t, f, target)
-		defer c.Close(context.Background())
+		c := maintenanceChild(ctx, t, f, target)
+		defer c.Close(context.WithoutCancel(ctx))
 		return access.WithReadOnly(ctx, c, verificationPlacement(f, c, target), func(ctx context.Context, tx pgx.Tx) error {
 			var owner, original, stage string
 			var rows int64
@@ -665,7 +665,7 @@ func TestCopyDatabaseMaintenanceSerializesDifferentDatabasesUntilOriginalClosure
 	if got != (MaintenanceClosure{}) || !errors.Is(e, pgerrors.ErrConflict) || calls != 0 {
 		t.Fatal("second database opened before original closure", e)
 	}
-	allow, _, _, state := maintenanceStatus(t, f, f.templateOID)
+	allow, _, _, state := maintenanceStatus(t.Context(), t, f, f.templateOID)
 	if allow || state != "" {
 		t.Fatal("blocked database retained a new window")
 	}
@@ -716,7 +716,7 @@ func TestCopyDatabaseMaintenanceValidatesIdentityScopeAndAdmissionBeforeMutation
 			if got != (MaintenanceClosure{}) || !errors.Is(e, want) || calls != 0 {
 				t.Fatal("invalid maintenance input reached callback", e)
 			}
-			allow, _, _, state := maintenanceStatus(t, f, f.ordinaryOID)
+			allow, _, _, state := maintenanceStatus(t.Context(), t, f, f.ordinaryOID)
 			if allow || state != "" {
 				t.Fatal("invalid input changed target admission")
 			}
@@ -730,11 +730,11 @@ func TestCopyDatabaseMaintenanceKeepsUnqualifiedProviderEntriesRequired(t *testi
 		t.Run(mode, func(t *testing.T) {
 			f := newFixtureConfigured(t, func(f *fixture) {
 				if mode == "open_database" {
-					run(t, f.targetRoot, "CREATE DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" OWNER "+pgx.Identifier{f.owner}.Sanitize()+" TEMPLATE template0")
+					run(t.Context(), t, f.targetRoot, "CREATE DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" OWNER "+pgx.Identifier{f.owner}.Sanitize()+" TEMPLATE template0")
 				}
 				if mode == "unowned_closed_template" {
 					existingClosedTemplate(t, f)
-					run(t, f.targetRoot, "ALTER DATABASE "+pgx.Identifier{f.template}.Sanitize()+" OWNER TO "+pgx.Identifier{f.dataOwner}.Sanitize())
+					run(t.Context(), t, f.targetRoot, "ALTER DATABASE "+pgx.Identifier{f.template}.Sanitize()+" OWNER TO "+pgx.Identifier{f.dataOwner}.Sanitize())
 				}
 			})
 			id := f.ordinaryOID
@@ -816,7 +816,7 @@ func TestCopyDatabaseMaintenanceRecoversCommittedOpeningAndClosureReplyLoss(t *t
 			if got != (MaintenanceClosure{}) || e == nil || !tr.fired {
 				t.Fatal("lost committed reply returned successful closure", e)
 			}
-			allow, _, _, state := maintenanceStatus(t, f, f.ordinaryOID)
+			allow, _, _, state := maintenanceStatus(t.Context(), t, f, f.ordinaryOID)
 			if phase == "open" && (!allow || state != "open" || calls != 0) {
 				t.Fatal("lost opening reply dispatched callback or lost ownership")
 			}

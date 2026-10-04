@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -73,7 +74,7 @@ func promotionFeatureFlagsActivationTx(ctx context.Context, tx pgx.Tx, promotion
 	}
 	captured, err := readPromotionFeatureFlags(ctx, tx, promotion.AccountID, promotion.ID)
 	if err != nil {
-		if err == ErrNotFound {
+		if errors.Is(err, ErrNotFound) {
 			return ErrConflict // a legacy operation has no frozen flag evidence
 		}
 		return err

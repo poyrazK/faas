@@ -31,6 +31,27 @@ type Scope struct {
 	CapturePoint, SnapshotCreatedAt, CaptureCreatedAt                      time.Time
 }
 
+// UnmarshalJSON canonicalizes database JSON timestamps before immutable plans
+// compare their nested scope. PostgreSQL jsonb can spell UTC as +00:00, which
+// time.UnmarshalJSON otherwise resolves to time.Local on a UTC host.
+func (s *Scope) UnmarshalJSON(raw []byte) error {
+	type wireScope Scope
+	var decoded wireScope
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return pgerrors.ErrInvalid
+	}
+	decoded.CapturePoint = decoded.CapturePoint.UTC()
+	decoded.SnapshotCreatedAt = decoded.SnapshotCreatedAt.UTC()
+	decoded.CaptureCreatedAt = decoded.CaptureCreatedAt.UTC()
+	*s = Scope(decoded)
+	return nil
+}
+
 func (s Scope) Validate() error {
 	if s.PostgresMajor < 14 || s.PostgresMajor > 99 {
 		return pgerrors.ErrInvalid

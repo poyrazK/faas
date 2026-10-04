@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -95,8 +96,7 @@ func (s *PgStore) productionDeadLetterReplay(ctx context.Context, accountID, app
 		return DeadLetterEvent{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	row, err := sqlc.New().LockProductionDeadLetterEvent(ctx, tx, sqlc.LockProductionDeadLetterEventParams{
-		EventID: args.EventID, AccountID: args.AccountID, AppID: args.AppID})
+	row, err := sqlc.New().LockProductionDeadLetterEvent(ctx, tx, sqlc.LockProductionDeadLetterEventParams(args))
 	if err != nil {
 		return DeadLetterEvent{}, mapErr(err)
 	}
@@ -131,7 +131,7 @@ func (s *PgStore) productionDeadLetterReplayMany(ctx context.Context, accountID,
 	for _, row := range rows {
 		ev := deadLetterEventFromSQLC(row)
 		if _, err := replayDeadLetterEventTx(ctx, tx, accountID, ev.AppID, ev); err != nil {
-			if err == ErrNotFound {
+			if errors.Is(err, ErrNotFound) {
 				continue
 			}
 			return 0, err
@@ -149,8 +149,7 @@ func (s *PgStore) productionDeadLetterDelete(ctx context.Context, accountID, app
 	if err != nil {
 		return err
 	}
-	n, err := sqlc.New().DeleteProductionDeadLetterEvent(ctx, s.pool, sqlc.DeleteProductionDeadLetterEventParams{
-		EventID: args.EventID, AccountID: args.AccountID, AppID: args.AppID})
+	n, err := sqlc.New().DeleteProductionDeadLetterEvent(ctx, s.pool, sqlc.DeleteProductionDeadLetterEventParams(args))
 	if err != nil {
 		return err
 	}

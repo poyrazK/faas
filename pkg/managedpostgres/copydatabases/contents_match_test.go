@@ -47,7 +47,7 @@ func TestCopyDatabaseContentsRetainedMatchBindsOriginalWindowCiphertextAndClosur
 			if err != nil || binding.OwnerID != owner || binding.ImportID != imported {
 				return pgerrors.ErrConflict
 			}
-			child := maintenanceChild(t, f, target)
+			child := maintenanceChild(ctx, t, f, target)
 			defer child.Close(context.Background())
 			err = access.WithReadOnly(ctx, child, verificationPlacement(f, child, target), func(ctx context.Context, tx pgx.Tx) error {
 				var err error

@@ -26,7 +26,7 @@ func testProductionQueueBoundary(t *testing.T, store environmentQueueInvocationT
 	// A backlog in the same app and logical queue must be filtered before LIMIT.
 	var stages []state.Invocation
 	for range 24 {
-		stages = append(stages, enqueueStageQueue(t, store, f))
+		stages = append(stages, enqueueStageQueue(t.Context(), t, store, f))
 	}
 	if _, err := state.ReplaceEnvironmentQueueBindings(ctx, store, f.app, "other", 0, f.spec.Settings.QueueBindings.Bindings); err != nil {
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func testProductionQueueBoundary(t *testing.T, store environmentQueueInvocationT
 	}
 	sibling := f
 	sibling.dep = otherDep
-	stages = append(stages, enqueueStageQueue(t, store, sibling))
+	stages = append(stages, enqueueStageQueue(t.Context(), t, store, sibling))
 	enqueue := func(source state.InvocationSource, queueName string) state.Invocation {
 		t.Helper()
 		inv, err := store.EnqueueInvocation(ctx, state.Invocation{AppID: f.app.ID, AccountID: f.account.ID,
@@ -66,7 +66,7 @@ func testProductionQueueBoundary(t *testing.T, store environmentQueueInvocationT
 	if err := store.FailInvocation(ctx, dead.ID, "production failure", time.Second, 1); err != nil {
 		t.Fatal(err)
 	}
-	stages = append(stages, enqueueStageQueue(t, store, f))
+	stages = append(stages, enqueueStageQueue(t.Context(), t, store, f))
 	stageDead := stages[len(stages)-1]
 	if _, err := store.ClaimInvocationWithCap(ctx, stageDead.ID, "", 300, 5); err != nil {
 		t.Fatal(err)

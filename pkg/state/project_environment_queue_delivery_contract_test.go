@@ -1,6 +1,8 @@
 // adr: 531
 package state_test
 
+import "context"
+
 import (
 	"encoding/json"
 	"errors"
@@ -21,9 +23,8 @@ type environmentQueueDeliveryTestStore interface {
 	state.AccountAbuseHoldStore
 }
 
-func seedQueueDelivery(t *testing.T, store environmentQueueDeliveryTestStore, class state.WorkloadClass, mode string) (queueConsumerFixture, state.ProjectEnvironmentQueueDeliveryRequest) {
+func seedQueueDelivery(ctx context.Context, t *testing.T, store environmentQueueDeliveryTestStore, class state.WorkloadClass, mode string) (queueConsumerFixture, state.ProjectEnvironmentQueueDeliveryRequest) {
 	t.Helper()
-	ctx := t.Context()
 	var f queueConsumerFixture
 	var err error
 	f.account, err = store.CreateAccount(ctx, "delivery-"+uuid.NewString()+"@example.test", api.PlanPro)
@@ -81,8 +82,8 @@ func testEnvironmentQueueDeliveryClassesAndReceipts(t *testing.T, store environm
 		mode  string
 	}{{state.WorkloadClassWorker, "pull"}, {state.WorkloadClassJob, "pull"}, {state.WorkloadClassWorker, "push"}, {state.WorkloadClassJob, "push"}, {state.WorkloadClassHTTP, "push"}} {
 		t.Run(string(transport.class)+"_"+transport.mode, func(t *testing.T) {
-			f, req := seedQueueDelivery(t, store, transport.class, transport.mode)
-			inv := enqueueStageQueue(t, store, f)
+			f, req := seedQueueDelivery(t.Context(), t, store, transport.class, transport.mode)
+			inv := enqueueStageQueue(t.Context(), t, store, f)
 			first, err := store.ClaimNextProjectEnvironmentQueueDelivery(ctx, req)
 			if err != nil || first.Invocation.ID != inv.ID || first.Invocation.State != state.InvocationDispatching || first.Invocation.Attempts != 1 ||
 				!first.Invocation.QuotaReserved || first.Invocation.EnvironmentID != f.spec.EnvironmentID || first.Receipt == "" ||
@@ -151,7 +152,7 @@ func TestMemEnvironmentQueueDeliveryScopeAndCapacity(t *testing.T) {
 
 func testEnvironmentQueueDeliveryScopeAndCapacity(t *testing.T, store environmentQueueDeliveryTestStore) {
 	ctx := t.Context()
-	f, req := seedQueueDelivery(t, store, state.WorkloadClassWorker, "pull")
+	f, req := seedQueueDelivery(t.Context(), t, store, state.WorkloadClassWorker, "pull")
 	for _, mutate := range []func(*state.ProjectEnvironmentQueueDeliveryRequest){
 		func(r *state.ProjectEnvironmentQueueDeliveryRequest) { r.Mode = "push" },
 		func(r *state.ProjectEnvironmentQueueDeliveryRequest) { r.BindingName = "disabled" },
@@ -205,7 +206,7 @@ func testEnvironmentQueueDeliveryScopeAndCapacity(t *testing.T, store environmen
 	}
 	var oldest state.Invocation
 	for i := range 8 {
-		inv := enqueueStageQueue(t, store, f)
+		inv := enqueueStageQueue(t.Context(), t, store, f)
 		if i == 0 {
 			oldest = inv
 		}
@@ -309,8 +310,8 @@ func TestMemEnvironmentQueueDeliveryLeaseRecoveryAndRetirement(t *testing.T) {
 
 func testEnvironmentQueueDeliveryLeaseRecoveryAndRetirement(t *testing.T, store environmentQueueDeliveryTestStore) {
 	ctx := t.Context()
-	f, req := seedQueueDelivery(t, store, state.WorkloadClassJob, "pull")
-	inv := enqueueStageQueue(t, store, f)
+	f, req := seedQueueDelivery(t.Context(), t, store, state.WorkloadClassJob, "pull")
+	inv := enqueueStageQueue(t.Context(), t, store, f)
 	req.LeaseSeconds = 1
 	first, err := store.ClaimNextProjectEnvironmentQueueDelivery(ctx, req)
 	if err != nil {
@@ -361,8 +362,8 @@ func TestMemEnvironmentQueueDeliveryLeaseTimeoutsHonorAttemptBudget(t *testing.T
 
 func testEnvironmentQueueDeliveryLeaseTimeoutsHonorAttemptBudget(t *testing.T, store environmentQueueDeliveryTestStore) {
 	ctx := t.Context()
-	f, req := seedQueueDelivery(t, store, state.WorkloadClassWorker, "pull")
-	inv := enqueueStageQueue(t, store, f)
+	f, req := seedQueueDelivery(t.Context(), t, store, state.WorkloadClassWorker, "pull")
+	inv := enqueueStageQueue(t.Context(), t, store, f)
 	req.LeaseSeconds = 1
 	var last state.ProjectEnvironmentQueueDelivery
 	for attempt := 1; attempt <= 2; attempt++ {
@@ -376,7 +377,7 @@ func testEnvironmentQueueDeliveryLeaseTimeoutsHonorAttemptBudget(t *testing.T, s
 			t.Fatalf("timeout recovery: %d %v", n, err)
 		}
 	}
-	next := enqueueStageQueue(t, store, f)
+	next := enqueueStageQueue(t.Context(), t, store, f)
 	if _, err := store.ClaimNextProjectEnvironmentQueueDelivery(ctx, req); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("exhausted message delivered a third time: %v", err)
 	}

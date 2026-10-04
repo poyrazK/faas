@@ -58,7 +58,7 @@ func TestPgInvocationEnvironmentClaimRejectsDamagedPlainWork(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				store, ctx, pool := pgWithPool(t)
 				f := seedInvocationWorkEnvironment(t, store)
-				row, err := store.EnqueueInvocation(ctx, f.request(t, store, "staging"))
+				row, err := store.EnqueueInvocation(ctx, f.request(t.Context(), t, store, "staging"))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -101,7 +101,7 @@ func TestPgInvocationEnvironmentCleanupRejectsBrokenOwnership(t *testing.T) {
 		t.Run(fault.name, func(t *testing.T) {
 			store, ctx, pool := pgWithPool(t)
 			f := seedInvocationWorkEnvironment(t, store)
-			row, err := store.EnqueueKeyedInvocation(ctx, f.request(t, store, "staging"), f.serial, "s:one", "s:customer")
+			row, err := store.EnqueueKeyedInvocation(ctx, f.request(t.Context(), t, store, "staging"), f.serial, "s:one", "s:customer")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -125,7 +125,7 @@ func TestPgInvocationEnvironmentCleanupRejectsBrokenOwnership(t *testing.T) {
 func TestPgInvocationEnvironmentCleanupRejectsBrokerReferences(t *testing.T) {
 	store, ctx, pool := pgWithPool(t)
 	f := seedInvocationWorkEnvironment(t, store)
-	row, err := store.EnqueueKeyedInvocation(ctx, f.request(t, store, "staging"), f.serial, "s:one", "s:customer")
+	row, err := store.EnqueueKeyedInvocation(ctx, f.request(t.Context(), t, store, "staging"), f.serial, "s:one", "s:customer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestPgInvocationEnvironmentDeletionFencesAdmission(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			store, ctx, pool := pgWithPool(t)
 			f := seedInvocationWorkEnvironment(t, store)
-			request := f.request(t, store, "staging")
+			request := f.request(t.Context(), t, store, "staging")
 			env, err := store.ProjectEnvironmentBySlug(ctx, f.account.ID, f.project.ID, "staging")
 			if err != nil {
 				t.Fatal(err)
@@ -247,21 +247,21 @@ func TestPgInvocationEnvironmentOwnerMigrationBackfillsPins(t *testing.T) {
 	f := seedInvocationWorkEnvironment(t, store)
 	owners := make(map[string]string)
 	for _, scope := range []string{"production", "staging", "empty-stage"} {
-		request := f.request(t, store, scope)
+		request := f.request(t.Context(), t, store, scope)
 		row, err := store.EnqueueInvocation(ctx, request)
 		if err != nil {
 			t.Fatal(err)
 		}
 		owners[row.ID] = row.EnvironmentID
 	}
-	request := f.request(t, store, "staging")
+	request := f.request(t.Context(), t, store, "staging")
 	request.Headers = []byte(`{"X-Gregale-Revision":"` + f.stage.ID + `"}`)
 	row, err := store.EnqueueInvocation(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	owners[row.ID] = row.EnvironmentID
-	row, err = store.EnqueueKeyedInvocation(ctx, f.request(t, store, "staging"), f.serial, "s:proof", "s:customer")
+	row, err = store.EnqueueKeyedInvocation(ctx, f.request(t.Context(), t, store, "staging"), f.serial, "s:proof", "s:customer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestPgInvocationEnvironmentOwnerMigrationBackfillsPins(t *testing.T) {
 		t.Fatal(err)
 	}
 	owners[foreignRow.ID] = ""
-	ambiguous, err := store.EnqueueInvocation(ctx, f.request(t, store, "staging"))
+	ambiguous, err := store.EnqueueInvocation(ctx, f.request(t.Context(), t, store, "staging"))
 	if err != nil {
 		t.Fatal(err)
 	}

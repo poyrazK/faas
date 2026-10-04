@@ -165,15 +165,15 @@ func TestCopyDatabaseRecoveredPreparationRequiresActualOriginalJournalWithoutRep
 			authorize := f.authorize
 			switch fault {
 			case "journal missing":
-				run(t, c, "DROP SCHEMA gregale_copy_databases CASCADE")
+				run(t.Context(), t, c, "DROP SCHEMA gregale_copy_databases CASCADE")
 			case "time changed":
-				run(t, c, "UPDATE gregale_copy_databases.databases SET created_at=created_at+interval '1 second' WHERE source_oid=$1::oid", f.ordinaryOID)
+				run(t.Context(), t, c, "UPDATE gregale_copy_databases.databases SET created_at=created_at+interval '1 second' WHERE source_oid=$1::oid", f.ordinaryOID)
 			case "state changed":
-				run(t, c, "UPDATE gregale_copy_databases.databases SET state='creating',created_at=NULL WHERE source_oid=$1::oid", f.ordinaryOID)
+				run(t.Context(), t, c, "UPDATE gregale_copy_databases.databases SET state='creating',created_at=NULL WHERE source_oid=$1::oid", f.ordinaryOID)
 			case "database missing":
-				run(t, f.targetRoot, "DROP DATABASE "+pgx.Identifier{f.ordinary}.Sanitize())
+				run(t.Context(), t, f.targetRoot, "DROP DATABASE "+pgx.Identifier{f.ordinary}.Sanitize())
 			case "catalogue drift":
-				run(t, f.targetRoot, "ALTER DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" CONNECTION LIMIT 19")
+				run(t.Context(), t, f.targetRoot, "ALTER DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" CONNECTION LIMIT 19")
 			case "stale after lock":
 				var calls int
 				authorize = func(ctx context.Context, target copyarchive.RestoreTarget) error {
@@ -193,7 +193,7 @@ func TestCopyDatabaseRecoveredPreparationRequiresActualOriginalJournalWithoutRep
 					t.Fatal("verification recreated lost journal", err)
 				}
 			}
-			if fault == "database missing" && f.exists(t, f.ordinary) {
+			if fault == "database missing" && f.exists(t.Context(), t, f.ordinary) {
 				t.Fatal("verification recreated missing database")
 			}
 		})

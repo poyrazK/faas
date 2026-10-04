@@ -80,7 +80,7 @@ func (p *Provider) withCheckpointConnectionController(ctx context.Context, defin
 	if err != nil {
 		return connectionfence.Observation{}, managedpostgres.ErrUnavailable
 	}
-	poolConfig.ConnConfig, poolConfig.MaxConns, poolConfig.MinConns = config.ConnConfig.Copy(), 1, 0
+	poolConfig.ConnConfig, poolConfig.MaxConns, poolConfig.MinConns = config.Copy(), 1, 0
 	pool, err := connect(ctx, poolConfig)
 	if pool != nil {
 		defer pool.Close()

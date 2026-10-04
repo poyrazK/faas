@@ -1,5 +1,7 @@
 package s3gateway
 
+import "context"
+
 import (
 	"bytes"
 	"crypto/md5" // #nosec G501 -- multipart ETag compatibility uses the S3 MD5 convention.
@@ -111,8 +113,8 @@ func (h *Handler) initiateMultipart(w http.ResponseWriter, r *http.Request, req 
 		if !h.recordProviderRequest(w, r, req) {
 			return
 		}
-		providerID, providerErr := objectstorageactivity.Execute(r.Context(), h.store, req.bucket, func() (string, error) {
-			return req.provider.EnsureMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartCreateRequest{
+		providerID, providerErr := objectstorageactivity.Execute(r.Context(), h.store, req.bucket, func(mutationCtx context.Context) (string, error) {
+			return req.provider.EnsureMultipartUpload(mutationCtx, req.bucket.PhysicalName, objectstorage.MultipartCreateRequest{
 				SessionID: claimed.ID, Key: claimed.Key, SizeBytes: 0,
 				Metadata: objectstorage.ObjectMetadata{
 					ContentType: claimed.ContentType, CacheControl: claimed.Metadata.CacheControl,
@@ -390,12 +392,11 @@ func (h *Handler) completeMultipart(w http.ResponseWriter, r *http.Request, req 
 		h.writeMultipartError(w, r, req, err, "OperationAborted")
 		return
 	}
-	claimed.SizeBytes = total
 	if !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	if err = h.mutate(r.Context(), req, func() error {
-		return req.provider.CompleteMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartCompleteRequest{SessionID: claimed.ID, Key: claimed.Key, ProviderUploadID: claimed.ProviderUploadID, SizeBytes: total, Parts: toProviderParts(parts)})
+	if err = h.mutate(r.Context(), req, func(mutationCtx context.Context) error {
+		return req.provider.CompleteMultipartUpload(mutationCtx, req.bucket.PhysicalName, objectstorage.MultipartCompleteRequest{SessionID: claimed.ID, Key: claimed.Key, ProviderUploadID: claimed.ProviderUploadID, SizeBytes: total, Parts: toProviderParts(parts)})
 	}); err != nil {
 		h.providerError(w, r, req, err, key)
 		return
@@ -432,8 +433,8 @@ func (h *Handler) abortMultipart(w http.ResponseWriter, r *http.Request, req req
 	if !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	if err = h.mutate(r.Context(), req, func() error {
-		return req.provider.AbortMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartAbortRequest{Key: claimed.Key, ProviderUploadID: claimed.ProviderUploadID})
+	if err = h.mutate(r.Context(), req, func(mutationCtx context.Context) error {
+		return req.provider.AbortMultipartUpload(mutationCtx, req.bucket.PhysicalName, objectstorage.MultipartAbortRequest{Key: claimed.Key, ProviderUploadID: claimed.ProviderUploadID})
 	}); err != nil {
 		h.providerError(w, r, req, err, key)
 		return

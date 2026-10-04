@@ -80,7 +80,7 @@ func (s *server) prepareProjectEnvironmentClonePostgresCopyReader(ctx context.Co
 		var limit int
 		limit, err = s.managedPostgres.AdmitSnapshotCopyReaderReservation(ctx, lease.Operation.AccountID, definition)
 		if err == nil {
-			reader, _, err = readers.ReserveProjectEnvironmentClonePostgresCopyReader(ctx, lease, plan.source.ID, limit)
+			_, _, err = readers.ReserveProjectEnvironmentClonePostgresCopyReader(ctx, lease, plan.source.ID, limit)
 		}
 	}
 	if err != nil {

@@ -13,7 +13,15 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
-		"queue_bindings": CloneSchemaConfiguration, "crons": CloneSchemaConfiguration, "jobs": CloneSchemaConfiguration,
+		"customer_operation_definitions":   CloneSchemaConfiguration,
+		"customer_operations":              CloneSchemaOperational,
+		"customer_operation_events":        CloneSchemaOperational,
+		"customer_operation_executions":    CloneSchemaOperational,
+		"customer_operation_idempotency":   CloneSchemaOperational,
+		"customer_operation_recoveries":    CloneSchemaOperational,
+		"customer_operation_reports":       CloneSchemaOperational,
+		"customer_operation_stream_leases": CloneSchemaOperational,
+		"queue_bindings":                   CloneSchemaConfiguration, "crons": CloneSchemaConfiguration, "jobs": CloneSchemaConfiguration,
 		"app_webhooks": CloneSchemaConfiguration, "outbound_integration_credentials": CloneSchemaConfiguration,
 		"app_work_policies": CloneSchemaConfiguration, "event_subscription_work_bindings": CloneSchemaConfiguration,
 		"trigger_work_bindings": CloneSchemaConfiguration, "app_private_network_attachments": CloneSchemaConfiguration,

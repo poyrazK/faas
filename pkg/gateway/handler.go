@@ -32,6 +32,7 @@ import (
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -1861,7 +1862,7 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 	allowed, err := h.declaredRoutes.MatchDeclaredRoute(r.Context(), app, requestPath, requestMethod)
 	if err != nil {
 		if h.log != nil {
-			h.log.Warn("gateway: declared route policy unavailable", "app_id", app.ID, "path", requestPath, "method", requestMethod, "err", err)
+			h.log.Warn("gateway: declared route policy unavailable", "app_id", app.ID, "path", logsanitize.Field(requestPath), "method", logsanitize.Field(requestMethod), "err", logsanitize.FieldAny(err))
 		}
 		w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
@@ -6793,7 +6794,7 @@ haveApp:
 			// fallback path. Failure here means the cold
 			// bucket won't wake this request — the next
 			// notify will refresh weights.
-			h.log.Warn("apid: wake-fan-out admit failed", "err", bucketErr, "deployment_id", pick.ColdBucket)
+			h.log.Warn("apid: wake-fan-out admit failed", "err", logsanitize.FieldAny(bucketErr), "deployment_id", pick.ColdBucket)
 		} else if bucketWakeID != "" {
 			cold, wakeID, wakeMethod = true, bucketWakeID, bucketMethod
 		}

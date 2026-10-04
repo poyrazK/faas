@@ -96,8 +96,8 @@ func (s *appSecretCredentialSink) SealCredential(ctx context.Context, binding ma
 	return managedpostgres.SealedCredential{ProviderIdentityID: material.ProviderIdentityID, Ref: credentialRef, Ciphertext: ciphertext, Kid: recipient.String(), ValueHash: valueHash}, nil
 }
 
-func (s *appSecretCredentialSink) seal(binding managedpostgres.Binding, material managedpostgres.CredentialMaterial) (state.AppSecret, string, error) {
-	sealed, err := s.SealCredential(context.Background(), binding, material)
+func (s *appSecretCredentialSink) seal(ctx context.Context, binding managedpostgres.Binding, material managedpostgres.CredentialMaterial) (state.AppSecret, string, error) {
+	sealed, err := s.SealCredential(ctx, binding, material)
 	if err != nil {
 		return state.AppSecret{}, "", err
 	}

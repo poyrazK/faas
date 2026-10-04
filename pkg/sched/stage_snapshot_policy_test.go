@@ -70,9 +70,8 @@ func seedStageSnapshotPolicy(t *testing.T, productionPool int, warmSnapshots boo
 	return f
 }
 
-func (f stageSnapshotFixture) recreateStage(t *testing.T) {
+func (f stageSnapshotFixture) recreateStage(ctx context.Context, t *testing.T) {
 	t.Helper()
-	ctx := t.Context()
 	if err := f.store.MarkDeploymentSuperseded(ctx, f.stage.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -121,11 +120,11 @@ func TestStageParkRejectsRecreatedEnvironment(t *testing.T) {
 				t.Fatal(err)
 			}
 			if moment == "before-park" {
-				f.recreateStage(t)
+				f.recreateStage(t.Context(), t)
 			} else if moment == "during-warm" {
-				vmm.warmSnapshotHook = func() { f.recreateStage(t) }
+				vmm.warmSnapshotHook = func() { f.recreateStage(t.Context(), t) }
 			} else {
-				vmm.initHook = func() { f.recreateStage(t) }
+				vmm.initHook = func() { f.recreateStage(t.Context(), t) }
 			}
 			if err := engine.Park(ctx, ins.ID); err != nil {
 				t.Fatal(err)

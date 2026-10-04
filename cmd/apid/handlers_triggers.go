@@ -70,6 +70,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/triggerconfig"
@@ -284,7 +285,7 @@ func (s *server) persistCreatedTrigger(
 	appUUID := uuidFromPgtype(t.AppID).String()
 	_ = s.notif.Notify(ctx, db.NotifyTriggerChanged,
 		notifyTriggerChangedJSON("created", appUUID, triggerUUID))
-	s.log.Info("trigger created", "trigger", triggerUUID, "app", appUUID, "account", acct.ID, "kind", req.Kind)
+	s.log.Info("trigger created", "trigger", triggerUUID, "app", appUUID, "account", acct.ID, "kind", logsanitize.Field(string(req.Kind)))
 	s.audit.Emit(ctx, "trigger.created", &acct.ID, map[string]any{
 		"trigger_id": triggerUUID,
 		"app_id":     appUUID,

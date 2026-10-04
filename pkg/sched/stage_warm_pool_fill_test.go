@@ -178,7 +178,7 @@ func TestStageWarmPoolRetiresOriginalLifetimeWithoutBorrowingReplacementTarget(t
 	ctx := t.Context()
 	f := seedStageSnapshotPolicy(t, 1, false)
 	original := stagePoolInstance(t, f, f.stage)
-	f.recreateStage(t)
+	f.recreateStage(t.Context(), t)
 	stagePoolSnapshot(t, f, f.prod, 256)
 	vmm := &stagePoolPausedVMM{fakeVMM: &fakeVMM{}}
 	engine := newEngine(t, f.store, vmm, &fakeNotifier{}, "1.10.0")
@@ -196,7 +196,7 @@ func TestRecreatedStageWarmPoolFillsNewLifetime(t *testing.T) {
 	f := seedStageSnapshotPolicy(t, 1, false)
 	original := stagePoolInstance(t, f, f.stage)
 	production := stagePoolInstance(t, f, f.prod)
-	f.recreateStage(t)
+	f.recreateStage(t.Context(), t)
 	if err := f.store.DeleteAppSecretInScope(ctx, f.account.ID, f.app.ID, "stage", "TOKEN"); err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestStageWarmPoolPublicationRejectsChangesAfterRestoreRead(t *testing.T) {
 				}
 				switch change {
 				case "owner":
-					f.recreateStage(t)
+					f.recreateStage(t.Context(), t)
 				case "variable":
 					if err := f.store.UpsertAppEnvInScope(ctx, f.account.ID, f.app.ID, "stage", "MODE", "changed"); err != nil {
 						t.Fatal(err)
@@ -352,7 +352,7 @@ func TestStageWarmPromotionRejectsChangedOwnerOrInputsDuringResume(t *testing.T)
 			vmm := &stagePoolResumeVMM{stagePoolPausedVMM: &stagePoolPausedVMM{fakeVMM: &fakeVMM{}}}
 			vmm.resumeHook = func() {
 				if change == "owner" {
-					f.recreateStage(t)
+					f.recreateStage(t.Context(), t)
 				} else if change == "variable" {
 					if err := f.store.UpsertAppEnvInScope(ctx, f.account.ID, f.app.ID, "stage", "MODE", "changed"); err != nil {
 						t.Fatal(err)

@@ -63,7 +63,7 @@ func newBootstrapFixture(t *testing.T) bootstrapFixture {
 
 func (f bootstrapFixture) bootstrap(t *testing.T) *Bootstrap {
 	t.Helper()
-	conn, err := f.connect(t, f.request.DatabaseNames[0], f.admin)
+	conn, err := f.connect(t.Context(), t, f.request.DatabaseNames[0], f.admin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestMaintenanceBootstrapRecoversOwnershipAndActivatesPrivately(t *testing.T
 	if replayed != reserved {
 		t.Fatalf("reservation recovery changed ownership: %+v %+v", reserved, replayed)
 	}
-	client, err := f.connect(t, f.request.DatabaseNames[0], f.tenant)
+	client, err := f.connect(t.Context(), t, f.request.DatabaseNames[0], f.tenant)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestMaintenanceBootstrapRecoversOwnershipAndActivatesPrivately(t *testing.T
 	if err := f.root.QueryRow(ctx, "SELECT datallowconn FROM pg_database WHERE oid=$1", created.DatabaseOID).Scan(&allows); err != nil || allows {
 		t.Fatalf("database was not created closed: %v %v", allows, err)
 	}
-	if _, err := f.connect(t, MaintenanceDatabase, f.tenant); err == nil {
+	if _, err := f.connect(t.Context(), t, MaintenanceDatabase, f.tenant); err == nil {
 		t.Fatal("application connected before activation")
 	}
 	// Simulate losing the response after CREATE: recovery has only the durable
@@ -146,11 +146,12 @@ func TestMaintenanceBootstrapRecoversOwnershipAndActivatesPrivately(t *testing.T
 			t.Fatalf("activation recovery: %+v %v", observed, err)
 		}
 	}
-	if _, err := f.connect(t, MaintenanceDatabase, f.tenant); err == nil {
+	if _, err := f.connect(t.Context(), t, MaintenanceDatabase, f.tenant); err == nil {
 		t.Fatal("application connected after private activation")
 	}
 	poolConfig := f.fixture.bootstrap.Copy()
 	poolConfig.ConnConfig.Database, poolConfig.ConnConfig.User = MaintenanceDatabase, f.admin
+poolConfig.ConnConfig.Password = f.password
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +205,7 @@ func TestMaintenanceBootstrapRejectsSubstitution(t *testing.T) {
 				return
 			}
 			if fault == "unknown_role" || fault == "forged_creator" {
-				creator, err := f.connect(t, f.request.DatabaseNames[0], f.tenant)
+				creator, err := f.connect(t.Context(), t, f.request.DatabaseNames[0], f.tenant)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -309,7 +310,7 @@ func TestMaintenanceBootstrapRetirementFencesDelayedCreation(t *testing.T) {
 			}
 			// Select the owner before retirement so the following SQL CREATE
 			// exercises a previously admitted session's refreshed authority.
-			lateConn, err := f.connect(t, f.request.DatabaseNames[0], f.admin)
+			lateConn, err := f.connect(t.Context(), t, f.request.DatabaseNames[0], f.admin)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -358,7 +359,7 @@ func TestMaintenanceBootstrapCancellationKeepsRecovery(t *testing.T) {
 	f := newBootstrapFixture(t)
 	ctx := t.Context()
 	receipt := f.reserved(t)
-	blocker, err := f.connect(t, f.request.DatabaseNames[0], f.admin)
+	blocker, err := f.connect(t.Context(), t, f.request.DatabaseNames[0], f.admin)
 	if err != nil {
 		t.Fatal(err)
 	}

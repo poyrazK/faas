@@ -106,7 +106,7 @@ type clonePostgresPreparationSink struct {
 }
 
 func (s *clonePostgresPreparationSink) Put(ctx context.Context, binding managedpostgres.Binding, material managedpostgres.CredentialMaterial) (string, error) {
-	secret, ref, err := s.sealer.seal(binding, material)
+	secret, ref, err := s.sealer.seal(ctx, binding, material)
 	if err != nil {
 		return "", err
 	}

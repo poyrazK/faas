@@ -4754,7 +4754,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 				"account", acct.ID,
 				"from", logsanitize.Field(string(acct.Plan)),
 				"to", logsanitize.Field(string(plan)),
-				"err", err)
+				"err", logsanitize.FieldAny(err))
 			if errors.Is(err, billing.ErrAlreadyCancelled) {
 				api.WriteProblem(w, api.NewProblem(http.StatusConflict,
 					api.CodeConflict, "billing subscription unavailable",

@@ -109,7 +109,7 @@ func verificationRetryNativeWindow(t *testing.T, v *verificationWorkerFixture, a
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close(context.Background())
+	defer conn.Close(context.WithoutCancel(t.Context()))
 	var phase, owner string
 	var opened time.Time
 	var closed *time.Time

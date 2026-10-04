@@ -22,7 +22,7 @@ func (p *cloneSnapshotProvider) WithSnapshotCopyReaderSQL(ctx context.Context, d
 	if p.readerSQLConn == nil {
 		return managedpostgres.ErrUnavailable
 	}
-	defer func() { _ = p.readerSQLConn.Close(context.Background()) }()
+	defer func(cleanupCtx context.Context) { _ = p.readerSQLConn.Close(context.WithoutCancel(cleanupCtx)) }(ctx)
 	return read(ctx, p.readerSQLConn, p.readerSQLIdentity)
 }
 

@@ -336,16 +336,16 @@ func TestPGClonePostgresCheckpointConnectionsRejectPostClosureCancellationAndLea
 					return nil
 				}
 			}
-			provider.onObserve = func(context.Context) error {
+			provider.onObserve = func(observeCtx context.Context) error {
 				if fault == "cancel" {
 					cancel()
 					return nil
 				}
-				if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
+				if err := store.ReleaseProjectEnvironmentCloneLease(observeCtx, f.lease, 0); err != nil {
 					return err
 				}
 				var err error
-				f.lease, err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+				f.lease, err = store.ClaimNextProjectEnvironmentClone(observeCtx, uuid.NewString(), time.Minute)
 				return err
 			}
 			l, actual, err := f.srv.closeProjectEnvironmentClonePostgresCheckpointConnections(ctx, f.lease, plan)

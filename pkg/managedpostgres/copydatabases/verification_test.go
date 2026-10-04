@@ -24,10 +24,10 @@ func verificationImport(t *testing.T, f *fixture, r Receipt) (uuid.UUID, Mainten
 	t.Helper()
 	imported := uuid.New()
 	c, err := r.WithMaintenance(t.Context(), f.target, f.exports, imported, f.authorize, func(ctx context.Context, target copyarchive.RestoreTarget) error {
-		conn := maintenanceChild(t, f, target)
+		conn := maintenanceChild(ctx, t, f, target)
 		defer conn.Close(context.Background())
-		run(t, conn, "CREATE TABLE public.verification_data(id integer PRIMARY KEY, value text)")
-		run(t, conn, "INSERT INTO public.verification_data VALUES (1,'original imported row')")
+		run(ctx, t, conn, "CREATE TABLE public.verification_data(id integer PRIMARY KEY, value text)")
+		run(ctx, t, conn, "INSERT INTO public.verification_data VALUES (1,'original imported row')")
 		return nil
 	})
 	if err != nil || c.ClosedAt().IsZero() {
@@ -35,22 +35,22 @@ func verificationImport(t *testing.T, f *fixture, r Receipt) (uuid.UUID, Mainten
 	}
 	return imported, c
 }
-func verificationStatus(t *testing.T, f *fixture, r Receipt) (bool, bool, int32, string, time.Time) {
+func verificationStatus(ctx context.Context, t *testing.T, f *fixture, r Receipt) (bool, bool, int32, string, time.Time) {
 	t.Helper()
 	d, _, _ := r.plan.creationDatabase(r.sourceOID)
 	var allow, template bool
 	var limit int32
-	if err := f.targetRoot.QueryRow(t.Context(), "SELECT datallowconn,datistemplate,datconnlimit FROM pg_database WHERE oid=$1", d.OID).Scan(&allow, &template, &limit); err != nil {
+	if err := f.targetRoot.QueryRow(ctx, "SELECT datallowconn,datistemplate,datconnlimit FROM pg_database WHERE oid=$1", d.OID).Scan(&allow, &template, &limit); err != nil {
 		t.Fatal(err)
 	}
 	var present bool
-	if err := f.target.QueryRow(t.Context(), "SELECT to_regclass('gregale_copy_database_verification.windows') IS NOT NULL").Scan(&present); err != nil {
+	if err := f.target.QueryRow(ctx, "SELECT to_regclass('gregale_copy_database_verification.windows') IS NOT NULL").Scan(&present); err != nil {
 		t.Fatal(err)
 	}
 	var state string
 	var at *time.Time
 	if present {
-		err := f.target.QueryRow(t.Context(), "SELECT state,closed_at FROM gregale_copy_database_verification.windows WHERE source_oid=$1", r.sourceOID).Scan(&state, &at)
+		err := f.target.QueryRow(ctx, "SELECT state,closed_at FROM gregale_copy_database_verification.windows WHERE source_oid=$1", r.sourceOID).Scan(&state, &at)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatal(err)
 		}
@@ -95,7 +95,7 @@ func TestCopyDatabaseVerificationReadsSeparatelyAndPreservesOriginalImport(t *te
 				if existing {
 					existingClosedTemplate(t, f)
 				} else {
-					run(t, f.sourceRoot, "ALTER DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" CONNECTION LIMIT 0")
+					run(t.Context(), t, f.sourceRoot, "ALTER DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" CONNECTION LIMIT 0")
 				}
 			})
 			id := f.ordinaryOID
@@ -109,7 +109,7 @@ func TestCopyDatabaseVerificationReadsSeparatelyAndPreservesOriginalImport(t *te
 			closure, err := r.WithVerificationAccess(t.Context(), f.target, f.exports, imported, owner, f.authorize, func(ctx context.Context, target VerificationTarget) error {
 				calls++
 				retained = target
-				allow, template, limit, state, _ := verificationStatus(t, f, r)
+				allow, template, limit, state, _ := verificationStatus(ctx, t, f, r)
 				if !allow || template || limit != api.PostgresCopyMaintenanceConnections || state != "open" {
 					t.Fatal("verification admission not isolated")
 				}
@@ -120,8 +120,8 @@ func TestCopyDatabaseVerificationReadsSeparatelyAndPreservesOriginalImport(t *te
 				if e != nil {
 					return e
 				}
-				c := maintenanceChild(t, f, child)
-				defer c.Close(context.Background())
+				c := maintenanceChild(ctx, t, f, child)
+				defer c.Close(context.WithoutCancel(ctx))
 				placementCalls := 0
 				place := verificationPlacement(f, c, child)
 				e = target.WithReadOnly(ctx, c, func(ctx context.Context, c *pgx.Conn, got copyarchive.RestoreTarget) error {
@@ -257,7 +257,7 @@ func TestCopyDatabaseVerificationRequiresOriginalClosedImportAndDistinctOwners(t
 	if calls != 0 {
 		t.Fatal("invalid verification invoked callback")
 	}
-	allow, _, _, state, _ := verificationStatus(t, f, r)
+	allow, _, _, state, _ := verificationStatus(t.Context(), t, f, r)
 	if allow || state != "" {
 		t.Fatal("invalid input installed verification")
 	}
@@ -294,7 +294,7 @@ func TestCopyDatabaseVerificationFailureCancellationAndAuthorityLossClose(t *tes
 			if got != (VerificationClosure{}) || err == nil || strings.Contains(err.Error(), "secret") {
 				t.Fatal("failure minted/leaked closure", err)
 			}
-			allow, _, _, state, _ := verificationStatus(t, f, r)
+			allow, _, _, state, _ := verificationStatus(t.Context(), t, f, r)
 			want := "closed"
 			if mode == "authority_lost_open" {
 				want = ""
@@ -315,7 +315,7 @@ func TestCopyDatabaseVerificationFailureCancellationAndAuthorityLossClose(t *tes
 
 func TestCopyDatabaseVerificationQuiescesLeaksAndBlocksImportEvenAtBaselineLimit(t *testing.T) {
 	f := newFixtureConfigured(t, func(f *fixture) {
-		run(t, f.sourceRoot, "ALTER DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" CONNECTION LIMIT 2")
+		run(t.Context(), t, f.sourceRoot, "ALTER DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" CONNECTION LIMIT 2")
 	})
 	r := f.prepare(t, f.ordinaryOID)
 	other := f.prepare(t, f.templateOID)
@@ -324,14 +324,14 @@ func TestCopyDatabaseVerificationQuiescesLeaksAndBlocksImportEvenAtBaselineLimit
 	var leaked *pgx.Conn
 	got, e := r.WithVerificationAccess(t.Context(), f.target, f.exports, imported, owner, f.authorize, func(ctx context.Context, target VerificationTarget) error {
 		child, _ := target.TargetForWorker()
-		leaked = maintenanceChild(t, f, child)
+		leaked = maintenanceChild(ctx, t, f, child)
 		return nil
 	})
 	if got != (VerificationClosure{}) || !errors.Is(e, pgerrors.ErrConflict) {
 		t.Fatal("leaked child received successful closure", e)
 	}
 	defer leaked.Close(context.Background())
-	allow, template, limit, state, _ := verificationStatus(t, f, r)
+	allow, template, limit, state, _ := verificationStatus(t.Context(), t, f, r)
 	if allow || template || limit != api.PostgresCopyMaintenanceConnections || state != "closing" {
 		t.Fatal("leaked child was not quiesced")
 	}
@@ -377,22 +377,22 @@ func TestCopyDatabaseVerificationRejectsJournalAndOriginalParentSubstitution(t *
 			verificationCrash(t, f, r, imported, owner)
 			switch mode {
 			case "parent_owner":
-				run(t, f.target, "UPDATE gregale_copy_database_maintenance.windows SET owner_id=$1 WHERE source_oid=$2", uuid.New(), r.sourceOID)
+				run(t.Context(), t, f.target, "UPDATE gregale_copy_database_maintenance.windows SET owner_id=$1 WHERE source_oid=$2", uuid.New(), r.sourceOID)
 			case "parent_closed_at":
-				run(t, f.target, "UPDATE gregale_copy_database_maintenance.windows SET closed_at=closed_at-interval '1 microsecond' WHERE source_oid=$1", r.sourceOID)
+				run(t.Context(), t, f.target, "UPDATE gregale_copy_database_maintenance.windows SET closed_at=closed_at-interval '1 microsecond' WHERE source_oid=$1", r.sourceOID)
 			case "verification_owner":
-				run(t, f.target, "UPDATE gregale_copy_database_verification.windows SET owner_id=$1 WHERE source_oid=$2", uuid.New(), r.sourceOID)
+				run(t.Context(), t, f.target, "UPDATE gregale_copy_database_verification.windows SET owner_id=$1 WHERE source_oid=$2", uuid.New(), r.sourceOID)
 			case "verification_import":
-				run(t, f.target, "UPDATE gregale_copy_database_verification.windows SET import_owner_id=$1 WHERE source_oid=$2", uuid.New(), r.sourceOID)
+				run(t.Context(), t, f.target, "UPDATE gregale_copy_database_verification.windows SET import_owner_id=$1 WHERE source_oid=$2", uuid.New(), r.sourceOID)
 			case "fingerprint":
-				run(t, f.target, "UPDATE gregale_copy_database_verification.windows SET plan_fingerprint=$1 WHERE source_oid=$2", strings.Repeat("f", 64), r.sourceOID)
+				run(t.Context(), t, f.target, "UPDATE gregale_copy_database_verification.windows SET plan_fingerprint=$1 WHERE source_oid=$2", strings.Repeat("f", 64), r.sourceOID)
 			case "privacy":
-				run(t, f.target, "GRANT USAGE ON SCHEMA gregale_copy_database_verification TO PUBLIC")
+				run(t.Context(), t, f.target, "GRANT USAGE ON SCHEMA gregale_copy_database_verification TO PUBLIC")
 			case "shape":
-				run(t, f.target, "ALTER TABLE gregale_copy_database_verification.windows ADD COLUMN substituted text")
+				run(t.Context(), t, f.target, "ALTER TABLE gregale_copy_database_verification.windows ADD COLUMN substituted text")
 			case "active_index":
-				run(t, f.target, "DROP INDEX gregale_copy_database_verification.windows_one_active")
-				run(t, f.target, "CREATE UNIQUE INDEX windows_one_active ON gregale_copy_database_verification.windows ((1)) WHERE state='closed'")
+				run(t.Context(), t, f.target, "DROP INDEX gregale_copy_database_verification.windows_one_active")
+				run(t.Context(), t, f.target, "CREATE UNIQUE INDEX windows_one_active ON gregale_copy_database_verification.windows ((1)) WHERE state='closed'")
 			}
 			if got, e := r.CloseVerificationAccess(t.Context(), f.target, f.exports, imported, owner, f.authorize); got != (VerificationClosure{}) || !errors.Is(e, pgerrors.ErrConflict) {
 				t.Fatal("substituted ownership repaired/adopted", e)
@@ -406,7 +406,7 @@ func TestCopyDatabaseVerificationRejectsJournalAndOriginalParentSubstitution(t *
 			}
 			// Cleanup only fixture admission; public recovery may not adopt this evidence.
 			d, _, _ := r.plan.creationDatabase(r.sourceOID)
-			run(t, f.targetRoot, "ALTER DATABASE "+pgx.Identifier{d.Name}.Sanitize()+" ALLOW_CONNECTIONS false")
+			run(t.Context(), t, f.targetRoot, "ALTER DATABASE "+pgx.Identifier{d.Name}.Sanitize()+" ALLOW_CONNECTIONS false")
 		})
 	}
 }
@@ -417,7 +417,7 @@ func TestCopyDatabaseVerificationReadOnlyChecksIdentityPlacementAndTransaction(t
 			f := newFixtureConfigured(t, func(f *fixture) {
 				if mode == "changed_role" {
 					for _, root := range []*pgx.Conn{f.sourceRoot, f.targetRoot} {
-						run(t, root, "GRANT "+pgx.Identifier{f.dataOwner}.Sanitize()+" TO "+pgx.Identifier{f.owner}.Sanitize()+" WITH INHERIT TRUE, SET TRUE")
+						run(t.Context(), t, root, "GRANT "+pgx.Identifier{f.dataOwner}.Sanitize()+" TO "+pgx.Identifier{f.owner}.Sanitize()+" WITH INHERIT TRUE, SET TRUE")
 					}
 				}
 			})
@@ -426,8 +426,8 @@ func TestCopyDatabaseVerificationReadOnlyChecksIdentityPlacementAndTransaction(t
 			calls := 0
 			got, e := r.WithVerificationAccess(t.Context(), f.target, f.exports, imported, uuid.New(), f.authorize, func(ctx context.Context, target VerificationTarget) error {
 				child, _ := target.TargetForWorker()
-				c := maintenanceChild(t, f, child)
-				defer c.Close(context.Background())
+				c := maintenanceChild(ctx, t, f, child)
+				defer c.Close(context.WithoutCancel(ctx))
 				place := verificationPlacement(f, c, child)
 				placeCalls := 0
 				var placement copyarchive.RestorePlacement = func(ctx context.Context, c *pgx.Conn, got copyarchive.RestoreTarget) error {
@@ -477,7 +477,7 @@ func TestCopyDatabaseVerificationReadOnlyChecksIdentityPlacementAndTransaction(t
 			if got != (VerificationClosure{}) || e == nil {
 				t.Fatal("unqualified inspection minted closure", e)
 			}
-			allow, _, _, state, _ := verificationStatus(t, f, r)
+			allow, _, _, state, _ := verificationStatus(t.Context(), t, f, r)
 			if allow || state != "closed" {
 				t.Fatal("failed read helper left admission")
 			}
@@ -531,7 +531,7 @@ func TestCopyDatabaseVerificationRecoversLostOpeningAndClosureReplyWithoutReadRe
 			if e != nil {
 				t.Fatal(e)
 			}
-			allow, _, _, state, at := verificationStatus(t, f, r)
+			allow, _, _, state, at := verificationStatus(t.Context(), t, f, r)
 			if phase == "open" && (!allow || state != "open" || calls != 0) {
 				t.Fatal("unknown open replayed read")
 			}
@@ -634,7 +634,7 @@ func TestCopyDatabaseVerificationSerializesConcurrentWorkersAndRechecksAuthority
 			case <-time.After(10 * time.Second):
 				t.Fatal("waiter did not finish")
 			}
-			allow, _, _, state, _ := verificationStatus(t, f, r)
+			allow, _, _, state, _ := verificationStatus(t.Context(), t, f, r)
 			if allow || (stale && state != "") || (!stale && state != "closed") {
 				t.Fatal("waiter did not preserve/close original window", state)
 			}
@@ -650,25 +650,25 @@ func TestCopyDatabaseVerificationQuiescesBeforeCatalogueAndSeedDrift(t *testing.
 			r := f.prepare(t, f.ordinaryOID)
 			imported, _ := verificationImport(t, f, r)
 			owner := uuid.New()
-			got, e := r.WithVerificationAccess(t.Context(), f.target, f.exports, imported, owner, f.authorize, func(context.Context, VerificationTarget) error {
+			got, e := r.WithVerificationAccess(t.Context(), f.target, f.exports, imported, owner, f.authorize, func(ctx context.Context, _ VerificationTarget) error {
 				if mode == "unselected_database" {
-					run(t, f.targetRoot, "ALTER DATABASE "+pgx.Identifier{f.bootstrap}.Sanitize()+" CONNECTION LIMIT 4")
+					run(ctx, t, f.targetRoot, "ALTER DATABASE "+pgx.Identifier{f.bootstrap}.Sanitize()+" CONNECTION LIMIT 4")
 				} else {
-					run(t, f.targetRoot, "ALTER ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" CREATEDB")
+					run(ctx, t, f.targetRoot, "ALTER ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" CREATEDB")
 				}
 				return nil
 			})
 			if got != (VerificationClosure{}) || !errors.Is(e, pgerrors.ErrConflict) {
 				t.Fatal("catalogue/seed drift received successful closure", e)
 			}
-			allow, _, _, state, _ := verificationStatus(t, f, r)
+			allow, _, _, state, _ := verificationStatus(t.Context(), t, f, r)
 			if allow || state != "closing" {
 				t.Fatal("drift was not quiesced before validation")
 			}
 			if mode == "unselected_database" {
-				run(t, f.targetRoot, "ALTER DATABASE "+pgx.Identifier{f.bootstrap}.Sanitize()+" CONNECTION LIMIT -1")
+				run(t.Context(), t, f.targetRoot, "ALTER DATABASE "+pgx.Identifier{f.bootstrap}.Sanitize()+" CONNECTION LIMIT -1")
 			} else {
-				run(t, f.targetRoot, "ALTER ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" NOCREATEDB")
+				run(t.Context(), t, f.targetRoot, "ALTER ROLE "+pgx.Identifier{f.dataOwner}.Sanitize()+" NOCREATEDB")
 			}
 			c, e := r.CloseVerificationAccess(t.Context(), f.target, f.exports, imported, owner, f.authorize)
 			if e != nil || c.ClosedAt().IsZero() {

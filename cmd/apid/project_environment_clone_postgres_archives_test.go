@@ -129,7 +129,7 @@ func cloneArchiveWorkerFixture(t *testing.T) (cloneCoordinatorFixture, *archiveW
 		if err != nil {
 			return copyarchive.Receipt{}, err
 		}
-		defer func() { _ = conn.Close(context.Background()) }()
+		defer func(cleanupCtx context.Context) { _ = conn.Close(context.WithoutCancel(cleanupCtx)) }(ctx)
 		return copyarchive.Export(ctx, conn, d, tool, key, w, 4<<20)
 	}
 	return f, store, plan, oid, identity, artifact, b, produce, calls

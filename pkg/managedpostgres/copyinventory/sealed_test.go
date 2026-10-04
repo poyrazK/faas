@@ -221,3 +221,29 @@ func TestSealedInventoryRejectsTamperingMalformedEnvelopesAndOversize(t *testing
 		t.Fatalf("oversized ciphertext accepted: %v", err)
 	}
 }
+
+// adr:531
+func TestScopeJSONCanonicalizesNumericUTCTimestamps(t *testing.T) {
+	previous := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = previous })
+	want := sealedInventoryScope(16)
+	raw, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, encoded := range []string{string(raw), strings.ReplaceAll(string(raw), "Z\"", "+00:00\"")} {
+		var got Scope
+		if err := json.Unmarshal([]byte(encoded), &got); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("scope changed across JSON timestamp representation: got %#v, want %#v", got, want)
+		}
+	}
+	var got Scope
+	unknown := strings.TrimSuffix(string(raw), "}") + ",\"unexpected\":true}"
+	if err := json.Unmarshal([]byte(unknown), &got); err == nil {
+		t.Fatal("scope accepted an unknown authenticated field")
+	}
+}

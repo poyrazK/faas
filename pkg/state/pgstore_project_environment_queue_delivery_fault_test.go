@@ -20,8 +20,8 @@ import (
 
 func TestPgEnvironmentQueueDeliveryRollsBackClaimAndFinish(t *testing.T) {
 	s, ctx, pool := pgWithPool(t)
-	f, req := seedQueueDelivery(t, s, state.WorkloadClassWorker, "pull")
-	inv := enqueueStageQueue(t, s, f)
+	f, req := seedQueueDelivery(t.Context(), t, s, state.WorkloadClassWorker, "pull")
+	inv := enqueueStageQueue(t.Context(), t, s, f)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -104,8 +104,8 @@ func TestPgEnvironmentQueueDeliveryRollsBackClaimAndFinish(t *testing.T) {
 
 func TestPgEnvironmentQueueDeliveryDamagedOwnersRemainPrivate(t *testing.T) {
 	s, ctx, pool := pgWithPool(t)
-	f, req := seedQueueDelivery(t, s, state.WorkloadClassJob, "pull")
-	inv := enqueueStageQueue(t, s, f)
+	f, req := seedQueueDelivery(t.Context(), t, s, state.WorkloadClassJob, "pull")
+	inv := enqueueStageQueue(t.Context(), t, s, f)
 	d, err := s.ClaimNextProjectEnvironmentQueueDelivery(ctx, req)
 	if err != nil {
 		t.Fatal(err)
@@ -211,8 +211,8 @@ func TestPgEnvironmentQueueDeliveryDamagedOwnersRemainPrivate(t *testing.T) {
 
 func TestPgEnvironmentQueueDeliveryMigrationRoundTrip(t *testing.T) {
 	s, ctx, pool := pgWithPool(t)
-	f, _ := seedQueueDelivery(t, s, state.WorkloadClassWorker, "pull")
-	inv := enqueueStageQueue(t, s, f)
+	f, _ := seedQueueDelivery(t.Context(), t, s, state.WorkloadClassWorker, "pull")
+	inv := enqueueStageQueue(t.Context(), t, s, f)
 	raw, err := migrations.FS.ReadFile("20261004095153171_environment_queue_delivery_receipts.sql")
 	if err != nil {
 		t.Fatal(err)

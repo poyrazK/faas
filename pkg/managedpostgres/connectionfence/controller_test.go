@@ -24,6 +24,7 @@ type fixture struct {
 	config            Config
 	request           Request
 	admin, tenant     string
+	password          string
 	bootstrap         *pgxpool.Config
 }
 
@@ -47,7 +48,7 @@ func newFixture(t *testing.T, lockTimeout ...string) fixture {
 		t.Fatal(err)
 	}
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
-	f := fixture{root: root, bootstrap: config, admin: "gf_admin_" + suffix, tenant: "gf_client_" + suffix,
+	f := fixture{root: root, bootstrap: config, admin: "gf_admin_" + suffix, tenant: "gf_client_" + suffix, password: uuid.NewString(),
 		config: Config{MaintenanceDatabase: "gf_maintenance_" + suffix, MaintenanceRole: "gf_admin_" + suffix}}
 	f.request = Request{Identity: Identity{OwnerToken: uuid.NewString(), SourceResourceID: "project/branch-" + suffix},
 		DatabaseNames: []string{"gf_source_" + suffix, "gf_closed_" + suffix + "\";%"}}
@@ -69,7 +70,7 @@ func newFixture(t *testing.T, lockTimeout ...string) fixture {
 		}
 	})
 	for _, role := range []string{f.admin, f.tenant} {
-		if _, err := root.Exec(ctx, "CREATE ROLE "+pgx.Identifier{role}.Sanitize()+" LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB"); err != nil {
+		if _, err := root.Exec(ctx, "CREATE ROLE "+pgx.Identifier{role}.Sanitize()+" LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB PASSWORD '"+f.password+"'"); err != nil {
 			t.Fatal(err)
 		}
 		createdRoles = append(createdRoles, role)
@@ -89,6 +90,7 @@ func newFixture(t *testing.T, lockTimeout ...string) fixture {
 	maint := config.Copy()
 	maint.ConnConfig.Database = f.config.MaintenanceDatabase
 	maint.ConnConfig.User = f.admin
+	maint.ConnConfig.Password = f.password
 	if len(lockTimeout) != 0 {
 		maint.ConnConfig.RuntimeParams["lock_timeout"] = lockTimeout[0]
 	}
@@ -105,12 +107,15 @@ func newFixture(t *testing.T, lockTimeout ...string) fixture {
 	return f
 }
 
-func (f fixture) connect(t *testing.T, name, user string) (*pgx.Conn, error) {
+func (f fixture) connect(ctx context.Context, t *testing.T, name, user string) (*pgx.Conn, error) {
 	t.Helper()
 	config := f.bootstrap.ConnConfig.Copy()
 	config.Database = name
 	config.User = user
-	conn, err := pgx.ConnectConfig(t.Context(), config)
+	if user != f.bootstrap.ConnConfig.User {
+		config.Password = f.password
+	}
+	conn, err := pgx.ConnectConfig(ctx, config)
 	if err == nil {
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -129,7 +134,7 @@ func TestConnectionFenceClosesAdmissionAndObservesDrain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	admin, err := f.connect(t, f.request.DatabaseNames[0], f.admin)
+	admin, err := f.connect(t.Context(), t, f.request.DatabaseNames[0], f.admin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +144,7 @@ func TestConnectionFenceClosesAdmissionAndObservesDrain(t *testing.T) {
 	if err := admin.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
-	client, err := f.connect(t, f.request.DatabaseNames[0], f.tenant)
+	client, err := f.connect(t.Context(), t, f.request.DatabaseNames[0], f.tenant)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +158,7 @@ func TestConnectionFenceClosesAdmissionAndObservesDrain(t *testing.T) {
 	if _, err := client.Exec(ctx, "ALTER DATABASE "+pgx.Identifier{f.request.DatabaseNames[0]}.Sanitize()+" ALLOW_CONNECTIONS true"); err == nil {
 		t.Fatal("client reopened database")
 	}
-	if _, err := f.connect(t, f.request.DatabaseNames[0], f.admin); err == nil {
+	if _, err := f.connect(t.Context(), t, f.request.DatabaseNames[0], f.admin); err == nil {
 		t.Fatal("new admin connection bypassed closure")
 	} else {
 		var pe *pgconn.PgError
@@ -213,10 +218,10 @@ func TestConnectionFenceClosesAdmissionAndObservesDrain(t *testing.T) {
 			t.Fatalf("release recovery: %+v %v", released, err)
 		}
 	}
-	if _, err := f.connect(t, f.request.DatabaseNames[0], f.tenant); err != nil {
+	if _, err := f.connect(t.Context(), t, f.request.DatabaseNames[0], f.tenant); err != nil {
 		t.Fatalf("original open setting not restored: %v", err)
 	}
-	if _, err := f.connect(t, f.request.DatabaseNames[1], f.admin); err == nil {
+	if _, err := f.connect(t.Context(), t, f.request.DatabaseNames[1], f.admin); err == nil {
 		t.Fatal("original closed setting was reopened")
 	}
 	if _, err := replacement.Close(ctx, f.request); !errors.Is(err, managedpostgres.ErrConflict) {
@@ -304,7 +309,7 @@ func TestConnectionFenceRequiresPrivateMaintenance(t *testing.T) {
 			case "foreign_session":
 				// Infrastructure superusers are trusted, but their active
 				// maintenance sessions still invalidate isolation observations.
-				if _, err := f.connect(t, f.config.MaintenanceDatabase, f.bootstrap.ConnConfig.User); err != nil {
+				if _, err := f.connect(t.Context(), t, f.config.MaintenanceDatabase, f.bootstrap.ConnConfig.User); err != nil {
 					t.Fatal(err)
 				}
 			}

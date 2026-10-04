@@ -264,7 +264,7 @@ func (e *Engine) environmentWarmPoolInstances(ctx context.Context, app state.App
 			return nil, nil, fmt.Errorf("sched: warm pool: paused app owner: %w", state.ErrConflict)
 		}
 		depScope := normalizedDeploymentScope(dep.Scope)
-		if depScope != scope && !(reaperProductionScope(depScope) && reaperProductionScope(scope)) {
+		if depScope != scope && (!reaperProductionScope(depScope) || !reaperProductionScope(scope)) {
 			continue
 		}
 		ownerErr, checked := owners[dep.ID]

@@ -149,9 +149,9 @@ func (s *PgStore) ReserveProjectEnvironmentClonePostgresContents(ctx context.Con
 		if err = p.authenticate(ctx, tx, l); err != nil {
 			return ProjectEnvironmentClonePostgresContents{}, false, err
 		}
-		usage, err := q.CountProjectEnvironmentClonePostgresContents(ctx, tx, mustPgUUID(op.AccountID))
-		if err != nil {
-			return ProjectEnvironmentClonePostgresContents{}, false, mapErr(err)
+		usage, countErr := q.CountProjectEnvironmentClonePostgresContents(ctx, tx, mustPgUUID(op.AccountID))
+		if countErr != nil {
+			return ProjectEnvironmentClonePostgresContents{}, false, mapErr(countErr)
 		}
 		if usage.Count >= int64(limits.Count) || request.ReservedBytes > limits.Bytes || usage.Bytes > limits.Bytes-request.ReservedBytes {
 			return ProjectEnvironmentClonePostgresContents{}, false, ErrQuotaExceeded

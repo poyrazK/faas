@@ -129,7 +129,7 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 		if env.AccountID != app.AccountID || env.ProjectID != app.ProjectID || env.Slug != scope {
 			return inv, InvocationVersion{}, ErrConflict
 		}
-		if (invocationHasSharedWorkProducer(inv) && !(inv.ID != "" && inv.EnvironmentID != "" && stageQueueInvocationShape(inv))) ||
+		if (invocationHasSharedWorkProducer(inv) && (inv.ID == "" || inv.EnvironmentID == "" || !stageQueueInvocationShape(inv))) ||
 			inv.OnSuccessDestinationID != "" || inv.OnFailureDestinationID != "" {
 			return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
 		}

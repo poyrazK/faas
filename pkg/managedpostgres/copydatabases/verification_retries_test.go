@@ -103,7 +103,7 @@ func TestCopyDatabaseVerificationRetryBoundedOwnersReadOnlyAndOriginalHistory(t 
 				if err != nil {
 					return err
 				}
-				child := maintenanceChild(t, f, target)
+				child := maintenanceChild(ctx, t, f, target)
 				defer child.Close(context.Background())
 				return access.WithReadOnly(ctx, child, verificationPlacement(f, child, target), func(ctx context.Context, tx pgx.Tx) error {
 					var ro bool
@@ -179,7 +179,7 @@ func TestCopyDatabaseVerificationRetryActualDataMatchAndClosure(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		child := maintenanceChild(t, f, target)
+		child := maintenanceChild(ctx, t, f, target)
 		place := verificationPlacement(f, child, target)
 		var match copycontents.Match
 		err = access.WithReadOnly(ctx, child, place, func(ctx context.Context, tx pgx.Tx) error {
@@ -296,7 +296,7 @@ func TestCopyDatabaseVerificationRetryFailureAndAuthorityLossCloseOriginalOwner(
 				if err != nil {
 					return err
 				}
-				child := maintenanceChild(t, f, target)
+				child := maintenanceChild(ctx, t, f, target)
 				if mode == "leaked child" {
 					leaked = child
 				} else {
@@ -392,7 +392,7 @@ func TestCopyDatabaseVerificationRetryLostNativeReplyRecoversWithoutReadReplay(t
 
 func TestCopyDatabaseVerificationRetryActiveAndQuiescedHistoryFencesEveryEntry(t *testing.T) {
 	f := newFixtureConfigured(t, func(f *fixture) {
-		run(t, f.sourceRoot, "ALTER DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" CONNECTION LIMIT "+fmt.Sprint(api.PostgresCopyMaintenanceConnections))
+		run(t.Context(), t, f.sourceRoot, "ALTER DATABASE "+pgx.Identifier{f.ordinary}.Sanitize()+" CONNECTION LIMIT "+fmt.Sprint(api.PostgresCopyMaintenanceConnections))
 	})
 	r := f.prepare(t, f.ordinaryOID)
 	imported, _ := verificationImport(t, f, r)
@@ -446,29 +446,29 @@ func TestCopyDatabaseVerificationRetryRejectsDamagedHistoryOnAllReaders(t *testi
 			}
 			switch mode {
 			case "scope fingerprint":
-				run(t, f.target, "UPDATE gregale_copy_database_verification_retries.windows SET plan_fingerprint=$2 WHERE owner_id=$1", owner, strings.Repeat("a", 64))
+				run(t.Context(), t, f.target, "UPDATE gregale_copy_database_verification_retries.windows SET plan_fingerprint=$2 WHERE owner_id=$1", owner, strings.Repeat("a", 64))
 			case "import owner":
-				run(t, f.target, "UPDATE gregale_copy_database_verification_retries.windows SET import_owner_id=$2 WHERE owner_id=$1", owner, uuid.New())
+				run(t.Context(), t, f.target, "UPDATE gregale_copy_database_verification_retries.windows SET import_owner_id=$2 WHERE owner_id=$1", owner, uuid.New())
 			case "predecessor owner":
-				run(t, f.target, "UPDATE gregale_copy_database_verification_retries.windows SET previous_owner_id=$2 WHERE owner_id=$1", owner, uuid.New())
+				run(t.Context(), t, f.target, "UPDATE gregale_copy_database_verification_retries.windows SET previous_owner_id=$2 WHERE owner_id=$1", owner, uuid.New())
 			case "predecessor time":
-				run(t, f.target, "UPDATE gregale_copy_database_verification_retries.windows SET previous_closed_at=previous_closed_at-interval '1 microsecond' WHERE owner_id=$1", owner)
+				run(t.Context(), t, f.target, "UPDATE gregale_copy_database_verification_retries.windows SET previous_closed_at=previous_closed_at-interval '1 microsecond' WHERE owner_id=$1", owner)
 			case "attempt gap":
-				run(t, f.target, "UPDATE gregale_copy_database_verification_retries.windows SET attempt=3 WHERE owner_id=$1", owner)
+				run(t.Context(), t, f.target, "UPDATE gregale_copy_database_verification_retries.windows SET attempt=3 WHERE owner_id=$1", owner)
 			case "schema grant":
-				run(t, f.target, "GRANT USAGE ON SCHEMA gregale_copy_database_verification_retries TO PUBLIC")
+				run(t.Context(), t, f.target, "GRANT USAGE ON SCHEMA gregale_copy_database_verification_retries TO PUBLIC")
 			case "table grant":
-				run(t, f.target, "GRANT SELECT ON gregale_copy_database_verification_retries.windows TO PUBLIC")
+				run(t.Context(), t, f.target, "GRANT SELECT ON gregale_copy_database_verification_retries.windows TO PUBLIC")
 			case "columns":
-				run(t, f.target, "ALTER TABLE gregale_copy_database_verification_retries.windows ADD COLUMN changed text")
+				run(t.Context(), t, f.target, "ALTER TABLE gregale_copy_database_verification_retries.windows ADD COLUMN changed text")
 			case "active index":
-				run(t, f.target, "DROP INDEX gregale_copy_database_verification_retries.windows_one_active")
-				run(t, f.target, "CREATE UNIQUE INDEX windows_one_active ON gregale_copy_database_verification_retries.windows ((1)) WHERE state='closed'")
+				run(t.Context(), t, f.target, "DROP INDEX gregale_copy_database_verification_retries.windows_one_active")
+				run(t.Context(), t, f.target, "CREATE UNIQUE INDEX windows_one_active ON gregale_copy_database_verification_retries.windows ((1)) WHERE state='closed'")
 			case "gap in retained history":
 				if _, err := r.WithVerificationRetryAccess(t.Context(), f.target, f.exports, imported, uuid.New(), second, f.authorize, func(context.Context, VerificationTarget) error { return nil }); err != nil {
 					t.Fatal(err)
 				}
-				run(t, f.target, "DELETE FROM gregale_copy_database_verification_retries.windows WHERE owner_id=$1", owner)
+				run(t.Context(), t, f.target, "DELETE FROM gregale_copy_database_verification_retries.windows WHERE owner_id=$1", owner)
 			}
 			if _, err := r.CloseVerificationRetryAccess(t.Context(), f.target, f.exports, imported, owner, previous.ownerID, f.authorize); !errors.Is(err, pgerrors.ErrConflict) {
 				t.Fatal("damaged retry recovered closure", err)
@@ -479,7 +479,7 @@ func TestCopyDatabaseVerificationRetryRejectsDamagedHistoryOnAllReaders(t *testi
 			if _, err := r.CloseMaintenance(t.Context(), f.target, f.exports, imported, f.authorize); !errors.Is(err, pgerrors.ErrConflict) {
 				t.Fatal("import ignored damaged retry history", err)
 			}
-			allow, template, limit, state := maintenanceStatus(t, f, r.sourceOID)
+			allow, template, limit, state := maintenanceStatus(t.Context(), t, f, r.sourceOID)
 			d, _, _ := r.plan.creationDatabase(r.sourceOID)
 			if allow || template != d.Template || limit != d.ConnectionLimit || state != "closed" {
 				t.Fatal("history rejection changed original database admission")

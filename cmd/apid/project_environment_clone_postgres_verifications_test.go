@@ -91,7 +91,7 @@ func (v *verificationWorkerFixture) window(t *testing.T) verificationWorkerWindo
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close(context.Background())
+	defer conn.Close(context.WithoutCancel(t.Context()))
 	var w verificationWorkerWindow
 	if err := conn.QueryRow(t.Context(), `SELECT d.datallowconn,w.state,w.owner_id::text,w.import_owner_id::text,w.opened_at,w.closed_at
  FROM gregale_copy_database_verification.windows w JOIN pg_database d ON d.oid=w.target_oid WHERE w.source_oid=$1::oid`, f.sourceOID).
@@ -210,7 +210,7 @@ func (v *verificationWorkerFixture) assertClosed(t *testing.T, hasWindow bool) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer conn.Close(context.Background())
+		defer conn.Close(context.WithoutCancel(t.Context()))
 		var closed bool
 		o := v.owner(t)
 		if err := conn.QueryRow(t.Context(), `SELECT state='closed' AND owner_id=$2::uuid AND import_owner_id=$3::uuid AND closed_at IS NOT NULL

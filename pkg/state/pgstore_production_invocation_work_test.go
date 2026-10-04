@@ -45,7 +45,7 @@ func TestPgProductionQueueBoundaryRetainsDamagedAndDeletedStageOwnership(t *test
 			t.Fatalf("production rollup=%d %v", rollup, err)
 		}
 	}
-	proofOnly := enqueueStageQueue(t, s, f)
+	proofOnly := enqueueStageQueue(t.Context(), t, s, f)
 	if _, err := pool.Exec(ctx, `UPDATE invocations SET environment_id=NULL,headers='{}' WHERE id=$1`, proofOnly.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestPgProductionQueueBoundaryRetainsDamagedAndDeletedStageOwnership(t *test
 		{"X-GREGALE-REVISION", " \n urn:uuid:{" + strings.ToUpper(f.dep.ID) + "}\t "},
 		{"x-gregale-release", "{" + strings.ReplaceAll(release.ID, "-", "") + "}"},
 	} {
-		inv := enqueueStageQueue(t, s, f)
+		inv := enqueueStageQueue(t.Context(), t, s, f)
 		headers, _ := json.Marshal(map[string]any{pin.key: pin.value, "unrelated": 42})
 		if _, err := pool.Exec(ctx, `DELETE FROM invocation_environment_queue_admissions WHERE invocation_id=$1`, inv.ID); err != nil {
 			t.Fatal(err)
@@ -69,7 +69,7 @@ func TestPgProductionQueueBoundaryRetainsDamagedAndDeletedStageOwnership(t *test
 		}
 		assertHidden(inv.ID)
 	}
-	dead := enqueueStageQueue(t, s, f)
+	dead := enqueueStageQueue(t.Context(), t, s, f)
 	if _, err := s.ClaimInvocationWithCap(ctx, dead.ID, "", 300, 5); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestPgProductionQueueBoundaryMigrationBackfillAndRollback(t *testing.T) {
 	if _, err := s.PrepareProjectEnvironmentQueueConsumers(ctx, f.account.ID, f.project.ID, f.dep.ID); err != nil {
 		t.Fatal(err)
 	}
-	pending, dead := enqueueStageQueue(t, s, f), enqueueStageQueue(t, s, f)
+	pending, dead := enqueueStageQueue(t.Context(), t, s, f), enqueueStageQueue(t.Context(), t, s, f)
 	if _, err := s.ClaimInvocationWithCap(ctx, dead.ID, "", 300, 5); err != nil {
 		t.Fatal(err)
 	}

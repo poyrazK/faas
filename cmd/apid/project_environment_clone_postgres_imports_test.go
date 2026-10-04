@@ -71,7 +71,7 @@ func (p *cloneSnapshotProvider) WithSnapshotCopyTargetDatabaseSQL(ctx context.Co
 	if err != nil {
 		return managedpostgres.ErrUnavailable
 	}
-	defer func() { _ = conn.Close(context.Background()) }()
+	defer func(cleanupCtx context.Context) { _ = conn.Close(context.WithoutCancel(cleanupCtx)) }(ctx)
 	var i managedpostgres.SnapshotCopyTargetSQLIdentity
 	if err := conn.QueryRow(ctx, `SELECT current_setting('server_version_num')::int/10000,current_database(),current_user,d.oid,r.oid
  FROM pg_catalog.pg_database d,pg_catalog.pg_roles r WHERE d.datname=current_database() AND r.rolname=current_user`).Scan(&i.PostgresMajor, &i.DatabaseName, &i.RoleName, &i.DatabaseOID, &i.RoleOID); err != nil {
@@ -271,7 +271,7 @@ func (f *importWorkerFixture) window(t *testing.T) importWorkerWindow {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close(context.Background())
+	defer conn.Close(context.WithoutCancel(t.Context()))
 	var w importWorkerWindow
 	if err := conn.QueryRow(t.Context(), "SELECT d.datallowconn,w.state,w.owner_id::text,w.closed_at FROM gregale_copy_database_maintenance.windows w JOIN pg_database d ON d.oid=w.target_oid WHERE w.source_oid=$1::oid", f.sourceOID).Scan(&w.allow, &w.state, &w.owner, &w.closedAt); err != nil {
 		t.Fatal(err)

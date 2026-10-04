@@ -410,8 +410,8 @@ func (s *server) executeObjectMultipartOperation(ctx context.Context, store stat
 		switch upload.State {
 		case state.ObjectMultipartInitiating:
 			var providerID string
-			providerID, err = objectstorageactivity.Execute(callCtx, s.store, bucket, func() (string, error) {
-				return backend.Provider.EnsureMultipartUpload(callCtx, bucket.PhysicalName, objectstorage.MultipartCreateRequest{
+			providerID, err = objectstorageactivity.Execute(callCtx, s.store, bucket, func(mutationCtx context.Context) (string, error) {
+				return backend.Provider.EnsureMultipartUpload(mutationCtx, bucket.PhysicalName, objectstorage.MultipartCreateRequest{
 					SessionID: upload.ID, Key: upload.Key, SizeBytes: upload.SizeBytes,
 					Metadata: objectstorage.ObjectMetadata{
 						ContentType: upload.ContentType, CacheControl: upload.Metadata.CacheControl,
@@ -430,8 +430,8 @@ func (s *server) executeObjectMultipartOperation(ctx context.Context, store stat
 			for _, part := range upload.Parts {
 				parts = append(parts, objectstorage.CompletedPart{PartNumber: part.PartNumber, ETag: part.ETag})
 			}
-			err = objectstorageactivity.Run(callCtx, s.store, bucket, func() error {
-				return backend.Provider.CompleteMultipartUpload(callCtx, bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
+			err = objectstorageactivity.Run(callCtx, s.store, bucket, func(mutationCtx context.Context) error {
+				return backend.Provider.CompleteMultipartUpload(mutationCtx, bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
 					SessionID: upload.ID, Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, SizeBytes: upload.SizeBytes, Parts: parts,
 				})
 			})
@@ -441,8 +441,8 @@ func (s *server) executeObjectMultipartOperation(ctx context.Context, store stat
 				})
 			}
 		case state.ObjectMultipartAborting:
-			err = objectstorageactivity.Run(callCtx, s.store, bucket, func() error {
-				return backend.Provider.AbortMultipartUpload(callCtx, bucket.PhysicalName, objectstorage.MultipartAbortRequest{Key: upload.Key, ProviderUploadID: upload.ProviderUploadID})
+			err = objectstorageactivity.Run(callCtx, s.store, bucket, func(mutationCtx context.Context) error {
+				return backend.Provider.AbortMultipartUpload(mutationCtx, bucket.PhysicalName, objectstorage.MultipartAbortRequest{Key: upload.Key, ProviderUploadID: upload.ProviderUploadID})
 			})
 			if err == nil {
 				err = finishObjectMultipartOperation(ctx, func(finishCtx context.Context) error {

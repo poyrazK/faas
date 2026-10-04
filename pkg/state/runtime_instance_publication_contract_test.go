@@ -1,6 +1,8 @@
 // adr: 531
 package state_test
 
+import "context"
+
 import (
 	"errors"
 	"testing"
@@ -33,9 +35,9 @@ func seedRuntimeInstancePublication(t *testing.T, store runtimeAppEnvTestStore, 
 		Fence: configFence.SecretFence, ConfigFence: configFence}
 }
 
-func assertRuntimePublicationUnchanged(t *testing.T, store state.Store, p state.RuntimeInstancePublication) {
+func assertRuntimePublicationUnchanged(ctx context.Context, t *testing.T, store state.Store, p state.RuntimeInstancePublication) {
 	t.Helper()
-	row, err := store.InstanceByID(t.Context(), p.InstanceID)
+	row, err := store.InstanceByID(ctx, p.InstanceID)
 	if err != nil || row.State != p.ExpectedState || row.Netns != "" || row.HostIP != "" || row.GuestUID != 0 {
 		t.Fatalf("rejected publication changed provisional instance: %+v %v", row, err)
 	}
@@ -63,7 +65,7 @@ func testRuntimeInstancePublicationOwnership(t *testing.T, store runtimeAppEnvTe
 			if _, err := store.PublishOwnedInstanceRuntime(ctx, forged); !errors.Is(err, state.ErrConflict) {
 				t.Fatalf("foreign publication: %v", err)
 			}
-			assertRuntimePublicationUnchanged(t, store, p)
+			assertRuntimePublicationUnchanged(t.Context(), t, store, p)
 		})
 	}
 	missing := p
@@ -104,7 +106,7 @@ func testRuntimeInstancePublicationOwnership(t *testing.T, store runtimeAppEnvTe
 	if _, err := store.PublishOwnedInstanceRuntime(ctx, rotation); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("changed sealed input publication: %v", err)
 	}
-	assertRuntimePublicationUnchanged(t, store, rotation)
+	assertRuntimePublicationUnchanged(t.Context(), t, store, rotation)
 }
 
 func TestMemRuntimeInstancePublicationLifetime(t *testing.T) {
@@ -133,7 +135,7 @@ func testRuntimeInstancePublicationLifetime(t *testing.T, store runtimeAppEnvTes
 	if _, err := store.PublishOwnedInstanceRuntime(ctx, original); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("original boot adopted replacement environment: %v", err)
 	}
-	assertRuntimePublicationUnchanged(t, store, original)
+	assertRuntimePublicationUnchanged(t.Context(), t, store, original)
 	if _, err := store.PublishOwnedInstanceRuntime(ctx, production); err != nil {
 		t.Fatalf("stage deletion blocked production: %v", err)
 	}
@@ -177,7 +179,7 @@ func testWarmInstancePublicationOwnership(t *testing.T, store runtimeAppEnvTestS
 			if _, err := store.PublishOwnedInstanceRuntime(ctx, forged); !errors.Is(err, state.ErrConflict) {
 				t.Fatalf("foreign paused publication: %v", err)
 			}
-			assertRuntimePublicationUnchanged(t, store, p)
+			assertRuntimePublicationUnchanged(t.Context(), t, store, p)
 		})
 	}
 	for _, target := range []string{string(state.StateStopped), string(state.StateDraining), "unknown"} {
@@ -186,7 +188,7 @@ func testWarmInstancePublicationOwnership(t *testing.T, store runtimeAppEnvTestS
 		if _, err := store.PublishOwnedInstanceRuntime(ctx, invalid); !errors.Is(err, state.ErrInvalidArgument) {
 			t.Fatalf("invalid publication target %s: %v", target, err)
 		}
-		assertRuntimePublicationUnchanged(t, store, p)
+		assertRuntimePublicationUnchanged(t.Context(), t, store, p)
 	}
 	warm, err := store.PublishOwnedInstanceRuntime(ctx, p)
 	if err != nil || warm.State != string(state.StateWarm) || warm.Netns != p.Netns || warm.HostIP != p.HostIP || warm.GuestUID != p.GuestUID || warm.StartedAt.IsZero() {
@@ -212,12 +214,12 @@ func testWarmInstancePublicationOwnership(t *testing.T, store runtimeAppEnvTestS
 	if _, err := store.PublishOwnedInstanceRuntime(ctx, stale); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("changed sealed inputs published paused runtime: %v", err)
 	}
-	assertRuntimePublicationUnchanged(t, store, stale)
+	assertRuntimePublicationUnchanged(t.Context(), t, store, stale)
 	// Cleanup keeps a retention anchor without overwriting another state owner.
 	if err := store.UpdateInstanceStateIf(ctx, stale.InstanceID, string(state.StateColdBooting), string(state.StateStopped)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale terminal cleanup: %v", err)
 	}
-	assertRuntimePublicationUnchanged(t, store, stale)
+	assertRuntimePublicationUnchanged(t.Context(), t, store, stale)
 	if err := store.UpdateInstanceStateIf(ctx, stale.InstanceID, stale.ExpectedState, string(state.StateStopped)); err != nil {
 		t.Fatal(err)
 	}

@@ -81,7 +81,7 @@ func localSelectedReaderSQLFixture(t *testing.T) (*snapshotReaderFixture, manage
 		t.Fatal(err)
 	}
 	if !exists {
-		if _, err := admin.Exec(t.Context(), "create role "+pgx.Identifier{maintenanceSourceRole}.Sanitize()+" login"); err != nil {
+		if _, err := admin.Exec(t.Context(), "create role "+pgx.Identifier{maintenanceSourceRole}.Sanitize()+" login password 'reader-private-password'"); err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {
@@ -118,9 +118,9 @@ func localSelectedReaderSQLFixture(t *testing.T) (*snapshotReaderFixture, manage
 			t.Fatal("selected SQL changed literal name, endpoint, role, trust or readonly startup")
 		}
 		// HTTP metadata/credentials are mocked; actual SQL authentication runs
-		// on a separate local Unix socket using the requested role/database.
+		// against the fixture server using the requested role, password and database.
 		local := cfg.Copy()
-		local.Database, local.User = actual.Database, actual.User
+		local.Database, local.User, local.Password = actual.Database, actual.User, actual.Password
 		local.RuntimeParams = actual.RuntimeParams
 		var err error
 		*opened, err = pgx.ConnectConfig(ctx, local)

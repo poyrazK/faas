@@ -61,12 +61,12 @@ func (s *server) prepareProjectEnvironmentClonePostgresCopyTargets(ctx context.C
 			return lease, false, err
 		}
 		definition := clonePostgresSnapshotDefinition(plan)
-		target, err := targets.ProjectEnvironmentClonePostgresCopyTargetForLease(copyCtx, lease, plan.source.ID)
+		_, err = targets.ProjectEnvironmentClonePostgresCopyTargetForLease(copyCtx, lease, plan.source.ID)
 		if errors.Is(err, state.ErrNotFound) {
 			var limit int
 			limit, err = s.managedPostgres.AdmitSnapshotCopyTargetReservation(copyCtx, lease.Operation.AccountID, definition)
 			if err == nil {
-				target, _, err = targets.ReserveProjectEnvironmentClonePostgresCopyTarget(copyCtx, lease, plan.source.ID, limit)
+				_, _, err = targets.ReserveProjectEnvironmentClonePostgresCopyTarget(copyCtx, lease, plan.source.ID, limit)
 			}
 		}
 		if err != nil {

@@ -265,7 +265,7 @@ func TestMemCloneBindingCatalogueRequiresPostgresCatalogue(t *testing.T) {
 	s := state.NewMemStore()
 	a, p, app, op := cloneBindingFixture(t, s)
 	if err := s.PutManagedPostgresSecret(ctx, state.AppSecret{AccountID: a.ID, AppID: app.ID, Scope: "production", Key: "DATABASE_URL", Ciphertext: []byte("sealed"),
-		ManagedPostgresBindingID: "binding", ManagedCredentialRef: "ref", ManagedCredentialGeneration: 1}); err != nil {
+		ManagedPostgresBindingID: "binding", ManagedPostgresAccess: "read_write", ManagedCredentialRef: "ref", ManagedCredentialGeneration: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.CaptureProjectEnvironmentCloneWorkloads(ctx, a.ID, p.ID, op.ID, op.Revision); !errors.Is(err, state.ErrProjectEnvironmentCloneBindingCaptureUnavailable) {

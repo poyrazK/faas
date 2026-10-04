@@ -59,6 +59,11 @@ func clonePostgresInventoryFixture(t *testing.T) (*state.PgStore, context.Contex
 
 func TestPgClonePostgresSnapshotInventoryWriteOnceAndHandoff(t *testing.T) {
 	s, ctx, pool, lease, sealed, identity := clonePostgresInventoryFixture(t)
+	for _, at := range []time.Time{sealed.Scope.CapturePoint, sealed.Scope.SnapshotCreatedAt, sealed.Scope.CaptureCreatedAt} {
+		if at.Location() != time.UTC {
+			t.Fatal("database scope did not canonicalize its timestamp locations")
+		}
+	}
 	id := sealed.Scope.SourceDatabaseID
 	if _, err := s.ProjectEnvironmentClonePostgresInventoryForLease(ctx, lease, id); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("invented capture: %v", err)

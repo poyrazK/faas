@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -86,7 +87,7 @@ func (h *uploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app, err := h.lookupApp(r)
 	if err != nil {
-		h.log.Warn("object upload app lookup failed", "host", r.Host, "err", err)
+		h.log.Warn("object upload app lookup failed", "host", logsanitize.Field(r.Host), "err", logsanitize.FieldAny(err))
 		h.next.ServeHTTP(w, r)
 		return
 	}
@@ -191,11 +192,11 @@ func (h *uploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		uploadProblem(w, http.StatusServiceUnavailable, "upload destination writes are temporarily unavailable")
 		return
 	}
-	defer func() {
-		if err := guard.finishUnsent(r.Context()); err != nil {
+	defer func(ctx context.Context) {
+		if err := guard.finishUnsent(ctx); err != nil {
 			h.log.Warn("unsent upload writer receipt completion failed")
 		}
-	}()
+	}(r.Context())
 	completion := state.ObjectUploadCompletion{ID: uuid.NewString(), RouteID: route.ID, AccountID: app.AccountID, AppID: app.ID, BucketID: bucket.ID, SubjectID: subject, Key: objectKey, Bytes: r.ContentLength, ContentType: contentType, RequestID: r.Header.Get("X-Request-ID"), IdempotencyKey: idempotencyKey, RequestFingerprint: requestFingerprint, Status: "pending", CreatedAt: h.now()}
 	if idempotencyKey != "" {
 		intent, intentErr := h.routes.CreateObjectUploadIntent(r.Context(), completion)
@@ -239,7 +240,7 @@ func (h *uploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		h.record(r.Context(), completion)
 	}
-	h.log.Info("object upload completed", "route", route.Name, "bucket_id", bucket.ID, "bytes", r.ContentLength)
+	h.log.Info("object upload completed", "route", logsanitize.Field(route.Name), "bucket_id", bucket.ID, "bytes", r.ContentLength)
 	writeUploadJSON(w, http.StatusCreated, uploadResponse(completion))
 }
 

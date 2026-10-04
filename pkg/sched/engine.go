@@ -3832,7 +3832,9 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			// while this exact boot still owns its provisional row. Retire that
 			// row without overwriting a watchdog or another wake attempt.
 			if current.State == string(bootInput.initState) && current.WakeID == bootInput.wakeID && current.NodeID == bootInput.nodeID {
-				e.transitionWithKindCAS(ctx, current.ID, current.AppID, state.StateFailed, "wake_boot_error", "record_runtime_failed")
+				if _, err := e.transitionWithKindCAS(ctx, current.ID, current.AppID, state.StateFailed, "wake_boot_error", "record_runtime_failed"); err != nil {
+					e.log.Warn("wake: retire rejected runtime publication", "instance", current.ID, "err", err)
+				}
 			}
 		}
 		e.log.Warn("wake: state stolen during boot, aborting",
@@ -7958,44 +7960,6 @@ func envSecretsFromDep(dep state.Deployment) map[string]string {
 	}
 	if len(out) == 0 {
 		return nil
-	}
-	return out
-}
-
-// loadAPIEnv is the plaintext sibling of loadSealedEnv (issue #395 /
-// ADR-045). Reads the per-app app_envs rows for the given scope and
-// flattens them into the fcvm shape Manager.Wake consumes. Same
-// non-fatal read-failure posture as loadSealedEnv — a transient PG
-// hiccup drops the env layer (the next wake retries) rather than
-// failing the wake itself. Plaintext by contract so there's nothing
-// to leak; the worst case is a missing env var, which customer
-// support can spot from the "API env X missing" log line.
-//
-// ADR-091 / PR-D: scope is threaded through here. Pre-PR callers pass
-// api.DefaultEnvScope (`"default"`) and the legacy behaviour is
-// preserved. Scope-aware callers pass the deployment's declared scope
-// (read via store.LiveDeploymentForScope or by reading `dep.Scope`
-// after DeploymentByID). The scope's row-set is read via
-// ListAppEnvInScope (the scope-aware sibling of the legacy flat
-// ListAppEnv).
-//
-// Carries AccountID explicitly so a cross-account (accountID, appID)
-// pair returns ErrNotFound (consistent with apid's 404 contract).
-func (e *Engine) loadAPIEnv(ctx context.Context, accountID, appID, scope string) []fcvm.APIEnvEntry {
-	if scope == "" {
-		scope = api.DefaultEnvScope
-	}
-	rows, err := e.store.ListAppEnvInScope(ctx, accountID, appID, scope)
-	if err != nil {
-		e.log.Warn("load api env", "app", appID, "err", err)
-		return nil
-	}
-	if len(rows) == 0 {
-		return nil
-	}
-	out := make([]fcvm.APIEnvEntry, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, fcvm.APIEnvEntry{Key: r.Key, Value: r.Value})
 	}
 	return out
 }

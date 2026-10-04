@@ -134,7 +134,7 @@ func TestSnapshotCopyTargetSQLInspectionRejectsSQLAndPostConnectionPlacementDrif
 						if reads == 3 {
 							if *opened == nil {
 								t.Error("post-SQL check preceded connection")
-							} else if _, err := (*opened).Exec(t.Context(), "SET default_transaction_read_only=on"); err != nil {
+							} else if _, err := (*opened).Exec(r.Context(), "SET default_transaction_read_only=on"); err != nil {
 								t.Error(err)
 							}
 						}
@@ -152,12 +152,12 @@ func TestSnapshotCopyTargetSQLInspectionRejectsSQLAndPostConnectionPlacementDrif
 				var err error
 				if fault == "database" || fault == "role" {
 					local := localCfg.Copy()
-					local.Database, local.User = cfg.Database, cfg.User
+					local.Database, local.User, local.Password = cfg.Database, cfg.User, cfg.Password
 					local.RuntimeParams = cfg.RuntimeParams
 					if fault == "database" {
 						local.Database = localCfg.Database
 					} else {
-						local.User = localCfg.User
+						local.User, local.Password = localCfg.User, localCfg.Password
 					}
 					conn, err = pgx.ConnectConfig(ctx, local)
 					*opened = conn

@@ -276,7 +276,7 @@ func TestPGClonePostgresContentsWorkerRejectsForeignManifestHandoffAndBudgetFail
 				if err != nil {
 					return copycontents.Manifest{}, err
 				}
-				defer conn.Close(context.Background())
+				defer conn.Close(context.WithoutCancel(ctx))
 				manifest, err := copycontents.Capture(ctx, conn, d, copycontents.Config{Key: k, SpoolDir: t.TempDir(), MaxBytes: 16 << 20}, func(context.Context, *pgx.Conn, copyinventory.DatabaseExport) error { return nil })
 				if err != nil {
 					return copycontents.Manifest{}, err

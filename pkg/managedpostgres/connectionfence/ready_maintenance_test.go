@@ -29,7 +29,7 @@ func TestReadyMaintenanceRecoversWhileSourceAdmissionIsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := readyMaintenanceConfig(t, f)
-	conn, err := f.connect(t, MaintenanceDatabase, f.admin)
+	conn, err := f.connect(t.Context(), t, MaintenanceDatabase, f.admin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,6 +38,7 @@ func TestReadyMaintenanceRecoversWhileSourceAdmissionIsClosed(t *testing.T) {
 	}
 	poolConfig := f.fixture.bootstrap.Copy()
 	poolConfig.ConnConfig.Database, poolConfig.ConnConfig.User = MaintenanceDatabase, f.admin
+poolConfig.ConnConfig.Password = f.password
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -54,11 +55,11 @@ func TestReadyMaintenanceRecoversWhileSourceAdmissionIsClosed(t *testing.T) {
 	if _, err := c.Close(ctx, f.request); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.connect(t, config.SourceDatabase, f.admin); err == nil {
+	if _, err := f.connect(t.Context(), t, config.SourceDatabase, f.admin); err == nil {
 		t.Fatal("source admitted a new connection after closure")
 	}
 	// Recovery opens only the private database after losing the source path.
-	fresh, err := f.connect(t, MaintenanceDatabase, f.admin)
+	fresh, err := f.connect(t.Context(), t, MaintenanceDatabase, f.admin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func TestReadyMaintenanceRecoversWhileSourceAdmissionIsClosed(t *testing.T) {
 	if err != nil || terminal.State != "released" || terminal.ReleasedAt.IsZero() {
 		t.Fatalf("independent terminal observation: %+v %v", terminal, err)
 	}
-	if _, err := f.connect(t, config.SourceDatabase, f.admin); err != nil {
+	if _, err := f.connect(t.Context(), t, config.SourceDatabase, f.admin); err != nil {
 		t.Fatalf("original source admission was not restored: %v", err)
 	}
 }
@@ -92,7 +93,7 @@ func TestReadyMaintenanceRejectsReceiptAndSessionSubstitution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn, err := f.connect(t, MaintenanceDatabase, f.admin)
+	conn, err := f.connect(t.Context(), t, MaintenanceDatabase, f.admin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +120,7 @@ func TestReadyMaintenanceRejectsReceiptAndSessionSubstitution(t *testing.T) {
 			case "major":
 				cfg.SourcePostgresMajor++
 			case "source_session":
-				session, err = f.connect(t, cfg.SourceDatabase, f.admin)
+				session, err = f.connect(t.Context(), t, cfg.SourceDatabase, f.admin)
 				if err != nil {
 					t.Fatal(err)
 				}

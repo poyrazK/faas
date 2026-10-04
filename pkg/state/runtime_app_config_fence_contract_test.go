@@ -63,7 +63,7 @@ func testRuntimeInstancePublicationConfiguration(t *testing.T, store runtimeAppE
 				if !errors.Is(err, state.ErrConflict) {
 					t.Fatalf("changed captured config published: %v", err)
 				}
-				assertRuntimePublicationUnchanged(t, store, p)
+				assertRuntimePublicationUnchanged(t.Context(), t, store, p)
 				if _, err := store.InstanceRuntimeConfigFence(ctx, f.account.ID, f.app.ID, p.InstanceID); !errors.Is(err, state.ErrNotFound) {
 					t.Fatalf("rejected publication saved a proof: %v", err)
 				}
@@ -116,7 +116,7 @@ func testLegacyRuntimeConfigFenceProjection(t *testing.T, store runtimeAppEnvTes
 	if _, err := store.PublishOwnedInstanceRuntime(ctx, p); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("edited legacy settings published old captured inputs: %v", err)
 	}
-	assertRuntimePublicationUnchanged(t, store, p)
+	assertRuntimePublicationUnchanged(t.Context(), t, store, p)
 }
 
 func testPausedRuntimeConfigProofCannotAdoptNewValues(t *testing.T, store runtimeAppEnvTestStore) {

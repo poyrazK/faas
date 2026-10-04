@@ -59,7 +59,7 @@ func (s *server) cleanupProjectEnvironmentClonePostgresCopyReader(ctx context.Co
 		if findErr != nil {
 			return false, findErr
 		}
-		reader, err = readers.RecordProjectEnvironmentClonePostgresCopyReader(ctx, lease, plan.source.ID,
+		_, err = readers.RecordProjectEnvironmentClonePostgresCopyReader(ctx, lease, plan.source.ID,
 			state.ProjectEnvironmentClonePostgresCopyReaderObservation{EndpointID: observation.EndpointID, CreatedAt: observation.CreatedAt})
 		if err != nil {
 			return false, err

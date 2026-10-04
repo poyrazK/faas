@@ -3,6 +3,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -183,7 +184,7 @@ func TestCoordinatedStageReplacementCannotJoinOldBoot(t *testing.T) {
 	}
 	go wake("original")
 	waitStageBoots(t, vmm.bootStarted, 1)
-	f.recreateStage(t)
+	f.recreateStage(t.Context(), t)
 	settings, err := state.WorkloadSettingsFromApp(f.app)
 	if err != nil {
 		t.Fatal(err)
@@ -289,7 +290,7 @@ func TestWakeCoordForgetEvictsAllAppDeployments(t *testing.T) {
 	other, _, _ := coord.Enter("app-sibling\x00deployment:prod", WakeFanout{})
 	coord.Forget("app")
 	for _, call := range calls {
-		if out := call.Await(t.Context()); out.Err != ErrAppDeleted {
+		if out := call.Await(t.Context()); !errors.Is(out.Err, ErrAppDeleted) {
 			t.Fatalf("forgotten deployment: %+v", out)
 		}
 	}

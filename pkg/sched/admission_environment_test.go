@@ -238,7 +238,7 @@ func TestSeedLedgerLostStageLifetimeRetainsOrphanCapacity(t *testing.T) {
 	if _, err := f.store.CreateInstance(ctx, f.app.ID, f.stage.ID, string(state.StateRunning), 256, state.DefaultLocalNodeName, ""); err != nil {
 		t.Fatal(err)
 	}
-	f.recreateStage(t)
+	f.recreateStage(t.Context(), t)
 	engine := newEngine(t, f.store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	if err := engine.SeedLedger(ctx); err != nil {
 		t.Fatal(err)

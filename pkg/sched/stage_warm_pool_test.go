@@ -192,7 +192,7 @@ func TestWarmPromotionRejectsRecreatedStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.recreateStage(t)
+	f.recreateStage(t.Context(), t)
 	if _, accepted, err := engine.promoteWarmInstanceLocked(ctx, app, f.account, api.MustLimitsFor(f.account.Plan), f.stage, string(state.InstanceModeNormal)); err == nil || accepted || vmm.resumeCalls != 0 {
 		t.Fatalf("old stage warm VM resumed: accepted=%v resume=%d err=%v", accepted, vmm.resumeCalls, err)
 	}

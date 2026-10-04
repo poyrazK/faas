@@ -34,13 +34,13 @@ func Finish(ctx context.Context, store any, receipt state.ObjectBucketMutation) 
 	return nil
 }
 
-func Execute[T any](ctx context.Context, store any, bucket state.ObjectBucket, call func() (T, error)) (T, error) {
+func Execute[T any](ctx context.Context, store any, bucket state.ObjectBucket, call func(context.Context) (T, error)) (T, error) {
 	var zero T
 	receipt, err := Begin(ctx, store, bucket, state.ObjectBucketMutationRequest)
 	if err != nil {
 		return zero, err
 	}
-	value, err := call()
+	value, err := call(ctx)
 	if err != nil {
 		return zero, err
 	}
@@ -50,7 +50,7 @@ func Execute[T any](ctx context.Context, store any, bucket state.ObjectBucket, c
 	return value, nil
 }
 
-func Run(ctx context.Context, store any, bucket state.ObjectBucket, call func() error) error {
-	_, err := Execute(ctx, store, bucket, func() (struct{}, error) { return struct{}{}, call() })
+func Run(ctx context.Context, store any, bucket state.ObjectBucket, call func(context.Context) error) error {
+	_, err := Execute(ctx, store, bucket, func(callCtx context.Context) (struct{}, error) { return struct{}{}, call(callCtx) })
 	return err
 }

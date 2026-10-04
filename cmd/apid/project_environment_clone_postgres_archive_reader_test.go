@@ -39,7 +39,7 @@ func (p *cloneSnapshotProvider) WithSnapshotCopyReaderDatabaseSQL(ctx context.Co
 	if err != nil {
 		return managedpostgres.ErrUnavailable
 	}
-	defer func() { _ = conn.Close(context.Background()) }()
+	defer func(cleanupCtx context.Context) { _ = conn.Close(context.WithoutCancel(cleanupCtx)) }(ctx)
 	var id managedpostgres.SnapshotCopyReaderSQLIdentity
 	if err := conn.QueryRow(ctx, `select pg_catalog.current_setting('server_version_num')::int/10000,pg_catalog.current_database(),current_user,d.oid,r.oid
         from pg_catalog.pg_database d,pg_catalog.pg_roles r where d.datname=pg_catalog.current_database() and r.rolname=current_user`).Scan(

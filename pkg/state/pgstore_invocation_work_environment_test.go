@@ -34,7 +34,7 @@ func TestPgInvocationWorkEnvironmentClaimFailsClosed(t *testing.T) {
 		t.Run(fault.name, func(t *testing.T) {
 			store, ctx, pool := pgWithPool(t)
 			f := seedInvocationWorkEnvironment(t, store)
-			row, err := store.EnqueueKeyedInvocation(ctx, f.request(t, store, "staging"), f.serial, "s:first", "s:customer")
+			row, err := store.EnqueueKeyedInvocation(ctx, f.request(t.Context(), t, store, "staging"), f.serial, "s:first", "s:customer")
 			if err != nil {
 				t.Fatal(err)
 			}

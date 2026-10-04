@@ -23,7 +23,7 @@ func TestPgEnvironmentQueueProducerDepthRetainsDamagedOwnership(t *testing.T) {
 	limit := api.MustLimitsFor(api.PlanHobby).MaxQueueDepth
 	var rows []state.Invocation
 	for range limit {
-		rows = append(rows, enqueueStageQueue(t, store, f))
+		rows = append(rows, enqueueStageQueue(t.Context(), t, store, f))
 	}
 	// A damaged row marker must not erase authoritative admission ownership.
 	if _, err := pool.Exec(ctx, `UPDATE invocations SET environment_id=NULL,source='async_invoke',queue_name='' WHERE id=$1`, rows[0].ID); err != nil {

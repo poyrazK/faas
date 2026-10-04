@@ -225,7 +225,7 @@ func (w *clonePostgresVerificationRetryWorker) close(ctx context.Context, a stat
 		}
 		// Absence must survive complete provider postchecks. Returning NotFound
 		// from the callback would give it precedence over the provider's error.
-		if nativeErr == managedpostgres.ErrNotFound {
+		if errors.Is(nativeErr, managedpostgres.ErrNotFound) {
 			return nil
 		}
 		return nativeErr
@@ -310,13 +310,14 @@ func (w *clonePostgresVerificationRetryWorker) run(ctx context.Context, cfg copy
 	var retained copycontents.RetainedMatch
 	var closure copydatabases.VerificationClosure
 	var err error
-	if a.State == "compared" || a.State == "verified" {
+	switch a.State {
+	case "compared", "verified":
 		retained, err = copycontents.OpenMatch(w.identities, w.manifest, w.actual, owner, imported, a.Sealed)
 		if err != nil {
 			return zero, err
 		}
 		closure, err = w.close(ctx, a)
-	} else if a.State == "verifying" {
+	case "verifying":
 		closure, err = w.close(ctx, a)
 		if err == nil {
 			if err = w.recordFailure(ctx, closure); err != nil {
@@ -370,7 +371,7 @@ func (w *clonePostgresVerificationRetryWorker) run(ctx context.Context, cfg copy
 				})
 			return err
 		})
-	} else {
+	default:
 		return zero, managedpostgres.ErrConflict
 	}
 	if err != nil {

@@ -63,11 +63,11 @@ func seedInvocationWorkEnvironment(t *testing.T, store invocationWorkEnvironment
 	return f
 }
 
-func (f invocationWorkEnvironmentFixture) request(t *testing.T, store invocationWorkEnvironmentTestStore, environment string) state.Invocation {
+func (f invocationWorkEnvironmentFixture) request(ctx context.Context, t *testing.T, store invocationWorkEnvironmentTestStore, environment string) state.Invocation {
 	t.Helper()
 	request := state.Invocation{ID: uuid.NewString(), AppID: f.app.ID, AccountID: f.account.ID, Source: state.InvocationAsyncInvoke,
 		Method: "POST", Path: "/work", Payload: json.RawMessage(`{}`), DueAt: time.Now().Add(-time.Second)}
-	prepared, _, err := state.ResolveInvocationVersionForEnvironment(t.Context(), store, request, environment)
+	prepared, _, err := state.ResolveInvocationVersionForEnvironment(ctx, store, request, environment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func testInvocationWorkEnvironmentIsolation(t *testing.T, store invocationWorkEn
 	f := seedInvocationWorkEnvironment(t, store)
 	enqueue := func(environment string, policy workpolicy.Policy, key string, fairness ...string) state.Invocation {
 		t.Helper()
-		row, err := store.EnqueueKeyedInvocation(ctx, f.request(t, store, environment), policy, key, fairness...)
+		row, err := store.EnqueueKeyedInvocation(ctx, f.request(t.Context(), t, store, environment), policy, key, fairness...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -127,7 +127,7 @@ func testInvocationWorkEnvironmentIsolation(t *testing.T, store invocationWorkEn
 		{Name: "latest", MaxRunningPerKey: 1, PendingUpdates: workpolicy.PendingAll},
 		{Name: "latest", MaxRunningPerKey: 1, PendingUpdates: workpolicy.PendingKeepLatest, Debounce: time.Second},
 	} {
-		request := f.request(t, store, "staging")
+		request := f.request(t.Context(), t, store, "staging")
 		if _, err := store.EnqueueKeyedInvocation(ctx, request, policy, "s:one"); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("unowned policy admitted: %v", err)
 		}
@@ -140,7 +140,7 @@ func testInvocationWorkEnvironmentIsolation(t *testing.T, store invocationWorkEn
 	if replay, err := store.EnqueueKeyedInvocation(ctx, newStage, f.latest, "s:one"); err != nil || replay.ID != newStage.ID || replay.WorkSequence != 2 {
 		t.Fatalf("stage enqueue replay = %+v, %v", replay, err)
 	}
-	direct := f.request(t, store, "staging")
+	direct := f.request(t.Context(), t, store, "staging")
 	direct.Headers, _ = json.Marshal(map[string]string{api.RevisionHeader: f.stage.ID})
 	direct, err = store.EnqueueKeyedInvocation(ctx, direct, f.serial, "s:direct", "s:direct-customer")
 	if err != nil {
@@ -257,7 +257,7 @@ func testInvocationWorkEnvironmentIsolation(t *testing.T, store invocationWorkEn
 		func(inv *state.Invocation) { inv.OnSuccessDestinationID = uuid.NewString() },
 		func(inv *state.Invocation) { inv.OnFailureDestinationID = uuid.NewString() },
 	} {
-		request := f.request(t, store, "staging")
+		request := f.request(t.Context(), t, store, "staging")
 		change(&request)
 		if _, err := store.EnqueueKeyedInvocation(ctx, request, f.latest, "s:one"); !errors.Is(err, state.ErrInvocationEnvironmentWorkIsolation) {
 			t.Fatalf("stage work used a shared producer or destination: %v", err)

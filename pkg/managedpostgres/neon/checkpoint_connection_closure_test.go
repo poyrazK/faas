@@ -78,7 +78,7 @@ func newNativeConnectionClosureFixture(t *testing.T) *nativeConnectionClosureFix
 			}
 		}
 	})
-	if _, err := root.Exec(t.Context(), "CREATE ROLE gregale_owner LOGIN NOSUPERUSER CREATEDB CREATEROLE"); err != nil {
+	if _, err := root.Exec(t.Context(), "CREATE ROLE gregale_owner LOGIN NOSUPERUSER CREATEDB CREATEROLE PASSWORD 'private-fixture-password'"); err != nil {
 		t.Fatal(err)
 	}
 	createdRoles = append(createdRoles, maintenanceSourceRole)
@@ -93,6 +93,7 @@ func newNativeConnectionClosureFixture(t *testing.T) *nativeConnectionClosureFix
 	}
 	source := cfg.Copy()
 	source.Database, source.User = f.request.DatabaseNames[0], maintenanceSourceRole
+	source.Password = "private-fixture-password"
 	conn, err := pgx.ConnectConfig(t.Context(), source)
 	if err != nil {
 		t.Fatal(err)
@@ -163,6 +164,7 @@ func (f *nativeConnectionClosureFixture) connectPool(t *testing.T) func(context.
 		local := requested.Copy()
 		local.ConnConfig = f.config.Copy()
 		local.ConnConfig.Database, local.ConnConfig.User = connectionfence.MaintenanceDatabase, maintenanceSourceRole
+		local.ConnConfig.Password = "private-fixture-password"
 		return pgxpool.NewWithConfig(ctx, local)
 	}
 }
@@ -182,6 +184,7 @@ func TestCheckpointConnectionClosureNativePipelineRecoversAndObservesDrain(t *te
 	ctx := t.Context()
 	clientConfig := f.config.Copy()
 	clientConfig.Database, clientConfig.User = f.request.DatabaseNames[0], maintenanceSourceRole
+	clientConfig.Password = "private-fixture-password"
 	client, err := pgx.ConnectConfig(ctx, clientConfig)
 	if err != nil {
 		t.Fatal(err)

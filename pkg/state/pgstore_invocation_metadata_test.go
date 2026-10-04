@@ -5,6 +5,7 @@ package state_test
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -102,4 +103,36 @@ func TestPgInvocationSQLCReadersRetainDurableMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertMetadata(t, row)
+}
+
+// ADR-531: synthetic production batches have correlation IDs, not durable row
+// UUIDs. They cannot claim environment-owned or keyed admission identities.
+func TestPgInvocationVersionAcceptsSyntheticProductionBatchWithoutOwnedAdmission(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	_, appID, _ := seedLiveDeploy(t, store, ctx, "synthetic-"+uuid.NewString(), "synthetic-"+uuid.NewString()[:8])
+	app, err := store.AppByID(ctx, appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv := state.Invocation{ID: "trigger-" + uuid.NewString() + "-" + uuid.NewString(), AppID: appID, AccountID: app.AccountID, Source: state.InvocationSource("esm"), Headers: []byte(`{}`)}
+	prepared, version, err := state.ResolveInvocationVersion(ctx, store, inv)
+	if err != nil || prepared.ID != inv.ID || version.Scope != state.DefaultEnvScope {
+		t.Fatalf("synthetic production batch: %+v %v", version, err)
+	}
+	ledger := inv
+	ledger.Source = state.InvocationAsyncInvoke
+	if _, _, err := state.ResolveInvocationVersion(ctx, store, ledger); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("invalid durable invocation identity accepted: %v", err)
+	}
+	for _, fault := range []string{"environment", "keyed"} {
+		forged := inv
+		if fault == "environment" {
+			forged.EnvironmentID = uuid.NewString()
+		} else {
+			forged.WorkPolicyName = "owned-policy"
+		}
+		if _, _, err := state.ResolveInvocationVersion(ctx, store, forged); !errors.Is(err, state.ErrInvocationEnvironmentWorkIsolation) {
+			t.Fatalf("synthetic %s claim bypassed admission: %v", fault, err)
+		}
+	}
 }

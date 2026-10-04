@@ -507,7 +507,9 @@ func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req reques
 		if !h.recordProviderRequest(w, r, req) {
 			return
 		}
-		if err := h.mutate(r.Context(), req, func() error { return req.provider.DeleteObject(r.Context(), req.bucket.PhysicalName, key) }); err != nil {
+		if err := h.mutate(r.Context(), req, func(mutationCtx context.Context) error {
+			return req.provider.DeleteObject(mutationCtx, req.bucket.PhysicalName, key)
+		}); err != nil {
 			h.providerError(w, r, req, err, key)
 			return
 		}
@@ -716,7 +718,9 @@ func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, req requ
 		if !h.recordProviderRequest(w, r, req) {
 			return
 		}
-		err := h.mutate(r.Context(), req, func() error { return req.provider.DeleteObject(r.Context(), req.bucket.PhysicalName, object.Key) })
+		err := h.mutate(r.Context(), req, func(mutationCtx context.Context) error {
+			return req.provider.DeleteObject(mutationCtx, req.bucket.PhysicalName, object.Key)
+		})
 		if err == nil || errors.Is(err, objectstorage.ErrNotFound) {
 			if !request.Quiet {
 				result.Deleted = append(result.Deleted, deletedObjectResult{Key: object.Key})
@@ -805,8 +809,8 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, req request
 	if !h.admit(w, r, req, destinationKey, size, true) || !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	result, err := objectstorageactivity.Execute(r.Context(), h.store, req.bucket, func() (objectstorage.CopyObjectResult, error) {
-		return copier.CopyObject(r.Context(), req.bucket.PhysicalName, objectstorage.CopyObjectRequest{
+	result, err := objectstorageactivity.Execute(r.Context(), h.store, req.bucket, func(mutationCtx context.Context) (objectstorage.CopyObjectResult, error) {
+		return copier.CopyObject(mutationCtx, req.bucket.PhysicalName, objectstorage.CopyObjectRequest{
 			SourceKey: sourceKey, DestinationKey: destinationKey, MetadataDirective: directive, TaggingDirective: taggingDirective, Metadata: metadata,
 		})
 	})
@@ -982,7 +986,9 @@ func (h *Handler) objectTags(w http.ResponseWriter, r *http.Request, req request
 		if !h.recordProviderRequest(w, r, req) {
 			return
 		}
-		if err := h.mutate(r.Context(), req, func() error { return tagger.PutObjectTags(r.Context(), req.bucket.PhysicalName, key, tags) }); err != nil {
+		if err := h.mutate(r.Context(), req, func(mutationCtx context.Context) error {
+			return tagger.PutObjectTags(mutationCtx, req.bucket.PhysicalName, key, tags)
+		}); err != nil {
 			h.providerError(w, r, req, err, key)
 			return
 		}
@@ -991,7 +997,9 @@ func (h *Handler) objectTags(w http.ResponseWriter, r *http.Request, req request
 		if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) || !h.admit(w, r, req, key, 0, false) || !h.recordProviderRequest(w, r, req) {
 			return
 		}
-		if err := h.mutate(r.Context(), req, func() error { return tagger.DeleteObjectTags(r.Context(), req.bucket.PhysicalName, key) }); err != nil {
+		if err := h.mutate(r.Context(), req, func(mutationCtx context.Context) error {
+			return tagger.DeleteObjectTags(mutationCtx, req.bucket.PhysicalName, key)
+		}); err != nil {
 			h.providerError(w, r, req, err, key)
 			return
 		}

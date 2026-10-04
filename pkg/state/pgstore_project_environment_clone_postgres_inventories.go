@@ -37,7 +37,7 @@ func clonePostgresInventoryScopeTx(ctx context.Context, tx pgx.Tx, lease Project
 	scope := copyinventory.Scope{PostgresMajor: int(database.PostgresMajor), OperationID: op.ID, AccountID: op.AccountID, ProjectID: op.ProjectID, SourceDatabaseID: snapshot.SourceDatabaseID,
 		CaptureDatabaseID: capture.AdoptedDatabaseID, SourceVersion: snapshot.SourceVersion, BackendID: snapshot.BackendID, BackendFingerprint: snapshot.BackendFingerprint,
 		SourceProviderResourceID: snapshot.SourceProviderResourceID, SourceDataResourceID: snapshot.SourceDataResourceID, ProviderSnapshotID: snapshot.ProviderSnapshotID,
-		CaptureProviderResourceID: capture.TargetProviderResourceID, CapturePoint: snapshot.CapturePoint, SnapshotCreatedAt: snapshot.SnapshotCreatedAt, CaptureCreatedAt: capture.TargetCreatedAt}
+		CaptureProviderResourceID: capture.TargetProviderResourceID, CapturePoint: snapshot.CapturePoint.UTC(), SnapshotCreatedAt: snapshot.SnapshotCreatedAt.UTC(), CaptureCreatedAt: capture.TargetCreatedAt.UTC()}
 	if scope.Validate() != nil {
 		return scope, ErrConflict
 	}
