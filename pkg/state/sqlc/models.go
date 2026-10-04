@@ -2703,6 +2703,25 @@ type ObjectBucketNotification struct {
 	Rules    []byte
 }
 
+type ObjectBucketObjectLock struct {
+	BucketID              pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	State                 string
+	Revision              int64
+	EnabledRequired       bool
+	NativeEnabledObserved bool
+	ObservedKnown         bool
+	ObservedSnapshot      []byte
+	DesiredSnapshot       []byte
+	LeaseToken            string
+	LeaseUntil            pgtype.Timestamptz
+	RetryAt               pgtype.Timestamptz
+	Dispatched            bool
+	LastErrorCode         string
+	UpdatedAt             pgtype.Timestamptz
+}
+
 type ObjectBucketVersioning struct {
 	BucketID         pgtype.UUID
 	DesiredStatus    string

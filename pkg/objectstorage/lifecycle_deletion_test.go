@@ -55,7 +55,7 @@ func newLifecycleServiceFixture(t *testing.T, pg bool) lifecycleServiceFixture {
 		}
 		f.st = state.NewPgStore(f.pool)
 		f.advance = func() {
-			if _, err := f.pool.Exec(ctx, `UPDATE object_bucket_versioning SET propagation_until=clock_timestamp()-interval '1 second',retry_at=clock_timestamp()`); err != nil {
+			if _, err := f.pool.Exec(ctx, `UPDATE object_bucket_versioning SET propagation_until=CASE WHEN state IN ('waiting','propagating') THEN clock_timestamp()-interval '1 second' ELSE propagation_until END,retry_at=clock_timestamp()`); err != nil {
 				t.Fatal(err)
 			}
 		}

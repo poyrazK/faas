@@ -36,6 +36,9 @@ func (m *MemStore) RequestObjectBucketVersioning(_ context.Context, account, app
 	if err != nil {
 		return j, err
 	}
+	if lock := m.objectBucketObjectLock[bucket]; status == "Suspended" && (lock.EnabledRequired || objectLockActive(lock)) {
+		return j, ErrConflict
+	}
 	_, unsafe, _, _ := m.capacityReadinessLocked(bucket)
 	if unsafe || m.activeDeletionLocked(bucket) {
 		return j, ErrConflict
@@ -105,7 +108,11 @@ func (m *MemStore) ClaimObjectBucketVersioning(_ context.Context, bucket, token 
 	pending, unsafe, multipart, _ := m.capacityReadinessLocked(bucket)
 	if j.State == "inventory" {
 		c := m.objectCapacityJobs[j.CapacityJobID]
-		if c.State == "completed" && c.InventoryVerified { /* claim to verify provider again */
+		if c.State == "completed" && c.InventoryVerified {
+			if j.PropagationUntil != nil && c.CreatedAt.Before(*j.PropagationUntil) {
+				j.CapacityJobID = ""
+				j.State = "propagating"
+			} // A superseded configuration's inventory only drains its worker.
 		} else if objectCapacityActive(c.State) {
 			return cloneObjectVersioning(j), ErrConflict
 		} else {

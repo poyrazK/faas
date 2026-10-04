@@ -11646,6 +11646,148 @@ func (q *Queries) ObjectBucketLockApp(ctx context.Context, db DBTX, arg ObjectBu
 	return id, err
 }
 
+const objectBucketObjectLockDue = `-- name: ObjectBucketObjectLockDue :many
+SELECT bucket_id FROM object_bucket_object_lock WHERE state<>'ready' AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,bucket_id LIMIT $1
+`
+
+func (q *Queries) ObjectBucketObjectLockDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, objectBucketObjectLockDue, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var bucket_id pgtype.UUID
+		if err := rows.Scan(&bucket_id); err != nil {
+			return nil, err
+		}
+		items = append(items, bucket_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectBucketObjectLockGet = `-- name: ObjectBucketObjectLockGet :one
+SELECT l.bucket_id, l.account_id, l.app_id, l.state, l.revision, l.enabled_required, l.native_enabled_observed, l.observed_known, l.observed_snapshot, l.desired_snapshot, l.lease_token, l.lease_until, l.retry_at, l.dispatched, l.last_error_code, l.updated_at FROM object_bucket_object_lock l JOIN object_buckets b ON b.id=l.bucket_id AND (b.account_id,b.app_id)=(l.account_id,l.app_id) WHERE l.bucket_id=$1
+`
+
+func (q *Queries) ObjectBucketObjectLockGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketObjectLock, error) {
+	row := db.QueryRow(ctx, objectBucketObjectLockGet, bucketID)
+	var i ObjectBucketObjectLock
+	err := row.Scan(
+		&i.BucketID,
+		&i.AccountID,
+		&i.AppID,
+		&i.State,
+		&i.Revision,
+		&i.EnabledRequired,
+		&i.NativeEnabledObserved,
+		&i.ObservedKnown,
+		&i.ObservedSnapshot,
+		&i.DesiredSnapshot,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.Dispatched,
+		&i.LastErrorCode,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const objectBucketObjectLockInsert = `-- name: ObjectBucketObjectLockInsert :exec
+INSERT INTO object_bucket_object_lock(bucket_id,account_id,app_id,state,revision,enabled_required,native_enabled_observed,observed_known,observed_snapshot,desired_snapshot,lease_token,lease_until,retry_at,dispatched,last_error_code,updated_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+`
+
+type ObjectBucketObjectLockInsertParams struct {
+	BucketID              pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	State                 string
+	Revision              int64
+	EnabledRequired       bool
+	NativeEnabledObserved bool
+	ObservedKnown         bool
+	ObservedSnapshot      []byte
+	DesiredSnapshot       []byte
+	LeaseToken            string
+	LeaseUntil            pgtype.Timestamptz
+	RetryAt               pgtype.Timestamptz
+	Dispatched            bool
+	LastErrorCode         string
+	UpdatedAt             pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectBucketObjectLockInsert(ctx context.Context, db DBTX, arg ObjectBucketObjectLockInsertParams) error {
+	_, err := db.Exec(ctx, objectBucketObjectLockInsert,
+		arg.BucketID,
+		arg.AccountID,
+		arg.AppID,
+		arg.State,
+		arg.Revision,
+		arg.EnabledRequired,
+		arg.NativeEnabledObserved,
+		arg.ObservedKnown,
+		arg.ObservedSnapshot,
+		arg.DesiredSnapshot,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+		arg.Dispatched,
+		arg.LastErrorCode,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const objectBucketObjectLockUpdate = `-- name: ObjectBucketObjectLockUpdate :execrows
+UPDATE object_bucket_object_lock SET state=$2,revision=$3,enabled_required=$4,native_enabled_observed=$5,observed_known=$6,observed_snapshot=$7,desired_snapshot=$8,lease_token=$9,lease_until=$10,retry_at=$11,dispatched=$12,last_error_code=$13,updated_at=$14 WHERE bucket_id=$1
+`
+
+type ObjectBucketObjectLockUpdateParams struct {
+	BucketID              pgtype.UUID
+	State                 string
+	Revision              int64
+	EnabledRequired       bool
+	NativeEnabledObserved bool
+	ObservedKnown         bool
+	ObservedSnapshot      []byte
+	DesiredSnapshot       []byte
+	LeaseToken            string
+	LeaseUntil            pgtype.Timestamptz
+	RetryAt               pgtype.Timestamptz
+	Dispatched            bool
+	LastErrorCode         string
+	UpdatedAt             pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectBucketObjectLockUpdate(ctx context.Context, db DBTX, arg ObjectBucketObjectLockUpdateParams) (int64, error) {
+	result, err := db.Exec(ctx, objectBucketObjectLockUpdate,
+		arg.BucketID,
+		arg.State,
+		arg.Revision,
+		arg.EnabledRequired,
+		arg.NativeEnabledObserved,
+		arg.ObservedKnown,
+		arg.ObservedSnapshot,
+		arg.DesiredSnapshot,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+		arg.Dispatched,
+		arg.LastErrorCode,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectBucketPruneTombstones = `-- name: ObjectBucketPruneTombstones :exec
 DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted'
 `
@@ -11838,7 +11980,7 @@ func (q *Queries) ObjectCapacityDue(ctx context.Context, db DBTX, limit int32) (
 }
 
 const objectCapacityFenced = `-- name: ObjectCapacityFenced :one
-SELECT (EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1 AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning')))::boolean AS fenced
+SELECT (EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=$1 AND l.state<>'ready') OR EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1 AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning')))::boolean AS fenced
 `
 
 func (q *Queries) ObjectCapacityFenced(ctx context.Context, db DBTX, bucketID pgtype.UUID) (bool, error) {

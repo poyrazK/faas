@@ -103,6 +103,15 @@ func (s *PgStore) GetObjectBucketVersioning(ctx context.Context, account, app, b
 }
 func (s *PgStore) RequestObjectBucketVersioning(ctx context.Context, account, app, bucket, status string) (ObjectBucketVersioning, error) {
 	return s.mutateObjectVersioning(ctx, account, app, bucket, func(tx pgx.Tx, j ObjectBucketVersioning, now time.Time) (ObjectBucketVersioning, error) {
+		if status == "Suspended" {
+			lock, e := readObjectBucketObjectLock(ctx, tx, bucket)
+			if e != nil && !errors.Is(e, ErrNotFound) {
+				return j, e
+			}
+			if lock.EnabledRequired || objectLockActive(lock) {
+				return j, ErrConflict
+			}
+		}
 		ready, err := sqlc.New().ObjectCapacityReadiness(ctx, tx, mustPgUUID(bucket))
 		if err != nil {
 			return j, err
@@ -159,7 +168,11 @@ func (s *PgStore) ClaimObjectBucketVersioning(ctx context.Context, bucket, token
 			if err != nil {
 				return j, err
 			}
-			if c.State == "completed" && c.InventoryVerified { /* verify provider after inventory */
+			if c.State == "completed" && c.InventoryVerified {
+				if j.PropagationUntil != nil && c.CreatedAt.Before(*j.PropagationUntil) {
+					j.CapacityJobID = ""
+					j.State = "propagating"
+				} // Require a scan created after the current propagation interval.
 			} else if objectCapacityActive(c.State) {
 				return j, ErrConflict
 			} else {

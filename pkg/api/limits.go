@@ -7849,11 +7849,17 @@ const (
 // Object Lock policies and their native XML are bounded independently of
 // object payloads. Duration bounds match S3 event hold periods.
 const (
-	MaxObjectLockRetentionDays  int32 = 36500
-	MaxObjectLockRetentionYears int32 = 100
-	MaxObjectLockBodyBytes      int64 = 16 << 10
-	MaxObjectLockXMLDepth             = 8
-	MaxObjectLockXMLElements          = 64
+	MaxObjectLockRetentionDays        int32 = 36500
+	MaxObjectLockRetentionYears       int32 = 100
+	MaxObjectLockBodyBytes            int64 = 16 << 10
+	MaxObjectLockXMLDepth                   = 8
+	MaxObjectLockXMLElements                = 64
+	MaxObjectLockLeaseTokenBytes            = 128
+	ObjectBucketObjectLockLease             = 2 * time.Minute
+	ObjectBucketObjectLockRetry             = 30 * time.Second
+	ObjectBucketObjectLockTimeout           = time.Minute
+	ObjectBucketObjectLockBatch       int32 = 50
+	MaxObjectBucketObjectLockRevision int64 = 1<<53 - 1
 )
 
 // Deletion fences survive lease expiry; only pre-dispatch cancellation,

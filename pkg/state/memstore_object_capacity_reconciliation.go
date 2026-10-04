@@ -12,6 +12,9 @@ import (
 var _ ObjectCapacityStore = (*MemStore)(nil)
 
 func (m *MemStore) objectCapacityFencedLocked(bucket string) bool {
+	if objectLockActive(m.objectBucketObjectLock[bucket]) {
+		return true
+	}
 	if m.activeDeletionLocked(bucket) {
 		return true
 	}
