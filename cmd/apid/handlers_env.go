@@ -9,7 +9,7 @@
 //
 // All three routes accept an optional `?scope=` query param
 // (ADR-090 D2 / PR-B). The scope is a domain-valid slug
-// (3..40 lowercase alnum + dash, see api.EnvScopePattern) or
+// (1..40 lowercase alnum + dash, see api.EnvScopePattern) or
 // the reserved sentinel `__all__` on GET only. Omitted `?scope=`
 // means `scope=default` — the wire shape is byte-identical to
 // pre-PR-B. See api.ValidateScope for the rejection rules.
@@ -120,7 +120,7 @@ func deploymentScopeFromQuery(r *http.Request) (string, *api.Problem) {
 		return "", nil
 	}
 	if len(raw) > api.MaxEnvScopeLen || !envScopeReForDeployment.MatchString(raw) {
-		return "", api.ErrEnvScopeInvalid("deployment_scope must be 3..40 chars, lowercase alnum + dash")
+		return "", api.ErrEnvScopeInvalid("deployment_scope must be 1..40 chars, lowercase alnum + dash")
 	}
 	return raw, nil
 }

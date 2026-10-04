@@ -910,7 +910,7 @@ const (
 	CodeEnvVarNotFound      = "env_var_not_found"
 
 	// Customer env-var scopes (ADR-090). The scope query param on
-	// /v1/apps/{slug}/envs?scope= accepts a domain-valid slug (3..40
+	// /v1/apps/{slug}/envs?scope= accepts a domain-valid slug (1..40
 	// lowercase alnum + dash) OR the reserved sentinel "__all__" on
 	// the read path. Two distinct codes so a CLI author can tell
 	// "you used the all-scopes sentinel on a write" (400

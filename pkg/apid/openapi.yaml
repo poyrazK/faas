@@ -9055,7 +9055,7 @@ paths:
                   description: "Optional repository-relative directory to build from when source contains a workspace context. Empty or omitted means the archive root."
                 scope:
                   type: string
-                  pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+                  pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
                   description: "Named environment scope read by the developer deployment; omitted uses default."
                 source_url:
                   type: string
@@ -9194,7 +9194,7 @@ paths:
                   pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
                 scope:
                   type: string
-                  pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+                  pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
                   description: "Named environment scope read by the deployment; omitted uses default."
                 workflows:
                   type: string
@@ -10549,7 +10549,7 @@ paths:
         - name: scope
           in: query
           required: false
-          schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$' }
+          schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
           description: Deployment scope to compare; defaults to `prod`.
       responses:
         '200':
@@ -13082,11 +13082,11 @@ paths:
         required: false
         schema:
           type: string
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
         description: |
           ADR-098 amendment (issue #954). Optional server-side filter
           that narrows the list to one deployment. Omitted = return
-          all deployments for the app. Same shape as `scope` (3..40
+          all deployments for the app. Same shape as `scope` (1..40
           chars, lowercase alnum + dash); empty string is treated as
           "no filter".
     get:
@@ -13197,7 +13197,7 @@ paths:
         required: false
         schema:
           type: string
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
         description: "Optional deployment scope filter from the ADR-098 issue #954 overlay."
     get:
       tags: [upstreams]
@@ -25644,7 +25644,7 @@ components:
 
     # ADR-090 PR-B: optional `?scope=` query param on the three
     # env routes (/v1/apps/{slug}/envs and .../{key}). The scope
-    # is a domain-valid slug (3..40 lowercase alnum + dash) or the
+    # is a domain-valid slug (1..40 lowercase alnum + dash) or the
     # reserved sentinel `__all__` on GET only. Omitted means
     # scope=default — the wire shape is byte-identical to
     # pre-PR-B. See EnvScopeInvalid / EnvScopeReserved in
@@ -25655,10 +25655,10 @@ components:
       required: false
       schema:
         type: string
-        pattern: '^([a-z0-9]([a-z0-9-]{1,38})[a-z0-9]|__all__)$'
+        pattern: '^([a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?|__all__)$'
         maxLength: 40
       description: |
-        Env-var scope (ADR-090). A domain-valid slug (3..40 chars,
+        Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
         lowercase alnum + dash, no leading/trailing dash) — e.g.
         `default`, `staging`, `prod-eu`. Or the reserved sentinel
         `__all__` on GET only, which returns the nested
@@ -28594,7 +28594,7 @@ components:
         id: { type: string, minLength: 1, maxLength: 128 }
         database_id: { type: string, minLength: 1, maxLength: 128 }
         app_id: { type: string, minLength: 1, maxLength: 128 }
-        scope: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
         access: { type: string, enum: [read_write, read_only, migration] }
         credential_generation: { type: integer, format: int64, minimum: 1 }
@@ -28616,7 +28616,7 @@ components:
       required: [app_id, scope, environment_key, access]
       properties:
         app_id: { type: string, minLength: 1, maxLength: 128 }
-        scope: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
         access: { type: string, enum: [read_write, read_only, migration], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved. }
 
@@ -28629,7 +28629,7 @@ components:
         source_database_id: { type: string, format: uuid }
         target_database_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
-        scope: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
     ManagedPostgresCutover:
       description: Staged cutover metadata. Verified means control-plane SQL evidence; workloads still use the source. Provider identities and sealed credentials are never returned.
       type: object
@@ -28639,7 +28639,7 @@ components:
         source_database_id: { type: string, format: uuid }
         target_database_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
-        scope: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         state: { type: string, enum: [preparing, prepared, verifying, verified, cancelling, cancelled] }
         verification_fresh: { type: boolean, description: All staged members have SQL evidence no older than verification_max_age_seconds. }
         verification_max_age_seconds: { type: integer, format: int64, minimum: 1 }
@@ -29257,7 +29257,7 @@ components:
           maxProperties: 32
           additionalProperties:
             type: string
-            pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+            pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
           description: GitHub branch names mapped to deployment environment scopes. An empty object clears existing rules.
 
     InstallBindResponse:
@@ -30278,7 +30278,7 @@ components:
         # regardless of scope), so the field is always populated.
         scope:
           type: string
-          pattern: '^([a-z0-9]([a-z0-9-]{1,38})[a-z0-9]|__all__)$'
+          pattern: '^([a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?|__all__)$'
           maxLength: 40
           x-since: "2026-08"
           x-issue: "adr-092"
@@ -34118,7 +34118,7 @@ components:
         handler: { type: string }
         dockerfile: { type: boolean }
         source_root: { type: string }
-        scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', description: "Named environment scope applied when the upload is committed; omitted uses default." }
+        scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$', description: "Named environment scope applied when the upload is committed; omitted uses default." }
         source_url:
           { type: string, maxLength: 1024, description: "Informational repository provenance URL; never fetched by apid." }
         commit_sha:
@@ -34332,8 +34332,8 @@ components:
         # deployment_scope_collision.
         scope:
           type: [string, "null"]
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
-          description: "Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no leading/trailing dash. nil/omitted = `default`."
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: "Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash. nil/omitted = `default`."
           example: "staging"
         secret_scan:
           oneOf:
@@ -35534,7 +35534,7 @@ components:
       additionalProperties: false
       required: [type, data]
       properties:
-        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Registered project environment. Requires an enabled environment-owned queue binding; omitted uses the default environment and legacy shared queues." }
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Registered project environment. Requires an enabled environment-owned queue binding; omitted uses the default environment and legacy shared queues." }
         id: { type: string, minLength: 1, maxLength: 256, description: Generated when omitted. }
         source: { type: string, minLength: 1, maxLength: 256, default: gregale.send }
         type: { type: string, minLength: 1, maxLength: 256 }
@@ -35555,7 +35555,7 @@ components:
       additionalProperties: false
       required: [id, event_id, target_app, status, status_url]
       properties:
-        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Deployment scope captured when the message was accepted." }
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Deployment scope captured when the message was accepted." }
         queue_binding_id: { type: string, description: "Immutable captured queue binding identity; omitted for legacy unbound work." }
         id: { type: string, description: Durable invocation identifier. }
         event_id: { type: string }
@@ -35963,8 +35963,8 @@ components:
         # same (app_id, scope) → 409 deployment_scope_collision.
         scope:
           type: [string, "null"]
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
-          description: "Top-level per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no leading/trailing dash. nil/omitted = `default`."
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: "Top-level per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash. nil/omitted = `default`."
           example: "prod"
         environment:
           type: string
@@ -36104,8 +36104,8 @@ components:
         # if both are absent.
         scope:
           type: [string, "null"]
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
-          description: "Override-object per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no leading/trailing dash. nil/omitted = inherit top-level scope or `default`."
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: "Override-object per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash. nil/omitted = inherit top-level scope or `default`."
           example: "staging"
 
     # ─── Canary ladder (issue #976 / ADR-122 / SAFE-RELEASES-A) ───────────
@@ -39131,7 +39131,7 @@ components:
         # before they commit.
         scope:
           type: [string, "null"]
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
           description: "Pending per-deployment env scope (ADR-091 / SAFE-RELEASES production-leveling Stream E). Compared against Baseline.LatestScope; mismatch emits a scope_mismatch break. Empty = default."
           example: "prod"
         build_plan:
@@ -42101,7 +42101,7 @@ components:
         # AppEnvResponse.Scope.
         scope:
           type: string
-          pattern: '^([a-z0-9]([a-z0-9-]{1,38})[a-z0-9]|__all__)$'
+          pattern: '^([a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?|__all__)$'
           maxLength: 40
           example: "prod"
         secret_class: { type: string, enum: [persistent, ephemeral], description: "Storage policy for this row: ephemeral values prevent future VM snapshots in the row's scope." }
@@ -42174,7 +42174,7 @@ components:
       properties:
         scope:
           type: string
-          pattern: '^([a-z0-9]([a-z0-9-]{1,38})[a-z0-9]|__all__)$'
+          pattern: '^([a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?|__all__)$'
           maxLength: 40
           example: "staging"
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "DATABASE_URL" }
@@ -42346,7 +42346,7 @@ components:
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "LOG_LEVEL" }
         scope:
           type: string
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
           maxLength: 40
           description: "Env-var scope (ADR-090). Always 'default' for the pre-PR-B flat response; varies for the nested `env_by_scope` response."
           example: "default"
@@ -42367,7 +42367,7 @@ components:
       properties:
         scope:
           type: string
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
           maxLength: 40
           example: "staging"
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "DB_URL" }
@@ -42431,10 +42431,10 @@ components:
           maximum: 65535
         scope:
           type: string
-          description: "ADR-090 deployment-scope filter (3..40 chars, lowercase alnum + dash). Omitted = default scope."
+          description: "ADR-090 deployment-scope filter (1..40 chars, lowercase alnum + dash). Omitted = default scope."
         deployment_scope:
           type: string
-          description: "ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same app. Same shape as `scope` (3..40 chars, lowercase alnum + dash). Omitted = default scope, the migration's SQL DEFAULT stamp."
+          description: "ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same app. Same shape as `scope` (1..40 chars, lowercase alnum + dash). Omitted = default scope, the migration's SQL DEFAULT stamp."
 
     EgressCircuitBreakerPolicy:
       description: |
@@ -42549,7 +42549,7 @@ components:
           maximum: 65535
         scope:
           type: string
-          description: "ADR-090 deployment-scope filter (3..40 chars, lowercase alnum + dash). Echoes the value persisted on the row; absent when the default scope applies."
+          description: "ADR-090 deployment-scope filter (1..40 chars, lowercase alnum + dash). Echoes the value persisted on the row; absent when the default scope applies."
         deployment_scope:
           type: string
           description: "ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same app. Echoes the value persisted on the row; absent when the default scope applies."
@@ -43693,7 +43693,7 @@ components:
         # group rows without a second GET.
         scope:
           type: string
-          pattern: '^([a-z0-9]([a-z0-9-]{1,38})[a-z0-9]|__all__)$'
+          pattern: '^([a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?|__all__)$'
           maxLength: 40
           x-since: "2026-08"
           x-issue: "adr-092"
@@ -43799,7 +43799,7 @@ components:
           example: "demo"
         scopes:
           type: array
-          items: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$' }
+          items: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
           description: "Sorted ASC list of scopes present in the matrix. Consumers iterate this list for column ordering."
         rows:
           type: array
@@ -44764,7 +44764,7 @@ components:
       type: object
       required: [id]
       properties:
-        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Environment recorded for the newly accepted queue message." }
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Environment recorded for the newly accepted queue message." }
         queue_binding_id: { type: string, description: "Binding identity captured for this accepted message; absent for unbound legacy sends." }
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$', description: "Canonical platform trace id when the request carried a valid trace context." }
@@ -44774,7 +44774,7 @@ components:
       type: object
       required: [id, payload]
       properties:
-        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Original environment of the completed invocation in this queue feed." }
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Original environment of the completed invocation in this queue feed." }
         queue_binding_id: { type: string, description: "Retained binding identity of the completed queue invocation; absent for legacy work." }
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         payload: { type: object, additionalProperties: true }
@@ -45772,7 +45772,7 @@ components:
       description: "Body for POST /v1/apps/{slug}/queues/send. Cap-checked against MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key ordering."
       type: object
       properties:
-        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Target registered environment with an enabled scoped queue binding. Omission sends through the default environment and legacy shared queues." }
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Target registered environment with an enabled scoped queue binding. Omission sends through the default environment and legacy shared queues." }
         payload: { type: object, additionalProperties: true }
         flag_context: { type: string, maxLength: 12288, description: "Optional bounded Gregale Flags context produced by the Node SDK from decisions marked used. The platform validates the envelope, binds it to its active customer, and restores it on the queued request." }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Optional logical queue name. Required when an app has multiple enabled queue consumers." }
@@ -45816,7 +45816,7 @@ components:
       type: object
       required: [name, queue_name]
       properties:
-        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Immutable registered project environment. The binding captures its catalog UUID; omitted creates a shared legacy binding." }
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Immutable registered project environment. The binding captures its catalog UUID; omitted creates a shared legacy binding." }
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         mode: { type: string, enum: [pull, push], default: pull }
@@ -45846,7 +45846,7 @@ components:
       type: object
       required: [id, app_id, account_id, name, queue_name, mode, workload_class, enabled, max_concurrency, created_at, updated_at]
       properties:
-        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Immutable project environment slug; omitted for a shared legacy binding." }
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Immutable project environment slug; omitted for a shared legacy binding." }
         environment_id: { type: string, format: uuid, description: "Original catalog environment identity; omitted for a shared legacy binding." }
         id: { type: string, pattern: '^[0-9a-f]{32}$' }
         app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
@@ -45868,7 +45868,7 @@ components:
       required: [binding_id, name, queue_name, mode, workload_class, enabled,
                  consumer_state, consumer_liveness, depth, in_flight, dead_letter, generated_at]
       properties:
-        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Captured environment slug of the observed consumer; absent for legacy shared consumers." }
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Captured environment slug of the observed consumer; absent for legacy shared consumers." }
         environment_id: { type: string, format: uuid, description: "Original environment catalog UUID of this consumer status; absent for a shared legacy consumer." }
         binding_id: { type: string }
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }

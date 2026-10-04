@@ -59,6 +59,10 @@ func seedMode(t *testing.T, store gitOpsTestStore, mode string) (state.Environme
 }
 
 func seedModePolicy(t *testing.T, store gitOpsTestStore, mode, policy string) (state.EnvironmentGitSource, environmentsync.DesiredState) {
+	return seedModePolicyScope(t, store, mode, policy, "production")
+}
+
+func seedModePolicyScope(t *testing.T, store gitOpsTestStore, mode, policy, scope string) (state.EnvironmentGitSource, environmentsync.DesiredState) {
 	t.Helper()
 	ctx := context.Background()
 	account, err := store.CreateAccount(ctx, "gitops@example.test", api.PlanPro)
@@ -69,11 +73,16 @@ func seedModePolicy(t *testing.T, store gitOpsTestStore, mode, policy string) (s
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := store.CreateEnvironmentGitSource(ctx, account.ID, project.ID, "production", state.EnvironmentGitSourceSpec{RepositoryID: 123, InstallationID: 42, Repository: "example/shop", Ref: "refs/heads/main", ManifestPath: "environments/production.yaml", Mode: mode, ApprovalPolicy: policy})
+	if scope != "production" {
+		if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: scope}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source, err := store.CreateEnvironmentGitSource(ctx, account.ID, project.ID, scope, state.EnvironmentGitSourceSpec{RepositoryID: 123, InstallationID: 42, Repository: "example/shop", Ref: "refs/heads/main", ManifestPath: "environments/" + scope + ".yaml", Mode: mode, ApprovalPolicy: policy})
 	if err != nil {
 		t.Fatal(err)
 	}
-	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: "shop", Environment: "production", Workloads: map[string]api.EnvironmentWorkload{"api": {App: "shop-api", Variables: map[string]string{"MODE": "production"}}}})
+	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: "shop", Environment: scope, Workloads: map[string]api.EnvironmentWorkload{"api": {App: "shop-api", Variables: map[string]string{"MODE": scope}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

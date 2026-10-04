@@ -1,18 +1,19 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateProjectEnvironmentFlag(t *testing.T) {
-	if err := validateProjectEnvironmentFlag("staging"); err != nil {
-		t.Fatalf("staging rejected: %v", err)
+	for _, environment := range []string{"", "staging", "qa", "a", "1", "ab", "12", "1a", "a-1", strings.Repeat("a", 33)} {
+		if err := validateProjectEnvironmentFlag(environment); err != nil {
+			t.Errorf("accepted catalog environment %q rejected: %v", environment, err)
+		}
 	}
-	if err := validateProjectEnvironmentFlag(""); err != nil {
-		t.Fatalf("empty environment rejected: %v", err)
-	}
-	if err := validateProjectEnvironmentFlag("qa"); err == nil {
-		t.Fatal("short environment accepted; want deployment-scope validation")
-	}
-	if err := validateProjectEnvironmentFlag("Bad_Env"); err == nil {
-		t.Fatal("invalid environment accepted")
+	for _, environment := range []string{"default", "__all__", "Bad_Env", "-a", "a-", strings.Repeat("a", 34)} {
+		if err := validateProjectEnvironmentFlag(environment); err == nil {
+			t.Errorf("invalid or reserved catalog environment %q accepted", environment)
+		}
 	}
 }

@@ -6317,7 +6317,7 @@ type AppSecret struct {
 	// Scope is the env-scope identifier attached at write time.
 	// Always 'default' for legacy rows backfilled via the
 	// column DEFAULT. Validated by `pkg/api.ValidateScope`
-	// (regex ^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$) on every PUT /
+	// (regex api.EnvScopePattern) on every PUT /
 	// POST / DELETE that flows through apid's `?scope=` parse
 	// helper — the same shape as `app_envs.scope` (00203).
 	// Sealing (the secretbox step) is scope-agnostic; scope is
@@ -6632,8 +6632,8 @@ type AccountAppSecret struct {
 // CountAppEnv) which hardcode scope='default' at the SQL boundary.
 // Scope-aware writers (UpsertAppEnvInScope and its siblings) set
 // this field from the caller-supplied scope. The shape must match
-// the validSlug regex from cmd/apid/handlers.go:600 — lowercase
-// alnum + dash, 3..40 chars — and the app_envs_scope_shape CHECK
+// api.EnvScopePattern — lowercase
+// alnum + dash, 1..40 chars — and the app_envs_scope_shape CHECK
 // enforces this server-side.
 type AppEnv struct {
 	AccountID string

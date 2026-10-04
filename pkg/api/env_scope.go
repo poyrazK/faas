@@ -4,28 +4,16 @@ import (
 	"regexp"
 )
 
-// EnvScopePattern is the regex enforced by the app_envs.scope CHECK
-// constraint added in migration 00203 (ADR-090 PR-A) and mirrored
-// verbatim by ValidateScope below. Mirrors the server-side validSlug
-// regex at cmd/apid/handlers.go:600 — lowercase alnum + dash, 3..40
-// chars, no leading/trailing dash. A scope is NOT a free-form string:
-// it's a domain-valid slug that the operator can reference from
-// `gregale env set --scope staging KEY=val` (PR-B) and from the
-// `?scope=` query param on /v1/apps/{slug}/envs (PR-B).
-//
-// The shape is intentionally the same as apps.slug so scope-based env
-// overrides can be addressed by the same identifier the operator
-// already uses for app slugs. Keeping the regex here as a named const
-// (rather than a regexp.MustCompile at the call site) means a future
-// relaxation — e.g. widening to underscores — only touches one file
-// and the DB CHECK migration. See EnvScopeAllSentinel for the one
-// string the regex must continue to reject on the write path.
-const EnvScopePattern = `^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`
+// EnvScopePattern accepts every catalog environment slug and preserves the
+// existing 40-character limit for legacy deployment scopes (ADR-521). Scope
+// names contain lowercase letters, digits and internal hyphens. The catalog
+// has its own 33-character limit and reserves DefaultEnvScope. Scope writes
+// continue to reject the read-only EnvScopeAllSentinel.
+const EnvScopePattern = `^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`
 
 // MaxEnvScopeLen bounds the scope name. Mirrors MaxSecretKeyLen /
 // MaxOrgSlugLen so the wire limits and DB CHECK share one source.
-// 40 chars is the upper bound the migration's CHECK allows
-// (`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$` = exactly 3..40 chars).
+// 40 chars is the upper bound of the paired database CHECK constraints.
 const MaxEnvScopeLen = 40
 
 // EnvScopeAllSentinel is the magic string a client passes in
@@ -47,10 +35,7 @@ const EnvScopeAllSentinel = "__all__"
 // handler seam (see scopeFromQuery); the schedd loadAPIEnv thread
 // does the same defensive collapse so a caller that forgets to
 // pass scope doesn't accidentally read a scope='other' row's
-// env. The literal is `^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`-
-// compatible (3 chars: d, e, f ... `default` is 7) so the
-// schema's CHECK accepts it and ValidateScope accepts it without
-// a special case.
+// env. The schema and ValidateScope accept it without a special case.
 const DefaultEnvScope = "default"
 
 // envScopeRe is the compiled form of EnvScopePattern. Compiled once

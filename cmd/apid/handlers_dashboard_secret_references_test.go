@@ -33,23 +33,41 @@ func secretReferenceDashboardPost(t *testing.T, h http.Handler, session *http.Co
 	return rec
 }
 
-func TestSecretReferenceDashboardShortCatalogNameDoesNotHideSupportedEditor(t *testing.T) {
+func TestSecretReferenceDashboardShortCatalogNamesAreWritable(t *testing.T) {
 	h, session, store, _ := newAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, _ := seedPublicSecretReferences(t, store, acct)
-	if _, err := store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "qa"}); err != nil {
-		t.Fatal(err)
+	project, app := seedPublicSecretReferences(t, store, acct)
+	for _, scope := range []string{"qa", "1"} {
+		if _, err := store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: scope}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpsertAppSecretInScope(t.Context(), acct.ID, app.ID, scope, "DATABASE", []byte("sealed-"+scope)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	page := cookieDo(t, h, session, http.MethodGet, "/dashboard/apps/shop-api/env?scope=__all__", nil)
 	if page.Code != 200 {
 		t.Fatalf("page: %d", page.Code)
 	}
 	body := page.Body.String()
-	if !strings.Contains(body, "Save reference") || !strings.Contains(body, "Unavailable environments: <code>qa</code>") || strings.Contains(body, `option value="qa"`) {
-		t.Fatal("unsupported scope either broke the editor or appeared as a writable option")
+	if !strings.Contains(body, "Save reference") || strings.Contains(body, "Unavailable environments:") {
+		t.Fatal("accepted catalog scopes appeared unavailable")
+	}
+	for _, scope := range []string{"qa", "1"} {
+		if !strings.Contains(body, `option value="`+scope+`"`) {
+			t.Fatalf("catalog scope %s is missing from the editor", scope)
+		}
+		form := url.Values{"environment": {scope}, "key": {"DATABASE_URL"}, "reference": {"secret:DATABASE"}}
+		if rec := secretReferenceDashboardPost(t, h, session, page, "/dashboard/apps/shop-api/secret-references", form, true); rec.Code != 302 {
+			t.Fatalf("save %s: %d %s", scope, rec.Code, rec.Body.String())
+		}
+		refs, err := store.AppEnvironmentSecretReferences(t.Context(), acct.ID, app.ID, scope)
+		if err != nil || refs["DATABASE_URL"] != "secret:DATABASE" {
+			t.Fatalf("saved catalog reference: %+v %v", refs, err)
+		}
 	}
 }
 

@@ -843,9 +843,9 @@ parity and the Go SDK coverage gate include the new contracts. SQLC regeneration
 matches the committed query output. The repository-wide OpenAPI lint still has
 14 pre-existing errors, also present before these paths were added.
 
-These controls currently accept environment names of 3–33 characters, matching
-the intersection of the catalog and sealed-secret scope contracts. Catalog names
-of one or two characters remain an integration gate; the dashboard identifies
+At this checkpoint, these controls accepted environment names of 3–33
+characters, matching the intersection of the catalog and sealed-secret scope contracts. Catalog names
+of one or two characters were an integration gate; the dashboard identified
 those unavailable names without hiding supported environments.
 
 Legacy reference adoption now observes every live deployment in the exact scope,
@@ -1903,3 +1903,38 @@ shard. Cross-package coverage instruments the real state adapters exercised by
 that suite; the exact pkg/state 70% floor is retained. Previously the external
 suite ran in the lightweight shard, where its PostgreSQL cases could skip and
 its adapter calls did not contribute to the state profile.
+
+## Catalog and runtime scope compatibility
+
+The runtime scope contract now accepts one to forty lowercase alphanumeric
+characters with internal hyphens, preserving the legacy upper bound. Every
+catalog name, including short and numeric names, fits this contract. The catalog
+retains its separate thirty-three-character bound and reserves `default`; the
+runtime keeps `default` as its omitted-scope value. `__all__` remains a read-only
+query sentinel and is rejected on writes and catalog registration.
+
+An append-only migration updates scope constraints for variables, sealed secrets,
+deployments, invocations, upstreams, OpenAPI snapshots, GitHub branch mappings,
+app tasks, secret revocations and managed object-storage credentials. Catalog-owned
+queue bindings, private consumers, reference intent and suppression use the
+catalog grammar and retain their original identity and membership guards.
+The migration changes constraints only. It preserves values and accepted work;
+a downgrade that cannot represent existing short/numeric scope data fails
+atomically instead of rewriting or removing that data.
+
+The shared validator, public OpenAPI schemas, CLI reference commands and dashboard
+editor use the relaxed runtime grammar. This change does not grant graph
+activation, native qualification or serving authority. Shared memory/PostgreSQL
+checks cover short, numeric and maximum-length catalog names through reviewed
+adoption, owned-variable enforcement, scoped references and suppression, queue
+reconciliation, accepted work/receipt retention, deployment identity, and runtime
+input/snapshot receipt storage. A populated migration upgrade and replay retain
+legacy forty-character scopes and accepted numeric-scope work; the actual Down
+SQL rejects incompatible data inside a transaction and preserves the current
+constraints and intent. Routed variable/all-scopes and authenticated dashboard
+checks pass; CLI and Node/Python reference transports preserve the exact name.
+Pinned Node/Python regeneration is deterministic, OpenAPI source/embed parity and
+AST checks pass, and SQLC regeneration matches. These receipts are portable store
+fixtures, not native guest or snapshot lifecycle acceptance. Scoped Linux lint
+passes with zero issues; current-head repository CI remains to be completed
+for this increment.
