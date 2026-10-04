@@ -296,10 +296,9 @@ func TestRouteHealthAutomaticRecoveryMigrationReplayAndDefault(t *testing.T) {
 func TestRouteHealthAutomaticRecoveryRollsBackEveryWrite(t *testing.T) {
 	for _, fault := range []string{"history", "traffic", "audit", "outbox", "lease"} {
 		t.Run(fault, func(t *testing.T) {
-			pool, s, a, app, d, seed := healthAbortPG(t)
+			pool, s, a, app, d, _ := healthAbortPG(t)
 			healthNotificationHook(t, s, a.ID, app.ID, "atomic", []string{"routes.health.aborted"}, true)
-			seed(100, 100)
-			healthAbortErrors(t, pool, a, app, d)
+			healthAbortRecoveryEvidence(t, pool, a, app, d)
 			table, operation, body := "route_health_history", "INSERT", "RAISE EXCEPTION 'forced recovery failure';"
 			switch fault {
 			case "traffic":
@@ -378,6 +377,37 @@ func TestRouteHealthAutomaticRecoveryRollsBackEveryWrite(t *testing.T) {
 				t.Fatal("committed recovery did not notify gateway", notification, err)
 			}
 		})
+	}
+}
+
+// The lease fault deliberately waits past expiry. Seed one coherent set of
+// observations, including the next closed minute, so crossing the ingestion
+// boundary cannot turn the restart retry into an unrelated unknown-evidence
+// decision. These samples are historical even before that minute is eligible.
+func healthAbortRecoveryEvidence(t *testing.T, pool *pgxpool.Pool, a state.Account, app state.App, candidate state.Deployment) {
+	t.Helper()
+	var stableID string
+	if err := pool.QueryRow(t.Context(), "SELECT id::text FROM deployments WHERE app_id=$1 AND id<>$2 AND status='live'", app.ID, candidate.ID).Scan(&stableID); err != nil {
+		t.Fatal(err)
+	}
+	windows := routehealth.Windows(time.Now().UTC())
+	end := windows[len(windows)-1].End
+	windows = append(windows, api.RouteHealthWindowEvidence{Start: end, End: end.Add(api.RouteHealthWindow)})
+	for _, window := range windows {
+		for _, sample := range []struct {
+			deploymentID string
+			status       int32
+			count        int32
+		}{{stableID, 200, 100}, {candidate.ID, 200, 100}, {candidate.ID, 500, 10}} {
+			if err := sqlc.New().InsertRequestTelemetry(t.Context(), pool, sqlc.InsertRequestTelemetryParams{
+				AccountID: pgtype.UUID{Bytes: uuid.MustParse(a.ID), Valid: true}, AppID: pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true},
+				DeploymentID: pgtype.UUID{Bytes: uuid.MustParse(sample.deploymentID), Valid: true}, Route: "POST /checkout", Method: "POST",
+				Status: sample.status, Count: sample.count, LatencyMs: 100, ReceivedAt: state.NewPgtypeTime(window.Start.Add(time.Second)),
+				UaFamily: "__unknown__", ReferrerHost: "__none__", Country: "__unknown__", GuestRuntime: "__unknown__", GuestOutcome: "missing", FlagEvidenceJson: "[]",
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 }
 
