@@ -109,8 +109,9 @@ func cloneVerificationWorkerFixture(t *testing.T) *verificationWorkerFixture {
 	f := cloneImportWorkerFixture(t)
 	x := f.db.x
 	v := &verificationWorkerFixture{f: f, store: &verificationWorkerFailureStore{importWorkerFailureStore: f.store},
-		cfg: copycontents.Config{SpoolDir: t.TempDir(), MaxBytes: 16 << 20, SortMemoryBytes: 64, SortDiskBytes: 1 << 20}}
+		cfg: cloneContentsReadConfig(t)}
 	x.f.srv.store = v.store
+	x.f.srv.clonePostgresContentsReadPool = v.cfg.ReadPool
 	if _, err := x.f.srv.projectEnvironmentClonePostgresContentsFromReader(t.Context(), x.f.lease, x.source, f.db.exports, f.sourceOID,
 		api.PostgresCopyCiphertextMaxBytes, contentsWorkerLimits(), v.cfg); err != nil {
 		t.Fatal(err)
@@ -212,7 +213,7 @@ func (v *verificationWorkerFixture) assertClosed(t *testing.T, hasWindow bool) {
 		}
 	}
 	entries, err := os.ReadDir(v.cfg.SpoolDir)
-	if err != nil || len(entries) != 0 {
+	if err != nil || len(entries) != 1 || entries[0].Name() != ".gregale-contents-read-pool" {
 		t.Fatal("verification digest spool leaked", err)
 	}
 }

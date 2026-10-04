@@ -106,6 +106,12 @@ func (s *server) projectEnvironmentClonePostgresVerification(ctx context.Context
 			return zero, err
 		}
 	}
+	var releaseRead func()
+	defer func() {
+		if releaseRead != nil {
+			releaseRead()
+		}
+	}()
 	authorize := func(ctx context.Context, target copyarchive.RestoreTarget) error {
 		fresh, err := verifications.ProjectEnvironmentClonePostgresVerificationForLease(ctx, l, id, oid)
 		if err != nil {
@@ -117,6 +123,9 @@ func (s *server) projectEnvironmentClonePostgresVerification(ctx context.Context
 		}
 		if err == nil {
 			err = authorizeClonePostgresVerificationReadBudget(ctx, budgets, l, owner, budget)
+		}
+		if err == nil && releaseRead != nil {
+			err = s.authorizeProjectEnvironmentClonePostgresRead(ctx, cfg)
 		}
 		return err
 	}
@@ -151,7 +160,7 @@ func (s *server) projectEnvironmentClonePostgresVerification(ctx context.Context
 							return err
 						}
 						var err error
-						cfg, err = allocateClonePostgresVerificationRead(ctx, budgets, l, owner, owner.VerificationID, 1, &budget, cfg)
+						cfg, releaseRead, err = s.admitClonePostgresVerificationRead(ctx, budgets, l, owner, owner.VerificationID, 1, &budget, cfg)
 						return err
 					},
 					func(ctx context.Context, access copydatabases.VerificationTarget) error {

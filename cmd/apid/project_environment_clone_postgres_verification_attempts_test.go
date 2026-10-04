@@ -191,47 +191,62 @@ func TestPGClonePostgresVerificationAttemptsRealRetryMatchAndExactClosure(t *tes
 	}
 	var closure copydatabases.VerificationClosure
 	var completed state.ProjectEnvironmentClonePostgresVerificationCompletion
+	readConfig := v.cfg
+	var releaseRead func()
+	defer func() {
+		if releaseRead != nil {
+			releaseRead()
+		}
+	}()
 	if err = verificationAttemptBootstrap(t, v, func(ctx context.Context, conn *pgx.Conn, p clonePostgresDatabasePreparation) error {
 		var err error
-		closure, err = p.receipt.WithVerificationRetryAccess(ctx, conn, f.db.exports, imported, owner, previous, authorize, func(ctx context.Context, access copydatabases.VerificationTarget) error {
-			actual, e := access.TargetForWorker()
-			identity, ie := access.IdentityForWorker()
-			if e != nil || ie != nil || actual != f.target || identity.Attempt != a.Attempt || identity.OwnerID != owner || identity.ImportID != imported {
-				return managedpostgres.ErrConflict
-			}
-			request, e := s.projectEnvironmentClonePostgresTargetDatabaseSQLRequest(ctx, x.f.lease, x.source, f.target.Scope, f.target)
-			if e != nil {
-				return e
-			}
-			var matched copycontents.Match
-			e = s.managedPostgres.WithSnapshotCopyTargetDatabaseSQL(ctx, clonePostgresSnapshotDefinition(x.source), request, func(ctx context.Context, child *pgx.Conn, _ managedpostgres.SnapshotCopyTargetSQLIdentity) error {
-				placement := func(ctx context.Context, got *pgx.Conn, target copyarchive.RestoreTarget) error {
-					if got != child || target != f.target {
-						return managedpostgres.ErrConflict
-					}
-					return authorize(ctx, p.bootstrap)
+		closure, err = p.receipt.WithVerificationRetryAccessAdmitted(ctx, conn, f.db.exports, imported, owner, previous, authorize,
+			func(ctx context.Context, target copyarchive.RestoreTarget) error {
+				if err := authorize(ctx, target); err != nil {
+					return err
 				}
-				return access.WithReadOnly(ctx, child, placement, func(ctx context.Context, tx pgx.Tx) error {
-					var e error
-					matched, e = manifest.CompareTarget(ctx, tx, f.target, v.cfg, placement)
+				var err error
+				readConfig, releaseRead, err = s.reserveProjectEnvironmentClonePostgresRead(ctx, readConfig)
+				return err
+			}, func(ctx context.Context, access copydatabases.VerificationTarget) error {
+				actual, e := access.TargetForWorker()
+				identity, ie := access.IdentityForWorker()
+				if e != nil || ie != nil || actual != f.target || identity.Attempt != a.Attempt || identity.OwnerID != owner || identity.ImportID != imported {
+					return managedpostgres.ErrConflict
+				}
+				request, e := s.projectEnvironmentClonePostgresTargetDatabaseSQLRequest(ctx, x.f.lease, x.source, f.target.Scope, f.target)
+				if e != nil {
 					return e
+				}
+				var matched copycontents.Match
+				e = s.managedPostgres.WithSnapshotCopyTargetDatabaseSQL(ctx, clonePostgresSnapshotDefinition(x.source), request, func(ctx context.Context, child *pgx.Conn, _ managedpostgres.SnapshotCopyTargetSQLIdentity) error {
+					placement := func(ctx context.Context, got *pgx.Conn, target copyarchive.RestoreTarget) error {
+						if got != child || target != f.target {
+							return managedpostgres.ErrConflict
+						}
+						return authorize(ctx, p.bootstrap)
+					}
+					return access.WithReadOnly(ctx, child, placement, func(ctx context.Context, tx pgx.Tx) error {
+						var e error
+						matched, e = manifest.CompareTarget(ctx, tx, f.target, readConfig, placement)
+						return e
+					})
 				})
+				if e != nil {
+					return e
+				}
+				sealed, e := copycontents.SealMatch(setSecretRecipient(), manifest, f.target, owner, imported, identity.OpenedAt, matched)
+				if e != nil {
+					return e
+				}
+				a, e = v.store.RecordProjectEnvironmentClonePostgresVerificationAttemptMatch(ctx, x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, sealed)
+				if e != nil {
+					return e
+				}
+				retained, e := copycontents.OpenMatch(mfaIdentities(), manifest, f.target, owner, imported, a.Sealed)
+				completed = state.ProjectEnvironmentClonePostgresVerificationCompletion{Manifest: manifest, Match: retained, Target: f.target, Preparation: p.receipt}
+				return e
 			})
-			if e != nil {
-				return e
-			}
-			sealed, e := copycontents.SealMatch(setSecretRecipient(), manifest, f.target, owner, imported, identity.OpenedAt, matched)
-			if e != nil {
-				return e
-			}
-			a, e = v.store.RecordProjectEnvironmentClonePostgresVerificationAttemptMatch(ctx, x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, sealed)
-			if e != nil {
-				return e
-			}
-			retained, e := copycontents.OpenMatch(mfaIdentities(), manifest, f.target, owner, imported, a.Sealed)
-			completed = state.ProjectEnvironmentClonePostgresVerificationCompletion{Manifest: manifest, Match: retained, Target: f.target, Preparation: p.receipt}
-			return e
-		})
 		return err
 	}); err != nil {
 		t.Fatal("actual retry comparison and provider postchecks", err)

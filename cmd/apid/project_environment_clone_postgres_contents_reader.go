@@ -41,9 +41,17 @@ func (s *server) captureProjectEnvironmentClonePostgresContentsFromReader(ctx co
 	if err != nil {
 		return copycontents.Manifest{}, err
 	}
+	cfg, release, err := s.reserveProjectEnvironmentClonePostgresRead(ctx, cfg)
+	if err != nil {
+		return copycontents.Manifest{}, err
+	}
+	defer release()
 	// Provider IO may take long enough for a handoff or input retirement. Check
 	// the exact durable request both before and after every placement lookup.
 	check := func(ctx context.Context) error {
+		if err := s.authorizeProjectEnvironmentClonePostgresRead(ctx, cfg); err != nil {
+			return err
+		}
 		before, err := s.projectEnvironmentClonePostgresContentsReaderRequest(ctx, l, source, d, owner)
 		if err != nil {
 			return err

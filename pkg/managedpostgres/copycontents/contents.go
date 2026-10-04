@@ -25,6 +25,8 @@ import (
 )
 
 type Config struct {
+	ReadPool        *ReadPool
+	readLease       *readLease
 	Key             [32]byte `json:"-"`
 	SpoolDir        string
 	MaxBytes        int64
@@ -233,6 +235,15 @@ func (m Manifest) CompareTarget(ctx context.Context, tx pgx.Tx, target copyarchi
 }
 func readContents(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, cfg Config, check func() error) (contents, error) {
 	result := contents{Types: []typeShape{}, Relations: []relationContents{}, LargeObjects: []objectContents{}}
+	if cfg.ReadPool != nil || cfg.readLease != nil {
+		if e := cfg.CheckReadAdmissionForWorker(ctx); e != nil {
+			return result, e
+		}
+		if e := cfg.readLease.begin(ctx); e != nil {
+			return result, e
+		}
+		defer cfg.readLease.end()
+	}
 	if e := q.ConfigureCopyContentsOutput(ctx, tx); e != nil {
 		return result, classify(ctx, e)
 	}
@@ -254,6 +265,7 @@ func readContents(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, cfg Config, c
 		if e != nil {
 			return result, e
 		}
+		sorter.admission = cfg.readLease
 		writer := newRowWriter(sorter, len(r.Shape.Columns), cfg.MaxBytes-bytesRead, cfg.Key, domain)
 		if r.Shape.Kind != "m" || r.Shape.Populated {
 			command, e := q.FormatCopyContentsRelation(ctx, tx, sqlc.FormatCopyContentsRelationParams{Column1: pgtype.Uint32{Uint32: r.OID, Valid: true}, Column2: r.Shape.Name.Schema, Column3: r.Shape.Name.Name, Column4: r.Shape.Kind})

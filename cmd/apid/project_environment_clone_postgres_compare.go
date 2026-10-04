@@ -20,6 +20,9 @@ func (s *server) projectEnvironmentClonePostgresCompare(ctx context.Context, sou
 	recipient *age.X25519Recipient, identities []*age.X25519Identity, cfg copycontents.Config, authorize copyroles.Authorize, access copydatabases.VerificationTarget,
 	persist func(context.Context, copycontents.SealedMatch) (copycontents.SealedMatch, error)) (copycontents.RetainedMatch, error) {
 	var zero copycontents.RetainedMatch
+	if err := s.authorizeProjectEnvironmentClonePostgresRead(ctx, cfg); err != nil {
+		return zero, err
+	}
 	target, err := access.TargetForWorker()
 	binding, bindingErr := access.IdentityForWorker()
 	if err != nil || bindingErr != nil || target != actual || binding.OwnerID != owner || binding.ImportID != imported || binding.Attempt != attempt {
@@ -29,6 +32,9 @@ func (s *server) projectEnvironmentClonePostgresCompare(ctx context.Context, sou
 	err = s.managedPostgres.WithSnapshotCopyTargetDatabaseSQL(ctx, clonePostgresSnapshotDefinition(source), request,
 		func(ctx context.Context, selected *pgx.Conn, _ managedpostgres.SnapshotCopyTargetSQLIdentity) error {
 			placement := func(ctx context.Context, got *pgx.Conn, target copyarchive.RestoreTarget) error {
+				if err := s.authorizeProjectEnvironmentClonePostgresRead(ctx, cfg); err != nil {
+					return err
+				}
 				if got != selected || target != actual {
 					return managedpostgres.ErrConflict
 				}

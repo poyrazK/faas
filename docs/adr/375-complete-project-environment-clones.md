@@ -6337,3 +6337,68 @@ required, alongside the common config/data cut and source writer closure, full
 schema/data/globals and final authority, object copying, PostgreSQL 14/15 and
 mixed-version qualification, full coordinator and production-preserving
 promotion/rollback. The public full database/object clone gate remains closed.
+
+### Shared contents spool admission (2026-10-04)
+
+Private source-contents capture and original/retry target verification now share
+an explicit worker-owned `copycontents.ReadPool`. The server supplies one pool
+across operations and accounts. Per-attempt configuration cannot substitute
+another pool; every authorization authenticates that configured owner again.
+Source capture reserves before provider placement or SQL borrowing. Verification
+reserves only at the authenticated never-opened admission point under the native
+bootstrap lock, before a new read-credit debit and SQL opening. Capacity refusal
+leaves the claimed owner never opened and spends no new debit. Once capacity
+returns, that same owner may dispatch under a fresh lease. A recovered debit
+selects its original read and sort caps before physical admission.
+
+The pool explicitly bounds simultaneous readers, aggregate sort memory and
+aggregate sort disk. `pkg/api/limits.go` caps these at two readers, 16 MiB sort
+memory and 128 GiB sort disk per private worker, with at least 1 GiB filesystem
+free-space reserve. Operators must supply explicit limits and may lower the work
+caps. Reservations charge complete planned sort caps against aggregate counters
+and actual available filesystem space. Existing physical consumption is also
+retained in this conservative admission check. These bounds cover sort work;
+they are not total process/PostgreSQL RSS, a CPU quota, storage entitlement or a
+monetary allowance. VM instance admission remains owned by schedd and vmmd.
+
+A private directory owned by the worker UID and a persistent non-symlink lock
+marker have one exclusive OS-locked owner. A second process or path alias cannot
+start independent accounting for that directory. The marker must never be
+unlinked, and every read and sort flush/merge rechecks the retained directory and
+marker inode identities. Actual sort output checks available headroom before
+each run or merge. This is a local spool policy, not a reservation against other
+filesystem users; they can cause later work to fail its headroom check. All copy
+contents work on a node must use the configured shared directory. Deployment
+still needs to establish that owner and prevent older workers from bypassing it.
+
+An opaque reservation binds the exact normalized configuration. It cannot be
+expanded, reused by another worker invocation or fund parallel contents readers.
+The worker retains capacity through read rollback, sort descriptor cleanup,
+provider postchecks, native closure and verification publication. Early release
+while a contents reader is active revokes further access but retains the capacity
+until its sort cleanup ends. Closing the pool while reservations remain is
+refused. Process exit closes unlinked digest descriptors and releases the OS
+lock; empty private sort directories may remain, without retained row data.
+Transient capacity release does not refund durable verification read debits.
+Retained manifest and matched-proof recovery remains close-only and requires no
+reader configuration or new physical reservation.
+
+Local contracts exercise aggregate concurrency/memory/disk refusal, private
+directory and marker policy, aliases and a competing process, process-exit lock
+recovery with a real unlinked sort descriptor, immutable configuration, released
+and shared-capability refusal, free-space exhaustion and release during a read.
+PostgreSQL 16 contracts use real source contents and encrypted archive restoration
+between independent clusters. They cover source refusal before provider/SQL
+borrowing, original/retry refusal before debit or native opening and resumption of
+the same owner after handoff, missing/substituted pool refusal, held capacity
+during actual reads and provider postchecks, changed spool identity during reads,
+and the existing manifest/verification ownership and recovery contracts. Provider
+observations remain synthetic; paid-provider permissions are unqualified.
+
+This supplies shared local contents-spool admission to the private workers. The
+public full database/object clone gate stays closed. Production worker bootstrap,
+CPU enforcement and host placement, archive/import/object work admission, source
+read credits, dispatch/backoff, measured usage/billing and durable retirement
+remain pending, as do the common config/data cut and writer closure, complete
+schema/data/globals and final authority, PostgreSQL 14/15 and mixed-version/provider
+qualification, full coordinator and production-preserving promotion/rollback.

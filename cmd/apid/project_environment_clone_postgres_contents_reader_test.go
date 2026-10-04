@@ -82,7 +82,9 @@ func newContentsReaderFixture(t *testing.T) *contentsReaderFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &contentsReaderFixture{x: x, p: p, source: plans[0], cfg: copycontents.Config{SpoolDir: t.TempDir(), MaxBytes: 16 << 20, SortMemoryBytes: 64, SortDiskBytes: 1 << 20}}
+	f := &contentsReaderFixture{x: x, p: p, source: plans[0], cfg: cloneContentsReadConfig(t)}
+	x.f.srv.clonePostgresContentsReadPool = f.cfg.ReadPool
+	return f
 }
 
 func (f *contentsReaderFixture) capture(ctx context.Context) (copycontents.Manifest, error) {
@@ -115,7 +117,7 @@ func (f *contentsReaderFixture) unpublished(t *testing.T, original state.Project
 		t.Fatal("failed read changed the original charged reservation")
 	}
 	entries, err := os.ReadDir(f.cfg.SpoolDir)
-	if err != nil || len(entries) != 0 {
+	if err != nil || len(entries) != 1 || entries[0].Name() != ".gregale-contents-read-pool" {
 		t.Fatal("contents spool not retired", err)
 	}
 	if f.p.borrowed != nil && !f.p.borrowed.IsClosed() {
@@ -377,6 +379,7 @@ func TestPGClonePostgresContentsOwnedReaderBudgetFailureRetiresOnlyReadResources
 				t.Fatal(err)
 			}
 			want := managedpostgres.ErrQuotaExceeded
+			wantSQLCalls := 1
 			switch mode {
 			case "read_bytes":
 				f.cfg.MaxBytes = 1
@@ -385,8 +388,9 @@ func TestPGClonePostgresContentsOwnedReaderBudgetFailureRetiresOnlyReadResources
 			case "invalid_config":
 				f.cfg.SortMemoryBytes = 1
 				want = managedpostgres.ErrInvalid
+				wantSQLCalls = 0
 			}
-			if m, err := f.capture(t.Context()); !errors.Is(err, want) || m.Fingerprint() != "" || f.p.readerSelectedSQLCalls != 1 {
+			if m, err := f.capture(t.Context()); !errors.Is(err, want) || m.Fingerprint() != "" || f.p.readerSelectedSQLCalls != wantSQLCalls {
 				t.Fatal("bounded reader returned contents", err)
 			}
 			f.unpublished(t, original)

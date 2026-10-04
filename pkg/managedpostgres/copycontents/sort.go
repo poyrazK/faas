@@ -23,6 +23,7 @@ type digestRun struct {
 	bytes int64
 }
 type digestSorter struct {
+	admission           *readLease
 	ctx                 context.Context
 	dir                 string
 	memory              [][sha256.Size]byte
@@ -94,6 +95,11 @@ func (s *digestSorter) flush() error {
 	if len(s.memory) == 0 {
 		return nil
 	}
+	if s.admission != nil {
+		if e := s.admission.checkSpace(s.ctx, int64(len(s.memory))*sha256.Size); e != nil {
+			return e
+		}
+	}
 	sort.Slice(s.memory, func(i, j int) bool { return bytes.Compare(s.memory[i][:], s.memory[j][:]) < 0 })
 	run, e := s.file()
 	if e != nil {
@@ -133,6 +139,11 @@ func (s *digestSorter) flush() error {
 	return pgerrors.ErrQuotaExceeded
 }
 func (s *digestSorter) merge(a, b *digestRun) (result *digestRun, err error) {
+	if s.admission != nil {
+		if e := s.admission.checkSpace(s.ctx, a.bytes+b.bytes); e != nil {
+			return nil, e
+		}
+	}
 	if _, e := a.file.Seek(0, io.SeekStart); e != nil {
 		return nil, pgerrors.ErrUnavailable
 	}

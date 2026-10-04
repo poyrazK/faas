@@ -11,6 +11,27 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// A retained debit selects its original quantities before host admission. A
+// transient capacity refusal creates neither a new debit nor a native window.
+func (s *server) admitClonePostgresVerificationRead(ctx context.Context, store state.ProjectEnvironmentClonePostgresVerificationReadBudgetStore, l state.ProjectEnvironmentCloneLease,
+	original state.ProjectEnvironmentClonePostgresVerification, owner string, attempt int32, held *state.ProjectEnvironmentClonePostgresVerificationReadBudget, cfg copycontents.Config) (copycontents.Config, func(), error) {
+	for _, a := range held.Allocations {
+		if a.VerificationID == owner && a.Attempt == attempt {
+			cfg.MaxBytes, cfg.SortMemoryBytes, cfg.SortDiskBytes = a.ReadBytes, int(a.SortMemoryBytes), a.SortDiskBytes
+		}
+	}
+	cfg, release, err := s.reserveProjectEnvironmentClonePostgresRead(ctx, cfg)
+	if err != nil {
+		return copycontents.Config{}, nil, err
+	}
+	cfg, err = allocateClonePostgresVerificationRead(ctx, store, l, original, owner, attempt, held, cfg)
+	if err != nil {
+		release()
+		return copycontents.Config{}, nil, err
+	}
+	return cfg, release, nil
+}
+
 // Only an undispatched original can create the aggregate hold. Legacy owners
 // without a hold remain eligible for authenticated close-only recovery.
 func clonePostgresVerificationReadBudget(ctx context.Context, store state.ProjectEnvironmentClonePostgresVerificationReadBudgetStore, l state.ProjectEnvironmentCloneLease, original state.ProjectEnvironmentClonePostgresVerification, cfg copycontents.Config, reserve bool) (state.ProjectEnvironmentClonePostgresVerificationReadBudget, error) {

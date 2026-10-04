@@ -116,6 +116,7 @@ type clonePostgresVerificationRetryWorker struct {
 	pins          state.ProjectEnvironmentClonePostgresDatabaseSQLPinsStore
 	budgets       state.ProjectEnvironmentClonePostgresVerificationReadBudgetStore
 	budget        state.ProjectEnvironmentClonePostgresVerificationReadBudget
+	readConfig    *copycontents.Config
 }
 
 func (w *clonePostgresVerificationRetryWorker) head() state.ProjectEnvironmentClonePostgresVerificationAttempt {
@@ -198,6 +199,9 @@ func (w *clonePostgresVerificationRetryWorker) authorize(ctx context.Context, ta
 	}
 	if err == nil {
 		err = authorizeClonePostgresVerificationReadBudget(ctx, w.budgets, w.lease, w.original, w.budget)
+	}
+	if err == nil && w.readConfig != nil {
+		err = w.server.authorizeProjectEnvironmentClonePostgresRead(ctx, *w.readConfig)
 	}
 	return err
 }
@@ -294,6 +298,13 @@ func (s *server) recoverProjectEnvironmentClonePostgresVerificationFailure(ctx c
 }
 func (w *clonePostgresVerificationRetryWorker) run(ctx context.Context, cfg copycontents.Config) (state.ProjectEnvironmentClonePostgresVerificationAttempt, error) {
 	var zero state.ProjectEnvironmentClonePostgresVerificationAttempt
+	var releaseRead func()
+	defer func() {
+		if releaseRead != nil {
+			releaseRead()
+		}
+		w.readConfig = nil
+	}()
 	a := w.head()
 	owner, imported := uuid.MustParse(a.VerificationID), uuid.MustParse(a.ImportID)
 	var retained copycontents.RetainedMatch
@@ -339,7 +350,10 @@ func (w *clonePostgresVerificationRetryWorker) run(ctx context.Context, cfg copy
 						return err
 					}
 					var err error
-					cfg, err = allocateClonePostgresVerificationRead(ctx, w.budgets, w.lease, w.original, a.VerificationID, a.Attempt, &w.budget, cfg)
+					cfg, releaseRead, err = w.server.admitClonePostgresVerificationRead(ctx, w.budgets, w.lease, w.original, a.VerificationID, a.Attempt, &w.budget, cfg)
+					if err == nil {
+						w.readConfig = &cfg
+					}
 					return err
 				},
 				func(ctx context.Context, access copydatabases.VerificationTarget) error {

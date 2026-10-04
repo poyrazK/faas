@@ -139,6 +139,12 @@ const (
 	PostgresCopyContentsSortLevelsMax         = 32
 	PostgresCopyContentsReadBlockBytes        = 1 << 20
 	PostgresCopyContentsCleanupTimeout        = 10 * time.Second
+	// A single private worker owns a node-local contents spool. These bound
+	// simultaneous sort work; they are not VM CPU/RSS or billing allowances.
+	PostgresCopyContentsReadersPerWorkerMax          = 2
+	PostgresCopyContentsSortMemoryPerWorkerMax       = PostgresCopyContentsReadersPerWorkerMax * PostgresCopyContentsSortMemoryMax
+	PostgresCopyContentsSortDiskPerWorkerMax         = PostgresCopyContentsReadersPerWorkerMax * PostgresCopyContentsSortDiskMax
+	PostgresCopyContentsSpoolFreeReserveMin    int64 = 1 << 30
 	// Original manifests retain these account reservations until an explicit
 	// qualified retirement protocol exists; reader cleanup does not release them.
 	PostgresCopyContentsManifestsPerAccountMax       = 4096
