@@ -55,6 +55,7 @@ NATIVE_E2E_REQUIRED_TESTS=(
   TestWakeTimelineMetal
   TestDeployHealthcheckMetal
   TestCatalogRuntimeParityMetal
+  TestFeatureFlagsNativeParkRestoreMetal
   TestSec11_MemoryMaxFenceEnforced_CrossProcess
   TestSec11_SeccompFilterEnforced_CrossProcess
 )
@@ -139,6 +140,9 @@ native_e2e_lane_verdict() {
     if grep -qE "^--- SKIP: ${required}( |\$)" "${log}"; then
       echo "native e2e: ${lane}: required test ${required} SKIPPED" >&2
       rc=1
+    elif grep -qE "^[[:space:]]*--- SKIP: ${required}/" "${log}"; then
+      echo "native e2e: ${lane}: required test ${required} has SKIPPED subtests" >&2
+      rc=1
     elif grep -qE "^--- FAIL: ${required}( |\$)" "${log}"; then
       echo "native e2e: ${lane}: required test ${required} FAILED" >&2
       rc=1
@@ -159,7 +163,7 @@ native_e2e_lane_verdict() {
 # native_e2e_phase_tally reports one phase's result.
 #
 # Deliberately NOT native_e2e_verdict: the required-test contract is a
-# whole-suite claim (its eight tests span several phases), so applying it per
+# whole-suite claim (its nine tests span several phases), so applying it per
 # phase would fail every phase for tests it was never asked to run. The
 # workflow's final verdict step owns that contract across the phases' logs.
 #
@@ -194,4 +198,15 @@ native_e2e_phase_tally() {
     rc=1
   fi
   return "${rc}"
+}
+
+# Companion qualification is source-derived even though the native fcvm runner
+# executes its whole package. Every companion acceptance test must pass.
+native_container_companion_tests() {
+  local file="${1:?repository root required}/pkg/fcvm/sidecar_metal_test.go"
+  [[ -r "${file}" ]] || { echo "companion test source missing: ${file}" >&2; return 1; }
+  grep -qE '^func Test[A-Za-z0-9_]+\(' "${file}" || {
+    echo 'companion source selects no tests' >&2; return 1;
+  }
+  grep -hoE '^func Test[A-Za-z0-9_]+\(' "${file}" | sed -E 's/^func //; s/\($//' | sort -u
 }

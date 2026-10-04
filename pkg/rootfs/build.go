@@ -168,6 +168,9 @@ type BuildInput struct {
 	// false preserves today's two-drive behaviour for every
 	// existing caller.
 	FullRootfs bool
+	// CommandPATH is consulted only by the full-rootfs launch check. See
+	// BuildFullRootfsInput.CommandPATH; shared-base layering is unchanged.
+	CommandPATH *string
 }
 
 // BuildResult reports the produced layer.
@@ -215,6 +218,7 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 			FunctionRunnerPath:  in.FunctionRunnerPath,
 			SBOMRun:             in.SBOMRun,
 			SBOMStorageKey:      in.SBOMStorageKey,
+			CommandPATH:         in.CommandPATH,
 		})
 	}
 	limits, ok := limitsFor(in.Plan)

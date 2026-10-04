@@ -1,12 +1,14 @@
 package state_test
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 func TestPg_Jobs_ImageFailureSettlesQueuedRun(t *testing.T) {
@@ -150,5 +152,46 @@ func TestPg_Jobs_ReapClaimedRetriesAndDeadLetters(t *testing.T) {
 	attempts, err = store.JobTaskAttemptList(ctx, run.ID, 0, 10, 0)
 	if err != nil || len(attempts) != 2 || attempts[1].Attempt != 2 || attempts[1].Status != "timeout" {
 		t.Fatalf("dead-letter attempt journal = %+v, %v", attempts, err)
+	}
+}
+
+func TestPg_Jobs_ReaperHonorsUncertainOutcomePolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, uncertainOutcome, wantStatus, wantAction string
+		wantRetry                                      bool
+	}{
+		{name: "hold", uncertainOutcome: "hold", wantStatus: "timeout", wantAction: "hold"},
+		{name: "retry", uncertainOutcome: "retry", wantStatus: "queued", wantAction: "retry", wantRetry: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, pool, ctx := pgJobsStoreWithPool(t)
+			job, run, _ := pgJobsSeed(t, store, ctx, "reap-uncertain-"+tc.name)
+			rules := workpolicy.FailureRules{Version: workpolicy.Version, UnmatchedFailure: "retry", UncertainOutcome: tc.uncertainOutcome}
+			rulesJSON, err := json.Marshal(rules)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `update job_runs set failure_rules = $2::jsonb where id = $1::uuid`, run.ID, rulesJSON); err != nil {
+				t.Fatalf("set run failure rules: %v", err)
+			}
+			expired := time.Now().UTC().Add(-time.Hour)
+			instanceID := pgJobsCreateJobTaskInstance(t, pool, ctx, job.AccountID, job.ID)
+			lease := uuid.NewString()
+			if err := store.JobTaskMarkClaimed(ctx, run.ID, 0, instanceID, lease, expired, resolveDefaultLocal(t, ctx, store)); err != nil {
+				t.Fatal(err)
+			}
+			retried, err := store.JobTaskReapClaimed(ctx, run.ID, 0, lease, time.Now().UTC().Add(-time.Minute), 1, time.Now().UTC())
+			if err != nil || retried != tc.wantRetry {
+				t.Fatalf("reap = (%t, %v), want retry=%t", retried, err, tc.wantRetry)
+			}
+			task, err := store.JobTaskGet(ctx, run.ID, 0)
+			if err != nil || task.Status != tc.wantStatus {
+				t.Fatalf("reaped task = %+v, %v; want %s", task, err, tc.wantStatus)
+			}
+			attempts, err := store.JobTaskAttemptList(ctx, run.ID, 0, 10, 0)
+			if err != nil || len(attempts) != 1 || attempts[0].WorkDecision == nil || attempts[0].WorkDecision.Classification != "uncertain" || attempts[0].WorkDecision.Action != tc.wantAction || attempts[0].ErrorClass == nil || *attempts[0].ErrorClass != "uncertain" {
+				t.Fatalf("attempt history = %+v, %v; want uncertain decision %s", attempts, err, tc.wantAction)
+			}
+		})
 	}
 }

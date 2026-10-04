@@ -334,9 +334,6 @@ func boot() error {
 		if rosterErr != nil && !isNotExist(rosterErr) {
 			return fmt.Errorf("secret reload requires a readable workload roster: %w", rosterErr)
 		}
-		if len(roster.Sidecars) > 0 {
-			return fmt.Errorf("secret reload is not supported with sidecars; use restart-based secret rotation")
-		}
 	}
 	if rosterErr == nil && len(roster.Sidecars) > 0 {
 		return runWorkloads(manifest, roster, secrets, apiEnv, slog.Default(), sidecarProxy)
@@ -357,23 +354,21 @@ func boot() error {
 	// assignment. The wiring below is the canonical fix.
 	policy, maxRestarts := supervisorPolicyFromManifest(manifest)
 	supRef := &Supervisor{Max: maxRestarts, Policy: policy}
+	mainStarted := make(chan struct{})
+	supRef.onStart = func() { close(mainStarted) }
 	var rotatingSecrets *runtimeSecretsState
 	if manifest.SecretReloadSignal != "" {
-		rotatingSecrets = newRuntimeSecretsState(secrets)
-		secretUID := lookupUID(manifest.EffectiveUser())
-		if err := writeRuntimeSecretsProjection(secretReloadFilePath, secretUID, secrets); err != nil {
-			return fmt.Errorf("prepare runtime secret file: %w", err)
-		}
-		if err := writeRuntimeSecretRevisionProjection(secretReloadRevisionFilePath, secretUID, ""); err != nil {
-			return fmt.Errorf("prepare runtime secret revision file: %w", err)
+		rotatingSecrets, err = prepareWorkloadRuntimeSecrets("", manifest, secrets, secretReloadFilePath, secretReloadRevisionFilePath)
+		if err != nil {
+			return err
 		}
 	}
 	supRef.Start = func() error {
-		currentSecrets := secrets
 		if rotatingSecrets != nil {
-			currentSecrets = rotatingSecrets.snapshot()
+			snapshot := rotatingSecrets.startupSnapshot()
+			return runAppWithSecretStartup(manifest, snapshot.Secrets, apiEnv, supRef, 0, singleWorkloadEndpointEnv(manifest.EffectivePort()), &snapshot, rotatingSecrets.projection, rotatingSecrets)
 		}
-		return runAppWithEnv(manifest, currentSecrets, apiEnv, supRef)
+		return runAppWithEnv(manifest, secrets, apiEnv, supRef)
 	}
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: app restart (restart %d/%d policy=%s): %v\n", attempt, maxRestarts, policy, err)
@@ -407,7 +402,16 @@ func boot() error {
 	// Soft-fail on bind (e.g. guest kernel without AF_VSOCK) —
 	// the engine's existing :8080 TCP-accept probe continues to
 	// gate readiness, so the customer doesn't lose the boot.
-	if err := runHealthcheckPoll(bootCtx, manifest, slog.Default()); err != nil {
+	if err := runHealthcheckPoll(bootCtx, manifest, slog.Default(), healthcheckPollOptions{
+		Started: mainStarted,
+		Environment: func() []string {
+			currentSecrets := secrets
+			if rotatingSecrets != nil {
+				currentSecrets = rotatingSecrets.snapshot()
+			}
+			return BuildEnvWithSecrets(os.Environ(), manifest, currentSecrets, apiEnv)
+		},
+	}); err != nil {
 		slog.Default().Warn("healthcheck poll unavailable", "err", err)
 	}
 	// M-2 / ADR-138 §Decision 1 / issue #474 — install the PID 1
@@ -447,6 +451,10 @@ func runAppWithRAM(m api.AppManifest, secrets, apiEnv map[string]string, sup *Su
 // contract, so a workload cannot redirect its sibling endpoints by setting a
 // reserved variable in its image or deployment env.
 func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]string, sup *Supervisor, ramMB int, workloadEnv map[string]string, cpuMillicoresOpt ...int) error {
+	return runAppWithSecretStartup(m, secrets, apiEnv, sup, ramMB, workloadEnv, nil, nil, nil, cpuMillicoresOpt...)
+}
+
+func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]string, sup *Supervisor, ramMB int, workloadEnv map[string]string, snapshot *runtimeSecretSnapshot, projection *runtimeSecretProjection, processSecrets *runtimeSecretsState, cpuMillicoresOpt ...int) error {
 	argv := m.Entrypoint
 	env := BuildEnvWithSecrets(os.Environ(), m, secrets, apiEnv)
 	// Issue #460 / ADR-053 (PR-C): stamp PORT=<m.EffectivePort()>
@@ -502,17 +510,30 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	} else {
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	}
-	if uid := lookupUID(m.EffectiveUser()); uid > 0 {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)},
-		}
+	credential, err := processCredential("", m.EffectiveUser())
+	if err != nil {
+		return fmt.Errorf("run app: %w", err)
 	}
+	readyPath, guestReadyPath, err := prepareRuntimeSecretReadyFile(projection, "", m.SecretReloadReadiness)
+	if err != nil {
+		return err
+	}
+	if readyPath != "" {
+		defer func() { _ = os.Remove(readyPath) }()
+		cmd.Env = append(cmd.Env, SecretsReloadReadyEnv+"="+guestReadyPath)
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: execProcessCredential(credential)}
 	// ADR-051 Phase 4: expose the forked cmd to the supervisor so
 	// runCharacterizationForSup can read the PID via LastAppPID().
 	// The supervisor's Run() loop captures the cmd at every
 	// restart; runAppWithEnv executes once per restart.
 	if sup != nil {
-		sup.TrackCommand(cmd)
+		if snapshot != nil {
+			sup.trackRuntimeSecretCommand(cmd, *snapshot, readyPath)
+			defer sup.retireRuntimeSecretCommand(cmd)
+		} else {
+			sup.TrackCommand(cmd)
+		}
 	}
 	// Issue #463 / ADR-069 / PR-B AC #4: per-workload
 	// in-guest cgroup v2 partition for the main workload.
@@ -526,6 +547,18 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	if cgroupErr != nil {
 		return fmt.Errorf("prepare main workload cgroup: %w", cgroupErr)
 	}
+	cgroupFile, err := attachWorkloadCgroup(cmd, mainLeaf)
+	if err != nil {
+		return fmt.Errorf("attach main workload cgroup: %w", err)
+	}
+	if cgroupFile != nil {
+		defer func() { _ = cgroupFile.Close() }()
+	}
+	retireGeneration, err := prepareRuntimeSecretProcess(cmd, processSecrets, sup, "")
+	if err != nil {
+		return err
+	}
+	defer retireGeneration()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
@@ -540,11 +573,6 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 			}
 		}
 		sup.markHealthy()
-	}
-	// Place the forked child into the leaf. Same race
-	// posture as runSidecar — see placeIntoLeaf's doc.
-	if mainLeaf != "" {
-		placeIntoLeaf(mainLeaf, cmd.Process.Pid, slog.Default())
 	}
 	// Cluster C / ADR-121: spawn the per-workload cgroup.events
 	// oom_kill listener (guest/init/cgroup_partition_linux.go::
@@ -2374,19 +2402,18 @@ func mountSidecarRuntimeFilesystems(root string, tmpfsSizeMB int) error {
 			return fmt.Errorf("bind %s: %w", name, err)
 		}
 	}
-	for _, mount := range []struct {
-		name string
-		mode string
-	}{
-		{name: "tmp", mode: sidecarTmpfsMountData(tmpfsSizeMB)},
-	} {
-		target := filepath.Join(root, mount.name)
-		if err := ensureMountDirectory(target); err != nil {
-			return fmt.Errorf("%s target: %w", mount.name, err)
-		}
-		if err := syscall.Mount("tmpfs", target, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, mount.mode); err != nil {
-			return fmt.Errorf("tmpfs %s: %w", mount.name, err)
-		}
+	return mountSidecarScratch(root, tmpfsSizeMB)
+}
+
+// mountSidecarScratch is shared with the Linux capacity acceptance test so
+// the test exercises the mount options and target checks used during boot.
+func mountSidecarScratch(root string, tmpfsSizeMB int) error {
+	target := filepath.Join(root, "tmp")
+	if err := ensureMountDirectory(target); err != nil {
+		return fmt.Errorf("tmp target: %w", err)
+	}
+	if err := syscall.Mount("tmpfs", target, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, sidecarTmpfsMountData(tmpfsSizeMB)); err != nil {
+		return fmt.Errorf("tmpfs tmp: %w", err)
 	}
 	return nil
 }
@@ -2454,7 +2481,8 @@ func pivotInto(root string) error {
 // two-drive legacy path is unaffected.
 //
 // ADR-142 §Decision 3 (binary-search reader).
-func lookupUID(user string) int {
+func legacyLookupUID(user string) int {
+	user, _, _ = strings.Cut(user, ":")
 	if user == api.DefaultAppUser {
 		return api.DefaultAppUID
 	}

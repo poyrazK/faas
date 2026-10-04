@@ -195,7 +195,7 @@ func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, po
 	}
 	existing, err := scanInvocation(tx.QueryRow(ctx, `select `+invocationSelectCols+` from invocations where id = $1`, inv.ID))
 	if err == nil {
-		if existing.AppID != inv.AppID || existing.WorkPolicyName != policy.Name ||
+		if existing.AppID != inv.AppID || existing.PlatformTenantID != inv.PlatformTenantID || existing.WorkPolicyName != policy.Name ||
 			!bytes.Equal(existing.WorkKeyDigest, digest[:]) {
 			return Invocation{}, ErrConflict
 		}
@@ -373,6 +373,9 @@ func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, pol
 	if _, ok := m.apps[inv.AppID]; !ok {
 		return Invocation{}, fmt.Errorf("state: invocation for unknown app %q", inv.AppID)
 	}
+	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
+		return Invocation{}, err
+	}
 	if inv.State != "" && inv.State != InvocationPending {
 		return Invocation{}, fmt.Errorf("state: keyed invocation must start pending")
 	}
@@ -380,7 +383,7 @@ func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, pol
 		inv.ID = newID()
 	}
 	if existing, ok := m.invocations[inv.ID]; ok {
-		if existing.AppID != inv.AppID || existing.WorkPolicyName != policy.Name ||
+		if existing.AppID != inv.AppID || existing.PlatformTenantID != inv.PlatformTenantID || existing.WorkPolicyName != policy.Name ||
 			!bytes.Equal(existing.WorkKeyDigest, digest[:]) {
 			return Invocation{}, ErrConflict
 		}

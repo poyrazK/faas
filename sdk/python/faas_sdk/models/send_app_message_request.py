@@ -38,6 +38,9 @@ class SendAppMessageRequest:
     """Server time when omitted."""
     datacontenttype: SendAppMessageRequestDatacontenttype | Unset = "application/json"
     data_content_type: SendAppMessageRequestDataContentType | Unset = UNSET
+    flag_context: str | Unset = UNSET
+    """Optional bounded Gregale Flags context. The platform validates the envelope, binds it to its active
+    customer, and restores it on the queued request."""
     queue_name: str | Unset = UNSET
     retry_policy: RetryPolicyDTO | Unset = UNSET
     """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. max_attempts
@@ -72,6 +75,8 @@ class SendAppMessageRequest:
         if not isinstance(self.data_content_type, Unset):
             data_content_type = self.data_content_type
 
+        flag_context = self.flag_context
+
         queue_name = self.queue_name
 
         retry_policy: dict[str, Any] | Unset = UNSET
@@ -100,6 +105,8 @@ class SendAppMessageRequest:
             field_dict["datacontenttype"] = datacontenttype
         if data_content_type is not UNSET:
             field_dict["data_content_type"] = data_content_type
+        if flag_context is not UNSET:
+            field_dict["flag_context"] = flag_context
         if queue_name is not UNSET:
             field_dict["queue_name"] = queue_name
         if retry_policy is not UNSET:
@@ -144,6 +151,8 @@ class SendAppMessageRequest:
         else:
             data_content_type = check_send_app_message_request_data_content_type(_data_content_type)
 
+        flag_context = d.pop("flag_context", UNSET)
+
         queue_name = d.pop("queue_name", UNSET)
 
         _retry_policy = d.pop("retry_policy", UNSET)
@@ -168,6 +177,7 @@ class SendAppMessageRequest:
             time=time,
             datacontenttype=datacontenttype,
             data_content_type=data_content_type,
+            flag_context=flag_context,
             queue_name=queue_name,
             retry_policy=retry_policy,
             work=work,

@@ -130,6 +130,22 @@ func TestManagedPostgresConnectionURLUsesAccessSpecificEndpoint(t *testing.T) {
 			{Role: managedpostgres.EndpointReadOnly, Host: "replica.example.test", Port: 5432},
 		},
 	}
+	// Migration tools always connect directly, even when pooling is available.
+	material.Endpoints = append(material.Endpoints, managedpostgres.Endpoint{Role: managedpostgres.EndpointPooled, Host: "pool.example.test", Port: 6432})
+	migrationURL, err := managedPostgresConnectionURL(managedpostgres.CredentialMigration, material)
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrationParsed, err := url.Parse(migrationURL)
+	if err != nil || migrationParsed.Hostname() != "primary.example.test" {
+		t.Fatalf("migration URL endpoint=%s err=%v", migrationParsed.Hostname(), err)
+	}
+	pooledOnly := material
+	pooledOnly.Endpoints = material.Endpoints[2:]
+	if _, err := managedPostgresConnectionURL(managedpostgres.CredentialMigration, pooledOnly); !errors.Is(err, managedpostgres.ErrUnsupported) {
+		t.Fatalf("pooled-only migration accepted: %v", err)
+	}
+	material.Endpoints = material.Endpoints[:2]
 	value, err := managedPostgresConnectionURL(managedpostgres.CredentialReadOnly, material)
 	if err != nil {
 		t.Fatal(err)
@@ -172,5 +188,41 @@ func TestManagedPostgresCredentialSinkFailsClosedWithoutSealKeys(t *testing.T) {
 	}
 	if _, err := sink.Put(context.Background(), binding, material); !errors.Is(err, managedpostgres.ErrUnavailable) {
 		t.Fatalf("missing seal keys = %v", err)
+	}
+}
+
+// adr: 464 — sealing for cutover does not publish or replace app secrets.
+func TestManagedPostgresCredentialSealerDoesNotPublish(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewMemStore()
+	sink, err := newAppSecretCredentialSink(store, func() *age.X25519Recipient { return identity.Recipient() }, func() []byte { return []byte("0123456789abcdef0123456789abcdef") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := managedpostgres.Binding{ID: "future-binding", AccountID: "account-a", AppID: "app-a", Scope: "default", EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialReadWrite, CredentialGeneration: 1}
+	material := managedpostgres.CredentialMaterial{ProviderIdentityID: "target-role", Username: "runtime", Password: "private-stage-password", Database: "gregale", TLSMode: "require", Endpoints: []managedpostgres.Endpoint{{Role: managedpostgres.EndpointPooled, Host: "pool.example.test", Port: 5432}}}
+	sealed, err := sink.SealCredential(context.Background(), binding, material)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sealed.Ciphertext) == 0 || sealed.Kid != identity.Recipient().String() || sealed.ValueHash == "" || sealed.Ref == "" || strings.Contains(string(sealed.Ciphertext), material.Password) {
+		t.Fatal("stage envelope is invalid or plaintext")
+	}
+	envelope, err := secretbox.Open(identity, sealed.Ciphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(envelope[binding.EnvironmentKey])
+	if err != nil || parsed.Hostname() != "pool.example.test" {
+		t.Fatal("staged envelope did not retain the pooled target endpoint")
+	}
+	if password, ok := parsed.User.Password(); !ok || password != material.Password {
+		t.Fatal("staged envelope did not retain the target credential")
+	}
+	if _, err = store.GetAppSecretInScope(context.Background(), binding.AccountID, binding.AppID, binding.Scope, binding.EnvironmentKey); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("sealing published a serving secret")
 	}
 }

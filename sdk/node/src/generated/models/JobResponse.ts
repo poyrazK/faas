@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FailureRules } from './FailureRules.js';
+import type { SchedulePolicy } from './SchedulePolicy.js';
 /**
  * Wire projection of state.Job.
  */
@@ -22,6 +24,8 @@ export type JobResponse = {
    * Most recent scheduled occurrence that created a run.
    */
   last_scheduled_at?: string;
+  schedule_policy?: SchedulePolicy;
+  failure_rules?: FailureRules;
   image_ref: string;
   /**
    * Immutable OCI manifest digest selected from image_ref.

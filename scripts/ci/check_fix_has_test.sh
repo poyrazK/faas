@@ -99,9 +99,9 @@ fi
 # stores, or to claim a "Why no test" exception that was not true.
 conformance_lib='pkg/state/conformance/*.go'
 changed_tests="$(git diff --name-only --diff-filter=ACMRTUXB "$base_sha" "$head_sha" \
-  -- '*_test.go' "$conformance_lib")"
+  -- '*_test.go' '*_test.sh' "$conformance_lib")"
 if [[ -n "$changed_tests" ]]; then
-  echo "fix-has-test-check: OK — $trigger changes Go test coverage:"
+  echo "fix-has-test-check: OK — $trigger changes regression test coverage:"
   printf '  %s\n' "$changed_tests"
   exit 0
 fi
@@ -120,7 +120,7 @@ if (( has_bypass_label == 1 )) && printf '%s\n' "$pr_body" \
   exit 0
 fi
 
-echo "::error::fix-has-test-check: $trigger must change a *_test.go file (or a pkg/state/conformance case)" >&2
+echo "::error::fix-has-test-check: $trigger must change a *_test.go or *_test.sh file (or a pkg/state/conformance case)" >&2
 echo "::error::Add a regression test to this PR. For an intentional exception, add the no-regression-test label and a non-empty Why no test: line to the PR body." >&2
 [[ -z "$pr_number" ]] || echo "::error::PR #$pr_number changed files:" >&2
 git diff --name-only "$base_sha" "$head_sha" -- | sed 's/^/  /' >&2

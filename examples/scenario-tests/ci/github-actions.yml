@@ -1,0 +1,171 @@
+name: Gregale scenario tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  scenarios:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Demo-only credentials for the local example API.
+      GREGALE_TEST_CONSUMER_CUSTOMER_A_KEY: example-customer-a
+      GREGALE_TEST_CONSUMER_CUSTOMER_B_KEY: example-customer-b
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install Gregale CLI
+        run: curl -fsSL https://get.gregale.dev | sh -s -- --dir "$RUNNER_TEMP/gregale"
+      - name: Find and download latest successful main baseline
+        if: github.event_name == 'pull_request'
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GREGALE_CI_BASELINE_MAX_AGE_DAYS: "30"
+        run: |
+          set -euo pipefail
+          latest_baseline_for_event() {
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow gregale-test.yml \
+            --branch main --event "$1" --status success --limit 1 \
+            --json databaseId,createdAt \
+            --jq 'if length == 0 then empty else .[0] | [.databaseId, .createdAt] | @tsv end'
+          }
+          push_baseline="$(latest_baseline_for_event push)"
+          manual_baseline="$(latest_baseline_for_event workflow_dispatch)"
+          baseline="$push_baseline"
+          if [ -z "$baseline" ]; then
+            baseline="$manual_baseline"
+          elif [ -n "$manual_baseline" ]; then
+            push_created_at="${push_baseline#*$'\t'}"
+            manual_created_at="${manual_baseline#*$'\t'}"
+            if [[ "$manual_created_at" > "$push_created_at" ]]; then
+              baseline="$manual_baseline"
+            fi
+          fi
+          write_baseline_error() {
+            {
+              echo '## Gregale test comparison'
+              echo
+              echo "$1"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::$1"
+          }
+          if [ -z "$baseline" ]; then
+            {
+              echo '## Gregale test comparison'
+              echo
+              echo 'No successful baseline exists for main yet. Push to main or run this workflow manually on main to publish one.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$baseline" != *$'\t'* ]]; then
+            write_baseline_error 'The latest successful main baseline returned incomplete metadata.'
+            exit 1
+          fi
+          run_id="${baseline%%$'\t'*}"
+          baseline_created_at="${baseline#*$'\t'}"
+          if [[ ! "$run_id" =~ ^[0-9]+$ || -z "$baseline_created_at" || "$baseline_created_at" == *$'\t'* ]]; then
+            write_baseline_error 'The latest successful main baseline returned invalid metadata.'
+            exit 1
+          fi
+          if [[ ! "$GREGALE_CI_BASELINE_MAX_AGE_DAYS" =~ ^[0-9]+$ || "$GREGALE_CI_BASELINE_MAX_AGE_DAYS" -gt 30 ]]; then
+            write_baseline_error 'The configured baseline age limit must be between 0 and 30 days.'
+            exit 1
+          fi
+          baseline_max_age_days=$((10#$GREGALE_CI_BASELINE_MAX_AGE_DAYS))
+          if (( baseline_max_age_days > 0 )); then
+            baseline_epoch="$(date -u -d "$baseline_created_at" +%s 2>/dev/null || true)"
+            now_epoch="$(date -u +%s)"
+            if [[ ! "$baseline_epoch" =~ ^[0-9]+$ || ! "$now_epoch" =~ ^[0-9]+$ ]]; then
+              write_baseline_error 'Could not determine the age of the latest successful main baseline.'
+              exit 1
+            fi
+            baseline_age_seconds=$((now_epoch - baseline_epoch))
+            if (( baseline_age_seconds < 0 || baseline_age_seconds > baseline_max_age_days * 86400 )); then
+              write_baseline_error "The latest successful main baseline is older than the configured ${baseline_max_age_days}-day limit. Push to main or run this workflow manually on main to refresh the baseline."
+              exit 1
+            fi
+          fi
+          if ! gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name gregale-scenario-baseline --dir "$RUNNER_TEMP/scenario-baseline"; then
+            write_baseline_error 'The latest successful main baseline artifact is unavailable or expired. Push to main or run this workflow manually on main to refresh it.'
+            exit 1
+          fi
+          for report in scenario-results.json scenario-load-results.json; do
+            if [ ! -f "$RUNNER_TEMP/scenario-baseline/$report" ]; then
+              write_baseline_error "The latest successful main baseline artifact did not contain $report. Push to main or run this workflow manually on main to refresh it."
+              exit 1
+            fi
+          done
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+      - name: Run scenario suite
+        run: |
+          "$RUNNER_TEMP/gregale/gregale" test \
+            --manifest examples/scenario-tests/gregale-test.yaml \
+            --suite smoke \
+            --report "$RUNNER_TEMP/scenario-results.json" \
+            --junit "$RUNNER_TEMP/scenario-results.xml" \
+            --html "$RUNNER_TEMP/scenario-results.html"
+          "$RUNNER_TEMP/gregale/gregale" test \
+            --manifest examples/scenario-tests/gregale-test.yaml \
+            --suite performance --load \
+            --repeat 3 \
+            --report "$RUNNER_TEMP/scenario-load-results.json" \
+            --junit "$RUNNER_TEMP/scenario-load-results.xml" \
+            --html "$RUNNER_TEMP/scenario-load-results.html"
+      - name: Compare PR report with main baseline
+        if: github.event_name == 'pull_request' && steps.baseline.outputs.exists == 'true'
+        run: |
+          compare_status=0
+          "$RUNNER_TEMP/gregale/gregale" test compare \
+            "$RUNNER_TEMP/scenario-baseline/scenario-results.json" \
+            "$RUNNER_TEMP/scenario-results.json" \
+            --budget examples/scenario-tests/ci/run-budget.yaml \
+            --html "$RUNNER_TEMP/scenario-comparison.html" \
+            --markdown "$RUNNER_TEMP/scenario-comparison.md" \
+            --github-summary || compare_status=$?
+          "$RUNNER_TEMP/gregale/gregale" test compare \
+            "$RUNNER_TEMP/scenario-baseline/scenario-load-results.json" \
+            "$RUNNER_TEMP/scenario-load-results.json" \
+            --budget examples/scenario-tests/ci/test-budget.yaml \
+            --html "$RUNNER_TEMP/scenario-load-comparison.html" \
+            --markdown "$RUNNER_TEMP/scenario-load-comparison.md" \
+            --github-summary || compare_status=$?
+          exit "$compare_status"
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: gregale-scenario-reports
+          path: |
+            ${{ runner.temp }}/scenario-results.json
+            ${{ runner.temp }}/scenario-results.xml
+            ${{ runner.temp }}/scenario-results.html
+            ${{ runner.temp }}/scenario-load-results.json
+            ${{ runner.temp }}/scenario-load-results.xml
+            ${{ runner.temp }}/scenario-load-results.html
+            ${{ runner.temp }}/scenario-comparison.html
+            ${{ runner.temp }}/scenario-comparison.md
+            ${{ runner.temp }}/scenario-load-comparison.html
+            ${{ runner.temp }}/scenario-load-comparison.md
+          if-no-files-found: ignore
+      - name: Publish baseline report from main
+        if: success() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v6
+        with:
+          name: gregale-scenario-baseline
+          path: |
+            ${{ runner.temp }}/scenario-results.json
+            ${{ runner.temp }}/scenario-load-results.json
+          if-no-files-found: error
+          retention-days: 30

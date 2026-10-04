@@ -252,6 +252,9 @@ func (s *Service) Plan(
 	if err != nil {
 		return Result{}, fmt.Errorf("reconcile: plan: load account: %w", err)
 	}
+	if err := validatePlatformTenantPolicy(acct.Plan, scan.Workloads); err != nil {
+		return Result{}, err
+	}
 
 	// 3. Diff. workloadDiff is read-only; it does not touch the
 	// store and does not emit audit. The exclude set is built

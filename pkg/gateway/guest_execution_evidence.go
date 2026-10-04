@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
+	"github.com/onebox-faas/faas/pkg/flags"
 )
 
 const maxGuestExecutionDurationMS = 24 * 60 * 60 * 1000
@@ -21,6 +23,7 @@ type guestExecutionEvidence struct {
 	CPUTimeMS              int
 	PeakRSSMB              int
 	ResourceUsageAvailable bool
+	FlagEvidenceJSON       string
 	cpuUsageSeen           bool
 	peakRSSSeen            bool
 	seen                   bool
@@ -34,6 +37,7 @@ type guestExecutionEvidenceSnapshot struct {
 	CPUTimeMS              int
 	PeakRSSMB              int
 	ResourceUsageAvailable bool
+	FlagEvidenceJSON       string
 }
 
 type guestExecutionEvidenceContextKey struct{}
@@ -54,6 +58,7 @@ func guestExecutionEvidenceFromContext(ctx context.Context) (guestExecutionEvide
 		Outcome: evidence.Outcome, ErrorClass: evidence.ErrorClass,
 		CPUTimeMS: evidence.CPUTimeMS, PeakRSSMB: evidence.PeakRSSMB,
 		ResourceUsageAvailable: evidence.ResourceUsageAvailable,
+		FlagEvidenceJSON:       evidence.FlagEvidenceJSON,
 	}, evidence.seen
 }
 
@@ -70,6 +75,13 @@ func recordGuestExecutionEvidence(ctx context.Context, name, value string) bool 
 	evidence.mu.Lock()
 	defer evidence.mu.Unlock()
 	switch name {
+	case api.FlagEvidenceHeader:
+		raw, err := flags.DecodeEvidenceHeader(value)
+		if err == nil {
+			evidence.FlagEvidenceJSON = raw
+			evidence.seen = true
+		}
+		return true
 	case api.GuestEvidenceDurationHeader:
 		duration, err := strconv.Atoi(value)
 		if err != nil || duration < 0 || duration > maxGuestExecutionDurationMS {
@@ -165,7 +177,7 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 			return
 		}
 	}
-	if strings.EqualFold(strings.TrimSpace(name), api.DeploymentIDHeader) || strings.EqualFold(strings.TrimSpace(name), api.RevisionHeader) || strings.EqualFold(strings.TrimSpace(name), api.ReleaseHeader) {
+	if strings.EqualFold(strings.TrimSpace(name), api.DeploymentIDHeader) || strings.EqualFold(strings.TrimSpace(name), apihostingreceipt.ServedResponseHeader) || strings.EqualFold(strings.TrimSpace(name), api.RevisionHeader) || strings.EqualFold(strings.TrimSpace(name), api.ReleaseHeader) {
 		return
 	}
 	if strings.EqualFold(strings.TrimSpace(name), "Sec-WebSocket-Protocol") {
@@ -213,7 +225,7 @@ func stripGuestManagedPlatformCookiesResponseHeader(resp *http.Response) {
 
 func isGuestEvidenceHeader(name string) bool {
 	switch http.CanonicalHeaderKey(strings.TrimSpace(name)) {
-	case api.GuestEvidenceDurationHeader, api.GuestEvidenceRuntimeHeader,
+	case api.FlagEvidenceHeader, api.GuestEvidenceDurationHeader, api.GuestEvidenceRuntimeHeader,
 		api.GuestEvidenceOutcomeHeader, api.GuestEvidenceErrorClassHeader,
 		api.GuestEvidenceCPUTimeHeader, api.GuestEvidencePeakRSSHeader:
 		return true
@@ -228,6 +240,8 @@ func stripGuestEvidenceResponseHeaders(resp *http.Response) {
 	}
 	resp.Header.Del(api.RevisionHeader)
 	resp.Header.Del(api.ReleaseHeader)
+	resp.Header.Del(api.DeploymentIDHeader)
+	resp.Header.Del(apihostingreceipt.ServedResponseHeader)
 	for name := range resp.Header {
 		if isTrafficResponseControlHeader(name) {
 			resp.Header.Del(name)
@@ -243,6 +257,7 @@ func stripGuestEvidenceResponseHeaders(resp *http.Response) {
 		ctx = resp.Request.Context()
 	}
 	for _, name := range []string{
+		api.FlagEvidenceHeader,
 		api.GuestEvidenceDurationHeader,
 		api.GuestEvidenceRuntimeHeader,
 		api.GuestEvidenceOutcomeHeader,

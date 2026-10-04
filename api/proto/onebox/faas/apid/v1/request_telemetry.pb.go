@@ -634,8 +634,9 @@ type IncrementRequestTelemetryRequest struct {
 	// anonymous, unlinked, and pre-upgrade gateway requests. This is an
 	// attribution snapshot, not a hint to infer from current consumer links.
 	PlatformTenantId string `protobuf:"bytes,29,opt,name=platform_tenant_id,json=platformTenantId,proto3" json:"platform_tenant_id,omitempty"`
-	// The same request's financial event was fsynced to the dedicated outbox.
-	// New receivers skip their legacy ledger write for this debugger row.
+	// Suppress the legacy financial increment for this debugger row: its usage
+	// was outboxed, or it is deliberately nonfinancial evidence (ADR-429).
+	// This bit alone does not attest an outbox append.
 	UsageOutboxed bool `protobuf:"varint,30,opt,name=usage_outboxed,json=usageOutboxed,proto3" json:"usage_outboxed,omitempty"`
 	// guest_cpu_time_ms — per-invocation child-process user+system CPU time
 	// measured by a Linux one-shot function runner. See resource-usage flag.
@@ -649,8 +650,10 @@ type IncrementRequestTelemetryRequest struct {
 	GuestResourceUsageAvailable          bool   `protobuf:"varint,33,opt,name=guest_resource_usage_available,json=guestResourceUsageAvailable,proto3" json:"guest_resource_usage_available,omitempty"`
 	PlatformTenantSurfaceId              string `protobuf:"bytes,34,opt,name=platform_tenant_surface_id,json=platformTenantSurfaceId,proto3" json:"platform_tenant_surface_id,omitempty"`
 	PlatformTenantJwtAuthorizationRuleId string `protobuf:"bytes,35,opt,name=platform_tenant_jwt_authorization_rule_id,json=platformTenantJwtAuthorizationRuleId,proto3" json:"platform_tenant_jwt_authorization_rule_id,omitempty"`
-	unknownFields                        protoimpl.UnknownFields
-	sizeCache                            protoimpl.SizeCache
+	// Bounded canonical application-reported flag decisions; no customer attributes.
+	FlagEvidenceJson string `protobuf:"bytes,36,opt,name=flag_evidence_json,json=flagEvidenceJson,proto3" json:"flag_evidence_json,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *IncrementRequestTelemetryRequest) Reset() {
@@ -928,6 +931,13 @@ func (x *IncrementRequestTelemetryRequest) GetPlatformTenantJwtAuthorizationRule
 	return ""
 }
 
+func (x *IncrementRequestTelemetryRequest) GetFlagEvidenceJson() string {
+	if x != nil {
+		return x.FlagEvidenceJson
+	}
+	return ""
+}
+
 // IncrementRequestTelemetryResponse is the per-record outcome the
 // server returns. outcome ∈ {inserted, rate_limited, db_error}.
 // `inserted` is a successful INSERT; `rate_limited` means the
@@ -1047,7 +1057,7 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\t \x01(\tR\trequestId\x12\x1b\n" +
 	"\tsource_ip\x18\n" +
-	" \x01(\tR\bsourceIp\"\xc1\n" +
+	" \x01(\tR\bsourceIp\"\xef\n" +
 	"\n" +
 	" IncrementRequestTelemetryRequest\x12\x1d\n" +
 	"\n" +
@@ -1091,7 +1101,8 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x11guest_peak_rss_mb\x18  \x01(\x05R\x0eguestPeakRssMb\x12C\n" +
 	"\x1eguest_resource_usage_available\x18! \x01(\bR\x1bguestResourceUsageAvailable\x12;\n" +
 	"\x1aplatform_tenant_surface_id\x18\" \x01(\tR\x17platformTenantSurfaceId\x12W\n" +
-	")platform_tenant_jwt_authorization_rule_id\x18# \x01(\tR$platformTenantJwtAuthorizationRuleId\"c\n" +
+	")platform_tenant_jwt_authorization_rule_id\x18# \x01(\tR$platformTenantJwtAuthorizationRuleId\x12,\n" +
+	"\x12flag_evidence_json\x18$ \x01(\tR\x10flagEvidenceJson\"c\n" +
 	"!IncrementRequestTelemetryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
 	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs2\x92\x03\n" +

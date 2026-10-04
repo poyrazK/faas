@@ -1,0 +1,103 @@
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'schedd_commit_relay_oldest_pending_timestamp_seconds{instance="scheduler-a"}'
+        values: '1x30'
+      - series: 'schedd_commit_relay_oldest_pending_timestamp_seconds{instance="scheduler-b"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: FaasCommitBacklogOverdue
+        exp_alerts: []
+      - eval_time: 22m
+        alertname: FaasCommitBacklogOverdue
+        exp_alerts:
+          - exp_labels: { severity: warn, component: schedd, family: commit }
+            exp_annotations:
+              summary: "Committed outbox work has waited more than fifteen minutes"
+              description: "A fresh source observation contains an unaccepted row older than fifteen minutes. Inspect Commit source health, blocked events and Operations capacity. Age is measured from insertion, not transaction commit."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+  - interval: 1m
+    input_series:
+      - series: 'schedd_commit_relay_blocked_events{instance="scheduler-a"}'
+        values: '2x10'
+      - series: 'schedd_commit_relay_blocked_events{instance="scheduler-b"}'
+        values: '2x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasCommitBlockedEvents
+        exp_alerts:
+          - exp_labels: { severity: warn, component: schedd, family: commit }
+            exp_annotations:
+              summary: "Committed outbox events require repair"
+              description: "Fresh source observations contain blocked events. Inspect their stable reason codes, correct unaccepted rows and request replay with the same event IDs."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+  - interval: 1m
+    input_series:
+      - series: 'schedd_commit_relay_unknown_sources'
+        values: '1x10'
+      - series: 'schedd_commit_relay_oldest_pending_timestamp_seconds'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasCommitSourceObservationUnknown
+        exp_alerts:
+          - exp_labels: { severity: warn, component: schedd, family: commit }
+            exp_annotations:
+              summary: "Commit source backlog cannot be established"
+              description: "An enabled source has no fresh known backlog observation. Check scheduler relay configuration, database access and source diagnostics. Unknown counts must not be treated as an empty queue."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - eval_time: 6m
+        alertname: FaasCommitBacklogOverdue
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'schedd_commit_relay_failing_sources'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasCommitRelaySourceFailure
+        exp_alerts:
+          - exp_labels: { severity: warn, component: schedd, family: commit }
+            exp_annotations:
+              summary: "Commit relay source recovery is pending"
+              description: "A fresh source observation reports a relay failure. Inspect the source health code and recover database access, schema, binding, cleanup or downstream acceptance without deleting pending events."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+  - interval: 1m
+    input_series:
+      - series: 'schedd_commit_relay_observation_snapshot_success{instance="scheduler-a"}'
+        values: '0x10'
+      - series: 'schedd_commit_relay_observation_snapshot_success{instance="scheduler-b"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: FaasCommitObservationUnavailable
+        exp_alerts:
+          - exp_labels: { severity: warn, component: schedd, family: commit }
+            exp_annotations:
+              summary: "Commit relay observations are unavailable"
+              description: "No reporting scheduler can read the shared Commit health ledger. Check the platform PostgreSQL connection and scheduler health; backlog totals are unavailable."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+  - interval: 1m
+    input_series:
+      - series: 'schedd_commit_relay_observation_snapshot_success{instance="scheduler-a"}'
+        values: '0x25'
+      - series: 'schedd_commit_relay_observation_snapshot_success{instance="scheduler-b"}'
+        values: '1x25'
+      - series: 'schedd_commit_relay_oldest_pending_timestamp_seconds'
+        values: '0x25'
+      - series: 'schedd_commit_relay_unknown_sources'
+        values: '0x25'
+      - series: 'schedd_commit_relay_failing_sources'
+        values: '0x25'
+      - series: 'schedd_commit_relay_blocked_events'
+        values: '0x25'
+    alert_rule_test:
+      - { eval_time: 22m, alertname: FaasCommitObservationUnavailable, exp_alerts: [] }
+      - { eval_time: 22m, alertname: FaasCommitBacklogOverdue, exp_alerts: [] }
+      - { eval_time: 22m, alertname: FaasCommitSourceObservationUnknown, exp_alerts: [] }
+      - { eval_time: 22m, alertname: FaasCommitRelaySourceFailure, exp_alerts: [] }
+      - { eval_time: 22m, alertname: FaasCommitBlockedEvents, exp_alerts: [] }

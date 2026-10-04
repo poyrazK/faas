@@ -254,7 +254,7 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 
 func docsURLForTemplate(name string) string {
 	switch name {
-	case "hello-node", "hello-python", "hello-go":
+	case "hello-node", "hello-python", "hello-go", "customer-platform":
 		return deployFromSourceDocsURL
 	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "ai-chat":
 		return functionsDocsURL
@@ -264,6 +264,8 @@ func docsURLForTemplate(name string) string {
 		return storageDocsURL
 	case "secret-reload-node":
 		return secretsDocsURL
+	case "mcp-node":
+		return "https://gregale.dev/docs/mcp"
 	default:
 		return cliDocsURL
 	}
@@ -318,6 +320,7 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 		"slack-bot":          []string{"SLACK_SIGNING_SECRET"},
 		"rest-api-postgres":  []string{"DATABASE_URL"},
 		"secret-reload-node": []string{"DATABASE_URL"},
+		"customer-platform":  []string{"DATABASE_URL"},
 		"cron-worker":        []string{"QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
 	}
 	var missing []string
@@ -350,6 +353,21 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 // the template README so the README and CLI hint stay in lockstep.
 func nextStepsFor(tpl string) []string {
 	switch tpl {
+	case "mcp-node":
+		return []string{"cd <dest> && npm ci && npm test", "Review gregale-mcp.json: the starter explicitly allows public tool access.", "gregale mcp deploy --path <dest> --name <slug>", "gregale mcp doctor --app <slug> --legacy --stream-tool stream_demo"}
+	case "customer-platform":
+		return []string{
+			"Reserve the app, then attach managed runtime and migration bindings:",
+			"  gregale deploy --create-only --template customer-platform --name <slug>",
+			"  gregale postgres attach <database> <slug> --access read_write --env DATABASE_URL",
+			"  gregale postgres attach <database> <slug> --access migration --env MIGRATION_DATABASE_URL",
+			"Use a runtime role without superuser or BYPASSRLS privileges.",
+			"For PostgreSQL on TCP 5432 (Pro/Scale): `gregale app <slug> egress-ports add 5432`.",
+			"  cd <dest> && gregale deploy --name <slug> --platform-tenant-required --no-require-authn",
+			"The Procfile release command installs the tenant-scoped document schema before activation.",
+			"Onboard customers locally with `node tools/customer.js onboard <slug> <external-ref> <customer-name>`.",
+			"Read README.md for external database secrets, credential issuance, rotation, usage, and suspension.",
+		}
 	case "s3-uploader":
 		return []string{
 			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
@@ -381,15 +399,14 @@ func nextStepsFor(tpl string) []string {
 		}
 	case "rest-api-postgres":
 		return []string{
-			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
-			"  DATABASE_URL=postgres://user:pass@host/db?sslmode=require",
-			"First deploy with secrets sealed before startup:",
-			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
-			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
-			"Or reserve the app before setting secrets separately:",
+			"Reserve the app, then attach managed runtime and migration bindings:",
 			"  gregale deploy --create-only --template rest-api-postgres --name <slug>",
-			"  gregale secrets set --app <slug> DATABASE_URL=postgres://user:pass@host/db?sslmode=require",
-			"  cd <dest> && gregale deploy",
+			"  gregale postgres attach <database> <slug> --access read_write --env DATABASE_URL",
+			"  gregale postgres attach <database> <slug> --access migration --env MIGRATION_DATABASE_URL",
+			"For PostgreSQL on TCP 5432 (Pro/Scale): `gregale app <slug> egress-ports add 5432`.",
+			"  cd <dest> && gregale deploy --name <slug>",
+			"The Procfile release command creates the schema before activation.",
+			"For external PostgreSQL, run migrations locally; see README.md for gregale secrets set and --secrets-file setup.",
 		}
 	case "secret-reload-node":
 		return []string{

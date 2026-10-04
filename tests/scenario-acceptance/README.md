@@ -15,15 +15,19 @@ The simulation and real VM assertion command call the same export contract in
 `export-api/test/contract.mjs`; the simulation additionally checks its local
 queue attempt count and object count.
 
-Run the fast local simulation from the repository root. It starts the app and
-delivery sink as local HTTP servers and checks the retry and recorded payload:
+Run the fast local simulation suite from the repository root. It runs both
+scenarios sequentially, starts the app and delivery sink as local HTTP servers,
+and checks the retry and recorded payload. Reports label every run `simulated`:
 
 ```sh
 gregale test --manifest tests/scenario-acceptance/gregale-test.yaml \
-  --scenario delivery-smoke --engine simulated
-gregale test --manifest tests/scenario-acceptance/gregale-test.yaml \
-  --scenario customer-export --engine simulated
+  --suite simulation --report scenario-simulation-report.json \
+  --junit scenario-simulation-report.xml
 ```
+
+Add `--fail-fast` to stop after the first failure. To run one member, use
+`--scenario delivery-smoke --engine simulated` or
+`--scenario customer-export --engine simulated` instead of `--suite`.
 
 On a live Gregale installation, run the real VM acceptance. `delivery-smoke`
 needs a Hobby or higher account; `customer-export` needs Pro or higher for its
@@ -54,3 +58,18 @@ environments and records one JUnit case for each attempt. The manual
 three repeats. It requires the `scenario-acceptance` environment, a live
 `GREGALE_ACCEPTANCE_API_URL` variable, and a Pro or higher
 `GREGALE_ACCEPTANCE_TOKEN` secret.
+
+To generate a profile-matrix workflow for this manifest, run:
+
+```sh
+gregale test ci init \
+  --manifest tests/scenario-acceptance/gregale-test.yaml \
+  --suite real-vm --engine real-vm \
+  --profiles warm,cold,restored --max-workload-minutes 135 \
+  --environment scenario-acceptance
+```
+
+This workflow runs only when manually dispatched, executes profile jobs one at
+a time, and uploads separate reports. Configure the selected GitHub environment
+with `GREGALE_TEST_API_URL` and `GREGALE_TEST_TOKEN`; generated workflows use
+the generic names described in the scenario testing guide.

@@ -125,18 +125,44 @@ func (a *scheddCPUAdapter) CPUUsageUsec(instanceID string) (uint64, bool) {
 	return row.CPUUsageUsec, true
 }
 
+// refreshFleetStatsPeriodically keeps the fleet snapshot, and with it the
+// meterd_fleet_stats_{expected,connected}_nodes gauges, current on an idle
+// fleet. The CPU and egress samplers refresh only while instances run, so a
+// new fleet reported zero expected nodes until its first wake and the
+// rollout's metering-convergence gate could never pass. refresh is
+// TTL-bounded, so this adds no round trips while samplers are active.
+func refreshFleetStatsPeriodically(ctx context.Context, cpu *scheddCPUAdapter, every time.Duration) {
+	cpu.refreshContext(ctx)
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cpu.refreshContext(ctx)
+		}
+	}
+}
+
 // refresh refreshes the in-memory snapshot if the last fetch is
 // older than scheddCPUAdapterTTL. The cost is one gRPC round trip
 // per minute per sampler iteration; the TTL bounds the staleness
 // without forcing a fetch per instance.
 func (a *scheddCPUAdapter) refresh() {
+	a.refreshContext(context.Background())
+}
+
+// refreshContext is refresh with a caller-owned context, so the periodic
+// fleet refresh stops its round trip when meterd shuts down.
+func (a *scheddCPUAdapter) refreshContext(ctx context.Context) {
 	a.mu.Lock()
 	last := a.fetched
 	a.mu.Unlock()
 	if !last.IsZero() && a.now().Sub(last) < scheddCPUAdapterTTL {
 		return
 	}
-	rows, err := a.parker.ListInstanceStats(context.Background())
+	rows, err := a.parker.ListInstanceStats(ctx)
 	if err != nil {
 		// Preserve the previous snapshot on error so a transient
 		// gRPC failure doesn't drop the CPU data for the rest of
@@ -1047,6 +1073,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	cpu := &scheddCPUAdapter{parker: statsParker, now: deps.now}
+	if cfg.Role == role.RoleControlPlane {
+		go refreshFleetStatsPeriodically(ctx, cpu, scheddCPUAdapterTTL)
+	}
 	// ADR-046 (PR-1 + PR-2): wire the egress adapters so the
 	// sampler can append tx_bytes + net_tx_bytes to
 	// usage_minutes. PR-1 leaves the gateway adapter as a

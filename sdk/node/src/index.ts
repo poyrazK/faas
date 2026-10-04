@@ -35,6 +35,7 @@ export { InvocationsService } from './generated/services/InvocationsService.js';
 export { KeysService } from './generated/services/KeysService.js';
 export { MetaService } from './generated/services/MetaService.js';
 export { MfaService } from './generated/services/MfaService.js';
+export { OutboundService } from './generated/services/OutboundService.js';
 export { QueuesService } from './generated/services/QueuesService.js';
 export { RunsService } from './generated/services/RunsService.js';
 export { SecretsService } from './generated/services/SecretsService.js';
@@ -136,3 +137,23 @@ export {
 
 // Opaque login-target signal for opt-in pre-auth abuse observation.
 export { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from './pre-auth-target.js';
+
+export { createIssueReporter, type IssueContext, type IssueReporterOptions } from './issues.js';
+
+export { GregaleFlags, evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, flagSubjectBucket, flagSubjectVariantBucket, validFlagSubjectID, GREGALE_FLAG_EVIDENCE_HEADER, GREGALE_FLAG_CONTEXT_HEADER, GREGALE_FLAG_PROPAGATION_HEADER } from './flags.js';
+export type { FlagsBundle, FlagRule, VariantFlagRule, ProgressiveRollout, FeatureFlag, FlagDefinition, BooleanFeatureFlag, VariantFeatureFlag, WeightedVariant, BooleanFlagDecision, VariantFlagDecision, AnyFlagDecision, FlagDecision, FlagEvidence, VariantFlagEvidence, AnyFlagEvidence, FlagRequestHeaders, FlagDecisionOrigin, GregaleFlagsOptions } from './flags.js';
+
+export { FlagsService } from './generated/services/FlagsService.js';
+
+export { DevService } from './generated/services/DevService.js';
+export {
+  DEV_BRIDGE_CONTEXT_HEADER,
+  createDevBridgeFetch,
+  currentDevBridgeContext,
+  devBridgeMiddleware,
+  withDevBridgeContext,
+  withDevBridgeRequestContext,
+} from './dev-bridge.js';
+
+export { decodeExecutionArtifact } from './execution-artifacts.js';
+export { insertCommitEvent, type CommitEvent, type CommitTransaction } from "./commit.js";

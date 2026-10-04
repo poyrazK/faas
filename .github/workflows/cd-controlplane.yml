@@ -25,7 +25,20 @@ name: cd-controlplane
 
 on:
   workflow_call:
+    outputs:
+      activated:
+        description: "The selected release completed deployctl activation in this run"
+        value: ${{ jobs.deploy.outputs.activated }}
     inputs:
+      deploy_environment:
+        description: >-
+          GitHub environment holding the target fleet's secrets. Each
+          environment has its own trusted runner label: production uses
+          faas-fleet, production-us (gregale-prod, us-east1) uses
+          faas-fleet-us, so one fleet's runner never deploys the other.
+        required: false
+        default: production
+        type: string
       release_tag:
         description: "Existing pre-1.0 release tag published by release.yml"
         required: true
@@ -43,6 +56,18 @@ on:
         default: false
   workflow_dispatch:  # manual trigger for deliberate deployment
     inputs:
+      deploy_environment:
+        description: >-
+          GitHub environment holding the target fleet's secrets. Each
+          environment has its own trusted runner label: production uses
+          faas-fleet, production-us (gregale-prod, us-east1) uses
+          faas-fleet-us, so one fleet's runner never deploys the other.
+        required: false
+        default: production
+        type: choice
+        options:
+          - production
+          - production-us
       release_tag:
         description: "Existing pre-1.0 release tag published by release.yml (for example v0.1.18-rc.1)"
         required: true
@@ -60,7 +85,7 @@ on:
         default: false
 
 concurrency:
-  group: cd-cp-${{ inputs.release_tag }}
+  group: cd-cp-${{ inputs.deploy_environment }}-${{ inputs.release_tag }}
   # A production deployment must finish or fail visibly; cancelling it
   # midway can leave binaries, migrations, and systemd state out of sync.
   cancel-in-progress: false
@@ -71,10 +96,12 @@ permissions:
 jobs:
   deploy:
     name: Deploy to Control Plane Host
-    environment: production
+    outputs:
+      activated: ${{ steps.activate.outputs.activated }}
+    environment: ${{ inputs.deploy_environment }}
     # The dedicated fleet runner does not queue behind repository CI the way
     # GitHub-hosted runners do (a busy CI day added 8-14 min per hosted job).
-    runs-on: ${{ inputs.hosted_runner && 'ubuntu-latest' || fromJSON('["self-hosted","linux","faas-fleet"]') }}
+    runs-on: ${{ inputs.hosted_runner && 'ubuntu-latest' || fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
     env:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
@@ -107,7 +134,13 @@ jobs:
           cache: true
 
       - name: Install pinned config renderer
-        run: python3 -m pip install --quiet 'ansible-core==2.21.2'
+        # A per-job venv: the self-hosted fleet runner (Ubuntu 24.04) has no
+        # system pip and marks its interpreter externally managed (PEP 668).
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/ansible-venv"
+          "$RUNNER_TEMP/ansible-venv/bin/python" -m pip install --quiet 'ansible-core==2.21.2'
+          echo "$RUNNER_TEMP/ansible-venv/bin" >> "$GITHUB_PATH"
 
       - name: Install pinned cosign verifier
         env:
@@ -115,6 +148,11 @@ jobs:
           COSIGN_SHA256: "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"
         run: |
           set -euo pipefail
+          # Two runner instances on one fleet host share a user and $HOME.
+          # A shared ~/.sigstore cache made parallel jobs race on its lock
+          # ("creating cached local store: resource temporarily
+          # unavailable"); keep the TUF cache per job.
+          echo "TUF_ROOT=$RUNNER_TEMP/sigstore-tuf" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/release-tools"
           curl --fail --silent --show-error --location \
             --proto '=https' --tlsv1.2 \
@@ -129,6 +167,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # The bundle manifest records each file's mode. The fleet runner's
+          # service runs with UMask=0077, while the control plane extracts
+          # release.tar.gz as root with the archive's modes; use the hosted
+          # runner's umask so both sides agree (bin/apid 0755, not 0700).
+          umask 0022
           CANONICAL_ROOT="$RUNNER_TEMP/gregale-canonical"
           mkdir -p "$CANONICAL_ROOT"
           # GitHub's by-tag response can lag asset uploads while the by-ID
@@ -191,7 +234,7 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ env.CP_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ env.CP_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -t ed25519,ecdsa,rsa -H ${{ env.CP_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
           chmod 600 ~/.ssh/known_hosts
 
       - name: Converge APID lifecycle storage credential
@@ -266,6 +309,8 @@ jobs:
       - name: Build immutable release bundle
         run: |
           set -euo pipefail
+          # Same umask as the canonical download step: see there.
+          umask 0022
           BUNDLE_ROOT="${RUNNER_TEMP}/faas-release/${RELEASE_ID}"
           mkdir -p "${BUNDLE_ROOT}/bin" "${BUNDLE_ROOT}/systemd" "${BUNDLE_ROOT}/optional-systemd" "${BUNDLE_ROOT}/tmpfiles.d" "${BUNDLE_ROOT}/prometheus" "${BUNDLE_ROOT}/statuspage"
           PROM_BOX_LABEL="$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" hostname)"
@@ -492,10 +537,11 @@ jobs:
         env:
           FLEET_AGE_KEY: ${{ secrets.FLEET_AGE_KEY }}
           FLEET_AGE_RECIPIENT: ${{ secrets.FLEET_AGE_RECIPIENT }}
+          COMPUTE_VERIFY_KEY: ${{ secrets.COMPUTE_VERIFY_KEY }}
         run: |
           set -euo pipefail
-          [[ -n "${FLEET_AGE_KEY:-}" && -n "${FLEET_AGE_RECIPIENT:-}" ]] || {
-            echo "::error::production secrets FLEET_AGE_KEY and FLEET_AGE_RECIPIENT are required" >&2
+          [[ -n "${FLEET_AGE_KEY:-}" && -n "${FLEET_AGE_RECIPIENT:-}" && -n "${COMPUTE_VERIFY_KEY:-}" ]] || {
+            echo "::error::production secrets FLEET_AGE_KEY, FLEET_AGE_RECIPIENT and COMPUTE_VERIFY_KEY are required" >&2
             exit 1
           }
           stage="$RUNNER_TEMP/fleet-age"
@@ -504,13 +550,15 @@ jobs:
           # newline makes the strict fleet-seal parser reject the key.
           printf '%s' "$FLEET_AGE_KEY" > "$stage/fleet.age"
           printf '%s' "$FLEET_AGE_RECIPIENT" > "$stage/fleet.age.pub"
+          # Exactly one trailing newline, however the secret was pasted.
+          printf '%s\n' "$(printf '%s' "$COMPUTE_VERIFY_KEY")" > "$stage/sign-pub.pem"
           chmod 0400 "$stage/fleet.age"
-          chmod 0444 "$stage/fleet.age.pub"
+          chmod 0444 "$stage/fleet.age.pub" "$stage/sign-pub.pem"
           remote_stage="/tmp/gregale-fleet-age-${GITHUB_RUN_ID}"
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             "root@${{ env.CP_HOST }}" "install -d -m 0700 '$remote_stage'"
           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            "$stage/fleet.age" "$stage/fleet.age.pub" \
+            "$stage/fleet.age" "$stage/fleet.age.pub" "$stage/sign-pub.pem" \
             "root@${{ env.CP_HOST }}:${remote_stage}/"
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             "root@${{ env.CP_HOST }}" "bash -s -- '$remote_stage'" <<'REMOTE'
@@ -519,6 +567,7 @@ jobs:
           trap 'rm -rf -- "$stage"' EXIT
           grep -qE '^AGE-SECRET-KEY-1[0-9A-Z]+$' "$stage/fleet.age"
           grep -qE '^age1[0-9a-z]+$' "$stage/fleet.age.pub"
+          grep -qx -- '-----BEGIN PUBLIC KEY-----' "$stage/sign-pub.pem"
           install -d -o root -g root -m 0700 /etc/faas/secrets
           for file in fleet.age fleet.age.pub; do
             if [[ -e "/etc/faas/secrets/$file" ]] && ! cmp -s "$stage/$file" "/etc/faas/secrets/$file"; then
@@ -528,6 +577,16 @@ jobs:
           done
           install -o root -g root -m 0400 "$stage/fleet.age" /etc/faas/secrets/fleet.age
           install -o root -g root -m 0444 "$stage/fleet.age.pub" /etc/faas/secrets/fleet.age.pub
+
+          # apid and schedd verify image signatures with the fleet's public
+          # signing key (LoadCredential=cd_sign_pub below). Compute joins
+          # install it from COMPUTE_VERIFY_KEY; the control plane never
+          # received it, so a fresh control plane could not start apid.
+          if [[ -e /etc/faas/secrets/sign-pub.pem ]] && ! cmp -s "$stage/sign-pub.pem" /etc/faas/secrets/sign-pub.pem; then
+            echo "existing sign-pub.pem differs from COMPUTE_VERIFY_KEY; use the signing-key rotation procedure" >&2
+            exit 1
+          fi
+          install -o root -g root -m 0444 "$stage/sign-pub.pem" /etc/faas/secrets/sign-pub.pem
 
           # Keep both the incoming release and an older rollback release able
           # to read the public recipients while /etc/faas/secrets stays 0700.
@@ -570,6 +629,7 @@ jobs:
           REMOTE
 
       - name: Upload and activate immutable release
+        id: activate
         run: |
           set -euo pipefail
           release_dir="/opt/faas/releases/${RELEASE_ID}"
@@ -724,76 +784,44 @@ jobs:
           REMOTE
           # Observe API readiness and a real canary app independently during
           # activation. The telemetry-heavy status route is diagnostic only.
-          # GitHub-hosted runner egress is blocked
-          # by the production edge policy, so use the control-plane VM only as
-          # a SOCKS egress point while still traversing public DNS + Cloudflare.
-          probe_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
-          ssh -N -D "127.0.0.1:${probe_port}" \
-            -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            -o ExitOnForwardFailure=yes root@${{ env.CP_HOST }} &
-          probe_proxy_pid=$!
-          cleanup_probe_proxy() {
-            kill "$probe_proxy_pid" 2>/dev/null || true
-            wait "$probe_proxy_pid" 2>/dev/null || true
-          }
-          trap cleanup_probe_proxy EXIT
-          probe_proxy="socks5h://127.0.0.1:${probe_port}"
+          # Host hardening disables TCP forwarding. Run the observer on the
+          # control plane so probes still traverse public DNS and Cloudflare.
           baseline_samples=3
           if [[ "$MAINTENANCE_MODE" == "true" ]]; then
-            # Legacy writers are intentionally stopped before migration; the
-            # public endpoint cannot provide a healthy pre-rollout baseline.
             baseline_samples=0
             echo "::notice::planned maintenance: customer-path availability gate is inconclusive"
-          else
-            proxy_ready=0
-            for _ in $(seq 1 20); do
-              if curl --fail --silent --show-error --proxy "$probe_proxy" \
-                --connect-timeout 1 --max-time 3 \
-                'https://api.gregale.dev/readyz?rollout_probe=proxy-preflight' \
-                >/dev/null; then
-                proxy_ready=1
-                break
-              fi
-              kill -0 "$probe_proxy_pid" 2>/dev/null || break
-              sleep 0.25
-            done
-            (( proxy_ready == 1 )) || {
-              echo "::error::control-plane rollout probe proxy did not become ready" >&2
-              exit 1
-            }
           fi
+          activation_script="$RUNNER_TEMP/controlplane-activate.sh"
+          cat > "$activation_script" <<ACTIVATE
+          set -euo pipefail
+          ${release_dir}/bin/deployctl bundle-check-installed ${release_dir}
+          if test ! -s /opt/faas/releases/sbom-baseline.json; then
+            current_release=\$(readlink -f /opt/faas/current 2>/dev/null || true)
+            if test -n "\$current_release" && test -s "\$current_release/release.sbom.json"; then
+              baseline_sha=\$(basename "\$current_release")
+            else
+              baseline_sha=${RELEASE_ID}
+            fi
+            ${release_dir}/bin/gregalectl release kgv rotate --git-sha "\$baseline_sha"
+          fi
+          ${release_dir}/bin/gregalectl release kgv verify --git-sha ${RELEASE_ID}
+          ${release_dir}/bin/gregalectl fleet-seal migrate --fleet-key /etc/faas/secrets/fleet.age --legacy-host-dir /etc/faas/secrets --db-env /etc/faas/sealed.env --json
+          verify_json=\$(${release_dir}/bin/gregalectl fleet-seal verify --fleet-key /etc/faas/secrets/fleet.age --host-key /etc/faas/secrets/host.age --db-env /etc/faas/sealed.env --metrics-file /var/lib/node_exporter/textfile_collector/faas_fleet_seal.prom --json)
+          test "\$(printf '%s' "\$verify_json" | jq -r .fleet_recipient)" = "\$(tr -d '\r\n' </etc/faas/secrets/fleet.age.pub)"
+          printf '%s\n' "\$verify_json"
+          ${release_dir}/bin/deployctl deploy ${RELEASE_ID}
+          touch "\$ROLLOUT_ACTIVATION_MARKER"
+          install -d -o faas-apid -g faas -m 0770 /etc/faas/statuspage
+          install -o root -g faas -m 0644 ${release_dir}/statuspage/index.html /etc/faas/statuspage/.index.html-${RELEASE_ID}
+          mv -Tf /etc/faas/statuspage/.index.html-${RELEASE_ID} /etc/faas/statuspage/index.html
+          install -o root -g faas -m 0644 ${release_dir}/host-config/dpa.md /etc/faas/.dpa.md-${RELEASE_ID}
+          mv -Tf /etc/faas/.dpa.md-${RELEASE_ID} /etc/faas/dpa.md
+          ln -sfn /opt/faas/current/bin/gregalectl /usr/local/bin/.gregalectl-${RELEASE_ID}
+          mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl
+          ACTIVATE
           ROLLOUT_BASELINE_SAMPLE_COUNT="$baseline_samples" \
-            ROLLOUT_APP_PROBE_URL="https://gregale-api-demo.gregale.dev/" \
-            ROLLOUT_STATUS_PROBE_URL="https://api.gregale.dev/v1/status" \
-            ROLLOUT_PROBE_PROXY="$probe_proxy" scripts/ci/observe_rollout_availability.sh \
-            "https://api.gregale.dev/readyz" -- \
-            ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            root@${{ env.CP_HOST }} \
-            "${release_dir}/bin/deployctl bundle-check-installed ${release_dir} &&
-             if test ! -s /opt/faas/releases/sbom-baseline.json; then
-               current_release=\$(readlink -f /opt/faas/current 2>/dev/null || true);
-               if test -n \"\$current_release\" && test -s \"\$current_release/release.sbom.json\"; then
-                 baseline_sha=\$(basename \"\$current_release\");
-               else
-                 baseline_sha=${RELEASE_ID};
-               fi;
-               ${release_dir}/bin/gregalectl release kgv rotate --git-sha \"\$baseline_sha\";
-             fi &&
-             ${release_dir}/bin/gregalectl release kgv verify --git-sha ${RELEASE_ID} &&
-             ${release_dir}/bin/gregalectl fleet-seal migrate --fleet-key /etc/faas/secrets/fleet.age --legacy-host-dir /etc/faas/secrets --db-env /etc/faas/sealed.env --json &&
-             verify_json=\$(${release_dir}/bin/gregalectl fleet-seal verify --fleet-key /etc/faas/secrets/fleet.age --host-key /etc/faas/secrets/host.age --db-env /etc/faas/sealed.env --metrics-file /var/lib/node_exporter/textfile_collector/faas_fleet_seal.prom --json) &&
-             test \"\$(printf '%s' \"\$verify_json\" | jq -r .fleet_recipient)\" = \"\$(tr -d '\\r\\n' </etc/faas/secrets/fleet.age.pub)\" &&
-             printf '%s\\n' \"\$verify_json\" &&
-             ${release_dir}/bin/deployctl deploy ${RELEASE_ID} &&
-             install -d -o faas-apid -g faas -m 0770 /etc/faas/statuspage &&
-             install -o root -g faas -m 0644 ${release_dir}/statuspage/index.html /etc/faas/statuspage/.index.html-${RELEASE_ID} &&
-             mv -Tf /etc/faas/statuspage/.index.html-${RELEASE_ID} /etc/faas/statuspage/index.html &&
-             install -o root -g faas -m 0644 ${release_dir}/host-config/dpa.md /etc/faas/.dpa.md-${RELEASE_ID} &&
-             mv -Tf /etc/faas/.dpa.md-${RELEASE_ID} /etc/faas/dpa.md &&
-             ln -sfn /opt/faas/current/bin/gregalectl /usr/local/bin/.gregalectl-${RELEASE_ID} &&
-             mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl"
-          cleanup_probe_proxy
-          trap - EXIT
+            scripts/ci/observe_remote_rollout.sh \
+            "root@${{ env.CP_HOST }}" ~/.ssh/deploy_key "$activation_script"
 
       - name: Upload control-plane rollout probe evidence
         if: always()
@@ -832,8 +860,15 @@ jobs:
               exit 1
             }
           }
-          assert_process_credential faas-apid /etc/faas/apid-storage.env
-          assert_process_credential faas-schedd /etc/faas/storage.env
+          # Registry credentials exist only when OCI is the backend or the
+          # migration fallback. A GCS-only fleet authenticates with the VM
+          # identity (ADC) and has no FAAS_OCI_* values to compare.
+          if grep -Eq '^FAAS_STORAGE_(FALLBACK_)?BACKEND=oci$' /etc/faas/storage.env; then
+            assert_process_credential faas-apid /etc/faas/apid-storage.env
+            assert_process_credential faas-schedd /etc/faas/storage.env
+          else
+            echo "storage.env selects GCS without an OCI fallback; no registry credentials to verify"
+          fi
           sudo -u faas-apid /opt/faas/current/bin/gregalectl artifact lifecycle-check \
             --env-file /etc/faas/storage.env \
             --lifecycle-env-file /etc/faas/apid-storage.env \

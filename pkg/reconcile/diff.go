@@ -248,6 +248,9 @@ func quoteShellArg(arg string) string {
 // no NULL handling needed.
 func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, available ...map[string]struct{}) []string {
 	var changed []string
+	if w.PlatformTenantRequired != nil && a.PlatformTenantRequired != *w.PlatformTenantRequired {
+		changed = append(changed, "platform_tenant_required")
+	}
 	if a.RootDir != w.RootDir {
 		changed = append(changed, "root_dir")
 	}

@@ -398,3 +398,69 @@ func TestBackupInit_RefuseOverwrite(t *testing.T) {
 		t.Fatalf("forced re-init: %v", err)
 	}
 }
+
+// The box-age identity file reaches the unseal commands in several shapes:
+// cd-compute writes COMPUTE_BOX_AGE_KEY with a trailing newline, and
+// operators create it with age-keygen, which adds comment lines. Parsing the
+// raw bytes with ParseX25519Identity rejected both, so a join that supplied
+// backup envelopes could never unseal them.
+func TestUnsealAcceptsBoxAgeIdentityFileShapes(t *testing.T) {
+	ident, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := ident.String()
+	keygen := "# created: 2026-09-29T19:00:00Z\n# public key: " + ident.Recipient().String() + "\n" + key + "\n"
+	for _, tc := range []struct {
+		name, file string
+		ok         bool
+	}{
+		{"bare key", key, true},
+		{"trailing newline (cd-compute printf)", key + "\n", true},
+		{"CRLF", key + "\r\n", true},
+		{"age-keygen output", keygen, true},
+		{"two identities", key + "\n" + other.String() + "\n", false},
+		{"empty", "\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			identPath := filepath.Join(dir, "box-age-key")
+			if err := os.WriteFile(identPath, []byte(tc.file), 0o400); err != nil {
+				t.Fatal(err)
+			}
+			var sealed strings.Builder
+			w, err := age.Encrypt(&sealed, ident.Recipient())
+			if err != nil {
+				t.Fatal(err)
+			}
+			const plaintext = `{"endpoint":"https://storage.googleapis.com","bucket":"b","auth_mode":"gcp_metadata"}` + "\n"
+			if _, err := w.Write([]byte(plaintext)); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Close(); err != nil {
+				t.Fatal(err)
+			}
+			envelope := filepath.Join(dir, "envelope.age")
+			if err := os.WriteFile(envelope, []byte(sealed.String()), 0o400); err != nil {
+				t.Fatal(err)
+			}
+			archiveErr := unsealArchiveCreds(&unsealArchiveCredsFlags{ageIdentity: identPath, in: envelope, out: filepath.Join(dir, "archive-creds.json")})
+			rcloneErr := unsealRclone(&unsealRcloneFlags{ageIdentity: identPath, in: envelope, out: filepath.Join(dir, "rclone.conf")})
+			for name, err := range map[string]error{"unseal-archive-creds": archiveErr, "unseal-rclone": rcloneErr} {
+				if (err == nil) != tc.ok {
+					t.Errorf("%s: err=%v, want ok=%v", name, err, tc.ok)
+				}
+			}
+			if tc.ok {
+				got, err := os.ReadFile(filepath.Join(dir, "archive-creds.json"))
+				if err != nil || string(got) != plaintext {
+					t.Errorf("archive creds round-trip = %q, %v", got, err)
+				}
+			}
+		})
+	}
+}

@@ -8,6 +8,7 @@ import type { AccountDeadLetterReplayAllResponse } from '../models/AccountDeadLe
 import type { AccountDeletionResponse } from '../models/AccountDeletionResponse.js';
 import type { AccountEgressAllowlistExtraResponse } from '../models/AccountEgressAllowlistExtraResponse.js';
 import type { AccountExportResponse } from '../models/AccountExportResponse.js';
+import type { AccountOverageCapResponse } from '../models/AccountOverageCapResponse.js';
 import type { AccountRateLimitsResponse } from '../models/AccountRateLimitsResponse.js';
 import type { AccountResponse } from '../models/AccountResponse.js';
 import type { AccountSLOResponse } from '../models/AccountSLOResponse.js';
@@ -548,6 +549,23 @@ export class AccountService {
       errors: {
         401: `code: unauthorized`,
         409: `code: account_deletion_confirm_required | account_deletion_pending | account_not_restorable`,
+      },
+    });
+  }
+  /**
+   * Read the account's monthly overage cap.
+   * Returns integer cents, zero when no overage is allowed, or null when no cap is set.
+   * @returns AccountOverageCapResponse The saved monthly overage cap.
+   * @throws ApiError
+   */
+  public static getOverageCap(): CancelablePromise<AccountOverageCapResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/overage-cap',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        500: `Could not read the saved cap.`,
       },
     });
   }

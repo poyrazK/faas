@@ -21,4 +21,16 @@ func TestValidateOutputManifest(t *testing.T) {
 			t.Fatalf("accepted invalid output manifest: %s", raw)
 		}
 	}
+
+	withOutcome := `{"version":1,"artifacts":[],"outcome_code":"invalid_record"}`
+	manifest, err = Validate([]byte(withOutcome))
+	if err != nil || manifest.OutcomeCode != "invalid_record" {
+		t.Fatalf("structured outcome = %+v, err %v", manifest, err)
+	}
+	for _, code := range []string{"Invalid", "bad code", strings.Repeat("a", 65)} {
+		raw := `{"version":1,"artifacts":[],"outcome_code":"` + code + `"}`
+		if _, err := Validate([]byte(raw)); err == nil {
+			t.Fatalf("accepted invalid outcome code %q", code)
+		}
+	}
 }

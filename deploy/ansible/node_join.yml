@@ -1353,6 +1353,33 @@
         path: /etc/systemd/system/faas-gatewayd-internal.service.d/zz-emergency-release.conf
         state: absent
 
+    # An audit hotfix (scripts/ops/request_evidence_hotfix_host.py) pins a
+    # daemon to a binary under /opt/faas/hotfixes through a
+    # `98-audit-*-hotfix.conf` ExecStart override and says "remove before a
+    # later full release". Nothing removed it, so a rollout restarted the
+    # daemon on the hotfix build instead of the release it just installed
+    # (FaasDeployVersionSkew). Retire every such override before activation;
+    # the hotfix binary stays on disk for audit evidence.
+    - name: Find audit hotfix ExecStart overrides before service activation
+      ansible.builtin.find:
+        paths:
+          - /etc/systemd/system/faas-vmmd.service.d
+          - /etc/systemd/system/faas-schedd.service.d
+          - /etc/systemd/system/faas-realtimed.service.d
+          - /etc/systemd/system/faas-gatewayd-internal.service.d
+          - /etc/systemd/system/faas-builderd.service.d
+          - /etc/systemd/system/faas-imaged.service.d
+        patterns: "*-audit-*-hotfix.conf"
+      register: faas_join_audit_hotfix_overrides
+
+    - name: Retire audit hotfix ExecStart overrides before service activation
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ faas_join_audit_hotfix_overrides.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
     - name: Stage the reusable box-age identity when supplied
       ansible.builtin.copy:
         src: "{{ faas_join_box_age_key_source }}"
@@ -1466,6 +1493,8 @@
           - doctor
           - --node
           - "{{ faas_join_database_node }}"
+          - --release
+          - "{{ faas_join_release_git_sha }}"
           - --fail-on
           - >-
             {{ 'warn' if
@@ -1480,6 +1509,10 @@
       # runs after identity/release rendering and before any service can
       # become schedulable, so a missing filesystem, mandatory secret,
       # certificate, or release membership cannot hide behind systemd=active.
+      # Scope release-history checks to this candidate: release_bundles is
+      # fleet-wide, while retained release directories are host-local. A
+      # historical CP-only bundle missing here must not block compute adoption.
+      # Unfiltered doctor remains available for fleet-history diagnostics.
       # Backup envelopes are optional join inputs: when the operator has not
       # supplied them yet, the doctor still reports the placeholder warnings,
       # but they do not block compute-node activation. Supplying either
@@ -1538,6 +1571,14 @@
           {{ (faas_gatewayd_service_proxy_listen |
           default('10.100.0.1:10080', true)).split(':')[0] }}
         port: 10080
+        timeout: 60
+
+    - name: Wait for the Fetch-compatible guest service proxy listener
+      ansible.builtin.wait_for:
+        host: >-
+          {{ (faas_gatewayd_service_proxy_listen |
+          default('10.100.0.1:10080', true)).split(':')[0] }}
+        port: 10081
         timeout: 60
 
     - name: Wait for the guest DNS TCP listener

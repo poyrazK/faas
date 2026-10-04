@@ -117,6 +117,7 @@ type workloadSeed struct {
 	previewServiceCallsPolicy PreviewServiceCallsPolicy
 	allowedServiceCallers     *[]string
 	allowedServiceCallScopes  *api.ServiceCallerScopes
+	platformTenantRequired    *bool
 
 	class     Class
 	schedule  string

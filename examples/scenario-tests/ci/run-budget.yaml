@@ -1,0 +1,5 @@
+version: 1
+
+runs:
+  require_passing: true
+  require_same_runs: true

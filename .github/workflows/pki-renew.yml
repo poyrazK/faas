@@ -4,20 +4,37 @@ on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
-
-concurrency:
-  group: internal-pki-renewal
-  cancel-in-progress: false
+    inputs:
+      deploy_environment:
+        description: >-
+          Fleet to renew: the GitHub environment holding its secrets. The
+          daily schedule renews every fleet.
+        required: false
+        default: production
+        type: choice
+        options:
+          - production
+          - production-us
 
 permissions:
   contents: read
 
 jobs:
   renew:
-    name: Renew expiring internal mTLS leaves
+    name: Renew expiring internal mTLS leaves (${{ matrix.deploy_environment }})
     if: github.repository == 'poyrazK/faas'
-    environment: production
-    runs-on: [self-hosted, linux, faas-fleet]
+    strategy:
+      fail-fast: false
+      matrix:
+        # A dispatch renews the selected fleet; the schedule renews every fleet.
+        deploy_environment: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.deploy_environment) || '["production","production-us"]') }}
+    # Renewal is serialized per fleet. A fleet whose runner is offline must
+    # not hold another fleet's renewal in the queue.
+    concurrency:
+      group: internal-pki-renewal-${{ matrix.deploy_environment }}
+      cancel-in-progress: false
+    environment: ${{ matrix.deploy_environment }}
+    runs-on: ${{ fromJSON(matrix.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -29,8 +46,16 @@ jobs:
           CONTROL_PLANE_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
           COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
           COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+          # The production fleet runs automation as its dedicated faas-runner
+          # principal. production-us compute hosts admit the deploy key as
+          # root, as its cd-compute rollouts do. Both escalate with become.
+          COMPUTE_SSH_USER: ${{ matrix.deploy_environment == 'production-us' && 'root' || 'faas-runner' }}
         run: |
           set -euo pipefail
+          [[ "$COMPUTE_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || {
+            echo "::error::invalid compute SSH user" >&2
+            exit 1
+          }
           [[ -n "$CP_HOST" ]] || {
             echo "::error::CP_HOST is required to reach the internal CA" >&2
             exit 1
@@ -49,7 +74,7 @@ jobs:
           # over SSH with the control-plane key, pinned the same way the CD
           # workflows pin it, and render the inventory there: the installed
           # release's manifest and gregalectl stay the source of truth.
-          ssh-keyscan -H "$CP_HOST" >> "$RUNNER_TEMP/pki-known-hosts" 2>/dev/null
+          ssh-keyscan -t ed25519,ecdsa,rsa -H "$CP_HOST" >> "$RUNNER_TEMP/pki-known-hosts" 2>/dev/null
           cp_ssh=(ssh -i "$RUNNER_TEMP/pki-control-key"
             -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
             -o "UserKnownHostsFile=$RUNNER_TEMP/pki-known-hosts" "root@${CP_HOST}")
@@ -73,15 +98,16 @@ jobs:
           tar -xzf "$RUNNER_TEMP/pki-inventory.tar.gz" -C "$inventory_root"
           mkdir -p "$inventory_root/inventory/group_vars"
           cat >> "$inventory_root/inventory/group_vars/all.yml" <<'EOF'
-          # The compute deployment key is bound to the dedicated fleet
-          # automation principal on every compute node.
-          ansible_user: faas-runner
+          # The compute deployment key is bound to the fleet's automation
+          # principal on every compute node.
+          ansible_user: __PKI_COMPUTE_USER__
           ansible_ssh_private_key_file: __PKI_DEPLOY_KEY__
           ansible_ssh_common_args: >-
             -o BatchMode=yes -o StrictHostKeyChecking=yes
             -o UserKnownHostsFile=__PKI_KNOWN_HOSTS__
           EOF
           sed -i \
+            -e "s|__PKI_COMPUTE_USER__|$COMPUTE_SSH_USER|" \
             -e "s|__PKI_DEPLOY_KEY__|$RUNNER_TEMP/pki-deploy-key|" \
             -e "s|__PKI_KNOWN_HOSTS__|$RUNNER_TEMP/pki-known-hosts|" \
             "$inventory_root/inventory/group_vars/all.yml"

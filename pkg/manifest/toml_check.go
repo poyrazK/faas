@@ -99,6 +99,20 @@ type HostBlock struct {
 	// renderer to consult the same descriptor the validator
 	// checks, so the two cannot drift.
 	ComputeNodeBlock []TableKey
+	// Tables are the daemon's own TOML tables other than
+	// [compute_node] (gatewayd_internal's [ratelimit]). The renderer
+	// emits them after every top-level key: TOML scopes each key below
+	// a [table] header into that table, so a table written mid-file
+	// silently swallows the top-level keys after it.
+	Tables []TableKey
+}
+
+// TableBlocks returns every table key the daemon's TOML carries, in
+// render order: [compute_node] first, then Tables.
+func (h HostBlock) TableBlocks() []TableKey {
+	out := make([]TableKey, 0, len(h.ComputeNodeBlock)+len(h.Tables))
+	out = append(out, h.ComputeNodeBlock...)
+	return append(out, h.Tables...)
 }
 
 // HostKeys is the per-daemon TOML key catalog. Use by the validator
@@ -261,6 +275,9 @@ var HostKeys = map[string]HostBlock{
 			"service_proxy_tls_ca_path",
 		},
 		ComputeNodeBlock: nil,
+		Tables: []TableKey{
+			{Table: "ratelimit", Key: "mode", Owner: "gatewayd_internal", Scope: "private"},
+		},
 	},
 	"imaged": {
 		Daemon: "imaged",
@@ -376,9 +393,9 @@ func ValidateTOMLPlacement(daemon string, rendered map[string]string) Errors {
 				fmt.Sprintf("key %q is a private key (top-level) but rendered inside [%s]", leaf, table),
 			})
 		}
-		// ComputeNodeBlock placement: every key in the catalog
-		// must land inside `[compute_node]` (not at top level).
-		for _, ck := range host.ComputeNodeBlock {
+		// Table placement: every table key in the catalog must land
+		// inside its own table (not at top level).
+		for _, ck := range host.TableBlocks() {
 			if ck.Key == leaf && table != ck.Table {
 				errs = append(errs, Error{
 					// Error code is a path token, not a dotted path

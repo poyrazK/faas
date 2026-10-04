@@ -341,6 +341,10 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	if protocol == "" {
 		protocol = "http1"
 	}
+	grpcDuplex := protocol == "grpc"
+	if grpcDuplex {
+		_ = http.NewResponseController(w).EnableFullDuplex()
+	}
 	if log.Enabled(r.Context(), slog.LevelDebug) {
 		log.Debug("gateway: framing selection",
 			"node", t.NodeID,
@@ -557,6 +561,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// The session context drops only the handshake budget after a
 			// successful long response. Its lifetime fence still interrupts writes.
 			defer guardResponseWrites(ctx, w)()
+			stampDeploymentSmokeResponse(r.Context(), w.Header())
 			for _, h := range init.GetHeaders() {
 				forwardedResponseHeader(r.Context(), w.Header(), h.GetName(), h.GetValue())
 			}
@@ -564,6 +569,11 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				if name := strings.TrimSpace(trailer.GetName()); name != "" && !isTrafficResponseControlHeader(name) {
 					w.Header().Add("Trailer", name)
 				}
+			}
+			// H2 gRPC can carry trailers that are unknown at header time.
+			// Its HTTP/1 translation must remain eligible for chunked framing.
+			if strings.HasPrefix(strings.ToLower(w.Header().Get("Content-Type")), "application/grpc") {
+				w.Header().Del("Content-Length")
 			}
 			w.WriteHeader(int(init.GetStatus()))
 			wroteHeader = true
@@ -575,6 +585,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				if budgetDetached {
 					recordTrafficStreamDetached(r.Context())
 				}
+			}
+			if grpcDuplex {
+				flushSafe(w)
 			}
 			touch()
 			// issue #517 / PR-C / ADR-064 — emit
@@ -614,9 +627,14 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			continue
 		}
 		if init := frame.GetInit(); init != nil && wroteHeader {
+			if len(init.GetTrailers()) > 0 {
+				// Commit a chunked response before handler completion can select
+				// Content-Length for a small body and discard late trailers.
+				flushSafe(w)
+			}
 			for _, trailer := range init.GetTrailers() {
 				if name := strings.TrimSpace(trailer.GetName()); name != "" {
-					forwardedResponseHeader(r.Context(), w.Header(), name, trailer.GetValue())
+					forwardedResponseTrailer(r.Context(), w.Header(), name, trailer.GetValue())
 				}
 			}
 			continue
@@ -640,6 +658,10 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				}
 				return
 			}
+			if grpcDuplex {
+				// Small messages must arrive before the client closes its send side.
+				flushSafe(w)
+			}
 		}
 	}
 
@@ -647,6 +669,18 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// distinguish a clean bidi close from a client-disconnect
 	// (which surfaces as a Send error).
 	<-bodyErrCh
+}
+
+// H2 can reveal trailer names only after body EOF. Apply the normal guest
+// header policy before using Go's late-trailer convention on the HTTP hop.
+func forwardedResponseTrailer(ctx context.Context, dst http.Header, name, value string) {
+	filtered := make(http.Header)
+	forwardedResponseHeader(ctx, filtered, name, value)
+	for key, values := range filtered {
+		for _, item := range values {
+			dst.Add(http.TrailerPrefix+key, item)
+		}
+	}
 }
 
 // rawStreamSessionDeadline is the wall-clock ceiling for a single
@@ -841,63 +875,10 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// observation. Prometheus counters are atomic, so the
 	// concurrent tx/rx increment from the body goroutine +
 	// receiver loop is race-free without a mutex.
-	bodyErrCh := make(chan error, 1)
-	go func() {
-		cr, stopReader := newCtxReader(ctx, r.Body)
-		defer stopReader()
-		buf := make([]byte, 8*1024)
-		for {
-			n, err := cr.Read(buf)
-			if n > 0 {
-				touch()
-				if serr := stream.Send(&vmmdpb.ForwardRawRequest{
-					Frame: &vmmdpb.ForwardRawRequest_BodyChunk{
-						BodyChunk: append([]byte(nil), buf[:n]...),
-					},
-				}); serr != nil {
-					// A Send failure on the request
-					// side is an upstream-availability
-					// issue (the bridge closed the
-					// bidi stream because the guest
-					// went away, the per-instance
-					// netns was torn down, or the
-					// vmmd process crashed). Without
-					// this label, the defer's default
-					// of WSOutcomeClientDisconnect
-					// would race-mislabel the
-					// histogram (PR-B code review
-					// finding #2: the body goroutine
-					// can record wsOutcome before the
-					// receiver loop sees the
-					// corresponding Recv error, and
-					// the latter would otherwise
-					// overwrite it with the same
-					// WSOutcomeUpstreamUnavailable).
-					// Both goroutines writing the
-					// same constant is benign — the
-					// race is only on the *value*,
-					// not on the observability
-					// contract.
-					wsOutcome = WSOutcomeUpstreamUnavailable
-					bodyErrCh <- serr
-					return
-				}
-				if metrics != nil {
-					metrics.AddWSSessionBytes(string(plan), WSDirectionTx, int64(n))
-				}
-			}
-			if errors.Is(err, io.EOF) {
-				_ = stream.CloseSend()
-				bodyErrCh <- nil
-				return
-			}
-			if err != nil {
-				_ = stream.CloseSend()
-				bodyErrCh <- err
-				return
-			}
-		}
-	}()
+	upgradeReader := make(chan io.ReadCloser, 1)
+	bodyErrCh := rawRequestBodyLoop(ctx, r.Body, stream, upgradeReader, touch, cancel, metrics, plan)
+	var rawOutput io.Writer = w
+	upgraded := false
 
 	// Receiver loop: read frames and pipe into w. The first
 	// frame is ForwardRawResponseInit (status + headers + error);
@@ -919,7 +900,11 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// Cancel the derived stream context so the request body is
 			// closed and the body goroutine can finish before return.
 			cancel()
-			<-bodyErrCh
+			bodyErr := <-bodyErrCh
+			var sendErr *rawRequestSendError
+			if errors.As(bodyErr, &sendErr) {
+				wsOutcome = WSOutcomeUpstreamUnavailable
+			}
 			if wroteHeader && !upgradeEstablished && (streamErr != nil || requestBudgetExpired(r.Context())) {
 				panic(http.ErrAbortHandler)
 			}
@@ -964,9 +949,27 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			for _, h := range init.GetHeaders() {
 				forwardedResponseHeaderWithUpgrade(r.Context(), w.Header(), h.GetName(), h.GetValue(), init.GetStatus() == http.StatusSwitchingProtocols)
 			}
-			w.WriteHeader(int(init.GetStatus()))
-			wroteHeader = true
 			if init.GetStatus() == http.StatusSwitchingProtocols {
+				conn, reader, err := beginRawUpgrade(w)
+				if err != nil {
+					cancel()
+					<-bodyErrCh
+					wsOutcome = WSOutcomeInitFailed
+					log.Error("gateway: raw upgrade failed", "err", err)
+					w.Header().Del("Connection")
+					w.Header().Del("Upgrade")
+					writeForwarderProblem(w, http.StatusBadGateway)
+					return
+				}
+				defer func() { _ = conn.Close() }()
+				rawOutput, upgraded = &rawUpgradeOutput{Conn: conn, response: w}, true
+				upgradeReader <- reader
+			} else {
+				w.WriteHeader(int(init.GetStatus()))
+				upgradeReader <- nil
+			}
+			wroteHeader = true
+			if upgraded || (init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest) {
 				// The upgrade response has started. Drop only the ordinary
 				// request budget; the raw session remains bounded by activity,
 				// the 24-hour ceiling, and client cancellation.
@@ -1048,7 +1051,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if metrics != nil {
 				metrics.AddWSSessionBytes(string(plan), WSDirectionRx, int64(len(chunk)))
 			}
-			if _, werr := w.Write(chunk); werr != nil {
+			if _, werr := rawOutput.Write(chunk); werr != nil {
 				// Client disconnect mid-stream. The
 				// receiver stops reading frames. The
 				// body-copy goroutine is cancelled via
@@ -1082,14 +1085,20 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// a WS frame of 256 bytes would otherwise
 			// buffer in the gateway until one of those
 			// triggers fired.
-			flushSafe(w)
+			if !upgraded {
+				flushSafe(w)
+			}
 		}
 	}
 
+	cancel()
 	// Wait for the body goroutine to drain so we can
 	// distinguish a clean bidi close from a client-disconnect
 	// (which surfaces as a Send error).
-	<-bodyErrCh
+	var sendErr *rawRequestSendError
+	if errors.As(<-bodyErrCh, &sendErr) {
+		wsOutcome = WSOutcomeUpstreamUnavailable
+	}
 	// wsOutcome stays at WSOutcomeClientDisconnect (the defer's
 	// default) for the clean bidi close. A future enhancement
 	// could inspect bodyErrCh's final value to distinguish

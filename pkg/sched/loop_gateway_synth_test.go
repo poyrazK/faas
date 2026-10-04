@@ -25,16 +25,17 @@ func TestHTTPGatewaySynthInvokeCarriesEnvelopeAndResult(t *testing.T) {
 			t.Fatalf("path = %q, want dispatch route", r.URL.Path)
 		}
 		var got struct {
-			InvocationID string            `json:"invocation_id"`
-			AppID        string            `json:"app_id"`
-			AccountID    string            `json:"account_id"`
-			Headers      map[string]string `json:"headers"`
-			BodyB64      string            `json:"body_b64"`
+			PlatformTenantID string            `json:"platform_tenant_id"`
+			InvocationID     string            `json:"invocation_id"`
+			AppID            string            `json:"app_id"`
+			Headers          map[string]string `json:"headers"`
+			BodyB64          string            `json:"body_b64"`
+			AccountID        string            `json:"account_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if got.InvocationID != "inv-1" || got.AppID != "app-1" || got.AccountID != "acct-1" {
+		if got.InvocationID != "inv-1" || got.AppID != "app-1" || got.PlatformTenantID != "tenant-1" || got.AccountID != "acct-1" {
 			t.Fatalf("identity = %#v", got)
 		}
 		if got.Headers["content-type"] != "application/json" {
@@ -50,14 +51,15 @@ func TestHTTPGatewaySynthInvokeCarriesEnvelopeAndResult(t *testing.T) {
 
 	h := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL}
 	got, err := h.Invoke(context.Background(), "app-1", state.Invocation{
-		ID:        "inv-1",
-		AppID:     "app-1",
-		AccountID: "acct-1",
-		Source:    state.InvocationAsyncInvoke,
-		Method:    http.MethodPost,
-		Path:      "/e2e",
-		Headers:   json.RawMessage(`{"content-type":"application/json"}`),
-		Payload:   []byte(`{"hello":"world"}`),
+		PlatformTenantID: "tenant-1",
+		ID:               "inv-1",
+		AppID:            "app-1",
+		Source:           state.InvocationAsyncInvoke,
+		Method:           http.MethodPost,
+		Path:             "/e2e",
+		Headers:          json.RawMessage(`{"content-type":"application/json"}`),
+		Payload:          []byte(`{"hello":"world"}`),
+		AccountID:        "acct-1",
 	})
 	if err != nil {
 		t.Fatalf("Invoke: %v", err)
@@ -90,16 +92,19 @@ func TestHTTPGatewaySynthHandlerFailureIsPermanent(t *testing.T) {
 func TestHTTPGatewaySynthOrdinaryServerErrorIsRetryable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"state":"dispatching","result":{"error":"upstream_unavailable"},"status_code":503}`))
+		_, _ = w.Write([]byte(`{"state":"dispatching","result":{"error":"upstream_unavailable"},"status_code":503,"outcome_code":"upstream_unavailable"}`))
 	}))
 	defer srv.Close()
 	synth := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL}
-	_, err := synth.Invoke(context.Background(), "app-1", state.Invocation{ID: "inv-1"})
+	out, err := synth.Invoke(context.Background(), "app-1", state.Invocation{ID: "inv-1"})
 	if err == nil {
 		t.Fatal("Invoke returned nil error for retryable 503")
 	}
 	if errors.Is(err, ErrPermanentInvoke) {
 		t.Fatalf("Invoke error = %v, must remain retryable", err)
+	}
+	if out.ResponseStatusCode != http.StatusServiceUnavailable || out.OutcomeCode != "upstream_unavailable" {
+		t.Fatalf("Invoke response classification evidence = status %d code %q", out.ResponseStatusCode, out.OutcomeCode)
 	}
 }
 

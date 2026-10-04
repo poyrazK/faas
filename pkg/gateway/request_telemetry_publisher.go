@@ -374,12 +374,17 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 			row.EventID = uuid.New()
 		}
 		row.Count = normalizedRequestTelemetryCount(row.Count)
+		if row.preserveExact {
+			out = append(out, row)
+			continue
+		}
 		row.LatencyMS = requestTelemetryLatencyBucketUpperBound(row.LatencyMS)
 		row.GuestDurationMS = requestTelemetryLatencyBucketUpperBound(row.GuestDurationMS)
 		row.GuestCPUTimeMS = requestTelemetryCPUTimeBucketUpperBound(row.GuestCPUTimeMS)
 		row.GuestPeakRSSMB = requestTelemetryMemoryBucketUpperBound(row.GuestPeakRSSMB)
 		bucket := row.ReceivedAt.Truncate(time.Minute)
 		key := bucketKey{
+			FlagEvidenceJSON:                     row.FlagEvidenceJSON,
 			AccountID:                            row.AccountID,
 			AppID:                                row.AppID,
 			DeploymentID:                         row.DeploymentID,
@@ -439,6 +444,7 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 // reader; the apid receiver never sees bucketKey, only the resulting
 // RequestTelemetryRow.
 type bucketKey struct {
+	FlagEvidenceJSON                     string
 	AccountID                            uuid.UUID
 	AppID                                uuid.UUID
 	DeploymentID                         uuid.UUID

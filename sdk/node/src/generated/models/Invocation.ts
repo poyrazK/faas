@@ -8,6 +8,10 @@
 export type Invocation = {
   id: string;
   app_id: string;
+  /**
+   * Immutable verified downstream customer identity for async HTTP work.
+   */
+  platform_tenant_id?: string;
   account_id: string;
   source: 'async_invoke' | 'inbound_webhook' | 'queue' | 'delayed_task' | 'cron' | 'replay';
   /**

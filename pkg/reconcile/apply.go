@@ -100,6 +100,9 @@ func (s *Service) applyActions(
 	if err != nil {
 		return out, err
 	}
+	if err := validatePlatformTenantPolicy(acct.Plan, scan.Workloads); err != nil {
+		return out, err
+	}
 	limits := s.Limits(acct.Plan)
 	planCap := limits.DeployedApps
 	if planCap == 0 {
@@ -129,7 +132,8 @@ func (s *Service) applyActions(
 			case "update":
 				app = ApplyScannedWorkloadToApp(app, action.Workload, availableServices)
 			}
-			mutations = append(mutations, state.ProjectReconcileMutation{Op: action.Op, App: app})
+			mutations = append(mutations, state.ProjectReconcileMutation{Op: action.Op, App: app,
+				SetPlatformTenantRequired: action.Workload.PlatformTenantRequired != nil})
 		}
 		var desiredCrons []state.ProjectReconcileCron
 		if cronSpecs != nil {
@@ -320,11 +324,13 @@ func (s *Service) applyUpdate(
 	manifest.BuildDockerfile = a.Workload.Dockerfile
 	workloadClass := workloadClassFromScan(a.Workload)
 	params := state.UpdateAppParams{
-		RootDir:       &rootDir,
-		WorkloadName:  &workloadName,
-		WorkloadClass: &workloadClass,
-		StartCommand:  &a.StartCommand,
-		Manifest:      &manifest,
+		RootDir:                   &rootDir,
+		WorkloadName:              &workloadName,
+		WorkloadClass:             &workloadClass,
+		StartCommand:              &a.StartCommand,
+		Manifest:                  &manifest,
+		PlatformTenantRequired:    a.Workload.PlatformTenantRequired,
+		SetPlatformTenantRequired: a.Workload.PlatformTenantRequired != nil,
 	}
 	updated, err := s.Store.UpdateApp(ctx, a.App.ID, params)
 	if err != nil {
@@ -394,8 +400,9 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 
 			BuildDockerfile: w.Dockerfile,
 		},
-		RequireAuthn:   plan.RequireAuthnDefault(),
-		PublicAuthMode: plan.PublicAuthModeDefault(),
+		RequireAuthn:           plan.RequireAuthnDefault(),
+		PublicAuthMode:         plan.PublicAuthModeDefault(),
+		PlatformTenantRequired: w.PlatformTenantRequired != nil && *w.PlatformTenantRequired,
 	}
 }
 
@@ -404,6 +411,9 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 // preview dispatcher uses the same normalization as production reconcile, but
 // persists it only on the preview row.
 func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map[string]struct{}) state.App {
+	if w.PlatformTenantRequired != nil {
+		app.PlatformTenantRequired = *w.PlatformTenantRequired
+	}
 	app.RootDir = w.RootDir
 	app.WorkloadName = w.Name
 	app.WorkloadClass = workloadClassFromScan(w)

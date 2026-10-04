@@ -103,6 +103,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
@@ -699,6 +700,9 @@ type Metrics struct {
 	// Deliberately NOT labelled by app — the label set must stay bounded, and
 	// per-app attribution already exists in the wake timeline.
 	serviceCallTotal *prometheus.CounterVec
+	// serviceChaosInjected is the event counter for synthetic scenario faults.
+	// Kind is a closed label; scenario and app IDs are deliberately excluded.
+	serviceChaosInjected *prometheus.CounterVec
 	// serviceDependencyCalls is the unsampled, per-caller-deployment outcome
 	// signal for managed service-proxy calls. Only trusted UUID identities from
 	// the node-local instance resolver are admitted; service names and paths
@@ -774,7 +778,8 @@ type Metrics struct {
 	// per-mirror-invocation counter, labelled by
 	// {app_id, rule_id, result}. `result` is the closed set
 	// {ok, mirror_5xx, status_diff, body_diff, cap_at_max,
-	// sched_error, mirror_roundtrip_error, build_request_error} —
+	// sched_error, slot_store_error, mirror_roundtrip_error,
+	// build_request_error} —
 	// the dispatch goroutine (pkg/gateway/mirror_dispatch.go) is
 	// the only incrementer. `app_id` is unbounded but addressable
 	// via PromQL; `rule_id` is bounded by Limits.MirrorTargetsPerApp
@@ -1079,12 +1084,12 @@ func NewMetrics() *Metrics {
 		// (≤ 3 per app) so the (app_id, rule_id) pair is closed;
 		// the `result` label is the closed vocabulary the dispatch
 		// goroutine writes (ok, mirror_5xx, status_diff, body_diff,
-		// cap_at_max, sched_error, mirror_roundtrip_error,
-		// build_request_error). See pkg/gateway/mirror_dispatch.go
+		// cap_at_max, sched_error, slot_store_error,
+		// mirror_roundtrip_error, build_request_error). See pkg/gateway/mirror_dispatch.go
 		// for the call sites.
 		mirrorDispatched: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_mirror_dispatched_total",
-			Help: "Per-mirror-invocation outcome counter. Closed `result` vocabulary: ok | mirror_5xx | status_diff | body_diff | cap_at_max | sched_error | mirror_roundtrip_error | build_request_error. ADR-124 / issue #72 PR-A3.",
+			Help: "Per-mirror-invocation outcome counter. Closed `result` vocabulary: ok | mirror_5xx | status_diff | body_diff | cap_at_max | sched_error | slot_store_error | mirror_roundtrip_error | build_request_error. ADR-124 / issue #72 PR-A3.",
 		}, []string{"app_id", "rule_id", "result"}),
 		mirrorLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "gateway_mirror_latency_seconds",
@@ -1501,6 +1506,13 @@ func NewMetrics() *Metrics {
 			},
 			[]string{"outcome"},
 		),
+		serviceChaosInjected: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_chaos_injected_total",
+				Help: "Count synthetic request faults injected by the internal service proxy for isolated scenario tests. The closed kind label is latency or http_status; app and run IDs are excluded.",
+			},
+			[]string{"kind"},
+		),
 		serviceDependencyCalls: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "gateway_service_dependency_calls_total",
@@ -1592,6 +1604,9 @@ func NewMetrics() *Metrics {
 	// internal traffic" from "the proxy is not wired" without them.
 	for _, outcome := range ServiceCallOutcomes {
 		m.serviceCallTotal.WithLabelValues(string(outcome))
+	}
+	for _, kind := range []string{chaos.KindLatency, chaos.KindHTTPStatus} {
+		m.serviceChaosInjected.WithLabelValues(kind)
 	}
 	// The sentinel keeps the metric family visible even when no workload has
 	// made a managed service call yet, allowing meterd to distinguish a
@@ -1885,7 +1900,7 @@ func NewMetrics() *Metrics {
 	for _, result := range []string{"recorded", "failed"} {
 		m.requestIDJournalWrites.WithLabelValues(result)
 	}
-	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow)
@@ -2945,7 +2960,8 @@ func (m *Metrics) ObserveAppMaintenance(plan string) {
 // `result` vocabulary:
 //
 //	ok | mirror_5xx | status_diff | body_diff | cap_at_max |
-//	sched_error | mirror_roundtrip_error | build_request_error.
+//	sched_error | slot_store_error | mirror_roundtrip_error |
+//	build_request_error.
 //
 // Dashboard readers and alerts MUST treat unknown result values as
 // a bug — see the metric's doc-comment for the closed set.
@@ -3426,6 +3442,20 @@ func (m *Metrics) IncServiceCall(outcome ServiceCallOutcome) {
 		return
 	}
 	m.serviceCallTotal.WithLabelValues(string(outcome)).Inc()
+}
+
+// ObserveServiceChaosInjection records one injected scenario fault. Only the
+// two validated rule kinds are admitted as labels.
+func (m *Metrics) ObserveServiceChaosInjection(kind string) {
+	if m == nil {
+		return
+	}
+	switch kind {
+	case chaos.KindLatency, chaos.KindHTTPStatus:
+		m.serviceChaosInjected.WithLabelValues(kind).Inc()
+	default:
+		return
+	}
 }
 
 // ObserveServiceDependencyCall records the final result of one managed

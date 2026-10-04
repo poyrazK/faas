@@ -44,11 +44,21 @@ func cmdTestInit(args []string) int {
 	if err != nil {
 		return printErr("Could not scaffold test", err)
 	}
+	if err := writeTestHTTPManifest(*output, *project, *source, *scenario, steps); err != nil {
+		return printErr("Could not create test manifest", err)
+	}
+	_, _ = fmt.Fprintf(osStdout, "Created %s with %d public GET smoke checks (%d operations skipped). Add auth, input fixtures, and business assertions for the remaining routes.\n", *output, len(steps), skipped)
+	return 0
+}
+
+func writeTestHTTPManifest(path, project, source, scenario string, steps []testHTTPRequest) error {
 	type scaffoldRequest struct {
-		Name   string         `yaml:"name"`
-		Method string         `yaml:"method"`
-		Path   string         `yaml:"path"`
-		Expect testHTTPExpect `yaml:"expect"`
+		Name    string            `yaml:"name"`
+		Method  string            `yaml:"method"`
+		Path    string            `yaml:"path"`
+		Headers map[string]string `yaml:"headers,omitempty"`
+		JSON    any               `yaml:"json,omitempty"`
+		Expect  testHTTPExpect    `yaml:"expect"`
 	}
 	type scaffoldScenario struct {
 		Project  string            `yaml:"project"`
@@ -58,30 +68,33 @@ func cmdTestInit(args []string) int {
 	manifest := struct {
 		Version   int                         `yaml:"version"`
 		Scenarios map[string]scaffoldScenario `yaml:"scenarios"`
-	}{Version: 1, Scenarios: map[string]scaffoldScenario{*scenario: {Project: *project, Source: *source}}}
-	entry := manifest.Scenarios[*scenario]
+	}{Version: 1, Scenarios: map[string]scaffoldScenario{scenario: {Project: project, Source: source}}}
+	entry := manifest.Scenarios[scenario]
 	for _, step := range steps {
-		entry.Requests = append(entry.Requests, scaffoldRequest{Name: step.Name, Method: step.Method, Path: step.Path, Expect: step.Expect})
+		entry.Requests = append(entry.Requests, scaffoldRequest{Name: step.Name, Method: step.Method, Path: step.Path, Headers: step.Headers, JSON: step.JSON, Expect: step.Expect})
 	}
-	manifest.Scenarios[*scenario] = entry
+	manifest.Scenarios[scenario] = entry
 	body, err := yaml.Marshal(manifest)
 	if err != nil {
-		return printErr("Could not encode test manifest", err)
+		return err
 	}
-	file, err := os.OpenFile(*output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if len(body) > testHTTPBodyLimit {
+		return errors.New("generated manifest exceeds 1 MiB")
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return printErr("Could not create test manifest", err)
+		return err
 	}
 	if _, err = file.Write(body); err != nil {
 		_ = file.Close()
-		_ = os.Remove(*output)
-		return printErr("Could not write test manifest", err)
+		_ = os.Remove(path)
+		return err
 	}
 	if err = file.Close(); err != nil {
-		return printErr("Could not close test manifest", err)
+		_ = os.Remove(path)
+		return err
 	}
-	_, _ = fmt.Fprintf(osStdout, "Created %s with %d public GET smoke checks (%d operations skipped). Add auth, input fixtures, and business assertions for the remaining routes.\n", *output, len(steps), skipped)
-	return 0
+	return nil
 }
 
 func scaffoldTestHTTPRequests(data []byte) ([]testHTTPRequest, int, error) {

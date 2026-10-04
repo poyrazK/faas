@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -77,4 +79,30 @@ func TestIssueCSRFToken(t *testing.T) {
 			t.Fatalf("problem = %s, want code %q", rec.Body.String(), api.CodeValidation)
 		}
 	})
+}
+
+func TestIssueCSRFToken_ConnectBinding(t *testing.T) {
+	env := newSessionEnv(t)
+	token, cookie := browserConnectCSRF(t, env.h, env.cookie)
+	for _, tc := range []struct {
+		name      string
+		action    string
+		accountID string
+		valid     bool
+	}{
+		{name: "connect action and account", action: githubConnectAction, accountID: env.acct.ID, valid: true},
+		{name: "wrong action", action: "mfa_confirm", accountID: env.acct.ID},
+		{name: "wrong account", action: githubConnectAction, accountID: "another-account"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect",
+				strings.NewReader(url.Values{"csrf_token": {token}}.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.AddCookie(cookie)
+			err := middleware.VerifyAuthenticatedNamed(env.mgr, req, tc.action, tc.accountID, githubConnectCSRFCookie)
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid = %t, verification error = %v", tc.valid, err)
+			}
+		})
+	}
 }

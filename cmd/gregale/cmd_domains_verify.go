@@ -30,7 +30,7 @@ import (
 // JSON mode emits the CustomDomainResponse, including `verified`.
 func cmdDomainsVerify(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: gregale domains verify <domain>\n")
+		printCommandValidation(os.Stderr, "usage: gregale domains verify <domain>\n")
 		return 1
 	}
 	domain := args[0]
@@ -52,6 +52,7 @@ func cmdDomainsVerify(args []string) int {
 		printDomainRow(osStdout, d, true)
 		if !d.Verified {
 			PrintWarn(osStdout, "Domain is still pending verification; check DNS records and retry.")
+			printDomainDNSRecords(osStdout, d)
 		}
 	}
 	if !d.Verified {
@@ -67,7 +68,7 @@ func cmdDomainsVerify(args []string) int {
 // retry.
 func cmdDomainsShow(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintf(os.Stderr, "usage: gregale domains show <domain>\n")
+		printCommandValidation(os.Stderr, "usage: gregale domains show <domain>\n")
 		return 1
 	}
 	domain := args[0]
@@ -93,7 +94,7 @@ func cmdDomainsShow(args []string) int {
 // TLS dial; it is safe for scripts and remains useful during an outage.
 func cmdDomainsStatus(args []string) int {
 	if len(args) != 0 {
-		fmt.Fprintf(os.Stderr, "usage: gregale domains status\n")
+		printCommandValidation(os.Stderr, "usage: gregale domains status\n")
 		return 1
 	}
 	client, err := authedClient()
@@ -149,5 +150,21 @@ func printDomainRow(w io.Writer, d api.CustomDomainResponse, verbose bool) {
 		if len(d.CertSANs) > 0 {
 			_, _ = fmt.Fprintf(w, "    cert_sans:      %v\n", d.CertSANs)
 		}
+	}
+}
+
+// printDomainDNSRecords prints the records the customer publishes for a
+// custom domain (ADR-520). Older servers send only the TXT proof.
+func printDomainDNSRecords(w io.Writer, d api.CustomDomainResponse) {
+	if len(d.DNSRecords) == 0 {
+		_, _ = fmt.Fprintf(w, "  _faas-verify.%s  TXT  %s\n", d.Domain, d.ChallengeToken)
+		return
+	}
+	for _, r := range d.DNSRecords {
+		note := ""
+		if r.Alternative {
+			note = "  (at a zone apex, instead of the CNAME)"
+		}
+		_, _ = fmt.Fprintf(w, "  %s  %s  %s%s\n", r.Name, r.Type, r.Value, note)
 	}
 }

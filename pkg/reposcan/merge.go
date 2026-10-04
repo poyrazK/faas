@@ -63,6 +63,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		previewServiceCallsPolicy PreviewServiceCallsPolicy
 		allowedServiceCallers     *[]string
 		allowedServiceCallScopes  *api.ServiceCallerScopes
+		platformTenantRequired    *bool
 
 		schedules []CronSchedule
 		ports     []int
@@ -179,6 +180,10 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			b.allowedServiceCallScopes = cloneServiceCallerScopes(s.allowedServiceCallScopes)
 			b.allowedServiceCallScopesSet = true
 		}
+		if b.platformTenantRequired == nil && s.platformTenantRequired != nil {
+			value := *s.platformTenantRequired
+			b.platformTenantRequired = &value
+		}
 		if !b.schedSet && (len(s.schedules) > 0 || s.schedule != "") {
 			if len(s.schedules) > 0 {
 				b.schedules = append([]CronSchedule(nil), s.schedules...)
@@ -234,6 +239,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			PreviewServiceCallsPolicy: b.previewServiceCallsPolicy,
 			AllowedServiceCallers:     b.allowedServiceCallers,
 			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
+			PlatformTenantRequired:    b.platformTenantRequired,
 
 			Class:     cls,
 			Schedule:  primarySchedule,

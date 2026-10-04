@@ -32,6 +32,8 @@ These numbers come from the financial model and are **not negotiable at implemen
 | Spend cap (`accounts.overage_cap_cents`, issue #561) | Free 0 (no overage) · Hobby NULL · Pro NULL · Scale NULL; customer-mutable via `POST /v1/account/overage-cap` and the dashboard `Spend cap` form | storage layer #279 (`migrations/00054_account_credits.sql`); enforcement at `schedd.Engine.admitGate` via `pkg/sched/OverageChecker` (5 s TTL cache, fail-open); wire surface `CodeAdmissionRefused` (HTTP 402); meterd's quota tick is the unchanged advisory-skip signal (#279 PR-A) |
 | Capacity-pressure rebalancer (Tier A9 / ADR-087) | `PressureAtCapacityThresholdPerMin=5`, `PressureReassessmentIntervalSeconds=30`, `PressureMigrationPolicy="migrate_after_2"` (closed set ∈ {skip_live, migrate_after_1, migrate_after_2}); env-overridable via `FAAS_PRESSURE_*`; surface lives in `pkg/api/limits.go` and `pkg/sched/pressure_aggregator.go` + `pressure_rebalancer.go` | `schedd` engine-side `IncAtCapacity` at every `WakeResult{AtCapacity:true}` return; aggregator + watcher poll for sustained apps; `Engine.RebalancePressuredApps` reassigns to peer with headroom; `app_changed{pressure_rebalanced}` notify on the rebalance — see ADR-087 |
 | Expected resident concurrency (planning) | 0.02 / 0.15 / 0.60 / 3.00 | telemetry comparison only |
+| Continuous app ownership recovery (ADR-421) | `OwnershipRecoveryIntervalSeconds=5`, `OwnershipRecoveryTimeoutSeconds=30`, `OwnershipRecoveryStoreTimeoutSeconds=5`; existing rebalance cooldown 60 s and batch limit 50 | `schedd` startup and periodic scan, fair app-ID pages, node-health-fenced ownership transfer, existing routing invalidation and durable service recovery |
+| Bare-metal service recovery capacity (ADR-422) | `ServiceCapacityMinimumHosts=2`; existing VM overhead, startup CPU, plan guest vCPU and CPU overcommit; heartbeat freshness 90 s | Atomic fleet policy and desired-intent reservations; conservative slots preserve one-host recovery; existing declared replicas may recover while degraded |
 | Overage meter | €0.01 per GB-RAM-hour | `meterd` → the selected `billing.Provider` (Polar by default) |
 | Build cost envelope | builds fit inside control-plane + headroom, never tenant RAM | `builderd` admission §9 |
 
@@ -124,6 +126,11 @@ the upstream Caddy/Cloudflare edge.
 - TLS and domains: the upstream edge performs certificate issuance and
   wildcard/custom-domain routing. Gregale still validates domain ownership and
   preserves the customer-domain policy before traffic reaches the app path.
+  With ADR-520 enabled, the control plane's Caddy issues customer-domain
+  certificates on demand and asks `gatewayd-public`
+  (`/v1/internal/tls/ask`, loopback only) before every certificate load,
+  issue and renewal; customer domains reach the edge directly while platform
+  hosts stay behind the upstream CDN.
 - Routing: hostname → `app_id` via in-memory cache (LRU, 10k entries) backed by Postgres `LISTEN app_routes_changed` (owned by `gatewayd-internal`). Cache miss = one indexed PG lookup.
 - Wake-blocking: if app has no `RUNNING` instance, `gatewayd-internal` enqueues the request, calls `schedd.EnsureInstance(app_id)`, and streams queued requests once readiness passes. The per-app waiter cap is plan-aware (Free/Hobby 16, Pro 64, Scale 128); Free waits at most 10 s and paid plans at most 30 s. An admission timeout or full queue returns `503 + Retry-After`. When a snapshot invalidation is already rebuilding an app, the first request returns `202 wake_in_progress` rather than a generic failure so clients can retry without treating the rebuild as an outage.
 - **Fan-out across `max_concurrency` (issue #168):** the routing cache is a per-app set of `Target{NodeID, InstanceID, WakeID}` (size ≤ plan's effective `max_concurrency`), picked via atomic round-robin so the hot path is allocation-free. `Backend.Admit(ctx, app_id, max_concurrency)` is the scale-out admission primitive; it atomically checks `HealthyCount < max_concurrency` before the gRPC round-trip so concurrent callers cannot collectively over-admit past the cap. At-capacity refusals surface as a typed `atCapacity=true` result (no gRPC status); `gatewayd-internal` treats them as a benign no-op when it already has ≥1 cached target. On every proxied request the handler stamps `x-faas-instance` with the picked `InstanceID`, overwriting any inbound header (trust model), and stamps the single-value `x-faas-client-ip` from the public listener's sanitized X-Forwarded-For hop (ambiguous or invalid chains remove the header). Per-instance `last_request_at` is keyed by `instance_id` directly — the addr→instance resolver hop is gone.
@@ -148,10 +155,13 @@ the upstream Caddy/Cloudflare edge.
 already-decrypted traffic from the trusted upstream edge and hands every
 request to `gatewayd-internal`, which checks `isApidPath`
 (`cmd/gatewayd-internal/proxy.go:202-228`) before falling through to the
-host-routed wake/proxy path. The matcher is the canonical reservation list —
-customer apps **cannot** expose routes under any of these prefixes, and the
-spec §4.1.1 enumerates them so customer-facing docs can mirror the platform's
-own contract.
+host-routed wake/proxy path. The matcher is the canonical reservation list,
+and the spec §4.1.1 enumerates it so customer-facing docs can mirror the
+platform's own contract. **ADR-480:** the reservation applies on platform
+hosts only — the apps-domain apex, `api.<apps domain>`,
+`operations.<apps domain>` and loopback/IP probes (`apid.IsPlatformHost`).
+On app subdomains, preview hosts and customer domains these paths belong to
+the app.
 
 | Reserved path                          | Owning handler (apid)                                     | Why reserved                                     |
 |----------------------------------------|------------------------------------------------------------|--------------------------------------------------|
@@ -172,7 +182,7 @@ own contract.
 
 **Anchor discipline.** Every anchored root matches exact + `/` subtree via `hasApidPrefix` (cmd/gatewayd-internal/proxy.go:171-176). A bare `HasPrefix(prefix)` would also match `prefix + arbitrary junk` (e.g. `/v1.zip`, `/loginfoo`) and silently steal customer-app paths — review finding #6 from the dashboard era. Bare `HasPrefix` is therefore deliberately avoided; only `/oauth/` is subtree-form because the only mounted route is `/oauth/callback`.
 
-**Customer-facing implication.** Apps must pick a different prefix for their own routes (e.g. `/api/`, `/v2/`). `/v1.zip` is **not** reserved — only `/v1` and `/v1/...` — so customers who want to expose a single-character-shorter alternative can use `/v1.<service>` or similar. The reservation table is enforced by `isApidPath` at request time; `gatewayd-internal` returns a 404 to any path the customer tries to expose that conflicts.
+**Customer-facing implication (ADR-480).** On its own hosts an app may serve every path in the table above. A small set stays reserved on every Host because platform components address it through app hosts or it gates certificate issuance: `/v1/apps/{slug}/logs`, `/v1/synthesize`, `/v1/invocations:dispatch`, `/v1/invocations:dispatch_batch`, `/v1/internal/realtime/`, `/v1/traces/`, `/v1/otel/v1/traces` and `/.well-known/acme-challenge/`. With no apps domain configured (dev single-box, the e2e harness) the router cannot tell app hosts from platform hosts and reserves the whole table on every Host.
 
 **Drift protection.** The `TestApidPathReservations_Documented` test in `cmd/gatewayd-internal/proxy_test.go` reads this section and asserts every `apidRoot*` constant in `cmd/gatewayd-internal/proxy.go:233-246` appears verbatim — the spec is documentation that must match the matcher, but the matcher is the source of truth. If a future change adds a new `apidRoot*` constant, this section must be updated in the same PR; CI fails the merge otherwise.
 
@@ -434,6 +444,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - Restore: create netns + TAP (§7) → jailer spawn → `PUT /snapshot/load` (`mem_backend: File`) → resume → guest agent re-seeds entropy + steps clock (§4.8) → readiness.
 - Boot config (cold path): kernel 6.1 LTS from Firecracker CI artifacts, `console=off quiet`, **two virtio-blk drives** (drive0 shared base rootfs read-only; drive1 app layer — §4.6), one virtio-net, `mem_size_mib = plan`, `vcpu_count` = 2 (Scale: 4), MMDS off, balloon off (v1), entropy: virtio-rng. The canonical plan RAM/vCPU pairs are Free `(128, 2)`, Hobby `(256, 2)`, Pro `(512, 2)`, and Scale `(1024, 4)`; see ADR-173. `POST /v1/apps` may assert this pair with `vcpu`, but vCPU remains plan-derived and is not a per-app override.
 - **Firecracker version pinning:** snapshots are only guaranteed to load on the Firecracker version that made them. `snapshots.fc_version` column; on FC upgrade, mark all snapshots stale — apps lazily re-snapshot via cold boot on next wake (this is why ADR-005 requires cold boot to always work).
+- **Backing image pinning (ADR-510):** a snapshot's RAM holds the guest kernel's page cache and ext4 metadata for drive0, so it may only be restored onto the exact kernel and read-only base it was captured with. vmmd records their content digests in the capture's `…/backing` object and refuses a restore whose identity is missing or differs, before any VM process starts; the wake cold-boots and schedd marks the snapshot stale. The shared base is a logical key that a release refresh replaces in place, so every base change retires the snapshots taken on the previous one.
 
 ### 4.5 `builderd` — build orchestrator
 
@@ -1106,7 +1117,7 @@ The schedd-side wake path is decomposed into four `schedd_wake_rpc_duration_seco
 |---|---|---|
 | `admit_to_rpc` | 0.01–5 s | gRPC handler → `Engine.admitGate` → `NodeLedger.Admit` → placement → `vmmd` RPC start. Lock + admission + ledger + placement. |
 | `rpc_call` | 0.01–5 s | vmmd `CreateFromSnapshot` / `CreateColdBoot` round trip. Cross-process boundary, the only phase that crosses a node-local socket. |
-| `rpc_to_running` | 0.01–5 s | RPC return → `e.transition(ctx, ..., state.StateRunning)`. Boot-input re-read + `SetInstanceRuntime` + audit emit. |
+| `rpc_to_running` | 0.01–5 s | RPC return → atomic runtime/RUNNING publication and its notifications. Includes restore-pressure release, startup CPU-tail persistence, publication-lock wait and audit emission. These post-RPC costs are excluded from `rpc_call`. |
 | `resume` | 0.01–5 s | vmmd in-place resume of a paused warm-pool VM before the durable `WARM → RUNNING` promotion. |
 
 `wake_id` is attached as a `prometheus.Exemplar` on every observation so an operator can join the histogram to `gateway_wake_latency_seconds` on the gateway side and to the `events` table — no `wake_id` label is added to the histogram (cardinality blow-up). Bucket set is spec §6.3 verbatim plus a 0.01 s low-end bucket for `admit_to_rpc`. ADR-097.
@@ -1401,6 +1412,15 @@ any row drifts.
 on this PR landing.
 
 ---
+
+### 6.H. Customer platform deferred requests (ADR-376)
+
+Async HTTP ingress stores verified platform tenant identity separately from
+payload and headers. App-and-tenant idempotency, immutable ledger identity,
+tenant suspension at claim, synthetic delivery validation and tenant-self
+status/cancel/replay preserve the customer boundary through deferred execution.
+Work admitted before suspension may finish; pending work retains its existing
+maximum-age deadline. See [ADR-376](adr/376-platform-tenant-async-invocations.md).
 
 ## 7. Networking
 

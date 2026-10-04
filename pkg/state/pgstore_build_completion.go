@@ -3,6 +3,10 @@ package state
 import (
 	"context"
 	"fmt"
+	"strings"
+
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func (s *PgStore) CompleteBuild(ctx context.Context, claim Build, path, key string, bytes int64, prov BuildProvenance) error {
@@ -40,26 +44,15 @@ func (s *PgStore) CompleteBuild(ctx context.Context, claim Build, path, key stri
 }
 
 func (s *PgStore) ListBuildsAwaitingImage(ctx context.Context, nodeID string, limit int) ([]BuildImageWork, error) {
-	rows, err := s.pool.Query(ctx, `select d.app_id,d.id,coalesce(p.builder_node_id,'')
-  from deployments d join builds b on b.deployment_id=d.id
-  join build_provenance p on p.build_id=b.id
-  where d.status in ('pending','building') and b.status='succeeded'
-    and d.rootfs_path is not null
-    and (nullif($1,'') is null or coalesce(p.builder_node_id,'')='' or p.builder_node_id=$1)
-  order by b.finished_at,b.id limit $2`, nodeID, limit)
+	rows, err := sqlc.New().ListBuildsAwaitingImage(ctx, s.pool, sqlc.ListBuildsAwaitingImageParams{NodeID: strings.TrimSpace(nodeID), BatchLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []BuildImageWork
-	for rows.Next() {
-		var work BuildImageWork
-		if err := rows.Scan(&work.AppID, &work.DeploymentID, &work.NodeID); err != nil {
-			return nil, err
-		}
-		out = append(out, work)
+	out := make([]BuildImageWork, 0, len(rows))
+	for _, work := range rows {
+		out = append(out, BuildImageWork{AppID: uuid.UUID(work.AppID.Bytes).String(), DeploymentID: uuid.UUID(work.DeploymentID.Bytes).String(), NodeID: work.NodeID})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // FailBuild fences failure against cancellation, reaping and a newer claim.

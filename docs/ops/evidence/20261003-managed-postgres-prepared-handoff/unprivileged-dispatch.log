@@ -1,0 +1,12 @@
+/var/tmp/faas-metal-smoke-managed-pg-prepared-handoff-6ac4ffcb/unprivileged-runner.sh: OK
+MemoryMax=10737418240
+ActiveState=active
+SubState=running
+InvocationID=6c5770b48b8f4d3dba5459fa40e8b1ae
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+Running as unit: gregale-managed-pg-prepared-handoff-6ac4ffcb-unprivileged.service; invocation ID: 6c5770b48b8f4d3dba5459fa40e8b1ae

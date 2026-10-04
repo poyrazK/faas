@@ -1,0 +1,138 @@
+{
+  "endpoint": "https://gregale-mcp-demo.gregale.dev/mcp",
+  "ok": true,
+  "checks": [
+    {
+      "name": "modern_tool_discovery",
+      "status": "passed"
+    },
+    {
+      "name": "gateway_streaming",
+      "status": "passed"
+    },
+    {
+      "name": "untrusted_origin",
+      "status": "passed"
+    },
+    {
+      "name": "legacy_stateless_compatibility",
+      "status": "passed"
+    },
+    {
+      "name": "live_progress",
+      "status": "passed"
+    }
+  ],
+  "tools": [
+    {
+      "name": "greet",
+      "description": "Return a greeting from Gregale.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "add",
+      "description": "Add two finite numbers.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "a": {
+            "type": "number"
+          },
+          "b": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "a",
+          "b"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "sum": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "sum"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "stream_demo",
+      "description": "Send three progress events over one second.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {},
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    }
+  ],
+  "discovery": {
+    "content_type": "text/event-stream",
+    "wake_tier": "restored",
+    "duration_ms": 2719,
+    "streaming_status": "accept-json-downgrade"
+  },
+  "stream": {
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Streaming complete."
+        }
+      ],
+      "resultType": "complete",
+      "_meta": {
+        "io.modelcontextprotocol/serverInfo": {
+          "name": "gregale-mcp-server",
+          "version": "1.0.0"
+        }
+      }
+    },
+    "content_type": "text/event-stream",
+    "wake_tier": "hot",
+    "duration_ms": 1480,
+    "progress_ms": [
+      284,
+      676,
+      1066
+    ],
+    "streaming_status": "accept-json-downgrade"
+  }
+}

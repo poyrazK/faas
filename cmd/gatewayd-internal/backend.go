@@ -197,7 +197,7 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 		return gateway.App{}, false, err
 	}
 	if app.ProjectID == "" || app.ProjectID != environment.ProjectID || app.AccountID != environment.AccountID ||
-		api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		(api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal && !gateway.DevBridgeAllowsPrivateEnvironment(ctx, app.AccountID, environment.ID, app.ID)) {
 		return gateway.App{}, false, nil
 	}
 	// Headers policies may carry security headers. A failed authoritative
@@ -648,9 +648,10 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		// short-circuit WITHOUT re-reading the database. Default
 		// false on the App struct matches the apps.maintenance_mode
 		// column DEFAULT (migration 00237).
-		MaintenanceMode:  app.MaintenanceMode,
-		RequireAuthn:     app.RequireAuthn,
-		ConsumerAuthMode: string(app.ConsumerAuthMode),
+		MaintenanceMode:        app.MaintenanceMode,
+		RequireAuthn:           app.RequireAuthn,
+		ConsumerAuthMode:       string(app.ConsumerAuthMode),
+		PlatformTenantRequired: app.PlatformTenantRequired,
 		// ADR-124: per-app wire-protocol selector (closed-set
 		// {http1, http2, grpc}, default 'http1'). Plumbed from
 		// apps.app_protocol through pgRouter.toApp so

@@ -14,12 +14,13 @@
       - faas_runner_repo is match('^[^/]+/[^/]+$')
       - faas_runner_name is match('^[A-Za-z0-9._-]+$')
       - faas_runner_labels is sequence
-      - "'faas-fleet' in faas_runner_labels"
+      - faas_runner_labels | select('match', '^faas-fleet(-[a-z0-9]+)?$') | list | length == 1
       - faas_runner_sha256 is match('^[0-9a-f]{64}$')
     fail_msg: >-
       The deployment runner requires a Debian-family Linux host with systemd,
-      x86_64, a valid repository/name, the faas-fleet label, and a 64-character
-      lowercase SHA-256 pin.
+      x86_64, a valid repository/name, exactly one fleet label (faas-fleet, or
+      faas-fleet-<env> for another fleet's GitHub environment), and a
+      64-character lowercase SHA-256 pin.
 
 - name: github_actions_runner — install runner prerequisites
   ansible.builtin.apt:
@@ -30,6 +31,8 @@
       - git
       - jq
       - openssh-client
+      # cd-controlplane installs its pinned ansible-core into a per-job venv.
+      - python3-venv
       - tar
     state: present
     update_cache: true

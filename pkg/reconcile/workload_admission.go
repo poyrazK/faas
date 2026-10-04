@@ -14,6 +14,18 @@ const EmptyWorkloadPlanReason = "scan produced zero workloads; reconcile refused
 
 var ErrInvalidWorkloadPlan = errors.New("reconcile: invalid workload plan")
 
+func validatePlatformTenantPolicy(plan api.Plan, workloads []reposcan.Workload) error {
+	if plan.ConsumerKeysPerApp() > 0 {
+		return nil
+	}
+	for _, workload := range workloads {
+		if workload.PlatformTenantRequired != nil && *workload.PlatformTenantRequired {
+			return &api.APIError{Problem: *api.ErrPlanPlatformTenantRequiredNotAllowed(plan)}
+		}
+	}
+	return nil
+}
+
 // WorkloadAdmissionReasons applies the create-time app identity constraints
 // before a project plan is declared applicable. A same-key app is an intended
 // project member update; reusing an account-wide slug with another key would

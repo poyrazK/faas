@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -329,7 +330,11 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 	if req.FromEnvironment != "" {
 		response.ClonedFrom = req.FromEnvironment
 		sharedResources := []string{"domains", "policies"}
-		sharedResources = append(sharedResources, clone.SharedResources...)
+		for _, resource := range clone.SharedResources {
+			if !slices.Contains(sharedResources, resource) {
+				sharedResources = append(sharedResources, resource)
+			}
+		}
 		response.Clone = &api.ProjectEnvironmentCloneResponse{
 			ConfigurationCopied: clone.ConfigurationCopied, VariablesCopied: clone.VariablesCopied,
 			SecretsCopied: clone.SecretsCopied, WorkloadsCopied: clone.WorkloadsCopied,

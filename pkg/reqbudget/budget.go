@@ -93,6 +93,24 @@ func NewContext(parent context.Context, b Budget) context.Context {
 	return context.WithValue(parent, budgetKey{}, b)
 }
 
+// WithoutBudget removes the request budget and its original cancellation
+// root while preserving the supplied context's cancellation, deadline, and
+// other values. Detached background work should combine this with
+// context.WithoutCancel and install its own bounded timeout. WithoutCancel
+// alone retains budget values which can reconnect a stream to the caller.
+func WithoutBudget(parent context.Context) context.Context {
+	return withoutBudgetContext{parent}
+}
+
+type withoutBudgetContext struct{ context.Context }
+
+func (c withoutBudgetContext) Value(key any) any {
+	if key == (budgetKey{}) || key == (budgetParentKey{}) {
+		return nil
+	}
+	return c.Context.Value(key)
+}
+
 func budgetBaseContext(parent context.Context) context.Context {
 	if stored, ok := parent.Value(budgetParentKey{}).(context.Context); ok && stored != nil {
 		return stored

@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-func TestMigrationJobTaskCanonicalExitClasses(t *testing.T) {
+func TestMigrationJobTaskCanonicalAndUncertainClasses(t *testing.T) {
 	pool := pgtest.Open(t)
 	migrateUpOnce(t.Context(), t, pool)
 
@@ -22,7 +22,7 @@ func TestMigrationJobTaskCanonicalExitClasses(t *testing.T) {
 	`).Scan(&definition); err != nil {
 		t.Fatalf("load job_tasks_error_class_check: %v", err)
 	}
-	for _, value := range []string{"'succeeded'", "'failed'"} {
+	for _, value := range []string{"'succeeded'", "'failed'", "'uncertain'"} {
 		if !strings.Contains(definition, value) {
 			t.Fatalf("job_tasks_error_class_check missing %s: %s", value, definition)
 		}

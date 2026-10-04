@@ -44,6 +44,11 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 		readmeHas []string // substrings the README must contain
 	}{
 		{
+			name:      "customer-platform",
+			files:     []string{"app/server.js", "app/http.js", "app/store.js", "app/schema.sql", "app/migrate.js", "tools/customer.js", "tools/client.js", "Procfile", "Dockerfile", "package.json", "package-lock.json", "README.md"},
+			readmeHas: []string{"platform_tenant_required", "DATABASE_URL", "BYPASSRLS", "gregale secrets set", "retry", "suspend"},
+		},
+		{
 			name:  "s3-uploader",
 			files: []string{"handler.js", "package.json", "README.md"},
 			readmeHas: []string{
@@ -65,8 +70,9 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 		},
 		{
 			name:  "rest-api-postgres",
-			files: []string{"handler.js", "package.json", "README.md"},
+			files: []string{"handler.js", "migrate.js", "schema.sql", "Procfile", "package.json", "README.md"},
 			readmeHas: []string{
+				"MIGRATION_DATABASE_URL",
 				"DATABASE_URL",
 				"gregale secrets set",
 				"--create-only",
@@ -398,6 +404,7 @@ func TestCmdInit_NextStepsFor(t *testing.T) {
 		tpl  string
 		want []string
 	}{
+		{"customer-platform", []string{"DATABASE_URL", "BYPASSRLS", "--platform-tenant-required", "--no-require-authn", "tools/customer.js"}},
 		{"s3-uploader", []string{"--create-only", "s3-uploader", "S3_BUCKET", "gregale secrets set", "cd <dest>"}},
 		{"slack-bot", []string{"--create-only", "slack-bot", "SLACK_SIGNING_SECRET", "gregale secrets set", "cd <dest>"}},
 		{"rest-api-postgres", []string{"--create-only", "rest-api-postgres", "DATABASE_URL", "gregale secrets set", "cd <dest>"}},
@@ -454,6 +461,8 @@ func TestValidateTemplateSecrets(t *testing.T) {
 		want  string
 		noErr bool
 	}{
+		{tpl: "customer-platform", want: "missing required secret(s): DATABASE_URL"},
+		{tpl: "customer-platform", pairs: []secretsPair{{Key: "DATABASE_URL", Value: "postgres://host/db?sslmode=require"}}, noErr: true},
 		{tpl: "s3-uploader", pairs: []secretsPair{{Key: "S3_BUCKET", Value: "bucket"}}, want: "S3_REGION"},
 		{tpl: "secret-reload-node", pairs: []secretsPair{{Key: "DATABASE_URL"}}, want: "missing required secret(s): DATABASE_URL"},
 		{tpl: "secret-reload-node", pairs: []secretsPair{{Key: "DATABASE_URL", Value: "postgres://host/db?sslmode=require"}}, noErr: true},
@@ -573,7 +582,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 		"hello":              {"hello-node", "hello-python", "hello-go"},
 		"function":           {"function-node", "function-python", "function-go", "function-node24", "function-python313", "cron-example"},
 		"event-driven":       {"event-worker", "queue-worker"},
-		"stateless-contract": {"s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node"},
+		"stateless-contract": {"s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform"},
 		"ai":                 {"ai-chat"},
 	}
 	for cat, names := range wantPerCat {
@@ -664,6 +673,7 @@ func TestTemplateDocsMatchTemplatePurpose(t *testing.T) {
 		"cron-example":       eventDrivenDocsURL,
 		"s3-uploader":        storageDocsURL,
 		"secret-reload-node": secretsDocsURL,
+		"customer-platform":  deployFromSourceDocsURL,
 	}
 	for _, name := range templates.Names {
 		got := docsURLForTemplate(name)

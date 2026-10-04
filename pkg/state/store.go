@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -363,6 +364,9 @@ type CanaryAdvanceParams struct {
 	RequireCanaryStageElapsed bool
 	CanaryStageDuration       time.Duration
 	Audit                     DeploymentAudit
+	RouteCheckFingerprint     RouteCheckFingerprinter
+	RouteGateDecision         *api.RouteGateDecision
+	RouteHealthDecision       *api.RouteHealthDecision
 }
 
 // CanaryAdvancer is intentionally separate from Store so existing narrow test
@@ -377,6 +381,21 @@ type CanaryAdvancer interface {
 // type-assert before persisting a hosting receipt.
 type DeploymentHostingReceiptStore interface {
 	UpsertDeploymentHostingReceipt(ctx context.Context, deploymentID string, receipt []byte) (Deployment, error)
+}
+
+// DeploymentHostingFailureStore commits a failed hosting verdict with the
+// deployment's terminal status, stage, traffic and outcome activity. Only a
+// snapshotting candidate can transition; terminal rows are unchanged. changed
+// tells the caller whether it owns the post-commit notification.
+type DeploymentHostingFailureStore interface {
+	FailDeploymentWithHostingReceipt(ctx context.Context, deploymentID string, receipt []byte, code, message string) (changed bool, err error)
+}
+
+// DeploymentHostingVerificationStore fences durable verification progress to
+// the snapshotting candidate and the current attempt. It does not own retries;
+// the notification outbox remains the delivery mechanism.
+type DeploymentHostingVerificationStore interface {
+	UpdateDeploymentHostingVerification(ctx context.Context, deploymentID string, update HostingVerificationUpdate) (HostingVerificationProgress, error)
 }
 
 // OpenAPISnapshotStore is the optional persistence seam for the API contract
@@ -887,8 +906,9 @@ type WebhookDeliveryReleaser interface {
 // and update, App carries the desired identity fields; for remove, App.ID
 // identifies the existing row.
 type ProjectReconcileMutation struct {
-	Op  string
-	App App
+	Op                        string
+	App                       App
+	SetPlatformTenantRequired bool
 }
 
 // ProjectReconcileCron is the desired cron attached to a scanned workload.
@@ -964,6 +984,14 @@ type DeploymentActivationLocker interface {
 // narrow keeps the ownership rules enforceable — apid only touches
 // customer-intent tables through the methods it is given.
 type Store interface {
+	// ADR-420: fenced durable retries for continuously managed services.
+	// Discovery leaves saturated candidates due. Claims honor failure cooldown
+	// unless desired revision changes; completion requires the current token.
+	ListServiceRecoveryApps(ctx context.Context, ownerNodeID string, sampledAt time.Time, limit int) ([]string, error)
+	ClaimServiceRecovery(ctx context.Context, appID, revision, token string, sampledAt, leaseUntil time.Time) (ServiceRecovery, bool, error)
+	CompleteServiceRecovery(ctx context.Context, token string, recovery ServiceRecovery) error
+	ServiceRecoveryByApp(ctx context.Context, appID string) (ServiceRecovery, error)
+
 	// Ping tests store/database connectivity.
 	Ping(ctx context.Context) error
 
@@ -1791,6 +1819,12 @@ type Store interface {
 	ClaimCliAuthCode(ctx context.Context, tokenHash []byte, accountID string) error
 	ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error)
 
+	// ServiceCapacityProtection reports the bare-metal recovery certificate.
+	ServiceCapacityProtection(ctx context.Context) (api.ServiceCapacityProtection, error)
+	// ServiceCapacityPlacement is the scheduler's internal slot projection.
+	ServiceCapacityPlacement(ctx context.Context) (ServiceCapacityPlacement, error)
+	// SetServiceCapacityProtection enables only when current demand is protected.
+	SetServiceCapacityProtection(ctx context.Context, enabled bool) (api.ServiceCapacityProtection, error)
 	// Apps (apid is the only writer, spec §Component ownership).
 	CreateApp(ctx context.Context, app App) (App, error)
 	// CreateAppIfUnderQuota inserts app iff the account currently holds
@@ -1835,6 +1869,8 @@ type Store interface {
 	RegisterScenarioTestMembers(ctx context.Context, accountID, runID string, members []ScenarioTestMember) error
 	ScenarioTestMemberByApp(ctx context.Context, appID string) (ScenarioTestMember, error)
 	ScenarioTestAppByWorkload(ctx context.Context, accountID, runID, workload string) (App, error)
+	SetScenarioTestChaosPlan(ctx context.Context, accountID, runID string, plan chaos.Plan) (chaos.Lease, error)
+	ScenarioTestChaosForCall(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error)
 	// Membership is removed only after its apps are soft-deleted.
 	DeleteScenarioTestMembers(ctx context.Context, accountID, runID string) error
 	// PruneScenarioTestMembers removes abandoned namespaces only after every
@@ -2050,20 +2086,18 @@ type Store interface {
 	// empty-uuid CHECK on apps.node_id reject bad values via the
 	// existing 23503 / 23514 paths.
 	SetAppNodeID(ctx context.Context, appID, nodeID string) error
-	// ListOrphanedApps returns every active/evicted_cold app whose
-	// node_id points at a compute_node with active=false — the input
-	// set for
-	// schedd's rebalancer (pkg/sched/rebalancer.go, Tier A4 migration
-	// 00092). Used by both the live compute_node_changed watcher (which
-	// filters by deadNodeID in memory) and the cold-start sweep (which
-	// scans every dead node at schedd boot — pg_notify is fire-and-
-	// forget; a schedd down while a drain event landed recovers via
-	// this path). Cooldown + per-tick cap are bound as parameters so
-	// the live watcher and cold-start sweep can use different cadences
-	// if needed; the rebalancer's caller passes
-	// api.RebalanceCooldownSeconds and api.RebalanceMaxPerTickPerNode
-	// (constants in pkg/api/limits.go).
+	// ListOrphanedApps is the legacy cooldown-ordered ownership scan (ADR-064).
+	// Production continuous recovery uses ListOrphanedAppsPage (ADR-421) so
+	// refused early candidates cannot starve later apps.
 	ListOrphanedApps(ctx context.Context, cooldownSeconds, maxPerTick int) ([]App, error)
+	// ListOrphanedAppsPage is the bounded, ID-ordered ownership recovery scan
+	// (ADR-421). afterAppID is an exclusive cursor; empty starts a new pass.
+	// deadNodeID optionally scopes the source before applying the limit.
+	ListOrphanedAppsPage(ctx context.Context, cooldownSeconds, limit int, afterAppID, deadNodeID string) ([]OrphanedAppCandidate, error)
+	// ReassignOrphanedAppOwner rechecks ownership, cooldown, source inactivity
+	// and destination health atomically. Node lifecycle writers cannot race
+	// the transfer. ErrConflict means the candidate is no longer eligible.
+	ReassignOrphanedAppOwner(ctx context.Context, appID, fromNodeID, toNodeID string, cooldownSeconds int) error
 	// ReassignAppOwner atomically transfers app ownership from
 	// fromNodeID to toNodeID. Tier A4 / migration 00092 — the
 	// conditional UPDATE that closes the Phase-2 follow-up "apps
@@ -3570,7 +3604,9 @@ type Store interface {
 	// PgStore uses the cron_fire_now_requests table.
 	InsertFireNowRequest(ctx context.Context, cronID, accountID string) (string, error)
 	ClaimPendingFireNowRequest(ctx context.Context) (FireNowRequest, error)
-	MarkFireNowRequestSucceeded(ctx context.Context, requestID, invocationID string) error
+	ClaimPendingFireNowRequestForNode(ctx context.Context, nodeID string) (FireNowRequest, error)
+	RequeueFireNowRequest(ctx context.Context, requestID string) error
+	MarkFireNowRequestSucceeded(ctx context.Context, requestID, invocationID, operationID string) error
 	MarkFireNowRequestFailed(ctx context.Context, requestID, errMsg string) error
 	GetFireNowRequest(ctx context.Context, requestID string) (FireNowRequest, error)
 
@@ -5149,7 +5185,9 @@ type Store interface {
 	//
 	// The stage_state jsonb is owned entirely by these two methods —
 	// callers MUST NOT write the column directly. The atomic JSONB
-	// merge is the load-bearing contract: the SSE handler's 2s
+	// merge preserves additive hosting verification progress, whose nested
+	// object is owned by DeploymentHostingVerificationStore.
+	// The merge is the load-bearing contract: the SSE handler's 2s
 	// polling tick (`statusTicker` at
 	// cmd/apid/handlers_ext.go:4156-4157) reads `stage_state`
 	// verbatim and emits `event: stage` frames per transition, so
@@ -5401,6 +5439,12 @@ type Store interface {
 	// (account_id, provider, provider_invoice_id) makes webhook redelivery and
 	// order status updates idempotent.
 	UpsertInvoice(ctx context.Context, inv Invoice) error
+	// ImportInvoiceHistory inserts provider-discovered invoices only. Existing
+	// webhook or imported rows are counted as skips and remain untouched.
+	ImportInvoiceHistory(ctx context.Context, accountID, provider string, invoices []Invoice) (int, error)
+	// RefreshInvoiceDetails atomically enriches an owned invoice if its captured
+	// update timestamp still matches, preserving every financial/payment field.
+	RefreshInvoiceDetails(ctx context.Context, accountID, id string, expectedUpdatedAt time.Time, details *InvoiceDetails) (Invoice, error)
 	// RecordInvoiceRefund appends one idempotent refund row and advances the
 	// invoice's cumulative refunded/credit-applied totals atomically.
 	RecordInvoiceRefund(ctx context.Context, refund InvoiceRefund) error
@@ -5750,6 +5794,8 @@ type Store interface {
 	// RecordAppSecretRuntimeReloadAck records an app's explicit, version-fenced
 	// claim that it applied (or failed to apply) the current secret revision.
 	RecordAppSecretRuntimeReloadAck(ctx context.Context, result AppSecretRuntimeReloadAckResult) (int, error)
+	BeginAppSecretRuntimeProcess(context.Context, AppSecretRuntimeProcess) error
+	RetireAppSecretRuntimeProcess(context.Context, AppSecretRuntimeProcess) error
 	// ListAppSecretRuntimeReloadObservations returns the latest report for each
 	// active runtime and secret in one app. An empty scope lists all scopes.
 	// Only non-sensitive version, instance and guest-init outcome metadata is
@@ -6758,4 +6804,15 @@ type IdempotencyReservation struct {
 	InFlight bool
 	Status   int
 	Body     []byte
+}
+
+// UDPListenerStore is optional so unrelated Store adapters stay narrow.
+type UDPListenerStore interface {
+	CreateUDPListener(context.Context, UDPListener) (UDPListener, error)
+	UDPListenerByID(context.Context, string) (UDPListener, error)
+	UDPListenerByAppAndName(context.Context, string, string) (UDPListener, error)
+	UDPListenerByPublicPort(context.Context, int) (UDPListener, error)
+	ListUDPListenersForApp(context.Context, string) ([]UDPListener, error)
+	SetUDPListenerEnabled(context.Context, string, bool) (UDPListener, error)
+	DeleteUDPListener(context.Context, string) error
 }

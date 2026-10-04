@@ -48,6 +48,8 @@ func (r *testPhaseRecorder) finishCurrent(status string) {
 }
 
 type testValidationResult struct {
+	Suite               string `json:"suite,omitempty"`
+	Engine              string `json:"engine,omitempty"`
 	Scenario            string `json:"scenario"`
 	Project             string `json:"project"`
 	Workloads           int    `json:"workloads"`
@@ -56,10 +58,10 @@ type testValidationResult struct {
 	SimulationAvailable bool   `json:"simulation_available"`
 }
 
-// Validation uses the same source and app-shape checks as real deployment,
-// before a scenario consumes plan capacity or authenticates to the platform.
-func validateTestManifest(scenarios map[string]testScenario, manifestDir, selected string) int {
-	results, err := collectTestValidation(scenarios, manifestDir, selected)
+// Real-VM validation checks deployable app shapes. Local validation checks the
+// command directory and rejects waits that require platform evidence.
+func validateTestManifestForEngine(scenarios map[string]testScenario, manifestDir, selected, engine string) int {
+	results, err := collectTestValidationForEngine(scenarios, manifestDir, selected, engine)
 	if err != nil {
 		return printErr("Invalid scenario manifest", err)
 	}
@@ -70,6 +72,10 @@ func validateTestManifest(scenarios map[string]testScenario, manifestDir, select
 		return 0
 	}
 	for _, result := range results {
+		if engine == "local" {
+			_, _ = fmt.Fprintf(osStdout, "%s: valid (local HTTP scenario)\n", result.Scenario)
+			continue
+		}
 		_, _ = fmt.Fprintf(osStdout, "%s: valid (%d workloads, %d buckets, %d consumers; simulation %s)\n",
 			result.Scenario, result.Workloads, result.Buckets, result.Consumers,
 			map[bool]string{true: "available", false: "unavailable"}[result.SimulationAvailable])
@@ -78,6 +84,10 @@ func validateTestManifest(scenarios map[string]testScenario, manifestDir, select
 }
 
 func collectTestValidation(scenarios map[string]testScenario, manifestDir, selected string) ([]testValidationResult, error) {
+	return collectTestValidationForEngine(scenarios, manifestDir, selected, "real-vm")
+}
+
+func collectTestValidationForEngine(scenarios map[string]testScenario, manifestDir, selected, engine string) ([]testValidationResult, error) {
 	names := make([]string, 0, len(scenarios))
 	if selected != "" {
 		if _, ok := scenarios[selected]; !ok {
@@ -96,19 +106,31 @@ func collectTestValidation(scenarios map[string]testScenario, manifestDir, selec
 	results := make([]testValidationResult, 0, len(names))
 	for _, name := range names {
 		scenario := scenarios[name]
+		if scenario.Chaos != nil && engine != "real-vm" {
+			return nil, fmt.Errorf("scenario %q declares chaos rules, which require the real-vm engine", name)
+		}
 		source := scenario.Source
 		if source == "" {
 			source = "."
 		}
-		if err := validateTestSource(manifestDir, source); err != nil {
-			return nil, fmt.Errorf("scenario %q: %w", name, err)
-		}
-		for service, spec := range scenario.Services {
-			if spec.Source == "" {
-				continue // built-in fixture, validated by readTestManifest
+		if engine == "local" {
+			if err := validateLocalTestScenario(scenario); err != nil {
+				return nil, fmt.Errorf("scenario %q: %w", name, err)
 			}
-			if err := validateTestSource(manifestDir, spec.Source); err != nil {
-				return nil, fmt.Errorf("scenario %q service %q: %w", name, service, err)
+			if _, err := resolveDeploySourceDir(manifestDir, source); err != nil {
+				return nil, fmt.Errorf("scenario %q: %w", name, err)
+			}
+		} else {
+			if err := validateTestSource(manifestDir, source); err != nil {
+				return nil, fmt.Errorf("scenario %q: %w", name, err)
+			}
+			for service, spec := range scenario.Services {
+				if spec.Source == "" {
+					continue // built-in fixture, validated by readTestManifest
+				}
+				if err := validateTestSource(manifestDir, spec.Source); err != nil {
+					return nil, fmt.Errorf("scenario %q service %q: %w", name, service, err)
+				}
 			}
 		}
 		results = append(results, testValidationResult{
@@ -136,6 +158,7 @@ type testJUnitSuite struct {
 	Name     string          `xml:"name,attr"`
 	Tests    int             `xml:"tests,attr"`
 	Failures int             `xml:"failures,attr"`
+	Skipped  int             `xml:"skipped,attr"`
 	Time     string          `xml:"time,attr"`
 	Cases    []testJUnitCase `xml:"testcase"`
 }
@@ -145,6 +168,7 @@ type testJUnitCase struct {
 	ClassName string            `xml:"classname,attr"`
 	Time      string            `xml:"time,attr"`
 	Failure   *testJUnitFailure `xml:"failure,omitempty"`
+	Skipped   *testJUnitSkipped `xml:"skipped,omitempty"`
 	SystemOut string            `xml:"system-out"`
 }
 
@@ -153,8 +177,15 @@ type testJUnitFailure struct {
 	Body    string `xml:",chardata"`
 }
 
+type testJUnitSkipped struct {
+	Message string `xml:"message,attr"`
+}
+
 func writeTestJUnit(path string, receipts []testRunReceipt) error {
 	suite := testJUnitSuite{Name: "gregale scenarios", Tests: len(receipts), Cases: make([]testJUnitCase, 0, len(receipts))}
+	if len(receipts) > 0 && receipts[0].Suite != "" {
+		suite.Name = "gregale suite " + receipts[0].Suite
+	}
 	var totalMS int64
 	for _, receipt := range receipts {
 		body, err := json.MarshalIndent(receipt, "", "  ")
@@ -162,13 +193,23 @@ func writeTestJUnit(path string, receipts []testRunReceipt) error {
 			return err
 		}
 		failureText := strings.TrimSpace(strings.Join([]string{receipt.Error, receipt.CleanupError}, "; "))
+		caseName := receipt.Scenario + "/" + receipt.Profile
+		if receipt.Load != nil {
+			caseName += "/load"
+		}
+		if receipt.Case != "" {
+			caseName += "/" + receipt.Case
+		}
 		caseResult := testJUnitCase{
-			Name:      fmt.Sprintf("%s/%s#%d", receipt.Scenario, receipt.Profile, receipt.Attempt),
+			Name:      fmt.Sprintf("%s#%d", caseName, receipt.Attempt),
 			ClassName: "gregale.scenario." + receipt.Engine,
 			Time:      fmt.Sprintf("%.3f", float64(receipt.DurationMS)/1000),
 			SystemOut: string(body),
 		}
-		if receipt.Status != "passed" {
+		if receipt.Status == "skipped" {
+			suite.Skipped++
+			caseResult.Skipped = &testJUnitSkipped{Message: receipt.SkipReason}
+		} else if receipt.Status != "passed" {
 			suite.Failures++
 			if failureText == "" {
 				failureText = "scenario did not pass"

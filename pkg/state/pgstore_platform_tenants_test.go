@@ -10,6 +10,38 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func TestPgCreateAppPersistsPlatformTenantRequired(t *testing.T) {
+	store, ctx := pgStore(t)
+	acct, err := store.CreateAccount(ctx, "tenant-policy-"+uuid.NewString()+"@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		create func(state.App) (state.App, error)
+	}{
+		{name: "direct", create: func(app state.App) (state.App, error) { return store.CreateApp(ctx, app) }},
+		{name: "quota", create: func(app state.App) (state.App, error) {
+			return store.CreateAppIfUnderQuota(ctx, app, api.MustLimitsFor(api.PlanHobby))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app, err := tc.create(state.App{AccountID: acct.ID, Slug: "tenant-policy-" + uuid.NewString()[:8],
+				Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, PlatformTenantRequired: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !app.PlatformTenantRequired {
+				t.Fatal("create response lost tenant policy")
+			}
+			read, err := store.AppByID(ctx, app.ID)
+			if err != nil || !read.PlatformTenantRequired {
+				t.Fatalf("read tenant policy = %t, err = %v", read.PlatformTenantRequired, err)
+			}
+		})
+	}
+}
+
 // adr: 226 — account-scoped tenant links preserve ownership and suspension.
 func TestPgPlatformTenantCrossAppLifecycle(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)

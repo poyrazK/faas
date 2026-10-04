@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -45,7 +46,94 @@ func (m *MemStore) ListPlatformTenantUsageMinutes(_ context.Context, accountID, 
 	return out, nil
 }
 
+func (m *MemStore) PlanPlatformTenantStatement(_ context.Context, accountID, tenantID string, start, end time.Time) (PlatformTenantStatementPlan, error) {
+	if !end.After(start) {
+		return PlatformTenantStatementPlan{}, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if tenant, ok := m.platformTenants[tenantID]; !ok || tenant.AccountID != accountID {
+		return PlatformTenantStatementPlan{}, ErrNotFound
+	}
+
+	plan := PlatformTenantStatementPlan{}
+	covered := map[string]int64{}
+	for _, statement := range m.platformTenantStatements {
+		if statement.AccountID != accountID || statement.TenantID != tenantID ||
+			!statement.PeriodStart.Equal(start) || !statement.PeriodEnd.Equal(end) {
+			continue
+		}
+		if !plan.HasLatest || statement.Revision > plan.Latest.Revision {
+			plan.Latest = clonePlatformTenantStatementHeader(statement)
+			plan.HasLatest = true
+		}
+		if statement.Status != APIConsumerUsageStatementFinalized {
+			continue
+		}
+		coverage := statement.Coverage
+		if len(coverage) == 0 {
+			for _, line := range statement.Lines {
+				if !line.WindowEnd.IsZero() && !line.WindowEnd.Equal(line.WindowStart.Add(time.Minute)) {
+					return PlatformTenantStatementPlan{}, ErrPlatformTenantUsageRegressed
+				}
+				coverage = append(coverage, PlatformTenantStatementCoverage{
+					AppID: line.AppID, ConsumerID: line.ConsumerID, SurfaceID: line.SurfaceID,
+					JWTAuthorizationRuleID: line.JWTAuthorizationRuleID,
+					WindowStart:            line.WindowStart, BillableUnits: line.BillableUnits,
+				})
+			}
+		}
+		for _, minute := range coverage {
+			key := platformTenantCoverageKey(minute.AppID, minute.ConsumerID, minute.SurfaceID, minute.JWTAuthorizationRuleID, minute.WindowStart)
+			if covered[key] > maxAPIConsumerUsageStatementInt64-minute.BillableUnits {
+				return PlatformTenantStatementPlan{}, fmt.Errorf("state: platform tenant coverage overflow")
+			}
+			covered[key] += minute.BillableUnits
+		}
+	}
+
+	prefix := accountID + "\x00" + tenantID + "\x00"
+	for key, bucket := range m.platformTenantUsage {
+		if !strings.HasPrefix(key, prefix) || bucket.WindowStart.Before(start) || !bucket.WindowStart.Before(end) {
+			continue
+		}
+		coverageKey := platformTenantCoverageKey(bucket.AppID, bucket.ConsumerKey, bucket.SurfaceID, bucket.JWTAuthorizationRuleID, bucket.WindowStart)
+		prior := covered[coverageKey]
+		if bucket.BillableUnits < prior {
+			return PlatformTenantStatementPlan{}, ErrPlatformTenantUsageRegressed
+		}
+		delete(covered, coverageKey)
+		bucket.BillableUnits -= prior
+		if bucket.BillableUnits > 0 {
+			plan.UsageDelta = append(plan.UsageDelta, bucket)
+		}
+	}
+	for _, prior := range covered {
+		if prior > 0 {
+			return PlatformTenantStatementPlan{}, ErrPlatformTenantUsageRegressed
+		}
+	}
+	sort.Slice(plan.UsageDelta, func(i, j int) bool {
+		left, right := plan.UsageDelta[i], plan.UsageDelta[j]
+		if left.AppID != right.AppID {
+			return left.AppID < right.AppID
+		}
+		if left.ConsumerKey != right.ConsumerKey {
+			return left.ConsumerKey < right.ConsumerKey
+		}
+		if left.SurfaceID != right.SurfaceID {
+			return left.SurfaceID < right.SurfaceID
+		}
+		if left.JWTAuthorizationRuleID != right.JWTAuthorizationRuleID {
+			return left.JWTAuthorizationRuleID < right.JWTAuthorizationRuleID
+		}
+		return left.WindowStart.Before(right.WindowStart)
+	})
+	return plan, nil
+}
+
 func (m *MemStore) CreatePlatformTenantStatement(_ context.Context, in PlatformTenantStatementInput) (PlatformTenantStatement, bool, error) {
+	in = normalizePlatformTenantStatementInput(in)
 	if err := validatePlatformTenantStatementInput(in); err != nil {
 		return PlatformTenantStatement{}, false, err
 	}
@@ -60,7 +148,7 @@ func (m *MemStore) CreatePlatformTenantStatement(_ context.Context, in PlatformT
 			continue
 		}
 		if statement.Revision == in.Revision {
-			return clonePlatformTenantStatement(statement), false, nil
+			return clonePlatformTenantStatementHeader(statement), false, nil
 		}
 		if statement.Revision > latest.Revision {
 			latest = statement
@@ -68,6 +156,9 @@ func (m *MemStore) CreatePlatformTenantStatement(_ context.Context, in PlatformT
 	}
 	if in.Revision != latest.Revision+1 || latest.Status != in.PriorStatus {
 		return PlatformTenantStatement{}, false, ErrConflict
+	}
+	if latest.Status == APIConsumerUsageStatementDraft && samePlatformTenantStatementSnapshot(latest, in) {
+		return clonePlatformTenantStatementHeader(latest), false, nil
 	}
 	if latest.Status == APIConsumerUsageStatementDraft {
 		latest.Status = PlatformTenantStatementSuperseded
@@ -78,9 +169,11 @@ func (m *MemStore) CreatePlatformTenantStatement(_ context.Context, in PlatformT
 		PeriodStart: in.PeriodStart, PeriodEnd: in.PeriodEnd, Revision: in.Revision,
 		Status: APIConsumerUsageStatementDraft, Currency: in.Currency, BillableUnits: in.BillableUnits,
 		UnpricedUnits: in.UnpricedUnits, AmountMillicents: in.AmountMillicents,
-		Lines: append([]PlatformTenantStatementLine(nil), in.Lines...), AsOf: in.AsOf, CreatedAt: now}
+		Lines:    append([]PlatformTenantStatementLine(nil), in.Lines...),
+		Coverage: append([]PlatformTenantStatementCoverage(nil), in.Coverage...),
+		AsOf:     in.AsOf, CreatedAt: now}
 	m.platformTenantStatements[out.ID] = out
-	return clonePlatformTenantStatement(out), true, nil
+	return clonePlatformTenantStatementHeader(out), true, nil
 }
 
 func (m *MemStore) GetPlatformTenantStatement(_ context.Context, accountID, tenantID, statementID string) (PlatformTenantStatement, error) {
@@ -106,6 +199,36 @@ func (m *MemStore) ListPlatformTenantStatements(_ context.Context, accountID, te
 	for _, statement := range m.platformTenantStatements {
 		if statement.AccountID == accountID && statement.TenantID == tenantID && statement.PeriodStart.Equal(start) && statement.PeriodEnd.Equal(end) {
 			out = append(out, clonePlatformTenantStatement(statement))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Revision < out[j].Revision })
+	return out, nil
+}
+
+func (m *MemStore) GetPlatformTenantStatementHeader(_ context.Context, accountID, tenantID, statementID string) (PlatformTenantStatement, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out, ok := m.platformTenantStatements[statementID]
+	if !ok || out.AccountID != accountID || out.TenantID != tenantID {
+		return PlatformTenantStatement{}, ErrNotFound
+	}
+	return clonePlatformTenantStatementHeader(out), nil
+}
+
+func (m *MemStore) ListPlatformTenantStatementHeaders(_ context.Context, accountID, tenantID string, start, end time.Time) ([]PlatformTenantStatement, error) {
+	if !end.After(start) {
+		return nil, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if tenant, ok := m.platformTenants[tenantID]; !ok || tenant.AccountID != accountID {
+		return nil, ErrNotFound
+	}
+	out := []PlatformTenantStatement{}
+	for _, statement := range m.platformTenantStatements {
+		if statement.AccountID == accountID && statement.TenantID == tenantID &&
+			statement.PeriodStart.Equal(start) && statement.PeriodEnd.Equal(end) {
+			out = append(out, clonePlatformTenantStatementHeader(statement))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Revision < out[j].Revision })
@@ -159,7 +282,7 @@ func (m *MemStore) FinalizePlatformTenantStatement(_ context.Context, accountID,
 		return PlatformTenantStatement{}, false, ErrNotFound
 	}
 	if out.Status == APIConsumerUsageStatementFinalized {
-		return clonePlatformTenantStatement(out), false, nil
+		return clonePlatformTenantStatementHeader(out), false, nil
 	}
 	if out.UnpricedUnits > 0 || out.Currency == "" {
 		return PlatformTenantStatement{}, false, ErrConflict
@@ -168,7 +291,7 @@ func (m *MemStore) FinalizePlatformTenantStatement(_ context.Context, accountID,
 	out.Status, out.FinalizedAt = APIConsumerUsageStatementFinalized, &now
 	m.platformTenantStatements[out.ID] = out
 	m.enqueuePlatformTenantStatementFinalizedWebhooksLocked(out, now)
-	return clonePlatformTenantStatement(out), true, nil
+	return clonePlatformTenantStatementHeader(out), true, nil
 }
 
 func (m *MemStore) enqueuePlatformTenantStatementFinalizedWebhooksLocked(statement PlatformTenantStatement, now time.Time) {
@@ -180,7 +303,7 @@ func (m *MemStore) enqueuePlatformTenantStatementFinalizedWebhooksLocked(stateme
 	for _, line := range statement.Lines {
 		lines = append(lines, api.PlatformTenantStatementLineResponse{
 			AppID: line.AppID, ConsumerID: line.ConsumerID, SurfaceID: line.SurfaceID,
-			JWTAuthorizationRuleID: line.JWTAuthorizationRuleID, WindowStart: line.WindowStart,
+			JWTAuthorizationRuleID: line.JWTAuthorizationRuleID, WindowStart: line.WindowStart, WindowEnd: line.WindowEnd,
 			BillableUnits: line.BillableUnits, RateCardID: line.RateCardID,
 			PlatformTenantRateCardID: line.PlatformTenantRateCardID, Currency: line.Currency,
 			PriceMillicentsPerUnit: line.PriceMillicentsPerUnit, AmountMillicents: line.AmountMillicents,

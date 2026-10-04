@@ -87,7 +87,7 @@ func TestCreatePreview_ProvisionsStablePRAppAndReusesIt(t *testing.T) {
 	if created.Manifest.EffectiveServiceBindingPolicy() != api.ServiceBindingPolicyDeclared || len(created.Manifest.ServiceBindings) != 1 {
 		t.Fatalf("persisted preview manifest did not inherit service binding policy: %#v", created.Manifest)
 	}
-	if created.Manifest.Env["GREGALE_SERVICE_BILLING_URL"] != "http://billing.svc.gregale:10080" ||
+	if created.Manifest.Env["GREGALE_SERVICE_BILLING_URL"] != "http://billing.svc.gregale:10081" ||
 		created.Manifest.Env["GREGALE_SERVICE_BILLING_HTTPS_URL"] != "https://billing.internal" {
 		t.Fatalf("preview service env = %#v, want legacy and HTTPS canary URLs", created.Manifest.Env)
 	}

@@ -41,6 +41,9 @@ func (m *MemStore) ListBuildsAwaitingImage(_ context.Context, nodeID string, lim
 		if !ok || (dep.Status != DeployPending && dep.Status != DeployBuilding) || dep.RootfsPath == "" || b.Status != BuildSucceeded {
 			continue
 		}
+		if _, started := m.imagePreparations[dep.ID]; started {
+			continue
+		}
 		prov, ok := m.buildProvenance[b.ID]
 		if !ok || (nodeID != "" && prov.BuilderNodeID != "" && prov.BuilderNodeID != nodeID) {
 			continue

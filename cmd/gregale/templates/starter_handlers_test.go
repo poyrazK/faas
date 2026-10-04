@@ -55,6 +55,14 @@ func TestSecretReloadNodeStarterHelper(t *testing.T) {
 	runNodeStarterTests(t, "secret-reload-node", "secret-reload.test.js")
 }
 
+func TestCustomerPlatformStarterHTTPIsolation(t *testing.T) {
+	runNodeStarterTests(t, "customer-platform", "test/http.test.js")
+}
+
+func TestCustomerPlatformStarterCredentialRecovery(t *testing.T) {
+	runNodeStarterTests(t, "customer-platform", "test/client.test.js")
+}
+
 func TestSecretReloadNodeStarterOptsIntoSIGHUP(t *testing.T) {
 	dir, cleanup, err := MaterializeForTest("secret-reload-node")
 	if err != nil {
@@ -254,4 +262,9 @@ func TestS3UploaderStarterKeepsRawBodyForEveryContentType(t *testing.T) {
 	if !strings.Contains(code, "express.raw({ type: () => true") {
 		t.Fatal("s3-uploader must read every request body as raw bytes (express.raw with a match-all type)")
 	}
+}
+
+func TestPostgresStarterMigrationCredentialBoundary(t *testing.T) {
+	runNodeStarterTests(t, "rest-api-postgres", "test/migration.test.js")
+	runNodeStarterTests(t, "customer-platform", "test/migration.test.js")
 }

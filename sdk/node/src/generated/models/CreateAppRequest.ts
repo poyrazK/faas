@@ -195,5 +195,9 @@ export type CreateAppRequest = {
    * Per-deployment token-gate flag (issue #560). Omitted at create-time → apid applies the plan default (false). Pro/Scale only.
    */
   require_authn?: boolean;
+  /**
+   * Require verified platform tenant identity on app traffic from creation. Omitted or false leaves the policy disabled. Available on Hobby and above.
+   */
+  platform_tenant_required?: boolean;
 };
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -150,4 +151,58 @@ func assertGaugeValue(t *testing.T, registry interface {
 		}
 	}
 	t.Fatalf("metric %s not found", name)
+}
+
+// A new fleet runs no instances, so the CPU and egress samplers never ask
+// for fleet stats and meterd reported zero expected nodes. The rollout's
+// metering-convergence gate (expected > 0 and connected == expected) could
+// therefore never pass before the first customer wake. The periodic refresh
+// keeps the gauges current with no instances at all.
+func TestFleetStatsGaugesRefreshOnAnIdleFleet(t *testing.T) {
+	t.Parallel()
+	targetA, targetB := "tcp://compute-a:9091", "tcp://compute-b:9091"
+	nodes := &fleetTestNodes{nodes: []state.ComputeNode{
+		{ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", Active: true, ScheddTargetURL: &targetA},
+		{ID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", Active: true, ScheddTargetURL: &targetB},
+	}}
+	m := newFleetStatsMetrics()
+	p := &fleetStatsParker{
+		nodes: nodes, fallback: &fleetTestParker{}, metrics: m,
+		snapshots: make(map[string][]scheddgrpc.InstanceStatsRow),
+		dial: func(context.Context, string, *tls.Config) (parkInstanceParker, error) {
+			return &fleetTestParker{}, nil
+		},
+	}
+	cpu := &scheddCPUAdapter{parker: p, now: time.Now}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		refreshFleetStatsPeriodically(ctx, cpu, 10*time.Millisecond)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for gaugeValue(t, m.registry, "meterd_fleet_stats_connected_nodes") != 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	assertGaugeValue(t, m.registry, "meterd_fleet_stats_expected_nodes", 2)
+	assertGaugeValue(t, m.registry, "meterd_fleet_stats_connected_nodes", 2)
+}
+
+// gaugeValue returns the first sample of a gauge, or -1 while it is absent.
+func gaugeValue(t *testing.T, registry interface {
+	Gather() ([]*dto.MetricFamily, error)
+}, name string) float64 {
+	t.Helper()
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() == name && len(family.GetMetric()) > 0 {
+			return family.GetMetric()[0].GetGauge().GetValue()
+		}
+	}
+	return -1
 }

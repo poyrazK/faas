@@ -118,6 +118,9 @@ func managedPostgresView(database managedpostgres.Database) api.ManagedPostgresD
 	if !database.RestorePointInTime.IsZero() {
 		out.RestorePointInTime = database.RestorePointInTime.UTC().Format(time.RFC3339Nano)
 	}
+	if database.Health != nil {
+		out.Health = managedPostgresHealthView(*database.Health)
+	}
 	if database.DeletedAt != nil {
 		out.DeletedAt = database.DeletedAt.UTC().Format(time.RFC3339Nano)
 	}

@@ -74,9 +74,9 @@ func codeToGRPC(code string) codes.Code {
 	case api.CodeBuildOOM,
 		api.CodeBuildTimeout:
 		return codes.ResourceExhausted
-	case api.CodeHTTPAdmissionUnavailable, api.CodeSourceRefUnavailable, api.CodeEgressCircuitUnavailable, api.CodeEgressCircuitDisabled:
+	case api.CodeAppAdmissionUnavailable, api.CodeHTTPAdmissionUnavailable, api.CodeSourceRefUnavailable, api.CodeEgressCircuitUnavailable, api.CodeEgressCircuitDisabled:
 		return codes.Unavailable
-	case api.CodeBeforeCheckpointFailed, api.CodeEgressCircuitRevision:
+	case api.CodeDatabaseCutoverFenced, api.CodeBeforeCheckpointFailed, api.CodeEgressCircuitRevision:
 		return codes.FailedPrecondition
 	case api.CodeBillingPastDue,
 		api.CodeUnauthorized:

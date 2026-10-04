@@ -62,6 +62,7 @@ type AsyncEdgeRuleMatcher interface {
 // Headers has already had credentials, hop-by-hop, and platform-owned fields
 // removed before it crosses this interface.
 type AsyncRouteRequest struct {
+	PlatformTenantID string
 	AppID            string
 	AccountID        string
 	OnSuccessWebhook string
@@ -97,8 +98,10 @@ func (h *Handler) matchAsyncRoute(r *http.Request, sidecarName string) *EdgeRule
 	return matcher.MatchAsync(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
 }
 
-func (h *Handler) applyEdgeRuleCacheUnlessAsync(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, asyncRule *EdgeRuleAsyncResolved) (bool, *EdgeRuleCacheResolved) {
-	if asyncRule != nil {
+func (h *Handler) applyEdgeRuleCacheUnlessAsync(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, asyncRule *EdgeRuleAsyncResolved, deploymentSmoke bool) (bool, *EdgeRuleCacheResolved) {
+	// Reuse the established challenge verdict so a slow policy evaluation or
+	// challenge expiry cannot send a candidate probe through customer caches.
+	if asyncRule != nil || deploymentSmoke {
 		return false, nil
 	}
 	return h.applyEdgeRuleCache(w, r, app, rec)
@@ -149,6 +152,7 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 	accepted, err := h.asyncRoutes.EnqueueAsyncRoute(r.Context(), AsyncRouteRequest{
 		AppID:            app.ID,
 		AccountID:        app.AccountID,
+		PlatformTenantID: authenticatedFrom(r.Context()).PlatformTenantID,
 		OnSuccessWebhook: rule.OnSuccessWebhook,
 		OnFailureWebhook: rule.OnFailureWebhook,
 		RetryPolicy:      retryPolicy,
@@ -162,6 +166,10 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		switch {
+		case errors.Is(err, state.ErrPlatformTenantSuspended):
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Platform tenant suspended", "resume this customer before accepting new work"))
+			h.observeAsyncRule(rule, "blocked", "error")
+			return true
 		case errors.Is(err, state.ErrInvalidArgument):
 			status = http.StatusBadRequest
 		case errors.Is(err, state.ErrNotFound):
@@ -182,6 +190,9 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 	}
 
 	statusURL := "/v1/invocations/" + accepted.ID
+	if authenticatedFrom(r.Context()).PlatformTenantID != "" {
+		statusURL = "/v1/platform-tenant-self/invocations/" + accepted.ID
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set(api.InvocationIDHeader, accepted.ID)
 	if accepted.ReleaseID != "" {
@@ -274,7 +285,7 @@ func asyncRouteHeaders(in http.Header) map[string]string {
 			continue
 		}
 		if lower == "authorization" || lower == "cookie" || lower == "content-length" ||
-			lower == "host" || strings.HasPrefix(lower, "x-faas-") || isHopByHopHeader(canonical) {
+			lower == "host" || strings.HasPrefix(lower, "x-faas-") || lower == "x-gregale-dev-session-context" || strings.HasPrefix(lower, "x-gregale-dev-bridge-") || isHopByHopHeader(canonical) {
 			continue
 		}
 		out[canonical] = strings.Join(values, ", ")

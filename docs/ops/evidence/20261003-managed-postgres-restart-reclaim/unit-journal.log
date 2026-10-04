@@ -1,0 +1,10 @@
+Oct 03 08:51:33 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: Started gregale-managed-pg-restart-reclaim-adc1b1d8-retry.service - /usr/bin/bash -c "exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-restart-reclaim-adc1b1d8/runner.sh > /var/tmp/faas-metal-smoke-managed-pg-restart-reclaim-adc1b1d8/run.log 2>&1".
+Oct 03 08:52:59 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal runuser[870616]: pam_unix(runuser:session): session opened for user nobody(uid=65534) by (uid=0)
+Oct 03 08:53:11 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal runuser[870616]: pam_unix(runuser:session): session closed for user nobody
+Oct 03 09:07:10 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-reclaim-adc1b1d8-retry.service: Deactivated successfully.
+Oct 03 09:07:10 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-reclaim-adc1b1d8-retry.service: Consumed 15min 1.583s CPU time, 10.0G memory peak, 0B memory swap peak.
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth

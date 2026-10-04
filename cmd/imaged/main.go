@@ -558,7 +558,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			},
 		}
 		h.WithHostingSmoke(func(ctx context.Context, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
-			return verifier.VerifyDeployment(ctx, app.Slug, imaged.HostingHealthPath(app, dep), dep.ID)
+			return imaged.VerifyHostingDeployment(ctx, verifier, app, dep)
 		})
 		if smokeURL == "" {
 			log.Warn("imaged: API hosting readiness smoke required but public origin is unset; deployments will fail closed")
@@ -655,6 +655,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	assignedBases, err := h.EnsureAssignedBases(ctx, arch, getenv)
 	if err != nil {
 		return err
+	}
+	profileBases, err := h.EnsureExecutionProfileBases(ctx, arch, getenv)
+	if err != nil {
+		return err
+	}
+	for _, base := range profileBases {
+		log.Info("imaged execution profile base ready", "profile", base.Runtime, "digest", base.ConfigDigest, "skipped", base.Skipped)
 	}
 	if prestageOnlyFromEnv(getenv) {
 		log.Info("imaged runtime-base pre-stage complete",
@@ -783,10 +790,10 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 
 	// Recover deploy handoffs that were emitted while imaged was restarting or
 	// its LISTEN connection was down. The replay worker shares Loop's handler
-	// with the low-latency subscriber and starts after its five-second wakeup
-	// grace, so ordinary notifications are not processed twice.
+	// with the low-latency subscriber. Both paths claim the same row and renew
+	// ownership while work runs; the grace period only favors immediate delivery.
 	go func() {
-		err := db.RunNotificationOutbox(ctx, pool, "imaged", []string{
+		err := db.RunNotificationOutboxForNode(ctx, pool, "imaged", getenv("FAAS_NODE_NAME"), []string{
 			db.NotifySnapshotBoot,
 			db.NotifySnapshotWritten,
 			db.NotifyDeploymentReady,

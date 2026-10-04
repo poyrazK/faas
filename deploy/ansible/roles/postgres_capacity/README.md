@@ -16,8 +16,11 @@ nodes derive 160 connections, ten derive 520, and twelve derive 610. A
 four-worker `join-fleet` batch at ten nodes derives 540 instead.
 
 The role changes only `max_connections` and
-`superuser_reserved_connections`, restarts PostgreSQL only when either file
-setting changes, and verifies the live settings before a node join continues.
+`superuser_reserved_connections`, restarts PostgreSQL only when the running
+postmaster differs from the target, and verifies the live settings before a
+node join continues. The restart decision reads the server, not whether this
+run edited the file, so a run that failed after writing the file still
+restarts on the next run.
 It is included by both `bootstrap.yml` and `node_join_control_plane.yml`. A RAM
 guard rejects admission before modifying PostgreSQL when the control-plane
 host is too small. The 4 GB beta host supports the current two-node standalone

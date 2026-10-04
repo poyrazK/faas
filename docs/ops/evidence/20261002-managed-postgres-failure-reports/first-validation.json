@@ -1,0 +1,38 @@
+{
+  "snapshot": "a902715766ab41566a8755870022ebf2d2774ba7",
+  "tree": "715c975f9fc6e107044c5251749f7c9658125a10",
+  "parent": "723b2f016f6ffe114ca92df3632fd8c85ac4ce49",
+  "archive_sha256": "fcb6804f9168578468cf7ea5c5aabca7f28fd53a45e4ef970cfde59033be1d9c",
+  "archive_bytes": 13414504,
+  "selected_paths": [
+    "go.mod",
+    "go.sum",
+    "Makefile",
+    "pkg",
+    "api",
+    "cmd/vmmd",
+    "cmd/vmmd-jail-helper",
+    "guest",
+    "deploy/scripts/leakcheck.sh",
+    "migrations",
+    "schema.sql",
+    "docs/adr/397-managed-postgres-failure-report-redelivery.md"
+  ],
+  "project": "gregale-prod",
+  "zone": "us-east1-b",
+  "instance": "gregale-internal-test-1",
+  "nested_virtualization": true,
+  "run_id": "managed-pg-failure-reports-d598bb27",
+  "stage": "/var/tmp/faas-metal-smoke-managed-pg-failure-reports-d598bb27",
+  "unit": "gregale-managed-pg-failure-reports-d598bb27",
+  "runtime_dir": "/run/mpgr-d598bb27",
+  "base_snapshot": "d598bb27fae873d0b9215ae5b3c28311e5e53396",
+  "supplement_paths": [
+    "docs/adr/397-managed-postgres-failure-report-redelivery.md",
+    "pkg/fcvm/failure_report_ownership_test.go",
+    "pkg/fcvm/manager.go"
+  ],
+  "supplement_sha256": "09876fa7df2950b0defdd2c7dc4543577d5b6d7d3b1f9bf473ecc2d4cab55f6c",
+  "supplement_bytes": 97409,
+  "runner_sha256": "eb97788b6e583bbeed106474d231c50c7c6ae6c19b10e1a437ac539298033aac"
+}

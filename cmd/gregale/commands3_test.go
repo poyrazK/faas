@@ -596,6 +596,41 @@ func TestCmdSecrets_Unset(t *testing.T) {
 	}
 }
 
+// `secrets unset` used to have no --restart, so a removed secret stayed in
+// every running instance's environment until the next cold wake.
+func TestCmdSecretsUnsetRestartUsesFreshRestartAfterDelete(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/secrets/"):
+			calls = append(calls, "delete")
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/x/restart":
+			calls = append(calls, "restart:"+r.URL.Query().Get("fresh"))
+			writeJSONTestStatus(w, http.StatusAccepted, api.AppRestartResponse{WakeID: "wake-unset-1"})
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	old := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = old }()
+
+	if code := cmdSecrets([]string{"unset", "--app", "x", "OLD_KEY", "--restart"}); code != 0 {
+		t.Fatalf("cmdSecrets unset --restart = %d, want 0", code)
+	}
+	if len(calls) != 2 || calls[0] != "delete" || calls[1] != "restart:true" {
+		t.Fatalf("calls = %v, want [delete restart:true]", calls)
+	}
+	if !strings.Contains(stdout.String(), "wake-unset-1") || strings.Contains(stdout.String(), "next cold wake") {
+		t.Fatalf("restart output = %q", stdout.String())
+	}
+}
+
 func TestCmdSecrets_Unset_RequiresExactlyOneKey(t *testing.T) {
 	if code := cmdSecrets([]string{"unset", "--app", "x"}); code != 1 {
 		t.Errorf("unset no key = %d, want 1", code)
@@ -1010,5 +1045,16 @@ func TestCmdSecrets_Set_QuotaStamp(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSecretRuntimeReloadLabelStartupDeliveryIsNotApplicationAck(t *testing.T) {
+	got := secretRuntimeReloadLabel(2, 2, "updated", "not_attempted", "instance", nil)
+	if !strings.Contains(got, "received at startup") {
+		t.Fatalf("startup delivery shown as unknown: %s", got)
+	}
+	got = secretRuntimeReloadLabel(2, 2, "updated", "not_attempted", "instance", []api.SecretRuntimeReloadObservation{{InstanceID: "instance", Version: 2, Projection: "updated", Signal: "not_attempted"}})
+	if !strings.Contains(got, "1 received at startup") || !strings.Contains(got, "app ack unknown") {
+		t.Fatalf("startup delivery overclaimed application state: %s", got)
 	}
 }

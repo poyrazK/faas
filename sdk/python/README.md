@@ -46,6 +46,60 @@ Use `await client.arun_execution(...)` with an async callback in an async
 application. Source/files are staged only in the guest's ephemeral scratch
 filesystem; no customer storage disk is attached.
 
+## Container listeners
+
+The generated clients expose UDP listener operations and TCP TLS policy/status.
+UDP ingress requires operator source-CIDR/firewall rollout and a declared guest
+UDP port. Creation reserves a disabled endpoint; enable it explicitly after the
+deployment and edge are configured:
+
+```python
+from faas_sdk import FaaSClient
+from faas_sdk.api.apps import create_app_udp_listener, update_app_udp_listener
+from faas_sdk.models import CreateUDPListenerRequest, UpdateUDPListenerRequest
+
+with FaaSClient(base_url="https://api.example.com", token="...") as client:
+    udp = create_app_udp_listener.sync(
+        "app", client=client.inner,
+        body=CreateUDPListenerRequest(name="dns", guest_port=5353),
+    )
+    if udp is not None:
+        update_app_udp_listener.sync(
+            "app", udp.name, client=client.inner,
+            body=UpdateUDPListenerRequest(enabled=True),
+        )
+```
+
+For an existing TCP listener, TLS termination requires a verified app-owned
+hostname and a certificate bundle provisioned by the edge operator. Changing TLS
+policy disables the listener; enable it separately after provisioning:
+
+```python
+from faas_sdk.api.apps import app_tcp_listener_tls_status, update_app_tcp_listener
+from faas_sdk.models import TCPListenerTLSConfig, UpdateTCPListenerRequest
+
+with FaaSClient(base_url="https://api.example.com", token="...") as client:
+    update_app_tcp_listener.sync(
+        "app", "echo", client=client.inner,
+        body=UpdateTCPListenerRequest(
+            tls=TCPListenerTLSConfig(mode="terminate", hostname="echo.example.com"),
+        ),
+    )
+    update_app_tcp_listener.sync(
+        "app", "echo", client=client.inner,
+        body=UpdateTCPListenerRequest(enabled=True),
+    )
+    status = app_tcp_listener_tls_status.sync("app", "echo", client=client.inner)
+    if status is not None:
+        print(status.observations)
+```
+
+Supply exactly one of `enabled` or `tls` in each TCP update. Certificate status
+covers observed edges only; empty observations and `unknown` do not establish
+readiness. It does not prove fleet coverage, client trust or guest availability.
+Native listener qualification remains pending; see the
+[qualification procedure](../../docs/container-qualification.md).
+
 ## Usage
 First, create a client:
 
@@ -148,6 +202,64 @@ removes it before returning the response to the client. See
 identifiers and key rotation. Call `failed_login_headers` with the normalized
 lookup value after either an unknown account or an incorrect credential, and
 set its result on the 401 response using your framework.
+
+## Dev Bridge request context
+
+Wrap a FastAPI/Starlette ASGI app and use an HTTPX transport that re-evaluates
+routing context on each outbound request and redirect hop:
+
+```python
+import httpx
+import os
+from fastapi import Response
+from faas_sdk import DevBridgeMiddleware, AsyncDevBridgeTransport
+
+app.add_middleware(DevBridgeMiddleware)
+service_client = httpx.AsyncClient(transport=AsyncDevBridgeTransport())
+
+@app.get('/charge')
+async def charge():
+    result = await service_client.get(os.environ['GREGALE_SERVICE_PAYMENTS_URL'] + '/charge')
+    return Response(result.content, status_code=result.status_code, media_type='application/json')
+```
+
+Close the shared HTTPX client in the application's shutdown hook. Synchronous
+applications can use `DevBridgeTransport`; other adapters can capture a header
+with `with_dev_bridge_context(value)`. ContextVar keeps concurrent requests
+separate. Both transports strip explicit bridge authority and propagate only to
+single-label `NAME.svc.gregale` or `NAME.internal` names without URL userinfo.
+HTTPX redirect handling passes each hop through the transport, so an external
+destination cannot inherit session authority. Application authentication remains
+subject to HTTPX's normal redirect policy. Gregale authorizes scope at every hop.
+See [the Dev Bridge guide](../../docs/dev-bridge.md) for local execution.
+
+## Runtime feature flags
+
+Managed Python ASGI applications can use Gregale's customer-aware runtime flag
+client. It evaluates locally against a bounded configuration snapshot and adds
+used decisions to response evidence. The HTTPX transport forwards only used
+decisions to managed Gregale services:
+
+~~~python
+import httpx
+from faas_sdk import (
+    AsyncGregaleFlagsTransport,
+    GregaleFlags,
+    GregaleFlagsMiddleware,
+)
+
+flags = GregaleFlags(api_url="https://api.gregale.dev")
+# Call await flags.start() in the application's async startup hook.
+# Call await flags.close() in its shutdown hook.
+app = GregaleFlagsMiddleware(app, flags)
+service_client = httpx.AsyncClient(transport=AsyncGregaleFlagsTransport(flags))
+~~~
+
+Inside a request handler, call flags.boolean(key, fallback) or
+flags.variant(key, fallback), then flags.used(key) when the selected behavior
+is entered. Close both clients during application shutdown. See the
+[feature flags guide](../../docs/flags.md) for workload identity, fallback,
+propagation and trust-boundary details.
 
 ## Project release context
 

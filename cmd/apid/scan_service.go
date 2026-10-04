@@ -57,16 +57,17 @@ import (
 // source bytes (hex). TS is informational — the hash is the load-
 // bearing field.
 type planTokenWire struct {
-	Hash             string `json:"hash"`
-	AccountID        string `json:"account_id"`
-	Slug             string `json:"slug"`
-	RepoFullName     string `json:"repo_full_name,omitempty"`
-	ProductionBranch string `json:"production_branch,omitempty"`
-	InstallID        int64  `json:"install_id,omitempty"`
-	NoTriggers       bool   `json:"no_triggers,omitempty"`
-	Environment      string `json:"environment,omitempty"`
-	ConfigHash       string `json:"config_hash,omitempty"`
-	TSUnix           int64  `json:"ts_unix"`
+	Hash                   string `json:"hash"`
+	AccountID              string `json:"account_id"`
+	Slug                   string `json:"slug"`
+	RepoFullName           string `json:"repo_full_name,omitempty"`
+	ProductionBranch       string `json:"production_branch,omitempty"`
+	InstallID              int64  `json:"install_id,omitempty"`
+	NoTriggers             bool   `json:"no_triggers,omitempty"`
+	PlatformTenantRequired *bool  `json:"platform_tenant_required,omitempty"`
+	Environment            string `json:"environment,omitempty"`
+	ConfigHash             string `json:"config_hash,omitempty"`
+	TSUnix                 int64  `json:"ts_unix"`
 }
 
 // scanPlanRequest is the parsed multipart body for both /scan and
@@ -101,9 +102,10 @@ type scanPlanRequest struct {
 	// NoTriggers makes trigger declarations observational only for this
 	// scan/apply pair. It is bound into the plan token so apply cannot change
 	// the suppression decision made during preview.
-	NoTriggers    bool
-	Environment   string // registered project environment; resolved to deployment scope
-	ApprovalToken string // exact-plan approval credential for protected applies
+	NoTriggers             bool
+	PlatformTenantRequired *bool
+	Environment            string // registered project environment; resolved to deployment scope
+	ApprovalToken          string // exact-plan approval credential for protected applies
 }
 
 func validProjectRepoFullName(repo string) bool {
@@ -238,6 +240,7 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 		PreviewServiceCallsPolicy: api.PreviewServiceCallsPolicy(w.PreviewServiceCallsPolicy).Effective(),
 		AllowedServiceCallers:     w.AllowedServiceCallers,
 		AllowedServiceCallScopes:  w.AllowedServiceCallScopes,
+		PlatformTenantRequired:    w.PlatformTenantRequired,
 
 		Class:      string(w.Class),
 		Schedule:   w.Schedule,
@@ -1292,7 +1295,7 @@ func (s *server) scanService(
 		if pt.Slug != req.ProjectSlug || pt.RepoFullName != req.RepoFullName ||
 			pt.ProductionBranch != req.ProdBranch || pt.InstallID != req.InstallID ||
 			pt.NoTriggers != req.NoTriggers || pt.Environment != req.Environment ||
-			pt.ConfigHash != environmentConfigHash {
+			pt.ConfigHash != environmentConfigHash || !samePlatformTenantPolicy(pt.PlatformTenantRequired, req.PlatformTenantRequired) {
 			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
 				"plan_token_stale", "plan_token does not match project binding",
 				"re-run scan and apply with the same repository, installation, and production branch")
@@ -1371,6 +1374,12 @@ func (s *server) scanService(
 		// running over result.Workloads.
 		if workloadMatchesSelectors(req.Exclude, wl) {
 			continue
+		}
+		if req.PlatformTenantRequired != nil {
+			wl.PlatformTenantRequired = req.PlatformTenantRequired
+		}
+		if wl.PlatformTenantRequired != nil && *wl.PlatformTenantRequired && acct.Plan.ConsumerKeysPerApp() == 0 {
+			return nil, state.Project{}, nil, nil, nil, nil, api.ErrPlanPlatformTenantRequiredNotAllowed(acct.Plan)
 		}
 		filteredW = append(filteredW, wl)
 	}
@@ -1780,7 +1789,7 @@ func (s *server) scanService(
 	// Mint a fresh plan_token unless one was supplied (apply path
 	// keeps the caller's; minting a new one would be confusing).
 	if planToken == "" {
-		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.NoTriggers, req.Environment, environmentConfigHash, req.SourceSHA256)
+		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.NoTriggers, req.Environment, environmentConfigHash, req.SourceSHA256, req.PlatformTenantRequired)
 		if mintErr != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "create project scan token",
 				"Gregale could not finish preparing this project scan.",
@@ -2190,18 +2199,19 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 			"Bad multipart", err.Error())
 	}
 	var (
-		sourcePath     string
-		onlySet        = map[string]bool{}
-		excludeSet     = map[string]bool{}
-		projectSlug    string
-		repoFullName   string
-		prodBranch     = "main"
-		installID      int64
-		persistExclude bool
-		noTriggers     bool
-		environment    string
-		approvalToken  string
-		projectSlugSet bool
+		sourcePath             string
+		onlySet                = map[string]bool{}
+		excludeSet             = map[string]bool{}
+		projectSlug            string
+		repoFullName           string
+		prodBranch             = "main"
+		installID              int64
+		persistExclude         bool
+		noTriggers             bool
+		platformTenantRequired *bool
+		environment            string
+		approvalToken          string
+		projectSlugSet         bool
 	)
 	for {
 		part, perr := mr.NextPart()
@@ -2295,6 +2305,14 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 					"Invalid no_triggers", "no_triggers must be true or false")
 			}
 			noTriggers = parsed
+		case "platform_tenant_required":
+			b, _ := io.ReadAll(io.LimitReader(part, 32))
+			parsed, parseErr := strconv.ParseBool(strings.TrimSpace(string(b)))
+			if parseErr != nil {
+				return nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid platform_tenant_required", "platform_tenant_required must be true or false")
+			}
+			platformTenantRequired = &parsed
 		case "environment":
 			b, readErr := io.ReadAll(io.LimitReader(part, api.MaxEnvScopeLen+1))
 			if readErr != nil || len(b) > api.MaxEnvScopeLen {
@@ -2352,19 +2370,20 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 	}
 
 	return &scanPlanRequest{
-		SourcePath:     sourcePath,
-		SourceSHA256:   hash,
-		ScanDir:        scanDir,
-		ProjectSlug:    projectSlug,
-		RepoFullName:   repoFullName,
-		ProdBranch:     prodBranch,
-		InstallID:      installID,
-		Only:           onlySet,
-		Exclude:        excludeSet,
-		PersistExclude: persistExclude,
-		NoTriggers:     noTriggers,
-		Environment:    environment,
-		ApprovalToken:  approvalToken,
+		SourcePath:             sourcePath,
+		SourceSHA256:           hash,
+		ScanDir:                scanDir,
+		ProjectSlug:            projectSlug,
+		RepoFullName:           repoFullName,
+		ProdBranch:             prodBranch,
+		InstallID:              installID,
+		Only:                   onlySet,
+		Exclude:                excludeSet,
+		PersistExclude:         persistExclude,
+		NoTriggers:             noTriggers,
+		PlatformTenantRequired: platformTenantRequired,
+		Environment:            environment,
+		ApprovalToken:          approvalToken,
 	}, nil
 }
 
@@ -2390,24 +2409,32 @@ func hashFileSHA256(path string) (string, error) {
 // mintPlanToken produces the base64-JSON blob. The hash is the
 // SHA-256 of the source bytes (the apply handler re-hashes and
 // compares). AccountID prevents token-reuse across accounts.
-func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, noTriggers bool, environment, configHash, hashHex string) (string, error) {
+func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, noTriggers bool, environment, configHash, hashHex string, platformTenantRequired *bool) (string, error) {
 	pt := planTokenWire{
-		Hash:             hashHex,
-		AccountID:        accountID,
-		Slug:             slug,
-		RepoFullName:     repoFullName,
-		ProductionBranch: productionBranch,
-		InstallID:        installID,
-		NoTriggers:       noTriggers,
-		Environment:      environment,
-		ConfigHash:       configHash,
-		TSUnix:           nowUnix(),
+		Hash:                   hashHex,
+		AccountID:              accountID,
+		Slug:                   slug,
+		RepoFullName:           repoFullName,
+		ProductionBranch:       productionBranch,
+		InstallID:              installID,
+		NoTriggers:             noTriggers,
+		PlatformTenantRequired: platformTenantRequired,
+		Environment:            environment,
+		ConfigHash:             configHash,
+		TSUnix:                 nowUnix(),
 	}
 	b, err := json.Marshal(pt)
 	if err != nil {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(b), nil
+}
+
+func samePlatformTenantPolicy(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 // loadCronInventory returns every cron on the already-loaded account apps.

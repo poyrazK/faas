@@ -1,0 +1,45 @@
+# Never change ownership or permissions on an existing operator directory.
+- name: gatewayd_public_service — validate optional TCP TLS directory
+  ansible.builtin.assert:
+    that:
+      - faas_tcpd_tls_cert_dir | default('') is string
+      - >-
+        faas_tcpd_tls_cert_dir | default('') == '' or
+        (faas_tcpd_tls_cert_dir is match('^/') and
+         faas_tcpd_tls_cert_dir != '/' and
+         not (faas_tcpd_tls_cert_dir is search('[\x00-\x1f\x7f-\x9f]')) and
+         not (faas_tcpd_tls_cert_dir is search('(^|/)\.{1,2}(/|$)')))
+    fail_msg: "faas_tcpd_tls_cert_dir must be empty or an absolute directory path without controls or dot components"
+
+- name: gatewayd_public_service — inspect optional TCP TLS directory
+  ansible.builtin.stat:
+    path: "{{ faas_tcpd_tls_cert_dir }}"
+    follow: false
+    get_checksum: false
+    get_mime: false
+  register: gatewayd_tcp_tls_directory
+  when: faas_tcpd_tls_cert_dir | default('') | length > 0
+
+- name: gatewayd_public_service — validate existing TCP TLS directory
+  ansible.builtin.assert:
+    that:
+      - gatewayd_tcp_tls_directory.stat.isdir | default(false)
+      - not (gatewayd_tcp_tls_directory.stat.islnk | default(false))
+      - gatewayd_tcp_tls_directory.stat.uid == 0
+      - gatewayd_tcp_tls_directory.stat.mode[-2] | int in [0, 1, 4, 5]
+      - gatewayd_tcp_tls_directory.stat.mode[-1] | int in [0, 1, 4, 5]
+    fail_msg: "Existing TCP TLS directory must be a root-owned real directory without group/other write access; operator permissions are preserved"
+  when:
+    - faas_tcpd_tls_cert_dir | default('') | length > 0
+    - gatewayd_tcp_tls_directory.stat.exists | default(false)
+
+- name: gatewayd_public_service — create missing TCP TLS directory
+  ansible.builtin.file:
+    path: "{{ faas_tcpd_tls_cert_dir }}"
+    state: directory
+    owner: root
+    group: faas
+    mode: "0750"
+  when:
+    - faas_tcpd_tls_cert_dir | default('') | length > 0
+    - not (gatewayd_tcp_tls_directory.stat.exists | default(false))

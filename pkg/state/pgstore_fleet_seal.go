@@ -52,6 +52,26 @@ func (s *PgStore) UpsertFleetSealProbe(ctx context.Context, recipient string, se
 	return nil
 }
 
+// CreateClusterSigningKeyIfAbsent writes the singleton row only while the
+// table is empty and reports whether this call created it. A concurrent
+// creator wins; the caller reloads the row it wrote. Rotation keeps using
+// InsertClusterSigningKey.
+func (s *PgStore) CreateClusterSigningKeyIfAbsent(ctx context.Context, k ClusterSigningKey) (bool, error) {
+	if k.KeyID == "" || k.PublicKeyPEM == "" || len(k.SealedBlob) == 0 {
+		return false, errors.New("state: create cluster signing key: empty input")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		INSERT INTO cluster_signing_keys
+		    (id, key_id, public_key_pem, sealed_blob, created_at, rotated_at, retired_at)
+		VALUES (1, $1, $2, $3, now(), NULL, NULL)
+		ON CONFLICT (id) DO NOTHING
+	`, k.KeyID, k.PublicKeyPEM, k.SealedBlob)
+	if err != nil {
+		return false, fmt.Errorf("state: create cluster signing key: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // ResealClusterSigningKey replaces only the ciphertext of the current
 // singleton row. The old ciphertext predicate makes concurrent signing-key
 // rotation fail with ErrConflict instead of overwriting the new key.

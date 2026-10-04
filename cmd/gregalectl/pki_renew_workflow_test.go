@@ -29,12 +29,12 @@ func TestPKIRenewWorkflowUsesRoleScopedSSHIdentities(t *testing.T) {
 		"CP_HOST: ${{ secrets.CP_HOST",
 		"CONTROL_PLANE_SSH_KEY:",
 		"pki-control-key",
-		`ssh-keyscan -H "$CP_HOST"`,
+		`ssh-keyscan -t ed25519,ecdsa,rsa -H "$CP_HOST"`,
 		`"root@${CP_HOST}"`,
 		"test -r /etc/faas/tls/ca/ca.key",
 		"rendered inventory contains an unsafe archive path",
 		"control_vars=",
-		"ansible_user: faas-runner",
+		"ansible_user: __PKI_COMPUTE_USER__",
 		"ansible_user: root",
 		"ansible_ssh_private_key_file: __PKI_CONTROL_KEY__",
 		"ansible_ssh_private_key_file:",
@@ -43,6 +43,38 @@ func TestPKIRenewWorkflowUsesRoleScopedSSHIdentities(t *testing.T) {
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Errorf("PKI workflow missing %q", want)
+		}
+	}
+}
+
+// Renewal ran only against the production environment on the faas-fleet
+// runner, so production-us compute leaves were never renewed and
+// FaasInternalMTLSRenewalNeverCompleted paged on both nodes. The schedule
+// renews every fleet on that fleet's runner with that fleet's secrets, and a
+// fleet whose runner is offline cannot hold another fleet's renewal behind a
+// shared concurrency group.
+func TestPKIRenewTargetsEveryFleet(t *testing.T) {
+	workflow := readWorkflow(t, "pki-renew.yml")
+	for _, want := range []string{
+		"      deploy_environment:\n",
+		"          - production\n          - production-us\n",
+		`deploy_environment: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.deploy_environment) || '["production","production-us"]') }}`,
+		"fail-fast: false",
+		"group: internal-pki-renewal-${{ matrix.deploy_environment }}",
+		"environment: ${{ matrix.deploy_environment }}",
+		`runs-on: ${{ fromJSON(matrix.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}`,
+		"COMPUTE_SSH_USER: ${{ matrix.deploy_environment == 'production-us' && 'root' || 'faas-runner' }}",
+		`-e "s|__PKI_COMPUTE_USER__|$COMPUTE_SSH_USER|"`,
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Errorf("pki-renew.yml missing %q", want)
+		}
+	}
+	for _, line := range strings.Split(workflow, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "environment: production" || trimmed == "group: internal-pki-renewal" ||
+			trimmed == "runs-on: [self-hosted, linux, faas-fleet]" {
+			t.Errorf("pki-renew.yml pins one fleet: %s", trimmed)
 		}
 	}
 }

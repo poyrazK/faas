@@ -217,6 +217,8 @@ func run(args []string) (status int) {
 		return cmdProjects(args[1:])
 	case "init":
 		return cmdInit(args[1:])
+	case "mcp":
+		return cmdMCP(args[1:])
 	case "connect":
 		return cmdConnect(args[1:])
 	case "github":
@@ -266,6 +268,12 @@ func run(args []string) (status int) {
 			}
 			return cmdAppsTCP(args[2], args[3:])
 		}
+		if len(args) > 1 && args[1] == subUDPListeners {
+			if len(args) < 3 {
+				return cmdAppsUDP("", nil)
+			}
+			return cmdAppsUDP(args[2], args[3:])
+		}
 		// `gregale apps streaming-cap <slug>` — ADR-102 D6 operator
 		// entry point. Same shape as the routes arm above: 3-token
 		// form (`apps streaming-cap <slug>`), placed BEFORE the
@@ -286,7 +294,7 @@ func run(args []string) (status int) {
 			return cmdAppsRm(args[1:])
 		}
 		if len(args) > 1 {
-			PrintUsage(os.Stderr, "usage: gregale apps [ls|restore <slug>|routes <slug>|tcp <slug>|streaming-cap <slug>|-q|--quiet <slug>]", "apps")
+			PrintUsage(os.Stderr, "usage: gregale apps [ls|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet <slug>]", "apps")
 			return 1
 		}
 		return cmdApps()
@@ -356,6 +364,8 @@ func run(args []string) (status int) {
 		return cmdWake(args[1:])
 	case "test":
 		return cmdTest(args[1:])
+	case "chaos":
+		return cmdChaos(args[1:])
 	case "traffic":
 		return cmdTraffic(args[1:])
 	case "mirror":
@@ -368,6 +378,8 @@ func run(args []string) (status int) {
 		return cmdDomains(args[1:])
 	case "tenant-surfaces":
 		return cmdTenantSurfaces(args[1:])
+	case "flags":
+		return cmdFlags(args[1:])
 	case "platform-tenants":
 		return cmdPlatformTenants(args[1:])
 	case "edge-rules":
@@ -385,6 +397,8 @@ func run(args []string) (status int) {
 		// deploy-diff engine uses — exits non-zero on BREAKING
 		// rows so CI can pin a contract across a service bump.
 		return cmdOpenapi(args[1:])
+	case "routes":
+		return cmdRoutes(args[1:])
 	case "cors":
 		// CORS improvements D5: thin shim over the typed SDK
 		// helper CreateCORSEdgeRule. Sub-commands live in
@@ -473,6 +487,10 @@ func run(args []string) (status int) {
 		// Tier C: per-account invocation ledger (issue #394 follow-up).
 		// Mirrors `audit-events` for dispatcher shape.
 		return cmdInvocations(args[1:])
+	case "operations":
+		// Durable exclusive operations: reconcile coordination policies and
+		// trigger bindings, submit work, inspect ownership, or cancel it.
+		return cmdOperations(args[1:])
 	case "invoices":
 		return cmdInvoices(args[1:])
 	case "jobs":
@@ -484,6 +502,8 @@ func run(args []string) (status int) {
 	case "workflows":
 		// ADR-081: durable execution workflows (list|run|status|steps|cancel|events).
 		return cmdWorkflows(args[1:])
+	case "commit":
+		return cmdCommit(args[1:])
 	case "events":
 		// EPIC #1278: publish a tenant-scoped CloudEvents envelope into
 		// the internal matcher and async fan-out path.
@@ -492,6 +512,8 @@ func run(args []string) (status int) {
 		return cmdSend(args[1:])
 	case "deliver":
 		return cmdDeliver(args[1:])
+	case "issues":
+		return cmdIssues(args[1:])
 	case "debug":
 		// ADR-127: production debugger (request evidence, regression
 		// watch, deployment compare, safe replay, and incident bundles).
@@ -699,7 +721,7 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 }
 
 func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
-	usage := "gregale " + command.Name + " " + sub.Name
+	usage := localHelpCommandPath(command) + " " + sub.Name
 	if len(sub.Subcommands) > 0 {
 		choices := make([]string, 0, len(sub.Subcommands))
 		for _, child := range sub.Subcommands {
@@ -707,12 +729,7 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 		}
 		usage += " <" + strings.Join(choices, "|") + ">"
 	}
-	for _, positional := range sub.Positionals {
-		usage += " " + positional
-	}
-	if len(sub.Flags) > 0 {
-		usage += " [flags]"
-	}
+	usage = localHelpArguments(usage, sub.Positionals, sub.Flags)
 	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", sub.Short, usage)
 	if len(sub.Subcommands) > 0 {
 		_, _ = fmt.Fprintln(w, "\nCommands:")
@@ -723,7 +740,7 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 	if len(sub.Flags) > 0 {
 		_, _ = fmt.Fprintln(w, "\nFlags:")
 		for _, flag := range sub.Flags {
-			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
+			printLocalHelpFlag(w, flag)
 		}
 	}
 	if len(sub.Examples) > 0 {
@@ -734,15 +751,13 @@ func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
 }
 
 func printLocalLeafHelp(w io.Writer, command cliCommand, parent, leaf cliSub) {
-	usage := "gregale " + command.Name + " " + parent.Name + " " + leaf.Name
-	if len(leaf.Flags) > 0 {
-		usage += " [flags]"
-	}
+	usage := localHelpCommandPath(command) + " " + parent.Name + " " + leaf.Name
+	usage = localHelpArguments(usage, leaf.Positionals, leaf.Flags)
 	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", leaf.Short, usage)
 	if len(leaf.Flags) > 0 {
 		_, _ = fmt.Fprintln(w, "\nFlags:")
 		for _, flag := range leaf.Flags {
-			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
+			printLocalHelpFlag(w, flag)
 		}
 	}
 	if len(leaf.Examples) > 0 {
@@ -750,6 +765,42 @@ func printLocalLeafHelp(w io.Writer, command cliCommand, parent, leaf cliSub) {
 		printCLIExamples(w, leaf.Examples)
 	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
+}
+
+func localHelpCommandPath(command cliCommand) string {
+	path := "gregale " + command.Name
+	if command.SubcommandsAfterPositionals {
+		for _, positional := range command.Positionals {
+			path += " " + positional
+		}
+	}
+	return path
+}
+
+func localHelpArguments(path string, positionals []string, flags []cliFlag) string {
+	hasOptional := false
+	for _, flag := range flags {
+		if flag.Req {
+			path += " " + mdFlagSyntax(flag)
+		} else {
+			hasOptional = true
+		}
+	}
+	for _, positional := range positionals {
+		path += " " + positional
+	}
+	if hasOptional {
+		path += " [flags]"
+	}
+	return path
+}
+
+func printLocalHelpFlag(w io.Writer, flag cliFlag) {
+	required := ""
+	if flag.Req {
+		required = " (required)"
+	}
+	_, _ = fmt.Fprintf(w, "  %-24s %s%s\n", mdFlagLabel(flag), flag.Short, required)
 }
 
 func printCLIExamples(w io.Writer, examples []string) {

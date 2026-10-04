@@ -117,9 +117,10 @@ jobs:
   test:
     name: lint + build
     runs-on: ubuntu-latest
-    # golangci-lint alone has an 8-minute cold-cache budget; leave enough
-    # time for setup, build, and the policy gates that follow it.
-    timeout-minutes: 15
+    # golangci-lint alone has an 8-minute cold-cache budget. Cold builds
+    # plus the real nftables and remaining policy gates can exceed 15
+    # minutes; keep a bounded budget that lets every gate finish.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -231,6 +232,9 @@ jobs:
       - name: release manifest materialization
         run: bash scripts/materialize-release-manifest_test.sh
 
+      - name: signed component hotfix controller contracts
+        run: bash scripts/ops/request_evidence_hotfix_test.sh
+
       # The public CLI distribution channels (ADR-172). install.sh runs as
       # `curl | sh` on machines we do not control, so its checksum
       # enforcement and platform detection are gated on every PR, not just
@@ -243,6 +247,9 @@ jobs:
 
       - name: npm package staging
         run: bash scripts/build-npm-packages_test.sh
+
+      - name: npm publication readiness and tag isolation
+        run: bash scripts/publish-npm-packages_test.sh
 
       # Cloudflare Free can replace origin 502/504 bodies. Keep the optional
       # public-timeout Worker contract executable in CI so its marker-based
@@ -258,12 +265,35 @@ jobs:
 
       # Keep the credential-free CLI scenario path executable on every PR.
       # The simulation starts the app and sink over local HTTP, including a
-      # planned failed delivery and retry.
+      # planned failed delivery and retry. Run both scenarios through the suite
+      # command so selection, sequential execution, and reporting stay covered.
       - name: scenario simulation fixture
         run: |
           ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --validate
-          ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --scenario delivery-smoke --engine simulated
-          ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --scenario customer-export --engine simulated
+          ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --suite simulation --report scenario-results.json --junit scenario-results.xml
+
+      # Run the copyable functional and load suites with this commit's CLI.
+      # Saved runs exercise HTML reporting and the offline regression gate.
+      - name: scenario reports example
+        env:
+          GREGALE_TEST_CONSUMER_CUSTOMER_A_KEY: example-customer-a
+          GREGALE_TEST_CONSUMER_CUSTOMER_B_KEY: example-customer-b
+        run: |
+          ./bin/gregale test --manifest examples/scenario-tests/gregale-test.yaml --suite smoke \
+            --report "$RUNNER_TEMP/scenario-before.json" --junit "$RUNNER_TEMP/scenario-before.xml" \
+            --html "$RUNNER_TEMP/scenario-before.html"
+          ./bin/gregale test --manifest examples/scenario-tests/gregale-test.yaml --suite smoke \
+            --report "$RUNNER_TEMP/scenario-after.json" --html "$RUNNER_TEMP/scenario-after.html"
+          ./bin/gregale test compare "$RUNNER_TEMP/scenario-before.json" "$RUNNER_TEMP/scenario-after.json" \
+            --budget examples/scenario-tests/ci/run-budget.yaml \
+            --html "$RUNNER_TEMP/scenario-comparison.html"
+          ./bin/gregale test --manifest examples/scenario-tests/gregale-test.yaml --suite performance --load --repeat 3 \
+            --report "$RUNNER_TEMP/scenario-load-before.json" --html "$RUNNER_TEMP/scenario-load-before.html"
+          ./bin/gregale test --manifest examples/scenario-tests/gregale-test.yaml --suite performance --load --repeat 3 \
+            --report "$RUNNER_TEMP/scenario-load-after.json" --html "$RUNNER_TEMP/scenario-load-after.html"
+          ./bin/gregale test compare "$RUNNER_TEMP/scenario-load-before.json" "$RUNNER_TEMP/scenario-load-after.json" \
+            --budget examples/scenario-tests/ci/test-budget.yaml \
+            --html "$RUNNER_TEMP/scenario-load-comparison.html"
 
       # Provider-created machines hand their one-time connection details to
       # the provider-neutral adoption pipeline through ComputeNodeClaim files.
@@ -513,6 +543,9 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+      # Handler fixtures clone a fully migrated private database. Migration
+      # tests still use fresh schemas/databases and exercise the complete chain.
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
     steps:
       - name: pre-pull postgres image
         run: |
@@ -593,7 +626,7 @@ jobs:
         include:
           - id: a0
             label: state partition 1/8+reconcile/reposcan
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a-0.out
             state_coverage: true
             state_partition: 0
@@ -650,7 +683,7 @@ jobs:
     # Each state partition retains its own runner and PostgreSQL service.
     # Every test executes once with the existing 20-minute binary budget;
     # full inventory and coverage gates run only after all eight receipts.
-    timeout-minutes: 25
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
@@ -730,6 +763,36 @@ jobs:
           name: state-suite-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.state_partition }}
           path: coverage/state-suite/${{ matrix.state_partition }}
           retention-days: 14
+
+      - name: require PostgreSQL operation-policy retirement
+        if: matrix.id == 'a'
+        run: |
+          set -o pipefail
+          python3 scripts/ci/operation-policy-postgres-check.py 2>&1 | tee operation-policy-postgres-contract.log
+
+      - name: upload PostgreSQL operation-policy retirement log
+        if: always() && matrix.id == 'a'
+        uses: actions/upload-artifact@v4
+        with:
+          name: operation-policy-postgres-contract
+          path: operation-policy-postgres-contract.log
+          if-no-files-found: ignore
+
+      - name: require PostgreSQL UDP contracts
+        if: matrix.id == 'a'
+        env:
+          GOFLAGS: -race
+        run: |
+          set -o pipefail
+          make udp-postgres-check 2>&1 | tee udp-postgres-contract.log
+
+      - name: upload PostgreSQL UDP contract log
+        if: always() && matrix.id == 'a'
+        uses: actions/upload-artifact@v4
+        with:
+          name: udp-postgres-contract
+          path: udp-postgres-contract.log
+          if-no-files-found: ignore
 
       - name: coverage floor (ship-blocking packages)
         if: ${{ !matrix.state_coverage }}
@@ -1016,7 +1079,7 @@ jobs:
           GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}  # queue counts as non-PR: fresh + shuffled
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|pkg/devbridgeintegration|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
           go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
 
 
@@ -1051,6 +1114,46 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-pure-2-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+
+  container-contract:
+    name: portable container contracts (strict)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: cache container contract builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ hashFiles('scripts/ci/container-contract-check.py', 'scripts/ci/udp-contract-check.py', 'pkg/ingressroute/**', 'pkg/tcpd/**', 'pkg/udpd/**', 'pkg/oci/**', 'pkg/ociidentity/**', 'pkg/e2etest/**', 'pkg/imaged/**', 'cmd/gregale/**') }}
+          restore-keys: |
+            go-container-contract-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-container-contract-${{ runner.os }}-
+      - name: require portable container contracts
+        run: |
+          set -o pipefail
+          make test-container-contract 2>&1 | tee container-contract.log
+      - name: require portable UDP contracts
+        run: |
+          set -o pipefail
+          python3 scripts/ci/udp-contract-check.py 2>&1 | tee udp-contract.log
+      - name: retain container qualification log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            container-contract.log
+            udp-contract.log
+          if-no-files-found: warn
 
   checks:
     # Nine gates that each finished in well under two minutes used to run
@@ -1163,7 +1266,7 @@ jobs:
       - name: product capability registry and generated matrix
         run: make capabilities-check
       - name: standards registry and generated matrix
-        run: make standards-check standards-conformance
+        run: make standards-check standards-conformance standards-contract-check focus-contract-check
       - name: customer docs and pricing
         run: make pricing-check docs-links-check
       # ---- former job `api-hosting-contract-check`: framework fixture matrix ----
@@ -1303,6 +1406,11 @@ jobs:
         run: |
           set -euo pipefail
           govulncheck -mode=source -show=verbose ./...
+      - name: terraform provider vulnerability scan
+        working-directory: terraform-provider-gregale
+        # A nested module is absent from the root ./... traversal. Scan the
+        # provider's selected dependencies, including its plugin RPC server.
+        run: govulncheck -mode=source -show=verbose ./...
       # ---- moved from `lint + build`: Prometheus rule + ansible gates ----
       # These need pip (ansible-core, ansible-lint), a pinned promtool and
       # ~90 s of wall time, none of which the Go lint/build critical path
@@ -1338,7 +1446,9 @@ jobs:
             deploy/ansible/roles/prometheus/files/faas.rules.yml \
             pkg/promqlrules/data_placement.yaml
           promtool test rules deploy/ansible/roles/prometheus/files/faas_safe_release.test.yml
+          promtool test rules deploy/ansible/roles/prometheus/files/faas_managed_postgres_health.test.yml
           promtool test rules pkg/promqlrules/testdata/service_dependency_errors.test.yml
+          make udp-alert-check tcp-tls-alert-check commit-alert-check
 
       - name: Prometheus alert metadata check
         run: make prometheus-alert-metadata-check
@@ -1371,6 +1481,7 @@ jobs:
         run: |
           set -euo pipefail
           pip install --quiet 'ansible-core==2.21.2'
+          python3 scripts/ci/test_udp_deployment.py
           cd deploy/ansible
           COLLECTIONS_PATH="${RUNNER_TEMP}/ansible-collections"
           export ANSIBLE_COLLECTIONS_PATH="${COLLECTIONS_PATH}"
@@ -1403,6 +1514,7 @@ jobs:
               https://github.com/ansible-collections/community.postgresql.git \
               "${COLLECTIONS_PATH}/ansible_collections/community/postgresql"
           fi
+          ansible-playbook -i localhost, -c local tests/tcp_tls_config.yml
           # Gate-A: parse the complete-inventory safety preflight.
           ansible-playbook --syntax-check preflight.yml
           # Gate-B: syntax-check the only production bootstrap playbook
@@ -1586,6 +1698,46 @@ jobs:
       - name: unit tests
         working-directory: sdk/node
         run: npm run test:unit
+      - name: Gregale Issues staging smoke contract
+        run: node --test tests/issues-smoke/run.test.mjs
+
+  # ADR-377: exercise the actual runtime SDK, control plane, gateway and
+  # telemetry persistence together; the small fakeapid fixture cannot prove
+  # verified customer targeting or refresh after inactivity.
+  flags-acceptance:
+    name: flags (customer release + request evidence)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:15
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+          cache: 'npm'
+          cache-dependency-path: sdk/node/package-lock.json
+      - name: customer-aware feature flag acceptance
+        run: make test-flags
 
   # Python SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-python:

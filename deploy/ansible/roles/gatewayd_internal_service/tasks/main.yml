@@ -27,6 +27,23 @@
     mode: "0644"
   register: realtimed_unit
 
+- name: gatewayd_internal_service — create development routing drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-internal.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: gatewayd_internal_service — set development routing feature gate
+  ansible.builtin.template:
+    src: 99-faas-dev-bridge.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-dev-bridge.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-gatewayd-internal
+
 - name: gatewayd_internal_service — create realtimed drop-in directory
   ansible.builtin.file:
     path: /etc/systemd/system/faas-realtimed.service.d

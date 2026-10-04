@@ -71,3 +71,4 @@ gatewayd_app_errors_target: "{{ faas_gatewayd_app_errors_target | default('') }}
 gatewayd_app_errors_tls_cert_path: /etc/faas/tls/gatewayd/apid-client.crt
 gatewayd_app_errors_tls_key_path: /etc/faas/tls/gatewayd/apid-client.key
 gatewayd_app_errors_tls_ca_path: /etc/faas/tls/ca/ca.crt
+faas_dev_bridge_enabled: false

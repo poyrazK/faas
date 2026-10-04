@@ -495,7 +495,7 @@ func (h *Handler) proxyAttempt(
 		recordTrafficAttempt(ctx)
 		unguarded(dst, req, selected)
 	}
-	if isStreaming {
+	if isStreaming || deploymentSmokeResponseID(r.Context()) != "" {
 		forward(w, r, target)
 		return completed
 	}

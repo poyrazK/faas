@@ -12,6 +12,26 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched"
 )
 
+func TestExecutionProfileArtifactsNeverFallBackToStandardImage(t *testing.T) {
+	prefix := "FAAS_EXECUTION_PYTHON313_PYTHON_DATA_V1_"
+	fields := map[string]string{"ARCH": "amd64", "KERNEL_DIGEST": strings.Repeat("a", 64), "EXECUTOR_DIGEST": strings.Repeat("b", 64), "BASE_DIGEST": strings.Repeat("c", 64), "KERNEL_KEY": "kernel", "BASE_KEY": "data-base", "LAYER_KEY": "layer", "FC_VERSION": "1.10.0"}
+	for field, value := range fields {
+		t.Setenv("FAAS_EXECUTION_PYTHON313_"+field, value)
+		t.Setenv(prefix+field, "")
+	}
+	shape := api.ExecutionSnapshotShape{Runtime: api.ExecutionRuntimePython313, Profile: api.ExecutionProfilePythonDataV1, MemoryMB: 256, EphemeralDiskMB: 64}
+	if _, err := executionRuntimeArtifactsFromEnv(context.Background(), shape.Runtime, shape); err == nil {
+		t.Fatal("data profile inherited standard release metadata")
+	}
+	for field, value := range fields {
+		t.Setenv(prefix+field, value)
+	}
+	artifacts, err := executionRuntimeArtifactsFromEnv(context.Background(), shape.Runtime, shape)
+	if err != nil || artifacts.Profile != shape.Profile || artifacts.BaseKey != "data-base" {
+		t.Fatalf("profile artifacts=%+v, %v", artifacts, err)
+	}
+}
+
 func TestExecutionDispatchEnabled(t *testing.T) {
 	for value, want := range map[string]bool{
 		"1": true, " 1 ": true, "": false, "0": false, "true": false,

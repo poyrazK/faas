@@ -8,6 +8,7 @@ import {
   GREGALE_RELEASE_HEADER,
   GREGALE_REVISION_HEADER,
   GREGALE_REQUEST_DEADLINE_HEADER,
+  GREGALE_FLAG_PROPAGATION_HEADER,
   gregaleReleaseMetaTag,
   withGregaleReleaseContext,
   withGregaleRequestContext,
@@ -90,6 +91,57 @@ test('request context propagates the release only to managed service calls', asy
   assert.equal(calls[1]?.headers.get(GREGALE_REVISION_HEADER), 'client-session-pin');
 });
 
+test('flag context stays on the managed redirect chain and is stripped before an external redirect', async () => {
+  const calls: Array<{ url: string; headers: Headers; method: string; body: string; redirect: RequestRedirect }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    calls.push({
+      url: request.url,
+      headers: new Headers(init?.headers ?? request.headers),
+      method: request.method,
+      body: await request.clone().text(),
+      redirect: init?.redirect ?? request.redirect,
+    });
+    if (calls.length === 1) {
+      return new Response(null, { status: 307, headers: { Location: 'https://catalog.svc.gregale/charge' } });
+    }
+    if (calls.length === 2) {
+      return new Response(null, { status: 302, headers: { Location: 'https://payments.example.test/charge' } });
+    }
+    return new Response(null, { status: 204 });
+  };
+  const fetcher = createGregaleFetch(fetchImpl, { flags: { propagationHeader: () => 'evaluated-context' } });
+
+  const response = await fetcher('https://billing.svc.gregale/charge', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer caller-token',
+      'Content-Type': 'application/json',
+      [GREGALE_RELEASE_HEADER]: 'release-123',
+    },
+    body: '{}',
+  });
+
+  assert.equal(response.status, 204);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0]?.headers.get(GREGALE_FLAG_PROPAGATION_HEADER), 'evaluated-context');
+  assert.equal(calls[0]?.headers.get(GREGALE_RELEASE_HEADER), 'release-123');
+  assert.equal(calls[0]?.redirect, 'manual');
+  assert.equal(calls[1]?.url, 'https://catalog.svc.gregale/charge');
+  assert.equal(calls[1]?.headers.get(GREGALE_FLAG_PROPAGATION_HEADER), 'evaluated-context');
+  assert.equal(calls[1]?.headers.get(GREGALE_RELEASE_HEADER), 'release-123');
+  assert.equal(calls[1]?.headers.has('authorization'), false);
+  assert.equal(calls[1]?.method, 'POST');
+  assert.equal(calls[1]?.body, '{}');
+  assert.equal(calls[1]?.redirect, 'manual');
+  assert.equal(calls[2]?.headers.has(GREGALE_FLAG_PROPAGATION_HEADER), false);
+  assert.equal(calls[2]?.headers.has(GREGALE_RELEASE_HEADER), false);
+  assert.equal(calls[2]?.headers.has('authorization'), false);
+  assert.equal(calls[2]?.method, 'GET');
+  assert.equal(calls[2]?.body, '');
+  assert.equal(calls[2]?.redirect, 'manual');
+});
+
 test('an explicit downstream release wins and ambiguous context is ignored', async () => {
   const seen: Array<Headers> = [];
   const fetcher = createGregaleFetch(async (_input, init) => {
@@ -125,4 +177,45 @@ test('release context stays isolated between concurrent handlers', async () => {
   });
 
   assert.deepEqual(await Promise.all([call('release-a'), call('release-b')]), ['release-a', 'release-b']);
+});
+
+
+test('flag propagation preserves the parent deadline and stops automatic redirects', async () => {
+  const calls: Array<{ url: string; headers: Headers; redirect: RequestRedirect | undefined }> = [];
+  const fetcher = createGregaleFetch(async (input, init) => {
+    calls.push({
+      url: input instanceof Request ? input.url : input.toString(),
+      headers: new Headers(init?.headers),
+      redirect: init?.redirect,
+    });
+    return new Response(null, { status: 307, headers: { Location: 'https://payments.example.test/' } });
+  }, { flags: { propagationHeader: () => 'evaluated-context' } });
+  const deadline = 'v1.key.parent.signature';
+  await withGregaleRequestContext({
+    [GREGALE_REQUEST_DEADLINE_HEADER]: deadline,
+    [GREGALE_RELEASE_HEADER]: 'release-parent',
+  }, async () => {
+    const response = await fetcher('https://billing.svc.gregale/', {
+      redirect: 'follow',
+      headers: { [GREGALE_REQUEST_DEADLINE_HEADER]: 'v1.key.override.signature' },
+    });
+    assert.equal(response.status, 307);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.headers.get(GREGALE_REQUEST_DEADLINE_HEADER), deadline);
+    assert.equal(calls[0]?.headers.get(GREGALE_FLAG_PROPAGATION_HEADER), 'evaluated-context');
+    assert.equal(calls[0]?.headers.get(GREGALE_RELEASE_HEADER), 'release-parent');
+    assert.equal(calls[0]?.redirect, 'manual');
+    await fetcher('https://billing.svc.gregale/', { redirect: 'error' });
+    assert.equal(calls[1]?.redirect, 'error');
+    await fetcher(new Request('https://payments.example.test/', {
+      headers: {
+        [GREGALE_REQUEST_DEADLINE_HEADER]: deadline,
+        [GREGALE_FLAG_PROPAGATION_HEADER]: 'untrusted-context',
+        'X-Customer': 'preserved',
+      },
+    }));
+    assert.equal(calls[2]?.headers.has(GREGALE_REQUEST_DEADLINE_HEADER), false);
+    assert.equal(calls[2]?.headers.has(GREGALE_FLAG_PROPAGATION_HEADER), false);
+    assert.equal(calls[2]?.headers.get('X-Customer'), 'preserved');
+  });
 });

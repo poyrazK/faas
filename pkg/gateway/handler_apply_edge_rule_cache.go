@@ -46,13 +46,18 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	if h == nil || h.responseCache == nil || h.edgeRules == nil {
 		return false, nil
 	}
+	// No matched rule means no capture writer or stale fallback either.
+	// Candidate evidence must come from the candidate's upstream response.
+	if h.authorizedDeploymentSmoke(r, app) {
+		return false, nil
+	}
 	markTrafficPhase(r.Context(), trafficCache)
 	// Deployment-preview URLs promise the exact immutable artifact named by
 	// the hostname. The response cache is currently populated before target
 	// selection and its v1 key is app-scoped, so consulting it here could replay
 	// a production sibling's body. Bypass both reads and writes until the cache
 	// key is deployment-aware end to end.
-	if app.PinnedDeploymentID != "" {
+	if app.PinnedDeploymentID != "" || hasDevBridgeScope(r.Context()) {
 		return false, nil
 	}
 	// Method gate is a cheap pre-flight: only {GET, HEAD} are

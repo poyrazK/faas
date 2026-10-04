@@ -1,4 +1,7 @@
 ---
+faas_dev_bridge_enabled: false
+faas_dev_bridge_gateway_url: http://127.0.0.1:8080
+faas_dev_bridge_database_url: postgres:///faas?host=/run/postgresql&user=faas
 # Managed meterd configuration is enabled by the manifest-generated
 # control-plane host_vars. Existing operator-owned /etc/faas/meterd.toml
 # files remain untouched unless this flag is explicitly true.
@@ -20,3 +23,11 @@ faas_billing_mode: disabled
 # Public uptime starts at the beta launch boundary. Buckets before this UTC
 # instant are labelled pre_release and excluded from coverage and uptime.
 faas_public_status_launch_at: "2026-09-14T00:00:00Z"
+
+# ADR-520: custom domains served by the platform's own edge. Rendered from the
+# manifest's public_edge.custom_domains. The target must resolve straight to
+# the public edge (not through a proxying CDN); the addresses are offered for
+# zone-apex A/AAAA records.
+faas_custom_domain_tls: false
+faas_custom_domain_target: ""
+faas_custom_domain_addresses: []

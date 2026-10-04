@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+// QueueConsumerMaxPollAge bounds scheduler liveness for queue status and the
+// bindings promotion gate. It is independent of connectivity proof age.
+const QueueConsumerMaxPollAge = 30 * time.Second
+
 // QueueBindingResponse is the durable app-scoped mapping between a logical
 // queue and a worker/job workload. It is intentionally independent of queue
 // messages so push consumers and autoscaling can reconcile configuration.

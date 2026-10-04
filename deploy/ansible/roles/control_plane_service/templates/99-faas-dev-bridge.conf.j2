@@ -1,0 +1,3 @@
+[Service]
+Environment=FAAS_DEV_BRIDGE_ENABLED={{ (faas_dev_bridge_enabled | bool) | ternary('1', '0') }}
+Environment=FAAS_DEV_BRIDGE_RELAY_URL=http://127.0.0.1:9098

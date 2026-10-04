@@ -1,4 +1,4 @@
-// Package templates ships the eighteen `gregale deploy --template <name>`
+// Package templates ships the twenty `gregale deploy --template <name>`
 // starter projects as an embed.FS so the CLI is a single static
 // binary. Precedent: migrations/embed.go:13 — `//go:embed` pulls in
 // the sibling subdirectories at compile time.
@@ -34,7 +34,7 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
@@ -69,6 +69,8 @@ var Names = []string{
 	"webhook-receiver",
 	"ai-chat",
 	"secret-reload-node",
+	"customer-platform",
+	"mcp-node",
 }
 
 // Exists reports whether name is a known template.
@@ -238,7 +240,7 @@ func NameIsValid(name string) bool {
 //
 //	"hello"              — first-touch smoke tests (3)
 //	"function"           — generic runtimes the customer customises (6)
-//	"stateless-contract" — managed-service scaffolds that BYO credentials (6)
+//	"stateless-contract" — managed-service scaffolds that BYO credentials (7)
 //	"event-driven"       — internal event and queue worker starters (2)
 //	"ai"                 — LLM-facing scaffolds that BYO keys (1)
 //	""                   — unknown / not in Names
@@ -255,14 +257,16 @@ func CategoryFor(name string) string {
 		return "function"
 	case "event-worker", "queue-worker":
 		return "event-driven"
-	case "s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node":
+	case "s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform":
 		return "stateless-contract"
 	case "ai-chat":
 		return "ai"
+	case "mcp-node":
+		return "mcp"
 	}
 	return ""
 }
 
 // CategoryOrder is the canonical order in which `gregale init --list`
 // prints categories. Pins against accidental reorders in CategoryFor.
-var CategoryOrder = []string{"hello", "function", "event-driven", "stateless-contract", "ai"}
+var CategoryOrder = []string{"hello", "function", "event-driven", "stateless-contract", "ai", "mcp"}

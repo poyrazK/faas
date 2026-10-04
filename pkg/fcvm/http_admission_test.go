@@ -217,3 +217,49 @@ func TestHTTPAdmissionCleanupDoesNotRecycleLeaseBeforeBridgeStops(t *testing.T) 
 		t.Fatalf("lease not reusable after cleanup: %v", err)
 	}
 }
+
+func TestHTTPAdmissionCleanupRetryRetainsBridgeAndLease(t *testing.T) {
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	lease, err := m.alloc.Acquire("cleanup-retry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.Plan = api.PlanFree
+	lease.Networkless = true
+	m.live[lease.Instance] = &Instance{Lease: lease, Plan: api.PlanFree}
+	forwardCtx, release, err := m.AcquireHTTPForward(t.Context(), lease.Instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	if err := m.cleanup(ctx, lease, m.live[lease.Instance].Net, nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("cleanup acknowledged a pending bridge: %v", err)
+	}
+	if forwardCtx.Err() == nil {
+		t.Fatal("cleanup did not cancel forwarding")
+	}
+	if m.teardownIdentity(lease.Instance) == nil {
+		t.Fatal("failed cleanup lost the resource identity")
+	}
+	if _, err := m.alloc.Acquire(lease.Instance); err == nil {
+		t.Fatal("failed cleanup released the lease")
+	}
+	if _, _, err := m.AcquireHTTPForward(t.Context(), lease.Instance); !errors.Is(err, ErrHTTPForwardNotLive) {
+		t.Fatalf("failed cleanup reopened admission: %v", err)
+	}
+	release()
+	if err := m.Destroy(t.Context(), lease.Instance); err != nil {
+		t.Fatal(err)
+	}
+	if m.teardownIdentity(lease.Instance) != nil {
+		t.Fatal("retry retained completed resources")
+	}
+	if _, err := m.alloc.Acquire(lease.Instance); err != nil {
+		t.Fatalf("retry did not release lease: %v", err)
+	}
+	if m.httpForwards[lease.Instance] != nil {
+		t.Fatal("retry retained the drained generation")
+	}
+}
