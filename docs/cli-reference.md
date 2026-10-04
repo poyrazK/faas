@@ -5258,7 +5258,7 @@ Enqueue a wake request
 
 ### queue receive
 
-Receive a wake request
+Wait for the next queue row the platform delivers
 
 `gregale queue receive <slug>`
 

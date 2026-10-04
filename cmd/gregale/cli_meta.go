@@ -2400,7 +2400,7 @@ var cliCommands = []cliCommand{
 				{Name: "work-key", Short: "JSON scalar identifying related work", Value: "JSON"},
 				{Name: "work-fairness-key", Short: "JSON scalar shared by related work keys", Value: "JSON"},
 			}},
-			{Name: "receive", Short: "Receive a wake request", Positionals: []string{"<slug>"}},
+			{Name: "receive", Short: "Wait for the next queue row the platform delivers", Positionals: []string{"<slug>"}},
 			{Name: "state", Short: "Show queue state", Positionals: []string{"<slug>"}},
 			{Name: statusLiteral, Short: "Show queue depth, scaling, bindings, and liveness", Positionals: []string{"<slug>"}},
 			{Name: "peek", Short: "Peek at the next wake", Positionals: []string{"<slug>"}},
