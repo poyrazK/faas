@@ -1572,6 +1572,15 @@
     "kind": "configuration"
   },
   {
+    "table": "customer_operation_code_pins",
+    "kind": "operational",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "expires_at"
+    ]
+  },
+  {
     "table": "customer_operation_definitions",
     "columns": [
       "account_id",
