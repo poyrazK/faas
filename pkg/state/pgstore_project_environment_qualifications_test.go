@@ -9,7 +9,7 @@ func TestPgProjectEnvironmentQualificationContract(t *testing.T) {
 	testProjectEnvironmentQualificationContract(t, store)
 }
 
-// adr: 569
+// adr: 581
 func TestPgQualificationPinsWorkloadConfigurations(t *testing.T) {
 	store, _, _ := pgStoreWithPool(t)
 	testQualificationPinsWorkloadConfigurations(t, store)

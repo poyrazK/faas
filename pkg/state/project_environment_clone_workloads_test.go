@@ -32,13 +32,13 @@ type cloneWorkloadTestStore interface {
 	GetProjectEnvironmentRoutePolicy(context.Context, string, string, string) (state.ProjectEnvironmentRoutePolicy, error)
 }
 
-// ADR-569: a clone reuses the selected immutable artifacts and actual deployed
+// ADR-581: a clone reuses the selected immutable artifacts and actual deployed
 // settings. It must survive a source head edit and a later production rollout.
 func TestMemProjectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T) {
 	projectEnvironmentCloneCapturesAndPreparesWorkloads(t, state.NewMemStore())
 }
 
-// ADR-569: captured state must appear in the completeness receipt, even when
+// ADR-581: captured state must appear in the completeness receipt, even when
 // the target contains matching values and all workloads are already live.
 func TestMemProjectEnvironmentCloneRequiresProjectConfigurationReceipt(t *testing.T) {
 	projectEnvironmentCloneCapturesAndPreparesWorkloads(t, state.NewMemStore(), true)
@@ -211,7 +211,7 @@ func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTes
 			t.Fatal(err)
 		}
 	}
-	// ADR-569: a named-production rollout cannot replace the captured legacy
+	// ADR-581: a named-production rollout cannot replace the captured legacy
 	// default value scope used by the second workload.
 	newNamed, err := s.CreateDeployment(ctx, state.Deployment{AppID: apps[1].ID, Scope: "production", Kind: state.DeploymentKindImage, ImageDigest: "sha256:newer-named"})
 	if err != nil {
@@ -544,7 +544,7 @@ func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTes
 	}
 }
 
-// ADR-569: a complete receipt and frozen values are checked at both publication gates.
+// ADR-581: a complete receipt and frozen values are checked at both publication gates.
 func TestMemProjectEnvironmentCloneValuePublication(t *testing.T) {
 	for _, fault := range cloneValuePublicationFaults {
 		t.Run(fault, func(t *testing.T) { projectEnvironmentClonePublicationContract(t, state.NewMemStore(), false, fault) })

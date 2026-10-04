@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 569
+// adr: 581
 package state_test
 
 import "testing"

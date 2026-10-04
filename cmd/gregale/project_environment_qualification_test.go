@@ -182,7 +182,7 @@ func TestQualifyProjectEnvironmentRunsAgainstExactReleaseMembers(t *testing.T) {
 		}
 	}
 	client.created = false
-	// ADR-569: flags are observed before probes and included in the submitted
+	// ADR-581: flags are observed before probes and included in the submitted
 	// fingerprint without changing the deployment's settings hash.
 	client.snapshot.FeatureFlagsHash = strings.Repeat("a", 64)
 	qualifiedHash, err := api.QualificationWorkloadConfigHash(api.EmptyProjectEnvironmentConfigHash(), client.snapshot.FeatureFlagsHash)

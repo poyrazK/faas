@@ -14,26 +14,26 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-569: provider resource definitions and policy rows share the same
+// ADR-581: provider resource definitions and policy rows share the same
 // repeatable-read capture as their source values and immutable workloads.
 func TestPgCloneBindingCatalogueSurvivesSourceDeletion(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	cloneBindingCatalogueSurvivesSourceDeletion(t, s)
 }
 
-// ADR-569: incomplete resources abort the entire capture transaction.
+// ADR-581: incomplete resources abort the entire capture transaction.
 func TestPgCloneBindingCatalogueRejectsUnreadyBucket(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	cloneBindingCatalogueRejectsUnreadyBucket(t, s)
 }
 
-// ADR-569: compute binding ownership is captured with all six envelopes.
+// ADR-581: compute binding ownership is captured with all six envelopes.
 func TestPgCloneBindingCatalogueCapturesObjectComputeBinding(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	cloneBindingCatalogueCapturesObjectComputeBinding(t, s)
 }
 
-// ADR-569: incomplete managed storage envelopes reject the entire capture.
+// ADR-581: incomplete managed storage envelopes reject the entire capture.
 func TestPgCloneBindingCatalogueRejectsMissingObjectEnvelope(t *testing.T) {
 	s, ctx, pool := pgWithPool(t)
 	a, p, app, op := cloneBindingFixture(t, s)
@@ -72,7 +72,7 @@ func clonePostgresSecretFixture(t *testing.T, pool *pgxpool.Pool, a state.Accoun
 		ManagedPostgresBindingID: bindingID, ManagedCredentialRef: ref, ManagedCredentialGeneration: generation}
 }
 
-// ADR-569: restore preparation uses frozen desired database configuration,
+// ADR-581: restore preparation uses frozen desired database configuration,
 // placement and ownership, even after a source credential/database is edited.
 func TestPgClonePostgresBindingCatalogueIsFrozen(t *testing.T) {
 	s, ctx, pool := pgWithPool(t)
@@ -119,7 +119,7 @@ func TestPgClonePostgresBindingCatalogueIsFrozen(t *testing.T) {
 	}
 }
 
-// ADR-569: inventory starts with catalogue rows, so a binding whose managed
+// ADR-581: inventory starts with catalogue rows, so a binding whose managed
 // envelope disappeared cannot be omitted and claimed as an empty resource set.
 func TestPgCloneBindingCatalogueRejectsMissingPostgresEnvelope(t *testing.T) {
 	s, ctx, pool := pgWithPool(t)

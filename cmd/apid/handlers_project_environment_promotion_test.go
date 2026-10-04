@@ -774,22 +774,22 @@ func TestProjectEnvironmentPromotionRollbackRestoresFallbackWithoutPriorGraph(t 
 	}
 }
 
-// adr: 569
+// adr: 581
 func TestProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T) {
 	testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t, false)
 }
 
-// adr: 569
+// adr: 581
 func TestProjectEnvironmentPromotionSyncsFlagsWithReleaseGraph(t *testing.T) {
 	testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t, true)
 }
 
-// adr: 569
+// adr: 581
 func TestProjectEnvironmentPromotionSyncsFlagsWithUnchangedArtifact(t *testing.T) {
 	testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t, true, true)
 }
 
-// adr: 569
+// adr: 581
 func TestProjectEnvironmentPromotionRejectsFlagEditDuringCreation(t *testing.T) {
 	testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t, true, true, true)
 }

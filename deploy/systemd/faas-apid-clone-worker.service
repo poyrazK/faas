@@ -1,5 +1,5 @@
 [Unit]
-Description=Gregale private project-environment clone worker (ADR-569)
+Description=Gregale private project-environment clone worker (ADR-581)
 Documentation=https://gregale.dev/docs/ops/apid
 After=network.target postgresql.service faas-cp.slice faas-apid.service
 Wants=faas-cp.slice

@@ -1,4 +1,4 @@
-// adr: 569
+// adr: 581
 package copyinventory
 
 import (
@@ -222,7 +222,7 @@ func TestSealedInventoryRejectsTamperingMalformedEnvelopesAndOversize(t *testing
 	}
 }
 
-// adr: 569
+// adr: 581
 func TestScopeJSONCanonicalizesNumericUTCTimestamps(t *testing.T) {
 	previous := time.Local
 	time.Local = time.UTC
