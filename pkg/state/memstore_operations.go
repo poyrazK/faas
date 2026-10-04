@@ -150,12 +150,13 @@ func (m *MemStore) AdmitOperation(ctx context.Context, admission OperationAdmiss
 	if err != nil {
 		return Operation{}, false, err
 	}
-	if receipt, ok := data.receipts[key]; ok && receipt.ExpiresAt.After(now) {
+	receipt, receiptExists := data.receipts[key]
+	original, originalExists := data.operations[receipt.OperationID]
+	if receiptExists && (receipt.ExpiresAt.After(now) || (originalExists && operationIsActive(original))) {
 		if receipt.Fingerprint != fingerprint {
 			return Operation{}, false, ErrOperationInputConflict
 		}
-		original, ok := data.operations[receipt.OperationID]
-		if !ok || !original.ExpiresAt.After(now) {
+		if !originalExists || !operationRetained(original, now) {
 			return Operation{}, false, ErrOperationExpired
 		}
 		return cloneOperation(original), false, nil
@@ -169,8 +170,11 @@ func (m *MemStore) AdmitOperation(ctx context.Context, admission OperationAdmiss
 	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
 		return Operation{}, false, err
 	}
-	if dep := m.deployments[def.DeploymentID]; dep.Status != DeployLive {
+	if !m.operationCodeAvailableLocked(op) || (def.ReleaseID != "" && op.ReleaseID != def.ReleaseID) {
 		return Operation{}, false, ErrConflict
+	}
+	if op.ReleaseID != "" && !releasePubliclyUsable(m.projectReleaseSets[op.ReleaseID], now) {
+		return Operation{}, false, ErrNotFound
 	}
 	if err := validateNewOperationInput(def, admission.Input, limits); err != nil {
 		return Operation{}, false, err
@@ -200,7 +204,7 @@ func (m *MemStore) OperationByID(_ context.Context, accountID, tenantID, id stri
 	if !ok || op.AccountID != accountID || (tenantID != "" && op.PlatformTenantID != tenantID) {
 		return Operation{}, ErrNotFound
 	}
-	if !op.ExpiresAt.After(time.Now().UTC()) {
+	if !operationRetained(op, time.Now().UTC()) {
 		return Operation{}, ErrOperationExpired
 	}
 	return cloneOperation(m.operationDeliveryLocked(op)), nil
@@ -218,7 +222,7 @@ func (m *MemStore) OperationEvents(_ context.Context, accountID, tenantID, id st
 		return api.OperationEventsResponse{}, ErrNotFound
 	}
 	now := time.Now().UTC()
-	if !op.ExpiresAt.After(now) {
+	if !operationRetained(op, now) {
 		return api.OperationEventsResponse{}, ErrOperationExpired
 	}
 	page := api.OperationEventsResponse{Events: []api.OperationEvent{}, LatestSequence: op.LatestSequence}

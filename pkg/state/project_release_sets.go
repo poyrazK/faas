@@ -65,18 +65,16 @@ func validReleaseTTL(seconds int) bool {
 }
 
 func releaseMemberDeployment(ctx context.Context, tx pgx.Tx, appID, deploymentID, scope string) error {
-	var found int
-	err := tx.QueryRow(ctx, `select 1 from deployments d
-		where d.id = $1 and d.app_id = $2 and d.scope = $3 and d.status = 'live'
-		  and (d.traffic_percent > 0 or d.traffic_percent_explicit
-		    or exists (select 1 from deployment_revision_pins p
-		      where p.deployment_id = d.id and p.expires_at > now())
-		    or exists (select 1 from project_release_members rm
-		      join project_release_sets rs on rs.id = rm.release_id
-		      where rm.deployment_id = d.id and rm.app_id = d.app_id
-		        and (rs.active or rs.expires_at > now())))
-		for update`,
-		deploymentID, appID, normalizedDeploymentScope(scope)).Scan(&found)
+	app, err := operationUUID(appID)
+	if err != nil {
+		return err
+	}
+	deployment, err := operationUUID(deploymentID)
+	if err != nil {
+		return err
+	}
+	_, err = sqlc.New().RetainedReleaseMemberDeploymentForUpdate(ctx, tx, sqlc.RetainedReleaseMemberDeploymentForUpdateParams{
+		AppID: app, DeploymentID: deployment, Scope: normalizedDeploymentScope(scope)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConflict
 	}
@@ -201,8 +199,7 @@ func (s *PgStore) publishProjectReleaseSet(ctx context.Context, accountID, proje
 		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, projectID, environment); err != nil {
 		return ProjectReleaseSet{}, fmt.Errorf("state: extend retained release members: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `update project_release_sets set active = false, expires_at = greatest(now() + (ttl_seconds * interval '1 second'), (select max(o.expires_at) from customer_operations o where o.record->>'release_id'=project_release_sets.id::text))
-		where project_id = $1 and environment_slug = $2 and active`, projectID, environment); err != nil {
+	if err := deactivateProjectReleaseSetsTx(ctx, tx, projectID, environment, ""); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	release := ProjectReleaseSet{AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment, Active: true, TTLSeconds: ttlSeconds, Members: append([]ProjectReleaseMember(nil), members...)}
@@ -276,9 +273,7 @@ func (s *PgStore) DeactivateProjectReleaseSetIfActive(ctx context.Context, accou
 		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, expectedActiveID); err != nil {
 		return fmt.Errorf("state: retain deactivated release members: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `update project_release_sets set active = false,
-		expires_at = greatest(now() + (ttl_seconds * interval '1 second'), (select max(o.expires_at) from customer_operations o where o.record->>'release_id'=project_release_sets.id::text))
-		where id = $1 and project_id = $2 and environment_slug = $3 and active`, expectedActiveID, projectID, environment); err != nil {
+	if err := deactivateProjectReleaseSetsTx(ctx, tx, projectID, environment, expectedActiveID); err != nil {
 		return fmt.Errorf("state: deactivate release set: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -353,28 +348,16 @@ func validateProjectReleaseFallbackTx(ctx context.Context, tx pgx.Tx, appIDs []s
 // ResolveProjectRelease returns empty IDs only when no active release exists.
 // An explicit but unknown/expired release, or a missing member, fails closed.
 func (s *PgStore) ResolveProjectRelease(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
-	if requestedID != "" {
-		if _, err := uuid.Parse(requestedID); err != nil {
-			return "", "", ErrInvalidArgument
-		}
+	app, err := operationUUID(appID)
+	if err != nil {
+		return "", "", err
 	}
-	query := `select rs.id, rm.deployment_id
-		from apps a join project_release_sets rs on rs.project_id = a.project_id
-		left join project_release_members rm on rm.release_id = rs.id and rm.app_id = a.id
-		where a.id = $1 and a.status <> 'deleted' and rs.environment_slug = $2
-		  and rs.active`
-	args := []any{appID, normalizedDeploymentScope(scope)}
-	if requestedID != "" {
-		query = `select rs.id, rm.deployment_id
-			from apps a join project_release_sets rs on rs.project_id = a.project_id
-			left join project_release_members rm on rm.release_id = rs.id and rm.app_id = a.id
-			where a.id = $1 and a.status <> 'deleted' and rs.environment_slug = $2
-			  and (rs.active or rs.expires_at > now()) and rs.id = $3`
-		args = append(args, requestedID)
+	release, err := optionalOperationUUID(requestedID)
+	if err != nil {
+		return "", "", err
 	}
-	var releaseID string
-	var deploymentID *string
-	err := s.pool.QueryRow(ctx, query, args...).Scan(&releaseID, &deploymentID)
+	row, err := sqlc.New().ResolvePublicProjectRelease(ctx, s.pool, sqlc.ResolvePublicProjectReleaseParams{
+		AppID: app, Scope: normalizedDeploymentScope(scope), ReleaseID: release})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if requestedID != "" {
 			return "", "", ErrNotFound
@@ -384,28 +367,40 @@ func (s *PgStore) ResolveProjectRelease(ctx context.Context, appID, scope, reque
 	if err != nil {
 		return "", "", err
 	}
-	if deploymentID == nil {
+	if row.DeploymentID == "" {
 		return "", "", ErrConflict
 	}
-	if err := s.releaseTargetLive(ctx, appID, *deploymentID); err != nil {
+	if err := s.releaseTargetLive(ctx, appID, row.DeploymentID); err != nil {
 		return "", "", err
 	}
-	return releaseID, *deploymentID, nil
+	return row.ReleaseID, row.DeploymentID, nil
+}
+
+func optionalOperationUUID(id string) (pgtype.UUID, error) {
+	if id == "" {
+		return pgtype.UUID{}, nil
+	}
+	return operationUUID(id)
 }
 
 func (s *PgStore) releaseTargetLive(ctx context.Context, appID, deploymentID string) error {
-	var found int
-	err := s.pool.QueryRow(ctx, `select 1 from deployments d where d.id = $1 and d.app_id = $2 and d.status = 'live'
-		and (d.traffic_percent > 0 or exists (select 1 from deployment_revision_pins p
-			where p.deployment_id = d.id and p.expires_at > now())
-			or exists (select 1 from project_release_members rm
-			join project_release_sets rs on rs.id = rm.release_id
-			where rm.deployment_id = d.id and rm.app_id = d.app_id
-			  and (rs.active or rs.expires_at > now())))`, deploymentID, appID).Scan(&found)
-	if errors.Is(err, pgx.ErrNoRows) {
+	app, err := operationUUID(appID)
+	if err != nil {
+		return err
+	}
+	deployment, err := operationUUID(deploymentID)
+	if err != nil {
+		return err
+	}
+	usable, err := sqlc.New().RetainedReleaseTargetUsable(ctx, s.pool, sqlc.RetainedReleaseTargetUsableParams{
+		AppID: app, DeploymentID: deployment})
+	if err != nil {
+		return err
+	}
+	if !usable {
 		return ErrConflict
 	}
-	return err
+	return nil
 }
 
 // ResolveServiceRelease uses the verified source deployment, not a guest
@@ -426,37 +421,25 @@ func (s *PgStore) ResolveServiceRelease(ctx context.Context, callerAppID, caller
 		}
 		return "", "", nil
 	}
-	if requestedID != "" {
-		if _, err := uuid.Parse(requestedID); err != nil {
-			return "", "", ErrInvalidArgument
-		}
-	}
-	query := `select rs.id, target.deployment_id
-		from project_release_sets rs
-		join project_release_members caller on caller.release_id = rs.id
-		join project_release_members target on target.release_id = rs.id
-		where caller.app_id = $1 and caller.deployment_id = $2 and target.app_id = $3
-		  and (rs.active or rs.expires_at > now())`
-	args := []any{callerAppID, callerDeploymentID, targetAppID}
-	if requestedID != "" {
-		query += ` and rs.id = $4`
-		args = append(args, requestedID)
-	}
-	query += ` order by rs.created_at desc limit 2`
-	rows, err := s.pool.Query(ctx, query, args...)
+	caller, err := operationUUID(callerAppID)
 	if err != nil {
 		return "", "", err
 	}
-	defer rows.Close()
-	var matches []struct{ release, deployment string }
-	for rows.Next() {
-		var row struct{ release, deployment string }
-		if err := rows.Scan(&row.release, &row.deployment); err != nil {
-			return "", "", err
-		}
-		matches = append(matches, row)
+	deployment, err := operationUUID(callerDeploymentID)
+	if err != nil {
+		return "", "", err
 	}
-	if err := rows.Err(); err != nil {
+	target, err := operationUUID(targetAppID)
+	if err != nil {
+		return "", "", err
+	}
+	release, err := optionalOperationUUID(requestedID)
+	if err != nil {
+		return "", "", err
+	}
+	matches, err := sqlc.New().ListRetainedServiceReleases(ctx, s.pool, sqlc.ListRetainedServiceReleasesParams{
+		CallerAppID: caller, CallerDeploymentID: deployment, TargetAppID: target, ReleaseID: release})
+	if err != nil {
 		return "", "", err
 	}
 	if len(matches) == 0 {
@@ -479,10 +462,10 @@ func (s *PgStore) ResolveServiceRelease(ctx context.Context, callerAppID, caller
 	if len(matches) > 1 {
 		return "", "", ErrConflict
 	}
-	if err := s.releaseTargetLive(ctx, targetAppID, matches[0].deployment); err != nil {
+	if err := s.releaseTargetLive(ctx, targetAppID, matches[0].DeploymentID); err != nil {
 		return "", "", err
 	}
-	return matches[0].release, matches[0].deployment, nil
+	return matches[0].ReleaseID, matches[0].DeploymentID, nil
 }
 
 func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, projectID, environment string, ttlSeconds int, members []ProjectReleaseMember, expectedActiveID *string) (ProjectReleaseSet, error) {
@@ -581,8 +564,7 @@ func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, acc
 		   set expires_at = greatest(deployment_revision_pins.expires_at, excluded.expires_at)`, projectID, environment); err != nil {
 		return ProjectReleaseSet{}, fmt.Errorf("state: extend retained release members: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `update project_release_sets set active = false, expires_at = greatest(now() + (ttl_seconds * interval '1 second'), (select max(o.expires_at) from customer_operations o where o.record->>'release_id'=project_release_sets.id::text))
-		where project_id = $1 and environment_slug = $2 and active`, projectID, environment); err != nil {
+	if err := deactivateProjectReleaseSetsTx(ctx, tx, projectID, environment, ""); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	release := ProjectReleaseSet{AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment, Active: true, TTLSeconds: ttlSeconds, Members: append([]ProjectReleaseMember(nil), members...)}
@@ -866,4 +848,17 @@ func readProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, accountID, projectI
 		return ProjectReleaseSet{}, mapErr(err)
 	}
 	return decodeProjectReleaseSet(data)
+}
+
+func deactivateProjectReleaseSetsTx(ctx context.Context, tx pgx.Tx, projectID, environment, releaseID string) error {
+	project, err := operationUUID(projectID)
+	if err != nil {
+		return err
+	}
+	release, err := optionalOperationUUID(releaseID)
+	if err != nil {
+		return err
+	}
+	return sqlc.New().DeactivateProjectReleaseSets(ctx, tx, sqlc.DeactivateProjectReleaseSetsParams{
+		ProjectID: project, Environment: environment, ReleaseID: release})
 }

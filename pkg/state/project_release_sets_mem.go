@@ -13,8 +13,7 @@ func releaseKey(projectID, scope string) string {
 }
 
 func (m *MemStore) validRetainedRevisionLocked(deploymentID string) bool {
-	expires, ok := m.revisionPins[deploymentID]
-	return ok && time.Now().Before(expires)
+	return m.deploymentRevisionRetainedLocked(deploymentID)
 }
 
 func (m *MemStore) PublishProjectReleaseSet(_ context.Context, accountID, projectID, environment string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
@@ -91,7 +90,6 @@ func (m *MemStore) publishProjectReleaseSet(accountID, projectID, environment st
 		previous := m.projectReleaseSets[previousID]
 		previous.Active = false
 		expires := time.Now().UTC().Add(time.Duration(previous.TTLSeconds) * time.Second)
-		expires = m.operationReleaseExpiryLocked(previousID, expires)
 		previous.ExpiresAt = &expires
 		for _, member := range previous.Members {
 			dep := m.deployments[member.DeploymentID]
@@ -135,7 +133,6 @@ func (m *MemStore) DeactivateProjectReleaseSetIfActive(_ context.Context, accoun
 	now := time.Now().UTC()
 	expires := now.Add(time.Duration(release.TTLSeconds) * time.Second)
 	release.Active = false
-	expires = m.operationReleaseExpiryLocked(expectedActiveID, expires)
 	release.ExpiresAt = &expires
 	for _, member := range release.Members {
 		dep := m.deployments[member.DeploymentID]
@@ -254,7 +251,6 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 		previous := m.projectReleaseSets[previousID]
 		previous.Active = false
 		expires := time.Now().UTC().Add(time.Duration(previous.TTLSeconds) * time.Second)
-		expires = m.operationReleaseExpiryLocked(previousID, expires)
 		previous.ExpiresAt = &expires
 		for _, member := range previous.Members {
 			dep := m.deployments[member.DeploymentID]
@@ -371,12 +367,12 @@ func (m *MemStore) releaseTargetLiveLocked(appID, deploymentID string) bool {
 		return true
 	}
 	expires, ok := m.revisionPins[deploymentID]
-	return ok && time.Now().Before(expires) || m.deploymentInUsableReleaseLocked(deploymentID)
+	return ok && time.Now().Before(expires) || m.operationRetainsDeploymentLocked(deploymentID) || m.deploymentInUsableReleaseLocked(deploymentID)
 }
 
 func (m *MemStore) deploymentInUsableReleaseLocked(deploymentID string) bool {
 	for _, release := range m.projectReleaseSets {
-		if !releaseUsable(release) {
+		if !m.releaseUsableLocked(release) {
 			continue
 		}
 		for _, member := range release.Members {
@@ -397,8 +393,12 @@ func releaseMemberForApp(release ProjectReleaseSet, appID string) string {
 	return ""
 }
 
-func releaseUsable(release ProjectReleaseSet) bool {
-	return release.Active || (release.ExpiresAt != nil && time.Now().Before(*release.ExpiresAt))
+func (m *MemStore) releaseUsableLocked(release ProjectReleaseSet) bool {
+	return release.Active || (release.ExpiresAt != nil && time.Now().Before(*release.ExpiresAt)) || m.operationRetainsReleaseLocked(release)
+}
+
+func releasePubliclyUsable(release ProjectReleaseSet, now time.Time) bool {
+	return release.Active || (release.ExpiresAt != nil && now.Before(*release.ExpiresAt))
 }
 
 func (m *MemStore) ResolveProjectRelease(_ context.Context, appID, scope, requestedID string) (string, string, error) {
@@ -427,7 +427,7 @@ func (m *MemStore) ResolveProjectRelease(_ context.Context, appID, scope, reques
 		return "", "", nil
 	}
 	release, ok := m.projectReleaseSets[id]
-	if !ok || release.ProjectID != app.ProjectID || release.EnvironmentSlug != normalizedDeploymentScope(scope) || !releaseUsable(release) {
+	if !ok || release.AccountID != app.AccountID || release.ProjectID != app.ProjectID || release.EnvironmentSlug != normalizedDeploymentScope(scope) || !releasePubliclyUsable(release, time.Now()) {
 		if requestedID != "" {
 			return "", "", ErrNotFound
 		}
@@ -470,7 +470,7 @@ func (m *MemStore) ResolveServiceRelease(_ context.Context, callerAppID, callerD
 		if requestedID != "" && release.ID != requestedID {
 			continue
 		}
-		if !releaseUsable(release) || releaseMemberForApp(release, callerAppID) != callerDeploymentID || releaseMemberForApp(release, targetAppID) == "" {
+		if !m.releaseUsableLocked(release) || releaseMemberForApp(release, callerAppID) != callerDeploymentID || releaseMemberForApp(release, targetAppID) == "" {
 			continue
 		}
 		if matching != nil {

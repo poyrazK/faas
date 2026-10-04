@@ -39,6 +39,9 @@ func (m *MemStore) RecoverOperation(_ context.Context, accountID, tenantID, oper
 		return Operation{}, ErrNotFound
 	}
 	if req.Resolution == "safe_to_retry" {
+		if !m.operationCodeAvailableLocked(op) {
+			return Operation{}, ErrConflict
+		}
 		if !limits.Operations.Allowed {
 			return Operation{}, NewOperationLimitError("plan_admission", 0, 1)
 		}

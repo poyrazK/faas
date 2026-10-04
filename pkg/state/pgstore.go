@@ -7284,12 +7284,15 @@ func (s *PgStore) CountLiveInstancesByDeployment(ctx context.Context, deployment
 }
 
 func (s *PgStore) LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error) {
-	row := s.pool.QueryRow(ctx,
-		`select `+deploymentSelectColumnsWithRootfs+`
-		 from deployments where app_id = $1 and (status = 'superseded' or (status = 'live' and traffic_percent = 0
-		   and exists (select 1 from deployment_revision_pins p where p.deployment_id = deployments.id and p.expires_at > now())))
-		 order by created_at desc limit 1`, appID)
-	return scanDeployment(row)
+	app, err := operationUUID(appID)
+	if err != nil {
+		return Deployment{}, err
+	}
+	id, err := sqlc.New().LatestRetainedRollbackDeployment(ctx, s.pool, sqlc.LatestRetainedRollbackDeploymentParams{AppID: app})
+	if err != nil {
+		return Deployment{}, mapErr(err)
+	}
+	return s.DeploymentByID(ctx, operationUUIDString(id))
 }
 
 // GetDeploymentByIDScopedToSuperseded returns the deployment only if it
@@ -7907,24 +7910,9 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 				on conflict (deployment_id) do nothing`, dep.AppID, dep.ID, manifest.RevisionPinTTLSeconds, normalizedDeploymentScope(dep.Scope)); err != nil {
 				return Deployment{}, 0, fmt.Errorf("state: advance canary retain siblings: %w", err)
 			}
-			if _, err := tx.Exec(ctx, `update deployments
-				set status = case when exists (
-					select 1 from deployment_revision_pins p where p.deployment_id = deployments.id and p.expires_at > now()
-				) or exists (
-					select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
-					where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
-				) then 'live' else 'superseded' end,
-				traffic_percent = 0
-				where app_id = $1 and scope = $3 and status = 'live' and id <> $2`, dep.AppID, dep.ID, normalizedDeploymentScope(dep.Scope)); err != nil {
-				return Deployment{}, 0, fmt.Errorf("state: advance canary retain live siblings: %w", err)
-			}
-		} else if _, err := tx.Exec(ctx,
-			`update deployments set status = case when exists (select 1 from deployment_revision_pins p where p.deployment_id=deployments.id and p.expires_at>now()) or exists (
-				select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
-				where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
-			) then 'live' else 'superseded' end, traffic_percent = 0
-			  where app_id = $1 and scope = $3 and status = 'live' and id != $2`, dep.AppID, dep.ID, normalizedDeploymentScope(dep.Scope)); err != nil {
-			return Deployment{}, 0, fmt.Errorf("state: advance canary supersede siblings: %w", err)
+		}
+		if err := retireLiveDeploymentSiblingsTx(ctx, tx, dep.AppID, dep.Scope, dep.ID); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: advance canary retire siblings: %w", err)
 		}
 	}
 	if _, err := tx.Exec(ctx,
@@ -9285,29 +9273,9 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 				on conflict (deployment_id) do nothing`, dep.AppID, normalizedDeploymentScope(dep.Scope), id, appManifest.RevisionPinTTLSeconds); err != nil {
 				return fmt.Errorf("state: retain replaced revisions: %w", err)
 			}
-			if _, err := tx.Exec(ctx, `update deployments
-				set status = case when exists (
-					select 1 from deployment_revision_pins p
-					 where p.deployment_id = deployments.id and p.expires_at > now()
-				) or exists (
-					select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
-					where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
-				) then 'live' else 'superseded' end,
-				traffic_percent = 0
-				where app_id = $1 and scope = $2 and status = 'live' and id <> $3`, dep.AppID, normalizedDeploymentScope(dep.Scope), id); err != nil {
-				return fmt.Errorf("state: mark stable live retain siblings: %w", err)
-			}
-		} else {
-			if _, err := tx.Exec(ctx,
-				`update deployments
-				    set status = case when exists (select 1 from deployment_revision_pins p where p.deployment_id=deployments.id and p.expires_at>now()) or exists (
-						select 1 from project_release_members rm join project_release_sets rs on rs.id = rm.release_id
-						where rm.deployment_id = deployments.id and (rs.active or rs.expires_at > now())
-					) then 'live' else 'superseded' end, traffic_percent = 0
-				  where app_id = $1 and scope = $2 and status = 'live' and id <> $3`,
-				dep.AppID, normalizedDeploymentScope(dep.Scope), id); err != nil {
-				return fmt.Errorf("state: mark stable live supersede siblings: %w", err)
-			}
+		}
+		if err := retireLiveDeploymentSiblingsTx(ctx, tx, dep.AppID, dep.Scope, id); err != nil {
+			return fmt.Errorf("state: mark stable live retire siblings: %w", err)
 		}
 		if _, err := tx.Exec(ctx,
 			`update deployments set
@@ -10377,15 +10345,17 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 	// target). ORDER BY created_at DESC mirrors LatestSupersededDeployment
 	// in cmd/apid so the manual + auto-rollback paths agree on the same
 	// target.
-	var targetID string
-	err = tx.QueryRow(ctx, `
-		 select id from deployments
-		 where app_id = $1 and scope = $3 and id <> $2
-		   and (status = 'superseded' or (status = 'live' and traffic_percent = 0
-		     and exists (select 1 from deployment_revision_pins p where p.deployment_id = deployments.id and p.expires_at > now())))
-		 order by created_at desc
-		 limit 1
-		 for update`, appID, currentDeploymentID, scope).Scan(&targetID)
+	app, err := operationUUID(appID)
+	if err != nil {
+		return "", err
+	}
+	current, err := operationUUID(currentDeploymentID)
+	if err != nil {
+		return "", err
+	}
+	q := sqlc.New()
+	target, err := q.LockRetainedRollbackDeployment(ctx, tx, sqlc.LockRetainedRollbackDeploymentParams{
+		AppID: app, CurrentDeploymentID: current, Scope: scope})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// No rollback target — succeed as a no-op so schedd does
@@ -10397,47 +10367,24 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 		return "", mapErr(err)
 	}
 
-	// (3) Retire every currently-live sibling in this scope. A canary may
-	// leave two live rows, so updating only currentDeploymentID is not enough
-	// to establish one serving projection. Rollout timestamps close the rows
-	// consistently with their zero traffic weight.
-	if _, err := tx.Exec(ctx, `
-		update deployments
-		   set status = 'superseded',
-		       traffic_percent = 0,
-		       rollout_state = 'aborted',
-		       rollout_completed_at = null,
-		       rollout_aborted_at = coalesce(rollout_aborted_at, now()),
-		       rollout_aborted_reason = coalesce(nullif(rollout_aborted_reason, ''), 'automatic rollback'),
-		       last_auto_rollback_at = case when id = $3 then coalesce(last_auto_rollback_at, now()) else last_auto_rollback_at end,
-		       last_auto_rollback_reason = case when id = $3 then coalesce(last_auto_rollback_reason, 'threshold_exceeded') else last_auto_rollback_reason end
-		 where app_id = $1 and scope = $2 and status = 'live'`,
-		appID, scope, currentDeploymentID); err != nil {
+	// Preserve privately retained code while switching the weighted route and
+	// closing the failed rollout in the same transaction.
+	if err := q.RetireAutoRollbackDeploymentSiblings(ctx, tx, sqlc.RetireAutoRollbackDeploymentSiblingsParams{
+		AppID: app, CurrentDeploymentID: current, Scope: scope}); err != nil {
 		return "", err
 	}
-
-	// (4) Promote the historical target as the sole 100% serving projection
-	// and close any stale canary/rollout metadata from its prior lifetime.
-	if _, err := tx.Exec(ctx, `
-		update deployments
-		   set status = 'live',
-		       error = '',
-		       traffic_percent = 100,
-		       canary_step = canary_total_steps,
-		       canary_step_started_at = case when canary_total_steps > 0 then now() else canary_step_started_at end,
-		       rollout_state = 'complete',
-		       rollout_started_at = coalesce(rollout_started_at, now()),
-		       rollout_completed_at = now(),
-		       rollout_aborted_at = null,
-		       rollout_aborted_reason = ''
-		 where id = $1 and status = 'superseded'`, targetID); err != nil {
+	changed, err := q.ActivateRetainedRollbackDeployment(ctx, tx, sqlc.ActivateRetainedRollbackDeploymentParams{
+		AppID: app, DeploymentID: target, Scope: scope})
+	if err != nil {
 		return "", err
 	}
-
+	if changed != 1 {
+		return "", ErrConflict
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", err
 	}
-	return targetID, nil
+	return operationUUIDString(target), nil
 }
 
 // PrepareDeploymentRollback starts a readiness-gated manual rollback while

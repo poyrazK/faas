@@ -154,7 +154,7 @@ func operationInvocationTransition(op *Operation, inv Invocation, def OperationD
 		return api.OperationEvent{}, ErrConflict
 	}
 	op.ExecutionCapabilityDigest = ""
-	if op.State.Terminal() {
+	if op.State.Terminal() || op.State == api.OperationRequiresReconciliation {
 		op.ExpiresAt = now.Add(time.Duration(limits.Operations.ResultRetentionSeconds) * time.Second)
 		op.EventExpiresAt = now.Add(time.Duration(limits.Operations.EventRetentionSeconds) * time.Second)
 		refreshOperationArtifactExpiry(op)

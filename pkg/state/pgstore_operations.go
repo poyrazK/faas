@@ -95,7 +95,7 @@ func (s *PgStore) PutOperationDefinition(ctx context.Context, def OperationDefin
 			return OperationDefinition{}, ErrConflict
 		}
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return OperationDefinition{}, err
 	}
@@ -187,7 +187,7 @@ func (s *PgStore) AdmitOperation(ctx context.Context, admission OperationAdmissi
 	if err != nil {
 		return Operation{}, false, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return Operation{}, false, err
 	}
@@ -222,7 +222,7 @@ func (s *PgStore) AdmitOperation(ctx context.Context, admission OperationAdmissi
 		return Operation{}, false, err
 	}
 	receipt, err := q.GetCustomerOperationIdempotency(ctx, tx, sqlc.GetCustomerOperationIdempotencyParams{ScopeDigest: key, AccountID: account})
-	if err == nil && receipt.ExpiresAt.Time.After(now) {
+	if err == nil && (receipt.ExpiresAt.Time.After(now) || receipt.Active) {
 		if receipt.Fingerprint != fingerprint {
 			return Operation{}, false, ErrOperationInputConflict
 		}
@@ -238,7 +238,7 @@ func (s *PgStore) AdmitOperation(ctx context.Context, admission OperationAdmissi
 		if err != nil {
 			return Operation{}, false, err
 		}
-		if !original.ExpiresAt.After(now) {
+		if !operationRetained(original, now) {
 			return Operation{}, false, ErrOperationExpired
 		}
 		return original, false, nil
@@ -252,21 +252,20 @@ func (s *PgStore) AdmitOperation(ctx context.Context, admission OperationAdmissi
 	if status != string(PlatformTenantActive) {
 		return Operation{}, false, ErrPlatformTenantSuspended
 	}
-	if admission.ReleaseID != "" {
-		_, deployment, err := s.ResolveProjectRelease(ctx, def.AppID, def.Scope, admission.ReleaseID)
+	if op.ReleaseID != "" {
+		_, deployment, err := s.ResolveProjectRelease(ctx, def.AppID, def.Scope, op.ReleaseID)
 		if err != nil {
 			return Operation{}, false, err
 		}
-		if deployment != def.DeploymentID || (def.ReleaseID != "" && def.ReleaseID != admission.ReleaseID) {
+		if deployment != def.DeploymentID || (def.ReleaseID != "" && def.ReleaseID != op.ReleaseID) {
 			return Operation{}, false, ErrConflict
 		}
 	}
-	deploymentStatus, err := q.LockCustomerOperationDeployment(ctx, tx, sqlc.LockCustomerOperationDeploymentParams{DeploymentID: deployment, AppID: app, AccountID: account})
-	if err != nil {
-		return Operation{}, false, mapErr(err)
-	}
-	if deploymentStatus != string(DeployLive) {
+	if def.ReleaseID != "" && op.ReleaseID != def.ReleaseID {
 		return Operation{}, false, ErrConflict
+	}
+	if err := lockOperationCodeTx(ctx, tx, op); err != nil {
+		return Operation{}, false, err
 	}
 	if err := validateNewOperationInput(def, admission.Input, limits); err != nil {
 		return Operation{}, false, err
@@ -336,7 +335,7 @@ func (s *PgStore) OperationByID(ctx context.Context, accountID, tenantID, id str
 	if err != nil {
 		return Operation{}, err
 	}
-	if !op.ExpiresAt.After(time.Now().UTC()) {
+	if !operationRetained(op, time.Now().UTC()) {
 		return Operation{}, ErrOperationExpired
 	}
 	if id := op.CompletionDelivery.DeliveryID; id != "" {

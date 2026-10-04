@@ -55,6 +55,12 @@ func operationSaveTx(ctx context.Context, tx pgx.Tx, op Operation, event api.Ope
 	}
 	q := sqlc.New()
 	id, _ := operationUUID(op.ID)
+	if op.State.Terminal() || op.State == api.OperationRequiresReconciliation {
+		until := op.UpdatedAt.Add(time.Duration(op.PlanLimits.IdempotencyRetentionSeconds) * time.Second)
+		if err := q.RetainCustomerOperationIdempotency(ctx, tx, sqlc.RetainCustomerOperationIdempotencyParams{OperationID: id, ExpiresAt: pgtype.Timestamptz{Time: until, Valid: true}}); err != nil {
+			return err
+		}
+	}
 	invocation, _ := operationUUID(op.CurrentInvocationID)
 	record, err := json.Marshal(op)
 	if err != nil {

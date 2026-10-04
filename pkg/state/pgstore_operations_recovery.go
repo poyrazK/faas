@@ -19,11 +19,16 @@ func (s *PgStore) RecoverOperation(ctx context.Context, accountID, tenantID, ope
 	if err != nil {
 		return Operation{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return Operation{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if req.Resolution == "safe_to_retry" {
+		if err := lockOperationCodeTx(ctx, tx, snapshot); err != nil {
+			return Operation{}, err
+		}
+	}
 	original, err := operationLockedInvocation(ctx, tx, snapshot.CurrentInvocationID)
 	if err != nil {
 		return Operation{}, mapErr(err)

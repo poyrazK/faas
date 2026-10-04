@@ -55,7 +55,7 @@ func (m *MemStore) OperationMetrics(_ context.Context, now time.Time) (Operation
 	counts := map[api.OperationState]OperationStateMetric{}
 	data := m.operationMemoryLocked()
 	for _, op := range data.operations {
-		if !op.ExpiresAt.After(now) {
+		if !operationRetained(op, now) {
 			continue
 		}
 		count := counts[op.State]

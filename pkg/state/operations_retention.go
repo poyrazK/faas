@@ -63,7 +63,8 @@ func (m *MemStore) PruneOperationState(_ context.Context, now time.Time, limit i
 		if pruned >= limit {
 			break
 		}
-		if !receipt.ExpiresAt.After(now) {
+		op, exists := data.operations[receipt.OperationID]
+		if !receipt.ExpiresAt.After(now) && (!exists || !operationIsActive(op)) {
 			delete(data.receipts, key)
 			pruned++
 		}

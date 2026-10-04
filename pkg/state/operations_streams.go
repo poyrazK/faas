@@ -37,7 +37,7 @@ func (m *MemStore) AcquireOperationStream(_ context.Context, accountID, tenantID
 		return "", ErrNotFound
 	}
 	now := time.Now().UTC()
-	if !op.ExpiresAt.After(now) {
+	if !operationRetained(op, now) {
 		return "", ErrOperationExpired
 	}
 	if data.streams == nil {
@@ -110,7 +110,7 @@ func (s *PgStore) AcquireOperationStream(ctx context.Context, accountID, tenantI
 		return "", err
 	}
 	now := time.Now().UTC()
-	if !op.ExpiresAt.After(now) {
+	if !operationRetained(op, now) {
 		return "", ErrOperationExpired
 	}
 	cutoff := pgtype.Timestamptz{Time: now, Valid: true}

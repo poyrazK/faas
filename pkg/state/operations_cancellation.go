@@ -13,7 +13,7 @@ func validateOperationCancellation(op Operation, accountID, tenantID string, gen
 	if op.AccountID != accountID || (tenantID != "" && op.PlatformTenantID != tenantID) {
 		return ErrNotFound
 	}
-	if !op.ExpiresAt.After(now) {
+	if !operationRetained(op, now) {
 		return ErrOperationExpired
 	}
 	if generation < 1 {

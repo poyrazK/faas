@@ -1351,6 +1351,12 @@ type CustomerOperation struct {
 	CreatedAt           pgtype.Timestamptz
 }
 
+type CustomerOperationCodePin struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	ExpiresAt    pgtype.Timestamptz
+}
+
 type CustomerOperationDefinition struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID
@@ -1422,6 +1428,14 @@ type CustomerOperationResultBlob struct {
 	NextAttemptAt pgtype.Timestamptz
 	LeaseToken    string
 	LeaseUntil    pgtype.Timestamptz
+}
+
+type CustomerOperationRetainedDeploymentRef struct {
+	DeploymentID pgtype.UUID
+}
+
+type CustomerOperationRetainedReleaseRef struct {
+	ReleaseID pgtype.UUID
 }
 
 type CustomerOperationStreamLease struct {
@@ -1642,6 +1656,12 @@ type DeploymentAudit struct {
 	At           pgtype.Timestamptz
 	Data         []byte
 	AlertRuleID  pgtype.UUID
+}
+
+type DeploymentCodePinDeadline struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	ExpiresAt    interface{}
 }
 
 type DeploymentImagePreparation struct {

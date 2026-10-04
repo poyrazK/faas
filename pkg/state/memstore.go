@@ -139,6 +139,7 @@ type jobRegistryCredentialKey struct {
 
 type MemStore struct {
 	operationData               *operationMemory
+	operationCodePins           map[string]time.Time
 	exclusivePolicies           map[string]ExclusiveWorkPolicy
 	exclusiveTriggerBindings    map[string]ExclusiveTriggerBinding
 	exclusiveKeys               map[string]exclusiveKey
@@ -1048,6 +1049,7 @@ type builderVMCleanupRow struct {
 func NewMemStore() *MemStore {
 	m := &MemStore{
 		revisionPins:                map[string]time.Time{},
+		operationCodePins:           map[string]time.Time{},
 		objectAccessGrants:          map[string]ObjectBucketAccessGrant{},
 		objectS3Credentials:         map[string]ObjectS3Credential{},
 		objectMultipartUploads:      map[string]ObjectMultipartUpload{},
@@ -4868,7 +4870,7 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 						m.revisionPins[sibling.ID] = now.Add(time.Duration(ttl) * time.Second)
 					}
 				}
-				if expiry, retained := m.revisionPins[sibling.ID]; retained && now.Before(expiry) || m.deploymentInUsableReleaseLocked(sibling.ID) {
+				if m.deploymentRevisionRetainedLocked(sibling.ID) || m.deploymentInUsableReleaseLocked(sibling.ID) {
 					other.Status = DeployLive
 				} else {
 					other.Status = DeploySuperseded
@@ -6482,6 +6484,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		if d.AppID == id {
 			depIDs[key] = struct{}{}
 			delete(m.deployments, key)
+			delete(m.operationCodePins, key)
 		}
 	}
 	for key, layer := range m.deploymentSidecarLayers {
@@ -8014,8 +8017,7 @@ func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID string) (
 	var latest Deployment
 	found := false
 	for _, d := range m.deployments {
-		pinExpiry, pinned := m.revisionPins[d.ID]
-		rollbackEligible := d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && pinned && time.Now().Before(pinExpiry))
+		rollbackEligible := d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && m.deploymentRevisionRetainedLocked(d.ID))
 		if d.AppID == appID && rollbackEligible && (!found || d.CreatedAt.After(latest.CreatedAt)) {
 			latest, found = d, true
 		}
@@ -8581,7 +8583,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 						m.revisionPins[otherID] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
 					}
 				}
-				if expiry, retained := m.revisionPins[otherID]; retained && time.Now().Before(expiry) || m.deploymentInUsableReleaseLocked(otherID) {
+				if m.deploymentRevisionRetainedLocked(otherID) || m.deploymentInUsableReleaseLocked(otherID) {
 					other.Status = DeployLive
 				} else {
 					other.Status = DeploySuperseded
@@ -9203,8 +9205,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		if id == currentDeploymentID {
 			continue
 		}
-		pinExpiry, pinned := m.revisionPins[d.ID]
-		rollbackEligible := d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && pinned && time.Now().Before(pinExpiry))
+		rollbackEligible := d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && m.deploymentRevisionRetainedLocked(d.ID))
 		if d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || !rollbackEligible {
 			continue
 		}
@@ -9224,6 +9225,9 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		}
 		before := d
 		d.Status = DeploySuperseded
+		if m.operationRetainsDeploymentLocked(id) {
+			d.Status = DeployLive
+		}
 		d.TrafficPercent = 0
 		d.RolloutState = "aborted"
 		d.RolloutCompletedAt = nil
@@ -21023,6 +21027,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if app, ok := m.apps[d.AppID]; ok && app.AccountID == id {
 			deletedDeployments[did] = struct{}{}
 			delete(m.deployments, did)
+			delete(m.operationCodePins, did)
 		}
 	}
 	for i := len(m.snapshots) - 1; i >= 0; i-- {
