@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"testing"
 
+	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -24,6 +25,8 @@ type migrationHandlerVMM struct {
 	deletes                          int
 	deletedMemKey, deletedVMStateKey string
 	wakeReq                          fcvm.WakeRequest
+	wakeMethod                       fcvm.WakeMethod
+	wakeFields                       wire.CorrelationFields
 }
 
 // migrationSnapshotOnlyVMM models a partially wired vmmd. Keeping the
@@ -51,13 +54,49 @@ func (f *migrationHandlerVMM) ResumeVM(_ context.Context, _ string) error {
 func (f *migrationHandlerVMM) Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error) {
 	f.wakeReq = req
 	f.wakeCorrelation, _ = wire.FromContext(ctx)
+	f.wakeFields, _ = wire.FromContext(ctx)
 	return &fcvm.Instance{
+		Method: f.wakeMethod,
 		Lease: fcvm.Lease{
 			HostIP: netip.MustParseAddr("10.100.0.9"),
 			UID:    20009,
 		},
 		Net: netns.Config{Netns: "fc-migrated"},
 	}, nil
+}
+
+func TestMigrationAdoptionAcknowledgesActualMethodAndDestinationWake(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		actual fcvm.WakeMethod
+		want   vmmdpb.WakeMethod
+	}{
+		{"restored", fcvm.WakeRestore, vmmdpb.WakeMethod_WAKE_RESTORE},
+		{"cold fallback", fcvm.WakeColdBoot, vmmdpb.WakeMethod_WAKE_COLD_BOOT},
+		{"unknown result", fcvm.WakeMethod(99), vmmdpb.WakeMethod_WAKE_UNKNOWN},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := state.NewMemStore()
+			vmm := &migrationHandlerVMM{wakeMethod: tc.actual}
+			s := New(vmm, wire.NewOpsMetrics("vmmd_test"), "1.10.0", nil).WithMigrationStore(store)
+			id := seedMigrationHandlerInstance(t, store)
+			prepared, err := s.PrepareLiveMigration(t.Context(), &vmmdpb.PrepareLiveMigrationRequest{InstanceId: id, SnapshotStorageKey: "snap/" + id + "/mem"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.MarkInstanceMigrating(t.Context(), id, "source", prepared.GetLeaseToken()); err != nil {
+				t.Fatal(err)
+			}
+			wakeID := uuid.NewString()
+			adopted, err := s.AdoptMigratedInstance(t.Context(), &vmmdpb.AdoptMigratedInstanceRequest{InstanceId: id, WakeId: wakeID,
+				AppSpec:       &vmmdpb.AppSpec{BaseKey: "base/node22", LayerKey: "layer/app", VcpuCount: 2, MemSizeMib: 128, AppId: "app-id"},
+				MemStorageKey: prepared.GetMemStorageKey(), VmstateStorageKey: prepared.GetVmstateStorageKey(), LeaseToken: prepared.GetLeaseToken(),
+				Plan: string(api.PlanHobby), AccountId: "acct-id", DeploymentId: "deployment-id", FcVersion: prepared.GetFcVersion()})
+			if err != nil || adopted.GetMethod() != tc.want || adopted.GetWakeId() != wakeID || vmm.wakeFields.WakeID != wakeID {
+				t.Fatalf("migration boot acknowledgement: %+v %+v %v", adopted, vmm.wakeFields, err)
+			}
+		})
+	}
 }
 
 func (f *migrationHandlerVMM) Destroy(_ context.Context, _ string) error {

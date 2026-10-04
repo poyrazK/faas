@@ -12,21 +12,36 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// Private consumers cannot be paused through the public trigger API. Model
+// a paused consumer observation without transferring its mutation authority.
+type pausedPromotionConsumerStore struct {
+	*state.MemStore
+	bindingID string
+}
+
+func (s *pausedPromotionConsumerStore) ListQueueBindingConsumersForApp(ctx context.Context, accountID, appID string) ([]state.QueueBindingConsumerInventory, error) {
+	rows, err := s.MemStore.ListQueueBindingConsumersForApp(ctx, accountID, appID)
+	for i := range rows {
+		if rows[i].BindingID == s.bindingID {
+			enabled := false
+			rows[i].ConsumerEnabled = &enabled
+		}
+	}
+	return rows, err
+}
+
 func TestBindingPromotionQueueReadinessAndRecovery(t *testing.T) {
 	for _, tc := range []struct {
 		name, code string
 		mutate     func(*testing.T, testEnv, state.App, state.QueueBinding, string)
 	}{
-		{"missing", "queue_consumer_missing", func(t *testing.T, e testEnv, app state.App, _ state.QueueBinding, id string) {
-			if err := e.store.DeleteTrigger(context.Background(), id, app.ID); err != nil {
-				t.Fatal(err)
+		{"missing", "queue_consumer_missing", func(t *testing.T, _ testEnv, _ state.App, _ state.QueueBinding, id string) {
+			if id != "" {
+				t.Fatalf("unprovisioned binding has consumer %s", id)
 			}
 		}},
-		{"paused", "queue_consumer_paused", func(t *testing.T, e testEnv, app state.App, binding state.QueueBinding, _ string) {
-			binding.Enabled = false
-			if err := e.s.syncQueueBindingConsumer(context.Background(), app, e.acct, binding); err != nil {
-				t.Fatal(err)
-			}
+		{"paused", "queue_consumer_paused", func(_ *testing.T, e testEnv, _ state.App, binding state.QueueBinding, _ string) {
+			e.s.store = &pausedPromotionConsumerStore{MemStore: e.store, bindingID: binding.ID}
 		}},
 		{"degraded", "queue_consumer_degraded", func(t *testing.T, e testEnv, _ state.App, _ state.QueueBinding, id string) {
 			if err := e.store.RecordTriggerConsumerHealth(context.Background(), id, state.TriggerConsumerHealthObservation{LastPollAt: time.Now().UTC(), Error: "PRIVATE_QUEUE_ERROR"}); err != nil {
@@ -47,7 +62,14 @@ func TestBindingPromotionQueueReadinessAndRecovery(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e, app, serving, candidate := promotionFixture(t)
 			completePromotionProbe(t, e, app, candidate, passedPostgresVerification)
-			binding := seedHealthyPromotionQueue(t, e, app)
+			var binding state.QueueBinding
+			if tc.name == "missing" {
+				// Retain a legacy binding whose private consumer is not yet
+				// provisioned; public deletion of an owned consumer is rejected.
+				binding = seedInventoryQueue(t, e, app, "events", false)
+			} else {
+				binding = seedHealthyPromotionQueue(t, e, app)
+			}
 			id, err := queueBindingTriggerID(context.Background(), e.store, app.ID, binding.ID)
 			if err != nil {
 				t.Fatal(err)
@@ -59,7 +81,8 @@ func TestBindingPromotionQueueReadinessAndRecovery(t *testing.T) {
 				t.Fatalf("waiver hid queue failure or exposed error: %d %s", r.Code, r.Body.String())
 			}
 			assertPromotionWeights(t, e, serving, candidate, 0)
-			if err := e.s.syncQueueBindingConsumer(context.Background(), app, e.acct, binding); err != nil {
+			e.s.store = e.store
+			if _, err := e.store.UpdateQueueBindingWithConsumer(context.Background(), e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{}); err != nil {
 				t.Fatal(err)
 			}
 			id, err = queueBindingTriggerID(context.Background(), e.store, app.ID, binding.ID)
@@ -86,17 +109,17 @@ func TestBindingPromotionQueueUnobservedDisabledAndExternalConsumers(t *testing.
 			binding := seedInventoryQueue(t, e, app, "events", false)
 			switch mode {
 			case "unobserved":
-				if err := e.s.syncQueueBindingConsumer(context.Background(), app, e.acct, binding); err != nil {
+				if _, err := e.store.UpdateQueueBindingWithConsumer(context.Background(), e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{}); err != nil {
 					t.Fatal(err)
 				}
 			case "disabled":
 				disabled := false
-				if _, err := e.store.UpdateQueueBinding(context.Background(), e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{Enabled: &disabled}); err != nil {
+				if _, err := e.store.UpdateQueueBindingWithConsumer(context.Background(), e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{Enabled: &disabled}); err != nil {
 					t.Fatal(err)
 				}
 			case "pull":
 				pull := "pull"
-				if _, err := e.store.UpdateQueueBinding(context.Background(), e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{Mode: &pull}); err != nil {
+				if _, err := e.store.UpdateQueueBindingWithConsumer(context.Background(), e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{Mode: &pull}); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -72,7 +72,7 @@ func (s *PgStore) UpsertAppEnvInScopeWithActivity(ctx context.Context, accountID
 		   SET value = EXCLUDED.value,
 		       updated_at = now()
 	`, accountID, appID, scope, key, value); err != nil {
-		return 0, fmt.Errorf("state: upsert env with activity: %w", err)
+		return 0, fmt.Errorf("state: upsert env with activity: %w", mapErr(err))
 	}
 	outboxID, err := enqueueOrgActivityOutboxTx(ctx, tx, entry)
 	if err != nil {
@@ -100,7 +100,7 @@ func (s *PgStore) DeleteAppEnvInScopeWithActivity(ctx context.Context, accountID
 		DELETE FROM app_envs WHERE account_id = $1 AND app_id = $2 AND scope = $3 AND key = $4
 	`, accountID, appID, scope, key)
 	if err != nil {
-		return 0, fmt.Errorf("state: delete env with activity: %w", err)
+		return 0, fmt.Errorf("state: delete env with activity: %w", mapErr(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return 0, ErrNotFound

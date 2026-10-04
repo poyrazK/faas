@@ -2571,6 +2571,12 @@ type schedTargetsEngine struct {
 	engine *sched.Engine
 }
 
+var _ targets.ScopedWorkerPoolEngine = schedTargetsEngine{}
+
+func (s schedTargetsEngine) ReconcileWorkerPools(ctx context.Context, appID, trigger string) error {
+	return s.engine.ReconcileWorkerPools(ctx, appID, trigger)
+}
+
 // AdmitInstance implements targets.Engine: delegates to the wrapped
 // engine and lifts InstanceID + AtCapacity into targets.AdmitResult.
 // AtCapacity MUST be forwarded — pkg/sched/targets.Trigger.Tick

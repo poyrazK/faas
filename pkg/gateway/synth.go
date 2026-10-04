@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -618,10 +620,13 @@ type batchDispatchRequest struct {
 // pass to poller.Ack/Nack. PayloadB64 is base64 to keep the
 // envelope JSON-safe (binary payloads are valid).
 type batchDispatchRecord struct {
-	ItemIdentifier string            `json:"item_identifier"`
-	PayloadB64     string            `json:"payload_b64"`
-	Headers        map[string]string `json:"headers"`
-	Metadata       map[string]any    `json:"metadata"`
+	ItemIdentifier             string            `json:"item_identifier"`
+	InvocationID               string            `json:"invocation_id,omitempty"`
+	InvocationAttempt          int               `json:"invocation_attempt,omitempty"`
+	InvocationReplayGeneration int64             `json:"invocation_replay_generation,omitempty"`
+	PayloadB64                 string            `json:"payload_b64"`
+	Headers                    map[string]string `json:"headers"`
+	Metadata                   map[string]any    `json:"metadata"`
 }
 
 // batchDispatchResponse is the per-record outcome array the
@@ -904,6 +909,14 @@ func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatch
 		Path:      "/_triggers/" + req.Source + "/" + req.TriggerID,
 		Payload:   payload,
 		Headers:   jsonOrEmpty(rec.Headers),
+	}
+	if rec.InvocationID != "" || rec.InvocationAttempt != 0 || rec.InvocationReplayGeneration != 0 {
+		if _, err := uuid.Parse(rec.InvocationID); err != nil || rec.InvocationID != rec.ItemIdentifier || rec.InvocationAttempt <= 0 || rec.InvocationReplayGeneration < 0 || req.Source != "esm" {
+			return batchDispatchResult{ItemIdentifier: rec.ItemIdentifier, Status: "dead_letter",
+				Error: "durable invocation identity is invalid", Code: "invocation_identity_invalid"}
+		}
+		inv.ID, inv.Attempts = rec.InvocationID, rec.InvocationAttempt
+		inv.ReplayGeneration = rec.InvocationReplayGeneration
 	}
 	var (
 		out        state.Invocation

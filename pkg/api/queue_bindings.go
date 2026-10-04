@@ -2,8 +2,15 @@ package api
 
 import (
 	"encoding/json"
+	"regexp"
 	"time"
 )
+
+var queueBindingNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+
+// ValidQueueBindingName is the catalog contract for binding and destination
+// names. These names do not allocate app hostnames and use their own grammar.
+func ValidQueueBindingName(name string) bool { return queueBindingNameRE.MatchString(name) }
 
 // QueueConsumerMaxPollAge bounds scheduler liveness for queue status and the
 // bindings promotion gate. It is independent of connectivity proof age.
@@ -13,6 +20,8 @@ const QueueConsumerMaxPollAge = 30 * time.Second
 // queue and a worker/job workload. It is intentionally independent of queue
 // messages so push consumers and autoscaling can reconcile configuration.
 type QueueBindingResponse struct {
+	Environment    string          `json:"environment,omitempty"`
+	EnvironmentID  string          `json:"environment_id,omitempty"`
 	ID             string          `json:"id"`
 	AppID          string          `json:"app_id"`
 	AccountID      string          `json:"account_id"`
@@ -25,6 +34,7 @@ type QueueBindingResponse struct {
 	RetryPolicy    *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
+	RetiredAt      *time.Time      `json:"retired_at,omitempty"`
 }
 
 // QueueBindingStatusResponse is the read-only control-plane projection for a
@@ -33,6 +43,8 @@ type QueueBindingResponse struct {
 // health. Queue counters come from the same lease-aware queue view used by the
 // autoscaler.
 type QueueBindingStatusResponse struct {
+	Environment             string     `json:"environment,omitempty"`
+	EnvironmentID           string     `json:"environment_id,omitempty"`
 	BindingID               string     `json:"binding_id"`
 	Name                    string     `json:"name"`
 	QueueName               string     `json:"queue_name"`
@@ -58,6 +70,8 @@ type QueueBindingStatusResponse struct {
 }
 
 type CreateQueueBindingRequest struct {
+	// Environment selects a registered project environment; omission retains the shared legacy binding.
+	Environment    string          `json:"environment,omitempty"`
 	Name           string          `json:"name"`
 	QueueName      string          `json:"queue_name"`
 	Mode           string          `json:"mode,omitempty"`
@@ -101,6 +115,8 @@ type QueueWorkloadProfileResponse struct {
 // into pkg/api. Invalid persisted retry JSON is treated as an empty policy;
 // the write path and database CHECK keep production rows object-shaped.
 type QueueBindingRow struct {
+	Environment     string
+	EnvironmentID   string
 	ID              string
 	AppID           string
 	AccountID       string
@@ -113,6 +129,7 @@ type QueueBindingRow struct {
 	RetryPolicyJSON json.RawMessage
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	RetiredAt       *time.Time
 }
 
 func QueueBindingResponseFromRow(row QueueBindingRow) QueueBindingResponse {
@@ -122,10 +139,12 @@ func QueueBindingResponseFromRow(row QueueBindingRow) QueueBindingResponse {
 		policyPtr = &policy
 	}
 	return QueueBindingResponse{
+		Environment: row.Environment, EnvironmentID: row.EnvironmentID,
 		ID: row.ID, AppID: row.AppID, AccountID: row.AccountID,
 		Name: row.Name, QueueName: row.QueueName, Mode: row.Mode,
 		WorkloadClass: row.WorkloadClass, Enabled: row.Enabled,
 		MaxConcurrency: row.MaxConcurrency, RetryPolicy: policyPtr,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		RetiredAt: row.RetiredAt,
 	}
 }

@@ -65,6 +65,9 @@ from .admin_status_maintenance_create_request_impact import AdminStatusMaintenan
 from .admin_status_maintenance_create_request_kind import AdminStatusMaintenanceCreateRequestKind
 from .admin_status_maintenance_create_request_state import AdminStatusMaintenanceCreateRequestState
 from .admin_status_update_edit_request import AdminStatusUpdateEditRequest
+from .adopt_environment_git_ops_request import AdoptEnvironmentGitOpsRequest
+from .adopt_environment_git_ops_response import AdoptEnvironmentGitOpsResponse
+from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsResponseStatus
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
 from .alert_delivery_response import AlertDeliveryResponse
@@ -183,6 +186,9 @@ from .app_routes_response_source import AppRoutesResponseSource
 from .app_secret_export_response import AppSecretExportResponse
 from .app_secret_list_response import AppSecretListResponse
 from .app_secret_list_response_secrets_by_scope import AppSecretListResponseSecretsByScope
+from .app_secret_reference_list_response import AppSecretReferenceListResponse
+from .app_secret_reference_list_response_references import AppSecretReferenceListResponseReferences
+from .app_secret_reference_response import AppSecretReferenceResponse
 from .app_secret_response import AppSecretResponse
 from .app_secret_response_delivery_status import AppSecretResponseDeliveryStatus
 from .app_secret_response_last_delivery_error_code import AppSecretResponseLastDeliveryErrorCode
@@ -264,6 +270,8 @@ from .apply_platform_tenant_surface_response_cert_state import ApplyPlatformTena
 from .apply_platform_tenant_surface_response_status import ApplyPlatformTenantSurfaceResponseStatus
 from .apply_response import ApplyResponse
 from .apply_response_apps_item import ApplyResponseAppsItem
+from .approve_environment_git_revision_request import ApproveEnvironmentGitRevisionRequest
+from .approve_environment_git_revision_response import ApproveEnvironmentGitRevisionResponse
 from .apps_metrics_response import AppsMetricsResponse
 from .apps_metrics_response_apps_type_0 import AppsMetricsResponseAppsType0
 from .apps_metrics_response_range import AppsMetricsResponseRange
@@ -433,6 +441,9 @@ from .create_edge_rule_request import CreateEdgeRuleRequest
 from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
 from .create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
 from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidateMode
+from .create_environment_git_source_request import CreateEnvironmentGitSourceRequest
+from .create_environment_git_source_request_approval_policy import CreateEnvironmentGitSourceRequestApprovalPolicy
+from .create_environment_git_source_request_mode import CreateEnvironmentGitSourceRequestMode
 from .create_execution_artifact_grant_request import CreateExecutionArtifactGrantRequest
 from .create_financial_budget_request import CreateFinancialBudgetRequest
 from .create_inbound_webhook_endpoint_request import CreateInboundWebhookEndpointRequest
@@ -727,6 +738,10 @@ from .dispatch_invocation_batch_body_records_item import DispatchInvocationBatch
 from .dispatch_invocation_batch_body_records_item_headers import DispatchInvocationBatchBodyRecordsItemHeaders
 from .dispatch_invocation_batch_body_records_item_metadata import DispatchInvocationBatchBodyRecordsItemMetadata
 from .dispatch_invocation_batch_response_200 import DispatchInvocationBatchResponse200
+from .dispatch_invocation_batch_response_200_results_item import DispatchInvocationBatchResponse200ResultsItem
+from .dispatch_invocation_batch_response_200_results_item_status import (
+    DispatchInvocationBatchResponse200ResultsItemStatus,
+)
 from .dns_record_instruction import DNSRecordInstruction
 from .dns_record_instruction_purpose import DNSRecordInstructionPurpose
 from .dns_record_instruction_type import DNSRecordInstructionType
@@ -787,6 +802,44 @@ from .env_diff_kind import EnvDiffKind
 from .env_diff_response import EnvDiffResponse
 from .env_diff_row import EnvDiffRow
 from .env_diff_row_cells import EnvDiffRowCells
+from .environment_definition import EnvironmentDefinition
+from .environment_definition_api_version import EnvironmentDefinitionApiVersion
+from .environment_definition_configuration import EnvironmentDefinitionConfiguration
+from .environment_definition_queue_pruning_policy import EnvironmentDefinitionQueuePruningPolicy
+from .environment_definition_workloads import EnvironmentDefinitionWorkloads
+from .environment_desired_revision import EnvironmentDesiredRevision
+from .environment_git_ops_change import EnvironmentGitOpsChange
+from .environment_git_ops_override_request import EnvironmentGitOpsOverrideRequest
+from .environment_git_ops_plan import EnvironmentGitOpsPlan
+from .environment_git_ops_run import EnvironmentGitOpsRun
+from .environment_git_ops_run_status import EnvironmentGitOpsRunStatus
+from .environment_git_ops_run_steps_type_0_item import EnvironmentGitOpsRunStepsType0Item
+from .environment_git_ops_status_response import EnvironmentGitOpsStatusResponse
+from .environment_git_protected_branch_evidence import EnvironmentGitProtectedBranchEvidence
+from .environment_git_review_evidence import EnvironmentGitReviewEvidence
+from .environment_git_reviewed_merge_evidence import EnvironmentGitReviewedMergeEvidence
+from .environment_git_revision_approval import EnvironmentGitRevisionApproval
+from .environment_git_source import EnvironmentGitSource
+from .environment_git_source_spec import EnvironmentGitSourceSpec
+from .environment_git_source_spec_approval_policy import EnvironmentGitSourceSpecApprovalPolicy
+from .environment_git_source_spec_mode import EnvironmentGitSourceSpecMode
+from .environment_git_source_update import EnvironmentGitSourceUpdate
+from .environment_git_source_update_mode import EnvironmentGitSourceUpdateMode
+from .environment_policy import EnvironmentPolicy
+from .environment_policy_kind import EnvironmentPolicyKind
+from .environment_policy_match_headers import EnvironmentPolicyMatchHeaders
+from .environment_queue_binding import EnvironmentQueueBinding
+from .environment_queue_binding_mode import EnvironmentQueueBindingMode
+from .environment_route_contract import EnvironmentRouteContract
+from .environment_service_binding import EnvironmentServiceBinding
+from .environment_workload import EnvironmentWorkload
+from .environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
+from .environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
+from .environment_workload_secret_refs import EnvironmentWorkloadSecretRefs
+from .environment_workload_service_bindings import EnvironmentWorkloadServiceBindings
+from .environment_workload_source import EnvironmentWorkloadSource
+from .environment_workload_source_kind import EnvironmentWorkloadSourceKind
+from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
@@ -1569,6 +1622,8 @@ from .preflight_verdict import PreflightVerdict
 from .prepare_managed_postgres_cutover_request import PrepareManagedPostgresCutoverRequest
 from .preview_artifact_response import PreviewArtifactResponse
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
+from .preview_environment_git_revision_request import PreviewEnvironmentGitRevisionRequest
+from .preview_environment_git_revision_response import PreviewEnvironmentGitRevisionResponse
 from .preview_environment_member_response import PreviewEnvironmentMemberResponse
 from .preview_environment_status_response import PreviewEnvironmentStatusResponse
 from .preview_environment_status_response_phase import PreviewEnvironmentStatusResponsePhase
@@ -1756,6 +1811,7 @@ from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .put_app_env_request import PutAppEnvRequest
 from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
+from .put_app_secret_reference_request import PutAppSecretReferenceRequest
 from .put_app_secret_request import PutAppSecretRequest
 from .put_app_secret_request_secret_class import PutAppSecretRequestSecretClass
 from .put_commit_source_connection_body import PutCommitSourceConnectionBody
@@ -1804,6 +1860,7 @@ from .register_event_schema_request import RegisterEventSchemaRequest
 from .register_event_schema_response import RegisterEventSchemaResponse
 from .register_scenario_test_request import RegisterScenarioTestRequest
 from .rekey_progress import RekeyProgress
+from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOpsOverrideRequest
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
@@ -2463,6 +2520,9 @@ __all__ = (
     "AdminStatusMaintenanceCreateRequestKind",
     "AdminStatusMaintenanceCreateRequestState",
     "AdminStatusUpdateEditRequest",
+    "AdoptEnvironmentGitOpsRequest",
+    "AdoptEnvironmentGitOpsResponse",
+    "AdoptEnvironmentGitOpsResponseStatus",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
     "AlertDeliveryResponse",
@@ -2604,9 +2664,14 @@ __all__ = (
     "AppRestartResponse",
     "AppRoutesResponse",
     "AppRoutesResponseSource",
+    "ApproveEnvironmentGitRevisionRequest",
+    "ApproveEnvironmentGitRevisionResponse",
     "AppSecretExportResponse",
     "AppSecretListResponse",
     "AppSecretListResponseSecretsByScope",
+    "AppSecretReferenceListResponse",
+    "AppSecretReferenceListResponseReferences",
+    "AppSecretReferenceResponse",
     "AppSecretResponse",
     "AppSecretResponseDeliveryStatus",
     "AppSecretResponseLastDeliveryErrorCode",
@@ -2831,6 +2896,9 @@ __all__ = (
     "CreateEdgeRuleRequestKind",
     "CreateEdgeRuleRequestMatchHeaders",
     "CreateEdgeRuleRequestValidateMode",
+    "CreateEnvironmentGitSourceRequest",
+    "CreateEnvironmentGitSourceRequestApprovalPolicy",
+    "CreateEnvironmentGitSourceRequestMode",
     "CreateExecutionArtifactGrantRequest",
     "CreateFinancialBudgetRequest",
     "CreateInboundWebhookEndpointRequest",
@@ -3113,6 +3181,8 @@ __all__ = (
     "DispatchInvocationBatchBodyRecordsItemHeaders",
     "DispatchInvocationBatchBodyRecordsItemMetadata",
     "DispatchInvocationBatchResponse200",
+    "DispatchInvocationBatchResponse200ResultsItem",
+    "DispatchInvocationBatchResponse200ResultsItemStatus",
     "DNSRecordInstruction",
     "DNSRecordInstructionPurpose",
     "DNSRecordInstructionType",
@@ -3173,6 +3243,44 @@ __all__ = (
     "EnvDiffResponse",
     "EnvDiffRow",
     "EnvDiffRowCells",
+    "EnvironmentDefinition",
+    "EnvironmentDefinitionApiVersion",
+    "EnvironmentDefinitionConfiguration",
+    "EnvironmentDefinitionQueuePruningPolicy",
+    "EnvironmentDefinitionWorkloads",
+    "EnvironmentDesiredRevision",
+    "EnvironmentGitOpsChange",
+    "EnvironmentGitOpsOverrideRequest",
+    "EnvironmentGitOpsPlan",
+    "EnvironmentGitOpsRun",
+    "EnvironmentGitOpsRunStatus",
+    "EnvironmentGitOpsRunStepsType0Item",
+    "EnvironmentGitOpsStatusResponse",
+    "EnvironmentGitProtectedBranchEvidence",
+    "EnvironmentGitReviewedMergeEvidence",
+    "EnvironmentGitReviewEvidence",
+    "EnvironmentGitRevisionApproval",
+    "EnvironmentGitSource",
+    "EnvironmentGitSourceSpec",
+    "EnvironmentGitSourceSpecApprovalPolicy",
+    "EnvironmentGitSourceSpecMode",
+    "EnvironmentGitSourceUpdate",
+    "EnvironmentGitSourceUpdateMode",
+    "EnvironmentPolicy",
+    "EnvironmentPolicyKind",
+    "EnvironmentPolicyMatchHeaders",
+    "EnvironmentQueueBinding",
+    "EnvironmentQueueBindingMode",
+    "EnvironmentRouteContract",
+    "EnvironmentServiceBinding",
+    "EnvironmentWorkload",
+    "EnvironmentWorkloadQueueBindings",
+    "EnvironmentWorkloadQueueRecoveries",
+    "EnvironmentWorkloadSecretRefs",
+    "EnvironmentWorkloadServiceBindings",
+    "EnvironmentWorkloadSource",
+    "EnvironmentWorkloadSourceKind",
+    "EnvironmentWorkloadVariables",
     "ErrorNewWebhookPayload",
     "EventDeliveryListResponse",
     "EventDeliveryResponse",
@@ -3931,6 +4039,8 @@ __all__ = (
     "PrepareManagedPostgresCutoverRequest",
     "PreviewArtifactResponse",
     "PreviewCreatedWebhookPayload",
+    "PreviewEnvironmentGitRevisionRequest",
+    "PreviewEnvironmentGitRevisionResponse",
     "PreviewEnvironmentMemberResponse",
     "PreviewEnvironmentStatusResponse",
     "PreviewEnvironmentStatusResponsePhase",
@@ -4096,6 +4206,7 @@ __all__ = (
     "PublishProjectReleaseSetRequestDeployments",
     "PutAppEnvRequest",
     "PutAppRegistryCredentialRequest",
+    "PutAppSecretReferenceRequest",
     "PutAppSecretRequest",
     "PutAppSecretRequestSecretClass",
     "PutCommitSourceConnectionBody",
@@ -4144,6 +4255,7 @@ __all__ = (
     "RegisterEventSchemaResponse",
     "RegisterScenarioTestRequest",
     "RekeyProgress",
+    "RemoveEnvironmentGitOpsOverrideRequest",
     "RenameAppRequest",
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",

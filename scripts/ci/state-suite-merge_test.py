@@ -13,12 +13,20 @@ class MergeTest(unittest.TestCase):
     def receipts(self):
         groups = merge.suite.partitions([f"Test{index}" for index in range(16)], 8)
         return [{"partition": index, "partition_count": 8, "commit": "source", "packages": ["state", "others"],
-                 "groups": groups, "go_version": "pinned", "state_runtime_environment": {},
+                 "groups": groups, "go_version": "pinned", "state_runtime_environment": {"GREGALE_GITOPS_ACCEPTANCE": "1"},
                  "source_unchanged": True, "result": "passed"} for index in range(8)]
 
     def test_accepts_complete_disjoint_inventory(self):
         receipts = self.receipts()
         self.assertEqual(merge.verify_inventory(receipts), receipts[0]["groups"])
+
+    def test_all_partitions_must_enable_gitops_postgres_acceptance(self):
+        for environment in [{}, {"GREGALE_GITOPS_ACCEPTANCE": "0"}]:
+            receipts = self.receipts()
+            for item in receipts:
+                item["state_runtime_environment"] = environment
+            with self.assertRaises(ValueError):
+                merge.verify_inventory(receipts)
 
     def test_refuses_missing_duplicate_failed_or_changed_partition(self):
         original = self.receipts()

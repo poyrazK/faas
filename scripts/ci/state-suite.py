@@ -26,7 +26,7 @@ def partitions(names, count=2):
     return groups
 
 
-def coverage(path):
+def coverage(path, allow_duplicates=False):
     lines = path.read_text().splitlines()
     if not lines or lines[0] != "mode: atomic":
         raise ValueError(f"invalid atomic coverage profile: {path}")
@@ -34,8 +34,13 @@ def coverage(path):
     for line in lines[1:]:
         location, statements, count = line.split()
         value = (int(statements), int(count))
-        if location in blocks or min(value) < 0:
+        if min(value) < 0:
             raise ValueError(f"invalid coverage block: {line}")
+        if location in blocks:
+            prior_statements, prior_count = blocks[location]
+            if not allow_duplicates or prior_statements != value[0]:
+                raise ValueError(f"invalid or incompatible repeated coverage block: {line}")
+            value = (prior_statements, prior_count + value[1])
         blocks[location] = value
     if not blocks:
         raise ValueError(f"empty coverage profile: {path}")
@@ -47,13 +52,20 @@ def merged_coverage(state_profiles, other_profile):
     if len(states) < 2 or any(set(states[0]) != set(profile) for profile in states[1:]):
         raise ValueError("state shards have different coverage block inventories")
     merged = {}
-    for profile in states + [coverage(other_profile)]:
+    # External adapter binaries repeat instrumented state locations. Count
+    # each statement once and union their hits, retaining strict state inventories.
+    for profile in states + [coverage(other_profile, allow_duplicates=True)]:
         for location, (statements, count) in profile.items():
             old_statements, old_count = merged.get(location, (statements, 0))
             if old_statements != statements:
                 raise ValueError("coverage statement count changed between shards")
             merged[location] = (statements, old_count + count)
     return "mode: atomic\n" + "".join(f"{key} {value[0]} {value[1]}\n" for key, value in sorted(merged.items()))
+
+
+def parity_coverage_arg(packages):
+    state_package = "github.com/onebox-faas/faas/pkg/state"
+    return "-coverpkg=" + ",".join(sorted({state_package, *packages} - {state_package + "/sqlc"}))
 
 
 def run(args, log, env, cwd=None):
@@ -95,7 +107,7 @@ def main():
     spec.loader.exec_module(checks)
     freeze = checks.source_snapshot(repo)
     checks.write_json(output / "source-freeze.json", freeze)
-    if freeze["commit"] != os.environ.get("GITHUB_SHA") or not os.environ.get("DATABASE_URL") or os.environ.get("FAAS_SKIP_PG_TESTS"):
+    if freeze["commit"] != os.environ.get("GITHUB_SHA") or not os.environ.get("DATABASE_URL") or os.environ.get("FAAS_SKIP_PG_TESTS") or os.environ.get("GREGALE_GITOPS_ACCEPTANCE") != "1":
         raise ValueError("state suite requires the dispatched commit and PostgreSQL")
     packages = args.packages.split()
     state_package = "github.com/onebox-faas/faas/pkg/state"
@@ -110,7 +122,7 @@ def main():
     receipt = {"commit": freeze["commit"], "packages": packages, "commands": [], "native_executions": 0,
                "partition": args.partition, "partition_count": args.partitions,
                "go_version": subprocess.check_output(["go", "version"], text=True, env=env).strip(),
-               "state_runtime_environment": {key: env.get(key) for key in ("GOMAXPROCS", "CGO_ENABLED", "GOTOOLCHAIN", "GOFLAGS", "GOEXPERIMENT")}}
+               "state_runtime_environment": {key: env.get(key) for key in ("GOMAXPROCS", "CGO_ENABLED", "GOTOOLCHAIN", "GOFLAGS", "GOEXPERIMENT", "GREGALE_GITOPS_ACCEPTANCE")}}
     try:
         build = run(["go", "test", "-race", "-c", "-p=1", "-cover", "-covermode=atomic", "-o", str(binary), state_package], output / "build.log", env)
         receipt["commands"].append(build)
@@ -131,7 +143,7 @@ def main():
         validate_terminals(selected, (output / "state.log").read_text())
         if args.partition == 0:
             other = run(["go", "test", "-race", "-count=1", "-p=4", "-timeout=30m", "-covermode=atomic",
-                         "-coverprofile=" + str(output / "others.out"), *others], output / "others.log", os.environ.copy())
+                         parity_coverage_arg(others), "-coverprofile=" + str(output / "others.out"), *others], output / "others.log", os.environ.copy())
             receipt["commands"].append(other)
             if other["exit_code"]:
                 raise ValueError("remaining state shard packages failed")

@@ -39,6 +39,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -65,6 +70,9 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
     """Delete a trigger.
+
+     Delete an independent trigger. A private queue consumer must be removed
+    through its queue binding; direct deletion of that projection returns 409.
 
     Args:
         id (str):
@@ -95,6 +103,9 @@ def sync(
 ) -> Any | Problem | None:
     """Delete a trigger.
 
+     Delete an independent trigger. A private queue consumer must be removed
+    through its queue binding; direct deletion of that projection returns 409.
+
     Args:
         id (str):
 
@@ -118,6 +129,9 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
     """Delete a trigger.
+
+     Delete an independent trigger. A private queue consumer must be removed
+    through its queue binding; direct deletion of that projection returns 409.
 
     Args:
         id (str):
@@ -145,6 +159,9 @@ async def asyncio(
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
     """Delete a trigger.
+
+     Delete an independent trigger. A private queue consumer must be removed
+    through its queue binding; direct deletion of that projection returns 409.
 
     Args:
         id (str):

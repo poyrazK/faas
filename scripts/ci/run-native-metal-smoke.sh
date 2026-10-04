@@ -228,6 +228,10 @@ companion_names="$(native_container_companion_tests "${repo_root}")"
 companion_tests=()
 while IFS= read -r test_name; do companion_tests+=("${test_name}"); done <<<"${companion_names}"
 native_e2e_lane_verdict "${metal_log}" companion-memory-isolation "${companion_tests[@]}" || metal_rc=1
+recovery_names="$(native_recovery_tests "${repo_root}")"
+recovery_tests=()
+while IFS= read -r test_name; do recovery_tests+=("${test_name}"); done <<<"${recovery_names}"
+native_e2e_lane_verdict "${metal_log}" native-owner-recovery "${recovery_tests[@]}" || metal_rc=1
 
 # Second pass: the tests that need private mount + network namespaces.
 #

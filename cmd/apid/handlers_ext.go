@@ -1850,11 +1850,33 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			return
 		}
 	}
+	// Read pending work before scheduling deletion, but cancel it only after
+	// the intent transaction accepts the delete. A Git ownership rejection
+	// must preserve the live app and its queued work.
+	pending, err := s.store.ListInvocationsForApp(r.Context(), app.ID,
+		state.InvocationPending, state.InvocationDispatching)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("list-inv"))
+		return
+	}
 	graceUntil := time.Now().UTC().Add(state.AppDeleteGraceDuration())
 	parked, err := s.scheduleAppDeletionWithActivity(r.Context(), r, acct, app, graceUntil)
 	if err != nil {
+		if writeEnvironmentGitOpsOwnershipProblem(w, err) {
+			return
+		}
 		api.WriteProblem(w, trafficPolicyWriteProblem(err, api.ErrCapacity("could not delete app")))
 		return
+	}
+	for _, inv := range pending {
+		if err := s.store.CancelInvocation(r.Context(), inv.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+			// Don't fail the delete on a per-row cancel error; the
+			// drain will surface the row as failed and the customer
+			// sees it in the meter. Logging at warn so it's
+			// observable.
+			s.log.Warn("deleteApp: cancel invocation",
+				"inv", inv.ID, "app", app.ID, "err", err)
+		}
 	}
 	// NotifyAppDelete is the lifecycle cleanup signal consumed by schedd.
 	// AppChanged is for app metadata/routing changes and is not subscribed

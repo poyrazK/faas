@@ -13,6 +13,18 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Native resource acceptance exercises the real bind operation with the
+// fixture's legacy owner; production staging supplies its caller's owner.
+func (v *JailerVMM) bindImage(root, src, name, instance string, addPerms os.FileMode, readOnly bool) (string, error) {
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return "", err
+	}
+	return v.bindImageForOwner(ctx, owner, root, src, name, instance, addPerms, readOnly)
+}
+
 func metalAssetFixture(t *testing.T) (*JailerVMM, *ResourceJournal, string, string) {
 	t.Helper()
 	if os.Geteuid() != 0 {

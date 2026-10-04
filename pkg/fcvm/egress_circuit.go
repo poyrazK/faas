@@ -16,11 +16,12 @@ var ErrEgressCircuitDisabled = errors.New("fcvm: egress circuit enforcement is d
 var ErrEgressCircuitRevision = errors.New("fcvm: invalid egress circuit revision")
 
 type egressCircuitNetwork struct {
-	appID           string
-	net             netns.Config
-	appliedRevision int64
-	targetCount     int
-	inSync          bool
+	nativeGeneration string
+	appID            string
+	net              netns.Config
+	appliedRevision  int64
+	targetCount      int
+	inSync           bool
 }
 
 type EgressCircuitStatus struct {
@@ -112,7 +113,11 @@ func (m *Manager) UpdateEgressCircuitRevision(ctx context.Context, appID string,
 		if network.appID != appID {
 			continue
 		}
-		if err := m.applyEgressCircuits(ctx, network.net, targets); err != nil {
+		networkCtx, err := m.nativeInstanceNetworkContext(ctx, id, network.nativeGeneration)
+		if err == nil {
+			err = m.applyEgressCircuits(networkCtx, network.net, targets)
+		}
+		if err != nil {
 			network.inSync = false
 			m.egressCircuitNetworks[id] = network
 			failures = append(failures, fmt.Errorf("fcvm: UpdateEgressCircuit instance=%s: %w", id, err))
@@ -154,6 +159,20 @@ func (m *Manager) registerEgressCircuitNetwork(ctx context.Context, appID string
 	if !nc.EgressCircuitEnabled {
 		return nil
 	}
+	// Pending networks use the original prepared owner, and retain that
+	// generation for every later circuit update. Never borrow a replacement.
+	var err error
+	ctx, err = m.nativeNetworkContext(ctx, nc.Instance, "", nativeHostHelperEffect)
+	if err != nil {
+		return err
+	}
+	if err := m.validateNativeNetworkConfig(ctx, nc); err != nil {
+		return err
+	}
+	generation := ""
+	if scope, ok := ctx.Value(nativeNetworkScopeKey{}).(nativeNetworkCommandScope); ok {
+		generation = scope.owner.Generation
+	}
 	var durable netns.EgressCircuitSnapshot
 	if m.egressCircuitSource != nil {
 		var err error
@@ -179,7 +198,7 @@ func (m *Manager) registerEgressCircuitNetwork(ctx context.Context, appID string
 	if m.egressCircuitNetworks == nil {
 		m.egressCircuitNetworks = make(map[string]egressCircuitNetwork)
 	}
-	m.egressCircuitNetworks[nc.Instance] = egressCircuitNetwork{appID: appID, net: nc,
+	m.egressCircuitNetworks[nc.Instance] = egressCircuitNetwork{appID: appID, net: nc, nativeGeneration: generation,
 		appliedRevision: m.appEgressCircuitRevisions[appID], targetCount: len(m.appEgressCircuits[appID]), inSync: true}
 	return nil
 }
@@ -195,6 +214,9 @@ func (m *Manager) unregisterEgressCircuitNetwork(instance string) {
 func (m *Manager) applyEgressCircuits(ctx context.Context, nc netns.Config, targets []netns.EgressCircuitTarget) error {
 	if !nc.EgressCircuitEnabled {
 		return ErrEgressCircuitDisabled
+	}
+	if err := m.validateNativeNetworkConfig(ctx, nc); err != nil {
+		return err
 	}
 	return m.runNftCommands(ctx, nc.Netns, nc.EgressCircuitSetCommands(targets))
 }

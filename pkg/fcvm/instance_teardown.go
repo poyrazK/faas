@@ -12,7 +12,7 @@ import (
 
 // A stop reservation closes the gap between joining an operation and finding
 // its live identity. Other stops wait; boots and resumable operations fail closed.
-type instanceStop struct{ done chan struct{} }
+type instanceStop = instanceTeardownFlight
 
 func (m *Manager) beginInstanceStop(ctx context.Context, instance string) (*instanceStop, error) {
 	for {
@@ -56,6 +56,7 @@ type instanceCleanup struct {
 func (m *Manager) retainCleanup(lease Lease, nc netns.Config, workloadNames []string) *instanceCleanup {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	delete(m.cidToID, GuestVsockCID(lease.Slot))
 	if retained := m.pendingCleanup[lease.Instance]; retained != nil {
 		return retained
 	}
@@ -79,15 +80,40 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 		m.log.Warn("cleanup pending; retaining instance lease", "instance", lease.Instance, "err", err)
 		return err
 	}
+	if v := m.nativeVMM(); v != nil {
+		if err := v.confirmNativeCleanup(ctx, lease, nativeLeaseNetwork(lease)); err != nil {
+			return err
+		}
+		if released, err := m.releaseNativeRecovered(lease.Instance); released || err != nil {
+			if err != nil {
+				return err
+			}
+			retained.complete = true
+			m.mu.Lock()
+			delete(m.pendingCleanup, lease.Instance)
+			m.mu.Unlock()
+			return nil
+		}
+	}
 	if m.resourceJournal != nil {
 		if err := m.resourceJournal.forget(lease); err != nil {
 			return fmt.Errorf("cleanup %s: retire resource journal before release: %w", lease.Instance, err)
 		}
 	}
 	m.mu.Lock()
-	if err := m.alloc.Release(lease.Instance); err != nil {
-		m.mu.Unlock()
-		return fmt.Errorf("cleanup %s: release lease: %w", lease.Instance, err)
+	// A duplicate native stop is still audited against its durable receipt,
+	// but its already-confirmed reservation may have been released earlier.
+	releaseLease := true
+	if m.nativeVMM() != nil {
+		m.alloc.mu.Lock()
+		_, releaseLease = m.alloc.byInstance[lease.Instance]
+		m.alloc.mu.Unlock()
+	}
+	if releaseLease {
+		if err := m.alloc.Release(lease.Instance); err != nil {
+			m.mu.Unlock()
+			return fmt.Errorf("cleanup %s: release lease: %w", lease.Instance, err)
+		}
 	}
 	retained.complete = true
 	delete(m.pendingCleanup, lease.Instance)
@@ -127,6 +153,20 @@ func (m *Manager) cleanupOwned(ctx context.Context, retained *instanceCleanup, f
 	}
 	if !lease.Networkless {
 		m.unregisterEgressCircuitNetwork(lease.Instance)
+		if m.nativeVMM() != nil {
+			networkCtx, skip, err := m.nativeCleanupNetworkContext(ctx, lease)
+			if err != nil {
+				return err
+			}
+			if !skip {
+				for _, argv := range nativeLeaseNetwork(lease).TeardownCommands() {
+					if err := m.runNetworkCommand(networkCtx, argv); err != nil {
+						m.log.Debug("cleanup: native teardown command", "cmd", argv, "err", err)
+					}
+				}
+			}
+			return nil // confirmNativeCleanup owns physical absence validation above.
+		}
 		if m.resourceJournal != nil {
 			return m.teardownJournalNetwork(ctx, nc)
 		}
@@ -196,20 +236,4 @@ func (m *Manager) teardownIdentity(instance string) *Instance {
 		return &Instance{Lease: retained.lease, Net: retained.net, WorkloadNames: retained.workloadNames}
 	}
 	return nil
-}
-
-func (m *Manager) interruptExport(ctx context.Context, instance string) (bool, int32, error) {
-	m.mu.Lock()
-	exporting := m.exportDirs[instance] != ""
-	m.mu.Unlock()
-	if !exporting {
-		return false, 0, nil
-	}
-	if interrupter, ok := m.vmm.(interface {
-		InterruptBuild(context.Context, string) (int32, error)
-	}); ok {
-		code, err := interrupter.InterruptBuild(ctx, instance)
-		return true, code, err
-	}
-	return true, 0, fmt.Errorf("vmm: builder interruption unsupported")
 }

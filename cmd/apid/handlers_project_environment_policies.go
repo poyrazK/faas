@@ -89,6 +89,9 @@ func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http
 	})
 	if err != nil {
 		convergence.abort(r.Context())
+		if writeEnvironmentGitOpsOwnershipProblem(w, err) {
+			return
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, environment.Slug))
 		} else {

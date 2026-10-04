@@ -899,6 +899,38 @@ func TestArchiveHasRootDockerfile(t *testing.T) {
 	}
 }
 
+func TestReviewedDockerfileScopesStatefulShapeChecks(t *testing.T) {
+	for _, tt := range []struct {
+		name, selected, root string
+		wantCode             string
+	}{
+		{name: "clean custom file", selected: "FROM node:22-slim\n", root: "FROM node:22-slim\nVOLUME /data\n"},
+		{name: "stateful custom file", selected: "FROM node:22-slim\nVOLUME /data\n", root: "FROM node:22-slim\n", wantCode: api.CodeStatelessOnlyViolation},
+		{name: "missing custom file", root: "FROM node:22-slim\n", wantCode: api.CodeSourceInvalid},
+		{name: "oversized custom file", selected: strings.Repeat("#", dockerfileMaxBytes+1), wantCode: api.CodeSourceInvalid},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			files := map[string][]byte{"repo/apps/api/package.json": []byte(`{"name":"api"}`)}
+			headers := []tar.Header{{Name: "repo/apps/api/package.json"}}
+			for name, contents := range map[string]string{"repo/apps/api/deploy/Dockerfile": tt.selected, "repo/apps/api/Dockerfile": tt.root} {
+				if contents != "" {
+					files[name] = []byte(contents)
+					headers = append(headers, tar.Header{Name: name})
+				}
+			}
+			archive := writeTarToSpool(t, t.TempDir(), buildTestTarGz(t, headers, files))
+			problem := scanForStatefulShapeWithDockerfileAtRoot(archive, true, "apps/api", "deploy/Dockerfile")
+			if tt.wantCode == "" {
+				if problem != nil {
+					t.Fatalf("selected clean Dockerfile rejected: %v", problem)
+				}
+			} else if problem == nil || problem.Code != tt.wantCode {
+				t.Fatalf("selected Dockerfile problem = %v, want %s", problem, tt.wantCode)
+			}
+		})
+	}
+}
+
 func TestWorkspaceSourceRootScopesArchiveChecks(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("FAAS_SPOOL_ROOT", dir)

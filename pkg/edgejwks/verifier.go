@@ -342,8 +342,8 @@ func boundedCustomClaims(raw map[string]any, priority []string) map[string]strin
 	sort.Strings(keys)
 	out := make(map[string]string, min(len(keys), maxCustomClaims))
 	seen := make(map[string]struct{}, len(priority))
-	// Append checks growth without adding potentially large input lengths.
-	ordered := make([]string, 0, len(priority))
+	// Grow by append rather than summing two caller-sized lengths.
+	ordered := make([]string, 0, len(keys))
 	for _, key := range priority {
 		if _, duplicate := seen[key]; duplicate {
 			continue

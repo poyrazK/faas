@@ -60,7 +60,7 @@ func (s *SynthServer) applyWorkflowAdmission(w http.ResponseWriter, r *http.Requ
 	}
 	if err := s.workflowAdmission(r.Context(), appID, runID, stepName, attempt); err != nil {
 		if s.log != nil {
-			s.log.Info("gateway synth: workflow delivery rejected", "app_id", logsanitize.Field(appID), "run_id", logsanitize.Field(runID), "step", logsanitize.Field(stepName), "attempt", attempt, "err", err)
+			s.log.Info("gateway synth: workflow delivery rejected", "app_id", logsanitize.Field(appID), "run_id", logsanitize.Field(runID), "step", logsanitize.Field(stepName), "attempt", attempt, "err", logsanitize.FieldAny(err))
 		}
 		http.Error(w, "workflow delivery rejected", http.StatusConflict)
 		return true

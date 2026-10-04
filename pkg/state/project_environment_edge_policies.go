@@ -72,6 +72,10 @@ func (m *MemStore) PutProjectEnvironmentEdgePolicy(ctx context.Context, policy P
 	if err := validateMemTrafficProjection("environment_edge_policy", environmentEdgeTrafficProjection(policy)); err != nil {
 		return ProjectEnvironmentEdgePolicy{}, err
 	}
+	memory, err := m.gitOpsGuardScopedWriteLocked(policy.AccountID, policy.AppID, policy.EnvironmentSlug, []string{"policies"})
+	if err != nil {
+		return ProjectEnvironmentEdgePolicy{}, err
+	}
 	key := projectEnvironmentRoutePolicyKey(policy.AppID, policy.EnvironmentSlug)
 	now := time.Now().UTC()
 	if old, ok := m.projectEnvironmentEdgePolicies[key]; ok {
@@ -85,6 +89,7 @@ func (m *MemStore) PutProjectEnvironmentEdgePolicy(ctx context.Context, policy P
 		return ProjectEnvironmentEdgePolicy{}, err
 	}
 	m.projectEnvironmentEdgePolicies[key] = policy
+	touchGitOpsMemoryIntent(memory)
 	policy.Rules = cloneProjectEnvironmentEdgeRules(policy.Rules)
 	return policy, nil
 }

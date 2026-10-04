@@ -146,6 +146,19 @@ func checkProjectEnvironmentCloneTargetScope(ctx context.Context, tx pgx.Tx, clo
 }
 
 func lockProjectEnvironmentCloneSource(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) error {
+	q := sqlc.New()
+	// Reference mutations and the executor take the source before application
+	// and catalog locks. Retain that order while reading the clone snapshot.
+	if _, err := q.LockProjectEnvironmentCloneGitSources(ctx, tx, sqlc.LockProjectEnvironmentCloneGitSourcesParams{
+		AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug,
+	}); err != nil {
+		return mapErr(err)
+	}
+	if _, err := q.LockProjectEnvironmentCloneApps(ctx, tx, sqlc.LockProjectEnvironmentCloneAppsParams{
+		AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID),
+	}); err != nil {
+		return mapErr(err)
+	}
 	var id string
 	err := tx.QueryRow(ctx, `
 		select e.id::text
@@ -181,39 +194,30 @@ func checkProjectEnvironmentCloneManagedBindings(ctx context.Context, tx pgx.Tx,
 }
 
 func checkProjectEnvironmentCloneQuota(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone, limits api.Limits) error {
-	rows, err := tx.Query(ctx, `
-		select a.slug,
-		       (select count(*) from app_secrets s where s.app_id = a.id),
-		       (select count(*) from app_secrets s where s.app_id = a.id and s.scope = $3),
-		       (select count(*) from app_secrets s where s.app_id = a.id and s.scope = $3 and (s.managed_postgres_binding_id is not null or s.managed_object_storage_credential_id is not null)),
-		       (select count(*) from app_envs e where e.app_id = a.id),
-		       (select count(*) from app_envs e where e.app_id = a.id and e.scope = $3)
-		  from apps a
-		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted'
-		 order by a.slug
-	`, clone.AccountID, clone.ProjectID, clone.SourceSlug)
+	rows, err := sqlc.New().ProjectEnvironmentCloneQuota(ctx, tx, sqlc.ProjectEnvironmentCloneQuotaParams{
+		AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug,
+	})
 	if err != nil {
 		return mapErr(err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var slug string
-		var secretCount, sourceSecrets, sourceManaged, envCount, sourceEnv int
-		if err := rows.Scan(&slug, &secretCount, &sourceSecrets, &sourceManaged, &envCount, &sourceEnv); err != nil {
-			return mapErr(err)
-		}
-		observedSecrets := secretCount + sourceSecrets
+	for _, row := range rows {
+		observedSecrets := int(row.SecretCount + row.SourceSecrets)
 		if clone.ManagedBindingsPrepared {
-			observedSecrets -= sourceManaged
+			observedSecrets -= int(row.SourceManaged)
 		}
 		if limits.SecretCountMax > 0 && observedSecrets > limits.SecretCountMax {
-			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: slug, Resource: "secrets", Limit: limits.SecretCountMax, Observed: observedSecrets}
+			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: row.Slug, Resource: "secrets", Limit: limits.SecretCountMax, Observed: observedSecrets}
 		}
+		envCount, sourceEnv := int(row.EnvCount), int(row.SourceEnv)
 		if limits.EnvVarsMax > 0 && envCount+sourceEnv > limits.EnvVarsMax {
-			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: slug, Resource: "variables", Limit: limits.EnvVarsMax, Observed: envCount + sourceEnv}
+			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: row.Slug, Resource: "variables", Limit: limits.EnvVarsMax, Observed: envCount + sourceEnv}
+		}
+		observedSuppressions := int(row.SuppressionCount + row.SourceSuppressions)
+		if observedSuppressions > api.EnvironmentSecretReferenceSuppressionsMaxPerApp {
+			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: row.Slug, Resource: "secret_reference_suppressions", Limit: api.EnvironmentSecretReferenceSuppressionsMaxPerApp, Observed: observedSuppressions}
 		}
 	}
-	return mapErr(rows.Err())
+	return nil
 }
 
 func insertClonedProjectEnvironment(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) (ProjectEnvironment, error) {
@@ -239,6 +243,16 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 	result.VariablesCopied, result.SecretsCopied, err = copyProjectEnvironmentScopedValues(ctx, tx, clone)
 	if err != nil {
 		return result, err
+	}
+	refsCopied, err := sqlc.New().CopyProjectEnvironmentSecretReferences(ctx, tx, sqlc.CopyProjectEnvironmentSecretReferencesParams{
+		AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug,
+	})
+	if err != nil {
+		return result, mapErr(err)
+	}
+	result.SecretReferencesCopied = int(refsCopied)
+	if err := sqlc.New().CopyProjectEnvironmentSecretSuppressions(ctx, tx, sqlc.CopyProjectEnvironmentSecretSuppressionsParams{AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug}); err != nil {
+		return result, mapErr(err)
 	}
 	if err := tx.QueryRow(ctx, `
 		with copied as (

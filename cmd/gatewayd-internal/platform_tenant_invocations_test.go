@@ -83,7 +83,7 @@ func TestSynthAdapterPlatformTenantDurableAdmission(t *testing.T) {
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		})
 	}}
-	target := gateway.Target{InstanceID: instance.ID, NodeID: instance.NodeID, DeploymentID: deployment.ID}
+	target := gateway.Target{InstanceID: instance.ID, NodeID: instance.NodeID, DeploymentID: deployment.ID, WakeID: instance.WakeID}
 	for _, tenantID := range []string{"", "forged"} {
 		wire := inv
 		wire.PlatformTenantID = tenantID

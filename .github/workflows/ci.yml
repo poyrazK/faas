@@ -163,6 +163,8 @@ jobs:
         run: make fix-has-test-check
       - name: fix-has-test checker tests
         run: make fix-has-test-check-test
+      - name: coverage checker tests
+        run: make coverage-checker-test
       - name: CVE monitor parser and issue-payload tests
         run: scripts/ci/cve-monitor_test.sh
 
@@ -627,64 +629,72 @@ jobs:
         include:
           - id: a0
             label: state partition 1/8+reconcile/reposcan
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
             coverage_file: cover-shard2a-0.out
+            gitops_acceptance: true
             state_coverage: true
             state_partition: 0
             test_timeout: 30m
             job_timeout_minutes: 40
           - id: a1
             label: state partition 2/8
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
             coverage_file: cover-shard2a-1.out
+            gitops_acceptance: true
             state_coverage: true
             state_partition: 1
             test_timeout: 30m
             job_timeout_minutes: 40
           - id: a2
             label: state partition 3/8
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
             coverage_file: cover-shard2a-2.out
+            gitops_acceptance: true
             state_coverage: true
             state_partition: 2
             test_timeout: 30m
             job_timeout_minutes: 40
           - id: a3
             label: state partition 4/8
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
             coverage_file: cover-shard2a-3.out
+            gitops_acceptance: true
             state_coverage: true
             state_partition: 3
             test_timeout: 30m
             job_timeout_minutes: 40
           - id: a4
             label: state partition 5/8
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
             coverage_file: cover-shard2a-4.out
+            gitops_acceptance: true
             state_coverage: true
             state_partition: 4
             test_timeout: 30m
             job_timeout_minutes: 40
           - id: a5
             label: state partition 6/8
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
             coverage_file: cover-shard2a-5.out
+            gitops_acceptance: true
             state_coverage: true
             state_partition: 5
             test_timeout: 30m
             job_timeout_minutes: 40
           - id: a6
             label: state partition 7/8
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
             coverage_file: cover-shard2a-6.out
+            gitops_acceptance: true
             state_coverage: true
             state_partition: 6
             test_timeout: 30m
             job_timeout_minutes: 40
           - id: a7
             label: state partition 8/8
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
             coverage_file: cover-shard2a-7.out
+            gitops_acceptance: true
             state_coverage: true
             state_partition: 7
             test_timeout: 30m
@@ -696,6 +706,7 @@ jobs:
             # query that failed on every call while its test was never run.
             package_pattern: '/(cmd/gregale|cmd/gregalectl|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall)(/|$)'
             coverage_file: cover-shard2b.out
+            gitops_acceptance: false
             state_coverage: false
             test_timeout: 20m
             job_timeout_minutes: 30
@@ -763,6 +774,8 @@ jobs:
             go-pg-2-${{ matrix.state_coverage && 'a' || matrix.id }}-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-pg-2-${{ matrix.state_coverage && 'a' || matrix.id }}-${{ runner.os }}-
       - name: unit tests (pg shard 2${{ matrix.id }})
+        env:
+          GREGALE_GITOPS_ACCEPTANCE: ${{ matrix.gitops_acceptance && '1' || '' }}
         run: |
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '${{ matrix.package_pattern }}')
@@ -1098,7 +1111,7 @@ jobs:
           GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}  # queue counts as non-PR: fresh + shuffled
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|pkg/devbridgeintegration|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|pkg/devbridgeintegration|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
           go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
 
 

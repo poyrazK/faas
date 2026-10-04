@@ -94,6 +94,10 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, payload snapshotBootPa
 	if err != nil {
 		return err
 	}
+	app, err = state.AppForDeploymentRuntime(app, dep)
+	if err != nil {
+		return err
+	}
 	workCtx := context.WithValue(ctx, imagePreparationClaimKey{}, imagePreparationClaim{id: dep.ID, token: p.ClaimToken, store: images})
 	return h.resumeImagePreparation(workCtx, images, app, dep, p)
 }
@@ -249,6 +253,10 @@ func (h *Handler) finishImageHandoff(ctx context.Context, images state.Deploymen
 	app, err := h.store.AppByID(ctx, dep.AppID)
 	if err != nil {
 		return imageRecoveryError(err)
+	}
+	app, err = state.AppForDeploymentRuntime(app, dep)
+	if err != nil {
+		return err
 	}
 	if err := h.validatePreparedImageScan(ctx, app, dep); err != nil {
 		return err

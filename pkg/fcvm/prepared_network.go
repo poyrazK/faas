@@ -68,11 +68,17 @@ type preparedNetworkPool struct {
 // EnablePreparedNetworks is an opt-in daemon wiring operation. It must run
 // before serving Wake RPCs. Call ClosePreparedNetworks after draining RPCs.
 func (m *Manager) EnablePreparedNetworks(ctx context.Context, capacity int) error {
+	if err := m.RecoverNativeProcesses(ctx); err != nil {
+		return fmt.Errorf("prepared networks: native ownership recovery: %w", err)
+	}
 	if capacity < 0 || capacity > maxPreparedNetworks {
 		return fmt.Errorf("prepared networks: capacity must be between 0 and %d", maxPreparedNetworks)
 	}
 	if capacity == 0 {
 		return nil
+	}
+	if m.nativeVMM() != nil {
+		return fmt.Errorf("prepared networks: native recovery requires a journaled cache claim; set prepared_networks = 0")
 	}
 	if m.preparedNetworks != nil {
 		return fmt.Errorf("prepared networks: already enabled")

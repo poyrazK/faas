@@ -180,7 +180,7 @@ class DeploymentResponse:
     """Per-deployment traffic-split weight (issue #556 PR-A). Summed across live rows for the app = 100 by
     construction."""
     scope: None | str | Unset = UNSET
-    """Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no leading/trailing dash.
+    """Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash.
     nil/omitted = `default`."""
     secret_scan: None | SecretScanResult | Unset = UNSET
     """Per-deploy secret-scan audit row (PR-A / ADR-101). Mirrors

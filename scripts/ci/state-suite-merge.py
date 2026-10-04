@@ -30,6 +30,8 @@ def verify_inventory(receipts, count=8):
     for item in receipts:
         if item.get("result") != "passed" or not item.get("source_unchanged") or item["partition_count"] != count:
             raise ValueError("failed, incomplete or changed-source state partition")
+        if item["state_runtime_environment"].get("GREGALE_GITOPS_ACCEPTANCE") != "1":
+            raise ValueError("GitOps PostgreSQL acceptance was not enabled")
         if any(item[key] != first[key] for key in shared):
             raise ValueError("state source, runtime, package scope or inventory changed between partitions")
     return first["groups"]
@@ -78,7 +80,7 @@ def main():
             profiles.append(root / "state.out")
             if item["partition"] == 0:
                 others = [pkg for pkg in item["packages"] if pkg != "github.com/onebox-faas/faas/pkg/state"]
-                if commands[2]["args"][:7] != ["go", "test", "-race", "-count=1", "-p=4", "-timeout=30m", "-covermode=atomic"] or commands[2]["args"][8:] != others:
+                if commands[2]["args"][:8] != ["go", "test", "-race", "-count=1", "-p=4", "-timeout=30m", "-covermode=atomic", suite.parity_coverage_arg(others)] or commands[2]["args"][9:] != others:
                     raise ValueError("remaining package scope or flags changed")
                 other = root / "others.out"
         args.coverage.write_text(suite.merged_coverage(profiles, other))

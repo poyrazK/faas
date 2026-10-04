@@ -78,6 +78,16 @@ class StateSuiteTest(unittest.TestCase):
         merged = self.merge("mode: atomic\na.go:1.1,2.1 3 0\n", "mode: atomic\na.go:1.1,2.1 3 2\n")
         self.assertEqual(merged, "mode: atomic\na.go:1.1,2.1 3 2\nother.go:1.1,2.1 2 1\n")
 
+    def test_external_adapter_binaries_union_state_hits_once(self):
+        first = "mode: atomic\na.go:1.1,2.1 3 0\n"
+        other = "mode: atomic\na.go:1.1,2.1 3 0\na.go:1.1,2.1 3 2\nother.go:1.1,2.1 2 1\n"
+        self.assertEqual(self.merge(first, first, other),
+                         "mode: atomic\na.go:1.1,2.1 3 2\nother.go:1.1,2.1 2 1\n")
+        with self.assertRaises(ValueError):
+            self.merge(first, first, other.replace("3 2", "4 2"))
+        with self.assertRaises(ValueError):
+            self.merge(first + "a.go:1.1,2.1 3 1\n", first, other)
+
     def test_refuses_truncated_or_changed_coverage(self):
         first = "mode: atomic\na.go:1.1,2.1 3 1\n"
         for second in ["mode: atomic\n", "mode: atomic\nb.go:1.1,2.1 3 1\n", "mode: atomic\na.go:1.1,2.1 4 1\n"]:
