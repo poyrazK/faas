@@ -963,6 +963,13 @@ type Limits struct {
 	// declare on top of TenantEgressBasePorts (ADR-361). 0 = the plan
 	// cannot declare any (Free/Hobby).
 	EgressExtraPortsMax int
+	// ServiceTCPSessionsPerAccount caps concurrent private TCP sessions an
+	// account's workloads may hold to its own services through the
+	// node-local service TCP proxy (ADR-576). It is enforced per compute
+	// node, like the public raw-TCP account cap, and is independent of
+	// EgressExtraPortsMax: reaching a same-account service is not tenant
+	// egress.
+	ServiceTCPSessionsPerAccount int
 
 	// Secrets (spec §11/G2). Ciphertext quota per app; per-value byte cap.
 	// SecretCountMax bounds the (app_id, scope, key) row count across every
@@ -2278,6 +2285,7 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerDestBurst:      20,
 		EgressFloodDropsPerMinute:      120,
 		EgressExtraPortsMax:            0,
+		ServiceTCPSessionsPerAccount:   16,
 		SecretCountMax:                 8,
 		SecretValueMaxBytes:            4 * 1024,
 		EnvVarsMax:                     16,
@@ -2662,6 +2670,7 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerDestBurst:      40,
 		EgressFloodDropsPerMinute:      240,
 		EgressExtraPortsMax:            0,
+		ServiceTCPSessionsPerAccount:   64,
 		SecretCountMax:                 25,
 		SecretValueMaxBytes:            8 * 1024,
 		EnvVarsMax:                     32,
@@ -3072,6 +3081,7 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerDestBurst:      100,
 		EgressFloodDropsPerMinute:      600,
 		EgressExtraPortsMax:            8,
+		ServiceTCPSessionsPerAccount:   256,
 		SecretCountMax:                 50,
 		SecretValueMaxBytes:            16 * 1024,
 		EnvVarsMax:                     64,
@@ -3444,6 +3454,7 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerDestBurst:      200,
 		EgressFloodDropsPerMinute:      1200,
 		EgressExtraPortsMax:            32,
+		ServiceTCPSessionsPerAccount:   1024,
 		SecretCountMax:                 100,
 		SecretValueMaxBytes:            32 * 1024,
 		EnvVarsMax:                     256,
@@ -8191,6 +8202,17 @@ func (p Plan) EgressExtraPortsMax() int {
 	return l.EgressExtraPortsMax
 }
 
+// ServiceTCPSessionsPerAccount returns the per-node concurrent private TCP
+// session cap for an account on this plan (ADR-576). Unknown plans get 0
+// (fail closed).
+func (p Plan) ServiceTCPSessionsPerAccount() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.ServiceTCPSessionsPerAccount
+}
+
 // tenantEgressForbiddenPorts are TCP ports an app may never add to its
 // egress (ADR-361), with the reason returned to the caller. SMTP stays
 // blocked for spam (spec §11); remote administration and SMB are the
@@ -8332,6 +8354,47 @@ const NamespaceBridgeReadinessMaxBytes = 4096
 // WorkloadPortCapMax bounds image metadata and the guest endpoint environment.
 // Listeners are a local workload contract, not an unbounded service registry.
 const WorkloadPortCapMax = 16
+
+// ADR-576: private TCP addressing between services.
+const (
+	// ServiceTCPProxyPort is the reserved tenant-bridge port of the node-local
+	// service TCP proxy. No netns rule admits it: guests reach it only through
+	// the host DNAT of a service address.
+	ServiceTCPProxyPort = 10082
+	// ServiceAddressIndexMin and ServiceAddressIndexMax bound an app's
+	// account-scoped index into ServiceAddressCIDR. The block's network and
+	// broadcast addresses are never allocated.
+	ServiceAddressIndexMin = 1
+	ServiceAddressIndexMax = 65534
+	// ServiceAddressReuseQuarantine keeps a deleted app's index out of
+	// allocation far longer than a cached service DNS answer (5 s TTL) or a
+	// lingering client, so a successor app never receives its traffic.
+	ServiceAddressReuseQuarantine = 24 * time.Hour
+	// ServiceTCPWakeTimeout bounds how long the service TCP proxy holds an
+	// accepted connection while a parked target is restored. It matches the
+	// gateway's 30 s wake hold so internal and public cold calls agree.
+	ServiceTCPWakeTimeout = 30 * time.Second
+	// ServiceTCPSessionsPerNodeMax caps concurrent private TCP sessions
+	// through one node's proxy across all accounts, independent of the
+	// per-account plan cap.
+	ServiceTCPSessionsPerNodeMax = 8192
+)
+
+// ServiceTCPReservedPorts belong to the HTTP service mesh on every service
+// address (ADR-576). The TCP proxy refuses them even when a target declares
+// one, so a raw session can never bypass HTTP-layer caller policy.
+func ServiceTCPReservedPorts() []int {
+	return []int{443, ServiceBindingLegacyPort, ServiceBindingPort}
+}
+
+// ServiceAddressCIDR is the block holding every app's service address
+// (ADR-576). It is a platform constant rather than an operator setting
+// because an address must not move when configuration changes. It sits in
+// the RFC 2544 benchmarking range, which is never a legitimate public
+// destination; the OCI puller's egress denylist already refuses it.
+func ServiceAddressCIDR() netip.Prefix {
+	return netip.MustParsePrefix("198.19.0.0/16")
+}
 
 // UDPListenerReservationsPerAppMax bounds all durable reservations, including
 // disabled ones and reservations retained across manifest changes.

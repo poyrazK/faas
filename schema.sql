@@ -59,6 +59,55 @@ $$;
 
 
 --
+-- Name: allocate_app_service_address_index(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.allocate_app_service_address_index(p_account_id uuid) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    next_index integer;
+BEGIN
+    -- The upsert's row lock serializes allocations within one account.
+    INSERT INTO app_service_address_cursors AS c (account_id, last_index)
+    VALUES (p_account_id, 1)
+    ON CONFLICT (account_id) DO UPDATE
+       SET last_index = c.last_index + 1
+     WHERE c.last_index < 65534
+    RETURNING c.last_index INTO next_index;
+    IF next_index IS NOT NULL THEN
+        RETURN next_index;
+    END IF;
+
+    -- The account has used the whole range. Take any index that is free or
+    -- held only by a tombstone past the quarantine.
+    PERFORM 1 FROM app_service_address_cursors WHERE account_id = p_account_id FOR UPDATE;
+    SELECT s.i
+      INTO next_index
+      FROM generate_series(1, 65534) AS s(i)
+     WHERE NOT EXISTS (
+            SELECT 1
+              FROM apps a
+             WHERE a.account_id = p_account_id
+               AND a.service_address_index = s.i
+               AND NOT (a.status = 'deleted'
+                        AND coalesce(a.deleted_at, '-infinity'::timestamptz) < now() - interval '24 hours'))
+     LIMIT 1;
+    IF next_index IS NULL THEN
+        -- Exhausted: the app keeps HTTP service calls through the bridge
+        -- address; it just has no private TCP address.
+        RETURN NULL;
+    END IF;
+    UPDATE apps
+       SET service_address_index = NULL
+     WHERE account_id = p_account_id
+       AND service_address_index = next_index;
+    RETURN next_index;
+END;
+$$;
+
+
+--
 -- Name: api_consumers_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -611,6 +660,29 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Copy source authority changed';
  END IF;
 END $_$;
+
+
+--
+-- Name: assign_app_service_address_index(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.assign_app_service_address_index() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.service_address_index IS NULL AND NEW.status <> 'deleted' THEN
+        NEW.service_address_index := allocate_app_service_address_index(NEW.account_id);
+    ELSIF TG_OP = 'INSERT' AND NEW.service_address_index IS NOT NULL THEN
+        -- An explicit index (data repair, tests) must never be handed out
+        -- again by the cursor.
+        INSERT INTO app_service_address_cursors AS c (account_id, last_index)
+        VALUES (NEW.account_id, NEW.service_address_index)
+        ON CONFLICT (account_id) DO UPDATE
+           SET last_index = greatest(c.last_index, EXCLUDED.last_index);
+    END IF;
+    RETURN NEW;
+END;
+$$;
 
 
 --
@@ -7660,6 +7732,7 @@ $$;
 
 CREATE FUNCTION public.service_capacity_snapshot() RETURNS jsonb
     LANGUAGE sql
+    SET jit TO 'off'
     AS $$
 WITH policy AS (SELECT * FROM service_capacity_policy WHERE singleton),
 eligible AS (
@@ -9339,6 +9412,17 @@ CREATE TABLE public.app_secrets (
 
 
 --
+-- Name: app_service_address_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_service_address_cursors (
+    account_id uuid NOT NULL,
+    last_index integer NOT NULL,
+    CONSTRAINT app_service_address_cursors_last_index_chk CHECK (((last_index >= 0) AND (last_index <= 65534)))
+);
+
+
+--
 -- Name: app_tasks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9728,6 +9812,7 @@ CREATE TABLE public.apps (
     platform_tenant_required boolean DEFAULT false NOT NULL,
     managed_postgres_admission_cutover_id uuid,
     managed_postgres_admission_fenced_at timestamp with time zone,
+    service_address_index integer,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
@@ -9758,6 +9843,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
     CONSTRAINT apps_scaling_policy_revision_positive CHECK ((scaling_policy_revision > 0)),
     CONSTRAINT apps_security_policy_chk CHECK ((security_policy = ANY (ARRAY['off'::text, 'warn'::text, 'enforce'::text]))),
+    CONSTRAINT apps_service_address_index_chk CHECK (((service_address_index IS NULL) OR ((service_address_index >= 1) AND (service_address_index <= 65534)))),
     CONSTRAINT apps_static_egress_ip_family_check CHECK (((static_egress_ip IS NULL) OR (family(static_egress_ip) = 4))),
     CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
     CONSTRAINT apps_streaming_enabled_plan_check CHECK (((NOT streaming_enabled) OR public.apps_streaming_plan_allowed(account_id))),
@@ -10291,6 +10377,7 @@ CREATE TABLE public.compute_nodes (
     recovery_initiated_at timestamp with time zone,
     last_recovery_outcome text,
     overlay_ip inet,
+    service_address_ready_at timestamp with time zone,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT compute_nodes_gateway_target_url_scheme_chk CHECK (((gateway_target_url IS NULL) OR (gateway_target_url ~ '^tcp://[^/:][^/]*:[0-9]+$'::text))),
     CONSTRAINT compute_nodes_last_recovery_outcome_chk CHECK (((last_recovery_outcome IS NULL) OR (last_recovery_outcome = ANY (ARRAY['succeeded'::text, 'failed'::text, 'partial'::text])))),
@@ -19978,6 +20065,14 @@ ALTER TABLE ONLY public.app_secrets
 
 
 --
+-- Name: app_service_address_cursors app_service_address_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_address_cursors
+    ADD CONSTRAINT app_service_address_cursors_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: app_tasks app_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25087,6 +25182,13 @@ CREATE INDEX apps_account_idx ON public.apps USING btree (account_id, status);
 
 
 --
+-- Name: apps_account_service_address_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX apps_account_service_address_uniq ON public.apps USING btree (account_id, service_address_index) WHERE (service_address_index IS NOT NULL);
+
+
+--
 -- Name: apps_delete_grace_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -30162,6 +30264,20 @@ CREATE TRIGGER app_webhook_deliveries_capture_dead_letter AFTER UPDATE OF status
 
 
 --
+-- Name: apps apps_assign_service_address_index_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_assign_service_address_index_insert BEFORE INSERT ON public.apps FOR EACH ROW EXECUTE FUNCTION public.assign_app_service_address_index();
+
+
+--
+-- Name: apps apps_assign_service_address_index_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_assign_service_address_index_update BEFORE UPDATE OF status, service_address_index ON public.apps FOR EACH ROW WHEN (((new.service_address_index IS NULL) AND (new.status <> 'deleted'::text))) EXECUTE FUNCTION public.assign_app_service_address_index();
+
+
+--
 -- Name: apps apps_bump_cpu_policy_revision_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -33003,6 +33119,14 @@ ALTER TABLE ONLY public.app_secrets
 
 ALTER TABLE ONLY public.app_secrets
     ADD CONSTRAINT app_secrets_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: app_service_address_cursors app_service_address_cursors_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_address_cursors
+    ADD CONSTRAINT app_service_address_cursors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

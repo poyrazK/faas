@@ -190,17 +190,23 @@ func admissionMatchesInvocation(owner InvocationWorkEnvironmentAdmission, inv In
 		bytes.Equal(owner.KeyDigest, inv.WorkKeyDigest) && bytes.Equal(owner.FairnessDigest, inv.WorkFairnessDigest) && owner.FairnessLimit == inv.WorkFairnessLimit
 }
 
+func syntheticTriggerInvocation(inv Invocation) bool {
+	if inv.ID == "" || inv.Source != InvocationSource("esm") {
+		return false
+	}
+	id, err := uuid.Parse(inv.ID)
+	return err != nil || id == uuid.Nil
+}
+
 func validateInvocationWorkEnvironmentAdmission(ctx context.Context, store invocationAppReader, inv Invocation, version InvocationVersion) error {
 	// Synthetic trigger batches use a correlation identity rather than a UUID
 	// ledger row. Such an identity cannot own a durable admission; production
 	// may deliver it, but environment/keyed claims still require a real row.
-	if inv.ID != "" && inv.Source == InvocationSource("esm") {
-		if id, err := uuid.Parse(inv.ID); err != nil || id == uuid.Nil {
-			if invocationStageScope(version.Scope) || inv.EnvironmentID != "" || inv.WorkPolicyName != "" || len(inv.WorkKeyDigest) != 0 || len(inv.WorkFairnessDigest) != 0 {
-				return ErrInvocationEnvironmentWorkIsolation
-			}
-			inv.ID = ""
+	if syntheticTriggerInvocation(inv) {
+		if invocationStageScope(version.Scope) || inv.EnvironmentID != "" || inv.WorkPolicyName != "" || len(inv.WorkKeyDigest) != 0 || len(inv.WorkFairnessDigest) != 0 {
+			return ErrInvocationEnvironmentWorkIsolation
 		}
+		inv.ID = ""
 	}
 	if err := validateInvocationEnvironmentOwner(ctx, store, inv, version); err != nil {
 		return err

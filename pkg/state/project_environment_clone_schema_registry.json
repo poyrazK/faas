@@ -774,6 +774,14 @@
     "kind": "configuration"
   },
   {
+    "table": "app_service_address_cursors",
+    "columns": [
+      "account_id",
+      "last_index"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_tasks",
     "columns": [
       "account_id",
@@ -1052,6 +1060,7 @@
       "scaling_policy",
       "scaling_policy_revision",
       "security_policy",
+      "service_address_index",
       "slug",
       "start_command",
       "static_egress_ip",
@@ -1401,6 +1410,7 @@
       "release_id",
       "role",
       "schedd_target_url",
+      "service_address_ready_at",
       "target_url",
       "vcpu_budget",
       "vpcpus",

@@ -84,7 +84,7 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	}
 	// Durable private work must retain its original marker and explicit pin.
 	// Never repair a damaged envelope by resolving today's active release.
-	if reader, ok := store.(InvocationEnvironmentOwnerReader); ok && inv.ID != "" {
+	if reader, ok := store.(InvocationEnvironmentOwnerReader); ok && inv.ID != "" && !syntheticTriggerInvocation(inv) {
 		stored, readErr := reader.InvocationEnvironmentID(ctx, inv.ID)
 		if readErr != nil && !errors.Is(readErr, ErrNotFound) {
 			return inv, InvocationVersion{}, readErr
