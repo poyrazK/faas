@@ -2664,6 +2664,20 @@ type OpenAPISnapshot struct {
 	CapturedAt    time.Time
 }
 
+// DeploymentRoutePolicySnapshot is the immutable edge-rule configuration
+// captured when a deployment first becomes live. Snapshot is a canonical JSON
+// envelope containing the ordered rules; SHA256 fingerprints the exact bytes.
+// A missing row means that historical policy evidence is unknown.
+type DeploymentRoutePolicySnapshot struct {
+	DeploymentID  string
+	AppID         string
+	Scope         string
+	Snapshot      json.RawMessage
+	SHA256        string
+	SchemaVersion int
+	CapturedAt    time.Time
+}
+
 // DeploymentPreviewActive (issue #976 / ADR-122 / SAFE-RELEASES-C)
 // returns true iff the deployment is in a state where a customer
 // can usefully visit its preview URL. Mirrors the App.PreviewOpen()

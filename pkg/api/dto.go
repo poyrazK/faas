@@ -9987,6 +9987,19 @@ type OpenAPIDocResponse struct {
 	Doc          map[string]any `json:"doc"`
 }
 
+// DeploymentRoutePolicySnapshotResponse returns the immutable edge-rule
+// snapshot captured when the deployment first became live. Rules use the same
+// owner-scoped shape as GET /v1/apps/{slug}/edge-rules.
+type DeploymentRoutePolicySnapshotResponse struct {
+	DeploymentID  string             `json:"deployment_id"`
+	AppID         string             `json:"app_id"`
+	Scope         string             `json:"scope"`
+	SHA256        string             `json:"sha256"`
+	SchemaVersion int                `json:"schema_version"`
+	CapturedAt    time.Time          `json:"captured_at"`
+	Rules         []EdgeRuleResponse `json:"rules"`
+}
+
 // AppOpenAPIImportResponse is the typed wire envelope for the
 // POST /v1/apps/{slug}/openapi import endpoint (issue #975 item #2 /
 // ADR-126). Mirrors the row shape of app_openapi_docs (one row per

@@ -204,7 +204,7 @@ func collectPreviewRouteReport(ctx context.Context, client *api.Client, slug, ba
 		return previewRouteReport{}, errors.New("preview has no accessible parent app")
 	}
 	report := previewRouteReport{
-		Version: 6, Preview: preview.App.Slug, Parent: preview.Parent.Slug,
+		Version: 7, Preview: preview.App.Slug, Parent: preview.Parent.Slug,
 		GeneratedAt: time.Now().UTC(), BaselineSelection: "latest_live_parent",
 		Requests:  previewReportEvidence{Status: "unavailable", Reason: "captured_documents_missing"},
 		Security:  previewReportEvidence{Status: "unavailable", Reason: "captured_documents_missing"},
@@ -215,7 +215,7 @@ func collectPreviewRouteReport(ctx context.Context, client *api.Client, slug, ba
 			"Contract classification covers route removals, supported response-schema changes, and supported declared request restrictions; runtime behavior is not verified.",
 			"Request comparison supports required inputs, types, scalar enums, nullability, numeric/length/size limits, simple nullable unions, object/array structure, and local input references. Unsupported schemas and serialization remain explicit unknowns.",
 			"Security comparison evaluates captured OpenAPI authentication declarations and supported credential combinations; it does not establish runtime enforcement, token validity, or relative credential strength.",
-			"Policy is current app configuration, not a deployment snapshot or proof that a request will be admitted.",
+			"Policy drift compares immutable edge-rule snapshots captured when each selected deployment first became live; older deployments without snapshots remain unknown.",
 			"Traffic differences are advisory: request mix, load, and warm/cold proportions may differ.",
 		},
 	}
@@ -258,14 +258,32 @@ func collectPreviewRouteReport(ctx context.Context, client *api.Client, slug, ba
 	}
 	policy, policyErr := client.PreviewAppOpenAPIPolicy(ctx, slug)
 	attachPreviewReportPolicy(&report, policy, policyErr)
-	baselineRules, baselineRulesErr := client.ListEdgeRulesForApp(ctx, report.Parent)
+	baselineRules, baselineRulesErr := previewDeploymentRoutePolicySnapshot(ctx, client, report.Parent, report.BaselineDeployment, preview.Parent.ID)
+	candidatePolicyRules, candidatePolicyErr := previewDeploymentRoutePolicySnapshot(ctx, client, report.Preview, report.CandidateDeployment, preview.App.ID)
 	candidateRules, candidateRulesErr := client.ListEdgeRulesForApp(ctx, report.Preview)
 	report.candidateEdgeRules, report.candidateRulesErr, report.candidateRulesLoaded = candidateRules, candidateRulesErr, true
-	attachPreviewRoutePolicyDrift(&report, baselineRules, candidateRules, baselineRulesErr, candidateRulesErr)
+	attachPreviewRoutePolicyDrift(&report, baselineRules, candidatePolicyRules, baselineRulesErr, candidatePolicyErr)
 	beforeTraffic, beforeErr := client.GetAppRequestAnalytics(ctx, report.Parent, since)
 	afterTraffic, afterErr := client.GetAppRequestAnalytics(ctx, report.Preview, since)
 	attachPreviewReportTraffic(&report, beforeTraffic, afterTraffic, beforeErr, afterErr)
 	return report, nil
+}
+
+func previewDeploymentRoutePolicySnapshot(ctx context.Context, client *api.Client, slug, deploymentID, appID string) ([]api.EdgeRuleResponse, error) {
+	if deploymentID == "" || appID == "" {
+		return nil, errors.New("deployment route policy snapshot is unavailable")
+	}
+	snapshot, err := client.GetAppsDeploymentRoutePolicySnapshot(ctx, slug, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot.DeploymentID != deploymentID || snapshot.AppID != appID || snapshot.SchemaVersion < 1 || snapshot.SHA256 == "" {
+		return nil, errors.New("deployment route policy snapshot identity or metadata is invalid")
+	}
+	if snapshot.Rules == nil {
+		snapshot.Rules = []api.EdgeRuleResponse{}
+	}
+	return snapshot.Rules, nil
 }
 
 func previewReportBaseline(ctx context.Context, client *api.Client, id, parentID string) (*api.DeploymentResponse, error) {

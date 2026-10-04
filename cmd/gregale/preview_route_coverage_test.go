@@ -84,6 +84,10 @@ func TestPreviewCoverageCLIUsesCandidateInventoryAndReadOnlyGate(t *testing.T) {
 						contract = strings.Replace(contract, `"/health":`, `"/new":{"get":{"responses":{}}},"/health":`, 1)
 					}
 					writePreviewReportDoc(t, w, "candidate", contract)
+				case "/v1/apps/api/deployments/baseline/route-policy":
+					writePreviewPolicySnapshotTest(w, "baseline", "parent-id", []api.EdgeRuleResponse{})
+				case "/v1/apps/pr-42-api/deployments/candidate/route-policy":
+					writePreviewPolicySnapshotTest(w, "candidate", "preview-id", []api.EdgeRuleResponse{})
 				case "/v1/apps/pr-42-api/openapi/preview":
 					writeJSONTest(w, api.AppOpenAPIPolicyPreviewResponse{Routes: []api.AppOpenAPIPolicyPreviewRoute{{Method: "get", Path: "/observed-only"}}})
 				case "/v1/apps/pr-42-api":
@@ -114,10 +118,10 @@ func TestPreviewCoverageCLIUsesCandidateInventoryAndReadOnlyGate(t *testing.T) {
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatal(err)
 			}
-			if report.Version != 6 || report.Requirements == nil || report.Requirements.Version != 2 || report.Requirements.Status != test.status || report.Requirements.Coverage.Deployment != "candidate" {
+			if report.Version != 7 || report.Requirements == nil || report.Requirements.Version != 2 || report.Requirements.Status != test.status || report.Requirements.Coverage.Deployment != "candidate" {
 				t.Fatalf("coverage=%+v", report.Requirements)
 			}
-			if len(reads) != 9 {
+			if len(reads) != 10 {
 				t.Fatalf("unexpected reads %v", reads)
 			}
 			if !test.candidateMissing && !test.serverBasePath && (report.Requirements.Coverage.Status != "available" || len(report.Requirements.Coverage.SHA256) != 64) {

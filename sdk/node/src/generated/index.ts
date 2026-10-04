@@ -350,6 +350,7 @@ export type { DeploymentLiveWebhookPayload } from './models/DeploymentLiveWebhoo
 export type { DeploymentPreviewURL } from './models/DeploymentPreviewURL.js';
 export type { DeploymentReadinessProbe } from './models/DeploymentReadinessProbe.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
+export type { DeploymentRoutePolicySnapshotResponse } from './models/DeploymentRoutePolicySnapshotResponse.js';
 export type { DeploymentSummaryResponse } from './models/DeploymentSummaryResponse.js';
 export type { DeployTokenResponse } from './models/DeployTokenResponse.js';
 export type { DevBridgeActivity } from './models/DevBridgeActivity.js';

@@ -507,6 +507,10 @@ type MemStore struct {
 	// — the contract is the same Map+slice-walk the production
 	// PgStore implements with an index.
 	openAPISnapshots map[string]OpenAPISnapshot
+	// routePolicySnapshots mirrors deployment_route_policy_snapshots.
+	// First capture wins so a deployment keeps the gateway policy it
+	// became live with even when app rules change later.
+	routePolicySnapshots map[string]DeploymentRoutePolicySnapshot
 	// openAPIImports mirrors the per-app app_openapi_docs table
 	// from migrations/00416 (issue #975 item #2 / ADR-126).
 	// Keyed by app_id (one row per app, last-write-wins).
@@ -1230,6 +1234,7 @@ func NewMemStore() *MemStore {
 		platformTenantByConsumer:             map[string]string{},
 		platformTenantBySurface:              map[string]string{},
 		openAPISnapshots:                     map[string]OpenAPISnapshot{},
+		routePolicySnapshots:                 map[string]DeploymentRoutePolicySnapshot{},
 		// ADR-119 redesign: empty gate (no provisioned IPs in
 		// unit tests unless a test explicitly seeds them).
 		provisionedStaticEgressIPs: map[string]map[string]netip.Addr{},
@@ -8515,11 +8520,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 				d.RolloutCompletedAt = &now
 			}
 		}
-		snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
-		if err != nil {
-			return err
-		}
-		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
+		if err := m.captureAndStoreDeploymentSnapshotsLocked(ctx, d, previousStatus != DeployLive); err != nil {
 			return err
 		}
 		if err := m.enqueueDeploymentOutcomeActivityLocked(id, "live", ""); err != nil {
@@ -8555,11 +8556,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 			other.TrafficPercent = newWeights[i]
 			updatedSiblings[sibling.ID] = other
 		}
-		snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
-		if err != nil {
-			return err
-		}
-		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
+		if err := m.captureAndStoreDeploymentSnapshotsLocked(ctx, d, previousStatus != DeployLive); err != nil {
 			return err
 		}
 		if err := m.enqueueDeploymentOutcomeActivityLocked(id, "live", ""); err != nil {
@@ -8584,11 +8581,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 			now := time.Now().UTC()
 			d.RolloutCompletedAt = &now
 		}
-		snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
-		if err != nil {
-			return err
-		}
-		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
+		if err := m.captureAndStoreDeploymentSnapshotsLocked(ctx, d, previousStatus != DeployLive); err != nil {
 			return err
 		}
 		if err := m.enqueueDeploymentOutcomeActivityLocked(id, "live", ""); err != nil {
@@ -8645,11 +8638,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 		d.RolloutState = "complete"
 		d.CanaryStepStartedAt = &now
 		d.RolloutCompletedAt = &now
-		snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
-		if err != nil {
-			return err
-		}
-		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
+		if err := m.captureAndStoreDeploymentSnapshotsLocked(ctx, d, previousStatus != DeployLive); err != nil {
 			return err
 		}
 		if err := m.enqueueDeploymentOutcomeActivityLocked(id, "live", ""); err != nil {
@@ -8673,11 +8662,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 		other.TrafficPercent = newWeights[i]
 		updatedSiblings[sibling.ID] = other
 	}
-	snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
-	if err != nil {
-		return err
-	}
-	if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
+	if err := m.captureAndStoreDeploymentSnapshotsLocked(ctx, d, previousStatus != DeployLive); err != nil {
 		return err
 	}
 	if err := m.enqueueDeploymentOutcomeActivityLocked(id, "live", ""); err != nil {

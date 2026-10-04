@@ -9039,22 +9039,22 @@ func (s *PgStore) MarkDeploymentSuperseded(ctx context.Context, id string) error
 }
 
 // captureDeploymentOpenAPISnapshotTx reads the edge-rule set while the
-// mark-live transaction is still open and delegates projection to the
-// registered openapidiff callback. Keeping the read, status update, and
-// eventual UPSERT on one tx makes a live deployment and its contract snapshot
-// an atomic unit.
-func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx.Tx, dep Deployment) (OpenAPISnapshot, error) {
+// mark-live transaction is still open, delegates contract projection to the
+// registered openapidiff callback, and builds the gateway-policy snapshot.
+// Keeping the read, status update, and snapshot writes on one tx makes a live
+// deployment and its revision evidence an atomic unit.
+func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx.Tx, dep Deployment) (OpenAPISnapshot, DeploymentRoutePolicySnapshot, error) {
 	rows, err := tx.Query(ctx,
 		`select `+edgeRuleSelectCols+` from edge_rules
 		 where app_id = $1::uuid
 		 order by priority asc, created_at desc`, dep.AppID)
 	if err != nil {
-		return OpenAPISnapshot{}, fmt.Errorf("state: read edge rules for snapshot: %w", err)
+		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: read edge rules for snapshot: %w", err)
 	}
 	defer rows.Close()
 	rules, err := scanEdgeRules(rows)
 	if err != nil {
-		return OpenAPISnapshot{}, fmt.Errorf("state: scan edge rules for snapshot: %w", err)
+		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: scan edge rules for snapshot: %w", err)
 	}
 	pending := make([]api.CreateEdgeRuleRequest, 0, len(rules))
 	for _, rule := range rules {
@@ -9063,9 +9063,14 @@ func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx
 		}
 		request, err := edgeRuleToCreateEdgeRuleRequest(rule)
 		if err != nil {
-			return OpenAPISnapshot{}, fmt.Errorf("state: encode edge rule %s for snapshot: %w", rule.ID, err)
+			return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: encode edge rule %s for snapshot: %w", rule.ID, err)
 		}
 		pending = append(pending, request)
+	}
+	scope := normalizedDeploymentScope(dep.Scope)
+	policySnapshot, err := marshalDeploymentRoutePolicySnapshot(dep.ID, dep.AppID, scope, rules)
+	if err != nil {
+		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: capture route policy for %s: %w", dep.ID, err)
 	}
 	var importedDoc []byte
 	err = tx.QueryRow(ctx, `
@@ -9074,14 +9079,13 @@ func (s *PgStore) captureDeploymentOpenAPISnapshotTx(ctx context.Context, tx pgx
 		 where app_id = $1::uuid
 	`, dep.AppID).Scan(&importedDoc)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return OpenAPISnapshot{}, fmt.Errorf("state: read imported OpenAPI document for snapshot: %w", err)
+		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: read imported OpenAPI document for snapshot: %w", err)
 	}
-	scope := normalizedDeploymentScope(dep.Scope)
 	snap, err := getOpenAPICapture()(ctx, tx, dep.ID, dep.AppID, scope, pending, importedDoc)
 	if err != nil {
-		return OpenAPISnapshot{}, fmt.Errorf("state: capture snapshot for %s: %w", dep.ID, err)
+		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("state: capture snapshot for %s: %w", dep.ID, err)
 	}
-	return snap, nil
+	return snap, policySnapshot, nil
 }
 
 func (s *PgStore) MarkDeploymentLive(ctx context.Context, id string) error {
@@ -9180,14 +9184,12 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 			 where id = $1`, id, string(DeployLive)); err != nil {
 			return fmt.Errorf("state: mark deployment live update: %w", err)
 		}
-		snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
+		snap, policySnap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
 		if err != nil {
 			return err
 		}
-		if snap.DeploymentID != "" {
-			if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
-				return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
-			}
+		if err := persistDeploymentSnapshotsDBTX(ctx, tx, snap, policySnap, dep.Status != DeployLive); err != nil {
+			return fmt.Errorf("state: persist deployment snapshots for %s: %w", id, err)
 		}
 		if err := enqueueDeploymentOutcomeActivityTx(ctx, tx, id, "live", ""); err != nil {
 			return err
@@ -9245,14 +9247,12 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 				return fmt.Errorf("state: mark manual split sibling %s: %w", sibling.ID, err)
 			}
 		}
-		snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
+		snap, policySnap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
 		if err != nil {
 			return err
 		}
-		if snap.DeploymentID != "" {
-			if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
-				return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
-			}
+		if err := persistDeploymentSnapshotsDBTX(ctx, tx, snap, policySnap, dep.Status != DeployLive); err != nil {
+			return fmt.Errorf("state: persist deployment snapshots for %s: %w", id, err)
 		}
 		if err := enqueueDeploymentOutcomeActivityTx(ctx, tx, id, "live", ""); err != nil {
 			return err
@@ -9315,14 +9315,12 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 			 where id = $1`, id); err != nil {
 			return fmt.Errorf("state: mark stable deployment live: %w", err)
 		}
-		snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
+		snap, policySnap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
 		if err != nil {
 			return err
 		}
-		if snap.DeploymentID != "" {
-			if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
-				return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
-			}
+		if err := persistDeploymentSnapshotsDBTX(ctx, tx, snap, policySnap, dep.Status != DeployLive); err != nil {
+			return fmt.Errorf("state: persist deployment snapshots for %s: %w", id, err)
 		}
 		if err := enqueueDeploymentOutcomeActivityTx(ctx, tx, id, "live", ""); err != nil {
 			return err
@@ -9400,14 +9398,12 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 			}
 		}
 	}
-	snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
+	snap, policySnap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
 	if err != nil {
 		return err
 	}
-	if snap.DeploymentID != "" {
-		if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
-			return fmt.Errorf("state: upsert snapshot for %s: %w", id, err)
-		}
+	if err := persistDeploymentSnapshotsDBTX(ctx, tx, snap, policySnap, dep.Status != DeployLive); err != nil {
+		return fmt.Errorf("state: persist deployment snapshots for %s: %w", id, err)
 	}
 	if err := enqueueDeploymentOutcomeActivityTx(ctx, tx, id, "live", ""); err != nil {
 		return err
@@ -9441,6 +9437,60 @@ func upsertDeploymentOpenAPISnapshotDBTX(ctx context.Context, db sqlc.DBTX, snap
 		return fmt.Errorf("pgstore: upsert snapshot: %w", err)
 	}
 	return nil
+}
+
+func upsertDeploymentRoutePolicySnapshotDBTX(ctx context.Context, db sqlc.DBTX, snap DeploymentRoutePolicySnapshot) error {
+	if err := validateDeploymentRoutePolicySnapshot(snap); err != nil {
+		return fmt.Errorf("pgstore: upsert route policy snapshot: %w", err)
+	}
+	if snap.CapturedAt.IsZero() {
+		snap.CapturedAt = time.Now().UTC()
+	}
+	_, err := db.Exec(ctx, `
+		insert into deployment_route_policy_snapshots
+			(deployment_id, app_id, scope, snapshot, sha256, schema_version, captured_at)
+		values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7)
+		on conflict (deployment_id) do nothing
+	`, snap.DeploymentID, snap.AppID, snap.Scope, []byte(snap.Snapshot), snap.SHA256, snap.SchemaVersion, snap.CapturedAt)
+	if err != nil {
+		return fmt.Errorf("pgstore: upsert route policy snapshot: %w", err)
+	}
+	return nil
+}
+
+func persistDeploymentSnapshotsDBTX(ctx context.Context, db sqlc.DBTX, openAPI OpenAPISnapshot, policy DeploymentRoutePolicySnapshot, capturePolicy bool) error {
+	if openAPI.DeploymentID != "" {
+		if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, db, openAPI); err != nil {
+			return err
+		}
+	}
+	if capturePolicy && policy.DeploymentID != "" {
+		if err := upsertDeploymentRoutePolicySnapshotDBTX(ctx, db, policy); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DeploymentRoutePolicySnapshotByDeployment returns the immutable rule set
+// captured with one deployment. A missing row deliberately stays unknown for
+// pre-feature deployments.
+func (s *PgStore) DeploymentRoutePolicySnapshotByDeployment(ctx context.Context, deploymentID string) (DeploymentRoutePolicySnapshot, error) {
+	var snap DeploymentRoutePolicySnapshot
+	var raw []byte
+	err := s.pool.QueryRow(ctx, `
+		select deployment_id, app_id, scope, snapshot, sha256, schema_version, captured_at
+		  from deployment_route_policy_snapshots
+		 where deployment_id = $1::uuid
+	`, deploymentID).Scan(&snap.DeploymentID, &snap.AppID, &snap.Scope, &raw, &snap.SHA256, &snap.SchemaVersion, &snap.CapturedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return DeploymentRoutePolicySnapshot{}, ErrNotFound
+		}
+		return DeploymentRoutePolicySnapshot{}, fmt.Errorf("pgstore: read route policy snapshot: %w", err)
+	}
+	snap.Snapshot = json.RawMessage(raw)
+	return snap, nil
 }
 
 // UpdateDeploymentOpenAPISnapshot (ADR-121, migration 00358)

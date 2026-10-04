@@ -10355,6 +10355,36 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/deployments/{deployment}/route-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: deployment
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: UUID of the deployment whose gateway policy snapshot is requested.
+    get:
+      tags: [edge_rules]
+      operationId: getDeploymentRoutePolicySnapshot
+      summary: Read the gateway policy captured with a deployment.
+      description: |
+        Returns the immutable edge-rule set captured atomically when this
+        deployment first became live. Rules use the same owner-scoped shape as
+        the current app edge-rule endpoint. Older deployments without a
+        snapshot return 404 so callers can report historical policy as unknown.
+      responses:
+        '200':
+          description: Captured gateway route policy and fingerprint.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentRoutePolicySnapshotResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: Deployment is not owned by the caller or has no captured route policy.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/openapi:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -40972,6 +41002,21 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    DeploymentRoutePolicySnapshotResponse:
+      description: Immutable gateway edge-rule state recorded on the deployment's first live transition.
+      type: object
+      required: [deployment_id, app_id, scope, sha256, schema_version, captured_at, rules]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        schema_version: { type: integer, minimum: 1 }
+        captured_at: { type: string, format: date-time }
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/EdgeRuleResponse' }
 
     CreateEdgeRuleRequest:
       description: 'Body shape for POST /v1/apps/{slug}/edge-rules.'
