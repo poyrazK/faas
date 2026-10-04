@@ -364,7 +364,7 @@ func TestResourceAssetsBindModeRestoresPinnedInodeAndAliases(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = handle.Close() })
-	v.bindSourceModes[path] = bindSourceMode{file: identity, mode: 0o600, refs: 1, handle: handle}
+	v.bindSourceModes[bindSourceKey{path, identity}] = bindSourceMode{file: identity, mode: 0o600, refs: 1, handle: handle}
 	held := path + ".held"
 	if err := os.Rename(path, held); err != nil {
 		t.Fatal(err)
@@ -372,7 +372,7 @@ func TestResourceAssetsBindModeRestoresPinnedInodeAndAliases(t *testing.T) {
 	if err := os.WriteFile(path, []byte("replacement"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.releaseBindSource(path); err != nil {
+	if err := v.releaseBindSource(path, identity); err != nil {
 		t.Fatal(err)
 	}
 	info, _ = os.Stat(held)
@@ -407,16 +407,16 @@ func TestResourceAssetsBindModeRestoresPinnedInodeAndAliases(t *testing.T) {
 		_ = primaryHandle.Close()
 		_ = aliasHandle.Close()
 	})
-	v.bindSourceModes[aliasSource] = bindSourceMode{file: aliasIdentity, mode: 0o600, refs: 1, handle: primaryHandle}
-	v.bindSourceModes[alias] = bindSourceMode{file: aliasIdentity, mode: 0o600, refs: 1, handle: aliasHandle}
-	if err := v.releaseBindSource(aliasSource); err != nil {
+	v.bindSourceModes[bindSourceKey{aliasSource, aliasIdentity}] = bindSourceMode{file: aliasIdentity, mode: 0o600, refs: 1, handle: primaryHandle}
+	v.bindSourceModes[bindSourceKey{alias, aliasIdentity}] = bindSourceMode{file: aliasIdentity, mode: 0o600, refs: 1, handle: aliasHandle}
+	if err := v.releaseBindSource(aliasSource, aliasIdentity); err != nil {
 		t.Fatal(err)
 	}
 	info, _ = os.Stat(alias)
 	if info.Mode().Perm() != 0o644 {
 		t.Fatal("permissions restored while alias still referenced")
 	}
-	if err := v.releaseBindSource(alias); err != nil {
+	if err := v.releaseBindSource(alias, aliasIdentity); err != nil {
 		t.Fatal(err)
 	}
 	info, _ = os.Stat(aliasSource)
@@ -444,8 +444,8 @@ func TestResourceAssetsBindModeWaitsForForeignOwner(t *testing.T) {
 	if err := j.addAsset(idOther, resourceAsset{Kind: "bind", Path: foreign, Source: path, SourceFile: &identity, Namespace: &ns, OriginalMode: 0o600}); err != nil {
 		t.Fatal(err)
 	}
-	v.bindSourceModes[path] = bindSourceMode{file: identity, mode: 0o600, refs: 1, handle: handle}
-	if err := v.releaseBindSource(path); err == nil {
+	v.bindSourceModes[bindSourceKey{path, identity}] = bindSourceMode{file: identity, mode: 0o600, refs: 1, handle: handle}
+	if err := v.releaseBindSource(path, identity); err == nil {
 		t.Fatal("permissions changed beneath an unknown owner")
 	}
 	info, _ = os.Stat(path)
@@ -455,7 +455,7 @@ func TestResourceAssetsBindModeWaitsForForeignOwner(t *testing.T) {
 	if err := j.retireAsset(idOther, foreign); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.releaseBindSource(path); err != nil {
+	if err := v.releaseBindSource(path, identity); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -483,4 +483,17 @@ func TestResourceAssetsMountInfoIdentity(t *testing.T) {
 	if _, _, err := parseResourceMountInfo([]byte("incomplete"), "/tmp/test space"); err == nil {
 		t.Fatal("incomplete inventory accepted")
 	}
+}
+
+// bindSourceRefs sums the references to every inode bound from path.
+func (v *JailerVMM) bindSourceRefs(path string) int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	refs := 0
+	for key, state := range v.bindSourceModes {
+		if key.path == path {
+			refs += state.refs
+		}
+	}
+	return refs
 }

@@ -1398,6 +1398,53 @@ func (q *Queries) ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg Cla
 	return claim, err
 }
 
+const claimCustomerOperationBlobCleanup = `-- name: ClaimCustomerOperationBlobCleanup :one
+WITH candidate AS (
+ SELECT b.id FROM customer_operation_result_blobs b
+ WHERE b.next_attempt_at <= $3::timestamptz
+ AND (b.lease_until IS NULL OR b.lease_until <= $3::timestamptz)
+ AND (b.state = 'deleting' OR (b.state = 'staging' AND b.expires_at <= $3::timestamptz)
+ OR (b.state = 'retained' AND NOT EXISTS (
+  SELECT 1 FROM customer_operations o WHERE o.id = b.operation_id
+  AND (o.expires_at > $3::timestamptz OR o.state IN ('accepted','running'))
+  AND EXISTS (SELECT 1 FROM jsonb_each_text(COALESCE(o.record->'artifact_storage_keys','{}'::jsonb)) k WHERE k.value = b.storage_key)
+ )))
+ ORDER BY b.next_attempt_at,b.id FOR UPDATE OF b SKIP LOCKED LIMIT 1
+)
+UPDATE customer_operation_result_blobs b SET state = 'deleting', lease_token = $1::text,
+lease_until = $2::timestamptz
+FROM candidate c WHERE b.id = c.id RETURNING b.id, b.operation_id, b.account_id, b.generation, b.execution_id, b.attempt, b.report_id, b.fingerprint, b.storage_key, b.size_bytes, b.state, b.expires_at, b.next_attempt_at, b.lease_token, b.lease_until
+`
+
+type ClaimCustomerOperationBlobCleanupParams struct {
+	LeaseToken string
+	LeaseUntil pgtype.Timestamptz
+	Now        pgtype.Timestamptz
+}
+
+func (q *Queries) ClaimCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg ClaimCustomerOperationBlobCleanupParams) (CustomerOperationResultBlob, error) {
+	row := db.QueryRow(ctx, claimCustomerOperationBlobCleanup, arg.LeaseToken, arg.LeaseUntil, arg.Now)
+	var i CustomerOperationResultBlob
+	err := row.Scan(
+		&i.ID,
+		&i.OperationID,
+		&i.AccountID,
+		&i.Generation,
+		&i.ExecutionID,
+		&i.Attempt,
+		&i.ReportID,
+		&i.Fingerprint,
+		&i.StorageKey,
+		&i.SizeBytes,
+		&i.State,
+		&i.ExpiresAt,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+	)
+	return i, err
+}
+
 const claimImmediateNotificationForNode = `-- name: ClaimImmediateNotificationForNode :one
 WITH candidate AS (
     SELECT id
@@ -2496,6 +2543,25 @@ func (q *Queries) CompleteAutomaticRouteCheck(ctx context.Context, db DBTX, arg 
 		arg.RequestID,
 		arg.LeaseToken,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const completeCustomerOperationBlobCleanup = `-- name: CompleteCustomerOperationBlobCleanup :execrows
+DELETE FROM customer_operation_result_blobs WHERE id = $1::uuid AND state = 'deleting'
+AND lease_token = $2::text AND lease_until > $3::timestamptz
+`
+
+type CompleteCustomerOperationBlobCleanupParams struct {
+	ID         pgtype.UUID
+	LeaseToken string
+	Now        pgtype.Timestamptz
+}
+
+func (q *Queries) CompleteCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg CompleteCustomerOperationBlobCleanupParams) (int64, error) {
+	result, err := db.Exec(ctx, completeCustomerOperationBlobCleanup, arg.ID, arg.LeaseToken, arg.Now)
 	if err != nil {
 		return 0, err
 	}
@@ -3890,6 +3956,81 @@ func (q *Queries) CustomerOperationAccountPlan(ctx context.Context, db DBTX, acc
 	var plan string
 	err := row.Scan(&plan)
 	return plan, err
+}
+
+const customerOperationBlobByKey = `-- name: CustomerOperationBlobByKey :one
+SELECT id, operation_id, account_id, generation, execution_id, attempt, report_id, fingerprint, storage_key, size_bytes, state, expires_at, next_attempt_at, lease_token, lease_until FROM customer_operation_result_blobs WHERE storage_key = $1::text
+`
+
+func (q *Queries) CustomerOperationBlobByKey(ctx context.Context, db DBTX, storageKey string) (CustomerOperationResultBlob, error) {
+	row := db.QueryRow(ctx, customerOperationBlobByKey, storageKey)
+	var i CustomerOperationResultBlob
+	err := row.Scan(
+		&i.ID,
+		&i.OperationID,
+		&i.AccountID,
+		&i.Generation,
+		&i.ExecutionID,
+		&i.Attempt,
+		&i.ReportID,
+		&i.Fingerprint,
+		&i.StorageKey,
+		&i.SizeBytes,
+		&i.State,
+		&i.ExpiresAt,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+	)
+	return i, err
+}
+
+const customerOperationBlobMetrics = `-- name: CustomerOperationBlobMetrics :many
+SELECT state, count(*)::bigint AS blob_count, COALESCE(sum(size_bytes),0)::bigint AS bytes
+FROM customer_operation_result_blobs GROUP BY state
+`
+
+type CustomerOperationBlobMetricsRow struct {
+	State     string
+	BlobCount int64
+	Bytes     int64
+}
+
+func (q *Queries) CustomerOperationBlobMetrics(ctx context.Context, db DBTX) ([]CustomerOperationBlobMetricsRow, error) {
+	rows, err := db.Query(ctx, customerOperationBlobMetrics)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerOperationBlobMetricsRow{}
+	for rows.Next() {
+		var i CustomerOperationBlobMetricsRow
+		if err := rows.Scan(&i.State, &i.BlobCount, &i.Bytes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const customerOperationBlobUsage = `-- name: CustomerOperationBlobUsage :one
+SELECT count(*)::bigint AS blob_count, COALESCE(sum(size_bytes),0)::bigint AS bytes
+FROM customer_operation_result_blobs WHERE account_id = $1::uuid
+`
+
+type CustomerOperationBlobUsageRow struct {
+	BlobCount int64
+	Bytes     int64
+}
+
+func (q *Queries) CustomerOperationBlobUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (CustomerOperationBlobUsageRow, error) {
+	row := db.QueryRow(ctx, customerOperationBlobUsage, accountID)
+	var i CustomerOperationBlobUsageRow
+	err := row.Scan(&i.BlobCount, &i.Bytes)
+	return i, err
 }
 
 const customerOperationCompletionWebhook = `-- name: CustomerOperationCompletionWebhook :one
@@ -8777,6 +8918,45 @@ func (q *Queries) InsertCustomerOperation(ctx context.Context, db DBTX, arg Inse
 		arg.Record,
 		arg.ExpiresAt,
 		arg.CreatedAt,
+	)
+	return err
+}
+
+const insertCustomerOperationBlob = `-- name: InsertCustomerOperationBlob :exec
+INSERT INTO customer_operation_result_blobs
+(id,operation_id,account_id,generation,execution_id,attempt,report_id,fingerprint,storage_key,size_bytes,state,expires_at,next_attempt_at)
+VALUES ($1::uuid,$2::uuid,$3::uuid,$4::integer,
+$5::uuid,$6::integer,$7::text,$8::text,
+$9::text,$10::bigint,'staging',$11::timestamptz,$11::timestamptz)
+`
+
+type InsertCustomerOperationBlobParams struct {
+	ID          pgtype.UUID
+	OperationID pgtype.UUID
+	AccountID   pgtype.UUID
+	Generation  int32
+	ExecutionID pgtype.UUID
+	Attempt     int32
+	ReportID    string
+	Fingerprint string
+	StorageKey  string
+	SizeBytes   int64
+	ExpiresAt   pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperationBlob(ctx context.Context, db DBTX, arg InsertCustomerOperationBlobParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationBlob,
+		arg.ID,
+		arg.OperationID,
+		arg.AccountID,
+		arg.Generation,
+		arg.ExecutionID,
+		arg.Attempt,
+		arg.ReportID,
+		arg.Fingerprint,
+		arg.StorageKey,
+		arg.SizeBytes,
+		arg.ExpiresAt,
 	)
 	return err
 }
@@ -16578,6 +16758,33 @@ func (q *Queries) LockCustomerOperationAccount(ctx context.Context, db DBTX, acc
 	var plan string
 	err := row.Scan(&plan)
 	return plan, err
+}
+
+const lockCustomerOperationBlob = `-- name: LockCustomerOperationBlob :one
+SELECT id, operation_id, account_id, generation, execution_id, attempt, report_id, fingerprint, storage_key, size_bytes, state, expires_at, next_attempt_at, lease_token, lease_until FROM customer_operation_result_blobs WHERE id = $1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockCustomerOperationBlob(ctx context.Context, db DBTX, id pgtype.UUID) (CustomerOperationResultBlob, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationBlob, id)
+	var i CustomerOperationResultBlob
+	err := row.Scan(
+		&i.ID,
+		&i.OperationID,
+		&i.AccountID,
+		&i.Generation,
+		&i.ExecutionID,
+		&i.Attempt,
+		&i.ReportID,
+		&i.Fingerprint,
+		&i.StorageKey,
+		&i.SizeBytes,
+		&i.State,
+		&i.ExpiresAt,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+	)
+	return i, err
 }
 
 const lockCustomerOperationClaim = `-- name: LockCustomerOperationClaim :one
@@ -27114,6 +27321,24 @@ func (q *Queries) RestoreTrafficPolicyStatementTimeout(ctx context.Context, db D
 	return column_1, err
 }
 
+const retainCustomerOperationBlob = `-- name: RetainCustomerOperationBlob :execrows
+UPDATE customer_operation_result_blobs SET state = 'retained'
+WHERE id = $1::uuid AND state = 'staging' AND expires_at > $2::timestamptz
+`
+
+type RetainCustomerOperationBlobParams struct {
+	ID  pgtype.UUID
+	Now pgtype.Timestamptz
+}
+
+func (q *Queries) RetainCustomerOperationBlob(ctx context.Context, db DBTX, arg RetainCustomerOperationBlobParams) (int64, error) {
+	result, err := db.Exec(ctx, retainCustomerOperationBlob, arg.ID, arg.Now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const retireGatewayTrafficRuntime = `-- name: RetireGatewayTrafficRuntime :execrows
 UPDATE gateway_traffic_runtime_observations SET reported_at = NULL
 WHERE node_name = $1::text AND generation = $2::bigint AND boot_id = $3::uuid
@@ -27127,6 +27352,32 @@ type RetireGatewayTrafficRuntimeParams struct {
 
 func (q *Queries) RetireGatewayTrafficRuntime(ctx context.Context, db DBTX, arg RetireGatewayTrafficRuntimeParams) (int64, error) {
 	result, err := db.Exec(ctx, retireGatewayTrafficRuntime, arg.NodeName, arg.Generation, arg.BootID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retryCustomerOperationBlobCleanup = `-- name: RetryCustomerOperationBlobCleanup :execrows
+UPDATE customer_operation_result_blobs SET lease_token = '',lease_until = NULL,next_attempt_at = $1::timestamptz
+WHERE id = $2::uuid AND state = 'deleting' AND lease_token = $3::text
+AND lease_until > $4::timestamptz
+`
+
+type RetryCustomerOperationBlobCleanupParams struct {
+	NextAttemptAt pgtype.Timestamptz
+	ID            pgtype.UUID
+	LeaseToken    string
+	Now           pgtype.Timestamptz
+}
+
+func (q *Queries) RetryCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg RetryCustomerOperationBlobCleanupParams) (int64, error) {
+	result, err := db.Exec(ctx, retryCustomerOperationBlobCleanup,
+		arg.NextAttemptAt,
+		arg.ID,
+		arg.LeaseToken,
+		arg.Now,
+	)
 	if err != nil {
 		return 0, err
 	}
