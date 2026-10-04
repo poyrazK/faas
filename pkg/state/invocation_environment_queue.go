@@ -105,6 +105,7 @@ func prepareEnvironmentQueueInvocation(ctx context.Context, store invocationAppR
 		return Invocation{}, ErrConflict
 	}
 	inv.Headers, inv.EnvironmentID, inv.State = prepared.Headers, set.EnvironmentID, InvocationPending
+	inv.DeploymentScope = prepared.DeploymentScope
 	inv.CreatedAt = time.Now().UTC().Truncate(time.Microsecond)
 	if inv.DueAt.IsZero() {
 		inv.DueAt = inv.CreatedAt
@@ -179,7 +180,7 @@ func validateInvocationEnvironmentQueueAdmission(ctx context.Context, store invo
 		if bound, err := validateBoundQueueEnvironment(ctx, store, inv, version.Scope); bound || err != nil {
 			return err
 		}
-		if invocationStageScope(version.Scope) && inv.Source == InvocationQueue {
+		if invocationStageScope(version.Scope) && inv.Source == InvocationQueue && (version.DeploymentID != "" || inv.EnvironmentID != "") {
 			return ErrInvocationEnvironmentWorkIsolation
 		}
 		return nil

@@ -43,6 +43,10 @@ func PreviewFinancialBudget(ctx context.Context, store state.Store, account stri
 		for _, reason := range meter.Coverage.Reasons {
 			out.Reasons = append(out.Reasons, meter.Meter+":"+reason)
 		}
+		if !financialBudgetAttributionComplete(spec.Scope, meter.Accrued) {
+			out.CoverageComplete = false
+			out.Reasons = append(out.Reasons, meter.Meter+":missing_scope_attribution")
+		}
 	}
 	out.KnownMillicents, err = financial.BudgetAmount(spec, costs)
 	if err != nil {
@@ -79,6 +83,17 @@ func PreviewFinancialBudget(ctx context.Context, store state.Store, account stri
 		out.Reasons = append(out.Reasons, "no_current_action_targets")
 	}
 	return out, nil
+}
+
+func financialBudgetAttributionComplete(scope financial.BudgetScope, costs financial.ContractCosts) bool {
+	for _, contract := range costs.Contracts {
+		for _, allocation := range contract.Allocations {
+			if allocation.Quantity > 0 && !scope.AttributionKnown(allocation.Attribution) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 type financialBudgetMember struct {

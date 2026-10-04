@@ -71,7 +71,7 @@ func TestPreviewSecurityCommandGates(t *testing.T) {
 				t.Fatal(err)
 			}
 			row := findPreviewReportRoute(t, report, "POST /checkout")
-			if report.Version != 6 || report.Security.Status != "available" || report.Outcome != test.outcome || row.SecurityCompatibility == nil || row.SecurityCompatibility.Status != test.status || row.RequestCompatibility.Status != "no_supported_breaks" || row.RequestContractChanged || reads.Load() != 8 {
+			if report.Version != 7 || report.Security.Status != "available" || report.Outcome != test.outcome || row.SecurityCompatibility == nil || row.SecurityCompatibility.Status != test.status || row.RequestCompatibility.Status != "no_supported_breaks" || row.RequestContractChanged || reads.Load() != 9 {
 				t.Fatalf("report %+v; row %+v; reads %d", report, row, reads.Load())
 			}
 			if strings.Contains(output.String(), "private") {

@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 )
 
 // First-class bindings retain their catalog UUID and scope. Private clone
@@ -25,10 +26,13 @@ func validateBoundQueueEnvironment(ctx context.Context, store invocationAppReade
 	}
 	binding, err := history.QueueBindingHistoryByID(ctx, app.AccountID, app.ID, inv.QueueBindingID)
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return false, ErrInvalidArgument
+		}
 		return false, err
 	}
 	if binding.AppID != app.ID || binding.AccountID != app.AccountID || inv.AccountID != "" && inv.AccountID != app.AccountID {
-		return false, ErrNotFound
+		return false, ErrInvalidArgument
 	}
 	if binding.RetiredAt != nil {
 		return false, ErrQueueBindingRetired
@@ -36,8 +40,8 @@ func validateBoundQueueEnvironment(ctx context.Context, store invocationAppReade
 	if binding.DeploymentScope == "" {
 		return !invocationStageScope(scope), nil
 	}
-	if binding.DeploymentScope != scope {
-		return false, ErrNotFound
+	if !invocationScopesMatch(app.ProjectID != "", binding.DeploymentScope, scope) {
+		return false, ErrInvalidArgument
 	}
 	environments, ok := store.(invocationEnvironmentStore)
 	if !ok {
@@ -53,6 +57,13 @@ func validateBoundQueueEnvironment(ctx context.Context, store invocationAppReade
 func (m *MemStore) validateBoundQueueClaimLocked(inv Invocation) (bool, error) {
 	if !invocationBoundQueueShape(inv) {
 		return false, nil
+	}
+	for _, binding := range m.queueBindings {
+		if canonicalMemUUID(binding.ID) == canonicalMemUUID(inv.QueueBindingID) &&
+			binding.AppID == inv.AppID && binding.AccountID == inv.AccountID &&
+			!m.queueBindingEnvironmentAvailableLocked(binding) {
+			return true, ErrQueueBindingEnvironmentUnavailable
+		}
 	}
 	copied := inv
 	if err := m.captureInvocationQueueBindingLocked(&copied); err != nil {

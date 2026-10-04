@@ -7622,7 +7622,7 @@ INSERT INTO invocations (
   work_policy_name, work_key_digest, work_expires_at,
   work_sequence, work_policy_revision, work_fairness_digest,
   work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id,
-  occurrence_id, start_deadline_at, failure_rules
+  occurrence_id, start_deadline_at, failure_rules, environment_id
 ) VALUES (
   coalesce($1::uuid, gen_random_uuid()), $2, $3,
   $4, $5, coalesce(nullif($6::text, ''), 'pending'),
@@ -7634,7 +7634,7 @@ INSERT INTO invocations (
   $22, $23, $24,
   $25, $26, $27,
   $28, nullif($29::text, ''), $30,
-  $31::uuid, $32::timestamptz, $33::jsonb
+  $31::uuid, $32::timestamptz, $33::jsonb, $34::uuid
 ) RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, environment_id
 `
 
@@ -7672,6 +7672,7 @@ type EnqueueInvocationRowParams struct {
 	OccurrenceID           pgtype.UUID
 	StartDeadlineAt        pgtype.Timestamptz
 	FailureRules           []byte
+	EnvironmentID          pgtype.UUID
 }
 
 func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg EnqueueInvocationRowParams) (Invocation, error) {
@@ -7709,6 +7710,7 @@ func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg Enqueue
 		arg.OccurrenceID,
 		arg.StartDeadlineAt,
 		arg.FailureRules,
+		arg.EnvironmentID,
 	)
 	var i Invocation
 	err := row.Scan(
@@ -12876,6 +12878,43 @@ func (q *Queries) GetManagedPostgresLifecycleDatabase(ctx context.Context, db DB
 		&i.EnvironmentCloneOperationID,
 		&i.DataResourceID,
 		&i.CloneResourceRole,
+	)
+	return i, err
+}
+
+const getManagedPostgresUsageProgress = `-- name: GetManagedPostgresUsageProgress :one
+SELECT c.collected_from, c.collected_until, c.observed_at, COALESCE(c.source_database_id::text, '')::text AS source_database_id,
+ (SELECT min(u.observed_at) FROM managed_postgres_usage u
+  WHERE u.database_id = d.id AND u.window_to <= c.collected_until
+    AND u.window_from >= GREATEST(c.collected_from, c.collected_until - 3 * $1::bigint * interval '1 second'))::timestamptz AS correction_observed_at
+FROM managed_postgres_databases d LEFT JOIN managed_postgres_usage_coverage c
+ON c.database_id = d.id AND c.window_seconds = $1::bigint
+WHERE d.account_id = $2::uuid AND d.id = $3::uuid
+`
+
+type GetManagedPostgresUsageProgressParams struct {
+	WindowSeconds int64
+	AccountID     pgtype.UUID
+	DatabaseID    pgtype.UUID
+}
+
+type GetManagedPostgresUsageProgressRow struct {
+	CollectedFrom        pgtype.Timestamptz
+	CollectedUntil       pgtype.Timestamptz
+	ObservedAt           pgtype.Timestamptz
+	SourceDatabaseID     string
+	CorrectionObservedAt pgtype.Timestamptz
+}
+
+func (q *Queries) GetManagedPostgresUsageProgress(ctx context.Context, db DBTX, arg GetManagedPostgresUsageProgressParams) (GetManagedPostgresUsageProgressRow, error) {
+	row := db.QueryRow(ctx, getManagedPostgresUsageProgress, arg.WindowSeconds, arg.AccountID, arg.DatabaseID)
+	var i GetManagedPostgresUsageProgressRow
+	err := row.Scan(
+		&i.CollectedFrom,
+		&i.CollectedUntil,
+		&i.ObservedAt,
+		&i.SourceDatabaseID,
+		&i.CorrectionObservedAt,
 	)
 	return i, err
 }
@@ -22387,6 +22426,68 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 	return items, nil
 }
 
+const listManagedPostgresAccountingCoverage = `-- name: ListManagedPostgresAccountingCoverage :many
+SELECT d.state, COALESCE(source.state, d.state)::text AS accounting_state,
+(CASE WHEN source.id IS NULL THEN d.deleted_at ELSE source.deleted_at END)::timestamptz AS ended_at, COALESCE(c.window_seconds, 0)::bigint AS window_seconds,
+COALESCE(s.collected_from, c.collected_from)::timestamptz AS collected_from,
+COALESCE(s.collected_until, c.collected_until)::timestamptz AS collected_until,
+COALESCE(s.observed_at, c.observed_at)::timestamptz AS observed_at,
+(SELECT min(u.observed_at) FROM managed_postgres_usage u
+ WHERE u.database_id = COALESCE(c.source_database_id, d.id)
+ AND u.window_to <= COALESCE(s.collected_until, c.collected_until)
+ AND u.window_from >= GREATEST(COALESCE(s.collected_from, c.collected_from),
+ COALESCE(s.collected_until, c.collected_until) - 3 * c.window_seconds * interval '1 second'))::timestamptz AS correction_observed_at, COALESCE(c.source_database_id::text, '')::text AS source_database_id
+FROM managed_postgres_databases d
+LEFT JOIN LATERAL (SELECT database_id, window_seconds, collected_from, collected_until, observed_at, source_database_id, updated_at FROM managed_postgres_usage_coverage WHERE database_id = d.id
+ ORDER BY updated_at DESC, window_seconds DESC LIMIT 1) c ON true
+LEFT JOIN managed_postgres_databases source ON source.id = c.source_database_id
+LEFT JOIN managed_postgres_usage_coverage s ON s.database_id = c.source_database_id AND s.window_seconds = c.window_seconds
+WHERE d.account_id = $1::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL)
+ORDER BY d.id
+`
+
+type ListManagedPostgresAccountingCoverageRow struct {
+	State                string
+	AccountingState      string
+	EndedAt              pgtype.Timestamptz
+	WindowSeconds        int64
+	CollectedFrom        pgtype.Timestamptz
+	CollectedUntil       pgtype.Timestamptz
+	ObservedAt           pgtype.Timestamptz
+	CorrectionObservedAt pgtype.Timestamptz
+	SourceDatabaseID     string
+}
+
+func (q *Queries) ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListManagedPostgresAccountingCoverageRow, error) {
+	rows, err := db.Query(ctx, listManagedPostgresAccountingCoverage, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListManagedPostgresAccountingCoverageRow{}
+	for rows.Next() {
+		var i ListManagedPostgresAccountingCoverageRow
+		if err := rows.Scan(
+			&i.State,
+			&i.AccountingState,
+			&i.EndedAt,
+			&i.WindowSeconds,
+			&i.CollectedFrom,
+			&i.CollectedUntil,
+			&i.ObservedAt,
+			&i.CorrectionObservedAt,
+			&i.SourceDatabaseID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listManagedPostgresCustomerDatabases = `-- name: ListManagedPostgresCustomerDatabases :many
 SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role FROM managed_postgres_databases d
 WHERE d.account_id=$1 AND d.state<>'deleted' AND d.clone_resource_role='target'
@@ -22568,6 +22669,73 @@ func (q *Queries) ListManagedPostgresLifecycleUsageDatabases(ctx context.Context
 		arg.AfterID,
 		arg.RowLimit,
 	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ManagedPostgresDatabase{}
+	for rows.Next() {
+		var i ManagedPostgresDatabase
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Region,
+			&i.PostgresMajor,
+			&i.ServiceClass,
+			&i.Availability,
+			&i.ScaleToZero,
+			&i.StorageLimitBytes,
+			&i.RestoreWindowSeconds,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.ProviderResourceID,
+			&i.State,
+			&i.DesiredGeneration,
+			&i.ObservedGeneration,
+			&i.LastErrorCode,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.RestoreSourceDatabaseID,
+			&i.RestoreSourceResourceID,
+			&i.RestorePointInTime,
+			&i.CutoverID,
+			&i.EnvironmentCloneOperationID,
+			&i.DataResourceID,
+			&i.CloneResourceRole,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listManagedPostgresUsageResources = `-- name: ListManagedPostgresUsageResources :many
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role FROM managed_postgres_databases d
+WHERE NULLIF(d.provider_resource_id, '') IS NOT NULL
+  AND ($1::timestamptz IS NULL
+       OR (d.updated_at, d.id) > ($1::timestamptz, $2::uuid))
+ORDER BY d.updated_at, d.id LIMIT $3
+`
+
+type ListManagedPostgresUsageResourcesParams struct {
+	AfterUpdatedAt pgtype.Timestamptz
+	AfterID        pgtype.UUID
+	PageLimit      int32
+}
+
+// ADR-569: known resources remain accountable through lifecycle shutdown.
+func (q *Queries) ListManagedPostgresUsageResources(ctx context.Context, db DBTX, arg ListManagedPostgresUsageResourcesParams) ([]ManagedPostgresDatabase, error) {
+	rows, err := db.Query(ctx, listManagedPostgresUsageResources, arg.AfterUpdatedAt, arg.AfterID, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -24453,7 +24621,18 @@ func (q *Queries) LockBindingPromotionRevision(ctx context.Context, db DBTX, arg
 
 const lockBoundOrProductionQueueTriggerInvocation = `-- name: LockBoundOrProductionQueueTriggerInvocation :one
 SELECT i.id FROM invocations i WHERE i.id=$1 AND i.app_id=$2 AND i.source='queue' AND i.state='pending' AND i.environment_id IS NULL
- AND NOT EXISTS(SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id) FOR UPDATE OF i SKIP LOCKED
+ AND NOT EXISTS(SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id)
+ AND (exists (select 1 from queue_bindings accepted where accepted.id=i.queue_binding_id
+ and accepted.app_id=i.app_id and accepted.account_id=i.account_id and accepted.deployment_scope<>''
+ and accepted.deployment_scope=i.deployment_scope) OR (not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-',''))))) FOR UPDATE OF i SKIP LOCKED
 `
 
 type LockBoundOrProductionQueueTriggerInvocationParams struct {
@@ -25764,6 +25943,49 @@ type LockManagedPostgresLifecycleDatabaseParams struct {
 
 func (q *Queries) LockManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg LockManagedPostgresLifecycleDatabaseParams) (ManagedPostgresDatabase, error) {
 	row := db.QueryRow(ctx, lockManagedPostgresLifecycleDatabase, arg.AccountID, arg.ID)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.CutoverID,
+		&i.EnvironmentCloneOperationID,
+		&i.DataResourceID,
+		&i.CloneResourceRole,
+	)
+	return i, err
+}
+
+const lockManagedPostgresUsageResource = `-- name: LockManagedPostgresUsageResource :one
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role FROM managed_postgres_databases d WHERE d.id = $1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockManagedPostgresUsageResource(ctx context.Context, db DBTX, id pgtype.UUID) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, lockManagedPostgresUsageResource, id)
 	var i ManagedPostgresDatabase
 	err := row.Scan(
 		&i.ID,
@@ -37331,15 +37553,27 @@ func (q *Queries) QueueBindingHistoryByID(ctx context.Context, db DBTX, arg Queu
 }
 
 const queueClaimActiveCount = `-- name: QueueClaimActiveCount :one
-select count(*)::bigint from invocations
-where app_id=$1::uuid and source='queue'
-  and ($2::text='' or deployment_scope=$2::text)
-  and (queue_binding_id=$3::uuid
-    or ($2::text='' and queue_binding_id is null and (queue_name=$4 or (queue_name=''
-      and work_policy_name is null and not exists (select 1 from triggers other
+select count(*)::bigint from invocations i
+where i.app_id=$1::uuid and i.source='queue'
+  and ($2::text='' or i.deployment_scope=$2::text)
+  and (i.queue_binding_id=$3::uuid
+    or ($2::text='' and i.queue_binding_id is null and (i.queue_name=$4 or (i.queue_name=''
+      and i.work_policy_name is null and not exists (select 1 from triggers other
       where other.app_id=$1::uuid and other.kind='queue' and other.queue_binding_scope='' and other.enabled
         and other.source='queue' and other.id<>$5::uuid)))))
-  and state='dispatching' and lease_expires_at > clock_timestamp()
+  and i.state='dispatching' and i.lease_expires_at > clock_timestamp()
+ AND (exists (select 1 from queue_bindings accepted where accepted.id=i.queue_binding_id
+ and accepted.app_id=i.app_id and accepted.account_id=i.account_id and accepted.deployment_scope<>''
+ and accepted.deployment_scope=i.deployment_scope) OR (not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))))
+ AND i.environment_id IS NULL AND NOT EXISTS (SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id)
 `
 
 type QueueClaimActiveCountParams struct {
@@ -37476,6 +37710,18 @@ where i.id=$2::uuid and i.app_id=$3::uuid and i.source='queue'
     and tr.item_identifier=i.id::text
     and not ((tr.state in ('pending','retry') and tr.next_fire_at<=clock_timestamp())
       or (tr.state='claimed' and tr.claim_expires_at<=clock_timestamp())))
+ AND (exists (select 1 from queue_bindings accepted where accepted.id=i.queue_binding_id
+ and accepted.app_id=i.app_id and accepted.account_id=i.account_id and accepted.deployment_scope<>''
+ and accepted.deployment_scope=i.deployment_scope) OR (not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))))
+ AND i.environment_id IS NULL AND NOT EXISTS (SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id)
 returning i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id
 `
 
@@ -38130,7 +38376,18 @@ select i.id::text from invocations i cross join consumer
     and (i.queue_name=$3::text or (i.queue_name='' and i.work_policy_name is null
       and not exists (select 1 from triggers other where other.app_id=$2::uuid
         and other.kind='queue' and other.queue_binding_scope='' and other.enabled and other.source='queue' and other.id<>$1::uuid)))))
-		order by i.created_at, i.id limit $4::integer
+
+ AND (exists (select 1 from queue_bindings accepted where accepted.id=i.queue_binding_id
+ and accepted.app_id=i.app_id and accepted.account_id=i.account_id and accepted.deployment_scope<>''
+ and accepted.deployment_scope=i.deployment_scope) OR (not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))))		order by i.created_at, i.id limit $4::integer
 `
 
 type QueuePollCandidatesParams struct {
@@ -38193,7 +38450,17 @@ with claimed as (
 			   and (tr.id is null
 			        or (tr.state in ('pending','retry') and tr.next_fire_at <= now())
 			        or (tr.state = 'claimed' and tr.claim_expires_at <= now()))
-			 order by i.created_at asc
+
+ AND NOT EXISTS (SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id)
+ and not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))			 order by i.created_at asc
 			 limit $5::integer
 			 for update of i skip locked
 		), updated as (
@@ -38719,6 +38986,17 @@ func (q *Queries) ReadBindingPromotionRevision(ctx context.Context, db DBTX, arg
 const readBoundOrProductionQueueTriggerInvocation = `-- name: ReadBoundOrProductionQueueTriggerInvocation :one
 SELECT i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id FROM invocations i WHERE i.id=$1 AND i.app_id=$2 AND i.source='queue' AND i.environment_id IS NULL
  AND NOT EXISTS(SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id)
+ AND (exists (select 1 from queue_bindings accepted where accepted.id=i.queue_binding_id
+ and accepted.app_id=i.app_id and accepted.account_id=i.account_id and accepted.deployment_scope<>''
+ and accepted.deployment_scope=i.deployment_scope) OR (not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))))
 `
 
 type ReadBoundOrProductionQueueTriggerInvocationParams struct {
@@ -42283,7 +42561,7 @@ WITH owner AS (
     SELECT d.id, a.id AS app_id, a.account_id,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id,
-        d.override_env_secrets,d.sidecars,COALESCE(d.secret_reload_signal,'')::text AS reload_signal,
+        d.environment_workload_runtime,d.override_env_secrets,d.sidecars,COALESCE(d.secret_reload_signal,'')::text AS reload_signal,
         COALESCE(spec.id::text,'')::text AS spec_id,COALESCE(spec.config_hash,'')::text AS settings_hash,
         COALESCE(spec.settings,(to_jsonb(a)||jsonb_build_object(
             'public_auth_basic_sealed',encode(a.public_auth_basic,'base64'),
@@ -42310,7 +42588,7 @@ WITH owner AS (
             OR (runtime_owner.deployment_id IS NULL AND pin.deployment_id IS NULL
                 AND (COALESCE(NULLIF(d.scope,''),'default') IN ('default','production') OR a.project_id IS NULL OR legacy.id IS NOT NULL)))
 )
-SELECT owner.scope,owner.environment_id,owner.override_env_secrets,owner.sidecars,owner.reload_signal,
+SELECT owner.scope,owner.environment_id,owner.environment_workload_runtime,owner.override_env_secrets,owner.sidecars,owner.reload_signal,
     owner.spec_id,owner.settings_hash,owner.settings,owner.artifact,
     COALESCE((SELECT jsonb_agg(to_jsonb(layer) ORDER BY layer.sidecar_name)
         FROM deployment_sidecar_layers layer WHERE layer.deployment_id=owner.id),'[]'::jsonb)::jsonb AS layers,
@@ -42335,19 +42613,20 @@ type ReadRuntimeAppValuesForDeploymentParams struct {
 }
 
 type ReadRuntimeAppValuesForDeploymentRow struct {
-	Scope              string
-	EnvironmentID      string
-	OverrideEnvSecrets []byte
-	Sidecars           []byte
-	ReloadSignal       string
-	SpecID             string
-	SettingsHash       string
-	Settings           []byte
-	Artifact           []byte
-	Layers             []byte
-	Values             []byte
-	Secrets            []byte
-	ReloadSignals      []byte
+	Scope                      string
+	EnvironmentID              string
+	EnvironmentWorkloadRuntime []byte
+	OverrideEnvSecrets         []byte
+	Sidecars                   []byte
+	ReloadSignal               string
+	SpecID                     string
+	SettingsHash               string
+	Settings                   []byte
+	Artifact                   []byte
+	Layers                     []byte
+	Values                     []byte
+	Secrets                    []byte
+	ReloadSignals              []byte
 }
 
 func (q *Queries) ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX, arg ReadRuntimeAppValuesForDeploymentParams) (ReadRuntimeAppValuesForDeploymentRow, error) {
@@ -42356,6 +42635,7 @@ func (q *Queries) ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX
 	err := row.Scan(
 		&i.Scope,
 		&i.EnvironmentID,
+		&i.EnvironmentWorkloadRuntime,
 		&i.OverrideEnvSecrets,
 		&i.Sidecars,
 		&i.ReloadSignal,
@@ -43415,6 +43695,46 @@ func (q *Queries) RecordManagedPostgresLifecycleResource(ctx context.Context, db
 		arg.At,
 		arg.DatabaseID,
 		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordManagedPostgresSharedUsage = `-- name: RecordManagedPostgresSharedUsage :execrows
+WITH RECURSIVE ancestry AS (
+ SELECT restore_source_database_id AS id FROM managed_postgres_databases
+ WHERE id = $3::uuid AND account_id = $4::uuid
+ UNION
+ SELECT d.restore_source_database_id FROM managed_postgres_databases d JOIN ancestry a ON d.id = a.id
+ WHERE d.account_id = $4::uuid
+)
+INSERT INTO managed_postgres_usage_coverage (database_id, window_seconds, source_database_id)
+SELECT d.id, $1::bigint, s.id FROM managed_postgres_databases d JOIN managed_postgres_databases s
+ON s.id = $2::uuid AND s.account_id = d.account_id
+AND s.backend_id = d.backend_id AND s.backend_fingerprint = d.backend_fingerprint
+WHERE d.id = $3::uuid AND d.account_id = $4::uuid
+AND NULLIF(d.provider_resource_id, '') IS NOT NULL AND NULLIF(s.provider_resource_id, '') IS NOT NULL
+AND s.id IN (SELECT id FROM ancestry)
+ON CONFLICT (database_id, window_seconds) DO UPDATE SET
+source_database_id = EXCLUDED.source_database_id, collected_from = NULL, collected_until = NULL,
+observed_at = NULL, updated_at = now()
+`
+
+type RecordManagedPostgresSharedUsageParams struct {
+	WindowSeconds int64
+	SourceID      pgtype.UUID
+	DatabaseID    pgtype.UUID
+	AccountID     pgtype.UUID
+}
+
+func (q *Queries) RecordManagedPostgresSharedUsage(ctx context.Context, db DBTX, arg RecordManagedPostgresSharedUsageParams) (int64, error) {
+	result, err := db.Exec(ctx, recordManagedPostgresSharedUsage,
+		arg.WindowSeconds,
+		arg.SourceID,
+		arg.DatabaseID,
+		arg.AccountID,
 	)
 	if err != nil {
 		return 0, err

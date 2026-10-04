@@ -46,6 +46,10 @@ func TestPreviewReportComparesCapturedRevisionsAndRedactsActions(t *testing.T) {
 			writePreviewReportDoc(t, w, "baseline", previewReportBefore)
 		case "/v1/apps/pr-42-api/deployments/candidate/openapi":
 			writePreviewReportDoc(t, w, "candidate", previewReportAfter)
+		case "/v1/apps/api/deployments/baseline/route-policy":
+			writePreviewPolicySnapshotTest(w, "baseline", "parent-id", []api.EdgeRuleResponse{})
+		case "/v1/apps/pr-42-api/deployments/candidate/route-policy":
+			writePreviewPolicySnapshotTest(w, "candidate", "preview-id", []api.EdgeRuleResponse{})
 		case "/v1/apps/pr-42-api/openapi/preview":
 			writeJSONTest(w, api.AppOpenAPIPolicyPreviewResponse{Routes: []api.AppOpenAPIPolicyPreviewRoute{{
 				Path: "/users/{id}", Method: "get", Rules: []api.AppOpenAPIPolicyPreviewRule{{Kind: "jwt", Enabled: true, Action: json.RawMessage(`{"token":"secret-action"}`)}},
@@ -74,10 +78,10 @@ func TestPreviewReportComparesCapturedRevisionsAndRedactsActions(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Version != 6 || report.SourceImpact != nil || report.Outcome != "breaking_changes" || report.Contract.Status != "available" || report.BaselineDeployment != "baseline" {
+	if report.Version != 7 || report.SourceImpact != nil || report.Outcome != "breaking_changes" || report.Contract.Status != "available" || report.BaselineDeployment != "baseline" {
 		t.Fatalf("report = %+v", report)
 	}
-	if len(paths) != 8 {
+	if len(paths) != 9 {
 		t.Fatalf("unexpected reads: %v", paths)
 	}
 	row := findPreviewReportRoute(t, report, "GET /users/{id}")
@@ -87,6 +91,14 @@ func TestPreviewReportComparesCapturedRevisionsAndRedactsActions(t *testing.T) {
 	if strings.Contains(out.String(), "secret-example") || strings.Contains(out.String(), "secret-action") {
 		t.Fatal("shareable report leaked schema examples or policy actions")
 	}
+}
+
+func writePreviewPolicySnapshotTest(w http.ResponseWriter, deploymentID, appID string, rules []api.EdgeRuleResponse) {
+	writeJSONTest(w, api.DeploymentRoutePolicySnapshotResponse{
+		DeploymentID: deploymentID, AppID: appID, Scope: "prod",
+		SHA256: strings.Repeat("0", 64), SchemaVersion: 1, CapturedAt: time.Now().UTC(),
+		Rules: rules,
+	})
 }
 
 func writePreviewReportDoc(t *testing.T, w http.ResponseWriter, id, body string) {

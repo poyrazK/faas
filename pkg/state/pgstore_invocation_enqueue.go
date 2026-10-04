@@ -68,6 +68,7 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 		{"on_failure_destination_id", inv.OnFailureDestinationID, false, &params.OnFailureDestinationID},
 		{"platform_tenant_id", inv.PlatformTenantID, false, &params.PlatformTenantID},
 		{"queue_binding_id", inv.QueueBindingID, false, &params.QueueBindingID},
+		{"environment_id", inv.EnvironmentID, false, &params.EnvironmentID},
 		{"occurrence_id", inv.OccurrenceID, false, &params.OccurrenceID},
 	} {
 		if input.value == "" && !input.required {

@@ -65,6 +65,35 @@ func runtimeAppValuesDB(ctx context.Context, db sqlc.DBTX, accountID, appID, dep
 			return RuntimeAppValuesSnapshot{}, ErrConflict
 		}
 	}
+	if len(row.EnvironmentWorkloadRuntime) > 0 {
+		app, applyErr := settings.ApplyTo(App{ID: appID, AccountID: accountID})
+		if applyErr != nil {
+			return RuntimeAppValuesSnapshot{}, applyErr
+		}
+		candidate := artifact.deployment("", owner.Scope, settings)
+		candidate.ID, candidate.EnvironmentWorkloadRuntime = deploymentID, string(row.EnvironmentWorkloadRuntime)
+		var stored struct {
+			EnvironmentWorkloadDeploymentInputs
+			BuildID     string `json:"build_id"`
+			SourcePath  string `json:"source_path"`
+			SourceBytes int64  `json:"source_bytes"`
+			SourceRoot  string `json:"source_root"`
+			LogPath     string `json:"log_path"`
+		}
+		if json.Unmarshal(row.Artifact, &stored) != nil {
+			return RuntimeAppValuesSnapshot{}, ErrConflict
+		}
+		stored.EnvironmentWorkloadDeploymentInputs.apply(&candidate)
+		candidate.BuildID, candidate.SourcePath, candidate.SourceBytes = stored.BuildID, stored.SourcePath, stored.SourceBytes
+		candidate.SourceRoot, candidate.LogPath = stored.SourceRoot, stored.LogPath
+		app, applyErr = AppForDeploymentRuntime(app, candidate)
+		if applyErr != nil {
+			return RuntimeAppValuesSnapshot{}, applyErr
+		}
+		// Guest fields follow the same immutable candidate overlay as boot.
+		settings.Manifest, settings.StartCommand = app.Manifest, app.StartCommand
+		settings.Type, settings.Runtime, settings.WorkloadClass = app.Type, app.Runtime, app.WorkloadClass
+	}
 	result.Configuration, err = runtimeAppConfiguration(settings, row.SpecID, artifact, result.SidecarLayers)
 	if err != nil {
 		return RuntimeAppValuesSnapshot{}, err

@@ -1,6 +1,9 @@
 package sched
 
-import "github.com/onebox-faas/faas/pkg/api"
+import (
+	"github.com/onebox-faas/faas/pkg/api"
+	"strings"
+)
 
 // Each deployed environment has its own configured serving ceiling. The
 // application's aggregate plan budget remains shared across its environments.
@@ -44,6 +47,11 @@ func (l *NodeLedger) servingCapacityLocked(appID, key string, production bool, c
 	capacity := servingCapacity{
 		concurrency:       l.servingEnvironmentConcurrencyLocked(appID, key, production),
 		sharedConcurrency: l.perApp[appID], limit: configuredLimit, sharedLimit: limits.MaxConcurrency,
+	}
+	// App-only scopes have no independent catalog policy. Their configured
+	// ceiling is shared; retained catalog environments use the plan budget.
+	if key == "" || strings.HasPrefix(key, "scope:") {
+		capacity.sharedLimit = configuredLimit
 	}
 	// Overlap is a new revision of a serving environment. A sibling stage
 	// cannot supply that prerequisite or grant itself extra plan capacity.

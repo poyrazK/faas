@@ -122,6 +122,10 @@ func TestPreviewReportCollectsCustomerUsageFromSelectedParentDeployment(t *testi
 			writePreviewReportDoc(t, w, customerBaseline, previewReportBefore)
 		case "/v1/apps/pr-42-api/deployments/candidate/openapi":
 			writePreviewReportDoc(t, w, "candidate", previewReportAfter)
+		case "/v1/apps/api/deployments/" + customerBaseline + "/route-policy":
+			writePreviewPolicySnapshotTest(w, customerBaseline, "parent", []api.EdgeRuleResponse{})
+		case "/v1/apps/pr-42-api/deployments/candidate/route-policy":
+			writePreviewPolicySnapshotTest(w, "candidate", "preview", []api.EdgeRuleResponse{})
 		case "/v1/apps/pr-42-api/openapi/preview":
 			writeJSONTest(w, api.AppOpenAPIPolicyPreviewResponse{})
 		case "/v1/apps/api/analytics", "/v1/apps/pr-42-api/analytics":
@@ -155,7 +159,7 @@ func TestPreviewReportCollectsCustomerUsageFromSelectedParentDeployment(t *testi
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
-	if customerReads != 1 || report.Version != 6 || report.Customers.Status != "advisory" || !strings.Contains(out.String(), customerID) {
+	if customerReads != 1 || report.Version != 7 || report.Customers.Status != "advisory" || !strings.Contains(out.String(), customerID) {
 		t.Fatalf("reads %d: %s", customerReads, out.String())
 	}
 }

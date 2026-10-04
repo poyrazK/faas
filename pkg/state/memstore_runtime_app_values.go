@@ -45,7 +45,11 @@ func (m *MemStore) runtimeAppValuesLocked(accountID, appID, deploymentID string)
 		})
 	}
 	sort.Slice(result.Secrets, func(i, j int) bool { return result.Secrets[i].Key < result.Secrets[j].Key })
-	settings, err := WorkloadSettingsFromApp(m.apps[appID])
+	runtimeApp, err := AppForDeploymentRuntime(m.apps[appID], d)
+	if err != nil {
+		return RuntimeAppValuesSnapshot{}, err
+	}
+	settings, err := WorkloadSettingsFromApp(runtimeApp)
 	if err != nil {
 		return RuntimeAppValuesSnapshot{}, err
 	}

@@ -138,6 +138,7 @@ func resolveKeyedInvocationEnvironment(ctx context.Context, store interface {
 		return inv, info, fmt.Errorf("pinned environment work policy differs from admission inputs: %w", ErrConflict)
 	}
 	inv.Headers, inv.WorkPolicyRevision = prepared.Headers, info.policy.Revision
+	inv.DeploymentScope = prepared.DeploymentScope
 	inv.EnvironmentID = info.environment.ID
 	return inv, info, nil
 }

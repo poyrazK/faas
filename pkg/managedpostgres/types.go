@@ -438,7 +438,8 @@ type UsageSnapshot struct {
 	HistoryByteSeconds int64
 	EgressBytes        int64
 	CostMillicents     int64
-	// Databases carries completeness for every ready database. Restores whose
+	// Databases carries completeness for ready databases and every known
+	// provider resource, including deletion tombstones. Restores whose
 	// usage is included in a source resolve to that source's coverage.
 	Databases []UsageProgress
 }
@@ -453,6 +454,14 @@ type UsageProgress struct {
 	ObservedAt       time.Time
 	SourceDatabaseID string
 	UpdatedAt        time.Time
+	// CorrectionObservedAt is the oldest observation in the covered final
+	// correction tail. Stores derive it from ledger rows when reading progress.
+	CorrectionObservedAt time.Time
+	// Terminal and EndedAt are snapshot metadata, not mutable coverage. A
+	// confirmed deletion has a finite coverage requirement that never ages
+	// into an active-resource freshness requirement.
+	Terminal bool
+	EndedAt  time.Time
 }
 
 // UsageLineItem is a normalized, provider-neutral meter line. It is an
@@ -502,18 +511,30 @@ func (p UsagePolicy) LineItems(snapshot UsageSnapshot) ([]UsageLineItem, error) 
 }
 
 func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
-	if !policy.Enabled || s.ReadyDatabases == 0 {
+	if !policy.Enabled {
 		return false
 	}
-	if len(s.Databases) > 0 && len(s.Databases) != s.ReadyDatabases {
+	if len(s.Databases) > 0 && len(s.Databases) < s.ReadyDatabases {
 		return true
 	}
 	for _, progress := range s.Databases {
-		if progress.Window != policy.Window || progress.ObservedAt.IsZero() ||
-			now.Sub(progress.ObservedAt) > policy.StaleAfter ||
-			progress.CollectedUntil.Before(now.UTC().Truncate(policy.Window)) {
+		if progress.Window != policy.Window || progress.ObservedAt.IsZero() {
 			return true
 		}
+		if progress.Terminal {
+			end := usageEnd(progress.EndedAt, policy.Window)
+			if end.IsZero() || progress.CollectedUntil.Before(end) ||
+				progress.CorrectionObservedAt.Before(end.Add(recentUsageCorrectionWindows*policy.Window)) {
+				return true
+			}
+			continue
+		}
+		if now.Sub(progress.ObservedAt) > policy.StaleAfter || progress.CollectedUntil.Before(now.UTC().Truncate(policy.Window)) {
+			return true
+		}
+	}
+	if len(s.Databases) > 0 || s.ReadyDatabases == 0 {
+		return false
 	}
 	return s.LastObservedAt.IsZero() || now.Sub(s.LastObservedAt) > policy.StaleAfter
 }
@@ -792,7 +813,7 @@ func (c UsageDatabaseCursor) isZero() bool { return c.ID == "" && c.UpdatedAt.Is
 // lifecycle test doubles remain small while production PostgreSQL can provide
 // an atomic, idempotent usage ledger and account snapshot.
 type UsageStore interface {
-	// ListUsageDatabases returns up to limit ready databases ordered by
+	// ListUsageDatabases returns up to limit known provider resources ordered by
 	// (updated_at, id), strictly after the cursor. The zero cursor starts
 	// from the beginning; a sweep pages until a short page.
 	ListUsageDatabases(ctx context.Context, after UsageDatabaseCursor, limit int) ([]Database, error)

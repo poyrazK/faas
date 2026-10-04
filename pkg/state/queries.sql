@@ -7055,7 +7055,7 @@ WITH owner AS (
     SELECT d.id, a.id AS app_id, a.account_id,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id,
-        d.override_env_secrets,d.sidecars,COALESCE(d.secret_reload_signal,'')::text AS reload_signal,
+        d.environment_workload_runtime,d.override_env_secrets,d.sidecars,COALESCE(d.secret_reload_signal,'')::text AS reload_signal,
         COALESCE(spec.id::text,'')::text AS spec_id,COALESCE(spec.config_hash,'')::text AS settings_hash,
         COALESCE(spec.settings,(to_jsonb(a)||jsonb_build_object(
             'public_auth_basic_sealed',encode(a.public_auth_basic,'base64'),
@@ -7082,7 +7082,7 @@ WITH owner AS (
             OR (runtime_owner.deployment_id IS NULL AND pin.deployment_id IS NULL
                 AND (COALESCE(NULLIF(d.scope,''),'default') IN ('default','production') OR a.project_id IS NULL OR legacy.id IS NOT NULL)))
 )
-SELECT owner.scope,owner.environment_id,owner.override_env_secrets,owner.sidecars,owner.reload_signal,
+SELECT owner.scope,owner.environment_id,owner.environment_workload_runtime,owner.override_env_secrets,owner.sidecars,owner.reload_signal,
     owner.spec_id,owner.settings_hash,owner.settings,owner.artifact,
     COALESCE((SELECT jsonb_agg(to_jsonb(layer) ORDER BY layer.sidecar_name)
         FROM deployment_sidecar_layers layer WHERE layer.deployment_id=owner.id),'[]'::jsonb)::jsonb AS layers,
@@ -8562,7 +8562,7 @@ INSERT INTO invocations (
   work_policy_name, work_key_digest, work_expires_at,
   work_sequence, work_policy_revision, work_fairness_digest,
   work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id,
-  occurrence_id, start_deadline_at, failure_rules
+  occurrence_id, start_deadline_at, failure_rules, environment_id
 ) VALUES (
   coalesce(sqlc.narg(id)::uuid, gen_random_uuid()), sqlc.arg(app_id), sqlc.arg(account_id),
   sqlc.arg(source), sqlc.arg(queue_name), coalesce(nullif(sqlc.arg(state)::text, ''), 'pending'),
@@ -8574,7 +8574,7 @@ INSERT INTO invocations (
   sqlc.narg(work_key_digest), sqlc.narg(work_expires_at), sqlc.narg(work_sequence),
   sqlc.narg(work_policy_revision), sqlc.narg(work_fairness_digest), sqlc.narg(work_fairness_limit),
   sqlc.narg(platform_tenant_id), nullif(sqlc.arg(deployment_scope)::text, ''), sqlc.narg(queue_binding_id),
-  sqlc.narg(occurrence_id)::uuid, sqlc.narg(start_deadline_at)::timestamptz, sqlc.narg(failure_rules)::jsonb
+  sqlc.narg(occurrence_id)::uuid, sqlc.narg(start_deadline_at)::timestamptz, sqlc.narg(failure_rules)::jsonb, sqlc.narg(environment_id)::uuid
 ) RETURNING *;
 
 -- Queue binding/consumer publication (ADR-393). Parent locks also serialize
@@ -8742,15 +8742,27 @@ where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
   and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name));
 
 -- name: QueueClaimActiveCount :one
-select count(*)::bigint from invocations
-where app_id=sqlc.arg(app_id)::uuid and source='queue'
-  and (sqlc.arg(binding_scope)::text='' or deployment_scope=sqlc.arg(binding_scope)::text)
-  and (queue_binding_id=sqlc.narg(binding_id)::uuid
-    or (sqlc.arg(binding_scope)::text='' and queue_binding_id is null and (queue_name=sqlc.arg(queue_name) or (queue_name=''
-      and work_policy_name is null and not exists (select 1 from triggers other
+select count(*)::bigint from invocations i
+where i.app_id=sqlc.arg(app_id)::uuid and i.source='queue'
+  and (sqlc.arg(binding_scope)::text='' or i.deployment_scope=sqlc.arg(binding_scope)::text)
+  and (i.queue_binding_id=sqlc.narg(binding_id)::uuid
+    or (sqlc.arg(binding_scope)::text='' and i.queue_binding_id is null and (i.queue_name=sqlc.arg(queue_name) or (i.queue_name=''
+      and i.work_policy_name is null and not exists (select 1 from triggers other
       where other.app_id=sqlc.arg(app_id)::uuid and other.kind='queue' and other.queue_binding_scope='' and other.enabled
         and other.source='queue' and other.id<>sqlc.arg(trigger_id)::uuid)))))
-  and state='dispatching' and lease_expires_at > clock_timestamp();
+  and i.state='dispatching' and i.lease_expires_at > clock_timestamp()
+ AND (exists (select 1 from queue_bindings accepted where accepted.id=i.queue_binding_id
+ and accepted.app_id=i.app_id and accepted.account_id=i.account_id and accepted.deployment_scope<>''
+ and accepted.deployment_scope=i.deployment_scope) OR (not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))))
+ AND i.environment_id IS NULL AND NOT EXISTS (SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id);
 
 -- name: QueueClaimPendingInvocation :one
 update invocations i set state='dispatching',
@@ -8768,6 +8780,18 @@ where i.id=sqlc.arg(id)::uuid and i.app_id=sqlc.arg(app_id)::uuid and i.source='
     and tr.item_identifier=i.id::text
     and not ((tr.state in ('pending','retry') and tr.next_fire_at<=clock_timestamp())
       or (tr.state='claimed' and tr.claim_expires_at<=clock_timestamp())))
+ AND (exists (select 1 from queue_bindings accepted where accepted.id=i.queue_binding_id
+ and accepted.app_id=i.app_id and accepted.account_id=i.account_id and accepted.deployment_scope<>''
+ and accepted.deployment_scope=i.deployment_scope) OR (not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))))
+ AND i.environment_id IS NULL AND NOT EXISTS (SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id)
 returning i.*;
 
 -- name: QueueReleasePendingBatchClaims :exec
@@ -8833,7 +8857,18 @@ select i.id::text from invocations i cross join consumer
     and (i.queue_name=sqlc.arg(queue_name)::text or (i.queue_name='' and i.work_policy_name is null
       and not exists (select 1 from triggers other where other.app_id=sqlc.arg(app_id)::uuid
         and other.kind='queue' and other.queue_binding_scope='' and other.enabled and other.source='queue' and other.id<>sqlc.arg(trigger_id)::uuid)))))
-		order by i.created_at, i.id limit sqlc.arg(candidate_limit)::integer;
+
+ AND (exists (select 1 from queue_bindings accepted where accepted.id=i.queue_binding_id
+ and accepted.app_id=i.app_id and accepted.account_id=i.account_id and accepted.deployment_scope<>''
+ and accepted.deployment_scope=i.deployment_scope) OR (not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))))		order by i.created_at, i.id limit sqlc.arg(candidate_limit)::integer;
 
 
 -- name: RetryQueueDeadLetterInvocation :one
@@ -8921,7 +8956,17 @@ with claimed as (
 			   and (tr.id is null
 			        or (tr.state in ('pending','retry') and tr.next_fire_at <= now())
 			        or (tr.state = 'claimed' and tr.claim_expires_at <= now()))
-			 order by i.created_at asc
+
+ AND NOT EXISTS (SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id)
+ and not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))			 order by i.created_at asc
 			 limit sqlc.arg(poll_limit)::integer
 			 for update of i skip locked
 		), updated as (
@@ -12643,8 +12688,88 @@ SELECT EXISTS(SELECT 1 FROM invocations i JOIN apps a ON a.id=i.app_id AND a.acc
 
 -- name: ReadBoundOrProductionQueueTriggerInvocation :one
 SELECT i.* FROM invocations i WHERE i.id=sqlc.arg(invocation_id) AND i.app_id=sqlc.arg(app_id) AND i.source='queue' AND i.environment_id IS NULL
- AND NOT EXISTS(SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id);
+ AND NOT EXISTS(SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id)
+ AND (exists (select 1 from queue_bindings accepted where accepted.id=i.queue_binding_id
+ and accepted.app_id=i.app_id and accepted.account_id=i.account_id and accepted.deployment_scope<>''
+ and accepted.deployment_scope=i.deployment_scope) OR (not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))));
 
 -- name: LockBoundOrProductionQueueTriggerInvocation :one
 SELECT i.id FROM invocations i WHERE i.id=sqlc.arg(invocation_id) AND i.app_id=sqlc.arg(app_id) AND i.source='queue' AND i.state='pending' AND i.environment_id IS NULL
- AND NOT EXISTS(SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id) FOR UPDATE OF i SKIP LOCKED;
+ AND NOT EXISTS(SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id)
+ AND (exists (select 1 from queue_bindings accepted where accepted.id=i.queue_binding_id
+ and accepted.app_id=i.app_id and accepted.account_id=i.account_id and accepted.deployment_scope<>''
+ and accepted.deployment_scope=i.deployment_scope) OR (not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-',''))))) FOR UPDATE OF i SKIP LOCKED;
+
+-- ADR-569: known resources remain accountable through lifecycle shutdown.
+-- name: ListManagedPostgresUsageResources :many
+SELECT d.* FROM managed_postgres_databases d
+WHERE NULLIF(d.provider_resource_id, '') IS NOT NULL
+  AND (sqlc.narg(after_updated_at)::timestamptz IS NULL
+       OR (d.updated_at, d.id) > (sqlc.narg(after_updated_at)::timestamptz, sqlc.arg(after_id)::uuid))
+ORDER BY d.updated_at, d.id LIMIT sqlc.arg(page_limit);
+
+-- name: LockManagedPostgresUsageResource :one
+SELECT d.* FROM managed_postgres_databases d WHERE d.id = sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: GetManagedPostgresUsageProgress :one
+SELECT c.collected_from, c.collected_until, c.observed_at, COALESCE(c.source_database_id::text, '')::text AS source_database_id,
+ (SELECT min(u.observed_at) FROM managed_postgres_usage u
+  WHERE u.database_id = d.id AND u.window_to <= c.collected_until
+    AND u.window_from >= GREATEST(c.collected_from, c.collected_until - 3 * sqlc.arg(window_seconds)::bigint * interval '1 second'))::timestamptz AS correction_observed_at
+FROM managed_postgres_databases d LEFT JOIN managed_postgres_usage_coverage c
+ON c.database_id = d.id AND c.window_seconds = sqlc.arg(window_seconds)::bigint
+WHERE d.account_id = sqlc.arg(account_id)::uuid AND d.id = sqlc.arg(database_id)::uuid;
+
+-- name: RecordManagedPostgresSharedUsage :execrows
+WITH RECURSIVE ancestry AS (
+ SELECT restore_source_database_id AS id FROM managed_postgres_databases
+ WHERE id = sqlc.arg(database_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+ UNION
+ SELECT d.restore_source_database_id FROM managed_postgres_databases d JOIN ancestry a ON d.id = a.id
+ WHERE d.account_id = sqlc.arg(account_id)::uuid
+)
+INSERT INTO managed_postgres_usage_coverage (database_id, window_seconds, source_database_id)
+SELECT d.id, sqlc.arg(window_seconds)::bigint, s.id FROM managed_postgres_databases d JOIN managed_postgres_databases s
+ON s.id = sqlc.arg(source_id)::uuid AND s.account_id = d.account_id
+AND s.backend_id = d.backend_id AND s.backend_fingerprint = d.backend_fingerprint
+WHERE d.id = sqlc.arg(database_id)::uuid AND d.account_id = sqlc.arg(account_id)::uuid
+AND NULLIF(d.provider_resource_id, '') IS NOT NULL AND NULLIF(s.provider_resource_id, '') IS NOT NULL
+AND s.id IN (SELECT id FROM ancestry)
+ON CONFLICT (database_id, window_seconds) DO UPDATE SET
+source_database_id = EXCLUDED.source_database_id, collected_from = NULL, collected_until = NULL,
+observed_at = NULL, updated_at = now();
+
+-- name: ListManagedPostgresAccountingCoverage :many
+SELECT d.state, COALESCE(source.state, d.state)::text AS accounting_state,
+(CASE WHEN source.id IS NULL THEN d.deleted_at ELSE source.deleted_at END)::timestamptz AS ended_at, COALESCE(c.window_seconds, 0)::bigint AS window_seconds,
+COALESCE(s.collected_from, c.collected_from)::timestamptz AS collected_from,
+COALESCE(s.collected_until, c.collected_until)::timestamptz AS collected_until,
+COALESCE(s.observed_at, c.observed_at)::timestamptz AS observed_at,
+(SELECT min(u.observed_at) FROM managed_postgres_usage u
+ WHERE u.database_id = COALESCE(c.source_database_id, d.id)
+ AND u.window_to <= COALESCE(s.collected_until, c.collected_until)
+ AND u.window_from >= GREATEST(COALESCE(s.collected_from, c.collected_from),
+ COALESCE(s.collected_until, c.collected_until) - 3 * c.window_seconds * interval '1 second'))::timestamptz AS correction_observed_at, COALESCE(c.source_database_id::text, '')::text AS source_database_id
+FROM managed_postgres_databases d
+LEFT JOIN LATERAL (SELECT * FROM managed_postgres_usage_coverage WHERE database_id = d.id
+ ORDER BY updated_at DESC, window_seconds DESC LIMIT 1) c ON true
+LEFT JOIN managed_postgres_databases source ON source.id = c.source_database_id
+LEFT JOIN managed_postgres_usage_coverage s ON s.database_id = c.source_database_id AND s.window_seconds = c.window_seconds
+WHERE d.account_id = sqlc.arg(account_id)::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL)
+ORDER BY d.id;

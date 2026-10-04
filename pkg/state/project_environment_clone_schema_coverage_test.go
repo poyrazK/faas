@@ -21,6 +21,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"environment_managed_fields":              CloneSchemaConfiguration,
 		"environment_management_overrides":        CloneSchemaConfiguration,
 		"environment_workload_graphs":             CloneSchemaConfiguration,
+		"deployment_route_policy_snapshots":       CloneSchemaConfiguration,
 		"instance_runtime_config_receipts":        CloneSchemaOperational,
 		"snapshot_runtime_config_receipts":        CloneSchemaOperational,
 		"financial_budget_policies":               CloneSchemaConfiguration,

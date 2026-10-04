@@ -24,6 +24,9 @@ func (m *MemStore) productionInvocationWorkLocked(inv Invocation) bool {
 	if _, ok := m.invocationWorkEnvironmentAdmissions[inv.ID]; ok {
 		return false
 	}
+	if binding, ok := m.queueBindings[inv.QueueBindingID]; ok && binding.DeploymentScope != "" && binding.AppID == inv.AppID && binding.AccountID == inv.AccountID && binding.DeploymentScope == inv.DeploymentScope {
+		return true
+	}
 	var headers map[string]json.RawMessage
 	if json.Unmarshal(inv.Headers, &headers) != nil {
 		return true

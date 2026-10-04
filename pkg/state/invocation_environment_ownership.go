@@ -68,6 +68,7 @@ func resolveInvocationEnvironmentAdmission(ctx context.Context, store interface 
 	}
 	info.deployment = version.DeploymentID
 	inv.Headers, inv.EnvironmentID = prepared.Headers, info.environment.ID
+	inv.DeploymentScope = prepared.DeploymentScope
 	if inv.AccountID == "" {
 		inv.AccountID = info.app.AccountID
 	}

@@ -60,7 +60,11 @@ func testEnvironmentQueueAdmission(t *testing.T, store environmentQueueInvocatio
 			t.Fatalf("injected input admitted: %+v", input)
 		}
 	}
+	// A production binding with the same label must not capture private work.
 	inv := enqueueStageQueue(t.Context(), t, store, f)
+	if inv.QueueBindingID != "" || inv.DeploymentScope != "stage" {
+		t.Fatalf("private work captured public binding or lost scope: %+v", inv)
+	}
 	owner, err := store.InvocationEnvironmentQueueAdmission(ctx, inv.ID)
 	if err != nil || owner.EnvironmentID != set.EnvironmentID || owner.RuntimeSetID != set.ID || owner.ConsumerID != set.Consumers[0].ID || owner.WorkloadSpecID != f.spec.ID || owner.SettingsHash != f.spec.Hash ||
 		owner.DefinitionHash != set.Consumers[0].DefinitionHash || owner.DeploymentID != f.dep.ID || inv.EnvironmentID != set.EnvironmentID || !owner.AdmittedAt.Equal(inv.CreatedAt) || inv.Source != state.InvocationQueue || inv.QueueName != "orders" {

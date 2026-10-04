@@ -1881,6 +1881,19 @@
     "kind": "operational"
   },
   {
+    "table": "deployment_route_policy_snapshots",
+    "kind": "configuration",
+    "columns": [
+      "app_id",
+      "captured_at",
+      "deployment_id",
+      "schema_version",
+      "scope",
+      "sha256",
+      "snapshot"
+    ]
+  },
+  {
     "table": "deployment_runtime_environment_owners",
     "columns": [
       "deployment_id",

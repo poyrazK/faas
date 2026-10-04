@@ -16,17 +16,46 @@ func (s *PostgresStore) ListUsageDatabases(ctx context.Context, after UsageDatab
 	if limit < 1 || limit > 100 {
 		return nil, ErrInvalid
 	}
-	var afterID pgtype.UUID
+	params := sqlc.ListManagedPostgresUsageResourcesParams{PageLimit: int32(limit)}
 	if !after.isZero() {
-		var err error
-		afterID, err = postgresUUID(after.ID)
+		id, err := postgresUUID(after.ID)
 		if err != nil {
 			return nil, err
 		}
+		params.AfterID = id
+		params.AfterUpdatedAt = pgtype.Timestamptz{Time: after.UpdatedAt, Valid: true}
 	}
-	rows, err := new(sqlc.Queries).ListManagedPostgresLifecycleUsageDatabases(ctx, s.pool, sqlc.ListManagedPostgresLifecycleUsageDatabasesParams{
-		FirstPage: after.isZero(), AfterTime: databaseNullableTime(after.UpdatedAt), AfterID: afterID, RowLimit: int32(limit)})
-	return databasesFromSQL(rows), mapPostgresError(err)
+	rows, err := sqlc.New().ListManagedPostgresUsageResources(ctx, s.pool, params)
+	if err != nil {
+		return nil, mapPostgresError(err)
+	}
+	items := make([]Database, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, usageDatabaseFromRow(row))
+	}
+	return items, nil
+}
+
+func usageDatabaseFromRow(row sqlc.ManagedPostgresDatabase) Database {
+	database := Database{
+		ID: cutoverUUID(row.ID), AccountID: cutoverUUID(row.AccountID), Name: row.Name,
+		Spec: Spec{Region: row.Region, PostgresMajor: int(row.PostgresMajor), Class: ServiceClass(row.ServiceClass),
+			Availability: Availability(row.Availability), ScaleToZero: row.ScaleToZero,
+			StorageLimitBytes: row.StorageLimitBytes, RestoreWindowSeconds: row.RestoreWindowSeconds},
+		BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint,
+		ProviderResourceID: row.ProviderResourceID.String, RestoreSourceResourceID: row.RestoreSourceResourceID.String,
+		RestorePointInTime: row.RestorePointInTime.Time, State: State(row.State),
+		DesiredGeneration: row.DesiredGeneration, ObservedGeneration: row.ObservedGeneration,
+		LastErrorCode: row.LastErrorCode.String, LeaseToken: row.LeaseToken.String, LeaseUntil: row.LeaseUntil.Time,
+		AttemptCount: row.AttemptCount, RetryAt: row.RetryAt.Time, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
+	}
+	if row.RestoreSourceDatabaseID.Valid {
+		database.RestoreSourceDatabaseID = cutoverUUID(row.RestoreSourceDatabaseID)
+	}
+	if row.DeletedAt.Valid {
+		database.DeletedAt = &row.DeletedAt.Time
+	}
+	return database
 }
 
 func (s *PostgresStore) UsageProgress(ctx context.Context, accountID, databaseID string, window time.Duration) (UsageProgress, error) {
@@ -38,16 +67,16 @@ func (s *PostgresStore) UsageProgress(ctx context.Context, accountID, databaseID
 	if err != nil {
 		return UsageProgress{}, err
 	}
-	var from, until, observed pgtype.Timestamptz
-	var source pgtype.Text
-	err = s.pool.QueryRow(ctx, `SELECT c.collected_from, c.collected_until, c.observed_at, c.source_database_id::text
- FROM managed_postgres_databases d LEFT JOIN managed_postgres_usage_coverage c
- ON c.database_id = d.id AND c.window_seconds = $3 WHERE d.account_id = $1 AND d.id = $2`,
-		account, database, int64(window/time.Second)).Scan(&from, &until, &observed, &source)
+	row, err := sqlc.New().GetManagedPostgresUsageProgress(ctx, s.pool, sqlc.GetManagedPostgresUsageProgressParams{
+		AccountID: account, DatabaseID: database, WindowSeconds: int64(window / time.Second),
+	})
 	if err != nil {
 		return UsageProgress{}, mapPostgresError(err)
 	}
-	return usageProgressFromColumns(window, from, until, observed, source), nil
+	progress := usageProgressFromColumns(window, row.CollectedFrom, row.CollectedUntil, row.ObservedAt,
+		pgtype.Text{String: row.SourceDatabaseID, Valid: row.SourceDatabaseID != ""})
+	progress.CorrectionObservedAt = row.CorrectionObservedAt.Time
+	return progress, nil
 }
 
 func usageProgressFromColumns(window time.Duration, from, until, observed pgtype.Timestamptz, source pgtype.Text) UsageProgress {
@@ -87,16 +116,18 @@ func (s *PostgresStore) RecordUsage(ctx context.Context, records []UsageRecord) 
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	// Serialize ledger replacement and coverage advancement across collectors.
-	var owner, backend, fingerprint string
-	var createdAt time.Time
-	if err := tx.QueryRow(ctx, `SELECT account_id::text, backend_id, backend_fingerprint, created_at
- FROM managed_postgres_databases WHERE id = $1 AND state <> 'deleted' FOR UPDATE`, database).
-		Scan(&owner, &backend, &fingerprint, &createdAt); err != nil {
+	row, err := sqlc.New().LockManagedPostgresUsageResource(ctx, tx, database)
+	if err != nil {
 		return mapPostgresError(err)
 	}
-	if owner != first.AccountID || backend != first.BackendID || fingerprint != first.BackendFingerprint {
+	resource := usageDatabaseFromRow(row)
+	if resource.AccountID != first.AccountID || resource.BackendID != first.BackendID || resource.BackendFingerprint != first.BackendFingerprint {
 		return ErrConflict
 	}
+	if err := validateUsageDatabaseWindow(resource, first); err != nil {
+		return err
+	}
+	createdAt := resource.CreatedAt
 	var from, until, observed pgtype.Timestamptz
 	var source pgtype.Text
 	err = tx.QueryRow(ctx, `SELECT collected_from, collected_until, observed_at, source_database_id::text
@@ -162,24 +193,13 @@ func (s *PostgresStore) RecordSharedUsage(ctx context.Context, accountID, databa
 	if err != nil {
 		return err
 	}
-	tag, err := s.pool.Exec(ctx, `WITH RECURSIVE ancestry AS (
- SELECT restore_source_database_id AS id FROM managed_postgres_databases WHERE id = $2 AND account_id = $1
- UNION
- SELECT d.restore_source_database_id FROM managed_postgres_databases d JOIN ancestry a ON d.id = a.id
- WHERE d.account_id = $1
- )
- INSERT INTO managed_postgres_usage_coverage (database_id, window_seconds, source_database_id)
- SELECT d.id, $4, s.id FROM managed_postgres_databases d JOIN managed_postgres_databases s
- ON s.id = $3 AND s.account_id = d.account_id AND s.backend_id = d.backend_id AND s.backend_fingerprint = d.backend_fingerprint
- WHERE d.id = $2 AND d.account_id = $1 AND d.state = 'ready' AND s.state = 'ready'
- AND s.id IN (SELECT id FROM ancestry)
- ON CONFLICT (database_id, window_seconds) DO UPDATE SET
- source_database_id = EXCLUDED.source_database_id, collected_from = NULL, collected_until = NULL,
- observed_at = NULL, updated_at = now()`, account, database, source, int64(window/time.Second))
+	count, err := sqlc.New().RecordManagedPostgresSharedUsage(ctx, s.pool, sqlc.RecordManagedPostgresSharedUsageParams{
+		AccountID: account, DatabaseID: database, SourceID: source, WindowSeconds: int64(window / time.Second),
+	})
 	if err != nil {
 		return mapPostgresError(err)
 	}
-	if tag.RowsAffected() != 1 {
+	if count != 1 {
 		return ErrConflict
 	}
 	return nil
@@ -211,35 +231,24 @@ func (s *PostgresStore) UsageSnapshot(ctx context.Context, accountID string, per
 	if err != nil {
 		return UsageSnapshot{}, mapPostgresError(err)
 	}
-	rows, err := tx.Query(ctx, `SELECT c.window_seconds,
- COALESCE(s.collected_from, c.collected_from), COALESCE(s.collected_until, c.collected_until),
- COALESCE(s.observed_at, c.observed_at), c.source_database_id::text
- FROM managed_postgres_databases d
- LEFT JOIN LATERAL (SELECT * FROM managed_postgres_usage_coverage WHERE database_id = d.id
- ORDER BY updated_at DESC, window_seconds DESC LIMIT 1) c ON true
- LEFT JOIN managed_postgres_usage_coverage s ON s.database_id = c.source_database_id AND s.window_seconds = c.window_seconds
- WHERE d.account_id = $1 AND d.state = 'ready' ORDER BY d.id`, account)
+	rows, err := sqlc.New().ListManagedPostgresAccountingCoverage(ctx, tx, account)
 	if err != nil {
 		return UsageSnapshot{}, mapPostgresError(err)
 	}
-	for rows.Next() {
-		var seconds pgtype.Int8
-		var from, until, observed pgtype.Timestamptz
-		var source pgtype.Text
-		if err := rows.Scan(&seconds, &from, &until, &observed, &source); err != nil {
-			rows.Close()
-			return UsageSnapshot{}, mapPostgresError(err)
-		}
-		progress := usageProgressFromColumns(time.Duration(seconds.Int64)*time.Second, from, until, observed, source)
-		if snapshot.ReadyDatabases == 0 || progress.ObservedAt.Before(snapshot.LastObservedAt) {
+	for _, row := range rows {
+		progress := usageProgressFromColumns(time.Duration(row.WindowSeconds)*time.Second,
+			row.CollectedFrom, row.CollectedUntil, row.ObservedAt,
+			pgtype.Text{String: row.SourceDatabaseID, Valid: row.SourceDatabaseID != ""})
+		progress.CorrectionObservedAt = row.CorrectionObservedAt.Time
+		progress.Terminal = row.AccountingState == string(StateDeleted)
+		progress.EndedAt = row.EndedAt.Time
+		if len(snapshot.Databases) == 0 || progress.ObservedAt.Before(snapshot.LastObservedAt) {
 			snapshot.LastObservedAt = progress.ObservedAt
 		}
 		snapshot.Databases = append(snapshot.Databases, progress)
-		snapshot.ReadyDatabases++
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return UsageSnapshot{}, mapPostgresError(err)
+		if row.State == string(StateReady) {
+			snapshot.ReadyDatabases++
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return UsageSnapshot{}, mapPostgresError(err)

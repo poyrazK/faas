@@ -1157,27 +1157,14 @@ func joinBootstrapContractHash(ansibleDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("select compute bootstrap contract: %w", err)
 	}
-	roots := []string{"node_join.yml", "requirements.yml", "roles/_shared"}
+	roots := append([]string{"node_join.yml", "requirements.yml"}, bootstrapSharedContractRoots("compute_nodes")...)
 	for _, roleName := range roleNames {
 		roots = append(roots, filepath.Join("roles", roleName))
 	}
-	var paths []string
-	for _, root := range roots {
-		path := filepath.Join(ansibleDir, root)
-		if err := filepath.WalkDir(path, func(path string, entry os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if entry.IsDir() {
-				return nil
-			}
-			paths = append(paths, path)
-			return nil
-		}); err != nil {
-			return "", fmt.Errorf("walk bootstrap contract %s: %w", root, err)
-		}
+	paths, err := ansibleContractFiles(ansibleDir, roots)
+	if err != nil {
+		return "", err
 	}
-	sort.Strings(paths)
 	hash := sha256.New()
 	if _, err := io.WriteString(hash, "bootstrap.compute.yml\x00"); err != nil {
 		return "", fmt.Errorf("hash compute bootstrap path: %w", err)
@@ -1219,7 +1206,48 @@ func joinBootstrapContractHash(ansibleDir string) (string, error) {
 // full OS bootstrap. The selected play bodies are part of the hash, so adding,
 // removing, reordering, or changing a compute pre-task still invalidates the
 // contract without maintaining a second handwritten role list.
+// bootstrapSharedContractRoots lists the non-role inputs a bootstrap play for
+// group reads: the task library roles include by path (roles/_shared, and
+// tasks/ via role_path), the play-level vars directory, and the group's
+// committed group_vars. Missing directories are skipped by the walkers.
+func bootstrapSharedContractRoots(group string) []string {
+	return []string{"roles/_shared", "tasks", "vars", filepath.Join("group_vars", group)}
+}
+
+// ansibleContractFiles returns every file under roots (relative to
+// ansibleDir), sorted. A root that does not exist contributes nothing, so a
+// removed optional directory changes the hash instead of failing the join.
+func ansibleContractFiles(ansibleDir string, roots []string) ([]string, error) {
+	var paths []string
+	for _, root := range roots {
+		path := filepath.Join(ansibleDir, root)
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err := filepath.WalkDir(path, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			paths = append(paths, path)
+			return nil
+		}); err != nil {
+			return nil, fmt.Errorf("walk bootstrap contract %s: %w", root, err)
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
 func computeBootstrapContract(body []byte) ([]byte, []string, error) {
+	return bootstrapPlayContract(body, "compute_nodes")
+}
+
+// bootstrapPlayContract selects the bootstrap.yml plays whose hosts pattern
+// names group, and the roles those plays apply.
+func bootstrapPlayContract(body []byte, group string) ([]byte, []string, error) {
 	var document yaml.Node
 	if err := yaml.Unmarshal(body, &document); err != nil {
 		return nil, nil, err
@@ -1234,7 +1262,7 @@ func computeBootstrapContract(body []byte) ([]byte, []string, error) {
 			continue
 		}
 		hosts := mappingValue(play, "hosts")
-		if hosts == nil || !strings.Contains(hosts.Value, "compute_nodes") {
+		if hosts == nil || !strings.Contains(hosts.Value, group) {
 			continue
 		}
 		selected.Content = append(selected.Content, play)
@@ -1259,7 +1287,7 @@ func computeBootstrapContract(body []byte) ([]byte, []string, error) {
 		}
 	}
 	if len(selected.Content) == 0 {
-		return nil, nil, errors.New("bootstrap.yml has no compute_nodes play")
+		return nil, nil, fmt.Errorf("bootstrap.yml has no %s play", group)
 	}
 	roleNames := make([]string, 0, len(roles))
 	for name := range roles {

@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -81,6 +82,20 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
+	// Durable private work must retain its original marker and explicit pin.
+	// Never repair a damaged envelope by resolving today's active release.
+	if reader, ok := store.(InvocationEnvironmentOwnerReader); ok && inv.ID != "" {
+		stored, readErr := reader.InvocationEnvironmentID(ctx, inv.ID)
+		if readErr != nil && !errors.Is(readErr, ErrNotFound) {
+			return inv, InvocationVersion{}, readErr
+		}
+		if readErr == nil && stored != inv.EnvironmentID {
+			return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
+		}
+	}
+	if inv.EnvironmentID != "" && revision == "" && release == "" {
+		return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
+	}
 	capturedScope := inv.DeploymentScope != ""
 	projectApp := app.ProjectID != "" && app.PreviewOfSlug == ""
 	scope, err := invocationDeploymentScope(app, inv.DeploymentScope)
@@ -107,6 +122,9 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 				return inv, InvocationVersion{}, scopeErr
 			}
 			if (ingress || capturedScope) && !invocationScopesMatch(projectApp, scope, pinScope) {
+				if inv.EnvironmentID != "" {
+					return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
+				}
 				return inv, InvocationVersion{}, ErrNotFound
 			}
 			scope = pinScope
@@ -117,14 +135,14 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if api.ValidateScope(scope) != nil {
 		return inv, InvocationVersion{}, ErrConflict
 	}
-	if !projectApp && scope != DefaultEnvScope {
+	if ingress && !projectApp && scope != DefaultEnvScope {
 		return inv, InvocationVersion{}, ErrNotFound
 	}
 	boundQueue, err := validateBoundQueueEnvironment(ctx, store, inv, scope)
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
-	if invocationStageScope(scope) {
+	if projectApp && invocationStageScope(scope) {
 		reader, ok := store.(invocationEnvironmentStore)
 		if !ok {
 			return inv, InvocationVersion{}, ErrConflict
