@@ -998,12 +998,16 @@ func InactiveAccountMayReach(acct state.Account, method, path string) bool {
 }
 
 func isBillingRecoveryRoute(method, path string) bool {
+	if financialBudgetRecoveryRoute(method, path) {
+		return true
+	}
 	if method == http.MethodPost && strings.HasPrefix(path, "/v1/invoices/") && strings.HasSuffix(path, "/refresh") && strings.Count(path, "/") == 4 {
 		return true
 	}
 	switch method + " " + path {
 	case "GET /v1/account", "GET /v1/account/export", "GET /v1/usage",
 		"GET /v1/billing/portal", "GET /v1/billing/status", "GET /v1/billing/focus", "POST /v1/billing/retry",
+		"GET /v1/billing/costs", "GET /v1/billing/forecast", "GET /v1/billing/budgets", "POST /v1/billing/budgets/preview",
 		"PATCH /v1/account/plan",
 		// Completing MFA is what clears an mfa_pending session and
 		// stamps the step-up that retry and plan change require.
@@ -1011,6 +1015,20 @@ func isBillingRecoveryRoute(method, path string) bool {
 		return true
 	}
 	return false
+}
+
+// ADR-566: customers can inspect and release budget intent while payment or
+// deletion holds remain. Handlers authorize ownership and never clear the
+// account status; allowing these routes does not resume compute.
+func financialBudgetRecoveryRoute(method, path string) bool {
+	parts := strings.Split(path, "/")
+	if len(parts) < 5 || parts[0] != "" || parts[1] != "v1" || parts[2] != "billing" || parts[3] != "budgets" || parts[4] == "" || parts[4] == "preview" {
+		return false
+	}
+	if len(parts) == 5 {
+		return method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete
+	}
+	return len(parts) == 6 && parts[5] == "revisions" && method == http.MethodGet
 }
 
 // --- RequireLimited ------------------------------------------------------

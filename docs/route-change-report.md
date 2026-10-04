@@ -17,15 +17,25 @@ gregale preview report pr-42-checkout --json > route-report.json
 gregale preview report pr-42-checkout --format markdown > route-report.md
 ```
 
-Markdown can be attached to a CI job summary. JSON uses a `version: 5` envelope,
-with or without `--source-impact`. Update consumers that accepted only versions
-1, 2, 3, or 4. Version 5 adds [observed customer exposure](route-customer-impact.md)
-for the selected baseline deployment, with counts by default and optional
-identity details. Version 4 added separate declared-security evidence and per-route
+Markdown can be attached to a CI job summary. JSON uses a `version: 6` envelope,
+with or without `--source-impact`. Update consumers that accepted only earlier
+versions. Version 6 adds per-route `policy_drift` for matching app edge rules;
+version 5 added [observed customer exposure](route-customer-impact.md) for the
+selected baseline deployment, with counts by default and optional identity
+details. Version 4 added separate declared-security evidence and per-route
 `security_compatibility`, alongside request-comparison evidence and findings,
 selected deployment IDs, document fingerprints, and per-route next actions.
 No raw rule actions, schema values, defaults, examples, reference URLs,
 request queries, or test error messages are included.
+
+Policy drift reads the parent and preview apps' current edge-rule configuration
+and compares rules whose path and method selectors cover each reported route.
+It reports additions, removals, priority/enabled/mode changes, and action
+changes, with rule IDs and selectors as provenance. Match-header values and raw
+actions stay private. This comparison is advisory: it is not a deployment-time
+policy snapshot or a simulation of every host, header, or request context. The
+top-level `policy_drift.scope` is `current_app_pair`; unavailable or malformed
+rule evidence is reported as incomplete rather than unchanged.
 
 Customer exposure reads the parent app's selected baseline deployment in the
 `--since` window, with its end fixed at report generation time. Text, Markdown,
@@ -90,8 +100,10 @@ routes, and conflicting route presence remain unmatched. Current declarations
 and traffic observations cannot substitute for captured contracts. Contract
 classification stays separate from source classification.
 
-The optional `source_impact` joins share `review_priorities` with request and
-declared-security findings.
+The optional `source_impact` joins share `review_priorities` with request,
+declared-security, and route-policy drift findings. Changed edge rules receive
+route-level review entries; unavailable or uncomparable policy evidence needs
+follow-up before relying on the comparison.
 Text and Markdown show
 handler locations, static reference chains, mapping status, and next actions.
 Source issue messages and the artifact's free-form scope are not copied into
@@ -102,8 +114,8 @@ stay separate from deployment tests and traffic.
 | Priority | What requires attention |
 |---|---|
 | `blocker` | Known request or response-contract break, declared authentication reduction or client restriction, route removal, failed candidate checks, declared requirement violations, unassigned candidate operations, or empty policy groups. |
-| `needs_evidence` | Unresolved request/security comparison, unbound source, incomplete analysis, unresolved route mapping, unknown requirements or family coverage, missing candidate inventory, or affected routes without passing candidate samples. |
-| `review` | Source changes with available passing samples that still require behavior review. |
+| `needs_evidence` | Unresolved request/security/policy comparison, unbound source, incomplete analysis, unresolved route mapping, unknown requirements or family coverage, missing candidate inventory, or affected routes without passing candidate samples. |
+| `review` | Source changes with available passing samples and changed route rules that need behavior review. |
 
 Within each priority, revision-attributed baseline request counts order
 attention; unavailable traffic remains unavailable. This is an explainable
@@ -336,8 +348,10 @@ response break, candidate test failure, or policy violation already has
 precedence. Unknown requests contribute to an incomplete report. Availability
 of captured evidence and comparison completeness are separate facts: an
 available request comparison can still contain unknown routes. The command
-uses the same six account-scoped GETs in its default path and runs no tests or
-application requests.
+uses eight account-scoped GETs in its default path and runs no tests or
+application requests. Adding `--requirements` performs one candidate app
+configuration read; its route-rule inventory reuses the report's candidate
+edge-rule read.
 
 ## Policy and performance evidence
 
@@ -390,6 +404,9 @@ lookup exit nonzero.
   authentication requirements. Missing/unknown evidence and stricter client
   requirements alone do not satisfy this gate. Combine with
   `--fail-on-incomplete` to reject unresolved security evidence as well.
+- `--fail-on-policy-drift` exits 1 when any route rule configuration changed or
+  the parent/preview comparison is incomplete. Intentional changes can be
+  reviewed in the emitted report before updating the CI baseline.
 - `--fail-on-incomplete` exits 1 when the outcome is not `no_findings`, including
   missing or unresolved evidence, source review, failed tests, and known breaks.
 - `--fail-on-requirements` requires a requirements file and exits 1 for violated
@@ -403,14 +420,15 @@ not a claim that the API is universally compatible or safe to release.
 
 ## Next increments
 
-1. Extend request comparison to additional composed schemas and validation
-   keywords, and capture effective gateway policies across revisions with
-   explicit provenance for enforcement drift review.
-2. Run customer-defined assertions against an identified preview revision and
+1. Capture deployment-time gateway policy snapshots so rule drift can be tied
+   to the exact baseline and candidate revisions rather than current app state.
+2. Extend request comparison to additional composed schemas and validation
+   keywords.
+3. Run customer-defined assertions against an identified preview revision and
    persist coverage without requiring a local receipt attachment.
-3. Turn a selected failure into an editable, redacted regression scenario with
+4. Turn a selected failure into an editable, redacted regression scenario with
    explicit fixtures and isolated dependencies.
-4. Extend policy plans with the preview evaluator's scoped template coverage
+5. Extend policy plans with the preview evaluator's scoped template coverage
    and confirmed application of reviewed changes.
-5. Validate optimization suggestions through controlled comparisons, including
+6. Validate optimization suggestions through controlled comparisons, including
    separate warm, cold, and restored measurements.
