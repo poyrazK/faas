@@ -185,3 +185,39 @@ This is the recovery primitive for the upcoming multi-target coordinator. It
 proves regional acceptance; health checks, quota allocations and ingress
 publication must establish serving eligibility separately. The default global
 policy remains `all_selected_regions`.
+
+## Ordered global image intent
+
+ADR-479 adds an optional generation fence to the regional receipt PUT:
+
+```go
+request := api.PutCellImageReleaseRequest{
+    Image: pinnedImage,
+    Ordering: &api.CellImageReleaseOrdering{GlobalAppID: globalAppUUID, Generation: generation},
+}
+receipt, err := regional.PutCellImageRelease(ctx, cellUUID, regionalAppUUID, releaseUUID, request)
+```
+
+The coordinator must allocate the generation once under the global app lock and
+persist it with the immutable release before dispatching to every selected region.
+Do not invent a larger generation when retrying old work. Every global submission
+must supply ordering. Matching retries reuse the release UUID, image, global app
+UUID and generation. GET and accepted PUT report ordering when present.
+
+The first ordered acceptance binds the regional app to that global app stream and
+current regional owner. Only a higher generation can create new ordered intent.
+A delayed older request returns `regional_image_release_order_conflict` (409),
+creating no deployment or activity. A matching old receipt can still replay after
+a newer generation, without replacing it. Changed ordering on the same release
+UUID returns `regional_image_release_conflict` (409). Generations are positive
+integers through 9007199254740991, preserving exact JSON precision in every SDK.
+
+Keep generation heads and receipts in regional backups. Deployment collection
+does not reset the fence; hard app deletion removes it. Destructive downgrade is
+refused while ordered receipts remain. Ownership transfer needs an explicit
+global stream adoption protocol before ordered intent can resume under another
+owner. Local unordered deployment remains a separate regional intent path.
+
+The fence orders regional acceptance. Global coordination, health, quota and
+ingress publication still establish which accepted deployment can serve, using
+the `all_selected_regions` default policy.

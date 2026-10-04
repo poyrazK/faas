@@ -32,17 +32,20 @@ func (s *server) putCellImageRelease(w http.ResponseWriter, r *http.Request, acc
 	var req api.PutCellImageReleaseRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, api.CellImageReleaseRequestMaxBytes))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&req) != nil || decoder.Decode(&struct{}{}) != io.EOF || len(req.Image) > api.CellImageReleaseImageMaxBytes || !api.ValidDeploymentImage(req.Image) {
+	if decoder.Decode(&req) != nil || decoder.Decode(&struct{}{}) != io.EOF || len(req.Image) > api.CellImageReleaseImageMaxBytes || !api.ValidDeploymentImage(req.Image) || (req.Ordering != nil && !req.Ordering.Valid()) {
 		api.WriteProblem(w, api.ErrValidation("send one bounded JSON object containing a digest-pinned image"))
 		return
 	}
-	if s.replayCellImageRelease(w, r, acct, req.Image) {
+	if s.replayCellImageRelease(w, r, acct, req) {
 		return
 	}
 	app, _ := r.Context().Value(cellDeploymentAppContextKey{}).(state.App)
 	request := &cellImageReleaseRequest{intent: state.RegionalImageReleaseIntent{
 		CellID: s.controlPlaneCell.ID, AppID: app.ID, ReleaseID: releaseID, AccountID: acct.ID, OrgID: app.OrgID, ImageRef: req.Image,
 	}}
+	if req.Ordering != nil {
+		request.intent.GlobalAppID, request.intent.Generation = req.Ordering.GlobalAppID, req.Ordering.Generation
+	}
 	r = r.WithContext(context.WithValue(r.Context(), cellImageReleaseContextKey{}, request))
 	body, _ := json.Marshal(api.CreateDeploymentRequest{Image: req.Image})
 	r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(body)), int64(len(body))
@@ -74,12 +77,12 @@ func (s *server) readCellImageRelease(r *http.Request, acct state.Account) (stat
 	return receipt, err
 }
 
-func (s *server) replayCellImageRelease(w http.ResponseWriter, r *http.Request, acct state.Account, image string) bool {
+func (s *server) replayCellImageRelease(w http.ResponseWriter, r *http.Request, acct state.Account, req api.PutCellImageReleaseRequest) bool {
 	receipt, err := s.readCellImageRelease(r, acct)
 	if errors.Is(err, state.ErrNotFound) {
 		return false
 	}
-	if err == nil && receipt.ImageRef != image {
+	if err == nil && (receipt.ImageRef != req.Image || !cellImageReleaseOrderingMatches(receipt, req.Ordering)) {
 		err = state.ErrRegionalImageReleaseConflict
 	}
 	if err == nil && receipt.DeploymentID == "" {
@@ -97,7 +100,9 @@ func (s *server) replayCellImageRelease(w http.ResponseWriter, r *http.Request, 
 func (s *server) writeCellImageReleaseError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, state.ErrRegionalImageReleaseConflict):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeRegionalImageReleaseConflict, "Release already accepted", "This release UUID identifies another image. Choose a new release UUID."))
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeRegionalImageReleaseConflict, "Release already accepted", "This release UUID identifies different image or ordering input. Choose a new release UUID."))
+	case errors.Is(err, state.ErrRegionalImageReleaseOrder):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeRegionalImageReleaseOrder, "Release ordering conflicts", "This global release generation is stale or the regional app is bound to another release stream."))
 	case errors.Is(err, state.ErrRegionalImageReleaseExpired):
 		api.WriteProblem(w, api.NewProblem(http.StatusGone, api.CodeRegionalImageReleaseExpired, "Release deployment collected", "The accepted deployment was collected. This release UUID cannot be executed again."))
 	case errors.Is(err, state.ErrInvalidArgument):
@@ -115,11 +120,22 @@ func (s *server) cellImageReleaseResponse(receipt state.RegionalImageReleaseRece
 		id := cellImageReleaseWireID(receipt.DeploymentID)
 		deploymentID = &id
 	}
-	return api.CellImageReleaseResponse{
+	response := api.CellImageReleaseResponse{
 		CellID: receipt.CellID, Region: s.controlPlaneCell.Region, RegionalAccountID: cellImageReleaseWireID(receipt.AccountID), RegionalAppID: receipt.AppID,
 		ReleaseID: receipt.ReleaseID, Image: receipt.ImageRef, DeploymentID: deploymentID, DeploymentStatus: receipt.DeploymentStatus,
 		CreatedAt: receipt.CreatedAt, Replayed: replayed,
 	}
+	if receipt.GlobalAppID != "" {
+		response.Ordering = &api.CellImageReleaseOrdering{GlobalAppID: receipt.GlobalAppID, Generation: receipt.Generation}
+	}
+	return response
+}
+
+func cellImageReleaseOrderingMatches(receipt state.RegionalImageReleaseReceipt, ordering *api.CellImageReleaseOrdering) bool {
+	if ordering == nil {
+		return receipt.GlobalAppID == "" && receipt.Generation == 0
+	}
+	return receipt.GlobalAppID == ordering.GlobalAppID && receipt.Generation == ordering.Generation
 }
 
 func (s *server) createImageDeploymentIntent(r *http.Request, dep state.Deployment, activity *state.OrgActivity) (state.Deployment, int64, bool, error) {

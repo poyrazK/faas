@@ -87,6 +87,9 @@ func TestPGRegionalImageReleaseGuardsAndCollection(t *testing.T) {
 	if _, err := store.RegionalImageReleaseReceipt(t.Context(), cellID, app.ID, intent.ReleaseID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("receipt survived hard app cleanup: %v", err)
 	}
+	if _, err := pool.Exec(t.Context(), regionalImageReleaseOrderingDownSQL(t)); err != nil {
+		t.Fatalf("empty ordering downgrade: %v", err)
+	}
 	if _, err := pool.Exec(t.Context(), down); err != nil {
 		t.Fatalf("empty downgrade: %v", err)
 	}

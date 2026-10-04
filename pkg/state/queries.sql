@@ -6460,7 +6460,8 @@ FOR UPDATE OF a;
 
 -- name: RegionalImageReleaseReceipt :one
 SELECT r.app_id, r.release_id, r.cell_id, r.account_id, r.image_ref,
-       r.deployment_id, r.created_at, COALESCE(d.status, 'expired')::text AS deployment_status
+       r.deployment_id, r.created_at, r.global_app_id, r.generation,
+       COALESCE(d.status, 'expired')::text AS deployment_status
 FROM regional_image_release_receipts r
 JOIN apps a ON a.id = r.app_id
 LEFT JOIN deployments d ON d.id = r.deployment_id
@@ -6478,7 +6479,12 @@ WHERE r.cell_id = sqlc.arg(cell_id)::uuid
 
 -- name: InsertRegionalImageReleaseReceipt :exec
 INSERT INTO regional_image_release_receipts
-    (app_id, release_id, cell_id, account_id, image_ref, deployment_id, created_at)
+    (app_id, release_id, cell_id, account_id, image_ref, deployment_id, created_at, global_app_id, generation)
 VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(release_id)::uuid, sqlc.arg(cell_id)::uuid,
         sqlc.arg(account_id)::uuid, sqlc.arg(image_ref)::text,
-        sqlc.arg(deployment_id)::uuid, sqlc.arg(created_at)::timestamptz);
+        sqlc.arg(deployment_id)::uuid, sqlc.arg(created_at)::timestamptz,
+        sqlc.narg(global_app_id)::uuid, sqlc.narg(generation)::bigint);
+
+-- name: RegionalImageReleaseHead :one
+SELECT cell_id, account_id, global_app_id, generation FROM regional_image_release_heads
+WHERE app_id = sqlc.arg(app_id)::uuid;

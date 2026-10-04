@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
+
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.cell_image_release_ordering import CellImageReleaseOrdering
+
 
 T = TypeVar("T", bound="CellImageReleaseResponse")
 
@@ -28,6 +34,9 @@ class CellImageReleaseResponse:
     created_at: datetime.datetime
     replayed: bool
     """Whether PUT returned an existing acceptance receipt. Always false for GET."""
+    ordering: CellImageReleaseOrdering | Unset = UNSET
+    """Immutable global app stream and increasing generation. Older first submissions cannot supersede an accepted
+    newer generation."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +64,10 @@ class CellImageReleaseResponse:
 
         replayed = self.replayed
 
+        ordering: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.ordering, Unset):
+            ordering = self.ordering.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -71,11 +84,15 @@ class CellImageReleaseResponse:
                 "replayed": replayed,
             }
         )
+        if ordering is not UNSET:
+            field_dict["ordering"] = ordering
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.cell_image_release_ordering import CellImageReleaseOrdering
+
         d = dict(src_dict)
         cell_id = UUID(d.pop("cell_id"))
 
@@ -110,6 +127,13 @@ class CellImageReleaseResponse:
 
         replayed = d.pop("replayed")
 
+        _ordering = d.pop("ordering", UNSET)
+        ordering: CellImageReleaseOrdering | Unset
+        if isinstance(_ordering, Unset):
+            ordering = UNSET
+        else:
+            ordering = CellImageReleaseOrdering.from_dict(_ordering)
+
         cell_image_release_response = cls(
             cell_id=cell_id,
             region=region,
@@ -121,6 +145,7 @@ class CellImageReleaseResponse:
             deployment_status=deployment_status,
             created_at=created_at,
             replayed=replayed,
+            ordering=ordering,
         )
 
         cell_image_release_response.additional_properties = d

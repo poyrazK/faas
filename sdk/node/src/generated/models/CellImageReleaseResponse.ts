@@ -2,10 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CellImageReleaseOrdering } from './CellImageReleaseOrdering.js';
 /**
  * Durable regional acceptance receipt. This does not establish global readiness or routing eligibility.
  */
 export type CellImageReleaseResponse = {
+  ordering?: CellImageReleaseOrdering;
   cell_id: string;
   region: string;
   regional_account_id: string;

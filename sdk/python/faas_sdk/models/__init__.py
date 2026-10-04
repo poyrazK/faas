@@ -323,6 +323,7 @@ from .capability_status_maturity import CapabilityStatusMaturity
 from .capability_status_plans_item import CapabilityStatusPlansItem
 from .capability_status_unavailable_reason import CapabilityStatusUnavailableReason
 from .cell_app_binding_response import CellAppBindingResponse
+from .cell_image_release_ordering import CellImageReleaseOrdering
 from .cell_image_release_response import CellImageReleaseResponse
 from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
@@ -2489,6 +2490,7 @@ __all__ = (
     "CapabilityStatusPlansItem",
     "CapabilityStatusUnavailableReason",
     "CellAppBindingResponse",
+    "CellImageReleaseOrdering",
     "CellImageReleaseResponse",
     "ChangeMemberRoleRequest",
     "ChangeMemberRoleRequestRole",

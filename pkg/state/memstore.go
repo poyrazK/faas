@@ -139,6 +139,7 @@ type jobRegistryCredentialKey struct {
 
 type MemStore struct {
 	regionalImageReleaseReceipts map[string]RegionalImageReleaseReceipt
+	regionalImageReleaseHeads    map[string]RegionalImageReleaseReceipt
 	runtimeLogArchiveBindings    map[string]RuntimeLogArchiveBinding
 	runtimeLogArchives           map[string]RuntimeLogArchive
 	runtimeLogArchiveFragments   map[string]bool
@@ -6431,6 +6432,12 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		}
 	}
 	delete(m.appDeletionClaims, id)
+	delete(m.regionalImageReleaseHeads, id)
+	for key, receipt := range m.regionalImageReleaseReceipts {
+		if receipt.AppID == id {
+			delete(m.regionalImageReleaseReceipts, key)
+		}
+	}
 	for key, v := range m.envs {
 		if v.AppID == id {
 			delete(m.envs, key)
@@ -7154,6 +7161,12 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, regiona
 			m.regionalImageReleaseReceipts = make(map[string]RegionalImageReleaseReceipt)
 		}
 		m.regionalImageReleaseReceipts[d.AppID+"/"+regional.intent.ReleaseID] = regional.receipt
+		if regional.intent.GlobalAppID != "" {
+			if m.regionalImageReleaseHeads == nil {
+				m.regionalImageReleaseHeads = make(map[string]RegionalImageReleaseReceipt)
+			}
+			m.regionalImageReleaseHeads[d.AppID] = regional.receipt
+		}
 	}
 	var outboxID int64
 	if activity != nil {

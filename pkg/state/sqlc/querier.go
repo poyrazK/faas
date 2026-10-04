@@ -1312,6 +1312,7 @@ type Querier interface {
 	// original deployment_id. ON CONFLICT DO NOTHING (rather than
 	// DO UPDATE) is correct: the original row is canonical.
 	RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg RecordUploadCommitOutcomeParams) (UploadCommitOutcome, error)
+	RegionalImageReleaseHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalImageReleaseHeadRow, error)
 	RegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg RegionalImageReleaseReceiptParams) (RegionalImageReleaseReceiptRow, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
 	ReleaseMirrorSlotLease(ctx context.Context, db DBTX, arg ReleaseMirrorSlotLeaseParams) error

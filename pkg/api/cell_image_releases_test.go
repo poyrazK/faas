@@ -3,6 +3,7 @@ package api
 // adr: 478
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,30 @@ import (
 
 	"github.com/google/uuid"
 )
+
+func TestCellImageReleaseOrderingBounds(t *testing.T) {
+	for _, value := range []CellImageReleaseOrdering{{GlobalAppID: uuid.NewString(), Generation: 1}, {GlobalAppID: uuid.NewString(), Generation: GlobalImageReleaseGenerationMax}} {
+		if !value.Valid() {
+			t.Fatalf("valid ordering rejected: %+v", value)
+		}
+		body, err := json.Marshal(PutCellImageReleaseRequest{Image: "image", Ordering: &value})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded PutCellImageReleaseRequest
+		if err := json.Unmarshal(body, &decoded); err != nil || decoded.Ordering == nil || *decoded.Ordering != value {
+			t.Fatalf("generation lost JSON precision: %+v %v", decoded, err)
+		}
+	}
+	for _, value := range []CellImageReleaseOrdering{{GlobalAppID: uuid.Nil.String(), Generation: 1}, {GlobalAppID: uuid.NewString(), Generation: 0}, {GlobalAppID: uuid.NewString(), Generation: GlobalImageReleaseGenerationMax + 1}} {
+		if value.Valid() {
+			t.Fatalf("invalid ordering accepted: %+v", value)
+		}
+	}
+	if StatusForCode(CodeRegionalImageReleaseOrder) != http.StatusConflict {
+		t.Fatal("ordering conflict status")
+	}
+}
 
 func TestCellImageReleaseSDKRefusesRedirects(t *testing.T) {
 	for _, method := range []string{http.MethodPut, http.MethodGet} {

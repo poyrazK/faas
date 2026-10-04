@@ -37,6 +37,8 @@ const (
 const (
 	CellImageReleaseRequestMaxBytes = 4096
 	CellImageReleaseImageMaxBytes   = 2048
+	// ADR-479: generations must round-trip exactly through every JSON SDK.
+	GlobalImageReleaseGenerationMax int64 = 9007199254740991
 )
 
 // OCI healthcheck image durations are nanoseconds. Docker permits zero for

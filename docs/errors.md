@@ -39,9 +39,15 @@ Never paste secrets into an error report. Request IDs and deployment IDs are
 safe correlation handles for support and `gregale debug`.
 
 Regional image release retries return `regional_image_release_conflict` (409) when
-one release UUID is reused for another image. Retain the original UUID for matching
+one release UUID is reused for another image or ordering. Retain the original UUID for matching
 retries and choose a new one for a new deployment. `regional_image_release_expired`
 (410) means the originally accepted deployment was collected; its receipt remains
 and that UUID cannot be executed again. Read the receipt with GET, then choose a
 new release UUID if another deployment is intended. See
 [durable regional image acceptance](ops/global-app-directory.md#durable-image-release-acceptance).
+
+`regional_image_release_order_conflict` (409) rejects a first submission whose
+global generation is not greater than the region's accepted generation, or whose
+stream identity or owner differs. Reconcile the current global release instead
+of resubmitting an older one with an invented larger generation. Matching receipt
+retries retain their original image, global app UUID and generation.

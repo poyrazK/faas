@@ -129,9 +129,12 @@ def sync_detailed(
     verified email, and MFA when required. Uses the regional app configuration
     and the existing image deployment pipeline. The body is limited to 4096 bytes.
     Authorization and current app ownership are checked before durable replay.
-    A matching release UUID and image return the same deployment forever,
-    independently of the ordinary 24-hour request cache. A different image
-    returns regional_image_release_conflict (409). A collected deployment
+    A matching release UUID, image and ordering return the same deployment forever,
+    independently of the ordinary 24-hour request cache. Different immutable input
+    returns regional_image_release_conflict (409). Optional ordering binds the app
+    to a global app stream; a first acceptance must increase its generation.
+    Stale generations or a changed stream return regional_image_release_order_conflict
+    (409). Matching receipt retries remain valid after a newer generation. A collected deployment
     returns regional_image_release_expired (410); it is never executed again.
     No Idempotency-Key header is required. Redirects must not be followed.
     This receipt proves regional acceptance, not global readiness or routing.
@@ -179,9 +182,12 @@ def sync(
     verified email, and MFA when required. Uses the regional app configuration
     and the existing image deployment pipeline. The body is limited to 4096 bytes.
     Authorization and current app ownership are checked before durable replay.
-    A matching release UUID and image return the same deployment forever,
-    independently of the ordinary 24-hour request cache. A different image
-    returns regional_image_release_conflict (409). A collected deployment
+    A matching release UUID, image and ordering return the same deployment forever,
+    independently of the ordinary 24-hour request cache. Different immutable input
+    returns regional_image_release_conflict (409). Optional ordering binds the app
+    to a global app stream; a first acceptance must increase its generation.
+    Stale generations or a changed stream return regional_image_release_order_conflict
+    (409). Matching receipt retries remain valid after a newer generation. A collected deployment
     returns regional_image_release_expired (410); it is never executed again.
     No Idempotency-Key header is required. Redirects must not be followed.
     This receipt proves regional acceptance, not global readiness or routing.
@@ -224,9 +230,12 @@ async def asyncio_detailed(
     verified email, and MFA when required. Uses the regional app configuration
     and the existing image deployment pipeline. The body is limited to 4096 bytes.
     Authorization and current app ownership are checked before durable replay.
-    A matching release UUID and image return the same deployment forever,
-    independently of the ordinary 24-hour request cache. A different image
-    returns regional_image_release_conflict (409). A collected deployment
+    A matching release UUID, image and ordering return the same deployment forever,
+    independently of the ordinary 24-hour request cache. Different immutable input
+    returns regional_image_release_conflict (409). Optional ordering binds the app
+    to a global app stream; a first acceptance must increase its generation.
+    Stale generations or a changed stream return regional_image_release_order_conflict
+    (409). Matching receipt retries remain valid after a newer generation. A collected deployment
     returns regional_image_release_expired (410); it is never executed again.
     No Idempotency-Key header is required. Redirects must not be followed.
     This receipt proves regional acceptance, not global readiness or routing.
@@ -272,9 +281,12 @@ async def asyncio(
     verified email, and MFA when required. Uses the regional app configuration
     and the existing image deployment pipeline. The body is limited to 4096 bytes.
     Authorization and current app ownership are checked before durable replay.
-    A matching release UUID and image return the same deployment forever,
-    independently of the ordinary 24-hour request cache. A different image
-    returns regional_image_release_conflict (409). A collected deployment
+    A matching release UUID, image and ordering return the same deployment forever,
+    independently of the ordinary 24-hour request cache. Different immutable input
+    returns regional_image_release_conflict (409). Optional ordering binds the app
+    to a global app stream; a first acceptance must increase its generation.
+    Stale generations or a changed stream return regional_image_release_order_conflict
+    (409). Matching receipt retries remain valid after a newer generation. A collected deployment
     returns regional_image_release_expired (410); it is never executed again.
     No Idempotency-Key header is required. Redirects must not be followed.
     This receipt proves regional acceptance, not global readiness or routing.

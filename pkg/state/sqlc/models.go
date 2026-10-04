@@ -3814,6 +3814,15 @@ type RecentBuildClaim struct {
 	OrgID     pgtype.UUID
 }
 
+type RegionalImageReleaseHead struct {
+	AppID       pgtype.UUID
+	CellID      pgtype.UUID
+	AccountID   pgtype.UUID
+	GlobalAppID pgtype.UUID
+	Generation  int64
+	ReleaseID   pgtype.UUID
+}
+
 type RegionalImageReleaseReceipt struct {
 	AppID        pgtype.UUID
 	ReleaseID    pgtype.UUID
@@ -3822,6 +3831,8 @@ type RegionalImageReleaseReceipt struct {
 	ImageRef     string
 	DeploymentID pgtype.UUID
 	CreatedAt    pgtype.Timestamptz
+	GlobalAppID  pgtype.UUID
+	Generation   pgtype.Int8
 }
 
 type ReleaseBundle struct {

@@ -405,6 +405,7 @@ const (
 	CodeProjectEnvironmentApprovalInvalid     = "project_environment_approval_invalid"
 	CodeRegionalImageReleaseConflict          = "regional_image_release_conflict"
 	CodeRegionalImageReleaseExpired           = "regional_image_release_expired"
+	CodeRegionalImageReleaseOrder             = "regional_image_release_order_conflict"
 	CodeGlobalAppDirectoryUnavailable         = "global_app_directory_unavailable"
 	CodeGlobalAppTargetReverificationRequired = "global_app_target_reverification_required"
 	CodeGlobalAppTargetVerificationFailed     = "global_app_target_verification_failed"
@@ -1854,7 +1855,7 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodeRegionalImageReleaseConflict:
+	case CodeRegionalImageReleaseConflict, CodeRegionalImageReleaseOrder:
 		return http.StatusConflict
 	case CodeRegionalImageReleaseExpired:
 		return http.StatusGone

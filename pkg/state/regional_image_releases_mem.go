@@ -65,6 +65,9 @@ func (m *MemStore) lockRegionalImageRelease(app App, mutation *regionalImageRele
 		if _, exists := m.regionalImageReleaseReceipts[i.AppID+"/"+i.ReleaseID]; exists {
 			return ErrNotFound
 		}
+		if head, exists := m.regionalImageReleaseHeads[i.AppID]; exists && i.GlobalAppID != "" {
+			return mutation.checkHead(head)
+		}
 		return nil
 	}
 	if err != nil {

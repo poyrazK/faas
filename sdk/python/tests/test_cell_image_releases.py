@@ -7,11 +7,20 @@ import pytest
 
 from faas_sdk.api.deployments import get_cell_image_release, put_cell_image_release
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models import PutCellImageReleaseRequest
+from faas_sdk.models import CellImageReleaseOrdering, PutCellImageReleaseRequest
 
 CELL_ID = UUID("7c93ae23-83ed-4dc9-987a-4676cd3ca6c2")
 APP_ID = UUID("6cb3f3a7-8b0d-4f6c-82d9-2c2b61ad1983")
 RELEASE_ID = UUID("4225983b-5e81-477c-a77d-c3f7e302ef87")
+GLOBAL_APP_ID = UUID("ba98d910-3f22-4d7c-b29a-99386df396a6")
+ORDERING = {"global_app_id": str(GLOBAL_APP_ID), "generation": 9007199254740991}
+
+
+def ordered_request():
+    return PutCellImageReleaseRequest(
+        image="image-marker",
+        ordering=CellImageReleaseOrdering(global_app_id=GLOBAL_APP_ID, generation=ORDERING["generation"]),
+    )
 
 
 def verify_request(request, method):
@@ -19,7 +28,7 @@ def verify_request(request, method):
     assert request.url.path == f"/v1/cells/{CELL_ID}/apps/{APP_ID}/image-releases/{RELEASE_ID}"
     assert request.headers["Authorization"] == "Bearer regional-key"
     if method == "PUT":
-        assert json.loads(request.content) == {"image": "image-marker"}
+        assert json.loads(request.content) == {"image": "image-marker", "ordering": ORDERING}
 
 
 @pytest.mark.parametrize("method", ["PUT", "GET"])
@@ -41,7 +50,7 @@ def test_cell_image_release_sync_refuses_redirect(method, status):
         client.set_httpx_client(transport)
         if method == "PUT":
             response = put_cell_image_release.sync_detailed(
-                CELL_ID, APP_ID, RELEASE_ID, client=client, body=PutCellImageReleaseRequest(image="image-marker")
+                CELL_ID, APP_ID, RELEASE_ID, client=client, body=ordered_request()
             )
         else:
             response = get_cell_image_release.sync_detailed(CELL_ID, APP_ID, RELEASE_ID, client=client)
@@ -70,7 +79,7 @@ def test_cell_image_release_async_refuses_redirect(method, status):
             client.set_async_httpx_client(transport)
             if method == "PUT":
                 response = await put_cell_image_release.asyncio_detailed(
-                    CELL_ID, APP_ID, RELEASE_ID, client=client, body=PutCellImageReleaseRequest(image="image-marker")
+                    CELL_ID, APP_ID, RELEASE_ID, client=client, body=ordered_request()
                 )
             else:
                 response = await get_cell_image_release.asyncio_detailed(CELL_ID, APP_ID, RELEASE_ID, client=client)
@@ -98,6 +107,7 @@ def test_cell_image_release_transport_retains_tombstone(asynchronous):
                 "deployment_status": "expired",
                 "created_at": "2026-10-04T00:00:00Z",
                 "replayed": False,
+                "ordering": ORDERING,
             },
         )
 
@@ -126,3 +136,5 @@ def test_cell_image_release_transport_retains_tombstone(asynchronous):
     assert response.parsed.deployment_id is None
     assert response.parsed.deployment_status == "expired"
     assert response.parsed.release_id == RELEASE_ID
+    assert response.parsed.ordering.global_app_id == GLOBAL_APP_ID
+    assert response.parsed.ordering.generation == ORDERING["generation"]

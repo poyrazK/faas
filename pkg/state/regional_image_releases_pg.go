@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -32,6 +33,7 @@ func readRegionalImageRelease(ctx context.Context, db sqlc.DBTX, cellID, appID, 
 		CellID: pgUUIDString(row.CellID), AppID: pgUUIDString(row.AppID), ReleaseID: pgUUIDString(row.ReleaseID),
 		AccountID: pgUUIDString(row.AccountID), ImageRef: row.ImageRef,
 		DeploymentID: pgUUIDString(row.DeploymentID), DeploymentStatus: row.DeploymentStatus, CreatedAt: row.CreatedAt.Time,
+		GlobalAppID: pgUUIDString(row.GlobalAppID), Generation: row.Generation.Int64,
 	}, nil
 }
 
@@ -61,7 +63,18 @@ func lockRegionalImageRelease(ctx context.Context, tx pgx.Tx, mutation *regional
 	}
 	receipt, err := readRegionalImageRelease(ctx, tx, i.CellID, i.AppID, i.ReleaseID, false)
 	if errors.Is(err, ErrNotFound) {
-		return nil
+		if i.GlobalAppID == "" {
+			return nil
+		}
+		head, err := (&sqlc.Queries{}).RegionalImageReleaseHead(ctx, tx, uuidToPgtype(i.AppID))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("state: read regional release head: %w", err)
+		}
+		return mutation.checkHead(RegionalImageReleaseReceipt{CellID: pgUUIDString(head.CellID), AccountID: pgUUIDString(head.AccountID),
+			GlobalAppID: pgUUIDString(head.GlobalAppID), Generation: head.Generation})
 	}
 	if err != nil {
 		return err
@@ -74,6 +87,7 @@ func insertRegionalImageRelease(ctx context.Context, tx pgx.Tx, mutation *region
 	err := (&sqlc.Queries{}).InsertRegionalImageReleaseReceipt(ctx, tx, sqlc.InsertRegionalImageReleaseReceiptParams{
 		CellID: uuidToPgtype(i.CellID), AppID: uuidToPgtype(i.AppID), ReleaseID: uuidToPgtype(i.ReleaseID),
 		AccountID: uuidToPgtype(i.AccountID), ImageRef: i.ImageRef, DeploymentID: uuidToPgtype(d.ID), CreatedAt: pgtypeTimestamptzFromTime(d.CreatedAt),
+		GlobalAppID: uuidToPgtype(i.GlobalAppID), Generation: pgtype.Int8{Int64: i.Generation, Valid: i.Generation != 0},
 	})
 	if err != nil {
 		return fmt.Errorf("state: insert regional image release receipt: %w", err)

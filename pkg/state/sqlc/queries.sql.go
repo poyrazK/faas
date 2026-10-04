@@ -7408,10 +7408,11 @@ func (q *Queries) InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg Ins
 
 const insertRegionalImageReleaseReceipt = `-- name: InsertRegionalImageReleaseReceipt :exec
 INSERT INTO regional_image_release_receipts
-    (app_id, release_id, cell_id, account_id, image_ref, deployment_id, created_at)
+    (app_id, release_id, cell_id, account_id, image_ref, deployment_id, created_at, global_app_id, generation)
 VALUES ($1::uuid, $2::uuid, $3::uuid,
         $4::uuid, $5::text,
-        $6::uuid, $7::timestamptz)
+        $6::uuid, $7::timestamptz,
+        $8::uuid, $9::bigint)
 `
 
 type InsertRegionalImageReleaseReceiptParams struct {
@@ -7422,6 +7423,8 @@ type InsertRegionalImageReleaseReceiptParams struct {
 	ImageRef     string
 	DeploymentID pgtype.UUID
 	CreatedAt    pgtype.Timestamptz
+	GlobalAppID  pgtype.UUID
+	Generation   pgtype.Int8
 }
 
 func (q *Queries) InsertRegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg InsertRegionalImageReleaseReceiptParams) error {
@@ -7433,6 +7436,8 @@ func (q *Queries) InsertRegionalImageReleaseReceipt(ctx context.Context, db DBTX
 		arg.ImageRef,
 		arg.DeploymentID,
 		arg.CreatedAt,
+		arg.GlobalAppID,
+		arg.Generation,
 	)
 	return err
 }
@@ -19285,9 +19290,34 @@ func (q *Queries) RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg Re
 	return i, err
 }
 
+const regionalImageReleaseHead = `-- name: RegionalImageReleaseHead :one
+SELECT cell_id, account_id, global_app_id, generation FROM regional_image_release_heads
+WHERE app_id = $1::uuid
+`
+
+type RegionalImageReleaseHeadRow struct {
+	CellID      pgtype.UUID
+	AccountID   pgtype.UUID
+	GlobalAppID pgtype.UUID
+	Generation  int64
+}
+
+func (q *Queries) RegionalImageReleaseHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalImageReleaseHeadRow, error) {
+	row := db.QueryRow(ctx, regionalImageReleaseHead, appID)
+	var i RegionalImageReleaseHeadRow
+	err := row.Scan(
+		&i.CellID,
+		&i.AccountID,
+		&i.GlobalAppID,
+		&i.Generation,
+	)
+	return i, err
+}
+
 const regionalImageReleaseReceipt = `-- name: RegionalImageReleaseReceipt :one
 SELECT r.app_id, r.release_id, r.cell_id, r.account_id, r.image_ref,
-       r.deployment_id, r.created_at, COALESCE(d.status, 'expired')::text AS deployment_status
+       r.deployment_id, r.created_at, r.global_app_id, r.generation,
+       COALESCE(d.status, 'expired')::text AS deployment_status
 FROM regional_image_release_receipts r
 JOIN apps a ON a.id = r.app_id
 LEFT JOIN deployments d ON d.id = r.deployment_id
@@ -19319,6 +19349,8 @@ type RegionalImageReleaseReceiptRow struct {
 	ImageRef         string
 	DeploymentID     pgtype.UUID
 	CreatedAt        pgtype.Timestamptz
+	GlobalAppID      pgtype.UUID
+	Generation       pgtype.Int8
 	DeploymentStatus string
 }
 
@@ -19338,6 +19370,8 @@ func (q *Queries) RegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg 
 		&i.ImageRef,
 		&i.DeploymentID,
 		&i.CreatedAt,
+		&i.GlobalAppID,
+		&i.Generation,
 		&i.DeploymentStatus,
 	)
 	return i, err

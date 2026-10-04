@@ -166,6 +166,7 @@ export type { CancelPendingWorkResponse } from './CancelPendingWorkResponse.js';
 export type { CapabilitiesResponse } from './CapabilitiesResponse.js';
 export type { CapabilityStatus } from './CapabilityStatus.js';
 export type { CellAppBindingResponse } from './CellAppBindingResponse.js';
+export type { CellImageReleaseOrdering } from './CellImageReleaseOrdering.js';
 export type { CellImageReleaseResponse } from './CellImageReleaseResponse.js';
 export type { ChangeMemberRoleRequest } from './ChangeMemberRoleRequest.js';
 export type { ChangePlanRequest } from './ChangePlanRequest.js';

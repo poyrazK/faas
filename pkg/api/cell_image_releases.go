@@ -10,22 +10,35 @@ import (
 )
 
 type PutCellImageReleaseRequest struct {
-	Image string `json:"image"`
+	Image    string                    `json:"image"`
+	Ordering *CellImageReleaseOrdering `json:"ordering,omitempty"`
+}
+
+// CellImageReleaseOrdering fences delayed first acceptance of older releases.
+type CellImageReleaseOrdering struct {
+	GlobalAppID string `json:"global_app_id"`
+	Generation  int64  `json:"generation"`
+}
+
+func (o CellImageReleaseOrdering) Valid() bool {
+	id, err := uuid.Parse(o.GlobalAppID)
+	return err == nil && id != uuid.Nil && id.String() == o.GlobalAppID && o.Generation > 0 && o.Generation <= GlobalImageReleaseGenerationMax
 }
 
 // CellImageReleaseResponse reports regional acceptance, not global readiness.
 // DeploymentID is null after collection; that release can never be executed again.
 type CellImageReleaseResponse struct {
-	CellID            string    `json:"cell_id"`
-	Region            string    `json:"region"`
-	RegionalAccountID string    `json:"regional_account_id"`
-	RegionalAppID     string    `json:"regional_app_id"`
-	ReleaseID         string    `json:"release_id"`
-	Image             string    `json:"image"`
-	DeploymentID      *string   `json:"deployment_id"`
-	DeploymentStatus  string    `json:"deployment_status"`
-	CreatedAt         time.Time `json:"created_at"`
-	Replayed          bool      `json:"replayed"`
+	CellID            string                    `json:"cell_id"`
+	Region            string                    `json:"region"`
+	RegionalAccountID string                    `json:"regional_account_id"`
+	RegionalAppID     string                    `json:"regional_app_id"`
+	ReleaseID         string                    `json:"release_id"`
+	Image             string                    `json:"image"`
+	DeploymentID      *string                   `json:"deployment_id"`
+	DeploymentStatus  string                    `json:"deployment_status"`
+	CreatedAt         time.Time                 `json:"created_at"`
+	Replayed          bool                      `json:"replayed"`
+	Ordering          *CellImageReleaseOrdering `json:"ordering,omitempty"`
 }
 
 // PutCellImageRelease accepts one digest-pinned image per release UUID, forever.
