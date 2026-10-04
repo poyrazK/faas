@@ -1017,7 +1017,7 @@ func isBillingRecoveryRoute(method, path string) bool {
 	return false
 }
 
-// ADR-431: customers can inspect and release budget intent while payment or
+// ADR-530: customers can inspect and release budget intent while payment or
 // deletion holds remain. Handlers authorize ownership and never clear the
 // account status; allowing these routes does not resume compute.
 func financialBudgetRecoveryRoute(method, path string) bool {

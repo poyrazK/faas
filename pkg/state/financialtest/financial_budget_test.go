@@ -17,7 +17,7 @@ type financialBudgetTestStore interface {
 	state.FinancialBudgetStore
 }
 
-// adr: 431 — customer intent must be atomic, revisioned and account owned.
+// adr: 530 — customer intent must be atomic, revisioned and account owned.
 func TestFinancialBudgetStores(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {

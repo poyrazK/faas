@@ -1075,7 +1075,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	if err != nil {
 		t.Fatalf("scan DTOs: %v", err)
 	}
-	// adr: 431 — financial domain structs are embedded directly in the API.
+	// adr: 530 — financial domain structs are embedded directly in the API.
 	// Check their actual JSON fields rather than excluding their schemas.
 	financialDTOs, err := scanDTOs([]string{
 		filepath.Join(root, "pkg", "financial", "cost.go"),

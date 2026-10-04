@@ -1,4 +1,4 @@
--- ADR-431. Policy mutations serialize per account and publish an atomic audit.
+-- ADR-530. Policy mutations serialize per account and publish an atomic audit.
 -- name: FinancialBudgetAccountLock :one
 SELECT id FROM accounts WHERE id = sqlc.arg(account_id)::uuid FOR UPDATE;
 

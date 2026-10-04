@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-431: corrections preserve originals, terms and workload identity.
+-- ADR-530: corrections preserve originals, terms and workload identity.
 ALTER TABLE financial_usage_evidence ADD COLUMN IF NOT EXISTS corrects_source_id text CHECK (corrects_source_id IS NULL OR length(corrects_source_id) BETWEEN 1 AND 512);
 ALTER TABLE financial_usage_evidence ADD COLUMN IF NOT EXISTS adjustment_actor text CHECK (adjustment_actor IS NULL OR octet_length(adjustment_actor) BETWEEN 1 AND 256);
 ALTER TABLE financial_usage_evidence ADD COLUMN IF NOT EXISTS adjustment_reason text CHECK (adjustment_reason IS NULL OR octet_length(adjustment_reason) BETWEEN 1 AND 512);

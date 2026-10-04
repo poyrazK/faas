@@ -30,7 +30,7 @@ const (
 	RouteCustomerUsageMaxCustomers = 20
 )
 
-// ADR-431 bounds retained-evidence reads. Financial data is paginated rather
+// ADR-530 bounds retained-evidence reads. Financial data is paginated rather
 // than silently truncated; this is an operational safety bound, not a price.
 const FinancialEvidencePageMax = 1000
 
@@ -3530,7 +3530,7 @@ var planLimits = map[Plan]Limits{
 // Global platform constants (spec §1, §13). These are the physics of the one
 // box; code enforces them, telemetry verifies them.
 const (
-	// ADR-431: diagnostic trace retention must fit the public gateway's 512 MiB
+	// ADR-530: diagnostic trace retention must fit the public gateway's 512 MiB
 	// cgroup. Byte accounting includes conservative Go object/map overhead;
 	// count and per-trace bounds also constrain tiny traces and merge work.
 	TraceRingMaxTraces              = 100_000

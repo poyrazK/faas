@@ -1,4 +1,4 @@
--- ADR-431: immutable retained evidence, bounded snapshot paging, and prices.
+-- ADR-530: immutable retained evidence, bounded snapshot paging, and prices.
 -- name: FinancialUsageEvidenceList :many
 SELECT id, account_id, instance_id, source_id, meter, unit, quantity,
        source_start, source_end, plan, attribution, observed_at, price_version,

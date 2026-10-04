@@ -1,9 +1,18 @@
-# ADR-431: Financial visibility and scoped spending controls
+# ADR-530: Financial visibility and scoped spending controls
 
 - **Status:** implementation in progress; customer promotion requires the acceptance gates below.
 - **Date:** 2026-10-02
 - **Decision:** retain attributable usage and price history, expose read-only cost and forecast APIs, and implement customer-selected budget responses through the existing component owners. Reserve charges before execution for meters advertised as strict.
 - **Why:** account overage admission alone cannot explain historical application charges or stop already-running workloads. A notification threshold, a delayed stop, and a strict monetary ceiling have different guarantees.
+
+## Preview release scope
+
+The first release includes retained compute/interface-egress evidence, cost and
+forecast reads, and disabled budget drafts with previews and revision history.
+Activation is rejected with `financial_budget_activation_unavailable`, and
+previews always report `enforcement_ready: false`. Runtime enforcement, durable
+notifications, holds, strict reservations, and lifecycle changes described below
+remain future work. See [release scope](../financial-controls-implementation.md).
 
 ## Accounting contract
 

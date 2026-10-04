@@ -351,7 +351,7 @@ type FinancialUsageEvidenceListParams struct {
 	PageSize    int32
 }
 
-// ADR-431: immutable retained evidence, bounded snapshot paging, and prices.
+// ADR-530: immutable retained evidence, bounded snapshot paging, and prices.
 func (q *Queries) FinancialUsageEvidenceList(ctx context.Context, db DBTX, arg FinancialUsageEvidenceListParams) ([]FinancialUsageEvidence, error) {
 	rows, err := db.Query(ctx, financialUsageEvidenceList,
 		arg.AccountID,

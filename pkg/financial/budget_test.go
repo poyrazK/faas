@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// adr: 431 — compact IDs returned by older surfaces and canonical PostgreSQL
+// adr: 530 — compact IDs returned by older surfaces and canonical PostgreSQL
 // UUIDs identify one resource, rather than silently producing a zero subtotal.
 func TestBudgetScopeUUIDRepresentations(t *testing.T) {
 	compact := "6dc4f67857664a06a061845c2b133fdd"
@@ -23,7 +23,7 @@ func TestBudgetScopeUUIDRepresentations(t *testing.T) {
 	}
 }
 
-// adr: 431 — a scoped budget shares the account allowance and retains identity.
+// adr: 530 — a scoped budget shares the account allowance and retains identity.
 func TestBudgetAmountAndScope(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
@@ -59,7 +59,7 @@ func TestBudgetAmountAndScope(t *testing.T) {
 	}
 }
 
-// adr: 431 — strict guarantees cannot be inferred from a monitored threshold.
+// adr: 530 — strict guarantees cannot be inferred from a monitored threshold.
 func TestBudgetValidation(t *testing.T) {
 	valid := BudgetSpec{Name: "batch", Scope: BudgetScope{Kind: "job", ID: "job"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 1000, NotifyMillicents: []int64{500, 800}, Mode: "strict", Action: "suspend_background", DrainSeconds: 30, ResumeRule: "next_period"}
 	if err := ValidateBudget(valid); err != nil {

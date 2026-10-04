@@ -14,6 +14,11 @@ Free accounts have a zero monthly charge and are subject to the published limits
 
 ## Retained usage costs and forecasts
 
+This financial visibility preview reports supported usage costs and budget
+drafts. Budget enforcement is unavailable: drafts do not stop workloads or
+send spending notifications. Coverage and unavailable bill components are
+reported explicitly.
+
 ```bash
 gregale billing costs --month 2026-10 --json
 gregale billing forecast --json

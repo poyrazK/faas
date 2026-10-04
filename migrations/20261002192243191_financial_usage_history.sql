@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-431. Retained deltas are committed atomically with canonical usage.
+-- ADR-530. Retained deltas are committed atomically with canonical usage.
 -- No historical prices or pre-migration usage are guessed/backfilled.
 CREATE TABLE IF NOT EXISTS financial_usage_evidence (
   id bigserial PRIMARY KEY,

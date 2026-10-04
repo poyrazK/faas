@@ -24,7 +24,7 @@ func (s *visibilityTestStore) FinancialSamplingCoverage(ctx context.Context, sta
 	return c, err
 }
 
-// adr: 431 — forecasts require complete coverage and retained prices.
+// adr: 530 — forecasts require complete coverage and retained prices.
 func TestFinancialVisibility(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	store := &visibilityTestStore{MemStore: state.NewMemStore(), retained: start, timeNow: start.Add(24 * time.Hour)}

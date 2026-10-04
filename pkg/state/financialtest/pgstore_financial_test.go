@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// adr: 431 — financial history must survive retention and transaction failure.
+// adr: 530 — financial history must survive retention and transaction failure.
 func TestFinancialPostgresTransactions(t *testing.T) {
 	store, pool, ctx := financialPostgres(t)
 	a := financialAccount(t, store)
@@ -54,7 +54,7 @@ func TestFinancialPostgresTransactions(t *testing.T) {
 	}
 }
 
-// adr: 431 — a fixed read head excludes transactions committed later.
+// adr: 530 — a fixed read head excludes transactions committed later.
 func TestFinancialPostgresCommitOrder(t *testing.T) {
 	store, pool, ctx := financialPostgres(t)
 	a := financialAccount(t, store)

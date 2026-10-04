@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-431: customer budget intent and immutable revision audit. Saving intent
+-- ADR-530: customer budget intent and immutable revision audit. Saving intent
 -- is distinct from a meterd decision and scheduler/gateway acknowledgement.
 CREATE TABLE IF NOT EXISTS financial_budget_policies (
   id uuid PRIMARY KEY,

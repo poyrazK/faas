@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/financial"
 )
 
-// adr: 431 — all CLI policy mutations carry explicit optimistic revisions;
+// adr: 530 — all CLI policy mutations carry explicit optimistic revisions;
 // retries can use one stable key, and machine output preserves readiness.
 func TestFinancialBudgetCRUDCLI(t *testing.T) {
 	id := "6dc4f678-5766-4a06-a061-845c2b133fdd"

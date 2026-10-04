@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/financial"
 )
 
-// adr: 431 — the automated cost surface is read-only and account scoped.
+// adr: 530 — the automated cost surface is read-only and account scoped.
 func TestFinancialReadOnlyAPI(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	key, hash, _ := api.GenerateAPIKey()
@@ -54,7 +54,7 @@ func TestFinancialReadOnlyAPI(t *testing.T) {
 	}
 }
 
-// adr: 431 — preview is a read permission and never persists stopping intent.
+// adr: 530 — preview is a read permission and never persists stopping intent.
 func TestFinancialBudgetPreviewAPI(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	key, hash, _ := api.GenerateAPIKey()

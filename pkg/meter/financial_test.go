@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 431 — snapshots follow activations, including returning to an old plan.
+// adr: 530 — snapshots follow activations, including returning to an old plan.
 func TestFinancialPricingHistory(t *testing.T) {
 	store := state.NewMemStore()
 	a, err := store.CreateAccount(t.Context(), "financial-pricing@example.com", api.PlanHobby)

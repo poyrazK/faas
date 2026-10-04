@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/financial"
 )
 
-// adr: 431 — preview must validate a bounded spec before auth or network.
+// adr: 530 — preview must validate a bounded spec before auth or network.
 func TestFinancialBudgetPreviewCLI(t *testing.T) {
 	spec := financial.BudgetSpec{Name: "preview guard", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1000, NotifyMillicents: []int64{800}, Mode: "monitored", Action: "stop_previews", DrainSeconds: 30, ResumeRule: "manual", Enabled: true}
 	calls := 0
