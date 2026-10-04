@@ -1,10 +1,6 @@
 package managedpostgres
 
-import (
-	"context"
-
-	"github.com/google/uuid"
-)
+import "context"
 
 // CheckpointMaintenanceRequest consumes a private, durably reserved dataset
 // owner. The worker must persist each phase's dispatch intent under its live
@@ -21,8 +17,8 @@ type CheckpointMaintenance struct {
 }
 
 func (r CheckpointMaintenanceRequest) Validate() error {
-	token, err := uuid.Parse(r.OwnerToken)
-	if err != nil || token == uuid.Nil || token.String() != r.OwnerToken || !validDataResourceID(r.SourceResourceID) {
+	identity := CheckpointConnectionIdentity{OwnerToken: r.OwnerToken, SourceResourceID: r.SourceResourceID}
+	if identity.Validate() != nil {
 		return ErrInvalid
 	}
 	switch r.Phase {

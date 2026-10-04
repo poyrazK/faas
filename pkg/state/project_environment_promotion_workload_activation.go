@@ -105,6 +105,8 @@ func (m *MemStore) syncProductionWorkloadSpecLocked(app App, params UpdateAppPar
 	if err != nil {
 		return App{}, err
 	}
+	settings.WorkPolicies = current.Settings.WorkPolicies
+	settings.QueueBindings = current.Settings.QueueBindings
 	hash, err := WorkloadSettingsHash(settings)
 	if err != nil {
 		return App{}, err

@@ -145,6 +145,8 @@ func syncProductionWorkloadSpecTx(ctx context.Context, tx pgx.Tx, app App, param
 	if err != nil {
 		return App{}, err
 	}
+	settings.WorkPolicies = current.Settings.WorkPolicies
+	settings.QueueBindings = current.Settings.QueueBindings
 	if _, err := putWorkloadSpecTx(ctx, tx, current.EnvironmentID, app.ID, current.Revision, settings); err != nil {
 		return App{}, err
 	}

@@ -3,20 +3,15 @@ package managedpostgres
 import (
 	"context"
 	"slices"
-	"strings"
 	"time"
-	"unicode/utf8"
 
-	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/checkpoint"
 )
 
 // The caller must durably own the exact source and selected database set before
 // dispatch. Names alone are not evidence of complete cluster/writer coverage.
 // Retries use the same operation owner and set; unknown replies retain the hold.
-type CheckpointConnectionRequest struct {
-	CheckpointConnectionIdentity
-	DatabaseNames []string
-}
+type CheckpointConnectionRequest = checkpoint.CheckpointConnectionRequest
 
 type CheckpointConnectionDatabase struct {
 	OID, OwnerOID            uint32
@@ -35,35 +30,12 @@ type CheckpointConnectionClosure struct {
 	Drained   bool
 }
 
-func (CheckpointConnectionRequest) String() string {
-	return "[private PostgreSQL checkpoint selection]"
-}
-func (r CheckpointConnectionRequest) GoString() string { return r.String() }
-func (CheckpointConnectionRequest) MarshalJSON() ([]byte, error) {
-	return []byte(`"[private PostgreSQL checkpoint selection]"`), nil
-}
-
 func (CheckpointConnectionClosure) String() string {
 	return "[private PostgreSQL checkpoint observation]"
 }
 func (o CheckpointConnectionClosure) GoString() string { return o.String() }
 func (CheckpointConnectionClosure) MarshalJSON() ([]byte, error) {
 	return []byte(`"[private PostgreSQL checkpoint observation]"`), nil
-}
-
-func (r CheckpointConnectionRequest) Validate() error {
-	i := CheckpointMaintenanceRequest{OwnerToken: r.OwnerToken, SourceResourceID: r.SourceResourceID, Phase: "role"}
-	if i.Validate() != nil || len(r.DatabaseNames) == 0 || len(r.DatabaseNames) > api.PostgresCheckpointDatabasesMax {
-		return ErrInvalid
-	}
-	names := make(map[string]bool, len(r.DatabaseNames))
-	for _, name := range r.DatabaseNames {
-		if name == "" || len(name) > 63 || !utf8.ValidString(name) || strings.ContainsRune(name, '\x00') || names[name] {
-			return ErrInvalid
-		}
-		names[name] = true
-	}
-	return nil
 }
 
 func (o CheckpointConnectionClosure) Validate(r CheckpointConnectionRequest) error {

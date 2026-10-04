@@ -3,13 +3,13 @@ package managedpostgres
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/managedpostgres/checkpoint"
 )
 
 // The barrier owner is operation-specific; the maintenance owner has its own
 // stable private identity and may be reused by successive clone operations.
-type CheckpointConnectionIdentity struct {
-	OwnerToken, SourceResourceID string
-}
+type CheckpointConnectionIdentity = checkpoint.CheckpointConnectionIdentity
 
 type CheckpointConnectionTerminal struct {
 	CheckpointConnectionIdentity

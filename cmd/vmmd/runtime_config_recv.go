@@ -158,12 +158,8 @@ func (r *runtimeConfigReceiver) handleRuntimeSecrets(instance, workloadName, kno
 	defer cancel()
 	response, err := loadRuntimeSecretsForWorkloadIfChanged(requestCtx, store, r.mgr, deploymentID, appID, accountID, workloadName, knownRevision)
 	if err != nil {
-		r.log.Debug("runtime secrets refresh unavailable", "instance", instance, "err_kind", runtimeSecretErrorKind(err))
-		code := "secrets_unavailable"
-		if errors.Is(err, errRuntimeSecretSidecarsUnsupported) {
-			code = "secret_reload_unsupported"
-		}
-		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: code})
+		r.log.Debug("runtime secrets refresh unavailable", "instance", instance, "err_kind", "refresh_failed")
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
 	}
 	return responseRuntimeConfig(r.log, conn, response)
 }
@@ -188,7 +184,7 @@ func (r *runtimeConfigReceiver) handleRuntimeSecretReloadStatus(instance string,
 	defer cancel()
 	selection, err := selectRuntimeSecretRowsForWorkload(requestCtx, store, deploymentID, appID, accountID, req.WorkloadName)
 	if err != nil {
-		r.log.Debug("runtime secret reload status unavailable", "instance", instance, "err_kind", runtimeSecretErrorKind(err))
+		r.log.Debug("runtime secret reload status unavailable", "instance", instance, "err_kind", "refresh_failed")
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
 	}
 	if selection.Revision != req.Revision {
@@ -229,7 +225,7 @@ func (r *runtimeConfigReceiver) handleRuntimeSecretReloadAck(instance string, re
 	defer cancel()
 	selection, err := selectRuntimeSecretRowsForWorkload(requestCtx, store, deploymentID, appID, accountID, req.WorkloadName)
 	if err != nil {
-		r.log.Debug("runtime secret application ack unavailable", "instance", instance, "err_kind", runtimeSecretErrorKind(err))
+		r.log.Debug("runtime secret application ack unavailable", "instance", instance, "err_kind", "refresh_failed")
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
 	}
 	if selection.Revision != req.Revision {
@@ -253,15 +249,6 @@ func (r *runtimeConfigReceiver) handleRuntimeSecretReloadAck(instance string, re
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
 	}
 	return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Accepted: true, Revision: req.Revision})
-}
-
-var errRuntimeSecretSidecarsUnsupported = errors.New("runtime secret reload is unsupported for sidecar deployments")
-
-func runtimeSecretErrorKind(err error) string {
-	if errors.Is(err, errRuntimeSecretSidecarsUnsupported) {
-		return "sidecars_unsupported"
-	}
-	return "refresh_failed"
 }
 
 func loadRuntimeSecrets(ctx context.Context, store runtimeSecretsStore, mgr *fcvm.Manager, deploymentID, appID, accountID string) (runtimeConfigResponse, error) {
@@ -395,12 +382,13 @@ func runtimeSecretWorkloadAllowlist(deployment state.Deployment, workloadName st
 		if err != nil {
 			return nil, fmt.Errorf("decode deployment sidecars: %w", err)
 		}
-		if hasSidecars {
-			return nil, errRuntimeSecretSidecarsUnsupported
-		}
 		allowed, err := runtimeSecretAllowlist(deployment.OverrideEnvSecrets)
 		if err != nil {
 			return nil, fmt.Errorf("decode deployment secret allowlist: %w", err)
+		}
+		if hasSidecars && allowed == nil {
+			// Sidecars require explicit grants for the main workload too.
+			return map[string]struct{}{}, nil
 		}
 		return allowed, nil
 	}
@@ -450,9 +438,9 @@ func runtimeDeploymentHasSidecars(raw json.RawMessage) (bool, error) {
 	return len(sidecars) > 0, nil
 }
 
-// A nil allowlist preserves the existing deployment contract: legacy deploys
-// receive all app secrets in their selected scope. A non-empty allowlist is
-// enforced as a positive grant, exactly as the boot delivery path does.
+// Sidecar-free legacy deployments receive all eligible app secrets in their
+// selected scope. With sidecars, a missing main allowlist becomes an empty grant
+// set. Explicit allowlists match the boot delivery path.
 func runtimeSecretAllowlist(raw json.RawMessage) (map[string]struct{}, error) {
 	if len(raw) == 0 {
 		return nil, nil

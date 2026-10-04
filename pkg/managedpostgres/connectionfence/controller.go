@@ -17,8 +17,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/connectionfence/sqlc"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
 
 type Identity struct {
@@ -65,7 +65,7 @@ type Controller struct {
 func New(ctx context.Context, pool *pgxpool.Pool, config Config) (*Controller, error) {
 	if pool == nil || !validDatabaseName(config.MaintenanceDatabase) || config.MaintenanceRole == "" ||
 		(config.MaintenanceDatabaseOID == 0) != (config.MaintenanceOwnerOID == 0) {
-		return nil, managedpostgres.ErrInvalid
+		return nil, pgerrors.ErrInvalid
 	}
 	c := &Controller{pool: pool, config: config}
 	if err := c.checkMaintenance(ctx, pool); err != nil {
@@ -76,7 +76,7 @@ func New(ctx context.Context, pool *pgxpool.Pool, config Config) (*Controller, e
 
 func (c *Controller) checkMaintenance(ctx context.Context, db sqlc.DBTX) error {
 	if c == nil || c.pool == nil {
-		return managedpostgres.ErrInvalid
+		return pgerrors.ErrInvalid
 	}
 	row, err := sqlc.New().MaintenanceIdentity(ctx, db)
 	if err != nil {
@@ -87,7 +87,7 @@ func (c *Controller) checkMaintenance(ctx context.Context, db sqlc.DBTX) error {
 		c.config.MaintenanceOwnerOID != 0 && (!row.OwnerOid.Valid || row.OwnerOid.Uint32 != c.config.MaintenanceOwnerOID) ||
 		!row.OwnsDatabase || !row.AllowsConnections.Valid || !row.AllowsConnections.Bool ||
 		!row.PrivateConnections || !row.PrivateRole || !row.PrivateSessions {
-		return managedpostgres.ErrUnsupported
+		return pgerrors.ErrUnsupported
 	}
 	return nil
 }
@@ -105,7 +105,7 @@ func (c *Controller) checkInstallation(ctx context.Context, db sqlc.DBTX) error 
 		return classifyError(err)
 	}
 	if !private.Valid || !private.Bool || version != 1 {
-		return managedpostgres.ErrUnsupported
+		return pgerrors.ErrUnsupported
 	}
 	return nil
 }
@@ -114,7 +114,7 @@ func (c *Controller) checkInstallation(ctx context.Context, db sqlc.DBTX) error 
 // is never overwritten. No source setting changes during installation.
 func (c *Controller) Install(ctx context.Context) error {
 	if c == nil {
-		return managedpostgres.ErrInvalid
+		return pgerrors.ErrInvalid
 	}
 	if err := c.checkMaintenance(ctx, c.pool); err != nil {
 		return err
@@ -153,13 +153,13 @@ func (c *Controller) Install(ctx context.Context) error {
 // is permission to drop recovery authority or start a different owner.
 func (c *Controller) Close(ctx context.Context, request Request) (Observation, error) {
 	if c == nil || !validIdentity(request.Identity) || len(request.DatabaseNames) == 0 {
-		return Observation{}, managedpostgres.ErrInvalid
+		return Observation{}, pgerrors.ErrInvalid
 	}
 	names := append([]string(nil), request.DatabaseNames...)
 	sort.Strings(names)
 	for i, name := range names {
 		if !validDatabaseName(name) || name == c.config.MaintenanceDatabase || i > 0 && names[i-1] == name {
-			return Observation{}, managedpostgres.ErrInvalid
+			return Observation{}, pgerrors.ErrInvalid
 		}
 	}
 	if err := c.checkInstallation(ctx, c.pool); err != nil {
@@ -176,7 +176,7 @@ func (c *Controller) Close(ctx context.Context, request Request) (Observation, e
 
 func (c *Controller) Observe(ctx context.Context, identity Identity) (Observation, error) {
 	if c == nil || !validIdentity(identity) {
-		return Observation{}, managedpostgres.ErrInvalid
+		return Observation{}, pgerrors.ErrInvalid
 	}
 	if err := c.checkInstallation(ctx, c.pool); err != nil {
 		return Observation{}, err
@@ -191,13 +191,13 @@ func (c *Controller) Observe(ctx context.Context, identity Identity) (Observatio
 		return Observation{}, classifyError(err)
 	}
 	if len(dbs) != len(row.DatabaseNames) || len(dbs) == 0 && row.State != "abandoned" {
-		return Observation{}, managedpostgres.ErrConflict
+		return Observation{}, pgerrors.ErrConflict
 	}
 	out := Observation{Identity: identity, State: row.State, ClosedAt: row.ClosedAt.Time, ReleasedAt: row.ReleasedAt.Time, Drained: row.State == "closed"}
 	for i, db := range dbs {
 		if !db.DatabaseOid.Valid || !db.OwnerOid.Valid || db.DatabaseName != row.DatabaseNames[i] ||
 			row.State == "closed" && (!db.IdentityClosed.Valid || !db.IdentityClosed.Bool) {
-			return Observation{}, managedpostgres.ErrConflict
+			return Observation{}, pgerrors.ErrConflict
 		}
 		out.Databases = append(out.Databases, Database{OID: db.DatabaseOid.Uint32, OwnerOID: db.OwnerOid.Uint32, Name: db.DatabaseName,
 			OriginalAllowConnections: db.OriginalAllowConnections, Sessions: db.Sessions})
@@ -211,7 +211,7 @@ func (c *Controller) Observe(ctx context.Context, identity Identity) (Observatio
 // call; provider maintenance state alone is not permission to release writers.
 func (c *Controller) Release(ctx context.Context, identity Identity) (Observation, error) {
 	if c == nil || !validIdentity(identity) {
-		return Observation{}, managedpostgres.ErrInvalid
+		return Observation{}, pgerrors.ErrInvalid
 	}
 	if err := c.checkInstallation(ctx, c.pool); err != nil {
 		return Observation{}, err
@@ -230,7 +230,7 @@ func (c *Controller) Release(ctx context.Context, identity Identity) (Observatio
 // Keep the durable reservation until this outcome is independently observed.
 func (c *Controller) Abandon(ctx context.Context, identity Identity) (Observation, error) {
 	if c == nil || !validIdentity(identity) {
-		return Observation{}, managedpostgres.ErrInvalid
+		return Observation{}, pgerrors.ErrInvalid
 	}
 	if err := c.checkInstallation(ctx, c.pool); err != nil {
 		return Observation{}, err
@@ -265,18 +265,18 @@ func classifyError(err error) error {
 		return err
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		return managedpostgres.ErrNotFound
+		return pgerrors.ErrNotFound
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
 		case "22023":
-			return managedpostgres.ErrInvalid
+			return pgerrors.ErrInvalid
 		case "55000", "42P06", "42P07", "23505":
-			return managedpostgres.ErrConflict
+			return pgerrors.ErrConflict
 		case "42501":
-			return managedpostgres.ErrUnsupported
+			return pgerrors.ErrUnsupported
 		}
 	}
-	return managedpostgres.ErrUnavailable
+	return pgerrors.ErrUnavailable
 }

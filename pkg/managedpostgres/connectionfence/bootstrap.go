@@ -7,8 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/connectionfence/sqlc"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
 
 const MaintenanceDatabase = "gregale_checkpoint"
@@ -43,7 +43,7 @@ type Bootstrap struct {
 func NewBootstrap(conn *pgx.Conn, config BootstrapConfig) (*Bootstrap, error) {
 	if conn == nil || !validDatabaseName(config.SourceDatabase) || config.SourceDatabase == MaintenanceDatabase ||
 		!validDatabaseName(config.SourceRole) || config.SourcePostgresMajor != 0 && config.SourcePostgresMajor < 16 {
-		return nil, managedpostgres.ErrInvalid
+		return nil, pgerrors.ErrInvalid
 	}
 	return &Bootstrap{conn: conn, config: config}, nil
 }
@@ -56,7 +56,7 @@ func AuthenticateReadyMaintenance(ctx context.Context, conn *pgx.Conn, config Bo
 	if conn == nil || !validDatabaseName(config.SourceDatabase) || config.SourceDatabase == MaintenanceDatabase ||
 		!validDatabaseName(config.SourceRole) || config.SourcePostgresMajor != 0 && config.SourcePostgresMajor < 16 ||
 		!validMaintenance(receipt, true) || receipt.State != "ready" {
-		return Maintenance{}, managedpostgres.ErrInvalid
+		return Maintenance{}, pgerrors.ErrInvalid
 	}
 	q := sqlc.New()
 	row, err := q.MaintenanceBootstrapIdentity(ctx, conn)
@@ -66,7 +66,7 @@ func AuthenticateReadyMaintenance(ctx context.Context, conn *pgx.Conn, config Bo
 	if row.DatabaseName != MaintenanceDatabase || row.RoleName != config.SourceRole || row.SessionRole != row.RoleName ||
 		!row.PrivateRole || row.ServerVersion < 160000 ||
 		config.SourcePostgresMajor != 0 && int(row.ServerVersion/10000) != config.SourcePostgresMajor {
-		return Maintenance{}, managedpostgres.ErrUnsupported
+		return Maintenance{}, pgerrors.ErrUnsupported
 	}
 	if err := q.InstallMaintenanceBootstrapFunction(ctx, conn); err != nil {
 		return Maintenance{}, classifyError(err)
@@ -87,14 +87,14 @@ func (b *Bootstrap) Reserve(ctx context.Context, identity Identity) (Maintenance
 // Durable first-dispatch authority remains the coordinator's responsibility.
 func (b *Bootstrap) Create(ctx context.Context, receipt Maintenance) (Maintenance, error) {
 	if !validMaintenance(receipt, false) || receipt.State != "reserved" {
-		return Maintenance{}, managedpostgres.ErrInvalid
+		return Maintenance{}, pgerrors.ErrInvalid
 	}
 	return b.run(ctx, receipt, "check", true)
 }
 
 func (b *Bootstrap) Observe(ctx context.Context, receipt Maintenance) (Maintenance, error) {
 	if !validMaintenance(receipt, false) {
-		return Maintenance{}, managedpostgres.ErrInvalid
+		return Maintenance{}, pgerrors.ErrInvalid
 	}
 	return b.run(ctx, receipt, "check", false)
 }
@@ -104,7 +104,7 @@ func (b *Bootstrap) Observe(ctx context.Context, receipt Maintenance) (Maintenan
 // privilege. Retrying a lost reply rechecks the same ready identity and ACL.
 func (b *Bootstrap) Activate(ctx context.Context, receipt Maintenance) (Maintenance, error) {
 	if !validMaintenance(receipt, true) || receipt.State != "reserved" && receipt.State != "ready" {
-		return Maintenance{}, managedpostgres.ErrInvalid
+		return Maintenance{}, pgerrors.ErrInvalid
 	}
 	return b.run(ctx, receipt, "activate", false)
 }
@@ -115,14 +115,14 @@ func (b *Bootstrap) Activate(ctx context.Context, receipt Maintenance) (Maintena
 // Keep control-plane recovery authority until this exact state is observed.
 func (b *Bootstrap) RetireReserved(ctx context.Context, receipt Maintenance) (Maintenance, error) {
 	if receipt.OwnerOID != 0 && !validMaintenance(receipt, false) {
-		return Maintenance{}, managedpostgres.ErrInvalid
+		return Maintenance{}, pgerrors.ErrInvalid
 	}
 	return b.run(ctx, receipt, "retire", false)
 }
 
 func (b *Bootstrap) run(ctx context.Context, receipt Maintenance, action string, create bool) (out Maintenance, err error) {
 	if b == nil || b.conn == nil || !validIdentity(receipt.Identity) {
-		return Maintenance{}, managedpostgres.ErrInvalid
+		return Maintenance{}, pgerrors.ErrInvalid
 	}
 	q := sqlc.New()
 	defer func() {
@@ -138,7 +138,7 @@ func (b *Bootstrap) run(ctx context.Context, receipt Maintenance, action string,
 			if unlockErr != nil {
 				err = classifyError(unlockErr)
 			} else {
-				err = managedpostgres.ErrConflict
+				err = pgerrors.ErrConflict
 			}
 		}
 		if err != nil {
@@ -163,7 +163,7 @@ func (b *Bootstrap) run(ctx context.Context, receipt Maintenance, action string,
 		return out, err
 	}
 	if out.State != "reserved" {
-		return Maintenance{}, managedpostgres.ErrConflict
+		return Maintenance{}, pgerrors.ErrConflict
 	}
 	if out.DatabaseOID != 0 {
 		return out, nil
@@ -188,7 +188,7 @@ func (b *Bootstrap) checkIdentity(ctx context.Context) error {
 	if row.DatabaseName != b.config.SourceDatabase || row.RoleName != b.config.SourceRole || row.SessionRole != row.RoleName ||
 		!row.OwnsDatabase || !row.PrivateRole || row.ServerVersion < 160000 ||
 		b.config.SourcePostgresMajor != 0 && int(row.ServerVersion/10000) != b.config.SourcePostgresMajor {
-		return managedpostgres.ErrUnsupported
+		return pgerrors.ErrUnsupported
 	}
 	return nil
 }
@@ -207,7 +207,7 @@ func (b *Bootstrap) action(ctx context.Context, receipt Maintenance, action stri
 		return Maintenance{}, classifyError(err)
 	}
 	if !row.OwnerOid.Valid || row.OwnerOid.Uint32 == 0 || !row.DatabaseOid.Valid || state == "ready" && row.DatabaseOid.Uint32 == 0 {
-		return Maintenance{}, managedpostgres.ErrConflict
+		return Maintenance{}, pgerrors.ErrConflict
 	}
 	return Maintenance{Identity: receipt.Identity, OwnerRole: role, OwnerOID: row.OwnerOid.Uint32, DatabaseOID: row.DatabaseOid.Uint32, State: state}, nil
 }

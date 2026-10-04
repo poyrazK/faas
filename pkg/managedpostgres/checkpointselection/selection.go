@@ -17,7 +17,7 @@ import (
 	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/checkpoint"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/connectionfence"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -79,14 +79,14 @@ func (s Selection) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct{ Fingerprint string }{s.fingerprint})
 }
 
-func (s Selection) RequestForWorker(expected Scope) (managedpostgres.CheckpointConnectionRequest, error) {
+func (s Selection) RequestForWorker(expected Scope) (checkpoint.CheckpointConnectionRequest, error) {
 	if expected.Validate() != nil {
-		return managedpostgres.CheckpointConnectionRequest{}, pgerrors.ErrInvalid
+		return checkpoint.CheckpointConnectionRequest{}, pgerrors.ErrInvalid
 	}
 	if !hexDigest(s.fingerprint) || s.body.Scope != expected || !validPayload(s.body) {
-		return managedpostgres.CheckpointConnectionRequest{}, pgerrors.ErrConflict
+		return checkpoint.CheckpointConnectionRequest{}, pgerrors.ErrConflict
 	}
-	return managedpostgres.CheckpointConnectionRequest{CheckpointConnectionIdentity: managedpostgres.CheckpointConnectionIdentity{
+	return checkpoint.CheckpointConnectionRequest{CheckpointConnectionIdentity: checkpoint.CheckpointConnectionIdentity{
 		OwnerToken: expected.OperationID, SourceResourceID: expected.SourceDataResourceID}, DatabaseNames: slices.Clone(s.body.DatabaseNames)}, nil
 }
 
@@ -120,7 +120,7 @@ func (s Sealed) ValidateMetadata() error {
 	return nil
 }
 
-func Seal(recipient *age.X25519Recipient, scope Scope, request managedpostgres.CheckpointConnectionRequest, key [32]byte) (Sealed, error) {
+func Seal(recipient *age.X25519Recipient, scope Scope, request checkpoint.CheckpointConnectionRequest, key [32]byte) (Sealed, error) {
 	if recipient == nil || scope.Validate() != nil || request.Validate() != nil || key == ([32]byte{}) {
 		return Sealed{}, pgerrors.ErrInvalid
 	}
@@ -195,7 +195,7 @@ func Open(identities []*age.X25519Identity, expected Scope, sealed Sealed) (Sele
 }
 
 func validPayload(body payload) bool {
-	r := managedpostgres.CheckpointConnectionRequest{CheckpointConnectionIdentity: managedpostgres.CheckpointConnectionIdentity{
+	r := checkpoint.CheckpointConnectionRequest{CheckpointConnectionIdentity: checkpoint.CheckpointConnectionIdentity{
 		OwnerToken: body.Scope.OperationID, SourceResourceID: body.Scope.SourceDataResourceID}, DatabaseNames: body.DatabaseNames}
 	return body.Version == 1 && body.Scope.Validate() == nil && r.Validate() == nil && slices.IsSorted(body.DatabaseNames) &&
 		!slices.Contains(body.DatabaseNames, connectionfence.MaintenanceDatabase)
