@@ -23,7 +23,7 @@ func (s *MemoryStore) ListUsageDatabases(_ context.Context, after UsageDatabaseC
 	defer s.mu.Unlock()
 	items := make([]Database, 0)
 	for _, database := range s.databases {
-		if database.State != StateReady || database.ProviderResourceID == "" {
+		if database.ProviderResourceID == "" {
 			continue
 		}
 		if !after.isZero() && (database.UpdatedAt.Before(after.UpdatedAt) ||
@@ -53,8 +53,11 @@ func (s *MemoryStore) RecordUsage(_ context.Context, records []UsageRecord) erro
 	defer s.mu.Unlock()
 	first := records[0]
 	database, ok := s.databases[first.DatabaseID]
-	if !ok || database.State == StateDeleted || database.AccountID != first.AccountID || database.BackendID != first.BackendID || database.BackendFingerprint != first.BackendFingerprint {
+	if !ok || database.AccountID != first.AccountID || database.BackendID != first.BackendID || database.BackendFingerprint != first.BackendFingerprint {
 		return ErrConflict
+	}
+	if err := validateUsageDatabaseWindow(database, first); err != nil {
+		return err
 	}
 	// Changing window size would overlap existing ledger periods and count
 	// the same consumption twice. Require an explicit accounting migration.
@@ -84,7 +87,22 @@ func (s *MemoryStore) UsageProgress(_ context.Context, accountID, databaseID str
 	if !ok || database.AccountID != accountID {
 		return UsageProgress{}, ErrNotFound
 	}
-	return s.usageProgress[usageProgressKey{databaseID, window}], nil
+	return s.usageProgressLocked(databaseID, window), nil
+}
+
+func (s *MemoryStore) usageProgressLocked(databaseID string, window time.Duration) UsageProgress {
+	progress := s.usageProgress[usageProgressKey{databaseID, window}]
+	from := progress.CollectedUntil.Add(-recentUsageCorrectionWindows * window)
+	if from.Before(progress.CollectedFrom) {
+		from = progress.CollectedFrom
+	}
+	for _, record := range s.usage {
+		if record.DatabaseID == databaseID && !record.WindowFrom.Before(from) && !record.WindowTo.After(progress.CollectedUntil) &&
+			(progress.CorrectionObservedAt.IsZero() || record.ObservedAt.Before(progress.CorrectionObservedAt)) {
+			progress.CorrectionObservedAt = record.ObservedAt
+		}
+	}
+	return progress
 }
 
 func (s *MemoryStore) RecordSharedUsage(_ context.Context, accountID, databaseID, sourceID string, window time.Duration) error {
@@ -96,7 +114,7 @@ func (s *MemoryStore) RecordSharedUsage(_ context.Context, accountID, databaseID
 	database, ok := s.databases[databaseID]
 	source, sourceOK := s.databases[sourceID]
 	if !ok || !sourceOK || database.AccountID != accountID || source.AccountID != accountID ||
-		database.State != StateReady || source.State != StateReady || database.RestoreSourceDatabaseID == "" ||
+		database.ProviderResourceID == "" || source.ProviderResourceID == "" || database.RestoreSourceDatabaseID == "" ||
 		database.BackendID != source.BackendID || database.BackendFingerprint != source.BackendFingerprint {
 		return ErrConflict
 	}
@@ -128,16 +146,28 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 	var snapshot UsageSnapshot
 	snapshot.PeriodStart = periodStart
 	for _, database := range s.databases {
-		if database.AccountID == accountID && database.State == StateReady {
-			snapshot.ReadyDatabases++
+		if database.AccountID == accountID && (database.State == StateReady || database.ProviderResourceID != "") {
+			if database.State == StateReady {
+				snapshot.ReadyDatabases++
+			}
 			var progress UsageProgress
+			accountingDatabase := database
 			for key, candidate := range s.usageProgress {
 				if key.databaseID == database.ID && candidate.UpdatedAt.After(progress.UpdatedAt) {
 					progress = candidate
 				}
 			}
 			if progress.SourceDatabaseID != "" {
-				progress = s.usageProgress[usageProgressKey{progress.SourceDatabaseID, progress.Window}]
+				if source, ok := s.databases[progress.SourceDatabaseID]; ok {
+					accountingDatabase = source
+				}
+				progress = s.usageProgressLocked(progress.SourceDatabaseID, progress.Window)
+			} else {
+				progress = s.usageProgressLocked(database.ID, progress.Window)
+			}
+			progress.Terminal = accountingDatabase.State == StateDeleted
+			if accountingDatabase.DeletedAt != nil {
+				progress.EndedAt = *accountingDatabase.DeletedAt
 			}
 			snapshot.Databases = append(snapshot.Databases, progress)
 		}

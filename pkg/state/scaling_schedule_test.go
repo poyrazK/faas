@@ -13,6 +13,34 @@ import (
 // 06:00 in winter".
 const ist = "Europe/Istanbul"
 
+// adr: 195 — billed floor seconds use the half-open source interval.
+func TestEffectiveMinInstanceSecondsInMinute(t *testing.T) {
+	minute := time.Date(2026, 10, 4, 9, 1, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name               string
+		static, deployment int
+		timezone           string
+		schedules          []ScalingSchedule
+		want               int64
+	}{
+		{"static", 2, 0, "UTC", nil, 120},
+		{"deployment_lower_bound", 1, 3, "UTC", nil, 180},
+		{"partial_close", 0, 0, "UTC", []ScalingSchedule{{Cron: "0 9 * * *", DurationS: 90, MinInstances: 2}}, 60},
+		{"static_below_schedule", 1, 0, "UTC", []ScalingSchedule{{Cron: "0 9 * * *", DurationS: 90, MinInstances: 3}}, 120},
+		{"overlapping_windows_take_max", 0, 0, "UTC", []ScalingSchedule{{Cron: "0 9 * * *", DurationS: 90, MinInstances: 3}, {Cron: "1 9 * * *", DurationS: 60, MinInstances: 2}}, 150},
+		{"recurring_overlap", 0, 0, "UTC", []ScalingSchedule{{Cron: "* * * * *", DurationS: 90, MinInstances: 2}}, 120},
+		{"timezone", 0, 0, ist, []ScalingSchedule{{Cron: "0 12 * * *", DurationS: 90, MinInstances: 2}}, 60},
+		{"invalid_schedule", 1, 0, "UTC", []ScalingSchedule{{Cron: "invalid", DurationS: 90, MinInstances: 3}}, 60},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := App{MinInstances: tc.static, ScalingPolicy: &ScalingPolicy{Timezone: tc.timezone, Schedules: tc.schedules}}
+			if got := app.EffectiveMinInstanceSecondsInMinute(minute, tc.deployment); got != tc.want {
+				t.Fatalf("floor seconds = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func at(t *testing.T, iso string) time.Time {
 	t.Helper()
 	parsed, err := time.Parse(time.RFC3339, iso)

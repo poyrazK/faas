@@ -353,6 +353,7 @@ export type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 export type { DeploymentPreviewURL } from './DeploymentPreviewURL.js';
 export type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
 export type { DeploymentResponse } from './DeploymentResponse.js';
+export type { DeploymentRoutePolicySnapshotResponse } from './DeploymentRoutePolicySnapshotResponse.js';
 export type { DeploymentSummaryResponse } from './DeploymentSummaryResponse.js';
 export type { DevBridgeActivity } from './DevBridgeActivity.js';
 export type { DevBridgeCredentials } from './DevBridgeCredentials.js';

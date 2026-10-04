@@ -1460,6 +1460,8 @@ jobs:
           # Gate-B: syntax-check the only production bootstrap playbook
           # before an operator can run either role-specific target.
           ansible-playbook --syntax-check bootstrap.yml
+          # ADR-580: the CD entrypoint that wraps the control-plane play.
+          ansible-playbook --syntax-check control_plane_converge.yml
           # Gate-C: keep the connection-free scale validator parseable.
           ansible-playbook --syntax-check scale_check.yml
           # Gate-D: keep the trusted deployment-runner bootstrap parseable.

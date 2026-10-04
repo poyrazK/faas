@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -84,6 +85,26 @@ func TestPreviewRoutePolicyDriftReportsAddedAndRemovedRouteRules(t *testing.T) {
 	}
 }
 
+func TestPreviewRoutePolicyDriftKeepsLegacySnapshotUnknown(t *testing.T) {
+	row := *newPreviewReportRoute("GET", "/users/{id}")
+	report := previewRouteReport{Contract: previewReportEvidence{Status: "available"}, Routes: []previewReportRoute{row}}
+	missing := &api.APIError{Problem: api.Problem{Status: http.StatusNotFound, Code: "deployment_route_policy_snapshot_not_found"}}
+	attachPreviewRoutePolicyDrift(&report, nil, nil, missing, nil)
+	if report.PolicyDrift.Status != "partial" || report.PolicyDrift.Scope != "deployment_pair" || report.PolicyDrift.UnknownRoutes != 1 || report.Routes[0].PolicyDrift == nil || report.Routes[0].PolicyDrift.Status != "unknown" {
+		t.Fatalf("missing historical snapshot was not kept unknown: %+v", report)
+	}
+}
+
+func TestPreviewRoutePolicyDriftMarksUnreadableSnapshotsUnknown(t *testing.T) {
+	row := *newPreviewReportRoute("GET", "/users/{id}")
+	report := previewRouteReport{Contract: previewReportEvidence{Status: "available"}, Routes: []previewReportRoute{row}}
+	attachPreviewRoutePolicyDrift(&report, nil, nil, errors.New("snapshot store unavailable"), nil)
+	if report.PolicyDrift.Status != "unavailable" || report.PolicyDrift.UnknownRoutes != 1 || report.Routes[0].PolicyDrift == nil ||
+		report.Routes[0].PolicyDrift.Status != "unknown" || report.Routes[0].PolicyDrift.Reason != "deployment_policy_snapshot_unavailable" {
+		t.Fatalf("unreadable historical snapshot was not kept unknown: %+v", report)
+	}
+}
+
 func TestPreviewReportPolicyDriftGateFailsOnChangedRouteAndRedactsValues(t *testing.T) {
 	resetJSONOut(t)
 	setPreviewTestAuth(t)
@@ -105,6 +126,16 @@ func TestPreviewReportPolicyDriftGateFailsOnChangedRouteAndRedactsValues(t *test
 			writePreviewReportDoc(t, w, "baseline", previewReportBefore)
 		case "/v1/apps/pr-42-api/deployments/candidate/openapi":
 			writePreviewReportDoc(t, w, "candidate", previewReportBefore)
+		case "/v1/apps/api/deployments/baseline/route-policy":
+			writePreviewPolicySnapshotTest(w, "baseline", "parent-id", []api.EdgeRuleResponse{{
+				ID: "baseline-rule", Kind: "jwt", Enabled: true, MatchPath: "/users/*", MatchMethods: []string{"GET"},
+				MatchHeaders: map[string]string{"Authorization": "Bearer header-secret"}, Action: baselineAction,
+			}})
+		case "/v1/apps/pr-42-api/deployments/candidate/route-policy":
+			writePreviewPolicySnapshotTest(w, "candidate", "preview-id", []api.EdgeRuleResponse{{
+				ID: "candidate-rule", Kind: "jwt", Enabled: true, MatchPath: "/users/*", MatchMethods: []string{"GET"},
+				MatchHeaders: map[string]string{"Authorization": "Bearer header-secret"}, Action: candidateAction,
+			}})
 		case "/v1/apps/pr-42-api/openapi/preview":
 			writeJSONTest(w, api.AppOpenAPIPolicyPreviewResponse{})
 		case "/v1/apps/api/edge-rules":
@@ -141,7 +172,7 @@ func TestPreviewReportPolicyDriftGateFailsOnChangedRouteAndRedactsValues(t *test
 		t.Fatal(err)
 	}
 	row := findPreviewReportRoute(t, report, "GET /users/{id}")
-	if report.PolicyDrift.Status != "available" || report.PolicyDrift.ChangedRoutes != 1 || row.PolicyDrift == nil || len(row.PolicyDrift.Changes) != 1 || !containsString(row.PolicyDrift.Changes[0].ChangedFields, "action") {
+	if report.PolicyDrift.Status != "available" || report.PolicyDrift.Scope != "deployment_pair" || report.PolicyDrift.ChangedRoutes != 1 || row.PolicyDrift == nil || len(row.PolicyDrift.Changes) != 1 || !containsString(row.PolicyDrift.Changes[0].ChangedFields, "action") {
 		t.Fatalf("policy drift comparison missing: %+v", report)
 	}
 	for _, secret := range []string{"before-secret", "after-secret", "header-secret"} {

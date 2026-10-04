@@ -10645,6 +10645,24 @@ CREATE TABLE public.deployment_openapi_snapshots (
 
 
 --
+-- Name: deployment_route_policy_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_route_policy_snapshots (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    snapshot jsonb NOT NULL,
+    sha256 text NOT NULL,
+    schema_version integer DEFAULT 1 NOT NULL,
+    captured_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_route_policy_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
+    CONSTRAINT deployment_route_policy_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT deployment_route_policy_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
 -- Name: deployment_revision_pins; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18535,6 +18553,14 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
+-- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_route_policy_snapshots
+    ADD CONSTRAINT deployment_route_policy_snapshots_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: deployment_revision_pins deployment_revision_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22976,6 +23002,13 @@ CREATE INDEX deployment_openapi_docs_app_id_idx ON public.deployment_openapi_doc
 --
 
 CREATE INDEX deployment_openapi_snapshots_app_scope_idx ON public.deployment_openapi_snapshots USING btree (app_id, scope, captured_at DESC);
+
+
+--
+-- Name: deployment_route_policy_snapshots_app_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_route_policy_snapshots_app_scope_idx ON public.deployment_route_policy_snapshots USING btree (app_id, scope, captured_at DESC);
 
 
 --
@@ -30584,6 +30617,22 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 ALTER TABLE ONLY public.deployment_openapi_snapshots
     ADD CONSTRAINT deployment_openapi_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_route_policy_snapshots
+    ADD CONSTRAINT deployment_route_policy_snapshots_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_route_policy_snapshots deployment_route_policy_snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_route_policy_snapshots
+    ADD CONSTRAINT deployment_route_policy_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

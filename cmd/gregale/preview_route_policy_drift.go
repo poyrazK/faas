@@ -3,8 +3,10 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -52,18 +54,42 @@ type previewPolicyRuleIdentity struct {
 }
 
 func attachPreviewRoutePolicyDrift(report *previewRouteReport, baseline, candidate []api.EdgeRuleResponse, baselineErr, candidateErr error) {
-	report.PolicyDrift = previewRoutePolicyDriftEvidence{Status: "unavailable", Scope: "current_app_pair"}
+	report.PolicyDrift = previewRoutePolicyDriftEvidence{Status: "unavailable", Scope: "deployment_pair"}
 	if baselineErr != nil {
 		report.PolicyDrift.Reason = "baseline:" + previewReportReadReason(baselineErr)
-		return
 	}
 	if candidateErr != nil {
-		report.PolicyDrift.Reason = "candidate:" + previewReportReadReason(candidateErr)
+		if report.PolicyDrift.Reason != "" {
+			report.PolicyDrift.Reason += ";"
+		}
+		report.PolicyDrift.Reason += "candidate:" + previewReportReadReason(candidateErr)
+	}
+	if baselineErr != nil || candidateErr != nil {
+		missing := previewRoutePolicySnapshotMissing(baselineErr) || previewRoutePolicySnapshotMissing(candidateErr)
+		if missing {
+			report.PolicyDrift.Status = "partial"
+			report.PolicyDrift.Reason = "historical_deployment_policy_snapshot_missing"
+		}
+		reason := "deployment_policy_snapshot_unavailable"
+		if missing {
+			reason = "deployment_policy_snapshot_missing"
+		}
+		for index := range report.Routes {
+			report.Routes[index].PolicyDrift = &previewRoutePolicyDrift{Status: "unknown", Reason: reason, Changes: []previewRoutePolicyRuleChange{}}
+			report.PolicyDrift.UnknownRoutes++
+		}
+		if missing {
+			report.Notes = append(report.Notes,
+				"Policy drift needs deployment-time snapshots for both selected revisions; legacy deployments without snapshots remain unknown and current app rules are not used as historical evidence.")
+		} else {
+			report.Notes = append(report.Notes,
+				"Policy drift could not read the selected deployment snapshots, so affected routes remain unknown and current app rules are not used as historical evidence.")
+		}
 		return
 	}
 
 	report.PolicyDrift.Status = "available"
-	report.PolicyDrift.Reason = "current_app_configuration"
+	report.PolicyDrift.Reason = "deployment_snapshots"
 	for index := range report.Routes {
 		row := &report.Routes[index]
 		changes, complete := diffPreviewRoutePolicy(row, baseline, candidate)
@@ -87,7 +113,15 @@ func attachPreviewRoutePolicyDrift(report *previewRouteReport, baseline, candida
 		report.PolicyDrift.Reason = "captured_route_inventory_unavailable"
 	}
 	report.Notes = append(report.Notes,
-		"Policy drift compares current parent and preview app rule configuration, not deployment-time snapshots or every possible request context; rule actions and header values are redacted.")
+		"Policy drift compares the captured gateway configuration for the selected parent and preview deployments; it does not simulate every possible request context, and rule actions and header values are redacted.")
+}
+
+func previewRoutePolicySnapshotMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *api.APIError
+	return errors.As(err, &apiErr) && apiErr.Problem.Status == http.StatusNotFound
 }
 
 func diffPreviewRoutePolicy(route *previewReportRoute, baseline, candidate []api.EdgeRuleResponse) ([]previewRoutePolicyRuleChange, bool) {

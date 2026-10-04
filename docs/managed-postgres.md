@@ -362,7 +362,7 @@ prior evidence and is reported as deferred. Coverage freshness does not imply
 provider settlement; older revisions still require explicit reconciliation.
 See [ADR-516](adr/516-managed-postgres-usage-correction-replay.md).
 
-Recovery runs across the ready fleet before any correction request: one missing
+Recovery runs across the known provider-resource fleet before any correction request: one missing
 window per eligible database per round, then one correction per database per
 round. Work is ordered by the oldest successful observation, with unmetered
 databases first and catalog order breaking ties. Durable observations preserve
@@ -387,7 +387,7 @@ See [ADR-500](adr/500-managed-postgres-provider-rate-limit-cooldowns.md).
 The migration does not infer coverage from old ledger rows, because those rows
 may contain gaps. Existing databases replay from creation, replacing identical
 window keys without increasing totals. Admission stays stale until recovery
-reaches the latest completed policy window for every ready database. Provider
+reaches the latest completed policy window for every active known provider resource. Provider
 history that is no longer available must be reconciled by an operator; it is
 never silently skipped. Keep `usage.window_seconds` unchanged for databases
 with recorded usage: changing its duration fails closed to prevent overlapping
@@ -397,10 +397,31 @@ UTC day: 1, 2, 3, 4, 6, 8, 12, or 24 hours. This keeps complete windows inside
 one UTC billing month and avoids provider boundary rounding. Invalid duration
 integers are rejected before conversion. Reconcile unsupported existing window
 sizes before adopting a different size; there is no automatic prorating.
-Deleting a database retains its recorded consumption in monthly account totals.
+Known provider resources remain in collection and admission completeness during
+provisioning, updating, failure, and deletion. Deletion retains recorded monthly
+consumption and a finite accounting endpoint: the policy window containing the
+provider-confirmed shutdown, rounded up only when shutdown is inside that window.
+The collector waits for an open final window to close, then recovers through that
+endpoint and replays its final three-window tail. Every tail window must have an
+observation at or after the endpoint plus three policy windows. Failed final
+replay leaves admission stale; a newer successful window cannot hide it.
+
+After that bounded evidence is complete, the tombstone needs no provider calls
+and never ages into staleness merely because it has been deleted. Restore
+children inherit their root's accounting lifecycle and endpoint without duplicate
+consumption. Deleting a branch of a live root keeps the root's active freshness
+requirement; the branch introduces no separate final-window wait.
+Ready counts remain lifecycle counts, so usage can be stale with zero ready
+databases. This protects the guardrail; it does not establish final invoice
+settlement or qualify Neon history after project deletion. Unavailable history
+requires an operator reconciliation workflow, which is still unfinished.
+Provider identities lost after uncertain provisioning responses also remain
+outside this known-resource accounting path.
+See [ADR-569](adr/569-managed-postgres-terminal-usage-coverage.md).
 
 When enabled, a new database reservation is admitted only if the account has a
-complete, fresh usage coverage for each ready database and has not crossed its
+complete usage coverage for every known provider resource, with fresh active
+observations and bounded final correction evidence for deleted resources and has not crossed its
 monthly cost, compute, storage, history (when configured), or egress ceiling. Missing or stale observations fail
 closed; an existing named database remains idempotent and can still be
 reconciled. The plan's per-database storage entitlement is multiplied by the

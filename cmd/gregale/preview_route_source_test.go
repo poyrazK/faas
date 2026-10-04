@@ -38,7 +38,7 @@ func previewSourceReportFixture() previewRouteReport {
 	row.TestProfiles = []previewReportTest{{Profile: "warm", Passed: 1}}
 	row.BaselineTraffic = &previewReportTraffic{Requests: 100, From: "start", Until: "end"}
 	row.PolicyDrift = &previewRoutePolicyDrift{Status: "unchanged", Changes: []previewRoutePolicyRuleChange{}}
-	return previewRouteReport{Version: 6, Outcome: "no_findings", PolicyDrift: previewRoutePolicyDriftEvidence{Status: "available", Scope: "current_app_pair"}, Routes: []previewReportRoute{*row},
+	return previewRouteReport{Version: 7, Outcome: "no_findings", PolicyDrift: previewRoutePolicyDriftEvidence{Status: "available", Scope: "deployment_pair"}, Routes: []previewReportRoute{*row},
 		baselineSource:  previewSourceDeployment(previewSourceDeploymentFixture(source.Base.Revision, "parent"), "parent"),
 		candidateSource: previewSourceDeployment(previewSourceDeploymentFixture(source.Candidate.Revision, "preview"), "preview"),
 	}
@@ -51,7 +51,7 @@ func TestPreviewSourceBindsDeclaredMetadataAndKeepsContractClassification(t *tes
 	if report.SourceImpact.CandidateRevision != source.Candidate.Revision || report.SourceImpact.Repository != source.Repository || report.SourceImpact.SourceRoot != source.SourceRoot {
 		t.Fatal("analyzed provenance absent from the joined report")
 	}
-	if report.Version != 6 || report.SourceImpact.Status != "aligned" || report.SourceImpact.MappingStatus != "complete" || report.SourceImpact.Base.Status != "declared_match" {
+	if report.Version != 7 || report.SourceImpact.Status != "aligned" || report.SourceImpact.MappingStatus != "complete" || report.SourceImpact.Base.Status != "declared_match" {
 		t.Fatalf("binding=%+v", report.SourceImpact)
 	}
 	row := report.Routes[0]
@@ -347,6 +347,10 @@ func TestPreviewSourceReportCommandAndMarkdown(t *testing.T) {
 			writePreviewReportDoc(t, w, "deployment-parent", previewReportBefore)
 		case "/v1/apps/pr-42-api/deployments/deployment-preview/openapi":
 			writePreviewReportDoc(t, w, "deployment-preview", previewReportBefore)
+		case "/v1/apps/api/deployments/deployment-parent/route-policy":
+			writePreviewPolicySnapshotTest(w, "deployment-parent", "parent", []api.EdgeRuleResponse{})
+		case "/v1/apps/pr-42-api/deployments/deployment-preview/route-policy":
+			writePreviewPolicySnapshotTest(w, "deployment-preview", "preview", []api.EdgeRuleResponse{})
 		case "/v1/apps/pr-42-api/openapi/preview":
 			writeJSONTest(w, api.AppOpenAPIPolicyPreviewResponse{})
 		case "/v1/apps/api/edge-rules", "/v1/apps/pr-42-api/edge-rules":
@@ -373,7 +377,7 @@ func TestPreviewSourceReportCommandAndMarkdown(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
-	if reads != 8 || report.Version != 6 || report.SourceImpact.SHA256 != fmt.Sprintf("%x", sha256.Sum256(body)) || report.SourceImpact.Status != "aligned" || report.Outcome != "incomplete" {
+	if reads != 9 || report.Version != 7 || report.SourceImpact.SHA256 != fmt.Sprintf("%x", sha256.Sum256(body)) || report.SourceImpact.Status != "aligned" || report.Outcome != "incomplete" {
 		t.Fatalf("reads=%d report=%+v", reads, report)
 	}
 	for _, secret := range []string{"secret-origin", "secret-scope", "secret-issue"} {

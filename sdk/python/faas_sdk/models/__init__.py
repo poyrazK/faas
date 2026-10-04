@@ -688,6 +688,7 @@ from .deployment_response_parked_reason_type_3_type_1 import DeploymentResponseP
 from .deployment_response_rollout_state import DeploymentResponseRolloutState
 from .deployment_response_stage_state import DeploymentResponseStageState
 from .deployment_response_tag import DeploymentResponseTag
+from .deployment_route_policy_snapshot_response import DeploymentRoutePolicySnapshotResponse
 from .deployment_summary_response import DeploymentSummaryResponse
 from .dev_bridge_activity import DevBridgeActivity
 from .dev_bridge_activity_connection_state import DevBridgeActivityConnectionState
@@ -3121,6 +3122,7 @@ __all__ = (
     "DeploymentResponseRolloutState",
     "DeploymentResponseStageState",
     "DeploymentResponseTag",
+    "DeploymentRoutePolicySnapshotResponse",
     "DeploymentSummaryResponse",
     "DeployTokenResponse",
     "DeployTokenResponseScopesItem",
