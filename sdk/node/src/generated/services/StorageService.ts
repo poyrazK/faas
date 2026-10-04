@@ -1645,11 +1645,14 @@ export class StorageService {
     });
   }
   /**
-   * Issue an exact-length direct upload URL for one part
+   * Issue a branded upload URL for one exact-length part
    * Requires storage:write or admin and a matching bucket grant. The URL
-   * binds the server-calculated byte length for this part and expires within
-   * 15 minutes. Upload it without Gregale credentials and retain the ETag
-   * response header for completion. Every issued part URL consumes the
+   * uses the branded S3 endpoint and binds the owned session, part and exact
+   * byte length. It expires within 15 minutes and before the session deadline.
+   * Upload without Gregale credentials and retain the ETag response header.
+   * Current issuer grants and the active session are checked at dispatch.
+   * Sequential retries may replace a settled part; overlapping or uncertain
+   * native attempts remain fenced. Issuance and redemption consume the
    * authorization safety budget.
    *
    * @returns ObjectSignedRequest Temporary provider capability; Cache-Control no-store

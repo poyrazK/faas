@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,27 +16,31 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/s3gateway"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type blockedMultipartSigner struct {
-	objectstorage.Provider
+type blockedMultipartURLStore struct {
+	*state.MemStore
 	entered chan struct{}
 	release chan struct{}
 }
 
-func (p blockedMultipartSigner) PresignMultipartPart(ctx context.Context, bucket string, req objectstorage.MultipartPartRequest) (objectstorage.SignedRequest, error) {
+func (p blockedMultipartURLStore) IssueObjectMultipartURLCredential(ctx context.Context, c state.ObjectS3Credential, u state.ObjectMultipartUpload, policy api.ObjectStoragePolicy) (state.ObjectS3Credential, error) {
 	close(p.entered)
 	select {
 	case <-p.release:
-		return p.Provider.PresignMultipartPart(ctx, bucket, req)
+		return p.MemStore.IssueObjectMultipartURLCredential(ctx, c, u, policy)
 	case <-ctx.Done():
-		return objectstorage.SignedRequest{}, ctx.Err()
+		return state.ObjectS3Credential{}, ctx.Err()
 	}
 }
 
 // adr: 408
 func TestObjectMultipartSignedURLWithheldAfterMutation(t *testing.T) {
+	_, teardown := withTestIdentities(t)
+	defer teardown()
 	for _, operation := range []string{state.ObjectMultipartAborting, state.ObjectMultipartCompleting} {
 		t.Run(operation, func(t *testing.T) {
 			e := setup(t, api.PlanHobby)
@@ -43,10 +48,11 @@ func TestObjectMultipartSignedURLWithheldAfterMutation(t *testing.T) {
 				t.Fatal(err)
 			}
 			createApp(t, e, "sign-race")
-			p := blockedMultipartSigner{Provider: &fakeObjectProvider{}, entered: make(chan struct{}), release: make(chan struct{})}
+			p := blockedMultipartURLStore{MemStore: e.store, entered: make(chan struct{}), release: make(chan struct{})}
+			e.s.store = p
 			var release sync.Once
 			defer release.Do(func() { close(p.release) })
-			e.s.WithObjectStorage(objectRegistry(t, p, &fakeObjectProvider{}, "external"))
+			e.s.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external"))
 			b := bucketResponse(t, e.do(t, "POST", "/v1/apps/sign-race/buckets", map[string]any{"name": "assets"}, nil), 201)
 			qualifyObjectAccounting(t, e, b.ID)
 			base := "/v1/apps/sign-race/buckets/" + b.ID + "/multipart-uploads"
@@ -62,7 +68,7 @@ func TestObjectMultipartSignedURLWithheldAfterMutation(t *testing.T) {
 			select {
 			case <-p.entered:
 			case <-time.After(5 * time.Second):
-				t.Fatal("signing did not reach the provider")
+				t.Fatal("signing did not reach atomic URL admission")
 			}
 			app, err := e.store.AppBySlug(t.Context(), "sign-race")
 			if err != nil {
@@ -98,6 +104,8 @@ func TestObjectMultipartSignedURLAbortEndToEndPG(t *testing.T) {
 
 func objectMultipartSignedURLAbortEndToEnd(t *testing.T, lostACK bool) {
 	t.Helper()
+	identity, teardown := withTestIdentities(t)
+	defer teardown()
 	const key = "目录 /+%.bin"
 	const native = "private-upload/+%?"
 	initialAborts := int32(1)
@@ -173,6 +181,23 @@ func objectMultipartSignedURLAbortEndToEnd(t *testing.T, lostACK bool) {
 		}
 	}), 7)
 	ctx := t.Context()
+	var gateway http.Handler
+	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gateway.ServeHTTP(w, r) }))
+	t.Cleanup(public.Close)
+	f.registry.PublicEndpoint = public.URL
+	gateway, err := s3gateway.New(s3gateway.Config{Registry: f.registry, Store: f.st, RequestMetrics: f.st, OpenSecret: func(blob []byte) (string, error) {
+		ns, plain, e := secretbox.OpenBytes(identity, blob)
+		if e != nil {
+			return "", e
+		}
+		if ns != s3gateway.CredentialSecretNamespace {
+			return "", errors.New("unexpected credential namespace")
+		}
+		return string(plain), nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	token, hash, err := api.GenerateAPIKey()
 	if err != nil {
 		t.Fatal(err)
@@ -205,7 +230,7 @@ func objectMultipartSignedURLAbortEndToEnd(t *testing.T, lostACK bool) {
 	for k, v := range signed.Headers {
 		req.Header.Set(k, v)
 	}
-	response, err := http.DefaultClient.Do(req)
+	response, err := public.Client().Do(req)
 	if err != nil {
 		t.Fatal("execute signed capability", err)
 	}
@@ -213,13 +238,17 @@ func objectMultipartSignedURLAbortEndToEnd(t *testing.T, lostACK bool) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatal("signed part", response.StatusCode)
 	}
-	if err = client.AbortObjectMultipartUpload(ctx, f.app.Slug, f.bucket.ID, u.ID); err == nil || aborts.Load() != initialAborts || lists.Load() != 0 {
-		t.Fatal("abort refunded a live signed URL", err, aborts.Load(), lists.Load())
+	initialLists := int32(1)
+	if lostACK {
+		initialLists = 0
+	}
+	if err = client.AbortObjectMultipartUpload(ctx, f.app.Slug, f.bucket.ID, u.ID); err == nil || aborts.Load() != initialAborts || lists.Load() != initialLists {
+		t.Fatal("abort accepted remaining native parts", err, aborts.Load(), lists.Load())
 	}
 	srv.Close()
 	recovery, _, client := management()
 	stored, err := state.NewPgStore(f.pool).GetObjectMultipartUpload(ctx, f.account.ID, f.app.ID, f.bucket.ID, u.ID)
-	if err != nil || stored.State != state.ObjectMultipartAborting || stored.ProviderUploadID != native || !stored.PartURLUnsafeUntil.After(signed.ExpiresAt) || stored.LeaseToken != "" {
+	if err != nil || stored.State != state.ObjectMultipartAborting || stored.ProviderUploadID != native || !stored.PartURLUnsafeUntil.IsZero() || stored.LeaseToken != "" {
 		t.Fatal("restart lost cleanup authority", stored, err)
 	}
 	if lostACK && stored.LastErrorCode != "temporary" {
@@ -236,29 +265,15 @@ func objectMultipartSignedURLAbortEndToEnd(t *testing.T, lostACK bool) {
 	if _, err = client.CreateObjectCapacityReconciliation(ctx, f.app.Slug, f.bucket.ID); err == nil {
 		t.Fatal("live signed upload allowed capacity reconciliation")
 	}
-	// Simulate time passing in this isolated database; the migration test
-	// separately proves that application callers cannot shorten this fence.
-	tx, err := f.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-	if _, err = tx.Exec(ctx, `ALTER TABLE object_storage_multipart_uploads DISABLE TRIGGER object_multipart_part_url_deadline_protected`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = tx.Exec(ctx, `UPDATE object_storage_multipart_uploads SET created_at=created_at-interval '1 hour',part_url_unsafe_until=clock_timestamp()-interval '1 second',retry_at=now() WHERE id=$1`, u.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = tx.Exec(ctx, `ALTER TABLE object_storage_multipart_uploads ENABLE TRIGGER object_multipart_part_url_deadline_protected`); err != nil {
-		t.Fatal(err)
-	}
-	if err = tx.Commit(ctx); err != nil {
+	// Branded URLs were never published to the native provider. An unused
+	// capability adds no drain delay once the session is fenced for abort.
+	if _, err = f.pool.Exec(ctx, `UPDATE object_storage_multipart_uploads SET retry_at=now() WHERE id=$1`, u.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err = recovery.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("false")); err != nil {
 		t.Fatal(err)
 	}
-	if err = recovery.reconcileObjectMultipartUploads(ctx, nil); err != nil || aborts.Load() != initialAborts+1 || lists.Load() != 1 {
+	if err = recovery.reconcileObjectMultipartUploads(ctx, nil); err != nil || aborts.Load() != initialAborts+1 || lists.Load() != initialLists+1 {
 		t.Fatal("restart cleanup of remaining parts", err, aborts.Load(), lists.Load())
 	}
 	assertReservation()
@@ -266,7 +281,7 @@ func objectMultipartSignedURLAbortEndToEnd(t *testing.T, lostACK bool) {
 	if _, err = f.pool.Exec(ctx, `UPDATE object_storage_multipart_uploads SET retry_at=now() WHERE id=$1`, u.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = recovery.reconcileObjectMultipartUploads(ctx, nil); err != nil || aborts.Load() != initialAborts+2 || lists.Load() != 2 {
+	if err = recovery.reconcileObjectMultipartUploads(ctx, nil); err != nil || aborts.Load() != initialAborts+2 || lists.Load() != initialLists+2 {
 		t.Fatal("verified cleanup", err, aborts.Load(), lists.Load())
 	}
 	// Legacy fixed-size uploads keep their untracked key grant even after
@@ -275,7 +290,7 @@ func objectMultipartSignedURLAbortEndToEnd(t *testing.T, lostACK bool) {
 	if err = recovery.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
-	if err = client.AbortObjectMultipartUpload(ctx, f.app.Slug, f.bucket.ID, u.ID); err != nil || aborts.Load() != initialAborts+2 || lists.Load() != 2 {
+	if err = client.AbortObjectMultipartUpload(ctx, f.app.Slug, f.bucket.ID, u.ID); err != nil || aborts.Load() != initialAborts+2 || lists.Load() != initialLists+2 {
 		t.Fatal("terminal abort replay dispatched again", err, aborts.Load(), lists.Load())
 	}
 	if _, err = client.CreateObjectCapacityReconciliation(ctx, f.app.Slug, f.bucket.ID); err != nil {

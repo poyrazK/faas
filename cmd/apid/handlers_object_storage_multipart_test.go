@@ -37,6 +37,8 @@ func TestObjectMultipartLayout(t *testing.T) {
 }
 
 func TestObjectMultipartUploadLifecycle(t *testing.T) {
+	_, teardown := withTestIdentities(t)
+	defer teardown()
 	e := setup(t, api.PlanHobby)
 	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)

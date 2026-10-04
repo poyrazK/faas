@@ -13,6 +13,70 @@ import (
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
+func TestControlMultipartClient(t *testing.T) {
+	const ownedKey = "arn:gregale:kms:us-east-1:11111111-1111-4111-8111-111111111111:key/22222222-2222-4222-8222-222222222222"
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Header.Get("Authorization") != "Bearer token" {
+			t.Error("missing management authorization")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/buckets/bucket/multipart-uploads":
+			var in faas.CreateObjectMultipartUploadRequest
+			if json.NewDecoder(r.Body).Decode(&in) != nil || in.Encryption == nil || in.Encryption.KeyID != ownedKey {
+				t.Error("owned encryption was not serialized")
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/buckets/bucket/multipart-uploads/session/parts/1/signed-url":
+			_, _ = io.WriteString(w, `{"url":"https://s3.example.test/assets/file?uploadId=session&partNumber=1","method":"PUT","headers":{"Content-Length":"3"},"expires_at":"2026-10-04T00:00:00Z"}`)
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/demo/buckets/bucket/multipart-uploads/session/parts":
+			_, _ = io.WriteString(w, `{"items":[{"part_number":1,"etag":"part","size_bytes":3,"last_modified":"2026-10-04T00:00:00Z"}]}`)
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/buckets/bucket/multipart-uploads/session/complete":
+			var in faas.CompleteObjectMultipartUploadRequest
+			if json.NewDecoder(r.Body).Decode(&in) != nil || len(in.Parts) != 1 || in.Parts[0].ETag != "part" {
+				t.Error("completion parts were not serialized")
+			}
+		case r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+			return
+		default:
+			t.Errorf("unexpected multipart route %s %s", r.Method, r.URL)
+		}
+		_, _ = io.WriteString(w, `{"id":"session","key":"file","state":"active","encryption":{"algorithm":"aws:kms","key_id":"`+ownedKey+`"}}`)
+	}))
+	defer srv.Close()
+	c, err := faas.NewClient(srv.URL, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	u, err := c.CreateObjectMultipartUpload(ctx, "demo", "bucket", faas.CreateObjectMultipartUploadRequest{Key: "file", SizeBytes: 3, Encryption: &faas.ObjectEncryption{Algorithm: "aws:kms", KeyID: ownedKey}})
+	if err != nil || u.Encryption == nil || u.Encryption.KeyID != ownedKey {
+		t.Fatal(u, err)
+	}
+	signed, err := c.SignObjectMultipartPart(ctx, "demo", "bucket", u.ID, 1, faas.ObjectMultipartPartSignRequest{})
+	if err != nil || signed.Headers["Content-Length"] != "3" {
+		t.Fatal(signed, err)
+	}
+	parts, err := c.ListObjectMultipartParts(ctx, "demo", "bucket", u.ID, 0, 1)
+	if err != nil || len(parts.Items) != 1 {
+		t.Fatal(parts, err)
+	}
+	_, err = c.CompleteObjectMultipartUpload(ctx, "demo", "bucket", u.ID, faas.CompleteObjectMultipartUploadRequest{Parts: []faas.ObjectMultipartCompletedPart{{PartNumber: 1, ETag: parts.Items[0].ETag}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.AbortObjectMultipartUpload(ctx, "demo", "bucket", u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if requests.Load() != 5 {
+		t.Fatal("unexpected management retries", requests.Load())
+	}
+}
+
 func TestBucketCatalogTransferDiscovery(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.EscapedPath() != "/v1/apps/demo%20app/buckets" || r.Header.Get("Authorization") != "Bearer token" {

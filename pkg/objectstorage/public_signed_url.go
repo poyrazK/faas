@@ -91,6 +91,17 @@ func PublicSignedObjectHeaders(r SignRequest) (http.Header, error) {
 // PresignPublicObject performs only local signing with a sealed ephemeral
 // credential. The caller must commit its capability before returning the URL.
 func PresignPublicObject(ctx context.Context, endpoint, region, bucket, access, secret string, r SignRequest, now time.Time) (SignedRequest, error) {
+	return presignPublicRequest(ctx, endpoint, region, bucket, access, secret, r, now, nil)
+}
+
+func PresignPublicMultipartPart(ctx context.Context, endpoint, region, bucket, access, secret string, r SignRequest, upload string, part int32, now time.Time) (SignedRequest, error) {
+	if r.Method != http.MethodPut || r.SizeBytes == nil || *r.SizeBytes < 1 || upload == "" || part < 1 || part > api.MaxMultipartParts {
+		return SignedRequest{}, ErrInvalid
+	}
+	return presignPublicRequest(ctx, endpoint, region, bucket, access, secret, r, now, url.Values{"uploadId": []string{upload}, "partNumber": []string{strconv.FormatInt(int64(part), 10)}})
+}
+
+func presignPublicRequest(ctx context.Context, endpoint, region, bucket, access, secret string, r SignRequest, now time.Time, query url.Values) (SignedRequest, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.Path != "" && u.Path != "/" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || region == "" || bucket == "" || strings.ContainsAny(bucket, "/\\") || access == "" || secret == "" {
 		return SignedRequest{}, ErrConfiguration
@@ -100,7 +111,10 @@ func PresignPublicObject(ctx context.Context, endpoint, region, bucket, access, 
 		return SignedRequest{}, ErrInvalid
 	}
 	u.Path = "/" + bucket + "/" + r.Key
-	query := url.Values{"X-Amz-Expires": []string{strconv.FormatInt(r.ExpiresIn, 10)}}
+	if query == nil {
+		query = url.Values{}
+	}
+	query.Set("X-Amz-Expires", strconv.FormatInt(r.ExpiresIn, 10))
 	u.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, r.Method, u.String(), nil)
 	if err != nil {

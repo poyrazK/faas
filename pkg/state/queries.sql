@@ -5447,6 +5447,16 @@ SELECT id FROM object_storage_s3_credentials
 WHERE account_id=$1 AND bucket_id=$2 AND url_receipt_id=$3 AND url_request IS NOT NULL AND status='active'
  AND object_url_issuer_live(account_id,bucket_id,url_api_key_id,permission,url_expires_at);
 
+-- name: ObjectURLMultipartCredential :one
+SELECT * FROM object_storage_s3_credentials WHERE id=$1 AND url_request ? 'multipart' AND status='active'
+AND object_url_issuer_live(account_id,bucket_id,url_api_key_id,permission,url_expires_at) FOR UPDATE;
+
+-- name: ObjectMultipartURLPartBegin :exec
+INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_bytes,cleanup_tracked,transfer_token,unsafe_until,url_credential_id)
+VALUES (sqlc.arg(upload_id),sqlc.arg(part_number),0,true,sqlc.arg(transfer_token),clock_timestamp()+(sqlc.arg(window_seconds)::int * interval '1 second'),sqlc.arg(url_credential_id))
+ON CONFLICT (upload_id,part_number) DO UPDATE SET
+max_bytes=0,cleanup_tracked=true,transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until,url_credential_id=EXCLUDED.url_credential_id;
+
 -- name: ObjectURLCredentialCleanup :exec
 DELETE FROM object_storage_s3_credentials WHERE id IN (
  SELECT c.id FROM object_storage_s3_credentials c

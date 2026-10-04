@@ -16,13 +16,31 @@ import (
 )
 
 // ObjectURLCapability freezes the authority behind a branded SigV4 URL.
-// The credential secret remains sealed; PUT authority names exactly one
-// durable receipt and cannot be used to admit another write.
+// The credential secret remains sealed. Ordinary PUT authority names one
+// durable receipt; multipart PUT authority names one fixed session and part.
 type ObjectURLCapability struct {
 	Request   api.ObjectSignRequest
 	APIKeyID  string
 	ReceiptID string
 	ExpiresAt time.Time
+	Multipart *ObjectURLMultipartPart
+}
+
+// ObjectURLMultipartPart identifies an owned fixed-size session, never a
+// native provider upload ID. Its layout and encryption live on that session.
+type ObjectURLMultipartPart struct {
+	UploadID   string `json:"upload_id"`
+	PartNumber int32  `json:"part_number"`
+}
+
+type objectURLRequestEnvelope struct {
+	api.ObjectSignRequest
+	Multipart *ObjectURLMultipartPart `json:"multipart,omitempty"`
+}
+
+type ObjectMultipartURLCapabilityStore interface {
+	IssueObjectMultipartURLCredential(context.Context, ObjectS3Credential, ObjectMultipartUpload, api.ObjectStoragePolicy) (ObjectS3Credential, error)
+	BeginObjectURLMultipartPart(context.Context, string, string, api.ObjectStoragePolicy) error
 }
 
 type ObjectURLCapabilityStore interface {
@@ -41,6 +59,10 @@ func (u *ObjectURLCapability) Clone() *ObjectURLCapability {
 		return nil
 	}
 	out := *u
+	if u.Multipart != nil {
+		part := *u.Multipart
+		out.Multipart = &part
+	}
 	out.Request.Metadata = maps.Clone(u.Request.Metadata)
 	out.Request.Tags = maps.Clone(u.Request.Tags)
 	if u.Request.SizeBytes != nil {
@@ -88,7 +110,10 @@ func objectURLRequestJSON(u *ObjectURLCapability) ([]byte, error) {
 	if u == nil || !validObjectURLRequest(u.Request) {
 		return nil, ErrInvalidArgument
 	}
-	b, err := json.Marshal(u.Request)
+	if u.Multipart != nil && !validObjectURLMultipartRequest(u) {
+		return nil, ErrInvalidArgument
+	}
+	b, err := json.Marshal(objectURLRequestEnvelope{ObjectSignRequest: u.Request, Multipart: u.Multipart})
 	// PostgreSQL's jsonb text includes field separators. Reserve their
 	// worst-case whitespace too, so a memory-admitted descriptor also fits
 	// the bounded SQL decoder after its canonical serialization.
@@ -109,15 +134,17 @@ func objectURLCapabilityFromJSON(b []byte, key, receipt string, expiry time.Time
 		return nil, ErrConflict
 	}
 	u := &ObjectURLCapability{APIKeyID: key, ReceiptID: receipt, ExpiresAt: expiry}
+	envelope := objectURLRequestEnvelope{}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
-	if err := d.Decode(&u.Request); err != nil || !validObjectURLRequest(u.Request) || expiry.IsZero() {
+	if err := d.Decode(&envelope); err != nil || !validObjectURLRequest(envelope.ObjectSignRequest) || expiry.IsZero() {
 		return nil, ErrConflict
 	}
+	u.Request, u.Multipart = envelope.ObjectSignRequest, envelope.Multipart
 	if err := d.Decode(new(any)); err != io.EOF {
 		return nil, ErrConflict
 	}
-	if (u.Request.Method == http.MethodPut) != (receipt != "") {
+	if (u.Request.Method == http.MethodPut && u.Multipart == nil) != (receipt != "") {
 		return nil, ErrConflict
 	}
 	if _, err := objectURLRequestJSON(u); err != nil {
@@ -127,6 +154,17 @@ func objectURLCapabilityFromJSON(b []byte, key, receipt string, expiry time.Time
 }
 
 func validObjectURLCredential(c ObjectS3Credential, receipt ObjectUploadCompletion, now time.Time) bool {
+	if !validObjectURLCredentialIdentity(c, now) || c.URL.Multipart != nil {
+		return false
+	}
+	u := c.URL
+	if u.Request.Method == http.MethodPut {
+		return c.Permission == ObjectBucketPermissionWrite && validTrackedGatewayUpload(receipt) && validObjectURLReceipt(c, receipt)
+	}
+	return c.Permission == ObjectBucketPermissionRead && u.ReceiptID == "" && receipt.ID == ""
+}
+
+func validObjectURLCredentialIdentity(c ObjectS3Credential, now time.Time) bool {
 	u := c.URL
 	plain := c
 	plain.URL = nil
@@ -146,10 +184,24 @@ func validObjectURLCredential(c ObjectS3Credential, receipt ObjectUploadCompleti
 	if _, err := objectURLRequestJSON(u); err != nil {
 		return false
 	}
-	if u.Request.Method == http.MethodPut {
-		return c.Permission == ObjectBucketPermissionWrite && validTrackedGatewayUpload(receipt) && validObjectURLReceipt(c, receipt)
+	return true
+}
+
+func validObjectURLMultipartRequest(u *ObjectURLCapability) bool {
+	if u.Multipart == nil || u.ReceiptID != "" || u.Multipart.PartNumber < 1 || u.Multipart.PartNumber > api.MaxMultipartParts {
+		return false
 	}
-	return c.Permission == ObjectBucketPermissionRead && u.ReceiptID == "" && receipt.ID == ""
+	id, err := uuid.Parse(u.Multipart.UploadID)
+	r := u.Request
+	return err == nil && id != uuid.Nil && r.Method == http.MethodPut && r.SizeBytes != nil && *r.SizeBytes > 0 && r.ContentType == "application/octet-stream" && r.Encryption == nil && len(r.Metadata) == 0 && len(r.Tags) == 0 && r.CacheControl == "" && r.ContentDisposition == "" && r.ContentEncoding == "" && r.ContentLanguage == ""
+}
+
+func validObjectURLMultipartUpload(c ObjectS3Credential, u ObjectMultipartUpload, now time.Time) bool {
+	if !validObjectURLCredentialIdentity(c, now) || c.Permission != ObjectBucketPermissionWrite || !validObjectURLMultipartRequest(c.URL) || c.AccountID != u.AccountID || c.BucketID != u.BucketID || c.URL.Multipart.UploadID != u.ID || c.URL.Request.Key != u.Key || u.PartCount < 1 || u.PartSizeBytes < 1 || u.SizeBytes < 1 || u.State != ObjectMultipartActive || !u.ExpiresAt.After(now) || c.URL.ExpiresAt.After(u.ExpiresAt) || u.ProviderUploadID == "" {
+		return false
+	}
+	part := c.URL.Multipart.PartNumber
+	return part <= u.PartCount && *c.URL.Request.SizeBytes == min(u.PartSizeBytes, u.SizeBytes-int64(part-1)*u.PartSizeBytes)
 }
 
 func validObjectURLReceipt(c ObjectS3Credential, receipt ObjectUploadCompletion) bool {

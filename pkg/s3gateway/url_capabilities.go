@@ -25,7 +25,7 @@ func (h *Handler) boundURLRequest(w http.ResponseWriter, r *http.Request, c stat
 	}
 	u := c.URL
 	bucket, key, hasBucket, hasKey, err := parsePath(r.URL.EscapedPath())
-	valid := err == nil && hasBucket && hasKey && bucket == b.Name && key == u.Request.Key && r.Method == u.Request.Method && r.URL.Query().Has("X-Amz-Algorithm") && len(operationQuery(r.URL.Query())) == 0
+	valid := err == nil && hasBucket && hasKey && bucket == b.Name && key == u.Request.Key && r.Method == u.Request.Method && r.URL.Query().Has("X-Amz-Algorithm") && boundURLQuery(r, u)
 	if u.Request.Method == http.MethodPut {
 		valid = valid && u.Request.SizeBytes != nil && *u.Request.SizeBytes == r.ContentLength
 	} else {
@@ -37,6 +37,14 @@ func (h *Handler) boundURLRequest(w http.ResponseWriter, r *http.Request, c stat
 		writeS3Error(w, http.StatusForbidden, "AccessDenied", "The signed URL is bound to its original object request.", r.URL.Path, requestID)
 	}
 	return valid
+}
+
+func boundURLQuery(r *http.Request, u *state.ObjectURLCapability) bool {
+	q := operationQuery(r.URL.Query())
+	if u.Multipart == nil {
+		return len(q) == 0
+	}
+	return len(q) == 2 && len(q["uploadId"]) == 1 && q.Get("uploadId") == u.Multipart.UploadID && len(q["partNumber"]) == 1 && q.Get("partNumber") == strconv.FormatInt(int64(u.Multipart.PartNumber), 10)
 }
 
 func fixedURLHeaders(r *http.Request, expected http.Header) bool {

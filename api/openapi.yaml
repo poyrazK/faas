@@ -2194,12 +2194,15 @@ paths:
       - { name: part, description: One-based part number from the session layout., in: path, required: true, schema: { type: integer, minimum: 1, maximum: 10000 } }
     post:
       operationId: signObjectMultipartPart
-      summary: Issue an exact-length direct upload URL for one part
+      summary: Issue a branded upload URL for one exact-length part
       description: |
         Requires storage:write or admin and a matching bucket grant. The URL
-        binds the server-calculated byte length for this part and expires within
-        15 minutes. Upload it without Gregale credentials and retain the ETag
-        response header for completion. Every issued part URL consumes the
+        uses the branded S3 endpoint and binds the owned session, part and exact
+        byte length. It expires within 15 minutes and before the session deadline.
+        Upload without Gregale credentials and retain the ETag response header.
+        Current issuer grants and the active session are checked at dispatch.
+        Sequential retries may replace a settled part; overlapping or uncertain
+        native attempts remain fenced. Issuance and redemption consume the
         authorization safety budget.
       tags: [storage]
       requestBody:
@@ -25027,6 +25030,7 @@ components:
         completion_error_code: { type: string, description: Persisted conditional completion rejection; retries retain the outcome. }
         etag: { type: string, description: Actual committed ETag when completion is confirmed. }
         version_id: { type: string, description: Owned public version ID when completion is confirmed; null denotes a mutable provider version. }
+        encryption: { $ref: '#/components/schemas/ObjectEncryption' }
         expires_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
     ObjectMultipartUploadList:
@@ -25039,7 +25043,7 @@ components:
           items: { $ref: '#/components/schemas/ObjectMultipartUpload' }
         next_cursor: { type: string, format: uuid }
     CreateObjectMultipartUploadRequest:
-      description: Final object identity and total size for a resumable upload.
+      description: Final object identity, total size and optional owned encryption frozen at initiation for a resumable upload.
       type: object
       additionalProperties: false
       required: [key, size_bytes]
@@ -25047,6 +25051,7 @@ components:
         key: { type: string, minLength: 1, maxLength: 1024 }
         size_bytes: { type: integer, format: int64, minimum: 1, maximum: 5497558138880 }
         content_type: { type: string, maxLength: 255 }
+        encryption: { $ref: '#/components/schemas/ObjectEncryption' }
     ObjectMultipartPartSignRequest:
       description: Requested lifetime for one exact-length part capability.
       type: object

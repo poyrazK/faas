@@ -49,7 +49,8 @@ func (h *Handler) loadPublicMultipart(w http.ResponseWriter, r *http.Request, re
 		return state.ObjectMultipartUpload{}, nil, false
 	}
 	upload, err := store.GetObjectMultipartUpload(r.Context(), req.credential.AccountID, req.bucket.AppID, req.bucket.ID, uploadID)
-	if err != nil || upload.PartCount != 0 || upload.Key != key {
+	fixedURL := req.credential.URL != nil && req.credential.URL.Multipart != nil
+	if err != nil || upload.PartCount != 0 && !fixedURL || fixedURL && upload.PartCount == 0 || upload.Key != key {
 		if err == nil {
 			err = objectstorage.ErrNotFound
 		}
@@ -135,10 +136,14 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 
 func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, req requestContext, upload state.ObjectMultipartUpload, part int32, integrity *requestIntegrityReader, transfers state.ObjectMultipartTransferStore) {
 	key := upload.Key
-	transferCtx, cancel := context.WithTimeout(r.Context(), h.transferTimeout)
+	timeout := h.transferTimeout
+	if req.credential.URL != nil {
+		timeout = min(timeout, api.ObjectTransferTimeout)
+	}
+	transferCtx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 	transferToken := uuid.NewString()
-	if !h.writeMultipartAdmissionError(w, r, req, transfers.BeginObjectMultipartPart(transferCtx, req.bucket.AccountID, req.bucket.ID, upload.ID, transferToken, part, r.ContentLength, h.registry.MaxUploadBytes, h.registry.Accounting)) {
+	if !h.beginMultipartPart(w, r, req, transferCtx, upload, transferToken, part, transfers) {
 		return
 	}
 
@@ -148,7 +153,7 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 			h.settleMultipartTransfer(transferCtx, req, upload.ID, part, transferToken, transfers)
 		}
 	}()
-	if !h.recordProviderRequest(w, r, req) {
+	if req.credential.URL == nil && !h.recordProviderRequest(w, r, req) {
 		return
 	}
 	signed, err := req.provider.PresignMultipartPart(transferCtx, req.bucket.PhysicalName, objectstorage.MultipartPartRequest{
@@ -202,6 +207,21 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 	safeToSettle = true
 	w.Header().Set("ETag", etag)
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) beginMultipartPart(w http.ResponseWriter, r *http.Request, req requestContext, ctx context.Context, upload state.ObjectMultipartUpload, token string, part int32, transfers state.ObjectMultipartTransferStore) bool {
+	var err error
+	if req.credential.URL != nil && req.credential.URL.Multipart != nil {
+		st, ok := h.store.(state.ObjectMultipartURLCapabilityStore)
+		if !ok {
+			h.unsupported(w, r, req.requestID)
+			return false
+		}
+		err = st.BeginObjectURLMultipartPart(ctx, req.credential.ID, token, h.registry.Accounting)
+	} else {
+		err = transfers.BeginObjectMultipartPart(ctx, req.bucket.AccountID, req.bucket.ID, upload.ID, token, part, r.ContentLength, h.registry.MaxUploadBytes, h.registry.Accounting)
+	}
+	return h.writeMultipartAdmissionError(w, r, req, err)
 }
 
 func (h *Handler) listMultipartParts(w http.ResponseWriter, r *http.Request, req requestContext, key, uploadID string, query url.Values) {

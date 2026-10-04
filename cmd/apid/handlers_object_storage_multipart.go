@@ -49,12 +49,17 @@ func multipartPartSize(upload state.ObjectMultipartUpload, part int32) (int64, e
 }
 
 func viewMultipartUpload(upload state.ObjectMultipartUpload) api.ObjectMultipartUpload {
-	return api.ObjectMultipartUpload{
+	out := api.ObjectMultipartUpload{
 		ID: upload.ID, Key: upload.Key, SizeBytes: upload.SizeBytes, PartSizeBytes: upload.PartSizeBytes,
 		PartCount: upload.PartCount, ContentType: upload.ContentType, State: upload.State,
 		ExpiresAt: upload.ExpiresAt, CreatedAt: upload.CreatedAt, CompletionErrorCode: upload.CompletionErrorCode,
 		ETag: upload.CompletionETag, VersionID: upload.CompletionVersionID,
 	}
+	if !upload.Encryption.Empty() {
+		selection := upload.Encryption.Clone().Selection
+		out.Encryption = &selection
+	}
+	return out
 }
 
 func decodeMultipartCompletion(w http.ResponseWriter, r *http.Request, out any) bool {
@@ -133,53 +138,12 @@ func (s *server) createObjectMultipartUpload(w http.ResponseWriter, r *http.Requ
 	if !decodeBucketRequest(w, r, &req) {
 		return
 	}
-	if !objectstorage.ValidKey(req.Key) || req.SizeBytes > s.objectStorage.MaxUploadBytes || objectstorage.ValidateContentType(req.ContentType) != nil {
-		bucketProblem(w, objectstorage.ErrInvalid)
-		return
-	}
-	partSize, partCount, err := multipartLayoutWithLimit(req.SizeBytes, s.objectStorage.MaxPartBytes)
+	upload, status, err := s.createControlMultipart(r.Context(), bucket, store, req)
 	if err != nil {
 		bucketProblem(w, err)
 		return
 	}
-	// Reserve the full final object before creating billable upstream parts.
-	size := req.SizeBytes
-	if err = s.admitObjectURL(r.Context(), bucket, objectstorage.SignRequest{Method: http.MethodPut, Key: req.Key, SizeBytes: &size, ContentType: req.ContentType}); err != nil {
-		bucketProblem(w, err)
-		return
-	}
-	upload, err := store.ReserveObjectMultipartUpload(r.Context(), state.ObjectMultipartUpload{
-		ID: uuid.NewString(), AccountID: acct.ID, AppID: bucket.AppID, BucketID: bucket.ID,
-		Key: req.Key, SizeBytes: req.SizeBytes, PartSizeBytes: partSize, PartCount: partCount,
-		ContentType: req.ContentType, ExpiresAt: time.Now().UTC().Add(api.ObjectMultipartUploadTTL),
-	}, api.MaxActiveMultipartUploadsPerBucket)
-	if err != nil {
-		bucketProblem(w, err)
-		return
-	}
-	if upload.State == state.ObjectMultipartActive {
-		writeJSON(w, http.StatusOK, viewMultipartUpload(upload))
-		return
-	}
-	if upload.State != state.ObjectMultipartInitiating {
-		bucketProblem(w, state.ErrConflict)
-		return
-	}
-	upload, err = store.ClaimObjectMultipartUpload(r.Context(), acct.ID, bucket.AppID, bucket.ID, upload.ID, uuid.NewString(), state.ObjectMultipartInitiating, nil, false)
-	if err != nil {
-		bucketProblem(w, err)
-		return
-	}
-	if err = s.executeObjectMultipartOperation(r.Context(), store, bucket, upload); err != nil {
-		bucketProblem(w, err)
-		return
-	}
-	upload, err = store.GetObjectMultipartUpload(r.Context(), acct.ID, bucket.AppID, bucket.ID, upload.ID)
-	if err != nil {
-		bucketProblem(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, viewMultipartUpload(upload))
+	writeJSON(w, status, viewMultipartUpload(upload))
 }
 
 func (s *server) listObjectMultipartUploads(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -275,7 +239,7 @@ func (s *server) signObjectMultipartPart(w http.ResponseWriter, r *http.Request,
 		bucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
-	bucket, upload, _, provider, ok := s.loadMultipartUpload(w, r, acct)
+	bucket, upload, _, _, ok := s.loadMultipartUpload(w, r, acct)
 	if !ok {
 		return
 	}
@@ -302,7 +266,7 @@ func (s *server) signObjectMultipartPart(w http.ResponseWriter, r *http.Request,
 		bucketProblem(w, objectstorage.ErrInvalid)
 		return
 	}
-	out, err := s.issueObjectMultipartPartURL(r.Context(), bucket, upload, provider, objectstorage.MultipartPartRequest{
+	out, err := s.issueObjectMultipartPartURL(r, bucket, upload, objectstorage.MultipartPartRequest{
 		Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumber: part, SizeBytes: partBytes, ExpiresIn: req.ExpiresIn,
 	})
 	if err != nil {

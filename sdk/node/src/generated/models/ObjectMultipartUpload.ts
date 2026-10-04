@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ObjectEncryption } from './ObjectEncryption.js';
 /**
  * Durable provider-neutral resumable upload session. The provider upload ID is private.
  */
@@ -25,6 +26,7 @@ export type ObjectMultipartUpload = {
    * Owned public version ID when completion is confirmed; null denotes a mutable provider version.
    */
   version_id?: string;
+  encryption?: ObjectEncryption;
   expires_at: string;
   created_at: string;
 };

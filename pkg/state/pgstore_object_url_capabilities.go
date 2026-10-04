@@ -51,10 +51,6 @@ func (s *PgStore) IssueObjectURLCredential(ctx context.Context, c ObjectS3Creden
 	if !validObjectURLCredential(c, receipt, time.Now()) {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrConflict
 	}
-	request, err := objectURLRequestJSON(c.URL)
-	if err != nil {
-		return ObjectS3Credential{}, ObjectUploadCompletion{}, err
-	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, err
@@ -67,17 +63,7 @@ func (s *PgStore) IssueObjectURLCredential(ctx context.Context, c ObjectS3Creden
 	if _, err = q.ObjectS3CredentialLockBucket(ctx, tx, sqlc.ObjectS3CredentialLockBucketParams{ID: mustPgUUID(c.BucketID), AccountID: mustPgUUID(c.AccountID)}); err != nil {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
 	}
-	if err = q.ObjectURLCredentialCleanup(ctx, tx, sqlc.ObjectURLCredentialCleanupParams{BucketID: mustPgUUID(c.BucketID), BatchLimit: api.MaxObjectURLCapabilitiesPerBucket}); err != nil {
-		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
-	}
-	n, err := q.ObjectURLCredentialCount(ctx, tx, mustPgUUID(c.BucketID))
-	if err != nil {
-		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
-	}
-	if n >= api.MaxObjectURLCapabilitiesPerBucket {
-		return ObjectS3Credential{}, ObjectUploadCompletion{}, objectURLCapabilityLimitError(n)
-	}
-	row, err := q.ObjectURLCredentialInsert(ctx, tx, sqlc.ObjectURLCredentialInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID), AccessKeyID: c.AccessKeyID, SecretSealed: c.SecretSealed, Kid: c.KID, Label: c.Label, Permission: c.Permission, UrlRequest: request, UrlApiKeyID: optionalURLUUID(c.URL.APIKeyID), UrlReceiptID: optionalURLUUID(c.URL.ReceiptID), UrlExpiresAt: pgtype.Timestamptz{Time: c.URL.ExpiresAt, Valid: true}})
+	out, err := insertObjectURLCredentialSQL(ctx, tx, c)
 	if err != nil {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
 	}
@@ -89,15 +75,35 @@ func (s *PgStore) IssueObjectURLCredential(ctx context.Context, c ObjectS3Creden
 	if err != nil {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
 	}
-	out := objectS3CredentialFromSQL(row)
-	out.URL, err = objectURLCapabilityFromJSON(row.UrlRequest, pgUUIDStringNullable(row.UrlApiKeyID), pgUUIDStringNullable(row.UrlReceiptID), row.UrlExpiresAt.Time)
-	if err != nil {
-		return ObjectS3Credential{}, ObjectUploadCompletion{}, err
-	}
 	if err = tx.Commit(ctx); err != nil {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
 	}
 	return out, receipt, nil
+}
+
+func insertObjectURLCredentialSQL(ctx context.Context, tx pgx.Tx, c ObjectS3Credential) (ObjectS3Credential, error) {
+	request, err := objectURLRequestJSON(c.URL)
+	if err != nil {
+		return ObjectS3Credential{}, err
+	}
+	q := sqlc.New()
+	if err = q.ObjectURLCredentialCleanup(ctx, tx, sqlc.ObjectURLCredentialCleanupParams{BucketID: mustPgUUID(c.BucketID), BatchLimit: api.MaxObjectURLCapabilitiesPerBucket}); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	n, err := q.ObjectURLCredentialCount(ctx, tx, mustPgUUID(c.BucketID))
+	if err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	if n >= api.MaxObjectURLCapabilitiesPerBucket {
+		return ObjectS3Credential{}, objectURLCapabilityLimitError(n)
+	}
+	row, err := q.ObjectURLCredentialInsert(ctx, tx, sqlc.ObjectURLCredentialInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID), AccessKeyID: c.AccessKeyID, SecretSealed: c.SecretSealed, Kid: c.KID, Label: c.Label, Permission: c.Permission, UrlRequest: request, UrlApiKeyID: optionalURLUUID(c.URL.APIKeyID), UrlReceiptID: optionalURLUUID(c.URL.ReceiptID), UrlExpiresAt: pgtype.Timestamptz{Time: c.URL.ExpiresAt, Valid: true}})
+	if err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
+	out := objectS3CredentialFromSQL(row)
+	out.URL, err = objectURLCapabilityFromJSON(row.UrlRequest, pgUUIDStringNullable(row.UrlApiKeyID), pgUUIDStringNullable(row.UrlReceiptID), row.UrlExpiresAt.Time)
+	return out, err
 }
 
 func issueObjectURLWriteSQL(ctx context.Context, tx pgx.Tx, credential ObjectS3Credential, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {

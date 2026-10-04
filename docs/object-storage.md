@@ -966,7 +966,7 @@ its granted buckets in the bucket list; a management principal sees all buckets.
   `{ "permission": "read" }`, `write`, or `read_write`. The target key must
   carry the corresponding storage scope(s). Admin keys do not need grants.
 - `DELETE /{bucket-id}/access-grants/{key-id}`: revoke the grant. Already-issued
-  URLs remain valid only until their short expiry.
+  branded URLs check the current grant; older native URLs retain their expiry.
 - `GET /{bucket-id}/objects?prefix=folder%2F&limit=100&cursor=...`: one page;
   pass `next_cursor` without interpreting it, keeping the same prefix.
 - `DELETE /{bucket-id}/objects?key=...`: URL-encode the entire exact key.
@@ -983,7 +983,8 @@ its granted buckets in the bucket list; a management principal sees all buckets.
 - `POST /{bucket-id}/multipart-uploads/{upload-id}/parts/{part}/signed-url`:
   `{ "expires_in": 300 }`. Upload that numbered part using the returned headers
   and record the provider's response `ETag`. Parts may be retried and uploaded
-  concurrently. Every non-final part has the advertised fixed size; the final
+  concurrently for different part numbers. A settled part may be replaced;
+  overlapping or uncertain attempts for the same part return 409. Every non-final part has the advertised fixed size; the final
   part may be smaller.
 - `POST /{bucket-id}/multipart-uploads/{upload-id}/complete`: send every ETag in
   ascending order as `{ "parts": [{"part_number":1,"etag":"..."}] }`.
@@ -1014,14 +1015,22 @@ optional `bucket_key_enabled` and optional `context`. The gateway captures the
 owned selection before issuing the URL and returns owned encryption headers.
 GCS rejects encryption; an ordinary GCS PUT still uses the branded broker, but
 a lost acknowledgment retains its receipt until exact provider proof support
-is available. Fixed multipart part URLs retain the provider URL contract and
-cannot yet opt into encryption. URLs issued before ADR-415 retain their native
-provider expiry; changing permissions cannot revoke those older capabilities.
+is available. Fixed multipart part URLs now use the branded endpoint too. The
+URL binds the owned session, exact part and length; it stops admitting writes
+when the session starts completion or abort. Native upload IDs stay private.
+URLs issued before ADR-415/416 retain their native provider expiry; changing
+permissions cannot revoke those older capabilities.
+
+Control multipart creation accepts the same optional owned `encryption`
+selection. Initiation captures it in the immutable multipart journal, parts
+return owned cipher acknowledgment headers, and complete/get/list responses
+include the captured selection. Send initiation encryption parameters only in
+the creation request. Part requests use exactly their returned headers.
 
 Multipart sessions reserve the declared final size before upstream initiation
 and use the same `storage:write` scope plus bucket write grant as ordinary PUT.
 Only one live session exists per bucket/key; retry creation with the same key,
-size and content type to recover its Gregale ID. A different shape conflicts.
+size, content type and encryption selection to recover its Gregale ID. A different shape conflicts.
 Gregale never exposes the provider upload ID. Part ETags and completion predicates
 are durably stored before the upstream call. The actual final ETag and public
 version ID are committed atomically with successful completion. An uncertain
@@ -1034,12 +1043,13 @@ Sessions expire after
 object-storage operations are disabled. The upstream lifecycle rule is still
 required as a defense against control-plane outages.
 
-Abort can return 409 while issued part URLs remain within their cleanup delay
-or the provider still reports parts. The session remains `aborting`; retrieve
+Abort can return 409 while a native part attempt is still unsafe, older direct
+part URLs remain within their cleanup delay, or the provider reports parts. An
+unused branded URL creates no extra drain delay. The session remains `aborting`; retrieve
 it with GET and let the recovery worker retry, including after a server restart.
 Signing rechecks the active session before returning a URL, so an abort or
-completion admitted during signing prevents publication. Cleanup waits beyond
-the recorded URL expiry, then checks a bounded part listing before reporting
+completion admitted during signing prevents publication. Cleanup drains actual
+transfers and legacy URL deadlines, then checks a bounded part listing before reporting
 `aborted`. Elapsed time and provider acknowledgment alone do not refund legacy
 key reservations or change the inventory baseline. See
 [ADR-408](adr/408-durable-object-lifecycle.md).
@@ -1699,7 +1709,7 @@ multipart upload can recover its identity without a new enabled-key probe.
 
 Do not send cipher directives on reads, individual parts or completion. SSE-C,
 native key references and encryption query directives are unsupported. Bucket
-defaults, control API multipart encryption/brokerage, upload-route encryption, GCS and
+defaults, upload-route encryption, GCS and
 cross-bucket encrypted copy remain acceptance work in
 `docs/s3-implementation-gaps.md`. See [ADR-414](adr/414-customer-s3-encryption.md)
 and [ADR-415](adr/415-branded-object-url-capabilities.md).

@@ -54,18 +54,19 @@ type ObjectSignedRequest struct {
 // ObjectMultipartUpload is Gregale's durable upload session. The upstream S3
 // upload ID is intentionally never exposed.
 type ObjectMultipartUpload struct {
-	ID                  string    `json:"id"`
-	Key                 string    `json:"key"`
-	SizeBytes           int64     `json:"size_bytes"`
-	PartSizeBytes       int64     `json:"part_size_bytes"`
-	PartCount           int32     `json:"part_count"`
-	ContentType         string    `json:"content_type"`
-	State               string    `json:"state"`
-	CompletionErrorCode string    `json:"completion_error_code,omitempty"`
-	ETag                string    `json:"etag,omitempty"`
-	VersionID           string    `json:"version_id,omitempty"`
-	ExpiresAt           time.Time `json:"expires_at"`
-	CreatedAt           time.Time `json:"created_at"`
+	ID                  string            `json:"id"`
+	Key                 string            `json:"key"`
+	SizeBytes           int64             `json:"size_bytes"`
+	PartSizeBytes       int64             `json:"part_size_bytes"`
+	PartCount           int32             `json:"part_count"`
+	ContentType         string            `json:"content_type"`
+	State               string            `json:"state"`
+	CompletionErrorCode string            `json:"completion_error_code,omitempty"`
+	ETag                string            `json:"etag,omitempty"`
+	VersionID           string            `json:"version_id,omitempty"`
+	Encryption          *ObjectEncryption `json:"encryption,omitempty"`
+	ExpiresAt           time.Time         `json:"expires_at"`
+	CreatedAt           time.Time         `json:"created_at"`
 }
 
 type ObjectMultipartUploadList struct {
@@ -74,9 +75,10 @@ type ObjectMultipartUploadList struct {
 }
 
 type CreateObjectMultipartUploadRequest struct {
-	Key         string `json:"key"`
-	SizeBytes   int64  `json:"size_bytes"`
-	ContentType string `json:"content_type,omitempty"`
+	Key         string            `json:"key"`
+	SizeBytes   int64             `json:"size_bytes"`
+	ContentType string            `json:"content_type,omitempty"`
+	Encryption  *ObjectEncryption `json:"encryption,omitempty"`
 }
 
 type ObjectMultipartPartSignRequest struct {

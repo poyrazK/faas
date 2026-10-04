@@ -28,6 +28,8 @@ type encryptionJournalHTTP struct {
 	headers                                   http.Header
 	part                                      string
 	completed                                 bool
+	disabled                                  bool
+	partWrites                                int
 	requests, creates, completions, keyChecks int
 }
 
@@ -39,6 +41,11 @@ func (f *encryptionJournalHTTP) serve(t *testing.T, w http.ResponseWriter, r *ht
 	switch {
 	case r.Header.Get("X-Amz-Target") == "TrentService.DescribeKey":
 		f.keyChecks++
+		if f.disabled {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"__type":"DisabledException"}`)
+			return
+		}
 		w.Header().Set("Content-Type", "application/x-amz-json-1.1")
 		_, _ = io.WriteString(w, `{"KeyMetadata":{"Arn":"`+journalNativeKMSKey+`","AWSAccountId":"111122223333","KeyId":"abcd8987-12d6-45ad-a4bc-d384c10d9149","Enabled":true,"KeyState":"Enabled","KeyUsage":"ENCRYPT_DECRYPT","KeySpec":"SYMMETRIC_DEFAULT","KeyManager":"CUSTOMER"}}`)
 	case r.Method == http.MethodGet && r.URL.Query().Has("uploads"):
@@ -52,12 +59,21 @@ func (f *encryptionJournalHTTP) serve(t *testing.T, w http.ResponseWriter, r *ht
 		nativeEncryptionJournalHeaders(w)
 		_, _ = io.WriteString(w, `<InitiateMultipartUploadResult><Bucket>physical</Bucket><Key>encrypted</Key><UploadId>native-upload</UploadId></InitiateMultipartUploadResult>`)
 	case r.Method == http.MethodPut && r.URL.Query().Get("uploadId") == "native-upload":
+		f.partWrites++
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Error(err)
 		}
 		f.part = string(data)
+		nativeEncryptionJournalHeaders(w)
 		w.Header().Set("ETag", `"part"`)
+	case r.Method == http.MethodGet && r.URL.Query().Get("uploadId") == "native-upload":
+		if f.completed {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `<Error><Code>NoSuchUpload</Code></Error>`)
+			return
+		}
+		_, _ = io.WriteString(w, `<ListPartsResult><IsTruncated>false</IsTruncated><Part><PartNumber>1</PartNumber><ETag>"part"</ETag><Size>3</Size></Part></ListPartsResult>`)
 	case r.Method == http.MethodPost && r.URL.Query().Get("uploadId") == "native-upload":
 		f.completions++
 		if f.completed {

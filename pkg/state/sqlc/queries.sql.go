@@ -13746,6 +13746,32 @@ func (q *Queries) ObjectMultipartTransfersPending(ctx context.Context, db DBTX, 
 	return pending, err
 }
 
+const objectMultipartURLPartBegin = `-- name: ObjectMultipartURLPartBegin :exec
+INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_bytes,cleanup_tracked,transfer_token,unsafe_until,url_credential_id)
+VALUES ($1,$2,0,true,$3,clock_timestamp()+($4::int * interval '1 second'),$5)
+ON CONFLICT (upload_id,part_number) DO UPDATE SET
+max_bytes=0,cleanup_tracked=true,transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until,url_credential_id=EXCLUDED.url_credential_id
+`
+
+type ObjectMultipartURLPartBeginParams struct {
+	UploadID        pgtype.UUID
+	PartNumber      int32
+	TransferToken   pgtype.Text
+	WindowSeconds   int32
+	UrlCredentialID pgtype.UUID
+}
+
+func (q *Queries) ObjectMultipartURLPartBegin(ctx context.Context, db DBTX, arg ObjectMultipartURLPartBeginParams) error {
+	_, err := db.Exec(ctx, objectMultipartURLPartBegin,
+		arg.UploadID,
+		arg.PartNumber,
+		arg.TransferToken,
+		arg.WindowSeconds,
+		arg.UrlCredentialID,
+	)
+	return err
+}
+
 const objectMutationEventAppend = `-- name: ObjectMutationEventAppend :exec
 INSERT INTO events (actor, kind, subject, data, at)
 VALUES ('objectstorage', 'event.published', $1::uuid,
@@ -15542,6 +15568,41 @@ func (q *Queries) ObjectURLCredentialInsert(ctx context.Context, db DBTX, arg Ob
 		arg.UrlExpiresAt,
 		arg.UrlReceiptID,
 	)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
+		&i.RotationParentID,
+		&i.RotationWakeID,
+		&i.RotationStampedAt,
+		&i.UrlRequest,
+		&i.UrlApiKeyID,
+		&i.UrlExpiresAt,
+		&i.UrlReceiptID,
+	)
+	return i, err
+}
+
+const objectURLMultipartCredential = `-- name: ObjectURLMultipartCredential :one
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials WHERE id=$1 AND url_request ? 'multipart' AND status='active'
+AND object_url_issuer_live(account_id,bucket_id,url_api_key_id,permission,url_expires_at) FOR UPDATE
+`
+
+func (q *Queries) ObjectURLMultipartCredential(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, objectURLMultipartCredential, id)
 	var i ObjectStorageS3Credential
 	err := row.Scan(
 		&i.ID,

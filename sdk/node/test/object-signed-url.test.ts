@@ -26,3 +26,23 @@ test('signed object requests preserve owned encryption and receipt identity', as
     OpenAPI.TOKEN = oldToken;
   }
 });
+
+test('control multipart creation freezes owned encryption', async () => {
+  const oldFetch = globalThis.fetch;
+  const oldBase = OpenAPI.BASE;
+  OpenAPI.BASE = 'https://api.example.test';
+  const encryption = { algorithm: 'aws:kms' as const, key_id: 'owned-key', bucket_key_enabled: false };
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), 'https://api.example.test/v1/apps/demo/buckets/bucket/multipart-uploads');
+    assert.deepEqual(JSON.parse(String(init?.body)), {key:'file',size_bytes:3,encryption});
+    return new Response(JSON.stringify({id:'session',key:'file',size_bytes:3,part_size_bytes:3,part_count:1,content_type:'application/octet-stream',state:'active',expires_at:'2026-10-04T00:00:00Z',created_at:'2026-10-03T23:00:00Z',encryption}), {status:201,headers:{'Content-Type':'application/json'}});
+  };
+  try {
+    const out = await StorageService.createObjectMultipartUpload({slug:'demo',bucket:'bucket',requestBody:{key:'file',size_bytes:3,encryption}});
+    assert.ok('encryption' in out);
+    assert.deepEqual(out.encryption, encryption);
+  } finally {
+    globalThis.fetch = oldFetch;
+    OpenAPI.BASE = oldBase;
+  }
+});

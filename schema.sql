@@ -2963,6 +2963,221 @@ $$;
 
 
 --
+-- Name: valid_object_encryption_snapshot(jsonb, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_object_encryption_snapshot(e jsonb, owner uuid) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $_$
+DECLARE s jsonb; algorithm text; context_bytes bytea; context_doc json; entries bigint; distinct_entries bigint;
+BEGIN
+ IF e='{}'::jsonb THEN RETURN true; END IF;
+ IF jsonb_typeof(e)<>'object' OR octet_length(e::text)>16384 OR
+  e - ARRAY['account_id','selection','provider_key_id','key_identity'] <> '{}'::jsonb OR
+  jsonb_typeof(e->'account_id') IS DISTINCT FROM 'string' OR e->>'account_id'<>owner::text OR
+  owner='00000000-0000-0000-0000-000000000000'::uuid THEN RETURN false; END IF;
+ s:=e->'selection'; algorithm:=s->>'algorithm';
+ IF jsonb_typeof(s) IS DISTINCT FROM 'object' OR jsonb_typeof(s->'algorithm') IS DISTINCT FROM 'string' OR
+  s - ARRAY['algorithm','key_id','bucket_key_enabled','context'] <> '{}'::jsonb THEN RETURN false; END IF;
+ IF algorithm='AES256' THEN
+  RETURN s='{"algorithm":"AES256"}'::jsonb AND NOT e ?| ARRAY['provider_key_id','key_identity'];
+ END IF;
+ IF algorithm NOT IN ('aws:kms','aws:kms:dsse') OR algorithm IS NULL OR
+  jsonb_typeof(s->'key_id') IS DISTINCT FROM 'string' OR
+  octet_length(s->>'key_id')>512 OR
+  (s->>'key_id') !~ '^arn:gregale:kms:[a-z][a-z0-9-]{0,62}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:key/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' OR
+  split_part(s->>'key_id',':',5)<>owner::text OR
+  split_part(s->>'key_id',':',6)='key/00000000-0000-0000-0000-000000000000' OR
+  jsonb_typeof(e->'provider_key_id') IS DISTINCT FROM 'string' OR
+  octet_length(e->>'provider_key_id') NOT BETWEEN 1 AND 512 OR
+  (e->>'provider_key_id') ~ '[\x01-\x1f\x7f]' OR
+  jsonb_typeof(e->'key_identity') IS DISTINCT FROM 'string' OR
+  (e->>'key_identity') !~ '^[0-9a-f]{64}$' OR (e->>'key_identity')=repeat('0',64) OR
+  (algorithm='aws:kms' AND jsonb_typeof(s->'bucket_key_enabled') IS DISTINCT FROM 'boolean') OR
+  (algorithm='aws:kms:dsse' AND s ? 'bucket_key_enabled') THEN RETURN false; END IF;
+ IF s ? 'context' THEN
+  IF jsonb_typeof(s->'context') IS DISTINCT FROM 'string' OR octet_length(s->>'context')>10924 THEN RETURN false; END IF;
+  IF s->>'context'<>'' THEN
+   context_bytes:=decode(s->>'context','base64');
+   IF octet_length(context_bytes)>8192 OR replace(encode(context_bytes,'base64'),E'\n','')<>s->>'context' THEN RETURN false; END IF;
+   context_doc:=convert_from(context_bytes,'UTF8')::json;
+   IF json_typeof(context_doc)<>'object' THEN RETURN false; END IF;
+   SELECT count(*),count(DISTINCT key) INTO entries,distinct_entries FROM json_each(context_doc);
+   IF entries>32 OR entries<>distinct_entries OR EXISTS(SELECT 1 FROM json_each(context_doc) WHERE key='' OR json_typeof(value)<>'string') THEN RETURN false; END IF;
+  END IF;
+ END IF;
+ RETURN true;
+EXCEPTION WHEN OTHERS THEN RETURN false;
+END $_$;
+
+
+--
+-- Name: valid_object_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_object_url_request(r jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+DECLARE method text;
+BEGIN
+ IF jsonb_typeof(r)<>'object' OR octet_length(r::text)>32768 OR
+  r - ARRAY['method','key','expires_in','size_bytes','content_type','cache_control','content_disposition','content_encoding','content_language','metadata','tags','encryption','multipart'] <> '{}'::jsonb OR
+  jsonb_typeof(r->'method') IS DISTINCT FROM 'string' OR jsonb_typeof(r->'key') IS DISTINCT FROM 'string' OR
+  octet_length(r->>'key') NOT BETWEEN 1 AND 1024 OR (r->>'key') ~ '[\x01-\x1f\x7f]' OR
+  jsonb_typeof(r->'expires_in') IS DISTINCT FROM 'number' OR (r->>'expires_in')::bigint NOT BETWEEN 1 AND 900 THEN RETURN false; END IF;
+ method:=r->>'method';
+ IF method IN ('GET','HEAD') THEN RETURN r - ARRAY['method','key','expires_in'] = '{}'::jsonb; END IF;
+ IF method<>'PUT' OR jsonb_typeof(r->'size_bytes') IS DISTINCT FROM 'number' OR (r->>'size_bytes')::bigint NOT BETWEEN 0 AND 5368709120 THEN RETURN false; END IF;
+ IF r ? 'multipart' THEN
+  IF jsonb_typeof(r->'multipart') IS DISTINCT FROM 'object' OR
+   (r->'multipart') - ARRAY['upload_id','part_number'] <> '{}'::jsonb OR
+   jsonb_typeof(r->'multipart'->'upload_id') IS DISTINCT FROM 'string' OR
+   (r->'multipart'->>'upload_id')::uuid='00000000-0000-0000-0000-000000000000'::uuid OR
+   jsonb_typeof(r->'multipart'->'part_number') IS DISTINCT FROM 'number' OR
+   (r->'multipart'->>'part_number')::int NOT BETWEEN 1 AND 10000 OR
+   (r->>'size_bytes')::bigint<1 OR r->>'content_type' IS DISTINCT FROM 'application/octet-stream' THEN RETURN false; END IF;
+  RETURN r - ARRAY['method','key','expires_in','size_bytes','content_type','multipart'] = '{}'::jsonb;
+ END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('content_type','cache_control','content_disposition','content_encoding','content_language') AND (jsonb_typeof(value)<>'string' OR value::text ~ '\\r|\\n|\\u0000')) THEN RETURN false; END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('metadata','tags','encryption') AND jsonb_typeof(value)<>'object') THEN RETURN false; END IF;
+ RETURN true;
+EXCEPTION WHEN OTHERS THEN RETURN false;
+END $$;
+
+
+SET default_table_access_method = heap;
+
+--
+-- Name: object_storage_multipart_uploads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_multipart_uploads (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    object_key text NOT NULL,
+    size_bytes bigint NOT NULL,
+    part_size_bytes bigint NOT NULL,
+    part_count integer NOT NULL,
+    content_type text DEFAULT ''::text NOT NULL,
+    provider_upload_id text DEFAULT ''::text NOT NULL,
+    completion_parts jsonb DEFAULT '[]'::jsonb NOT NULL,
+    state text DEFAULT 'initiating'::text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    lease_token text,
+    lease_until timestamp with time zone,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    retry_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_error_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    object_metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    part_revision bigint DEFAULT 0 NOT NULL,
+    completion_if_match text DEFAULT ''::text NOT NULL,
+    completion_if_none_match text DEFAULT ''::text NOT NULL,
+    completion_error_code text DEFAULT ''::text NOT NULL,
+    completion_etag text DEFAULT ''::text NOT NULL,
+    completion_version_id text DEFAULT ''::text NOT NULL,
+    completion_recovery_cursor text DEFAULT ''::text NOT NULL,
+    completion_versions_observed boolean DEFAULT false NOT NULL,
+    completion_dispatched boolean DEFAULT false NOT NULL,
+    part_url_unsafe_until timestamp with time zone,
+    lifecycle_scan_id uuid,
+    lifecycle_binding jsonb DEFAULT '{}'::jsonb NOT NULL,
+    encryption_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    encryption_lease_token text DEFAULT ''::text NOT NULL,
+    encryption_verified boolean DEFAULT false NOT NULL,
+    CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[[:cntrl:]]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
+    CONSTRAINT object_multipart_completion_error CHECK (((completion_error_code = ANY (ARRAY[''::text, 'precondition_failed'::text, 'conditional_conflict'::text, 'conditional_not_found'::text])) AND ((completion_error_code = ''::text) OR ((state = ANY (ARRAY['aborting'::text, 'aborted'::text])) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
+    CONSTRAINT object_multipart_encryption_phase CHECK ((((encryption_lease_token = ''::text) OR ((encryption_snapshot <> '{}'::jsonb) AND (lease_token IS NOT NULL) AND (encryption_lease_token = lease_token))) AND ((NOT encryption_verified) OR ((encryption_snapshot <> '{}'::jsonb) AND (state = 'completed'::text) AND completion_dispatched)) AND ((encryption_snapshot = '{}'::jsonb) OR (state <> 'completed'::text) OR encryption_verified))),
+    CONSTRAINT object_multipart_lifecycle_binding CHECK ((((lifecycle_scan_id IS NULL) AND (lifecycle_binding = '{}'::jsonb)) OR ((lifecycle_scan_id IS NOT NULL) AND (jsonb_typeof(lifecycle_binding) = 'object'::text) AND (lifecycle_binding ?& ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'expected_provider_upload_id'::text, 'expected_created_at'::text]) AND ((lifecycle_binding - ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'expected_provider_upload_id'::text, 'expected_created_at'::text]) = '{}'::jsonb) AND (jsonb_typeof((lifecycle_binding -> 'scan_id'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'scan_id'::text) = (lifecycle_scan_id)::text) AND (jsonb_typeof((lifecycle_binding -> 'scan_token'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'scan_token'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'scan_token'::text)) <= 128)) AND (jsonb_typeof((lifecycle_binding -> 'rule_id'::text)) = 'string'::text) AND ((char_length((lifecycle_binding ->> 'rule_id'::text)) >= 1) AND (char_length((lifecycle_binding ->> 'rule_id'::text)) <= 255)) AND (jsonb_typeof((lifecycle_binding -> 'expected_provider_upload_id'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_provider_upload_id'::text) = provider_upload_id) AND (provider_upload_id <> ''::text) AND (jsonb_typeof((lifecycle_binding -> 'expected_created_at'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_created_at'::text) <> ''::text) AND (octet_length((lifecycle_binding)::text) <= 8192) AND (state = ANY (ARRAY['aborting'::text, 'aborted'::text]))))),
+    CONSTRAINT object_multipart_part_url_deadline_shape CHECK (((part_url_unsafe_until IS NULL) OR ((part_count > 0) AND (part_url_unsafe_until >= created_at)))),
+    CONSTRAINT object_multipart_result_shape CHECK ((((state = 'completed'::text) OR ((completion_etag = ''::text) AND (completion_version_id = ''::text))) AND ((completion_version_id = ''::text) OR (completion_etag <> ''::text)) AND ((state <> 'completed'::text) OR (completion_recovery_cursor = ''::text)) AND ((state <> 'completed'::text) OR (NOT completion_dispatched) OR (completion_etag <> ''::text)))),
+    CONSTRAINT object_storage_multipart_uploa_completion_recovery_cursor_check CHECK (((octet_length(completion_recovery_cursor) <= 8192) AND (completion_recovery_cursor ~ '^[A-Za-z0-9_-]*$'::text))),
+    CONSTRAINT object_storage_multipart_uploads_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
+    CONSTRAINT object_storage_multipart_uploads_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT object_storage_multipart_uploads_check1 CHECK (((state = 'initiating'::text) OR (provider_upload_id <> ''::text))),
+    CONSTRAINT object_storage_multipart_uploads_check2 CHECK (public.valid_object_encryption_snapshot(encryption_snapshot, account_id)),
+    CONSTRAINT object_storage_multipart_uploads_completion_etag_check CHECK (((octet_length(completion_etag) <= 256) AND (completion_etag !~ '[\x01-\x1f\x7f]'::text) AND ((completion_etag = ''::text) OR (btrim(completion_etag) <> ''::text)))),
+    CONSTRAINT object_storage_multipart_uploads_completion_parts_check CHECK ((jsonb_typeof(completion_parts) = 'array'::text)),
+    CONSTRAINT object_storage_multipart_uploads_completion_version_id_check CHECK (((completion_version_id = ''::text) OR (completion_version_id = 'null'::text) OR (completion_version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
+    CONSTRAINT object_storage_multipart_uploads_content_type_check CHECK ((length(content_type) <= 255)),
+    CONSTRAINT object_storage_multipart_uploads_encryption_lease_token_check CHECK ((octet_length(encryption_lease_token) <= 128)),
+    CONSTRAINT object_storage_multipart_uploads_last_error_code_check CHECK ((length(last_error_code) <= 32)),
+    CONSTRAINT object_storage_multipart_uploads_layout_check CHECK ((((size_bytes = 0) AND (part_size_bytes = 0) AND (part_count = 0)) OR ((size_bytes > 0) AND (part_size_bytes = 0) AND (part_count = 0)) OR ((size_bytes > 0) AND (part_size_bytes > 0) AND (part_count > 0)))),
+    CONSTRAINT object_storage_multipart_uploads_object_key_check CHECK (((length(object_key) >= 1) AND (length(object_key) <= 1024))),
+    CONSTRAINT object_storage_multipart_uploads_object_metadata_check CHECK ((jsonb_typeof(object_metadata) = 'object'::text)),
+    CONSTRAINT object_storage_multipart_uploads_object_metadata_check1 CHECK ((octet_length((object_metadata)::text) <= 32768)),
+    CONSTRAINT object_storage_multipart_uploads_part_count_check CHECK (((part_count >= 0) AND (part_count <= 10000))),
+    CONSTRAINT object_storage_multipart_uploads_part_revision_check CHECK ((part_revision >= 0)),
+    CONSTRAINT object_storage_multipart_uploads_part_size_bytes_check CHECK (((part_size_bytes >= 0) AND (part_size_bytes <= '5368709120'::bigint))),
+    CONSTRAINT object_storage_multipart_uploads_provider_upload_id_check CHECK ((length(provider_upload_id) <= 4096)),
+    CONSTRAINT object_storage_multipart_uploads_size_bytes_check CHECK (((size_bytes >= 0) AND (size_bytes <= '5497558138880'::bigint))),
+    CONSTRAINT object_storage_multipart_uploads_state_check CHECK ((state = ANY (ARRAY['initiating'::text, 'active'::text, 'completing'::text, 'completing_conditional'::text, 'aborting'::text, 'completed'::text, 'aborted'::text])))
+);
+
+
+--
+-- Name: object_storage_s3_credentials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_s3_credentials (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    access_key_id text NOT NULL,
+    secret_sealed bytea NOT NULL,
+    kid text NOT NULL,
+    label text NOT NULL,
+    permission text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_used_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    managed_app_id uuid,
+    managed_scope text,
+    managed_prefix text,
+    rotation_parent_id uuid,
+    rotation_wake_id uuid,
+    rotation_stamped_at timestamp with time zone,
+    url_request jsonb,
+    url_api_key_id uuid,
+    url_expires_at timestamp with time zone,
+    url_receipt_id uuid,
+    CONSTRAINT object_storage_s3_credentials_access_key_id_check CHECK ((access_key_id ~ '^GRGA[A-Z2-7]{16}$'::text)),
+    CONSTRAINT object_storage_s3_credentials_check CHECK ((((status = 'active'::text) AND (revoked_at IS NULL)) OR ((status = 'revoked'::text) AND (revoked_at IS NOT NULL)))),
+    CONSTRAINT object_storage_s3_credentials_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
+    CONSTRAINT object_storage_s3_credentials_label_check CHECK (((length(label) >= 1) AND (length(label) <= 64))),
+    CONSTRAINT object_storage_s3_credentials_managed_shape_check CHECK ((((managed_app_id IS NULL) AND (managed_scope IS NULL) AND (managed_prefix IS NULL)) OR ((managed_app_id IS NOT NULL) AND (managed_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text) AND (managed_prefix ~ '^[A-Z][A-Z0-9_]{0,47}$'::text)))),
+    CONSTRAINT object_storage_s3_credentials_permission_check CHECK ((permission = ANY (ARRAY['read'::text, 'write'::text, 'read_write'::text]))),
+    CONSTRAINT object_storage_s3_credentials_rotation_shape_check CHECK ((((rotation_parent_id IS NULL) AND (rotation_wake_id IS NULL) AND (rotation_stamped_at IS NULL)) OR ((rotation_parent_id IS NOT NULL) AND (rotation_wake_id IS NOT NULL) AND (managed_app_id IS NULL) AND (managed_scope IS NULL) AND (managed_prefix IS NULL)))),
+    CONSTRAINT object_storage_s3_credentials_secret_sealed_check CHECK ((length(secret_sealed) > 0)),
+    CONSTRAINT object_storage_s3_credentials_status_check CHECK ((status = ANY (ARRAY['active'::text, 'revoked'::text]))),
+    CONSTRAINT object_storage_s3_credentials_url_api_key_id_check CHECK (((url_api_key_id IS NULL) OR (url_api_key_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT object_storage_s3_credentials_url_request_check CHECK (((url_request IS NULL) OR public.valid_object_url_request(url_request))),
+    CONSTRAINT object_url_credential_shape CHECK ((((url_request IS NULL) AND (url_api_key_id IS NULL) AND (url_expires_at IS NULL) AND (url_receipt_id IS NULL)) OR ((url_request IS NOT NULL) AND (url_expires_at IS NOT NULL) AND (url_expires_at > created_at) AND (url_expires_at <= (created_at + '00:15:00'::interval)) AND (managed_app_id IS NULL) AND (rotation_parent_id IS NULL) AND ((((url_request ->> 'method'::text) = 'PUT'::text) AND (permission = 'write'::text) AND (((NOT (url_request ? 'multipart'::text)) AND (url_receipt_id IS NOT NULL)) OR ((url_request ? 'multipart'::text) AND (url_receipt_id IS NULL)))) OR (((url_request ->> 'method'::text) = ANY (ARRAY['GET'::text, 'HEAD'::text])) AND (permission = 'read'::text) AND (url_receipt_id IS NULL))))))
+);
+
+
+--
+-- Name: object_url_multipart_matches(public.object_storage_s3_credentials, public.object_storage_multipart_uploads); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_url_multipart_matches(c public.object_storage_s3_credentials, u public.object_storage_multipart_uploads) RETURNS boolean
+    LANGUAGE sql
+    AS $$
+ SELECT c.url_request ? 'multipart' AND c.permission='write' AND c.status='active' AND
+ c.account_id=u.account_id AND c.bucket_id=u.bucket_id AND
+ c.url_request->>'key'=u.object_key AND c.url_request->'multipart'->>'upload_id'=u.id::text AND
+ u.state='active' AND u.part_count>0 AND u.provider_upload_id<>'' AND u.expires_at>clock_timestamp() AND c.url_expires_at<=u.expires_at AND
+ (c.url_request->'multipart'->>'part_number')::int BETWEEN 1 AND u.part_count AND
+ (c.url_request->>'size_bytes')::bigint=least(u.part_size_bytes,u.size_bytes-((c.url_request->'multipart'->>'part_number')::int-1)*u.part_size_bytes) AND
+ object_url_issuer_live(c.account_id,c.bucket_id,c.url_api_key_id,c.permission,c.url_expires_at);
+$$;
+
+
+--
 -- Name: object_url_receipt_committed(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3240,6 +3455,85 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Multipart version must belong to its bucket and key';
  END IF;
  NEW.completion_versions_observed:=OLD.completion_versions_observed OR NEW.completion_versions_observed;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_multipart_url_credential(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_multipart_url_credential() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE u object_storage_multipart_uploads;
+BEGIN
+ IF NEW.url_request ? 'multipart' THEN
+  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=(NEW.url_request->'multipart'->>'upload_id')::uuid FOR UPDATE;
+  IF NOT FOUND OR NOT object_url_multipart_matches(NEW,u) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_url_capability_fenced',MESSAGE='Multipart URL requires its active owned fixed session';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_multipart_url_part(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_multipart_url_part() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE u object_storage_multipart_uploads; c object_storage_s3_credentials; dispatch boolean;
+BEGIN
+ SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.upload_id FOR UPDATE;
+ IF u.part_count=0 THEN
+  IF NEW.max_bytes<1 OR NEW.url_credential_id IS NOT NULL THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_url_capability_fenced',MESSAGE='Dynamic multipart parts require their capacity grant';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF NEW.max_bytes<>0 OR NEW.url_credential_id IS NULL OR NOT NEW.cleanup_tracked OR NEW.part_number>u.part_count THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_url_capability_fenced',MESSAGE='Fixed multipart transfers use their existing full-object reservation';
+ END IF;
+ dispatch:=NEW.transfer_token IS NOT NULL;
+ IF TG_OP='UPDATE' THEN
+  IF (NEW.upload_id,NEW.part_number) IS DISTINCT FROM (OLD.upload_id,OLD.part_number) OR
+   (NEW.transfer_token IS NOT DISTINCT FROM OLD.transfer_token AND NEW.url_credential_id IS DISTINCT FROM OLD.url_credential_id) OR
+   (NEW.transfer_token IS NULL AND NEW.url_credential_id IS DISTINCT FROM OLD.url_credential_id) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_url_capability_fenced',MESSAGE='Multipart transfer identity is immutable';
+  END IF;
+  dispatch:=NEW.transfer_token IS NOT NULL AND NEW.transfer_token IS DISTINCT FROM OLD.transfer_token;
+  IF dispatch AND OLD.transfer_token IS NOT NULL AND OLD.unsafe_until>clock_timestamp() THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_url_capability_fenced',MESSAGE='Multipart part already has an unsafe native attempt';
+  END IF;
+  IF NOT dispatch AND NEW.transfer_token IS NOT NULL AND NEW.unsafe_until IS DISTINCT FROM OLD.unsafe_until THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_url_capability_fenced',MESSAGE='Multipart transfer deadline cannot change';
+  END IF;
+ END IF;
+ IF dispatch THEN
+  SELECT * INTO c FROM object_storage_s3_credentials WHERE id=NEW.url_credential_id;
+  IF NOT FOUND OR NOT object_url_multipart_matches(c,u) OR (c.url_request->'multipart'->>'part_number')::int<>NEW.part_number OR NEW.unsafe_until<clock_timestamp()+interval '35 minutes' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_url_capability_fenced',MESSAGE='Multipart part requires current fixed URL dispatch authority';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_multipart_url_transition(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_multipart_url_transition() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.part_count>0 AND NEW.state IN ('completing','completing_conditional','completed','aborted') AND
+  EXISTS(SELECT 1 FROM object_storage_multipart_part_grants WHERE upload_id=NEW.id AND transfer_token IS NOT NULL AND unsafe_until>clock_timestamp()) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_url_capability_fenced',MESSAGE='Fixed multipart transitions must drain native attempts';
+ END IF;
  RETURN NEW;
 END $$;
 
@@ -3893,79 +4187,6 @@ END $$;
 
 
 --
--- Name: valid_object_encryption_snapshot(jsonb, uuid); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.valid_object_encryption_snapshot(e jsonb, owner uuid) RETURNS boolean
-    LANGUAGE plpgsql IMMUTABLE STRICT
-    AS $_$
-DECLARE s jsonb; algorithm text; context_bytes bytea; context_doc json; entries bigint; distinct_entries bigint;
-BEGIN
- IF e='{}'::jsonb THEN RETURN true; END IF;
- IF jsonb_typeof(e)<>'object' OR octet_length(e::text)>16384 OR
-  e - ARRAY['account_id','selection','provider_key_id','key_identity'] <> '{}'::jsonb OR
-  jsonb_typeof(e->'account_id') IS DISTINCT FROM 'string' OR e->>'account_id'<>owner::text OR
-  owner='00000000-0000-0000-0000-000000000000'::uuid THEN RETURN false; END IF;
- s:=e->'selection'; algorithm:=s->>'algorithm';
- IF jsonb_typeof(s) IS DISTINCT FROM 'object' OR jsonb_typeof(s->'algorithm') IS DISTINCT FROM 'string' OR
-  s - ARRAY['algorithm','key_id','bucket_key_enabled','context'] <> '{}'::jsonb THEN RETURN false; END IF;
- IF algorithm='AES256' THEN
-  RETURN s='{"algorithm":"AES256"}'::jsonb AND NOT e ?| ARRAY['provider_key_id','key_identity'];
- END IF;
- IF algorithm NOT IN ('aws:kms','aws:kms:dsse') OR algorithm IS NULL OR
-  jsonb_typeof(s->'key_id') IS DISTINCT FROM 'string' OR
-  octet_length(s->>'key_id')>512 OR
-  (s->>'key_id') !~ '^arn:gregale:kms:[a-z][a-z0-9-]{0,62}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:key/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' OR
-  split_part(s->>'key_id',':',5)<>owner::text OR
-  split_part(s->>'key_id',':',6)='key/00000000-0000-0000-0000-000000000000' OR
-  jsonb_typeof(e->'provider_key_id') IS DISTINCT FROM 'string' OR
-  octet_length(e->>'provider_key_id') NOT BETWEEN 1 AND 512 OR
-  (e->>'provider_key_id') ~ '[\x01-\x1f\x7f]' OR
-  jsonb_typeof(e->'key_identity') IS DISTINCT FROM 'string' OR
-  (e->>'key_identity') !~ '^[0-9a-f]{64}$' OR (e->>'key_identity')=repeat('0',64) OR
-  (algorithm='aws:kms' AND jsonb_typeof(s->'bucket_key_enabled') IS DISTINCT FROM 'boolean') OR
-  (algorithm='aws:kms:dsse' AND s ? 'bucket_key_enabled') THEN RETURN false; END IF;
- IF s ? 'context' THEN
-  IF jsonb_typeof(s->'context') IS DISTINCT FROM 'string' OR octet_length(s->>'context')>10924 THEN RETURN false; END IF;
-  IF s->>'context'<>'' THEN
-   context_bytes:=decode(s->>'context','base64');
-   IF octet_length(context_bytes)>8192 OR replace(encode(context_bytes,'base64'),E'\n','')<>s->>'context' THEN RETURN false; END IF;
-   context_doc:=convert_from(context_bytes,'UTF8')::json;
-   IF json_typeof(context_doc)<>'object' THEN RETURN false; END IF;
-   SELECT count(*),count(DISTINCT key) INTO entries,distinct_entries FROM json_each(context_doc);
-   IF entries>32 OR entries<>distinct_entries OR EXISTS(SELECT 1 FROM json_each(context_doc) WHERE key='' OR json_typeof(value)<>'string') THEN RETURN false; END IF;
-  END IF;
- END IF;
- RETURN true;
-EXCEPTION WHEN OTHERS THEN RETURN false;
-END $_$;
-
-
---
--- Name: valid_object_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.valid_object_url_request(r jsonb) RETURNS boolean
-    LANGUAGE plpgsql IMMUTABLE STRICT
-    AS $$
-DECLARE method text;
-BEGIN
- IF jsonb_typeof(r)<>'object' OR octet_length(r::text)>32768 OR
-  r - ARRAY['method','key','expires_in','size_bytes','content_type','cache_control','content_disposition','content_encoding','content_language','metadata','tags','encryption'] <> '{}'::jsonb OR
-  jsonb_typeof(r->'method') IS DISTINCT FROM 'string' OR jsonb_typeof(r->'key') IS DISTINCT FROM 'string' OR
-  octet_length(r->>'key') NOT BETWEEN 1 AND 1024 OR (r->>'key') ~ '[\x01-\x1f\x7f]' OR
-  jsonb_typeof(r->'expires_in') IS DISTINCT FROM 'number' OR (r->>'expires_in')::bigint NOT BETWEEN 1 AND 900 THEN RETURN false; END IF;
- method:=r->>'method';
- IF method IN ('GET','HEAD') THEN RETURN r - ARRAY['method','key','expires_in'] = '{}'::jsonb; END IF;
- IF method<>'PUT' OR jsonb_typeof(r->'size_bytes') IS DISTINCT FROM 'number' OR (r->>'size_bytes')::bigint NOT BETWEEN 0 AND 5368709120 THEN RETURN false; END IF;
- IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('content_type','cache_control','content_disposition','content_encoding','content_language') AND (jsonb_typeof(value)<>'string' OR value::text ~ '\\r|\\n|\\u0000')) THEN RETURN false; END IF;
- IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('metadata','tags','encryption') AND jsonb_typeof(value)<>'object') THEN RETURN false; END IF;
- RETURN true;
-EXCEPTION WHEN OTHERS THEN RETURN false;
-END $$;
-
-
---
 -- Name: workflow_due_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4004,8 +4225,6 @@ BEGIN
 END;
 $$;
 
-
-SET default_table_access_method = heap;
 
 --
 -- Name: account_async_quota; Type: TABLE; Schema: public; Owner: -
@@ -9019,80 +9238,11 @@ CREATE TABLE public.object_storage_multipart_part_grants (
     cleanup_tracked boolean DEFAULT false NOT NULL,
     transfer_token text,
     unsafe_until timestamp with time zone,
+    url_credential_id uuid,
     CONSTRAINT object_multipart_transfer_pair CHECK ((((transfer_token IS NULL) AND (unsafe_until IS NULL)) OR ((transfer_token IS NOT NULL) AND ((length(transfer_token) >= 1) AND (length(transfer_token) <= 128)) AND (unsafe_until IS NOT NULL) AND isfinite(unsafe_until)))),
-    CONSTRAINT object_storage_multipart_part_grants_max_bytes_check CHECK (((max_bytes > 0) AND (max_bytes <= '5368709120'::bigint))),
-    CONSTRAINT object_storage_multipart_part_grants_part_number_check CHECK (((part_number >= 1) AND (part_number <= 10000)))
-);
-
-
---
--- Name: object_storage_multipart_uploads; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.object_storage_multipart_uploads (
-    id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    bucket_id uuid NOT NULL,
-    object_key text NOT NULL,
-    size_bytes bigint NOT NULL,
-    part_size_bytes bigint NOT NULL,
-    part_count integer NOT NULL,
-    content_type text DEFAULT ''::text NOT NULL,
-    provider_upload_id text DEFAULT ''::text NOT NULL,
-    completion_parts jsonb DEFAULT '[]'::jsonb NOT NULL,
-    state text DEFAULT 'initiating'::text NOT NULL,
-    expires_at timestamp with time zone NOT NULL,
-    lease_token text,
-    lease_until timestamp with time zone,
-    attempt_count integer DEFAULT 0 NOT NULL,
-    retry_at timestamp with time zone DEFAULT now() NOT NULL,
-    last_error_code text DEFAULT ''::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    object_metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
-    part_revision bigint DEFAULT 0 NOT NULL,
-    completion_if_match text DEFAULT ''::text NOT NULL,
-    completion_if_none_match text DEFAULT ''::text NOT NULL,
-    completion_error_code text DEFAULT ''::text NOT NULL,
-    completion_etag text DEFAULT ''::text NOT NULL,
-    completion_version_id text DEFAULT ''::text NOT NULL,
-    completion_recovery_cursor text DEFAULT ''::text NOT NULL,
-    completion_versions_observed boolean DEFAULT false NOT NULL,
-    completion_dispatched boolean DEFAULT false NOT NULL,
-    part_url_unsafe_until timestamp with time zone,
-    lifecycle_scan_id uuid,
-    lifecycle_binding jsonb DEFAULT '{}'::jsonb NOT NULL,
-    encryption_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
-    encryption_lease_token text DEFAULT ''::text NOT NULL,
-    encryption_verified boolean DEFAULT false NOT NULL,
-    CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[[:cntrl:]]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
-    CONSTRAINT object_multipart_completion_error CHECK (((completion_error_code = ANY (ARRAY[''::text, 'precondition_failed'::text, 'conditional_conflict'::text, 'conditional_not_found'::text])) AND ((completion_error_code = ''::text) OR ((state = ANY (ARRAY['aborting'::text, 'aborted'::text])) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
-    CONSTRAINT object_multipart_encryption_phase CHECK ((((encryption_lease_token = ''::text) OR ((encryption_snapshot <> '{}'::jsonb) AND (lease_token IS NOT NULL) AND (encryption_lease_token = lease_token))) AND ((NOT encryption_verified) OR ((encryption_snapshot <> '{}'::jsonb) AND (state = 'completed'::text) AND completion_dispatched)) AND ((encryption_snapshot = '{}'::jsonb) OR (state <> 'completed'::text) OR encryption_verified))),
-    CONSTRAINT object_multipart_lifecycle_binding CHECK ((((lifecycle_scan_id IS NULL) AND (lifecycle_binding = '{}'::jsonb)) OR ((lifecycle_scan_id IS NOT NULL) AND (jsonb_typeof(lifecycle_binding) = 'object'::text) AND (lifecycle_binding ?& ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'expected_provider_upload_id'::text, 'expected_created_at'::text]) AND ((lifecycle_binding - ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'expected_provider_upload_id'::text, 'expected_created_at'::text]) = '{}'::jsonb) AND (jsonb_typeof((lifecycle_binding -> 'scan_id'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'scan_id'::text) = (lifecycle_scan_id)::text) AND (jsonb_typeof((lifecycle_binding -> 'scan_token'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'scan_token'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'scan_token'::text)) <= 128)) AND (jsonb_typeof((lifecycle_binding -> 'rule_id'::text)) = 'string'::text) AND ((char_length((lifecycle_binding ->> 'rule_id'::text)) >= 1) AND (char_length((lifecycle_binding ->> 'rule_id'::text)) <= 255)) AND (jsonb_typeof((lifecycle_binding -> 'expected_provider_upload_id'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_provider_upload_id'::text) = provider_upload_id) AND (provider_upload_id <> ''::text) AND (jsonb_typeof((lifecycle_binding -> 'expected_created_at'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_created_at'::text) <> ''::text) AND (octet_length((lifecycle_binding)::text) <= 8192) AND (state = ANY (ARRAY['aborting'::text, 'aborted'::text]))))),
-    CONSTRAINT object_multipart_part_url_deadline_shape CHECK (((part_url_unsafe_until IS NULL) OR ((part_count > 0) AND (part_url_unsafe_until >= created_at)))),
-    CONSTRAINT object_multipart_result_shape CHECK ((((state = 'completed'::text) OR ((completion_etag = ''::text) AND (completion_version_id = ''::text))) AND ((completion_version_id = ''::text) OR (completion_etag <> ''::text)) AND ((state <> 'completed'::text) OR (completion_recovery_cursor = ''::text)) AND ((state <> 'completed'::text) OR (NOT completion_dispatched) OR (completion_etag <> ''::text)))),
-    CONSTRAINT object_storage_multipart_uploa_completion_recovery_cursor_check CHECK (((octet_length(completion_recovery_cursor) <= 8192) AND (completion_recovery_cursor ~ '^[A-Za-z0-9_-]*$'::text))),
-    CONSTRAINT object_storage_multipart_uploads_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
-    CONSTRAINT object_storage_multipart_uploads_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
-    CONSTRAINT object_storage_multipart_uploads_check1 CHECK (((state = 'initiating'::text) OR (provider_upload_id <> ''::text))),
-    CONSTRAINT object_storage_multipart_uploads_check2 CHECK (public.valid_object_encryption_snapshot(encryption_snapshot, account_id)),
-    CONSTRAINT object_storage_multipart_uploads_completion_etag_check CHECK (((octet_length(completion_etag) <= 256) AND (completion_etag !~ '[\x01-\x1f\x7f]'::text) AND ((completion_etag = ''::text) OR (btrim(completion_etag) <> ''::text)))),
-    CONSTRAINT object_storage_multipart_uploads_completion_parts_check CHECK ((jsonb_typeof(completion_parts) = 'array'::text)),
-    CONSTRAINT object_storage_multipart_uploads_completion_version_id_check CHECK (((completion_version_id = ''::text) OR (completion_version_id = 'null'::text) OR (completion_version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
-    CONSTRAINT object_storage_multipart_uploads_content_type_check CHECK ((length(content_type) <= 255)),
-    CONSTRAINT object_storage_multipart_uploads_encryption_lease_token_check CHECK ((octet_length(encryption_lease_token) <= 128)),
-    CONSTRAINT object_storage_multipart_uploads_last_error_code_check CHECK ((length(last_error_code) <= 32)),
-    CONSTRAINT object_storage_multipart_uploads_layout_check CHECK ((((size_bytes = 0) AND (part_size_bytes = 0) AND (part_count = 0)) OR ((size_bytes > 0) AND (part_size_bytes = 0) AND (part_count = 0)) OR ((size_bytes > 0) AND (part_size_bytes > 0) AND (part_count > 0)))),
-    CONSTRAINT object_storage_multipart_uploads_object_key_check CHECK (((length(object_key) >= 1) AND (length(object_key) <= 1024))),
-    CONSTRAINT object_storage_multipart_uploads_object_metadata_check CHECK ((jsonb_typeof(object_metadata) = 'object'::text)),
-    CONSTRAINT object_storage_multipart_uploads_object_metadata_check1 CHECK ((octet_length((object_metadata)::text) <= 32768)),
-    CONSTRAINT object_storage_multipart_uploads_part_count_check CHECK (((part_count >= 0) AND (part_count <= 10000))),
-    CONSTRAINT object_storage_multipart_uploads_part_revision_check CHECK ((part_revision >= 0)),
-    CONSTRAINT object_storage_multipart_uploads_part_size_bytes_check CHECK (((part_size_bytes >= 0) AND (part_size_bytes <= '5368709120'::bigint))),
-    CONSTRAINT object_storage_multipart_uploads_provider_upload_id_check CHECK ((length(provider_upload_id) <= 4096)),
-    CONSTRAINT object_storage_multipart_uploads_size_bytes_check CHECK (((size_bytes >= 0) AND (size_bytes <= '5497558138880'::bigint))),
-    CONSTRAINT object_storage_multipart_uploads_state_check CHECK ((state = ANY (ARRAY['initiating'::text, 'active'::text, 'completing'::text, 'completing_conditional'::text, 'aborting'::text, 'completed'::text, 'aborted'::text])))
+    CONSTRAINT object_storage_multipart_part_grants_max_bytes_check CHECK (((max_bytes >= 0) AND (max_bytes <= '5368709120'::bigint))),
+    CONSTRAINT object_storage_multipart_part_grants_part_number_check CHECK (((part_number >= 1) AND (part_number <= 10000))),
+    CONSTRAINT object_storage_multipart_part_grants_url_credential_id_check CHECK (((url_credential_id IS NULL) OR (url_credential_id <> '00000000-0000-0000-0000-000000000000'::uuid)))
 );
 
 
@@ -9108,48 +9258,6 @@ CREATE TABLE public.object_storage_request_metrics (
     CONSTRAINT object_storage_request_metrics_egress_bytes_check CHECK (((egress_bytes >= 0) AND (egress_bytes <= '1152921504606846976'::bigint))),
     CONSTRAINT object_storage_request_metrics_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
     CONSTRAINT object_storage_request_metrics_request_count_check CHECK (((request_count >= 0) AND (request_count <= '1152921504606846976'::bigint)))
-);
-
-
---
--- Name: object_storage_s3_credentials; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.object_storage_s3_credentials (
-    id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    bucket_id uuid NOT NULL,
-    access_key_id text NOT NULL,
-    secret_sealed bytea NOT NULL,
-    kid text NOT NULL,
-    label text NOT NULL,
-    permission text NOT NULL,
-    status text DEFAULT 'active'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    last_used_at timestamp with time zone,
-    revoked_at timestamp with time zone,
-    managed_app_id uuid,
-    managed_scope text,
-    managed_prefix text,
-    rotation_parent_id uuid,
-    rotation_wake_id uuid,
-    rotation_stamped_at timestamp with time zone,
-    url_request jsonb,
-    url_api_key_id uuid,
-    url_expires_at timestamp with time zone,
-    url_receipt_id uuid,
-    CONSTRAINT object_storage_s3_credentials_access_key_id_check CHECK ((access_key_id ~ '^GRGA[A-Z2-7]{16}$'::text)),
-    CONSTRAINT object_storage_s3_credentials_check CHECK ((((status = 'active'::text) AND (revoked_at IS NULL)) OR ((status = 'revoked'::text) AND (revoked_at IS NOT NULL)))),
-    CONSTRAINT object_storage_s3_credentials_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
-    CONSTRAINT object_storage_s3_credentials_label_check CHECK (((length(label) >= 1) AND (length(label) <= 64))),
-    CONSTRAINT object_storage_s3_credentials_managed_shape_check CHECK ((((managed_app_id IS NULL) AND (managed_scope IS NULL) AND (managed_prefix IS NULL)) OR ((managed_app_id IS NOT NULL) AND (managed_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text) AND (managed_prefix ~ '^[A-Z][A-Z0-9_]{0,47}$'::text)))),
-    CONSTRAINT object_storage_s3_credentials_permission_check CHECK ((permission = ANY (ARRAY['read'::text, 'write'::text, 'read_write'::text]))),
-    CONSTRAINT object_storage_s3_credentials_rotation_shape_check CHECK ((((rotation_parent_id IS NULL) AND (rotation_wake_id IS NULL) AND (rotation_stamped_at IS NULL)) OR ((rotation_parent_id IS NOT NULL) AND (rotation_wake_id IS NOT NULL) AND (managed_app_id IS NULL) AND (managed_scope IS NULL) AND (managed_prefix IS NULL)))),
-    CONSTRAINT object_storage_s3_credentials_secret_sealed_check CHECK ((length(secret_sealed) > 0)),
-    CONSTRAINT object_storage_s3_credentials_status_check CHECK ((status = ANY (ARRAY['active'::text, 'revoked'::text]))),
-    CONSTRAINT object_storage_s3_credentials_url_api_key_id_check CHECK (((url_api_key_id IS NULL) OR (url_api_key_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
-    CONSTRAINT object_storage_s3_credentials_url_request_check CHECK (((url_request IS NULL) OR public.valid_object_url_request(url_request))),
-    CONSTRAINT object_url_credential_shape CHECK ((((url_request IS NULL) AND (url_api_key_id IS NULL) AND (url_expires_at IS NULL) AND (url_receipt_id IS NULL)) OR ((url_request IS NOT NULL) AND (url_expires_at IS NOT NULL) AND (url_expires_at > created_at) AND (url_expires_at <= (created_at + '00:15:00'::interval)) AND (managed_app_id IS NULL) AND (rotation_parent_id IS NULL) AND ((((url_request ->> 'method'::text) = 'PUT'::text) AND (permission = 'write'::text) AND (url_receipt_id IS NOT NULL)) OR (((url_request ->> 'method'::text) = ANY (ARRAY['GET'::text, 'HEAD'::text])) AND (permission = 'read'::text) AND (url_receipt_id IS NULL))))))
 );
 
 
@@ -20793,6 +20901,27 @@ CREATE TRIGGER object_multipart_part_url_deadline_protected BEFORE UPDATE ON pub
 --
 
 CREATE TRIGGER object_multipart_result_immutable BEFORE INSERT OR UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.protect_object_multipart_result();
+
+
+--
+-- Name: object_storage_s3_credentials object_multipart_url_credential_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_url_credential_bound BEFORE INSERT ON public.object_storage_s3_credentials FOR EACH ROW EXECUTE FUNCTION public.protect_object_multipart_url_credential();
+
+
+--
+-- Name: object_storage_multipart_part_grants object_multipart_url_part_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_url_part_bound BEFORE INSERT OR UPDATE ON public.object_storage_multipart_part_grants FOR EACH ROW EXECUTE FUNCTION public.protect_object_multipart_url_part();
+
+
+--
+-- Name: object_storage_multipart_uploads object_multipart_url_transition_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_url_transition_bound BEFORE UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.protect_object_multipart_url_transition();
 
 
 --

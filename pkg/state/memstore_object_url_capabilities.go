@@ -61,10 +61,28 @@ func (m *MemStore) IssueObjectURLCredential(_ context.Context, c ObjectS3Credent
 	if !ok || b.AccountID != c.AccountID || b.State != "ready" || c.URL.Request.Method == http.MethodPut && receipt.AppID != b.AppID {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrNotFound
 	}
+	c, err := m.insertObjectURLCredentialLocked(c)
+	if err != nil {
+		return ObjectS3Credential{}, ObjectUploadCompletion{}, err
+	}
+	if c.URL.Request.Method == http.MethodPut {
+		receipt.Origin = "gateway"
+		receipt, _, err = m.beginTrackedUploadLocked(receipt, p)
+	} else {
+		err = m.admitObjectURLLocked(c.AccountID, c.BucketID, c.URL.Request.Key, 0, false, p, "")
+	}
+	if err != nil {
+		delete(m.objectS3Credentials, c.ID)
+		return ObjectS3Credential{}, ObjectUploadCompletion{}, err
+	}
+	return cloneObjectS3Credential(c), cloneObjectUploadCompletion(receipt), nil
+}
+
+func (m *MemStore) insertObjectURLCredentialLocked(c ObjectS3Credential) (ObjectS3Credential, error) {
 	active := 0
 	for id, old := range m.objectS3Credentials {
 		if old.ID == c.ID || old.AccessKeyID == c.AccessKeyID {
-			return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrConflict
+			return ObjectS3Credential{}, ErrConflict
 		}
 		if old.BucketID != c.BucketID || old.URL == nil {
 			continue
@@ -77,21 +95,10 @@ func (m *MemStore) IssueObjectURLCredential(_ context.Context, c ObjectS3Credent
 		}
 	}
 	if active >= api.MaxObjectURLCapabilitiesPerBucket {
-		return ObjectS3Credential{}, ObjectUploadCompletion{}, objectURLCapabilityLimitError(int64(active))
+		return ObjectS3Credential{}, objectURLCapabilityLimitError(int64(active))
 	}
 	c.CreatedAt = m.clock().UTC()
 	c = cloneObjectS3Credential(c)
 	m.objectS3Credentials[c.ID] = c
-	var err error
-	if c.URL.Request.Method == http.MethodPut {
-		receipt.Origin = "gateway"
-		receipt, _, err = m.beginTrackedUploadLocked(receipt, p)
-	} else {
-		err = m.admitObjectURLLocked(c.AccountID, c.BucketID, c.URL.Request.Key, 0, false, p, "")
-	}
-	if err != nil {
-		delete(m.objectS3Credentials, c.ID)
-		return ObjectS3Credential{}, ObjectUploadCompletion{}, err
-	}
-	return cloneObjectS3Credential(c), cloneObjectUploadCompletion(receipt), nil
+	return cloneObjectS3Credential(c), nil
 }

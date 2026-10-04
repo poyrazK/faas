@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -10,6 +10,10 @@ from attrs import field as _attrs_field
 
 from ..models.object_multipart_upload_state import ObjectMultipartUploadState, check_object_multipart_upload_state
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.object_encryption import ObjectEncryption
+
 
 T = TypeVar("T", bound="ObjectMultipartUpload")
 
@@ -33,6 +37,9 @@ class ObjectMultipartUpload:
     """Actual committed ETag when completion is confirmed."""
     version_id: str | Unset = UNSET
     """Owned public version ID when completion is confirmed; null denotes a mutable provider version."""
+    encryption: ObjectEncryption | Unset = UNSET
+    """PUT-only owned encryption selection. KMS requires an enrolled Gregale key reference; bucket keys apply only
+    to aws:kms. Context is canonical base64 of a bounded JSON object with unique string entries."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -60,6 +67,10 @@ class ObjectMultipartUpload:
 
         version_id = self.version_id
 
+        encryption: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.encryption, Unset):
+            encryption = self.encryption.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -81,11 +92,15 @@ class ObjectMultipartUpload:
             field_dict["etag"] = etag
         if version_id is not UNSET:
             field_dict["version_id"] = version_id
+        if encryption is not UNSET:
+            field_dict["encryption"] = encryption
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.object_encryption import ObjectEncryption
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -111,6 +126,13 @@ class ObjectMultipartUpload:
 
         version_id = d.pop("version_id", UNSET)
 
+        _encryption = d.pop("encryption", UNSET)
+        encryption: ObjectEncryption | Unset
+        if isinstance(_encryption, Unset):
+            encryption = UNSET
+        else:
+            encryption = ObjectEncryption.from_dict(_encryption)
+
         object_multipart_upload = cls(
             id=id,
             key=key,
@@ -124,6 +146,7 @@ class ObjectMultipartUpload:
             completion_error_code=completion_error_code,
             etag=etag,
             version_id=version_id,
+            encryption=encryption,
         )
 
         object_multipart_upload.additional_properties = d
