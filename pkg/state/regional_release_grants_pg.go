@@ -14,7 +14,7 @@ import (
 )
 
 func regionalGrantRow(row sqlc.RegionalReleaseGrant) RegionalReleaseGrant {
-	g := RegionalReleaseGrant{ID: pgUUIDString(row.ID), AppID: pgUUIDString(row.AppID), CellID: pgUUIDString(row.CellID), AccountID: pgUUIDString(row.AccountID), OrgID: pgUUIDString(row.OrgID), GlobalAppID: pgUUIDString(row.GlobalAppID), Hash: append([]byte(nil), row.TokenSha256...), CreatedAt: row.CreatedAt.Time, ExpiresAt: row.ExpiresAt.Time, Status: row.Status}
+	g := RegionalReleaseGrant{ID: pgUUIDString(row.ID), AppID: pgUUIDString(row.AppID), CellID: pgUUIDString(row.CellID), AccountID: pgUUIDString(row.AccountID), IssuerAccountID: pgUUIDString(row.IssuerAccountID), OrgID: pgUUIDString(row.OrgID), GlobalAppID: pgUUIDString(row.GlobalAppID), Hash: append([]byte(nil), row.TokenSha256...), CreatedAt: row.CreatedAt.Time, ExpiresAt: row.ExpiresAt.Time, Status: row.Status}
 	if row.RevokedAt.Valid {
 		stamp := row.RevokedAt.Time
 		g.RevokedAt = &stamp
@@ -37,6 +37,8 @@ func regionalGrantError(err error) error {
 			} else {
 				err = ErrConflict
 			}
+		} else if p.Code == "P0002" {
+			err = ErrNotFound
 		} else if p.Code == "23505" || p.Code == "23514" {
 			err = ErrConflict
 		}
@@ -44,11 +46,12 @@ func regionalGrantError(err error) error {
 	return fmt.Errorf("state: regional release grant: %w", err)
 }
 func readRegionalGrant(ctx context.Context, db sqlc.DBTX, owner, cellID, appID, id string) (RegionalReleaseGrant, error) {
-	row, err := (&sqlc.Queries{}).GetRegionalReleaseGrant(ctx, db, sqlc.GetRegionalReleaseGrantParams{AccountID: uuidToPgtype(owner), CellID: uuidToPgtype(cellID), AppID: uuidToPgtype(appID), GrantID: uuidToPgtype(id)})
+	row, err := (&sqlc.Queries{}).GetRegionalReleaseGrant(ctx, db, sqlc.GetRegionalReleaseGrantParams{ActorID: uuidToPgtype(owner), CellID: uuidToPgtype(cellID), AppID: uuidToPgtype(appID), GrantID: uuidToPgtype(id)})
 	return regionalGrantRow(row), regionalGrantError(err)
 }
 func (s *PgStore) PutRegionalReleaseGrant(ctx context.Context, g RegionalReleaseGrant) (RegionalReleaseGrant, error) {
 	g.ExpiresAt = g.ExpiresAt.UTC().Truncate(time.Microsecond)
+	g.IssuerAccountID = g.issuer()
 	if !g.valid() {
 		return RegionalReleaseGrant{}, ErrInvalidArgument
 	}
@@ -58,14 +61,14 @@ func (s *PgStore) PutRegionalReleaseGrant(ctx context.Context, g RegionalRelease
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := &sqlc.Queries{}
-	org, err := q.LockRegionalReleaseGrantApp(ctx, tx, sqlc.LockRegionalReleaseGrantAppParams{AccountID: uuidToPgtype(g.AccountID), CellID: uuidToPgtype(g.CellID), AppID: uuidToPgtype(g.AppID)})
+	org, err := q.LockRegionalReleaseGrantApp(ctx, tx, sqlc.LockRegionalReleaseGrantAppParams{ActorID: uuidToPgtype(g.issuer()), AccountID: uuidToPgtype(g.AccountID), CellID: uuidToPgtype(g.CellID), AppID: uuidToPgtype(g.AppID)})
 	if err != nil {
 		return RegionalReleaseGrant{}, regionalGrantError(err)
 	}
 	if pgUUIDString(org) != g.OrgID {
 		return RegionalReleaseGrant{}, ErrNotFound
 	}
-	old, err := readRegionalGrant(ctx, tx, g.AccountID, g.CellID, g.AppID, g.ID)
+	old, err := readRegionalGrant(ctx, tx, g.issuer(), g.CellID, g.AppID, g.ID)
 	if err == nil {
 		if !old.matches(g) {
 			return RegionalReleaseGrant{}, ErrConflict
@@ -78,7 +81,7 @@ func (s *PgStore) PutRegionalReleaseGrant(ctx context.Context, g RegionalRelease
 	if err := validRegionalGrantExpiry(g.ExpiresAt, time.Now()); err != nil {
 		return RegionalReleaseGrant{}, err
 	}
-	row, err := q.InsertRegionalReleaseGrant(ctx, tx, sqlc.InsertRegionalReleaseGrantParams{GrantID: uuidToPgtype(g.ID), AppID: uuidToPgtype(g.AppID), CellID: uuidToPgtype(g.CellID), AccountID: uuidToPgtype(g.AccountID), OrgID: uuidToPgtype(g.OrgID), GlobalAppID: uuidToPgtype(g.GlobalAppID), TokenSha256: g.Hash, ExpiresAt: pgtypeTimestamptzFromTime(g.ExpiresAt)})
+	row, err := q.InsertRegionalReleaseGrant(ctx, tx, sqlc.InsertRegionalReleaseGrantParams{GrantID: uuidToPgtype(g.ID), AppID: uuidToPgtype(g.AppID), CellID: uuidToPgtype(g.CellID), AccountID: uuidToPgtype(g.AccountID), IssuerAccountID: uuidToPgtype(g.issuer()), OrgID: uuidToPgtype(g.OrgID), GlobalAppID: uuidToPgtype(g.GlobalAppID), TokenSha256: g.Hash, ExpiresAt: pgtypeTimestamptzFromTime(g.ExpiresAt)})
 	if err != nil {
 		return RegionalReleaseGrant{}, regionalGrantError(err)
 	}
@@ -94,13 +97,13 @@ func (s *PgStore) RevokeRegionalReleaseGrant(ctx context.Context, owner, cellID,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := &sqlc.Queries{}
-	if _, err := q.LockRegionalReleaseGrantApp(ctx, tx, sqlc.LockRegionalReleaseGrantAppParams{AccountID: uuidToPgtype(owner), CellID: uuidToPgtype(cellID), AppID: uuidToPgtype(appID)}); err != nil {
+	if _, err := q.LockRegionalReleaseGrantApp(ctx, tx, sqlc.LockRegionalReleaseGrantAppParams{ActorID: uuidToPgtype(owner), CellID: uuidToPgtype(cellID), AppID: uuidToPgtype(appID)}); err != nil {
 		return RegionalReleaseGrant{}, regionalGrantError(err)
 	}
 	if _, err := readRegionalGrant(ctx, tx, owner, cellID, appID, id); err != nil {
 		return RegionalReleaseGrant{}, err
 	}
-	row, err := q.RevokeRegionalReleaseGrant(ctx, tx, sqlc.RevokeRegionalReleaseGrantParams{AccountID: uuidToPgtype(owner), CellID: uuidToPgtype(cellID), AppID: uuidToPgtype(appID), GrantID: uuidToPgtype(id)})
+	row, err := q.RevokeRegionalReleaseGrant(ctx, tx, sqlc.RevokeRegionalReleaseGrantParams{ActorID: uuidToPgtype(owner), CellID: uuidToPgtype(cellID), AppID: uuidToPgtype(appID), GrantID: uuidToPgtype(id)})
 	if err != nil {
 		return RegionalReleaseGrant{}, regionalGrantError(err)
 	}
@@ -115,7 +118,7 @@ func (s *PgStore) AuthenticateRegionalReleaseGrant(ctx context.Context, hash []b
 	if err := g.active(time.Now()); err != nil {
 		return Account{}, APIKey{}, err
 	}
-	acct, err := s.AccountByID(ctx, g.AccountID)
+	acct, err := s.AccountByID(ctx, g.issuer())
 	return acct, g.principal(), err
 }
 func checkRegionalGrantIntent(ctx context.Context, db sqlc.DBTX, i RegionalImageReleaseIntent) error {

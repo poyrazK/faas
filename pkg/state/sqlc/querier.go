@@ -989,6 +989,7 @@ type Querier interface {
 	LockOwnershipRecoveryNodes(ctx context.Context, db DBTX, arg LockOwnershipRecoveryNodesParams) ([]LockOwnershipRecoveryNodesRow, error)
 	// ADR-478: a durable image-release receipt is committed with deployment intent.
 	LockRegionalImageReleaseApp(ctx context.Context, db DBTX, arg LockRegionalImageReleaseAppParams) (pgtype.UUID, error)
+	// ADR-484: consent actor is separate from the pinned regional owner.
 	LockRegionalReleaseGrantApp(ctx context.Context, db DBTX, arg LockRegionalReleaseGrantAppParams) (pgtype.UUID, error)
 	// Parent locks serialize configuration edits while remaining compatible with
 	// the FK key-share locks taken by captures, rules and webhook event inserts.

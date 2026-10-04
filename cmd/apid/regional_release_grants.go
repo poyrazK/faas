@@ -51,7 +51,7 @@ func (s *server) putRegionalReleaseGrant(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	app, _ := r.Context().Value(cellDeploymentAppContextKey{}).(state.App)
-	g, err := store.PutRegionalReleaseGrant(r.Context(), state.RegionalReleaseGrant{ID: r.PathValue("grant_id"), CellID: s.controlPlaneCell.ID, AppID: app.ID, AccountID: acct.ID, OrgID: app.OrgID, GlobalAppID: req.GlobalAppID, Hash: hash, ExpiresAt: req.ExpiresAt})
+	g, err := store.PutRegionalReleaseGrant(r.Context(), state.RegionalReleaseGrant{ID: r.PathValue("grant_id"), CellID: s.controlPlaneCell.ID, AppID: app.ID, AccountID: app.AccountID, IssuerAccountID: acct.ID, OrgID: app.OrgID, GlobalAppID: req.GlobalAppID, Hash: hash, ExpiresAt: req.ExpiresAt})
 	s.writeRegionalReleaseGrant(w, r, acct, g, err)
 }
 func (s *server) getRegionalReleaseGrant(w http.ResponseWriter, r *http.Request, acct state.Account) {

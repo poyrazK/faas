@@ -11,10 +11,13 @@ import (
 
 type RegionalReleaseGrant struct {
 	ID, CellID, AppID, AccountID, OrgID, GlobalAppID string
-	Hash                                             []byte
-	CreatedAt, ExpiresAt                             time.Time
-	Status                                           string
-	RevokedAt                                        *time.Time
+	// AccountID pins the app's owner metadata; IssuerAccountID identifies
+	// the consenting member. They differ for organization-owned apps.
+	IssuerAccountID      string
+	Hash                 []byte
+	CreatedAt, ExpiresAt time.Time
+	Status               string
+	RevokedAt            *time.Time
 }
 
 type RegionalReleaseGrantStore interface {
@@ -32,7 +35,13 @@ func (g RegionalReleaseGrant) valid() bool {
 	return validRegionalReleaseIDs(g.CellID, g.AppID, g.ID) && validRegionalReleaseIDs(g.GlobalAppID, g.AppID, g.ID) && g.AccountID != "" && len(g.Hash) == 32 && !g.ExpiresAt.IsZero()
 }
 func (g RegionalReleaseGrant) matches(other RegionalReleaseGrant) bool {
-	return g.ID == other.ID && g.CellID == other.CellID && g.AppID == other.AppID && g.AccountID == other.AccountID && g.OrgID == other.OrgID && g.GlobalAppID == other.GlobalAppID && bytes.Equal(g.Hash, other.Hash) && g.ExpiresAt.Equal(other.ExpiresAt)
+	return g.ID == other.ID && g.CellID == other.CellID && g.AppID == other.AppID && g.AccountID == other.AccountID && g.issuer() == other.issuer() && g.OrgID == other.OrgID && g.GlobalAppID == other.GlobalAppID && bytes.Equal(g.Hash, other.Hash) && g.ExpiresAt.Equal(other.ExpiresAt)
+}
+func (g RegionalReleaseGrant) issuer() string {
+	if g.IssuerAccountID == "" {
+		return g.AccountID
+	}
+	return g.IssuerAccountID
 }
 func cloneRegionalReleaseGrant(g RegionalReleaseGrant) RegionalReleaseGrant {
 	g.Hash = append([]byte(nil), g.Hash...)
@@ -44,7 +53,7 @@ func cloneRegionalReleaseGrant(g RegionalReleaseGrant) RegionalReleaseGrant {
 }
 func (g RegionalReleaseGrant) principal() APIKey {
 	expiry := g.ExpiresAt
-	return APIKey{ID: g.ID, AccountID: g.AccountID, OrgID: g.OrgID, AppID: g.AppID, RegionalReleaseGrantID: g.ID, RegionalReleaseCellID: g.CellID, RegionalReleaseGlobalAppID: g.GlobalAppID, Scopes: []string{api.ScopeRegionalImageRelease}, Status: g.Status, ExpiresAt: &expiry}
+	return APIKey{ID: g.ID, AccountID: g.issuer(), OrgID: g.OrgID, AppID: g.AppID, RegionalReleaseGrantID: g.ID, RegionalReleaseCellID: g.CellID, RegionalReleaseGlobalAppID: g.GlobalAppID, Scopes: []string{api.ScopeRegionalImageRelease}, Status: g.Status, ExpiresAt: &expiry}
 }
 func (g RegionalReleaseGrant) active(now time.Time) error {
 	if g.Status != "active" {

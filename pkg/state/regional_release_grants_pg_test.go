@@ -117,7 +117,7 @@ func TestPGRegionalReleaseGrantRevocationLocksAppFirst(t *testing.T) {
 	blocked := false
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%control_plane_cells%')`).Scan(&blocked); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%lock_regional_release_grant_app%')`).Scan(&blocked); err != nil {
 			t.Fatal(err)
 		}
 		if blocked {

@@ -6568,18 +6568,17 @@ func (q *Queries) GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTr
 }
 
 const getRegionalReleaseGrant = `-- name: GetRegionalReleaseGrant :one
-SELECT g.id, g.app_id, g.cell_id, g.account_id, g.org_id, g.global_app_id, g.token_sha256, g.created_at, g.expires_at, g.status, g.revoked_at FROM regional_release_grants g JOIN apps a ON a.id=g.app_id JOIN control_plane_cells c ON c.id=g.cell_id
+SELECT g.id, g.app_id, g.cell_id, g.account_id, g.org_id, g.global_app_id, g.token_sha256, g.created_at, g.expires_at, g.status, g.revoked_at, g.issuer_account_id FROM regional_release_grants g JOIN control_plane_cells c ON c.id=g.cell_id
 WHERE g.id=$1::uuid AND g.app_id=$2::uuid
-AND g.cell_id=$3::uuid AND g.account_id=$4::uuid
-AND a.account_id=g.account_id AND a.org_id IS NOT DISTINCT FROM g.org_id AND a.status IN ('active','evicted_cold')
-AND (a.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id AND o.status='active' AND NOT o.deleted_pending))
+AND g.cell_id=$3::uuid
+AND regional_release_actor_allowed(g.app_id,g.account_id,g.org_id,$4::uuid)
 `
 
 type GetRegionalReleaseGrantParams struct {
-	GrantID   pgtype.UUID
-	AppID     pgtype.UUID
-	CellID    pgtype.UUID
-	AccountID pgtype.UUID
+	GrantID pgtype.UUID
+	AppID   pgtype.UUID
+	CellID  pgtype.UUID
+	ActorID pgtype.UUID
 }
 
 func (q *Queries) GetRegionalReleaseGrant(ctx context.Context, db DBTX, arg GetRegionalReleaseGrantParams) (RegionalReleaseGrant, error) {
@@ -6587,7 +6586,7 @@ func (q *Queries) GetRegionalReleaseGrant(ctx context.Context, db DBTX, arg GetR
 		arg.GrantID,
 		arg.AppID,
 		arg.CellID,
-		arg.AccountID,
+		arg.ActorID,
 	)
 	var i RegionalReleaseGrant
 	err := row.Scan(
@@ -6602,15 +6601,15 @@ func (q *Queries) GetRegionalReleaseGrant(ctx context.Context, db DBTX, arg GetR
 		&i.ExpiresAt,
 		&i.Status,
 		&i.RevokedAt,
+		&i.IssuerAccountID,
 	)
 	return i, err
 }
 
 const getRegionalReleaseGrantByHash = `-- name: GetRegionalReleaseGrantByHash :one
-SELECT g.id, g.app_id, g.cell_id, g.account_id, g.org_id, g.global_app_id, g.token_sha256, g.created_at, g.expires_at, g.status, g.revoked_at FROM regional_release_grants g JOIN apps a ON a.id=g.app_id JOIN control_plane_cells c ON c.id=g.cell_id
-WHERE g.token_sha256=$1::bytea AND a.account_id=g.account_id
-AND a.org_id IS NOT DISTINCT FROM g.org_id AND a.status IN ('active','evicted_cold')
-AND (a.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id AND o.status='active' AND NOT o.deleted_pending))
+SELECT g.id, g.app_id, g.cell_id, g.account_id, g.org_id, g.global_app_id, g.token_sha256, g.created_at, g.expires_at, g.status, g.revoked_at, g.issuer_account_id FROM regional_release_grants g JOIN control_plane_cells c ON c.id=g.cell_id
+WHERE g.token_sha256=$1::bytea
+AND regional_release_actor_allowed(g.app_id,g.account_id,g.org_id,g.issuer_account_id)
 `
 
 func (q *Queries) GetRegionalReleaseGrantByHash(ctx context.Context, db DBTX, tokenSha256 []byte) (RegionalReleaseGrant, error) {
@@ -6628,6 +6627,7 @@ func (q *Queries) GetRegionalReleaseGrantByHash(ctx context.Context, db DBTX, to
 		&i.ExpiresAt,
 		&i.Status,
 		&i.RevokedAt,
+		&i.IssuerAccountID,
 	)
 	return i, err
 }
@@ -7722,20 +7722,22 @@ func (q *Queries) InsertRegionalImageReleaseReceipt(ctx context.Context, db DBTX
 }
 
 const insertRegionalReleaseGrant = `-- name: InsertRegionalReleaseGrant :one
-INSERT INTO regional_release_grants(id,app_id,cell_id,account_id,org_id,global_app_id,token_sha256,expires_at)
-VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6::uuid,$7::bytea,$8::timestamptz)
-RETURNING id, app_id, cell_id, account_id, org_id, global_app_id, token_sha256, created_at, expires_at, status, revoked_at
+INSERT INTO regional_release_grants(id,app_id,cell_id,account_id,issuer_account_id,org_id,global_app_id,token_sha256,expires_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,
+    $5::uuid,$6::uuid,$7::uuid,$8::bytea,$9::timestamptz)
+RETURNING id, app_id, cell_id, account_id, org_id, global_app_id, token_sha256, created_at, expires_at, status, revoked_at, issuer_account_id
 `
 
 type InsertRegionalReleaseGrantParams struct {
-	GrantID     pgtype.UUID
-	AppID       pgtype.UUID
-	CellID      pgtype.UUID
-	AccountID   pgtype.UUID
-	OrgID       pgtype.UUID
-	GlobalAppID pgtype.UUID
-	TokenSha256 []byte
-	ExpiresAt   pgtype.Timestamptz
+	GrantID         pgtype.UUID
+	AppID           pgtype.UUID
+	CellID          pgtype.UUID
+	AccountID       pgtype.UUID
+	IssuerAccountID pgtype.UUID
+	OrgID           pgtype.UUID
+	GlobalAppID     pgtype.UUID
+	TokenSha256     []byte
+	ExpiresAt       pgtype.Timestamptz
 }
 
 func (q *Queries) InsertRegionalReleaseGrant(ctx context.Context, db DBTX, arg InsertRegionalReleaseGrantParams) (RegionalReleaseGrant, error) {
@@ -7744,6 +7746,7 @@ func (q *Queries) InsertRegionalReleaseGrant(ctx context.Context, db DBTX, arg I
 		arg.AppID,
 		arg.CellID,
 		arg.AccountID,
+		arg.IssuerAccountID,
 		arg.OrgID,
 		arg.GlobalAppID,
 		arg.TokenSha256,
@@ -7762,6 +7765,7 @@ func (q *Queries) InsertRegionalReleaseGrant(ctx context.Context, db DBTX, arg I
 		&i.ExpiresAt,
 		&i.Status,
 		&i.RevokedAt,
+		&i.IssuerAccountID,
 	)
 	return i, err
 }
@@ -14757,21 +14761,25 @@ func (q *Queries) LockRegionalImageReleaseApp(ctx context.Context, db DBTX, arg 
 }
 
 const lockRegionalReleaseGrantApp = `-- name: LockRegionalReleaseGrantApp :one
-SELECT a.org_id FROM apps a JOIN control_plane_cells c ON c.id=$1::uuid
-WHERE a.id=$2::uuid AND a.account_id=$3::uuid
-AND a.status IN ('active','evicted_cold') AND (a.org_id IS NULL OR EXISTS(
- SELECT 1 FROM orgs o WHERE o.id=a.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id AND o.status='active' AND NOT o.deleted_pending))
-FOR UPDATE OF a
+SELECT lock_regional_release_grant_app($1::uuid,$2::uuid,
+    $3::uuid,$4::uuid)::uuid AS org_id
 `
 
 type LockRegionalReleaseGrantAppParams struct {
-	CellID    pgtype.UUID
 	AppID     pgtype.UUID
+	CellID    pgtype.UUID
 	AccountID pgtype.UUID
+	ActorID   pgtype.UUID
 }
 
+// ADR-484: consent actor is separate from the pinned regional owner.
 func (q *Queries) LockRegionalReleaseGrantApp(ctx context.Context, db DBTX, arg LockRegionalReleaseGrantAppParams) (pgtype.UUID, error) {
-	row := db.QueryRow(ctx, lockRegionalReleaseGrantApp, arg.CellID, arg.AppID, arg.AccountID)
+	row := db.QueryRow(ctx, lockRegionalReleaseGrantApp,
+		arg.AppID,
+		arg.CellID,
+		arg.AccountID,
+		arg.ActorID,
+	)
 	var org_id pgtype.UUID
 	err := row.Scan(&org_id)
 	return org_id, err
@@ -21684,14 +21692,15 @@ func (q *Queries) RevokeDevBridge(ctx context.Context, db DBTX, arg RevokeDevBri
 
 const revokeRegionalReleaseGrant = `-- name: RevokeRegionalReleaseGrant :one
 UPDATE regional_release_grants SET status='revoked',revoked_at=COALESCE(revoked_at,clock_timestamp())
-WHERE id=$1::uuid AND app_id=$2::uuid AND cell_id=$3::uuid AND account_id=$4::uuid RETURNING id, app_id, cell_id, account_id, org_id, global_app_id, token_sha256, created_at, expires_at, status, revoked_at
+WHERE id=$1::uuid AND app_id=$2::uuid AND cell_id=$3::uuid
+AND regional_release_actor_allowed(app_id,account_id,org_id,$4::uuid) RETURNING id, app_id, cell_id, account_id, org_id, global_app_id, token_sha256, created_at, expires_at, status, revoked_at, issuer_account_id
 `
 
 type RevokeRegionalReleaseGrantParams struct {
-	GrantID   pgtype.UUID
-	AppID     pgtype.UUID
-	CellID    pgtype.UUID
-	AccountID pgtype.UUID
+	GrantID pgtype.UUID
+	AppID   pgtype.UUID
+	CellID  pgtype.UUID
+	ActorID pgtype.UUID
 }
 
 func (q *Queries) RevokeRegionalReleaseGrant(ctx context.Context, db DBTX, arg RevokeRegionalReleaseGrantParams) (RegionalReleaseGrant, error) {
@@ -21699,7 +21708,7 @@ func (q *Queries) RevokeRegionalReleaseGrant(ctx context.Context, db DBTX, arg R
 		arg.GrantID,
 		arg.AppID,
 		arg.CellID,
-		arg.AccountID,
+		arg.ActorID,
 	)
 	var i RegionalReleaseGrant
 	err := row.Scan(
@@ -21714,6 +21723,7 @@ func (q *Queries) RevokeRegionalReleaseGrant(ctx context.Context, db DBTX, arg R
 		&i.ExpiresAt,
 		&i.Status,
 		&i.RevokedAt,
+		&i.IssuerAccountID,
 	)
 	return i, err
 }

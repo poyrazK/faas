@@ -275,7 +275,7 @@ next requested generation. A rejected allocation writes no release or target.
 
 <a id="regional-delegation"></a>
 
-## Regional release delegation (ADR-481, ADR-482)
+## Regional release delegation (ADR-481, ADR-482, ADR-484)
 
 A caller mints a `fp_release_` token and fixed grant UUID before contacting the
 cell. It must seal the token and bound identity before registering its SHA-256
@@ -293,6 +293,20 @@ a grant, or inspect/revoke another grant. DELETE is terminal; a revoked or expir
 token cannot authenticate. An account-admin key can inspect and repeat revocation.
 The deployment transaction checks the grant again after authentication, with the
 app locked, before accepting intent. Ownership changes invalidate old grants.
+
+For a shared regional app, an organization-bound admin-scoped key from a current
+owner or administrator can register, inspect and revoke grants. Consent pins
+`issuer_account_id` separately from the app's account and organization anchors.
+The scoped bearer uses the issuer's account and rechecks current owner/admin
+membership, verified email, account activity and organization status. Another
+current administrator can revoke consent after the issuer leaves. Issuer account
+deletion retains grant identity; revocation remains terminal after role changes.
+Header and query organization hints cannot switch a bound key's tenant.
+
+Shared grant management is available; shared ownership proof, directory target
+attachment and image release admission still require organization identity,
+quota and billing integration. Creating a shared grant allocates no capacity and
+cannot bypass those deployment gates.
 
 Directory apid seals the scoped token and complete immutable binding with its
 fleet age identity before registration. Set `FAAS_FLEET_AGE_IDENTITY_PATH` (or the

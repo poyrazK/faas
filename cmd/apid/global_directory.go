@@ -55,10 +55,13 @@ func (s *server) registerGlobalDirectoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/cells/{cell_id}/apps/{app_id}/image-releases/{release_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeDeployWrite, api.ScopeRegionalImageRelease)(cellRelease(s.putCellImageRelease)))))
 	mux.HandleFunc("GET /v1/cells/{cell_id}/apps/{app_id}/image-releases/{release_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeAppsRead, api.ScopeDeployWrite, api.ScopeRegionalImageRelease)(cellRelease(s.getCellImageRelease)))))
 	mux.HandleFunc("GET /v1/cell/apps/{slug}/binding", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeRegionalImageRelease)(s.requireRegionalReleasePrincipal(s.cellAppBinding)))))
-	grantAdmin := s.requireRegionalAccountKey(s.requireDirectoryAccount(s.requireVerifiedEmail(s.requireCellDeploymentApp(s.putRegionalReleaseGrant))))
+	grantRoute := func(h accountHandler) accountHandler {
+		return s.requireVerifiedEmail(s.requireRegionalGrantApp(h))
+	}
+	grantAdmin := grantRoute(s.putRegionalReleaseGrant)
 	mux.HandleFunc("PUT /v1/cells/{cell_id}/apps/{app_id}/release-grants/{grant_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin)(grantAdmin))))
-	mux.HandleFunc("GET /v1/cells/{cell_id}/apps/{app_id}/release-grants/{grant_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeRegionalImageRelease)(cellRelease(s.getRegionalReleaseGrant)))))
-	mux.HandleFunc("DELETE /v1/cells/{cell_id}/apps/{app_id}/release-grants/{grant_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeRegionalImageRelease)(cellRelease(s.revokeRegionalReleaseGrant)))))
+	mux.HandleFunc("GET /v1/cells/{cell_id}/apps/{app_id}/release-grants/{grant_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeRegionalImageRelease)(grantRoute(s.getRegionalReleaseGrant)))))
+	mux.HandleFunc("DELETE /v1/cells/{cell_id}/apps/{app_id}/release-grants/{grant_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeRegionalImageRelease)(grantRoute(s.revokeRegionalReleaseGrant)))))
 }
 
 func (s *server) globalDirectoryAvailable(w http.ResponseWriter) bool {

@@ -10,10 +10,32 @@ import (
 
 func (m *MemStore) regionalGrantApp(g RegionalReleaseGrant) bool {
 	app, ok := m.apps[g.AppID]
-	return ok && app.AccountID == g.AccountID && app.OrgID == g.OrgID && m.regionalReleasePersonalApp(app)
+	return ok && app.AccountID == g.AccountID && app.OrgID == g.OrgID && m.regionalGrantActor(app, g.issuer())
+}
+
+// Caller holds m.mu. Shared consent requires a live credential-issuing role;
+// the creator's role or plan never substitutes for the consenting member.
+func (m *MemStore) regionalGrantActor(app App, actor string) bool {
+	if app.Status != AppActive && app.Status != AppEvictedCold {
+		return false
+	}
+	if m.regionalReleasePersonalApp(app) {
+		return actor == app.AccountID
+	}
+	org, ok := m.orgs[app.OrgID]
+	if !ok || org.Personal || org.Status != OrgStatusActive || org.DeletedPending {
+		return false
+	}
+	acct, ok := m.accounts[actor]
+	if !ok || !acct.MayDeploy() || !acct.EmailVerified() {
+		return false
+	}
+	mem, ok := m.memberships[orgAccountKey{OrgID: app.OrgID, AccountID: actor}]
+	return ok && mem.RemovedAt == nil && (mem.Role == OrgRoleOwner || mem.Role == OrgRoleAdmin)
 }
 func (m *MemStore) PutRegionalReleaseGrant(_ context.Context, g RegionalReleaseGrant) (RegionalReleaseGrant, error) {
 	g.ExpiresAt = g.ExpiresAt.UTC().Truncate(time.Microsecond)
+	g.IssuerAccountID = g.issuer()
 	if !g.valid() {
 		return RegionalReleaseGrant{}, ErrInvalidArgument
 	}
@@ -53,7 +75,8 @@ func (m *MemStore) PutRegionalReleaseGrant(_ context.Context, g RegionalReleaseG
 }
 func (m *MemStore) regionalGrantLocked(owner, cellID, appID, id string) (RegionalReleaseGrant, error) {
 	g, ok := m.regionalReleaseGrants[id]
-	if !ok || g.AccountID != owner || g.CellID != cellID || g.AppID != appID || !m.regionalGrantApp(g) {
+	app, appOK := m.apps[appID]
+	if !ok || !appOK || g.CellID != cellID || g.AppID != appID || app.AccountID != g.AccountID || app.OrgID != g.OrgID || !m.regionalGrantActor(app, owner) {
 		return RegionalReleaseGrant{}, ErrNotFound
 	}
 	return g, nil
@@ -91,7 +114,7 @@ func (m *MemStore) AuthenticateRegionalReleaseGrant(_ context.Context, hash []by
 		if err := g.active(time.Now()); err != nil {
 			return Account{}, APIKey{}, err
 		}
-		acct, ok := m.accounts[g.AccountID]
+		acct, ok := m.accounts[g.issuer()]
 		if !ok {
 			return Account{}, APIKey{}, ErrNotFound
 		}

@@ -3898,17 +3898,18 @@ type RegionalImageReleaseReceipt struct {
 }
 
 type RegionalReleaseGrant struct {
-	ID          pgtype.UUID
-	AppID       pgtype.UUID
-	CellID      pgtype.UUID
-	AccountID   pgtype.UUID
-	OrgID       pgtype.UUID
-	GlobalAppID pgtype.UUID
-	TokenSha256 []byte
-	CreatedAt   pgtype.Timestamptz
-	ExpiresAt   pgtype.Timestamptz
-	Status      string
-	RevokedAt   pgtype.Timestamptz
+	ID              pgtype.UUID
+	AppID           pgtype.UUID
+	CellID          pgtype.UUID
+	AccountID       pgtype.UUID
+	OrgID           pgtype.UUID
+	GlobalAppID     pgtype.UUID
+	TokenSha256     []byte
+	CreatedAt       pgtype.Timestamptz
+	ExpiresAt       pgtype.Timestamptz
+	Status          string
+	RevokedAt       pgtype.Timestamptz
+	IssuerAccountID pgtype.UUID
 }
 
 type ReleaseBundle struct {

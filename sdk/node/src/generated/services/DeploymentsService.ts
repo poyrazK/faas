@@ -326,7 +326,7 @@ export class DeploymentsService {
   }
   /**
    * Register immutable regional release delegation.
-   * Requires a personal regional account-admin key and verified email. Registers only a SHA-256 for a distinct fp_release_ token bound to this cell/app/current owner and one global app stream. Same immutable input returns the same grant, including revoked/expired state; changed input conflicts. Expiry is canonicalized to UTC microseconds and cannot exceed seven days. At most 32 active, unexpired grants exist per app. The request is bounded to 2048 bytes. Redirects must not be followed.
+   * Requires a regional admin-scoped key and verified email. Personal apps require their owner key; shared apps require an organization-bound key belonging to a current owner or administrator. Consent records the issuer separately from app ownership; membership, issuer activity and organization status are rechecked. Shared consent does not yet enable directory attachment or runtime release admission. Registers only a SHA-256 for a distinct fp_release_ token bound to this cell/app/current owner and one global app stream. Same immutable input returns the same grant, including revoked/expired state; changed input conflicts. Expiry is canonicalized to UTC microseconds and cannot exceed seven days. At most 32 active, unexpired grants exist per app. The request is bounded to 2048 bytes. Redirects must not be followed.
    * @returns RegionalReleaseGrantResponse Registered delegation identity and retained status.
    * @throws ApiError
    */
@@ -341,7 +341,7 @@ export class DeploymentsService {
      */
     cellId: string,
     /**
-     * Canonical UUID of the current owner's personal regional app.
+     * Canonical UUID of the current owner's regional app.
      */
     appId: string,
     /**
@@ -379,7 +379,7 @@ export class DeploymentsService {
   }
   /**
    * Read regional release delegation metadata.
-   * Requires the personal regional account-admin key or the active delegated token for this exact grant. Returns no token or token hash. A token can read only its own grant metadata. Redirects must not be followed.
+   * Requires the regional owner admin key, a current organization owner/admin key, or the active delegated token for this exact grant. Shared token authentication checks its issuer's current owner/admin membership and organization status. Returns no token or token hash. A token can read only its own grant metadata. Redirects must not be followed.
    * @returns RegionalReleaseGrantResponse Current delegation metadata for this grant.
    * @throws ApiError
    */
@@ -393,7 +393,7 @@ export class DeploymentsService {
      */
     cellId: string,
     /**
-     * Canonical UUID of the current owner's personal regional app.
+     * Canonical UUID of the current owner's regional app.
      */
     appId: string,
     /**
@@ -425,7 +425,7 @@ export class DeploymentsService {
   }
   /**
    * Revoke regional release delegation.
-   * Requires the personal regional account-admin key or the active delegated token for this exact grant. Revocation is terminal and retained while the app exists. Admin retries are idempotent; a revoked token cannot authenticate even for revocation. Redirects must not be followed.
+   * Requires the regional owner admin key, a current organization owner/admin key, or the active delegated token for this exact grant. Shared token authentication checks its issuer's current owner/admin membership and organization status. Revocation is terminal and retained while the app exists. Admin retries are idempotent; a revoked token cannot authenticate even for revocation. Redirects must not be followed.
    * @returns RegionalReleaseGrantResponse Revoked delegation metadata with terminal status.
    * @throws ApiError
    */
@@ -439,7 +439,7 @@ export class DeploymentsService {
      */
     cellId: string,
     /**
-     * Canonical UUID of the current owner's personal regional app.
+     * Canonical UUID of the current owner's regional app.
      */
     appId: string,
     /**

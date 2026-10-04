@@ -100,9 +100,11 @@ def sync_detailed(
 ) -> Response[Problem | RegionalReleaseGrantResponse]:
     """Revoke regional release delegation.
 
-     Requires the personal regional account-admin key or the active delegated token for this exact grant.
-    Revocation is terminal and retained while the app exists. Admin retries are idempotent; a revoked
-    token cannot authenticate even for revocation. Redirects must not be followed.
+     Requires the regional owner admin key, a current organization owner/admin key, or the active
+    delegated token for this exact grant. Shared token authentication checks its issuer's current
+    owner/admin membership and organization status. Revocation is terminal and retained while the app
+    exists. Admin retries are idempotent; a revoked token cannot authenticate even for revocation.
+    Redirects must not be followed.
 
     Args:
         cell_id (UUID):
@@ -139,9 +141,11 @@ def sync(
 ) -> Problem | RegionalReleaseGrantResponse | None:
     """Revoke regional release delegation.
 
-     Requires the personal regional account-admin key or the active delegated token for this exact grant.
-    Revocation is terminal and retained while the app exists. Admin retries are idempotent; a revoked
-    token cannot authenticate even for revocation. Redirects must not be followed.
+     Requires the regional owner admin key, a current organization owner/admin key, or the active
+    delegated token for this exact grant. Shared token authentication checks its issuer's current
+    owner/admin membership and organization status. Revocation is terminal and retained while the app
+    exists. Admin retries are idempotent; a revoked token cannot authenticate even for revocation.
+    Redirects must not be followed.
 
     Args:
         cell_id (UUID):
@@ -173,9 +177,11 @@ async def asyncio_detailed(
 ) -> Response[Problem | RegionalReleaseGrantResponse]:
     """Revoke regional release delegation.
 
-     Requires the personal regional account-admin key or the active delegated token for this exact grant.
-    Revocation is terminal and retained while the app exists. Admin retries are idempotent; a revoked
-    token cannot authenticate even for revocation. Redirects must not be followed.
+     Requires the regional owner admin key, a current organization owner/admin key, or the active
+    delegated token for this exact grant. Shared token authentication checks its issuer's current
+    owner/admin membership and organization status. Revocation is terminal and retained while the app
+    exists. Admin retries are idempotent; a revoked token cannot authenticate even for revocation.
+    Redirects must not be followed.
 
     Args:
         cell_id (UUID):
@@ -210,9 +216,11 @@ async def asyncio(
 ) -> Problem | RegionalReleaseGrantResponse | None:
     """Revoke regional release delegation.
 
-     Requires the personal regional account-admin key or the active delegated token for this exact grant.
-    Revocation is terminal and retained while the app exists. Admin retries are idempotent; a revoked
-    token cannot authenticate even for revocation. Redirects must not be followed.
+     Requires the regional owner admin key, a current organization owner/admin key, or the active
+    delegated token for this exact grant. Shared token authentication checks its issuer's current
+    owner/admin membership and organization status. Revocation is terminal and retained while the app
+    exists. Admin retries are idempotent; a revoked token cannot authenticate even for revocation.
+    Redirects must not be followed.
 
     Args:
         cell_id (UUID):

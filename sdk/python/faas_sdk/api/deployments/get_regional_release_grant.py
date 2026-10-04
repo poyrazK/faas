@@ -100,9 +100,10 @@ def sync_detailed(
 ) -> Response[Problem | RegionalReleaseGrantResponse]:
     """Read regional release delegation metadata.
 
-     Requires the personal regional account-admin key or the active delegated token for this exact grant.
-    Returns no token or token hash. A token can read only its own grant metadata. Redirects must not be
-    followed.
+     Requires the regional owner admin key, a current organization owner/admin key, or the active
+    delegated token for this exact grant. Shared token authentication checks its issuer's current
+    owner/admin membership and organization status. Returns no token or token hash. A token can read
+    only its own grant metadata. Redirects must not be followed.
 
     Args:
         cell_id (UUID):
@@ -139,9 +140,10 @@ def sync(
 ) -> Problem | RegionalReleaseGrantResponse | None:
     """Read regional release delegation metadata.
 
-     Requires the personal regional account-admin key or the active delegated token for this exact grant.
-    Returns no token or token hash. A token can read only its own grant metadata. Redirects must not be
-    followed.
+     Requires the regional owner admin key, a current organization owner/admin key, or the active
+    delegated token for this exact grant. Shared token authentication checks its issuer's current
+    owner/admin membership and organization status. Returns no token or token hash. A token can read
+    only its own grant metadata. Redirects must not be followed.
 
     Args:
         cell_id (UUID):
@@ -173,9 +175,10 @@ async def asyncio_detailed(
 ) -> Response[Problem | RegionalReleaseGrantResponse]:
     """Read regional release delegation metadata.
 
-     Requires the personal regional account-admin key or the active delegated token for this exact grant.
-    Returns no token or token hash. A token can read only its own grant metadata. Redirects must not be
-    followed.
+     Requires the regional owner admin key, a current organization owner/admin key, or the active
+    delegated token for this exact grant. Shared token authentication checks its issuer's current
+    owner/admin membership and organization status. Returns no token or token hash. A token can read
+    only its own grant metadata. Redirects must not be followed.
 
     Args:
         cell_id (UUID):
@@ -210,9 +213,10 @@ async def asyncio(
 ) -> Problem | RegionalReleaseGrantResponse | None:
     """Read regional release delegation metadata.
 
-     Requires the personal regional account-admin key or the active delegated token for this exact grant.
-    Returns no token or token hash. A token can read only its own grant metadata. Redirects must not be
-    followed.
+     Requires the regional owner admin key, a current organization owner/admin key, or the active
+    delegated token for this exact grant. Shared token authentication checks its issuer's current
+    owner/admin membership and organization status. Returns no token or token hash. A token can read
+    only its own grant metadata. Redirects must not be followed.
 
     Args:
         cell_id (UUID):

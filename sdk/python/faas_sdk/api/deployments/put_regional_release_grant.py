@@ -110,12 +110,15 @@ def sync_detailed(
 ) -> Response[Problem | RegionalReleaseGrantResponse]:
     """Register immutable regional release delegation.
 
-     Requires a personal regional account-admin key and verified email. Registers only a SHA-256 for a
-    distinct fp_release_ token bound to this cell/app/current owner and one global app stream. Same
-    immutable input returns the same grant, including revoked/expired state; changed input conflicts.
-    Expiry is canonicalized to UTC microseconds and cannot exceed seven days. At most 32 active,
-    unexpired grants exist per app. The request is bounded to 2048 bytes. Redirects must not be
-    followed.
+     Requires a regional admin-scoped key and verified email. Personal apps require their owner key;
+    shared apps require an organization-bound key belonging to a current owner or administrator. Consent
+    records the issuer separately from app ownership; membership, issuer activity and organization
+    status are rechecked. Shared consent does not yet enable directory attachment or runtime release
+    admission. Registers only a SHA-256 for a distinct fp_release_ token bound to this cell/app/current
+    owner and one global app stream. Same immutable input returns the same grant, including
+    revoked/expired state; changed input conflicts. Expiry is canonicalized to UTC microseconds and
+    cannot exceed seven days. At most 32 active, unexpired grants exist per app. The request is bounded
+    to 2048 bytes. Redirects must not be followed.
 
     Args:
         cell_id (UUID):
@@ -156,12 +159,15 @@ def sync(
 ) -> Problem | RegionalReleaseGrantResponse | None:
     """Register immutable regional release delegation.
 
-     Requires a personal regional account-admin key and verified email. Registers only a SHA-256 for a
-    distinct fp_release_ token bound to this cell/app/current owner and one global app stream. Same
-    immutable input returns the same grant, including revoked/expired state; changed input conflicts.
-    Expiry is canonicalized to UTC microseconds and cannot exceed seven days. At most 32 active,
-    unexpired grants exist per app. The request is bounded to 2048 bytes. Redirects must not be
-    followed.
+     Requires a regional admin-scoped key and verified email. Personal apps require their owner key;
+    shared apps require an organization-bound key belonging to a current owner or administrator. Consent
+    records the issuer separately from app ownership; membership, issuer activity and organization
+    status are rechecked. Shared consent does not yet enable directory attachment or runtime release
+    admission. Registers only a SHA-256 for a distinct fp_release_ token bound to this cell/app/current
+    owner and one global app stream. Same immutable input returns the same grant, including
+    revoked/expired state; changed input conflicts. Expiry is canonicalized to UTC microseconds and
+    cannot exceed seven days. At most 32 active, unexpired grants exist per app. The request is bounded
+    to 2048 bytes. Redirects must not be followed.
 
     Args:
         cell_id (UUID):
@@ -197,12 +203,15 @@ async def asyncio_detailed(
 ) -> Response[Problem | RegionalReleaseGrantResponse]:
     """Register immutable regional release delegation.
 
-     Requires a personal regional account-admin key and verified email. Registers only a SHA-256 for a
-    distinct fp_release_ token bound to this cell/app/current owner and one global app stream. Same
-    immutable input returns the same grant, including revoked/expired state; changed input conflicts.
-    Expiry is canonicalized to UTC microseconds and cannot exceed seven days. At most 32 active,
-    unexpired grants exist per app. The request is bounded to 2048 bytes. Redirects must not be
-    followed.
+     Requires a regional admin-scoped key and verified email. Personal apps require their owner key;
+    shared apps require an organization-bound key belonging to a current owner or administrator. Consent
+    records the issuer separately from app ownership; membership, issuer activity and organization
+    status are rechecked. Shared consent does not yet enable directory attachment or runtime release
+    admission. Registers only a SHA-256 for a distinct fp_release_ token bound to this cell/app/current
+    owner and one global app stream. Same immutable input returns the same grant, including
+    revoked/expired state; changed input conflicts. Expiry is canonicalized to UTC microseconds and
+    cannot exceed seven days. At most 32 active, unexpired grants exist per app. The request is bounded
+    to 2048 bytes. Redirects must not be followed.
 
     Args:
         cell_id (UUID):
@@ -241,12 +250,15 @@ async def asyncio(
 ) -> Problem | RegionalReleaseGrantResponse | None:
     """Register immutable regional release delegation.
 
-     Requires a personal regional account-admin key and verified email. Registers only a SHA-256 for a
-    distinct fp_release_ token bound to this cell/app/current owner and one global app stream. Same
-    immutable input returns the same grant, including revoked/expired state; changed input conflicts.
-    Expiry is canonicalized to UTC microseconds and cannot exceed seven days. At most 32 active,
-    unexpired grants exist per app. The request is bounded to 2048 bytes. Redirects must not be
-    followed.
+     Requires a regional admin-scoped key and verified email. Personal apps require their owner key;
+    shared apps require an organization-bound key belonging to a current owner or administrator. Consent
+    records the issuer separately from app ownership; membership, issuer activity and organization
+    status are rechecked. Shared consent does not yet enable directory attachment or runtime release
+    admission. Registers only a SHA-256 for a distinct fp_release_ token bound to this cell/app/current
+    owner and one global app stream. Same immutable input returns the same grant, including
+    revoked/expired state; changed input conflicts. Expiry is canonicalized to UTC microseconds and
+    cannot exceed seven days. At most 32 active, unexpired grants exist per app. The request is bounded
+    to 2048 bytes. Redirects must not be followed.
 
     Args:
         cell_id (UUID):
