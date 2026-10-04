@@ -3770,23 +3770,48 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 }
 
 func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	// List every cron owned by any of this account's apps.
-	apps, err := s.store.ListApps(r.Context(), acct.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list crons"))
-		return
+	// ?slug= (an app slug or id, sent by `gregale crons list --app`) scopes
+	// the list to one app; without it, every cron on the account's apps.
+	// The filter used to be ignored, so `--app X` listed other apps' crons.
+	var apps []state.App
+	if ref := r.URL.Query().Get("slug"); ref != "" {
+		app, ok := s.ownedAppByRef(r.Context(), acct.ID, ref)
+		if !ok {
+			s.notFound(w, "no such app")
+			return
+		}
+		apps = []state.App{app}
+	} else {
+		all, err := s.store.ListApps(r.Context(), acct.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not list crons"))
+			return
+		}
+		apps = all
 	}
 	out := make([]api.CronResponse, 0)
 	for _, app := range apps {
 		cs, err := s.store.ListCronsForApp(r.Context(), app.ID)
 		if err != nil {
-			continue
+			api.WriteProblem(w, api.ErrCapacity("could not list crons"))
+			return
 		}
 		for _, c := range cs {
 			out = append(out, cronResponse(c))
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// ownedAppByRef resolves an app id or slug owned by accountID.
+func (s *server) ownedAppByRef(ctx context.Context, accountID, ref string) (state.App, bool) {
+	if app, err := s.store.AppByID(ctx, ref); err == nil && app.AccountID == accountID {
+		return app, true
+	}
+	if app, err := s.store.AppBySlug(ctx, ref); err == nil && app.AccountID == accountID {
+		return app, true
+	}
+	return state.App{}, false
 }
 
 func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.Account) {

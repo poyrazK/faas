@@ -1797,7 +1797,8 @@ func cmdTail(args []string) int {
 	}
 }
 
-const (
+// Reconnect backoff for `gregale tail`; variables so tests can shorten them.
+var (
 	tailReconnectMin = time.Second
 	tailReconnectMax = 30 * time.Second
 )
@@ -1887,7 +1888,10 @@ func writeTailFrame(e api.Event, filter tailFilter) error {
 				"app_id": p.AppID, "app_slug": slug, "state": p.State,
 			})
 		}
-		_, _ = fmt.Fprintf(osStdout, "%s %s %s\n", p.InvocationID, filter.label(p.AppID), p.State)
+		if slug == "" {
+			slug = p.AppID
+		}
+		_, _ = fmt.Fprintf(osStdout, "%s %s %s\n", p.InvocationID, slug, p.State)
 	case "stateless_advisory":
 		if !filter.includeStateless {
 			return nil
