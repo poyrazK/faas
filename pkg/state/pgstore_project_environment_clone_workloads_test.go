@@ -12,13 +12,13 @@ func TestPgProjectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T) {
 	projectEnvironmentCloneCapturesAndPreparesWorkloads(t, s)
 }
 
-// ADR-566: the publication gate requires the captured project configuration.
+// ADR-567: the publication gate requires the captured project configuration.
 func TestPgProjectEnvironmentCloneRequiresProjectConfigurationReceipt(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	projectEnvironmentCloneCapturesAndPreparesWorkloads(t, s, true)
 }
 
-// ADR-566: actual sealed target values and completeness receipts are checked.
+// ADR-567: actual sealed target values and completeness receipts are checked.
 func TestPgProjectEnvironmentCloneValuePublication(t *testing.T) {
 	for _, fault := range cloneValuePublicationFaults {
 		t.Run(fault, func(t *testing.T) {
@@ -28,7 +28,7 @@ func TestPgProjectEnvironmentCloneValuePublication(t *testing.T) {
 	}
 }
 
-// ADR-566: raw route-row changes cannot hide behind an unchanged desired spec
+// ADR-567: raw route-row changes cannot hide behind an unchanged desired spec
 // hash. Both publication gates authenticate the actual scoped policy rows.
 func TestPgProjectEnvironmentCloneRoutePolicyPublication(t *testing.T) {
 	for _, fault := range []string{"before_route_policy", "after_route_policy"} {

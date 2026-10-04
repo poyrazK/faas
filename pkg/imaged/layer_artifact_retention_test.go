@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
-// ADR-566: deletion retries survive removal of snapshot rows and a daemon restart.
+// ADR-567: deletion retries survive removal of snapshot rows and a daemon restart.
 func TestLayerArtifactDeletionRetriesWithoutSnapshotRows(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
@@ -56,7 +56,7 @@ func TestLayerArtifactDeletionRetriesWithoutSnapshotRows(t *testing.T) {
 	}
 }
 
-// ADR-566: a prepared stage keeps a shared immutable layer after source cleanup.
+// ADR-567: a prepared stage keeps a shared immutable layer after source cleanup.
 func TestCleanupRetainsLayerReusedByStage(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()

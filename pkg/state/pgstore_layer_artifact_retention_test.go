@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/migrations"
 )
 
-// ADR-566: exercise real transaction/trigger fencing alongside MemStore.
+// ADR-567: exercise real transaction/trigger fencing alongside MemStore.
 func TestPgCloneLayerRetentionSurvivesSourceRetirement(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	cloneLayerRetentionSurvivesSourceRetirement(t, s)
@@ -20,13 +20,13 @@ func TestPgLayerDeletionFencesConcurrentPublication(t *testing.T) {
 	layerDeletionFencesConcurrentPublication(t, s)
 }
 
-// ADR-566: the persistent reference guards also cover snapshot/VM writers.
+// ADR-567: the persistent reference guards also cover snapshot/VM writers.
 func TestPgLayerRetentionConsumerReferences(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	layerRetentionConsumerReferences(t, s)
 }
 
-// ADR-566: an upgrade pins private workload captures made before this catalogue.
+// ADR-567: an upgrade pins private workload captures made before this catalogue.
 func TestPgCloneLayerRetentionBackfillsExistingCaptures(t *testing.T) {
 	s, ctx, pool := pgWithPool(t)
 	cloneLayerRetentionSurvivesSourceRetirement(t, s)

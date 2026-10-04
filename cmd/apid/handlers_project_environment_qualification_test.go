@@ -16,7 +16,7 @@ func TestCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T) {
 	testCreateProjectEnvironmentQualificationAndGatePreview(t, false)
 }
 
-// adr: 566
+// adr: 567
 func TestCreateProjectEnvironmentQualificationPinsFlagsAndGatePreview(t *testing.T) {
 	testCreateProjectEnvironmentQualificationAndGatePreview(t, true)
 }

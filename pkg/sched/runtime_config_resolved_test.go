@@ -57,7 +57,7 @@ func TestRuntimeConfigStaleAnchorsOnWakeAdmission(t *testing.T) {
 	}
 }
 
-// adr: 566
+// adr: 567
 func TestStageSnapshotFreshnessKeepsAdmissionClockAndEnvironmentOwner(t *testing.T) {
 	ctx := t.Context()
 	f := seedStageSnapshotPolicy(t, 0, false)

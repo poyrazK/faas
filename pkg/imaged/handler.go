@@ -293,7 +293,7 @@ type Handler struct {
 	// stay anonymous (matches the Free plan / no-credential case).
 	secretboxIdentity   *age.X25519Identity
 	secretboxIdentities []*age.X25519Identity
-	// baseConvergence (ADR-567) tracks the bases this daemon staged so the
+	// baseConvergence (ADR-566) tracks the bases this daemon staged so the
 	// convergence loop can keep each local copy byte-identical to the
 	// shared publication.
 	baseConvergence baseConvergenceState

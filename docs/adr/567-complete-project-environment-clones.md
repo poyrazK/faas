@@ -1,4 +1,4 @@
-# ADR-566 · Complete project-environment clones and qualified promotion
+# ADR-567 · Complete project-environment clones and qualified promotion
 
 - **Status:** proposed
 - **Date:** 2026-09-29
