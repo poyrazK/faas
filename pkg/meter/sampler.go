@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"sync"
 	"time"
@@ -418,13 +417,7 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 			}
 			mbs, err := s.store.DeploymentSidecarRAMs(ctx, inst.DeploymentID)
 			if err != nil {
-				// Fail-closed: under-admit rather than over-admit.
-				// The sampler doesn't own a *slog.Logger today
-				// (matches the existing budget-tier floor's no-log
-				// shape), so the warning rides the slog default.
-				slog.Default().Warn("meter: deployment sidecar RAM lookup failed",
-					"deployment_id", inst.DeploymentID, "err", err)
-				continue
+				return out, fmt.Errorf("meter: billable sidecar RAM %s: %w", inst.DeploymentID, err)
 			}
 			sidecarByDeploy[inst.DeploymentID] = mbs
 		}

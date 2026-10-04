@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+
 from faas_sdk._sse import SseEvent, aiter_sse, iter_sse, parse_data_json
 
 

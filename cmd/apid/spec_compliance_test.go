@@ -1044,6 +1044,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", realtimeFile),
 		filepath.Join(root, "pkg", "api", logDrainsFile),
 		filepath.Join(root, "pkg", "api", billingFile),
+		filepath.Join(root, "pkg", "api", "financial.go"),
 		filepath.Join(root, "pkg", "api", diffFile),
 		filepath.Join(root, "pkg", "api", upstreamsFile),
 		filepath.Join(root, "pkg", "api", triggerFile),
@@ -1094,6 +1095,20 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	dtos, err := scanDTOs(files)
 	if err != nil {
 		t.Fatalf("scan DTOs: %v", err)
+	}
+	// adr: 566 — financial domain structs are embedded directly in the API.
+	// Check their actual JSON fields rather than excluding their schemas.
+	financialDTOs, err := scanDTOs([]string{
+		filepath.Join(root, "pkg", "financial", "cost.go"),
+		filepath.Join(root, "pkg", "financial", "contracts.go"),
+		filepath.Join(root, "pkg", "financial", "forecast.go"),
+		filepath.Join(root, "pkg", "financial", "budget.go"),
+	})
+	if err != nil {
+		t.Fatalf("scan financial DTOs: %v", err)
+	}
+	for name, schema := range map[string]string{"Price": "FinancialPrice", "Attribution": "FinancialAttribution", "Allocation": "FinancialAllocation", "MeterCost": "FinancialMeterCost", "ContractCosts": "FinancialContractCosts", "Forecast": "FinancialForecast", "BudgetSpec": "FinancialBudgetSpec", "BudgetScope": "FinancialBudgetScope"} {
+		dtos[schema] = financialDTOs[name]
 	}
 
 	var missingInSpec []string

@@ -65,6 +65,12 @@ func cmdBilling(args []string) int {
 		return cmdBillingPaymentMethod(args[1:])
 	case billingSubStatus:
 		return cmdBillingStatus(args[1:])
+	case "costs", "forecast":
+		return cmdBillingFinancial(args[0], args[1:])
+	case "budget-preview":
+		return cmdBillingBudgetPreview(args[1:])
+	case "budgets":
+		return cmdBillingBudgets(args[1:])
 	case "export":
 		return cmdBillingExport(args[1:])
 	case "refresh-invoice":
@@ -106,6 +112,10 @@ const billingUsage = "usage: gregale billing <subcommand>\n\n" +
 	"                      y/N confirm (--yes for non-interactive shells)\n" +
 	"  status              show your provider-independent billing status\n" +
 	"                      (--watch N  re-poll every 5 s for N seconds; --json  emit JSON)\n" +
+	"  costs               explain retained usage costs (--month YYYY-MM --json)\n" +
+	"  forecast            show cost projections and coverage (--month YYYY-MM --json)\n" +
+	"  budget-preview      preview a budget's cost and consequences (--file PATH --json)\n" +
+	"  budgets             list, read, save, update, delete and audit budget drafts\n" +
 	"  export              download a partial FOCUS 1.4 Invoice Detail projection\n" +
 	"                      (--month YYYY-MM --out PATH; --format zip|csv|metadata)\n" +
 	"\n" +
