@@ -78,6 +78,10 @@ const EnvironmentGitOpsQualificationRuntimeCheckInterval = time.Second
 // keep their holdings and are retried on a later pass through the cursor.
 const EnvironmentGitOpsQualificationRecoveryBatchMax = 100
 
+// Discovery bounds a scheduler's scan of durable qualification requests. It
+// does not claim work or authorize native execution.
+const EnvironmentGitOpsQualificationDispatchBatchMax = 100
+
 // NativeHostHelperCgroupEventsMaxBytes bounds the kernel control-file parser.
 const NativeHostHelperCgroupEventsMaxBytes = 4096
 

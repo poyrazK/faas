@@ -1940,8 +1940,11 @@ retain short/numeric queue depth and accepted invocation identity/scope through
 project removal and dead-letter replay. The unpublished scope migration uses
 a version emitted by the repository generator. These receipts are portable store
 fixtures, not native guest or snapshot lifecycle acceptance. Scoped Linux lint
-passes with zero issues; current-head repository CI remains to be completed
-for this increment.
+passes with zero issues. Repository CI for source `eadb76904aeca42c0c4bb9e0239bdfaab0ea9c51`
+passes both complete PostgreSQL/race state shards, the external adapter suite,
+full migrations and all other PR checks. Aggregate exact `pkg/state` coverage
+is 72.7%, above the unchanged seventy-percent floor. These results cover this
+increment, not native lifecycle acceptance or the complete feature.
 
 
 ## State CI inventory and coverage union
@@ -1957,3 +1960,32 @@ state profiles and the external PostgreSQL GitOps adapter profile are required
 by one aggregate exact-package seventy-percent coverage gate. Repeated source
 blocks contribute statements once and count hits from any successful shard.
 This CI partition change does not supply native qualification evidence.
+
+## Durable qualification discovery
+
+Schedulers can now page committed qualification request IDs without depending
+on notification delivery or an in-memory queue. Each pass uses an exclusive UUID
+cursor and a bounded page size. Current scheduler ownership and tenant/project
+identity filter work before the limit. Only the current prepared, approved,
+enforce-mode graph is discoverable; suspended sources, held accounts, active
+execution leases and unretired original executions are excluded. A Git source
+outage preserves qualification work for the last approved graph. Jobs are
+excluded until their separate qualification execution adapter exists.
+
+Discovery is read-only and exposes no frozen inputs or private capabilities.
+The existing source/app/request-locked claim still rechecks the complete
+observation and artifact cohort, and the scheduler rechecks app ownership
+before native effects. An expired claim with no admission can resume with a
+new attempt and reservation. An admitted, uncertain attempt remains held until
+its original execution has retirement proof. Cursor exhaustion starts a fresh
+pass, so a newly eligible request behind the cursor is eventually discovered.
+
+Portable memory/PostgreSQL checks cover missed notifications, restart discovery,
+exclusive pagination, unchanged active leases, original reservation retention,
+fresh attempt authority, owner transfer, account holds, source revocation,
+unsupported jobs, source outages and competing PostgreSQL claim transactions.
+This is durable queue discovery for the pending consumer. It does not publish
+smoke/snapshot evidence, qualify a graph, enable dispatch, or activate workloads.
+The complete portable adapter suite passes with race detection and PostgreSQL:
+123 top-level tests and 448 cases, with no skipped cases. Scoped Linux lint
+passes with zero issues, and SQLC regeneration matches the committed output.

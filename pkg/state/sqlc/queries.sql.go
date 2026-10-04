@@ -14619,6 +14619,52 @@ func (q *Queries) ListEnvironmentQualificationExecutionsForRecovery(ctx context.
 	return items, nil
 }
 
+const listEnvironmentWorkloadQualificationsForDispatch = `-- name: ListEnvironmentWorkloadQualificationsForDispatch :many
+SELECT q.id FROM environment_workload_qualification_requests q
+JOIN environment_workload_graphs g ON g.id=q.graph_id
+JOIN environment_git_sources s ON s.id=g.source_id
+JOIN apps a ON a.id=q.app_id AND a.account_id=s.account_id AND a.project_id=s.project_id
+JOIN accounts c ON c.id=s.account_id
+WHERE s.mode='enforce' AND NOT s.suspended AND g.phase='prepared'
+ AND g.generation=s.generation AND g.intent_version=s.intent_version
+ AND g.revision_id=s.approved_revision_id AND g.environment_id=s.environment_id
+ AND c.status='active' AND c.abuse_hold_at IS NULL AND a.status IN ('active','evicted_cold')
+ AND (a.node_id IS NULL OR a.node_id=$1::uuid)
+ AND ($2::text='' OR q.id>nullif($2::text,'')::uuid)
+ AND q.execution_mode<>'job' AND (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
+ AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=q.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=q.reserved_instance_id AND e.retired_at IS NULL)
+ORDER BY q.id LIMIT $3::integer
+`
+
+type ListEnvironmentWorkloadQualificationsForDispatchParams struct {
+	NodeID         pgtype.UUID
+	AfterRequestID string
+	PageLimit      int32
+}
+
+// Discovery grants no execution authority. Claim rechecks the full observation
+// and cohort under source/app/request locks before issuing a new attempt.
+func (q *Queries) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.Context, db DBTX, arg ListEnvironmentWorkloadQualificationsForDispatchParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, listEnvironmentWorkloadQualificationsForDispatch, arg.NodeID, arg.AfterRequestID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventSubscriptionsForApp = `-- name: ListEventSubscriptionsForApp :many
 
 select id, account_id, app_id, source, type, filter, enabled,
