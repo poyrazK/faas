@@ -1,15 +1,19 @@
 package faas_test
 
 import (
+	"context"
 	"encoding/json"
-	faas "github.com/poyrazK/faas/sdk/go"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 func TestVersionProtectionClient(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	key := "目录/+ %"
 	id := "00000000-0000-4000-8000-000000000001"
 	version := "00000000-0000-4000-8000-000000000002"
@@ -49,19 +53,19 @@ func TestVersionProtectionClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := c.GetObjectVersionRetention(t.Context(), "demo", "bucket", key, version); err != nil || !out.Retention.Empty() {
+	if out, err := c.GetObjectVersionRetention(ctx, "demo", "bucket", key, version); err != nil || !out.Retention.Empty() {
 		t.Fatal(out, err)
 	}
-	if out, err := c.PutObjectVersionRetention(t.Context(), "demo", "bucket", key, version, faas.ObjectVersionRetentionRequest{ID: id}); err != nil || out.State != "waiting" {
+	if out, err := c.PutObjectVersionRetention(ctx, "demo", "bucket", key, version, faas.ObjectVersionRetentionRequest{ID: id}); err != nil || out.State != "waiting" {
 		t.Fatal(out, err)
 	}
-	if out, err := c.GetObjectVersionLegalHold(t.Context(), "demo", "bucket", key, version); err != nil || out.LegalHold.Status != "ON" {
+	if out, err := c.GetObjectVersionLegalHold(ctx, "demo", "bucket", key, version); err != nil || out.LegalHold.Status != "ON" {
 		t.Fatal(out, err)
 	}
-	if out, err := c.PutObjectVersionLegalHold(t.Context(), "demo", "bucket", key, version, faas.ObjectVersionLegalHoldRequest{ID: id, LegalHold: faas.ObjectVersionLegalHold{Status: "OFF"}}); err != nil || out.ID != id {
+	if out, err := c.PutObjectVersionLegalHold(ctx, "demo", "bucket", key, version, faas.ObjectVersionLegalHoldRequest{ID: id, LegalHold: faas.ObjectVersionLegalHold{Status: "OFF"}}); err != nil || out.ID != id {
 		t.Fatal(out, err)
 	}
-	if out, err := c.GetObjectVersionProtection(t.Context(), "demo", "bucket", id); err != nil || out.State != "ready" {
+	if out, err := c.GetObjectVersionProtection(ctx, "demo", "bucket", id); err != nil || out.State != "ready" {
 		t.Fatal(out, err)
 	}
 	if calls != 5 {
