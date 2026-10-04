@@ -22,5 +22,7 @@ func (s *server) getObjectBucketEncryptionCapabilities(w http.ResponseWriter, r 
 		bucketProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, backend.Encryption.PublicCapabilities(acct.ID))
+	out := backend.Encryption.PublicCapabilities(acct.ID)
+	_, out.BucketDefaults = backend.Provider.(objectstorage.BucketEncryptionProvider)
+	writeJSON(w, http.StatusOK, out)
 }

@@ -14,11 +14,13 @@ def test_encryption_discovery():
         assert request.method == "GET"
         assert request.url.path == f"/v1/apps/demo/buckets/{bucket}/encryption-capabilities"
         assert request.headers["Authorization"] == "Bearer token"
-        return httpx.Response(200, json={"algorithms": ["AES256", "aws:kms"], "key_ids": ["owned-key"]})
+        return httpx.Response(
+            200, json={"algorithms": ["AES256", "aws:kms"], "key_ids": ["owned-key"], "bucket_defaults": True}
+        )
 
     client = AuthenticatedClient(
         base_url="https://api.example.test", token="token", httpx_args={"transport": httpx.MockTransport(handle)}
     )
     out = get_object_bucket_encryption_capabilities.sync(client=client, slug="demo", bucket=bucket)
     assert isinstance(out, ObjectEncryptionCapabilities)
-    assert out.to_dict() == {"algorithms": ["AES256", "aws:kms"], "key_ids": ["owned-key"]}
+    assert out.to_dict() == {"algorithms": ["AES256", "aws:kms"], "key_ids": ["owned-key"], "bucket_defaults": True}

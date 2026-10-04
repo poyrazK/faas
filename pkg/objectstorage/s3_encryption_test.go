@@ -130,6 +130,9 @@ func TestS3EncryptedPutPresignAndExactRecovery(t *testing.T) {
 				}
 			}, encryptionKeyResponse())
 			e = encryptionSelection(t, placement, algorithm)
+			if algorithm == "aws:kms" {
+				e.Selection.BucketKeyEnabled = aws.Bool(true)
+			}
 			receipt := uuid.NewString()
 			metadata := ObjectMetadata{ContentType: "text/plain", Metadata: map[string]string{"owner": "customer"}}
 			result, err := p.WriteEncryptedObject(t.Context(), "physical", "key", receipt, strings.NewReader("abc"), 3, metadata, e)

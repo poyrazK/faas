@@ -40,7 +40,7 @@ func (m *MemStore) BeginObjectWrite(_ context.Context, account, bucket, token, k
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.objectUsage[bucket].InventoryScope == ObjectInventoryAllVersions {
+	if m.objectUsage[bucket].InventoryScope == ObjectInventoryAllVersions || m.objectBucketDefaultRequiresTrackingLocked(bucket) {
 		return ErrConflict
 	}
 	if _, exists := m.objectWriteAdmissions[token]; exists {

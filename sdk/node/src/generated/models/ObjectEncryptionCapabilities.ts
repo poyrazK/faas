@@ -7,6 +7,10 @@
  */
 export type ObjectEncryptionCapabilities = {
   algorithms: Array<'AES256' | 'aws:kms' | 'aws:kms:dsse'>;
+  /**
+   * Whether this placement supports durable native bucket defaults.
+   */
+  bucket_defaults: boolean;
   key_ids: Array<string>;
 };
 

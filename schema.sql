@@ -3089,6 +3089,7 @@ CREATE TABLE public.object_storage_multipart_uploads (
     encryption_lease_token text DEFAULT ''::text NOT NULL,
     encryption_verified boolean DEFAULT false NOT NULL,
     fixed_admission boolean DEFAULT false NOT NULL,
+    encryption_default_revision bigint DEFAULT 0 NOT NULL,
     CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[[:cntrl:]]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_completion_error CHECK (((completion_error_code = ANY (ARRAY[''::text, 'precondition_failed'::text, 'conditional_conflict'::text, 'conditional_not_found'::text])) AND ((completion_error_code = ''::text) OR ((state = ANY (ARRAY['aborting'::text, 'aborted'::text])) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_encryption_phase CHECK ((((encryption_lease_token = ''::text) OR ((encryption_snapshot <> '{}'::jsonb) AND (lease_token IS NOT NULL) AND (encryption_lease_token = lease_token))) AND ((NOT encryption_verified) OR ((encryption_snapshot <> '{}'::jsonb) AND (state = 'completed'::text) AND completion_dispatched)) AND ((encryption_snapshot = '{}'::jsonb) OR (state <> 'completed'::text) OR encryption_verified))),
@@ -3101,6 +3102,7 @@ CREATE TABLE public.object_storage_multipart_uploads (
     CONSTRAINT object_storage_multipart_uploads_check1 CHECK (((state = 'initiating'::text) OR (provider_upload_id <> ''::text))),
     CONSTRAINT object_storage_multipart_uploads_check2 CHECK (public.valid_object_encryption_snapshot(encryption_snapshot, account_id)),
     CONSTRAINT object_storage_multipart_uploads_check3 CHECK (((NOT fixed_admission) OR ((size_bytes > 0) AND (part_size_bytes > 0) AND (part_count > 0) AND (part_count = (((size_bytes + part_size_bytes) - 1) / part_size_bytes))))),
+    CONSTRAINT object_storage_multipart_uploads_check4 CHECK ((((encryption_default_revision >= 0) AND (encryption_default_revision <= '9007199254740991'::bigint)) AND ((encryption_default_revision = 0) OR (encryption_snapshot <> '{}'::jsonb)))),
     CONSTRAINT object_storage_multipart_uploads_completion_etag_check CHECK (((octet_length(completion_etag) <= 256) AND (completion_etag !~ '[\x01-\x1f\x7f]'::text) AND ((completion_etag = ''::text) OR (btrim(completion_etag) <> ''::text)))),
     CONSTRAINT object_storage_multipart_uploads_completion_parts_check CHECK ((jsonb_typeof(completion_parts) = 'array'::text)),
     CONSTRAINT object_storage_multipart_uploads_completion_version_id_check CHECK (((completion_version_id = ''::text) OR (completion_version_id = 'null'::text) OR (completion_version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
@@ -3333,6 +3335,65 @@ END $$;
 
 
 --
+-- Name: protect_object_bucket_encryption(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_bucket_encryption() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE b object_buckets;
+BEGIN
+ SELECT * INTO b FROM object_buckets WHERE id=coalesce(NEW.bucket_id,OLD.bucket_id);
+ IF TG_OP='DELETE' THEN
+  IF FOUND AND b.state NOT IN ('deleting','deleted') THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_encryption_fenced',MESSAGE='Clear policies without removing their revision tombstones';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF NOT FOUND OR (NEW.account_id,NEW.app_id) IS DISTINCT FROM (b.account_id,b.app_id) OR b.state<>'ready' OR
+  EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=b.id AND state IN ('prepared','dispatched')) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_encryption_fenced',MESSAGE='Encryption configuration requires an owned ready bucket';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF NEW.revision<>1 OR NEW.state<>'waiting' OR NEW.encryption_snapshot<>'{}' OR NEW.dispatched THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_encryption_fenced',MESSAGE='Encryption configuration requires a durable initial request';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF (NEW.bucket_id,NEW.account_id,NEW.app_id) IS DISTINCT FROM (OLD.bucket_id,OLD.account_id,OLD.app_id) OR
+  NEW.revision<OLD.revision OR NEW.revision>OLD.revision+1 OR
+  (NEW.revision<>OLD.revision AND (OLD.state<>'ready' OR NEW.state<>'waiting' OR NEW.dispatched)) OR
+  (NEW.revision=OLD.revision AND (NEW.desired_snapshot IS DISTINCT FROM OLD.desired_snapshot OR (OLD.dispatched AND NOT NEW.dispatched))) OR
+  (NEW.encryption_snapshot IS DISTINCT FROM OLD.encryption_snapshot AND NOT
+   (OLD.state='applying' AND OLD.lease_until>clock_timestamp() AND NEW.state='ready' AND NEW.revision=OLD.revision AND NEW.encryption_snapshot=OLD.desired_snapshot)) OR
+  (OLD.state<>'ready' AND NEW.state='ready' AND NOT
+   (OLD.state='applying' AND OLD.lease_until>clock_timestamp() AND NEW.revision=OLD.revision AND NEW.encryption_snapshot=OLD.desired_snapshot)) OR
+  (NEW.state='applying' AND NEW.lease_token IS DISTINCT FROM OLD.lease_token AND
+   ((OLD.lease_until IS NOT NULL AND OLD.lease_until>clock_timestamp()) OR OLD.retry_at>clock_timestamp())) OR
+  (NOT OLD.dispatched AND NEW.dispatched AND NOT (OLD.state='applying' AND NEW.state='applying' AND
+   OLD.lease_token=NEW.lease_token AND OLD.lease_until>clock_timestamp())) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_encryption_fenced',MESSAGE='Encryption identity and leased configuration progress are immutable';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_bucket_encryption_deletion(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_bucket_encryption_deletion() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.state<>OLD.state AND NEW.state='deleting' AND EXISTS(SELECT 1 FROM object_bucket_encryption WHERE bucket_id=OLD.id AND state<>'ready') THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_encryption_fenced',MESSAGE='Drain encryption configuration before deleting a bucket';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: protect_object_bucket_versioning(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3353,6 +3414,46 @@ BEGIN
   SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.id=NEW.capacity_job_id AND c.bucket_id=NEW.bucket_id
   AND c.state='completed' AND c.inventory_scope='all_versions' AND c.inventory_verified AND NEW.propagation_until<=now()
  ) THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Versioning cutover requires propagated configuration and verified version inventory'; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_default_legacy_write(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_default_legacy_write() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_TABLE_NAME='object_storage_key_grants' THEN
+  IF NEW.last_write_id IS NULL THEN PERFORM require_object_bucket_default(NEW.bucket_id,'{}',0); END IF;
+ ELSE
+  IF NEW.kind='proxy' AND NOT NEW.route_receipt THEN PERFORM require_object_bucket_default(NEW.bucket_id,'{}',0); END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_default_snapshot(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_default_snapshot() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF NEW.encryption_default_revision IS DISTINCT FROM OLD.encryption_default_revision THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_default_fenced',MESSAGE='Captured default revisions are immutable';
+  END IF;
+ ELSE
+  IF TG_TABLE_NAME<>'object_upload_completions' THEN
+   PERFORM require_object_bucket_default(NEW.bucket_id,NEW.encryption_snapshot,NEW.encryption_default_revision);
+  ELSIF NEW.status<>'rejected' THEN
+   PERFORM require_object_bucket_default(NEW.bucket_id,NEW.encryption_snapshot,NEW.encryption_default_revision);
+  END IF;
+ END IF;
  RETURN NEW;
 END $$;
 
@@ -3596,10 +3697,12 @@ BEGIN
  IF NEW.route_id IS NULL THEN RETURN NEW; END IF;
  SELECT * INTO r FROM object_upload_routes WHERE id=NEW.route_id FOR SHARE;
  IF NOT FOUND THEN RETURN NEW; END IF;
- IF (NEW.write_phase='prepared' AND NEW.encryption_snapshot IS DISTINCT FROM r.encryption_snapshot) OR
+ IF (NEW.write_phase='prepared' AND
+   ((r.encryption_snapshot<>'{}' AND (NEW.encryption_snapshot IS DISTINCT FROM r.encryption_snapshot OR NEW.encryption_default_revision<>0)) OR
+    (r.encryption_snapshot='{}' AND NEW.encryption_snapshot<>'{}' AND NEW.encryption_default_revision=0))) OR
   (r.encryption_snapshot<>'{}' AND NEW.status<>'rejected' AND
    ((NEW.account_id,NEW.app_id,NEW.bucket_id) IS DISTINCT FROM (r.account_id,r.app_id,r.bucket_id) OR
-    NEW.encryption_snapshot IS DISTINCT FROM r.encryption_snapshot OR NEW.write_phase<>'prepared' OR NEW.status<>'pending')) THEN
+    NEW.encryption_snapshot IS DISTINCT FROM r.encryption_snapshot OR NEW.encryption_default_revision<>0 OR NEW.write_phase<>'prepared' OR NEW.status<>'pending')) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_upload_route_encryption_fenced',MESSAGE='Route writes require the current captured encryption policy';
  END IF;
  RETURN NEW;
@@ -3903,6 +4006,23 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_fixed_multipart_admission_fenced',MESSAGE='Fixed multipart session requires its full-object admission';
  END IF;
  RETURN NULL;
+END $$;
+
+
+--
+-- Name: require_object_bucket_default(uuid, jsonb, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.require_object_bucket_default(bucket uuid, snapshot jsonb, revision bigint) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p object_bucket_encryption;
+BEGIN
+ SELECT * INTO p FROM object_bucket_encryption WHERE bucket_id=bucket FOR SHARE;
+ IF (revision>0 AND (NOT FOUND OR p.state<>'ready' OR p.revision<>revision OR p.encryption_snapshot IS DISTINCT FROM snapshot)) OR
+  (revision=0 AND snapshot='{}' AND FOUND AND (p.state<>'ready' OR p.encryption_snapshot<>'{}')) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_default_fenced',MESSAGE='New writes require the verified captured bucket default';
+ END IF;
 END $$;
 
 
@@ -8895,6 +9015,32 @@ CREATE TABLE public.oauth_links (
 
 
 --
+-- Name: object_bucket_encryption; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_encryption (
+    bucket_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    state text NOT NULL,
+    revision bigint NOT NULL,
+    encryption_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    desired_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    retry_at timestamp with time zone NOT NULL,
+    dispatched boolean DEFAULT false NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT object_bucket_encryption_check CHECK ((public.valid_object_encryption_snapshot(encryption_snapshot, account_id) AND public.valid_object_encryption_snapshot(desired_snapshot, account_id) AND (COALESCE(((encryption_snapshot -> 'selection'::text) ->> 'context'::text), ''::text) = ''::text) AND (COALESCE(((desired_snapshot -> 'selection'::text) ->> 'context'::text), ''::text) = ''::text))),
+    CONSTRAINT object_bucket_encryption_check1 CHECK ((((state = 'applying'::text) AND (lease_token <> ''::text) AND (lease_until IS NOT NULL)) OR ((state <> 'applying'::text) AND (lease_token = ''::text) AND (lease_until IS NULL)))),
+    CONSTRAINT object_bucket_encryption_check2 CHECK (((state <> 'ready'::text) OR (encryption_snapshot = desired_snapshot))),
+    CONSTRAINT object_bucket_encryption_lease_token_check CHECK ((octet_length(lease_token) <= 128)),
+    CONSTRAINT object_bucket_encryption_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT object_bucket_encryption_state_check CHECK ((state = ANY (ARRAY['waiting'::text, 'applying'::text, 'ready'::text])))
+);
+
+
+--
 -- Name: object_bucket_lifecycle; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9473,10 +9619,12 @@ CREATE TABLE public.object_upload_completions (
     encryption_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
     encryption_dispatched boolean DEFAULT false NOT NULL,
     encryption_verified boolean DEFAULT false NOT NULL,
+    encryption_default_revision bigint DEFAULT 0 NOT NULL,
     CONSTRAINT object_upload_completion_version_outcome CHECK (((version_id = ''::text) OR ((write_phase = 'settled'::text) AND (status = 'completed'::text)))),
     CONSTRAINT object_upload_completion_version_shape CHECK (((version_id = ''::text) OR (version_id = 'null'::text) OR (version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
     CONSTRAINT object_upload_completions_bytes_check CHECK ((bytes >= 0)),
     CONSTRAINT object_upload_completions_check CHECK (public.valid_object_encryption_snapshot(encryption_snapshot, account_id)),
+    CONSTRAINT object_upload_completions_check1 CHECK ((((encryption_default_revision >= 0) AND (encryption_default_revision <= '9007199254740991'::bigint)) AND ((encryption_default_revision = 0) OR (encryption_snapshot <> '{}'::jsonb)))),
     CONSTRAINT object_upload_completions_idempotency_key_check CHECK ((length(idempotency_key) <= 128)),
     CONSTRAINT object_upload_completions_object_key_check CHECK (((length(object_key) >= 1) AND (length(object_key) <= 1024))),
     CONSTRAINT object_upload_completions_origin_check CHECK ((origin = ANY (ARRAY['route'::text, 'gateway'::text, 'gateway_copy'::text]))),
@@ -13938,6 +14086,14 @@ ALTER TABLE ONLY public.oauth_links
 
 
 --
+-- Name: object_bucket_encryption object_bucket_encryption_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_encryption
+    ADD CONSTRAINT object_bucket_encryption_pkey PRIMARY KEY (bucket_id);
+
+
+--
 -- Name: object_bucket_lifecycle object_bucket_lifecycle_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18285,6 +18441,13 @@ CREATE INDEX oauth_links_account_idx ON public.oauth_links USING btree (account_
 
 
 --
+-- Name: object_bucket_encryption_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_bucket_encryption_due ON public.object_bucket_encryption USING btree (retry_at, bucket_id) WHERE (state <> 'ready'::text);
+
+
+--
 -- Name: object_bucket_versioning_due; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20854,10 +21017,38 @@ CREATE TRIGGER object_bucket_delete_access_grants AFTER UPDATE OF state ON publi
 
 
 --
+-- Name: object_buckets object_bucket_encryption_deletion_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_encryption_deletion_bound BEFORE UPDATE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.protect_object_bucket_encryption_deletion();
+
+
+--
+-- Name: object_bucket_encryption object_bucket_encryption_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_encryption_immutable BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_encryption FOR EACH ROW EXECUTE FUNCTION public.protect_object_bucket_encryption();
+
+
+--
 -- Name: object_bucket_versioning object_bucket_versioning_protected; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER object_bucket_versioning_protected BEFORE INSERT OR UPDATE ON public.object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION public.protect_object_bucket_versioning();
+
+
+--
+-- Name: object_storage_key_grants object_default_key_grant_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_default_key_grant_bound BEFORE INSERT ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.protect_object_default_legacy_write();
+
+
+--
+-- Name: object_storage_write_admissions object_default_write_admission_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_default_write_admission_bound BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.protect_object_default_legacy_write();
 
 
 --
@@ -20994,6 +21185,13 @@ CREATE TRIGGER object_multipart_completion_conditions_immutable BEFORE UPDATE ON
 
 
 --
+-- Name: object_storage_multipart_uploads object_multipart_default_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_default_bound BEFORE INSERT OR UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.protect_object_default_snapshot();
+
+
+--
 -- Name: object_storage_multipart_uploads object_multipart_encryption_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21054,6 +21252,13 @@ CREATE TRIGGER object_native_version_write_fence BEFORE INSERT ON public.object_
 --
 
 CREATE TRIGGER object_route_encryption_receipt_bound BEFORE INSERT ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.protect_object_route_encryption_receipt();
+
+
+--
+-- Name: object_upload_completions object_upload_default_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_upload_default_bound BEFORE INSERT OR UPDATE ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.protect_object_default_snapshot();
 
 
 --
@@ -23558,6 +23763,14 @@ ALTER TABLE ONLY public.mirror_rules
 
 ALTER TABLE ONLY public.oauth_links
     ADD CONSTRAINT oauth_links_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_bucket_encryption object_bucket_encryption_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_encryption
+    ADD CONSTRAINT object_bucket_encryption_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --

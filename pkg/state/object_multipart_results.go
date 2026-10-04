@@ -9,7 +9,7 @@ import (
 )
 
 func validMultipartResultOwner(old, request ObjectMultipartUpload) bool {
-	return old.Encryption.Equal(request.Encryption) && ObjectMultipartIsCompleting(old.State) && old.State == request.State && request.LeaseToken != "" && old.LeaseToken == request.LeaseToken && old.AccountID == request.AccountID && old.AppID == request.AppID && old.BucketID == request.BucketID && old.ID == request.ID && old.Key == request.Key && old.SizeBytes == request.SizeBytes && old.ProviderUploadID == request.ProviderUploadID && old.PartRevision == request.PartRevision && old.CompletionConditions == request.CompletionConditions && slices.Equal(old.Parts, request.Parts)
+	return old.EncryptionDefaultRevision == request.EncryptionDefaultRevision && old.Encryption.Equal(request.Encryption) && ObjectMultipartIsCompleting(old.State) && old.State == request.State && request.LeaseToken != "" && old.LeaseToken == request.LeaseToken && old.AccountID == request.AccountID && old.AppID == request.AppID && old.BucketID == request.BucketID && old.ID == request.ID && old.Key == request.Key && old.SizeBytes == request.SizeBytes && old.ProviderUploadID == request.ProviderUploadID && old.PartRevision == request.PartRevision && old.CompletionConditions == request.CompletionConditions && slices.Equal(old.Parts, request.Parts)
 }
 
 func validMultipartRecoveryResult(r ObjectMultipartCompletionResult) bool {

@@ -11,7 +11,7 @@ import (
 var _ ObjectTrackedUploadStore = (*MemStore)(nil)
 
 func (m *MemStore) BeginTrackedObjectUpload(_ context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, bool, error) {
-	if !validTrackedObjectUpload(c) {
+	if c.EncryptionDefaultRevision != 0 || !validTrackedObjectUpload(c) {
 		return c, false, ErrConflict
 	}
 	m.mu.Lock()
@@ -31,10 +31,20 @@ func (m *MemStore) BeginTrackedObjectUpload(_ context.Context, c ObjectUploadCom
 		return c, false, ErrConflict
 	}
 	c.Origin = "route"
-	return m.beginTrackedUploadLocked(c, p)
+	return m.beginTrackedUploadLocked(c, p, true)
 }
 
-func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, bool, error) {
+func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.ObjectStoragePolicy, capture bool) (ObjectUploadCompletion, bool, error) {
+	if capture {
+		var err error
+		c.Encryption, c.EncryptionDefaultRevision, err = m.captureObjectBucketDefaultLocked(c.BucketID, c.Encryption)
+		if err != nil {
+			return c, false, err
+		}
+	}
+	if !capturedDefaultRouteFits(c) {
+		return c, false, capturedDefaultRouteError(c)
+	}
 	if credential, ok := m.objectS3Credentials[c.SubjectID]; ok && credential.URL != nil && !validObjectURLReceipt(credential, c) {
 		return c, false, ErrConflict
 	}
@@ -58,6 +68,7 @@ func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.Obje
 	c.RecoveryCursor = ""
 	c.RecoveryVersionsObserved = false
 	c.RecoveryLeaseUntil = time.Time{}
+	c.RuntimeSinglePutLimit = 0
 	c.CreatedAt = m.clock().UTC()
 	c.WritePhase = ObjectUploadPrepared
 	c.RecoveryRetryAt = c.CreatedAt.Add(api.ObjectUploadPreparationTimeout)
@@ -196,7 +207,7 @@ func (m *MemStore) RetryTrackedObjectUploadRecovery(_ context.Context, c ObjectU
 	if !ok || old.AccountID != c.AccountID || old.BucketID != c.BucketID {
 		return ErrNotFound
 	}
-	if !old.Encryption.Equal(c.Encryption) || !validTrackedUploadRecovery(old, m.clock()) || old.RecoveryToken != c.RecoveryToken {
+	if old.EncryptionDefaultRevision != c.EncryptionDefaultRevision || !old.Encryption.Equal(c.Encryption) || !validTrackedUploadRecovery(old, m.clock()) || old.RecoveryToken != c.RecoveryToken {
 		return ErrConflict
 	}
 	old.RecoveryToken = ""
@@ -222,7 +233,7 @@ func (m *MemStore) GetObjectUploadReceipt(_ context.Context, account, app, route
 var _ ObjectTrackedGatewayUploadStore = (*MemStore)(nil)
 
 func (m *MemStore) BeginTrackedGatewayUpload(_ context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {
-	if !validTrackedGatewayUpload(c) {
+	if c.EncryptionDefaultRevision != 0 || !validTrackedGatewayUpload(c) {
 		return cloneObjectUploadCompletion(c), ErrConflict
 	}
 	c.Origin = "gateway"
@@ -232,7 +243,7 @@ func (m *MemStore) BeginTrackedGatewayUpload(_ context.Context, c ObjectUploadCo
 var _ ObjectTrackedGatewayCopyStore = (*MemStore)(nil)
 
 func (m *MemStore) BeginTrackedGatewayCopy(_ context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {
-	if !validTrackedGatewayCopy(c) {
+	if c.EncryptionDefaultRevision != 0 || !validTrackedGatewayCopy(c) {
 		return cloneObjectUploadCompletion(c), ErrConflict
 	}
 	c.Origin = "gateway_copy"
@@ -249,6 +260,6 @@ func (m *MemStore) beginTrackedGatewayWrite(c ObjectUploadCompletion, p api.Obje
 	if b.State != "ready" {
 		return cloneObjectUploadCompletion(c), ErrConflict
 	}
-	out, _, err := m.beginTrackedUploadLocked(c, p)
+	out, _, err := m.beginTrackedUploadLocked(c, p, true)
 	return out, err
 }

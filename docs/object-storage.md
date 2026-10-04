@@ -1718,11 +1718,41 @@ recovery and is never repaired by replaying its body. An already created
 multipart upload can recover its identity without a new enabled-key probe.
 
 Do not send cipher directives on reads, individual parts or completion. SSE-C,
-native key references and encryption query directives are unsupported. Bucket
-defaults, GCS and
+native key references and encryption query directives are unsupported. GCS and
 cross-bucket encrypted copy remain acceptance work in
 `docs/s3-implementation-gaps.md`. See [ADR-414](adr/414-customer-s3-encryption.md)
 and [ADR-415](adr/415-branded-object-url-capabilities.md).
+
+### Bucket default encryption
+
+Use `gregale bucket encryption status <app> <bucket-id>` to read the desired
+and verified default. Configure AES256 with
+`gregale bucket encryption AES256 <app> <bucket-id>`, or KMS with
+`gregale bucket encryption aws:kms <app> <bucket-id> <owned-key-ref> [true|false]`.
+`aws:kms:dsse` accepts an owned key reference without a bucket-key option.
+`gregale bucket encryption clear <app> <bucket-id>` removes the owned override.
+The control API exposes GET, PUT and DELETE at
+`/v1/apps/{slug}/buckets/{bucket}/encryption`, with typed Go, Node and Python
+clients. Management requires `storage:manage` and matching bucket write
+authority. Discovery reports `bucket_defaults` for compatible placements.
+
+PUT and DELETE return durable progress with HTTP 202. Wait for `state: ready`
+before relying on a changed default. Reconciliation verifies the native
+configuration and recovers an accepted mutation after a lost response.
+Standard S3 SDK GetBucketEncryption, PutBucketEncryption and
+DeleteBucketEncryption are also supported; mutations return success only after
+verification. KMS IDs remain owned Gregale references. Bucket policies cannot
+include per-object encryption contexts.
+
+Every new implicit PUT, copy, signed PUT URL, multipart session and application
+route write captures the verified default atomically with admission. Explicit
+write or route selections override it. Accepted URLs, receipts and multipart
+sessions retain their original selection through policy changes and retries.
+Pending configuration blocks new implicit writes. Existing writes still finish.
+GET and DELETE configuration and background recovery remain available when
+new ingress is disabled. Clearing preserves unrelated native encryption blocking
+settings and permits the provider's baseline encryption; it does not request
+plaintext storage. See [ADR-419](adr/419-bucket-default-encryption.md).
 
 ### Encryption on application upload routes
 

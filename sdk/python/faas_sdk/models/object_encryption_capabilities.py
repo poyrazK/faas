@@ -22,6 +22,8 @@ class ObjectEncryptionCapabilities:
     """
 
     algorithms: list[ObjectEncryptionCapabilitiesAlgorithmsItem]
+    bucket_defaults: bool
+    """Whether this placement supports durable native bucket defaults."""
     key_ids: list[str]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -31,6 +33,8 @@ class ObjectEncryptionCapabilities:
             algorithms_item: str = algorithms_item_data
             algorithms.append(algorithms_item)
 
+        bucket_defaults = self.bucket_defaults
+
         key_ids = self.key_ids
 
         field_dict: dict[str, Any] = {}
@@ -38,6 +42,7 @@ class ObjectEncryptionCapabilities:
         field_dict.update(
             {
                 "algorithms": algorithms,
+                "bucket_defaults": bucket_defaults,
                 "key_ids": key_ids,
             }
         )
@@ -54,10 +59,13 @@ class ObjectEncryptionCapabilities:
 
             algorithms.append(algorithms_item)
 
+        bucket_defaults = d.pop("bucket_defaults")
+
         key_ids = cast(list[str], d.pop("key_ids"))
 
         object_encryption_capabilities = cls(
             algorithms=algorithms,
+            bucket_defaults=bucket_defaults,
             key_ids=key_ids,
         )
 

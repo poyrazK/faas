@@ -7834,6 +7834,16 @@ const (
 
 const ObjectBucketVersioningOperationTimeout = time.Minute
 
+// Bucket default encryption configuration and native readback are bounded.
+const (
+	ObjectBucketEncryptionLease                  = 2 * time.Minute
+	ObjectBucketEncryptionRetry                  = 30 * time.Second
+	ObjectBucketEncryptionOperationTimeout       = time.Minute
+	ObjectBucketEncryptionBatch            int32 = 50
+	MaxObjectBucketEncryptionBodyBytes     int64 = 16 << 10
+	MaxObjectBucketEncryptionRevision      int64 = 1<<53 - 1
+)
+
 // Deletion fences survive lease expiry; only pre-dispatch cancellation,
 // definitive provider rejection or completion proof releases them.
 const (

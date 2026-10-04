@@ -121,6 +121,6 @@ func cloneObjectUploadCompletion(c ObjectUploadCompletion) ObjectUploadCompletio
 }
 
 func validTrackedEncryptionResult(old, c ObjectUploadCompletion) bool {
-	return old.Encryption.Equal(c.Encryption) && old.Encryption.ValidFor(old.AccountID) &&
+	return old.EncryptionDefaultRevision == c.EncryptionDefaultRevision && old.Encryption.Equal(c.Encryption) && old.Encryption.ValidFor(old.AccountID) &&
 		(c.Status != "completed" && c.VerifiedEncryption.Empty() || c.Status == "completed" && equalEncryptionSelection(old.Encryption.Selection, c.VerifiedEncryption))
 }

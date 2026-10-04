@@ -43,6 +43,7 @@ type ObjectMultipartUpload struct {
 	Metadata                        ObjectMultipartMetadata
 	Encryption                      ObjectEncryptionSnapshot `json:"-"`
 	FixedAdmission                  bool                     `json:"-"`
+	EncryptionDefaultRevision       int64                    `json:"-"`
 	ProviderUploadID                string
 	Parts                           []api.ObjectMultipartCompletedPart
 	CompletionConditions            api.ObjectWriteConditions

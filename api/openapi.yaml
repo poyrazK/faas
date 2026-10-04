@@ -1727,6 +1727,64 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/encryption:
+    parameters:
+      - { name: slug, in: path, required: true, description: App whose bucket default encryption is managed., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Logical bucket whose default is configured., schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectBucketEncryption
+      summary: Read bucket default encryption and reconciliation progress
+      description: Requires storage manage scope and the bucket write grant. Returns owned desired and verified selections without native key identities. Native readback detects policy drift and schedules reconciliation. Available while new ingress is disabled. An absent owned policy allows the provider baseline encryption.
+      tags: [storage]
+      responses:
+        '200':
+          description: Owned policy and durable progress
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketEncryption' }
+        default:
+          description: Bucket default policy access denied or placement unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      operationId: putObjectBucketEncryption
+      summary: Request a verified bucket default encryption policy
+      description: Requires storage manage scope and the bucket write grant. Supports enrolled S3 AES256 and owned KMS or DSSE keys, with supported bucket key settings. Per-object contexts are rejected. Each new implicit write captures the verified default atomically; explicit write and route selections override it. Accepted receipts, URLs and multipart sessions retain their snapshots through changes and restart. New implicit admissions wait while configuration is pending. Exact native readback is required; unrelated native blocking settings are preserved.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectBucketEncryptionRequest' }
+      responses:
+        '202':
+          description: Durable configuration request accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketEncryption' }
+        default:
+          description: Invalid selection, busy bucket or unsupported provider
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: deleteObjectBucketEncryption
+      summary: Clear the owned bucket default encryption policy
+      description: Requires storage manage scope and the bucket write grant. Records durable removal and retains the policy revision. Available with ingress disabled. Accepted operations keep their captured encryption. Clearing permits the provider baseline encryption and retains unrelated native encryption blocking settings.
+      tags: [storage]
+      responses:
+        '202':
+          description: Durable clear request accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketEncryption' }
+        default:
+          description: Busy configuration or unsupported provider
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/versioning:
     parameters:
       - { name: slug, in: path, required: true, description: App whose bucket configuration is being read or changed., schema: { type: string } }
@@ -24551,9 +24609,10 @@ components:
     ObjectEncryptionCapabilities:
       description: Operator enrollment for this bucket placement. Contains no native key identity, key material or permission assertion.
       type: object
-      required: [algorithms, key_ids]
+      required: [algorithms, key_ids, bucket_defaults]
       properties:
         algorithms: { type: array, uniqueItems: true, items: { type: string, enum: [AES256, 'aws:kms', 'aws:kms:dsse'] } }
+        bucket_defaults: { type: boolean, description: Whether this placement supports durable native bucket defaults. }
         key_ids: { type: array, uniqueItems: true, maxItems: 256, items: { type: string, maxLength: 512, description: Owned arn:gregale:kms reference accepted by the branded S3 endpoint. } }
     ObjectBucketList:
       description: App bucket catalog and operator-configured preview capabilities.
@@ -24941,6 +25000,24 @@ components:
         updated_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time }
 
+    ObjectBucketEncryptionRequest:
+      type: object
+      description: A non-empty enrolled default policy without per-object context.
+      additionalProperties: false
+      required: [encryption]
+      properties:
+        encryption: { $ref: '#/components/schemas/ObjectEncryption', description: Non-empty enrolled default selection without a per-object context. }
+    ObjectBucketEncryption:
+      type: object
+      description: Owned desired and verified policies. Empty encryption means no owned override; providers may retain baseline encryption. New implicit writes require state ready.
+      required: [bucket_id, state, revision, updated_at]
+      properties:
+        bucket_id: { type: string, format: uuid }
+        state: { type: string, enum: [waiting, applying, ready] }
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        encryption: { $ref: '#/components/schemas/ObjectEncryption', description: Verified active default for new implicit writes. }
+        desired_encryption: { $ref: '#/components/schemas/ObjectEncryption', description: Requested default awaiting native verification. }
+        updated_at: { type: string, format: date-time }
     ObjectBucketVersioningRequest:
       type: object
       description: Desired Enabled or Suspended status for a durable bucket configuration cutover.

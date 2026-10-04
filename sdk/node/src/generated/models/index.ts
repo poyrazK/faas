@@ -563,6 +563,8 @@ export type { OIDCExchangeResponse } from './OIDCExchangeResponse.js';
 export type { ObjectBucket } from './ObjectBucket.js';
 export type { ObjectBucketAccessGrant } from './ObjectBucketAccessGrant.js';
 export type { ObjectBucketAccessGrantList } from './ObjectBucketAccessGrantList.js';
+export type { ObjectBucketEncryption } from './ObjectBucketEncryption.js';
+export type { ObjectBucketEncryptionRequest } from './ObjectBucketEncryptionRequest.js';
 export type { ObjectBucketLifecycle } from './ObjectBucketLifecycle.js';
 export type { ObjectBucketLifecycleRequest } from './ObjectBucketLifecycleRequest.js';
 export type { ObjectBucketList } from './ObjectBucketList.js';

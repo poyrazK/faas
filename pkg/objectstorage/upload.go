@@ -177,6 +177,7 @@ func (h *uploadHandler) prepareUpload(w http.ResponseWriter, r *http.Request, ap
 		}
 	}
 	c.Encryption = route.Encryption.Clone()
+	c.RuntimeSinglePutLimit = h.registry.MaxSinglePutBytes
 	return c, true
 }
 func (h *uploadHandler) validateUpload(w http.ResponseWriter, r *http.Request, route state.ObjectUploadRoute, c state.ObjectUploadCompletion) bool {
@@ -503,6 +504,11 @@ func uploadProblem(w http.ResponseWriter, status int, detail string) {
 }
 
 func uploadAccountingProblem(w http.ResponseWriter, err error) {
+	var sizeErr *state.ObjectStorageLimitError
+	if errors.As(err, &sizeErr) && sizeErr.Kind == "single_put_bytes" {
+		uploadProblem(w, http.StatusRequestEntityTooLarge, "encrypted upload exceeds the current single PUT byte limit")
+		return
+	}
 	status, detail := http.StatusServiceUnavailable, "object storage usage policy is unavailable"
 	switch {
 	case errors.Is(err, state.ErrObjectBudget):

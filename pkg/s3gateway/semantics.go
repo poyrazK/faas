@@ -34,6 +34,9 @@ func isCleanupRequest(r *http.Request, q url.Values, hasBucket, hasKey bool) boo
 	if !hasBucket {
 		return false
 	}
+	if !hasKey && q.Has("encryption") && len(q["encryption"]) == 1 && q.Get("encryption") == "" && queryKeysOnly(q, "encryption") {
+		return r.Method == http.MethodGet || r.Method == http.MethodDelete
+	}
 	if hasKey && r.Method == http.MethodDelete && q.Has("tagging") {
 		return q.Get("tagging") == "" && queryKeysOnly(q, "tagging", "versionId")
 	}

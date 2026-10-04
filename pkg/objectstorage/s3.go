@@ -369,7 +369,17 @@ func (p *S3) presignEncrypted(ctx context.Context, bucket string, r SignRequest,
 	if ttl == 0 {
 		ttl = 5 * time.Minute
 	}
-	options := func(o *s3.PresignOptions) { o.Expires = ttl }
+	options := func(o *s3.PresignOptions) {
+		o.Expires = ttl
+		if encryption != nil {
+			// Keep every captured cipher field in signed headers. The SDK's
+			// hoisting allowlist otherwise moves bucket-key-enabled to the URL.
+			o.Presigner = v4.NewSigner(func(s *v4.SignerOptions) {
+				s.DisableURIPathEscaping = true
+				s.DisableHeaderHoisting = true
+			})
+		}
+	}
 	result := SignedRequest{Method: r.Method, Headers: map[string]string{}, ExpiresAt: time.Now().UTC().Add(ttl)}
 	switch r.Method {
 	case http.MethodPut:

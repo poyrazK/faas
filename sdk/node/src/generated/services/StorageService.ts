@@ -10,6 +10,8 @@ import type { CreateObjectUploadRouteRequest } from '../models/CreateObjectUploa
 import type { ObjectBucket } from '../models/ObjectBucket.js';
 import type { ObjectBucketAccessGrant } from '../models/ObjectBucketAccessGrant.js';
 import type { ObjectBucketAccessGrantList } from '../models/ObjectBucketAccessGrantList.js';
+import type { ObjectBucketEncryption } from '../models/ObjectBucketEncryption.js';
+import type { ObjectBucketEncryptionRequest } from '../models/ObjectBucketEncryptionRequest.js';
 import type { ObjectBucketLifecycle } from '../models/ObjectBucketLifecycle.js';
 import type { ObjectBucketLifecycleRequest } from '../models/ObjectBucketLifecycleRequest.js';
 import type { ObjectBucketList } from '../models/ObjectBucketList.js';
@@ -908,6 +910,97 @@ export class StorageService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/encryption-capabilities',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Read bucket default encryption and reconciliation progress
+   * Requires storage manage scope and the bucket write grant. Returns owned desired and verified selections without native key identities. Native readback detects policy drift and schedules reconciliation. Available while new ingress is disabled. An absent owned policy allows the provider baseline encryption.
+   * @returns ObjectBucketEncryption Owned policy and durable progress
+   * @returns Problem Bucket default policy access denied or placement unavailable
+   * @throws ApiError
+   */
+  public static getObjectBucketEncryption({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose bucket default encryption is managed.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose default is configured.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectBucketEncryption | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/encryption',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Request a verified bucket default encryption policy
+   * Requires storage manage scope and the bucket write grant. Supports enrolled S3 AES256 and owned KMS or DSSE keys, with supported bucket key settings. Per-object contexts are rejected. Each new implicit write captures the verified default atomically; explicit write and route selections override it. Accepted receipts, URLs and multipart sessions retain their snapshots through changes and restart. New implicit admissions wait while configuration is pending. Exact native readback is required; unrelated native blocking settings are preserved.
+   * @returns Problem Invalid selection, busy bucket or unsupported provider
+   * @returns ObjectBucketEncryption Durable configuration request accepted
+   * @throws ApiError
+   */
+  public static putObjectBucketEncryption({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App whose bucket default encryption is managed.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose default is configured.
+     */
+    bucket: string,
+    requestBody: ObjectBucketEncryptionRequest,
+  }): CancelablePromise<Problem | ObjectBucketEncryption> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/encryption',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Clear the owned bucket default encryption policy
+   * Requires storage manage scope and the bucket write grant. Records durable removal and retains the policy revision. Available with ingress disabled. Accepted operations keep their captured encryption. Clearing permits the provider baseline encryption and retains unrelated native encryption blocking settings.
+   * @returns Problem Busy configuration or unsupported provider
+   * @returns ObjectBucketEncryption Durable clear request accepted
+   * @throws ApiError
+   */
+  public static deleteObjectBucketEncryption({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose bucket default encryption is managed.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose default is configured.
+     */
+    bucket: string,
+  }): CancelablePromise<Problem | ObjectBucketEncryption> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/encryption',
       path: {
         'slug': slug,
         'bucket': bucket,

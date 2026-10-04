@@ -13,7 +13,7 @@ import (
 var _ ObjectTrackedUploadStore = (*PgStore)(nil)
 
 func objectTrackedUploadFromSQL(r sqlc.ObjectUploadCompletion) (ObjectUploadCompletion, error) {
-	c := ObjectUploadCompletion{ID: pgUUIDString(r.ID), RouteID: pgUUIDString(r.RouteID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), BucketID: pgUUIDString(r.BucketID), SubjectID: r.SubjectID, Key: r.ObjectKey, Bytes: r.Bytes, ContentType: r.ContentType, ETag: r.Etag, Status: r.Status, ErrorCode: r.ErrorCode, RequestID: r.RequestID, IdempotencyKey: r.IdempotencyKey, RequestFingerprint: r.RequestFingerprint, CreatedAt: r.CreatedAt.Time, Origin: r.Origin, SourceKey: r.SourceKey, SourceETag: r.SourceEtag, WritePhase: r.WritePhase, RecoveryToken: r.RecoveryToken, RecoveryLeaseUntil: r.RecoveryLeaseUntil.Time, RecoveryRetryAt: r.RecoveryRetryAt.Time, RecoveryCursor: r.RecoveryCursor, RecoveryVersionsObserved: r.RecoveryVersionsObserved, VersionID: r.VersionID}
+	c := ObjectUploadCompletion{ID: pgUUIDString(r.ID), RouteID: pgUUIDString(r.RouteID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), BucketID: pgUUIDString(r.BucketID), SubjectID: r.SubjectID, Key: r.ObjectKey, Bytes: r.Bytes, ContentType: r.ContentType, ETag: r.Etag, Status: r.Status, ErrorCode: r.ErrorCode, RequestID: r.RequestID, IdempotencyKey: r.IdempotencyKey, RequestFingerprint: r.RequestFingerprint, CreatedAt: r.CreatedAt.Time, Origin: r.Origin, SourceKey: r.SourceKey, SourceETag: r.SourceEtag, WritePhase: r.WritePhase, RecoveryToken: r.RecoveryToken, RecoveryLeaseUntil: r.RecoveryLeaseUntil.Time, RecoveryRetryAt: r.RecoveryRetryAt.Time, RecoveryCursor: r.RecoveryCursor, RecoveryVersionsObserved: r.RecoveryVersionsObserved, VersionID: r.VersionID, EncryptionDefaultRevision: r.EncryptionDefaultRevision}
 	var err error
 	c.Encryption, err = encryptionSnapshotFromJSON(r.EncryptionSnapshot, c.AccountID)
 	return c, err
@@ -27,12 +27,8 @@ func commitTrackedUploadSQL(ctx context.Context, tx pgx.Tx, r sqlc.ObjectUploadC
 	return c, tx.Commit(ctx)
 }
 func (s *PgStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, bool, error) {
-	if !validTrackedObjectUpload(c) {
+	if c.EncryptionDefaultRevision != 0 || !validTrackedObjectUpload(c) {
 		return c, false, ErrConflict
-	}
-	encryption, err := encryptionSnapshotJSON(c.Encryption)
-	if err != nil {
-		return c, false, err
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -64,10 +60,21 @@ func (s *PgStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCo
 	if c.Bytes > route.MaxBytes || !c.Encryption.Equal(routeEncryption) {
 		return c, false, ErrConflict
 	}
+	c.Encryption, c.EncryptionDefaultRevision, err = captureObjectBucketDefaultSQL(ctx, tx, c.BucketID, c.Encryption)
+	if err != nil {
+		return c, false, err
+	}
+	if !capturedDefaultRouteFits(c) {
+		return c, false, capturedDefaultRouteError(c)
+	}
+	encryption, err := encryptionSnapshotJSON(c.Encryption)
+	if err != nil {
+		return c, false, err
+	}
 	if err = admitObjectURLTx(ctx, tx, c.AccountID, c.BucketID, c.Key, c.Bytes, true, p, c.ID, true); err != nil {
 		return c, false, err
 	}
-	r, err := q.ObjectTrackedUploadInsert(ctx, tx, sqlc.ObjectTrackedUploadInsertParams{ID: mustPgUUID(c.ID), RouteID: mustPgUUID(c.RouteID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, IdempotencyKey: c.IdempotencyKey, RequestFingerprint: c.RequestFingerprint, EncryptionSnapshot: encryption, RetrySeconds: int32(api.ObjectUploadPreparationTimeout / time.Second)})
+	r, err := q.ObjectTrackedUploadInsert(ctx, tx, sqlc.ObjectTrackedUploadInsertParams{ID: mustPgUUID(c.ID), RouteID: mustPgUUID(c.RouteID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, IdempotencyKey: c.IdempotencyKey, RequestFingerprint: c.RequestFingerprint, EncryptionSnapshot: encryption, EncryptionDefaultRevision: c.EncryptionDefaultRevision, RetrySeconds: int32(api.ObjectUploadPreparationTimeout / time.Second)})
 	if err != nil {
 		return c, false, mapErr(err)
 	}
@@ -223,7 +230,7 @@ func (s *PgStore) RetryTrackedObjectUploadRecovery(ctx context.Context, c Object
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	if !old.Encryption.Equal(c.Encryption) || !validTrackedUploadRecovery(old, time.Now()) || old.RecoveryToken != c.RecoveryToken {
+	if old.EncryptionDefaultRevision != c.EncryptionDefaultRevision || !old.Encryption.Equal(c.Encryption) || !validTrackedUploadRecovery(old, time.Now()) || old.RecoveryToken != c.RecoveryToken {
 		return ErrConflict
 	}
 	err = sqlc.New().ObjectTrackedUploadRetry(ctx, tx, sqlc.ObjectTrackedUploadRetryParams{ID: mustPgUUID(c.ID), ErrorCode: code, RecoveryCursor: c.RecoveryCursor, RecoveryVersionsObserved: c.RecoveryVersionsObserved, RetrySeconds: int32(api.ObjectUploadRecoveryRetry / time.Second)})
@@ -244,7 +251,7 @@ func (s *PgStore) GetObjectUploadReceipt(ctx context.Context, account, app, rout
 var _ ObjectTrackedGatewayUploadStore = (*PgStore)(nil)
 
 func (s *PgStore) BeginTrackedGatewayUpload(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {
-	if !validTrackedGatewayUpload(c) {
+	if c.EncryptionDefaultRevision != 0 || !validTrackedGatewayUpload(c) {
 		return c, ErrConflict
 	}
 	c.Origin = "gateway"
@@ -254,7 +261,7 @@ func (s *PgStore) BeginTrackedGatewayUpload(ctx context.Context, c ObjectUploadC
 var _ ObjectTrackedGatewayCopyStore = (*PgStore)(nil)
 
 func (s *PgStore) BeginTrackedGatewayCopy(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {
-	if !validTrackedGatewayCopy(c) {
+	if c.EncryptionDefaultRevision != 0 || !validTrackedGatewayCopy(c) {
 		return c, ErrConflict
 	}
 	c.Origin = "gateway_copy"
@@ -262,10 +269,6 @@ func (s *PgStore) BeginTrackedGatewayCopy(ctx context.Context, c ObjectUploadCom
 }
 
 func (s *PgStore) beginTrackedGatewayWrite(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {
-	encryption, err := encryptionSnapshotJSON(c.Encryption)
-	if err != nil {
-		return c, err
-	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return c, err
@@ -282,11 +285,19 @@ func (s *PgStore) beginTrackedGatewayWrite(ctx context.Context, c ObjectUploadCo
 	if b.State != "ready" {
 		return c, ErrConflict
 	}
+	c.Encryption, c.EncryptionDefaultRevision, err = captureObjectBucketDefaultSQL(ctx, tx, c.BucketID, c.Encryption)
+	if err != nil {
+		return c, err
+	}
+	encryption, err := encryptionSnapshotJSON(c.Encryption)
+	if err != nil {
+		return c, err
+	}
 	// Receipt-owned proxy journals keep old capacity workers aware of pending writes.
 	if err = admitObjectURLTx(ctx, tx, c.AccountID, c.BucketID, c.Key, c.Bytes, true, p, c.ID, true); err != nil {
 		return c, err
 	}
-	r, err := q.ObjectGatewayUploadInsert(ctx, tx, sqlc.ObjectGatewayUploadInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, Origin: c.Origin, SourceKey: c.SourceKey, SourceEtag: c.SourceETag, EncryptionSnapshot: encryption, RetrySeconds: int32(api.ObjectUploadPreparationTimeout / time.Second)})
+	r, err := q.ObjectGatewayUploadInsert(ctx, tx, sqlc.ObjectGatewayUploadInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, Origin: c.Origin, SourceKey: c.SourceKey, SourceEtag: c.SourceETag, EncryptionSnapshot: encryption, EncryptionDefaultRevision: c.EncryptionDefaultRevision, RetrySeconds: int32(api.ObjectUploadPreparationTimeout / time.Second)})
 	if err != nil {
 		return c, mapErr(err)
 	}

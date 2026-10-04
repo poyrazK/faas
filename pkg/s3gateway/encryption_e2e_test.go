@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -99,7 +100,11 @@ func (f *publicEncryptionHTTP) serve(t *testing.T, w http.ResponseWriter, r *htt
 		f.puts++
 		obj := publicEncryptionObject{headers: r.Header.Clone()}
 		if r.Header.Get("X-Amz-Copy-Source") != "" {
-			obj.data = f.objects["put"].data
+			source, err := url.PathUnescape(r.Header.Get("X-Amz-Copy-Source"))
+			if err != nil {
+				t.Error(err)
+			}
+			obj.data = f.objects[path.Base(source)].data
 		} else {
 			data, err := io.ReadAll(r.Body)
 			if err != nil {

@@ -43,11 +43,13 @@ func (s *server) issueSignedBucketObject(w http.ResponseWriter, r *http.Request,
 		bucketProblem(w, err)
 		return
 	}
+	c, receipt, err = store.IssueObjectURLCredential(r.Context(), c, receipt, s.objectStorage.Accounting)
+	if err != nil {
+		bucketProblem(w, err)
+		return
+	}
 	now := c.URL.ExpiresAt.Add(-time.Duration(c.URL.Request.ExpiresIn) * time.Second)
 	out, err := objectstorage.PresignPublicObject(r.Context(), s.objectStorage.PublicEndpoint, s.objectStorage.PublicRegion, b.Name, c.AccessKeyID, secret, objectstorage.SignRequest(c.URL.Request), now)
-	if err == nil {
-		_, receipt, err = store.IssueObjectURLCredential(r.Context(), c, receipt, s.objectStorage.Accounting)
-	}
 	if err != nil {
 		bucketProblem(w, err)
 		return

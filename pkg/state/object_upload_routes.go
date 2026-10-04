@@ -60,8 +60,11 @@ type ObjectUploadCompletion struct {
 	RecoveryVersionsObserved bool   `json:"-"`
 	VersionID                string `json:"-"`
 	// ProviderVersionID is transient completion input, never a public payload.
-	ProviderVersionID string                   `json:"-"`
-	Encryption        ObjectEncryptionSnapshot `json:"-"`
+	ProviderVersionID         string                   `json:"-"`
+	Encryption                ObjectEncryptionSnapshot `json:"-"`
+	EncryptionDefaultRevision int64                    `json:"-"`
+	// RuntimeSinglePutLimit is an admission input, never persisted or exposed.
+	RuntimeSinglePutLimit int64 `json:"-"`
 	// VerifiedEncryption is transient provider proof; snapshots alone cannot settle a write.
 	VerifiedEncryption api.ObjectEncryption `json:"-"`
 }

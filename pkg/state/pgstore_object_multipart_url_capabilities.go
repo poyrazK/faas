@@ -37,7 +37,7 @@ func (s *PgStore) IssueObjectMultipartURLCredential(ctx context.Context, c Objec
 	if err != nil {
 		return ObjectS3Credential{}, err
 	}
-	if !validObjectURLMultipartUpload(c, u, time.Now()) || u.AppID != expected.AppID || u.ProviderUploadID != expected.ProviderUploadID || !u.Encryption.Equal(expected.Encryption) {
+	if !validObjectURLMultipartUpload(c, u, time.Now()) || u.AppID != expected.AppID || u.ProviderUploadID != expected.ProviderUploadID || u.EncryptionDefaultRevision != expected.EncryptionDefaultRevision || !u.Encryption.Equal(expected.Encryption) {
 		return ObjectS3Credential{}, ErrConflict
 	}
 	out, err := insertObjectURLCredentialSQL(ctx, tx, c)

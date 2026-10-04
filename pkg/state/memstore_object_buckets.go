@@ -94,7 +94,7 @@ func (m *MemStore) claimObjectBucket(accountID, appID, id, token, next string, r
 		return ObjectBucket{}, ErrConflict
 	}
 	if next == "deleting" {
-		if m.objectCapacityFencedLocked(id) {
+		if m.objectCapacityFencedLocked(id) || m.objectBucketEncryption[id].State != "" && m.objectBucketEncryption[id].State != "ready" {
 			return ObjectBucket{}, ErrConflict
 		}
 		for _, upload := range m.objectMultipartUploads {

@@ -56,7 +56,7 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 		if e != nil {
 			return e
 		}
-		if !u.Encryption.Equal(preparation.encryption) || pending || u.PartRevision != preparation.revision || ObjectMultipartIsCompleting(u.State) && (!slices.Equal(u.Parts, preparation.parts) || u.CompletionConditions != preparation.conditions || u.SizeBytes != size) {
+		if u.EncryptionDefaultRevision != preparation.defaultRevision || !u.Encryption.Equal(preparation.encryption) || pending || u.PartRevision != preparation.revision || ObjectMultipartIsCompleting(u.State) && (!slices.Equal(u.Parts, preparation.parts) || u.CompletionConditions != preparation.conditions || u.SizeBytes != size) {
 			return ErrConflict
 		}
 	}

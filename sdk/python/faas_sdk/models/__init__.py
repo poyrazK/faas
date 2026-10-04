@@ -1078,6 +1078,9 @@ from .object_bucket_access_grant import ObjectBucketAccessGrant
 from .object_bucket_access_grant_key_status import ObjectBucketAccessGrantKeyStatus
 from .object_bucket_access_grant_list import ObjectBucketAccessGrantList
 from .object_bucket_access_grant_permission import ObjectBucketAccessGrantPermission
+from .object_bucket_encryption import ObjectBucketEncryption
+from .object_bucket_encryption_request import ObjectBucketEncryptionRequest
+from .object_bucket_encryption_state import ObjectBucketEncryptionState
 from .object_bucket_lifecycle import ObjectBucketLifecycle
 from .object_bucket_lifecycle_request import ObjectBucketLifecycleRequest
 from .object_bucket_list import ObjectBucketList
@@ -3069,6 +3072,9 @@ __all__ = (
     "ObjectBucketAccessGrantKeyStatus",
     "ObjectBucketAccessGrantList",
     "ObjectBucketAccessGrantPermission",
+    "ObjectBucketEncryption",
+    "ObjectBucketEncryptionRequest",
+    "ObjectBucketEncryptionState",
     "ObjectBucketLifecycle",
     "ObjectBucketLifecycleRequest",
     "ObjectBucketList",

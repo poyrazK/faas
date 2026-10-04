@@ -567,6 +567,8 @@ export type { OAuthTokenExchangeResponse } from './models/OAuthTokenExchangeResp
 export type { ObjectBucket } from './models/ObjectBucket.js';
 export type { ObjectBucketAccessGrant } from './models/ObjectBucketAccessGrant.js';
 export type { ObjectBucketAccessGrantList } from './models/ObjectBucketAccessGrantList.js';
+export type { ObjectBucketEncryption } from './models/ObjectBucketEncryption.js';
+export type { ObjectBucketEncryptionRequest } from './models/ObjectBucketEncryptionRequest.js';
 export type { ObjectBucketLifecycle } from './models/ObjectBucketLifecycle.js';
 export type { ObjectBucketLifecycleRequest } from './models/ObjectBucketLifecycleRequest.js';
 export type { ObjectBucketList } from './models/ObjectBucketList.js';

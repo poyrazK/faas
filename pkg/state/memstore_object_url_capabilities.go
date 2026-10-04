@@ -54,12 +54,23 @@ func (m *MemStore) objectURLCredentialLiveLocked(c ObjectS3Credential) bool {
 func (m *MemStore) IssueObjectURLCredential(_ context.Context, c ObjectS3Credential, receipt ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectS3Credential, ObjectUploadCompletion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !validObjectURLCredential(c, receipt, m.clock()) || !m.objectURLCredentialLiveLocked(c) {
+	if receipt.EncryptionDefaultRevision != 0 || !validObjectURLCredential(c, receipt, m.clock()) || !m.objectURLCredentialLiveLocked(c) {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrConflict
 	}
 	b, ok := m.objectBuckets[c.BucketID]
 	if !ok || b.AccountID != c.AccountID || b.State != "ready" || c.URL.Request.Method == http.MethodPut && receipt.AppID != b.AppID {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrNotFound
+	}
+	if c.URL.Request.Method == http.MethodPut {
+		var captureErr error
+		receipt.Encryption, receipt.EncryptionDefaultRevision, captureErr = m.captureObjectBucketDefaultLocked(receipt.BucketID, receipt.Encryption)
+		if captureErr != nil {
+			return ObjectS3Credential{}, ObjectUploadCompletion{}, captureErr
+		}
+		c = bindObjectURLDefault(c, receipt)
+		if !validObjectURLReceipt(c, receipt) {
+			return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrConflict
+		}
 	}
 	c, err := m.insertObjectURLCredentialLocked(c)
 	if err != nil {
@@ -67,7 +78,7 @@ func (m *MemStore) IssueObjectURLCredential(_ context.Context, c ObjectS3Credent
 	}
 	if c.URL.Request.Method == http.MethodPut {
 		receipt.Origin = "gateway"
-		receipt, _, err = m.beginTrackedUploadLocked(receipt, p)
+		receipt, _, err = m.beginTrackedUploadLocked(receipt, p, false)
 	} else {
 		err = m.admitObjectURLLocked(c.AccountID, c.BucketID, c.URL.Request.Key, 0, false, p, "")
 	}

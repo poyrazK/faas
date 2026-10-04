@@ -282,6 +282,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPut && r.URL.Query().Has("lifecycle") {
 		bodyLimit = api.MaxObjectLifecycleBodyBytes
 	}
+	if r.Method == http.MethodPut && r.URL.Query().Has("encryption") {
+		bodyLimit = api.MaxObjectBucketEncryptionBodyBytes
+	}
 	if r.Method == http.MethodPut && r.URL.Query().Get("uploadId") != "" {
 		bodyLimit = h.registry.MaxPartBytes
 	}
@@ -385,6 +388,18 @@ func parsePath(escapedPath string) (bucket, key string, hasBucket, hasKey bool, 
 func (h *Handler) routeBucket(w http.ResponseWriter, r *http.Request, req requestContext) {
 	query := operationQuery(r.URL.Query())
 	query.Del("x-id")
+	if query.Has("encryption") {
+		if !queryKeysOnly(query, "encryption") || len(query["encryption"]) != 1 || query.Get("encryption") != "" {
+			h.bucketEncryptionError(w, r, req, objectstorage.ErrInvalid)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodPut && r.Method != http.MethodDelete {
+			h.unsupported(w, r, req.requestID)
+			return
+		}
+		h.bucketEncryption(w, r, req)
+		return
+	}
 	if query.Has("lifecycle") {
 		if !queryKeysOnly(query, "lifecycle") || len(query["lifecycle"]) != 1 || query.Get("lifecycle") != "" {
 			h.lifecycleError(w, r, req, objectstorage.ErrInvalid)
