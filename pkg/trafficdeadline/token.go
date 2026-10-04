@@ -1,6 +1,6 @@
 // Package trafficdeadline authenticates an absolute deadline across a managed
 // HTTP chain. A token is scoped to the app that receives it, not its next hop.
-// adr: 375
+// adr: 531
 package trafficdeadline
 
 import (

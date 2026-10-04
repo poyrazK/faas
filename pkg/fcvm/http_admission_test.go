@@ -1,4 +1,4 @@
-// adr: 375 — trusted VM admission and bridge-owned cleanup permits.
+// adr: 531 — trusted VM admission and bridge-owned cleanup permits.
 package fcvm
 
 import (

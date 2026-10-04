@@ -1,4 +1,4 @@
-// adr: 375 — durable tenant delivery also verifies the committed target.
+// adr: 531 — durable tenant delivery also verifies the committed target.
 package main
 
 import (

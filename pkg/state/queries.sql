@@ -4911,7 +4911,7 @@ SET state = 'retired', retired_at = sqlc.arg(retired_at)
 WHERE catalog_key = sqlc.arg(catalog_key) AND state = 'ready';
 
 -- name: ListEgressCircuitCandidates :many
--- ADR-375: replay actual recent probe history after restart. Keep unprobed
+-- ADR-531: replay actual recent probe history after restart. Keep unprobed
 -- opted-in upstreams as NULL samples so retirement differs from no evidence.
 -- Collapse region verdicts sharing one probe timestamp conservatively.
 SELECT
@@ -5214,7 +5214,7 @@ SELECT e.scope_kind, e.scope_id, e.revision, e.revoked
 FROM traffic_security_epochs e JOIN requested r
     ON e.scope_kind = r.scope_kind AND e.scope_id = r.scope_id;
 
--- ADR-375: generation-fenced gateway wiring observations.
+-- ADR-531: generation-fenced gateway wiring observations.
 
 -- name: ReadGatewayTrafficRuntimeEpoch :one
 SELECT generation, boot_id FROM gateway_traffic_runtime_observations WHERE node_name = sqlc.arg(node_name)::text;
@@ -5274,12 +5274,12 @@ WHERE n.active AND n.role IN ('compute-only', 'compute-node')
   AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
 ORDER BY n.name LIMIT sqlc.arg(row_limit)::integer;
 
--- ADR-375: identity-only projection for a durable invocation version snapshot.
+-- ADR-531: identity-only projection for a durable invocation version snapshot.
 -- name: ReadInvocationVersionApp :one
 SELECT id, account_id, project_id, preview_of_slug, status, deleted_at
 FROM apps WHERE id = sqlc.arg(id)::uuid;
 
--- ADR-375: verify every synthetic target in the invocation version snapshot.
+-- ADR-531: verify every synthetic target in the invocation version snapshot.
 -- name: InvocationTargetAllowed :one
 SELECT EXISTS (
     SELECT 1 FROM instances i JOIN deployments d ON d.id = i.deployment_id
@@ -5289,12 +5289,12 @@ SELECT EXISTS (
       AND d.scope = sqlc.arg(scope)::text AND d.status = 'live' AND d.deleted_at IS NULL
 )::boolean AS allowed;
 
--- ADR-375: fresh synthetic ingress mode without environment or credentials.
+-- ADR-531: fresh synthetic ingress mode without environment or credentials.
 -- name: ReadSyntheticIngressAuthMode :one
 SELECT public_auth_mode FROM apps
 WHERE id = sqlc.arg(id)::uuid AND status <> 'deleted' AND deleted_at IS NULL;
 
--- ADR-375: minimal credential-free projection for one read-only service-policy snapshot.
+-- ADR-531: minimal credential-free projection for one read-only service-policy snapshot.
 -- name: ReadServicePolicyAppByID :one
 SELECT id, account_id, slug, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
@@ -5437,7 +5437,7 @@ SELECT EXISTS (
       AND scope = sqlc.arg(scope)::text AND status IN ('ready', 'snapshot_ready', 'live') AND deleted_at IS NULL
 )::boolean AS allowed;
 
--- ADR-375: public host policy reads are credential-minimal and transaction-scoped.
+-- ADR-531: public host policy reads are credential-minimal and transaction-scoped.
 -- name: ReadPublicHostApp :one
 SELECT (jsonb_build_object(
     'ID', a.id,
@@ -6137,7 +6137,7 @@ WHERE id=sqlc.arg(deployment_id)::uuid
 SELECT status FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid;
 
 
--- ADR-375: only the current process may acknowledge durable policy replay.
+-- ADR-531: only the current process may acknowledge durable policy replay.
 -- Lock the node before its epoch, matching registration and FK deletion order.
 -- name: ReportGatewayPolicyProgress :execrows
 WITH live_node AS MATERIALIZED (

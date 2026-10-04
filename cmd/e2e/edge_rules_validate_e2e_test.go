@@ -391,7 +391,7 @@ func TestEdgeRulesValidate_StreamingSkipped(t *testing.T) {
 // can land a rule with a `$ref: "https://..."` body in the row.
 // pkg/edgevalidate.Compile rejects it while the gateway loads the host,
 // so the runtime never sees the external reference and the malformed rule
-// is rejected with an operator-visible compile-error metric. ADR-375 refuses
+// is rejected with an operator-visible compile-error metric. ADR-531 refuses
 // the request while an owned rule cannot compile, then permits ordinary routing
 // after the invalid rule is removed through the customer API.
 //

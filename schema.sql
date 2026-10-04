@@ -26723,7 +26723,7 @@ ALTER TABLE route_monitors ADD COLUMN IF NOT EXISTS customer_group_by text NOT N
 
 -- Exact public request-ID mappings are stored independently from sampled
 -- request_telemetry rows and expire on the request-time plan retention cap.
--- ADR-375: blocks from the migrated schema-dump; existing snapshot retained.
+-- ADR-531: blocks from the migrated schema-dump; existing snapshot retained.
 
 CREATE TABLE public.app_egress_circuits (
     app_id uuid NOT NULL,
@@ -26740,7 +26740,7 @@ ALTER TABLE ONLY public.app_egress_circuits
 ALTER TABLE ONLY public.app_egress_circuits
     ADD CONSTRAINT app_egress_circuits_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
--- ADR-375 additive blocks from the migrated schema dump; preserve unrelated snapshot.
+-- ADR-531 additive blocks from the migrated schema dump; preserve unrelated snapshot.
 CREATE TABLE public.traffic_retry_counters (
     app_id uuid NOT NULL,
     originals bigint NOT NULL,
@@ -26757,7 +26757,7 @@ ALTER TABLE ONLY public.traffic_retry_counters
 ALTER TABLE ONLY public.traffic_retry_counters
     ADD CONSTRAINT traffic_retry_counters_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
--- ADR-375 security-generation table; dump parity is verified independently
+-- ADR-531 security-generation table; dump parity is verified independently
 -- of the repository's existing unrelated schema snapshot drift.
 CREATE TABLE public.traffic_security_epochs (
     scope_kind text NOT NULL,

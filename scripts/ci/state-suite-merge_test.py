@@ -1,4 +1,4 @@
-"""ADR-375: coverage must reject omitted partitions or inconsistent inventories."""
+"""ADR-531: coverage must reject omitted partitions or inconsistent inventories."""
 import copy
 import importlib.util
 import pathlib

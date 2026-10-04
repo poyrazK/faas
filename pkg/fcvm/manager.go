@@ -762,7 +762,7 @@ type Manager struct {
 	// egress_resolved set: a restored snapshot may reconnect to addresses
 	// its guest resolved before the snapshot.
 	appResolved map[string]map[netip.Addr]time.Time
-	// ADR-375: serialize circuit updates and pending-network registration so
+	// ADR-531: serialize circuit updates and pending-network registration so
 	// a wake cannot miss a policy change before it enters the live map.
 	egressCircuitMu           sync.Mutex
 	egressCircuitEnabled      bool

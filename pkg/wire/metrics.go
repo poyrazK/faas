@@ -4470,7 +4470,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"app_id", "upstream_hash"})
 	egressCircuitReconcile := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_egress_circuit_reconcile_success",
-		Help: "ADR-375: latest whole-app desired-policy reconciliation completed DNS resolution, durable commit and all applicable node acknowledgments (1), or remains pending (0). Distinct from logical probe state.",
+		Help: "ADR-531: latest whole-app desired-policy reconciliation completed DNS resolution, durable commit and all applicable node acknowledgments (1), or remains pending (0). Distinct from logical probe state.",
 	}, []string{"app_id"})
 	commonCollectors = append(commonCollectors, gatewayDrainWaitSeconds, gatewayInflightRequests,
 		egressCircuitState, egressCircuitReconcile)

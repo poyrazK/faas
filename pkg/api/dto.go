@@ -9210,7 +9210,7 @@ func validateThrottleMaxKeys(maxKeys, planMax int) *Problem {
 type EdgeRuleBudgetAction struct {
 	BudgetMs int `json:"budget_ms"`
 	// TotalDeadlineMs includes upload/wake/admission from trusted public ingress.
-	// Zero leaves the existing execution-only budget unchanged (ADR-375).
+	// Zero leaves the existing execution-only budget unchanged (ADR-531).
 	TotalDeadlineMs     int    `json:"total_deadline_ms,omitempty"`
 	AllowOverrideHeader string `json:"allow_override_header,omitempty"`
 }

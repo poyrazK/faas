@@ -62,7 +62,7 @@ running any daemon with the hub disabled needs materially more direct
 connections than the table above; re-derive before enabling that mode on more
 than one node.
 
-ADR-375 reserves three direct connections for hub-enabled apid when a separate
+ADR-531 reserves three direct connections for hub-enabled apid when a separate
 `FAAS_DATABASE_URL_DIRECT` is configured: the notification hub, outer edge
 mutation convergence lock and guarded policy transaction. The deployed pooler
 role targets compute nodes, so the control plane keeps the ordinary direct

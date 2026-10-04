@@ -912,7 +912,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 
 // serveSyntheticForward translates the HTTP abort signal at the buffered
 // invocation boundary. A partial response cannot become a completed result.
-// adr: 375
+// adr: 531
 func serveSyntheticForward(ctx context.Context, handler http.Handler, w http.ResponseWriter, r *http.Request) (err error) {
 	defer func() {
 		if caught := recover(); caught != nil {
@@ -4204,7 +4204,7 @@ func (a mirrorRulesStoreAdapter) ListMirrorRules(ctx context.Context, appID stri
 }
 
 // buildCentralRateLimitBackend shares the daemon's Postgres pool. The caller
-// refuses central-mode startup when the pool is absent (ADR-375).
+// refuses central-mode startup when the pool is absent (ADR-531).
 func buildCentralRateLimitBackend(pool *pgxpool.Pool, log *slog.Logger) (*state.PGRateLimitBackend, func(plan string) (float64, bool)) {
 	if pool == nil {
 		return nil, nil

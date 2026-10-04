@@ -1,6 +1,6 @@
 # Total ordinary-HTTP deadline
 
-ADR-375 implementation; complete-path acceptance is pending.
+ADR-531 implementation; complete-path acceptance is pending.
 
 The existing `kind=budget` action accepts:
 

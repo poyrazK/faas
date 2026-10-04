@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Per-route execution budget plus an optional total deadline (ADR-375).
+ * Per-route execution budget plus an optional total deadline (ADR-531).
  * budget_ms starts after upload, wake and capacity admission. Its
  * configured override header (default x-faas-budget-ms) may alter the
  * execution allowance within the plan ceiling.

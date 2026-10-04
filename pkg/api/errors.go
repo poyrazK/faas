@@ -474,7 +474,7 @@ const (
 	// mirrors CodeCapacity / CodeBuildXXX — the failure is transient
 	// and the customer's CLI/CI will retry on the backoff.
 	CodeSourceRefUnavailable = "source_ref_unavailable"
-	// ADR-375: connection-circuit enforcement availability and revision errors.
+	// ADR-531: connection-circuit enforcement availability and revision errors.
 	CodeEgressCircuitUnavailable = "egress_circuit_unavailable"
 	CodeEgressCircuitDisabled    = "egress_circuit_disabled"
 	CodeEgressCircuitRevision    = "egress_circuit_revision"

@@ -14,7 +14,7 @@ Severity: warn. Family: `retry_safety`.
 `FaasRetryBudgetMixedModes` means the gateway fleet has both process-local
 and shared retry allowances. The fleet-wide cap requires every serving
 gateway to use the same shared backend. Central mode defaults to Postgres
-(ADR-375); explicit Redis credentials override that selection.
+(ADR-531); explicit Redis credentials override that selection.
 
 `FaasRetryBudgetBackendErrors` means shared store operations are failing. A
 gateway declines retries, including when the original observation failed.

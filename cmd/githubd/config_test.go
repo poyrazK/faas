@@ -173,7 +173,7 @@ func TestHostKeyPath_Precedence(t *testing.T) {
 	}
 }
 
-// adr: 375
+// adr: 531
 func TestLoadConfigAppsDomain(t *testing.T) {
 	for _, test := range []struct{ name, toml, env, want string }{
 		{"default", "", "", "gregale.dev"},

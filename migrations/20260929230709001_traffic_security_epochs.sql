@@ -1,5 +1,5 @@
 -- filename: 20260929230709001_traffic_security_epochs.sql
--- ADR-375: security generations fence admitted HTTP work independently of
+-- ADR-531: security generations fence admitted HTTP work independently of
 -- ordinary immutable policy. Keep deleted UUID tombstones; no FK cascade may
 -- erase a revoke while an older gateway still owns an exchange.
 -- +goose Up

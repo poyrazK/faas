@@ -62,7 +62,7 @@ policy, deadline, rate or decision-evidence agreement.
 
 ## Public request policy
 
-ADR-375 resolves hostname ownership and pins the corresponding route-only
+ADR-531 resolves hostname ownership and pins the corresponding route-only
 graph in one fresh readonly transaction before public route substitution.
 Claimed hosts read only their owner's routes before applying projection bounds.
 Genuinely unclaimed, substitutable hosts retain global route discovery; reserved

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ADR-375: require every state partition before applying full coverage gates."""
+"""ADR-531: require every state partition before applying full coverage gates."""
 import argparse
 import hashlib
 import importlib.util

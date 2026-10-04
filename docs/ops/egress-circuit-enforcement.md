@@ -1,6 +1,6 @@
 # Declared outbound connection circuits
 
-Implementation: ADR-201 and ADR-375. Native acceptance is pending; the
+Implementation: ADR-201 and ADR-531. Native acceptance is pending; the
 capability remains internal until complete-path and rollout evidence passes.
 
 ## Enable and inspect

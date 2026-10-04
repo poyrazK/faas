@@ -1,4 +1,4 @@
-# ADR-375 · Complete traffic enforcement guarantees
+# ADR-531 · Complete traffic enforcement guarantees
 
 - **Status:** accepted for implementation; acceptance evidence pending
 - **Date:** 2026-09-29

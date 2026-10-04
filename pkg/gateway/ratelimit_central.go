@@ -32,7 +32,7 @@ import "context"
 // Postgres counter row (pg_ratelimit_counters, migration 00126,
 // widened by migration 00281 to include scope='rule').
 //
-// Daemon startup wires state.PGRateLimitBackend by default (ADR-375).
+// Daemon startup wires state.PGRateLimitBackend by default (ADR-531).
 // Explicit local mode and library constructors use noopCentralBackend.
 //
 // ConsumeToken / PeekToken signatures use the same (scope, subject_id,
@@ -52,7 +52,7 @@ type CentralBackend interface {
 	//                    remaining tokens >= 0 after refill + -1)
 	//   err error      — non-nil iff Postgres was unreachable or
 	//                    the atomic counter operation failed; the caller
-	//                    MUST reject unverified shared admission (ADR-375)
+	//                    MUST reject unverified shared admission (ADR-531)
 	//
 	// A single upsert serialises contending replicas with the counter row lock.
 	ConsumeToken(ctx context.Context, scope, subjectID, plan string, rps, burst float64) (remaining int, ok bool, err error)

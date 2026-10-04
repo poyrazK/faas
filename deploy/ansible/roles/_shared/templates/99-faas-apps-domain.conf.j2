@@ -1,4 +1,4 @@
-# ADR-375: deployment status writers validate the same alias URL namespace
+# ADR-531: deployment status writers validate the same alias URL namespace
 # as public routing. The operator's DNS configuration supplies this value.
 [Service]
 Environment=FAAS_APPS_DOMAIN={{ gatewayd_apps_domain | default('gregale.dev') }}

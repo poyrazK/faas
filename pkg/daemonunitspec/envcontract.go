@@ -218,7 +218,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_E2E_BIN_DIR", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "test-harness only; directory of pre-built daemon binaries shared across native e2e phases so each phase does not re-link them (the Go build cache does not cover the final link); must never be set on a production host"},
 	{Name: "FAAS_E2E_VMMD_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host"},
 	{Name: "FAAS_EGRESS_ALLOW_LOOPBACK", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
-	{Name: "FAAS_EGRESS_CIRCUIT_BREAKER", Owners: []string{"schedd", "vmmd"}, Source: EnvSourceDefault, Note: "ADR-201 §3 / ADR-375; off by default; enable on schedd and each vmmd to reject new tenant connections to an unhealthy declared upstream"},
+	{Name: "FAAS_EGRESS_CIRCUIT_BREAKER", Owners: []string{"schedd", "vmmd"}, Source: EnvSourceDefault, Note: "ADR-201 §3 / ADR-531; off by default; enable on schedd and each vmmd to reject new tenant connections to an unhealthy declared upstream"},
 	{Name: "FAAS_EGRESS_DNS_GATING", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "ADR-373 per-node escape hatch; \"off\" disables DNS-gated tenant egress, any other value keeps it on"},
 	{Name: "FAAS_EGRESS_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_ENVIRONMENT", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value"},

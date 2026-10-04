@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 375 — replay must preserve revocation generations and deleted tombstones.
+// adr: 531 — replay must preserve revocation generations and deleted tombstones.
 package migrations_test
 
 import (

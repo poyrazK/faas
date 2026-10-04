@@ -1,4 +1,4 @@
-// adr: 375 — declared streaming idle/session limits and deadline detachment.
+// adr: 531 — declared streaming idle/session limits and deadline detachment.
 package gateway
 
 import (

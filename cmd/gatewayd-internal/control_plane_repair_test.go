@@ -180,7 +180,7 @@ func TestRepairDurableControlPlaneChangesLeavesCursorOnError(t *testing.T) {
 	}
 }
 
-// adr: 375
+// adr: 531
 func TestRepairDurableControlPlaneChangesRecoversFromPeriodicPlacementCollision(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -239,7 +239,7 @@ func TestRepairDurableControlPlaneChangesRecoversFromPeriodicPlacementCollision(
 	}
 }
 
-// adr: 375
+// adr: 531
 func TestRepairDurableControlPlanePlacementRetryRetainsDeadlineAndCursor(t *testing.T) {
 	collision := fmt.Errorf("placement read: %w", gateway.ErrTargetPlacementChanged)
 	unavailable := errors.New("placement source unavailable")
