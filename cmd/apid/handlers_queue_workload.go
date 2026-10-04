@@ -148,7 +148,7 @@ func (s *server) configureQueueWorkload(w http.ResponseWriter, r *http.Request, 
 	}
 	var existing *state.QueueBinding
 	for i := range bindings {
-		if bindings[i].Name != queueWorkloadProfileName {
+		if bindings[i].DeploymentScope != "" || bindings[i].Name != queueWorkloadProfileName {
 			continue
 		}
 		if existing != nil {
@@ -175,12 +175,17 @@ func (s *server) configureQueueWorkload(w http.ResponseWriter, r *http.Request, 
 	mode := "push"
 	workloadClass := state.WorkloadClass(class)
 	var binding state.QueueBinding
+	consumers, ok := s.queueBindingConsumers(w)
+	if !ok {
+		return
+	}
+	var result state.QueueBindingConsumerResult
 	created := existing == nil
 	if created {
 		if retryPolicyJSON == nil {
 			retryPolicyJSON = []byte(`{}`)
 		}
-		binding, err = s.store.CreateQueueBinding(r.Context(), state.QueueBinding{
+		result, err = consumers.CreateQueueBindingWithConsumer(r.Context(), state.QueueBinding{
 			AccountID: acct.ID, AppID: app.ID, Name: queueWorkloadProfileName,
 			QueueName: queueName, Mode: mode, WorkloadClass: workloadClass,
 			Enabled: enabled, MaxConcurrency: maxConcurrency, RetryPolicyJSON: retryPolicyJSON,
@@ -193,25 +198,14 @@ func (s *server) configureQueueWorkload(w http.ResponseWriter, r *http.Request, 
 		if req.RetryPolicy != nil {
 			params.RetryPolicyJSON = &retryPolicyJSON
 		}
-		binding, err = s.store.UpdateQueueBinding(r.Context(), acct.ID, app.ID, existing.ID, params)
+		result, err = consumers.UpdateQueueBindingWithConsumer(r.Context(), acct.ID, app.ID, existing.ID, params)
 	}
 	if err != nil {
-		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Queue workload profile conflict", "name and queue_name must be unique within an app"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not configure queue workload binding"))
+		writeQueueBindingMutationError(w, acct, err, "could not configure queue workload binding and consumer")
 		return
 	}
-	if err := s.syncQueueBindingConsumer(r.Context(), app, acct, binding); err != nil {
-		s.rollbackQueueWorkloadBinding(r.Context(), acct, app, binding, existing, created)
-		if prob := api.AsProblem(err); prob != nil {
-			api.WriteProblem(w, prob)
-		} else {
-			api.WriteProblem(w, api.ErrCapacity("could not provision queue consumer"))
-		}
-		return
-	}
+	binding = result.Binding
+	s.notifyQueueBindingConsumer(r.Context(), result)
 
 	updatedApp := app
 	if !queueWorkloadProfilePolicyEqual(app, desiredPolicy) {
@@ -240,11 +234,15 @@ func (s *server) configureQueueWorkload(w http.ResponseWriter, r *http.Request, 
 }
 
 func (s *server) rollbackQueueWorkloadBinding(ctx context.Context, acct state.Account, app state.App, current state.QueueBinding, previous *state.QueueBinding, created bool) {
+	consumers, ok := s.store.(state.QueueBindingConsumerStore)
+	if !ok {
+		return
+	}
 	if created {
-		if triggerID, err := queueBindingTriggerID(ctx, s.store, app.ID, current.ID); err == nil && triggerID != "" {
-			_ = s.store.DeleteTrigger(ctx, triggerID, app.ID)
+		result, err := consumers.DeleteQueueBindingWithConsumer(ctx, acct.ID, app.ID, current.ID)
+		if err == nil {
+			s.notifyQueueBindingConsumer(ctx, result)
 		}
-		_ = s.store.DeleteQueueBinding(ctx, acct.ID, app.ID, current.ID)
 		return
 	}
 	if previous == nil {
@@ -253,11 +251,11 @@ func (s *server) rollbackQueueWorkloadBinding(ctx context.Context, acct state.Ac
 	queueName, mode, workloadClass := previous.QueueName, previous.Mode, previous.WorkloadClass
 	enabled, maxConcurrency := previous.Enabled, previous.MaxConcurrency
 	policy := append([]byte(nil), previous.RetryPolicyJSON...)
-	restored, err := s.store.UpdateQueueBinding(ctx, acct.ID, app.ID, previous.ID, state.UpdateQueueBindingParams{
+	result, err := consumers.UpdateQueueBindingWithConsumer(ctx, acct.ID, app.ID, previous.ID, state.UpdateQueueBindingParams{
 		QueueName: &queueName, Mode: &mode, WorkloadClass: &workloadClass,
 		Enabled: &enabled, MaxConcurrency: &maxConcurrency, RetryPolicyJSON: &policy,
 	})
 	if err == nil {
-		_ = s.syncQueueBindingConsumer(ctx, app, acct, restored)
+		s.notifyQueueBindingConsumer(ctx, result)
 	}
 }

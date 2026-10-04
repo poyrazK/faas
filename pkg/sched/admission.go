@@ -39,7 +39,7 @@ type NodeLedger struct {
 	resident          map[string]*nodeReservation // node_id -> accounting (per-node ceiling check)
 	perApp            map[string]int              // app_id -> instances counting toward concurrency (global, §6.2-1)
 	perAppDeployment  map[string]int              // app_id|"\x00"|deployment_id -> per-deployment concurrency (ADR-072, issue #557 closure)
-	perAppEnvironment map[string]int              // app_id|"\x00"|original environment -> serving concurrency (ADR-568)
+	perAppEnvironment map[string]int              // app_id|"\x00"|original environment -> serving concurrency (ADR-569)
 	perAppProduction  map[string]int              // valid production ownership, including unpinned compatibility rows
 	entries           map[string]*reservation     // instance_id -> reservation (cross-node lookup for Release)
 }
@@ -58,14 +58,15 @@ type nodeReservation struct {
 // the box-wide counter in that case so the migration is non-breaking
 // for tests that don't plumb node IDs.
 type reservation struct {
-	appID          string
-	deploymentID   string // empty = legacy pre-#557 reservations (test seams); populated post-#557 via Admit's DeploymentID field
-	environmentKey string // authenticated original lifetime; empty = legacy production
-	production     bool
-	nodeID         string // empty = legacy box-wide accounting (test seams)
-	admissionMB    int    // ram_mb + PerVMOverheadMB
-	vcpu           int
-	cpuMillicores  int
+	appID           string
+	deploymentID    string // empty = legacy pre-#557 reservations (test seams); populated post-#557 via Admit's DeploymentID field
+	environmentKey  string // authenticated original lifetime; empty = legacy production
+	production      bool
+	nodeID          string // empty = legacy box-wide accounting (test seams)
+	admissionMB     int    // ram_mb + PerVMOverheadMB
+	vcpu            int
+	cpuMillicores   int
+	deploymentScope string
 	// cpuBoostMillicores is the temporary delta above the sustained quota.
 	// It remains reserved until cpuBoostUntil (readiness + bounded tail).
 	cpuBoostMillicores int
@@ -175,6 +176,7 @@ type Request struct {
 	ProductionEnvironment bool
 	Plan                  api.Plan
 	RAMMB                 int // the app's ram_mb (already validated ≤ plan cap)
+	DeploymentScope       string
 	// SidecarMBs (issue #463 / ADR-070 §Decision 6 / PR-C) is the
 	// per-sidecar RAM slice sourced from the deployment's
 	// `sidecars jsonb` column at Admit time. Each entry adds to the
@@ -339,7 +341,7 @@ func (l *NodeLedger) Admit(r Request) error {
 		return fmt.Errorf("sched: admit: instance %q already admitted", r.Instance)
 	}
 
-	// ADR-568: apply the deployed environment's configured cap and the shared
+	// ADR-569: apply the deployed environment's configured cap and the shared
 	// app plan budget together. Both counts are global across compute nodes.
 	//
 	// Tier A5 / ADR-066: KindMigration reservations SKIP this check.
@@ -447,6 +449,7 @@ func (l *NodeLedger) Admit(r Request) error {
 		appID: r.AppID, deploymentID: r.DeploymentID, environmentKey: r.EnvironmentKey, nodeID: r.NodeID,
 		production:  r.ProductionEnvironment || r.EnvironmentKey == "",
 		admissionMB: r.admissionMB(), vcpu: r.VCPU, cpuMillicores: r.CPUMillicores,
+		deploymentScope:    normalizedDeploymentScope(r.DeploymentScope),
 		cpuBoostMillicores: boostCPU, cpuBoostUntil: r.CPUStartupBoostUntil,
 		countsConc: kindCountsConcurrency(r.Kind),
 	}
@@ -765,6 +768,21 @@ func (l *NodeLedger) ConcurrencyForDeployment(appID, deploymentID string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.perAppDeployment[appID+"\x00"+deploymentID]
+}
+
+// HasOtherRevisionInScope checks only counted reservations, so snapshot primes,
+// parked rows, and migration destination memory cannot authorize an overlap.
+func (l *NodeLedger) HasOtherRevisionInScope(appID, deploymentID, scope string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	scope = normalizedDeploymentScope(scope)
+	for _, entry := range l.entries {
+		if entry.countsConc && entry.appID == appID && entry.deploymentID != "" &&
+			entry.deploymentID != deploymentID && entry.deploymentScope == scope {
+			return true
+		}
+	}
+	return false
 }
 
 // UsedVCPU returns reserved vCPU slots (global sum across nodes).

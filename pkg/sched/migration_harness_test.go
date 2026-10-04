@@ -317,8 +317,8 @@ func TestMigrateOne_Phase4PeerOwnerDestroysPausedSource(t *testing.T) {
 	if vmm.cancels != 0 {
 		t.Errorf("cancels = %d, want 0 (source must not resume after peer ownership commit)", vmm.cancels)
 	}
-	if vmm.destroys != 2 {
-		t.Errorf("destroys = %d, want 2 (destination and obsolete source cleanup)", vmm.destroys)
+	if vmm.destroys != 1 || vmm.acks != 1 {
+		t.Errorf("destroys=%d acks=%d, want destination cleanup and lease-bound source acknowledgement", vmm.destroys, vmm.acks)
 	}
 	ins, err := store.InstanceByID(context.Background(), insID)
 	if err != nil {

@@ -2009,6 +2009,9 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 	}
 	existingByName := make(map[string]api.QueueBindingResponse, len(existing))
 	for _, row := range existing {
+		if row.Environment != "" {
+			continue
+		}
 		existingByName[row.Name] = row
 	}
 	desired := make(map[string]gregalemanifest.QueueBinding, len(m.QueueBindings))
@@ -2016,6 +2019,9 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 		desired[binding.Name] = binding
 	}
 	for _, row := range existing {
+		if row.Environment != "" {
+			continue
+		}
 		if _, keep := desired[row.Name]; !keep {
 			if err := client.DeleteQueueBinding(ctx, slug, row.ID); err != nil {
 				return fmt.Errorf("delete stale queue binding %s: %w", row.Name, err)

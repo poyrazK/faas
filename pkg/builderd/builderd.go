@@ -622,6 +622,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.recoverClaimAfterLookupFailure(ctx, build, "load app", err)
 		return BuildResult{}, fmt.Errorf("builderd: load app: %w", err)
 	}
+	app, err = state.AppForDeploymentRuntime(app, dep)
+	if err != nil {
+		b.markFailed(ctx, build, state.FailureInfra, "frozen environment workload: "+err.Error(), time.Now())
+		return BuildResult{}, err
+	}
 	// Issue #197 B3.11: the cache key is partitioned by plan. A Hobby
 	// customer's cached layer must not serve a Pro build (the layer
 	// was built against the Hobby cap, not the Pro cap). Load the
@@ -756,7 +761,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 
 	var fw Framework
 	var ver string
-	if functionFW, ok := functionRuntimeFramework(app); ok {
+	frozen, _ := dep.ScopedWorkloadRuntime()
+	if frozen != nil && frozen.Source != nil && (frozen.Source.Kind == "dockerfile" || frozen.Source.Dockerfile != "") {
+		fw = FrameworkDocker
+		b.emitBuildLog(ctx, build.ID, "using reviewed environment Dockerfile\n")
+	} else if functionFW, ok := functionRuntimeFramework(app); ok {
 		// Function runtime is explicit app configuration, so it wins over a
 		// stale or misleading source marker/profile. This also keeps legacy
 		// markerless function deployments buildable after upgrade.
@@ -779,6 +788,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	dockerfilePath := app.Manifest.BuildDockerfile
 	if persistedPath, ok := persistedDockerfilePath(dep); ok {
 		dockerfilePath = persistedPath
+	}
+	if frozen != nil && frozen.Source != nil {
+		// A reviewed source selection replaces the shared app build setting,
+		// including clearing a Dockerfile for autodetected source builds.
+		dockerfilePath = frozen.Source.Dockerfile
 	}
 
 	// Railpack must build FROM the same immutable runtime base that imaged

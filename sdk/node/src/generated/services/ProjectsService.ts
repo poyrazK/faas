@@ -2,11 +2,23 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AdoptEnvironmentGitOpsRequest } from '../models/AdoptEnvironmentGitOpsRequest.js';
+import type { AdoptEnvironmentGitOpsResponse } from '../models/AdoptEnvironmentGitOpsResponse.js';
 import type { ApplyResponse } from '../models/ApplyResponse.js';
+import type { ApproveEnvironmentGitRevisionRequest } from '../models/ApproveEnvironmentGitRevisionRequest.js';
+import type { ApproveEnvironmentGitRevisionResponse } from '../models/ApproveEnvironmentGitRevisionResponse.js';
+import type { CreateEnvironmentGitSourceRequest } from '../models/CreateEnvironmentGitSourceRequest.js';
 import type { CreateProjectEnvironmentApprovalRequest } from '../models/CreateProjectEnvironmentApprovalRequest.js';
 import type { CreateProjectEnvironmentQualificationRequest } from '../models/CreateProjectEnvironmentQualificationRequest.js';
 import type { CreateProjectEnvironmentRequest } from '../models/CreateProjectEnvironmentRequest.js';
+import type { EnvironmentGitOpsOverrideRequest } from '../models/EnvironmentGitOpsOverrideRequest.js';
+import type { EnvironmentGitOpsPlan } from '../models/EnvironmentGitOpsPlan.js';
+import type { EnvironmentGitOpsStatusResponse } from '../models/EnvironmentGitOpsStatusResponse.js';
+import type { EnvironmentGitSource } from '../models/EnvironmentGitSource.js';
+import type { EnvironmentGitSourceUpdate } from '../models/EnvironmentGitSourceUpdate.js';
 import type { PlanResponse } from '../models/PlanResponse.js';
+import type { PreviewEnvironmentGitRevisionRequest } from '../models/PreviewEnvironmentGitRevisionRequest.js';
+import type { PreviewEnvironmentGitRevisionResponse } from '../models/PreviewEnvironmentGitRevisionResponse.js';
 import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
 import type { ProjectDeletePreviewResponse } from '../models/ProjectDeletePreviewResponse.js';
 import type { ProjectEnvironmentApprovalResponse } from '../models/ProjectEnvironmentApprovalResponse.js';
@@ -34,6 +46,7 @@ import type { ProjectSourceRefScanRequest } from '../models/ProjectSourceRefScan
 import type { ProjectSummaryResponse } from '../models/ProjectSummaryResponse.js';
 import type { PromoteProjectEnvironmentRequest } from '../models/PromoteProjectEnvironmentRequest.js';
 import type { PublishProjectReleaseSetRequest } from '../models/PublishProjectReleaseSetRequest.js';
+import type { RemoveEnvironmentGitOpsOverrideRequest } from '../models/RemoveEnvironmentGitOpsOverrideRequest.js';
 import type { ReplaceProjectEnvironmentQueueBindingsRequest } from '../models/ReplaceProjectEnvironmentQueueBindingsRequest.js';
 import type { UpdateProjectEnvironmentConfigRequest } from '../models/UpdateProjectEnvironmentConfigRequest.js';
 import type { UpdateProjectEnvironmentEdgePolicyRequest } from '../models/UpdateProjectEnvironmentEdgePolicyRequest.js';
@@ -568,6 +581,493 @@ export class ProjectsService {
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect Git source authority and reconciliation history.
+   * @returns EnvironmentGitOpsStatusResponse Inspect Git source authority and reconciliation history. result.
+   * @throws ApiError
+   */
+  public static getEnvironmentGitOps({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+  }): CancelablePromise<EnvironmentGitOpsStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Bind a verified project repository to an environment definition.
+   * @returns EnvironmentGitSource Bind a verified project repository to an environment definition. result.
+   * @throws ApiError
+   */
+  public static createEnvironmentGitSource({
+    slug,
+    environment,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Bind a verified project repository to an environment definition. request.
+     */
+    requestBody: CreateEnvironmentGitSourceRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<EnvironmentGitSource> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/source',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Update report, enforce, pruning, and suspension controls.
+   * @returns EnvironmentGitSource Update report, enforce, pruning, and suspension controls. result.
+   * @throws ApiError
+   */
+  public static updateEnvironmentGitSource({
+    slug,
+    environment,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Update report, enforce, pruning, and suspension controls. request.
+     */
+    requestBody: EnvironmentGitSourceUpdate,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<EnvironmentGitSource> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/source',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Fetch an immutable commit and review its definition digest.
+   * @returns PreviewEnvironmentGitRevisionResponse Fetch an immutable commit and review its definition digest. result.
+   * @throws ApiError
+   */
+  public static previewEnvironmentGitRevision({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Fetch an immutable commit and review its definition digest. request.
+     */
+    requestBody: PreviewEnvironmentGitRevisionRequest,
+  }): CancelablePromise<PreviewEnvironmentGitRevisionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/revisions/preview',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Approve reviewed Git bytes and enqueue durable reconciliation.
+   * @returns ApproveEnvironmentGitRevisionResponse Approve reviewed Git bytes and enqueue durable reconciliation. result.
+   * @throws ApiError
+   */
+  public static approveEnvironmentGitRevision({
+    slug,
+    environment,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Approve reviewed Git bytes and enqueue durable reconciliation. request.
+     */
+    requestBody: ApproveEnvironmentGitRevisionRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ApproveEnvironmentGitRevisionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/revisions/approve',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Preview adoption without changing ownership or resource values.
+   * @returns EnvironmentGitOpsPlan Preview adoption without changing ownership or resource values. result.
+   * @throws ApiError
+   */
+  public static previewEnvironmentGitOpsAdoption({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+  }): CancelablePromise<EnvironmentGitOpsPlan> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/adoption-preview',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Adopt fields from a current reviewed plan while preserving their values.
+   * @returns AdoptEnvironmentGitOpsResponse Adopt fields from a current reviewed plan while preserving their values. result.
+   * @throws ApiError
+   */
+  public static adoptEnvironmentGitOps({
+    slug,
+    environment,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Adopt fields from a current reviewed plan while preserving their values. request.
+     */
+    requestBody: AdoptEnvironmentGitOpsRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AdoptEnvironmentGitOpsResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/adopt',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Permit a temporary edit to one Git-owned field.
+   * @returns EnvironmentGitOpsOverrideRequest Permit a temporary edit to one Git-owned field. result.
+   * @throws ApiError
+   */
+  public static createEnvironmentGitOpsOverride({
+    slug,
+    environment,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Permit a temporary edit to one Git-owned field. request.
+     */
+    requestBody: EnvironmentGitOpsOverrideRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<EnvironmentGitOpsOverrideRequest> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/overrides',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Revoke a temporary field override and enqueue reconciliation.
+   * @returns void
+   * @throws ApiError
+   */
+  public static removeEnvironmentGitOpsOverride({
+    slug,
+    environment,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Revoke a temporary field override and enqueue reconciliation. request.
+     */
+    requestBody: RemoveEnvironmentGitOpsOverrideRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/overrides',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });

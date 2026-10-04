@@ -1245,21 +1245,7 @@ func cmdQueueBindings(args []string) int {
 	}
 	switch args[0] {
 	case "list":
-		if len(args) != 2 {
-			PrintUsage(os.Stderr, "usage: gregale queue bindings list <slug>", "queue")
-			return 1
-		}
-		rows, err := client.ListQueueBindings(context.Background(), args[1])
-		if err != nil {
-			return printErr("Queue binding list failed", err)
-		}
-		if jsonOutput {
-			return jsonOut(writeJSON(rows))
-		}
-		for _, row := range rows {
-			fmt.Printf("%-32s %-16s %-6s %-6s enabled=%t max=%d\n", row.ID, row.Name, row.Mode, row.WorkloadClass, row.Enabled, row.MaxConcurrency)
-		}
-		return 0
+		return cmdQueueBindingList(client, args[1:])
 	case "create":
 		return cmdQueueBindingCreate(client, args[1:])
 	case "update":
@@ -1285,6 +1271,7 @@ func cmdQueueBindings(args []string) int {
 
 func cmdQueueBindingCreate(client *api.Client, args []string) int {
 	fs := newFlagSet("queue bindings create", flag.ContinueOnError)
+	environment := fs.String("environment", "", "registered project environment (omitted creates a shared binding)")
 	name := fs.String("name", "", "binding name")
 	queueName := fs.String("queue-name", "", "logical queue name")
 	mode := fs.String("mode", "pull", "delivery mode: pull|push")
@@ -1292,10 +1279,10 @@ func cmdQueueBindingCreate(client *api.Client, args []string) int {
 	maxConcurrency := fs.Int("max-concurrency", 1, "maximum concurrent deliveries")
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil || len(pos) != 1 || *name == "" || *queueName == "" {
-		PrintUsage(os.Stderr, "usage: gregale queue bindings create <slug> --name NAME --queue-name QUEUE [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue bindings create <slug> --name NAME --queue-name QUEUE [--environment ENV] [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N]", "queue")
 		return 1
 	}
-	row, err := client.CreateQueueBinding(context.Background(), pos[0], api.CreateQueueBindingRequest{Name: *name, QueueName: *queueName, Mode: *mode, WorkloadClass: *workloadClass, MaxConcurrency: *maxConcurrency})
+	row, err := client.CreateQueueBinding(context.Background(), pos[0], api.CreateQueueBindingRequest{Environment: *environment, Name: *name, QueueName: *queueName, Mode: *mode, WorkloadClass: *workloadClass, MaxConcurrency: *maxConcurrency})
 	if err != nil {
 		return printErr("Queue binding create failed", err)
 	}
@@ -1352,6 +1339,7 @@ func cmdQueueBindingUpdate(client *api.Client, args []string) int {
 func cmdQueueSend(args []string) int {
 	fs := newFlagSet("queue send", flag.ContinueOnError)
 	payload := fs.String("payload", "", "JSON payload (inline | @file | -)")
+	environment := fs.String("environment", "", "registered project environment with an enabled queue binding")
 	queueName := fs.String("queue-name", "", "logical queue name (optional when the app has one active binding)")
 	workPolicy := fs.String("work-policy", "", "named app work policy (requires --work-key and an unnamed queue)")
 	workKey := fs.String("work-key", "", "JSON scalar identifying related work")
@@ -1361,7 +1349,7 @@ func cmdQueueSend(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE] [--environment ENV] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "queue")
 		return 1
 	}
 	work, err := queueWorkFromFlags(*workPolicy, *workKey, *workFairnessKey)
@@ -1377,7 +1365,7 @@ func cmdQueueSend(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Payload: body, QueueName: *queueName, Work: work})
+	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Environment: *environment, Payload: body, QueueName: *queueName, Work: work})
 	if err != nil {
 		return printErr("Queue send failed", err)
 	}

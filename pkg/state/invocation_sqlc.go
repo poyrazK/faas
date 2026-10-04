@@ -20,6 +20,7 @@ func invocationTimePointer(value pgtype.Timestamptz) *time.Time {
 func invocationFromSQLC(row sqlc.Invocation) (Invocation, error) {
 	inv := Invocation{
 		ID: pgUUIDString(row.ID), AppID: pgUUIDString(row.AppID), AccountID: pgUUIDString(row.AccountID), EnvironmentID: pgUUIDString(row.EnvironmentID),
+		DeploymentScope: row.DeploymentScope, QueueBindingID: pgUUIDString(row.QueueBindingID), ReplayGeneration: row.ReplayGeneration,
 		PlatformTenantID: pgUUIDString(row.PlatformTenantID), OccurrenceID: pgUUIDString(row.OccurrenceID),
 		StartDeadlineAt: invocationTimePointer(row.StartDeadlineAt), OutcomeCode: row.OutcomeCode,
 		Source: InvocationSource(row.Source), State: InvocationState(row.State), QueueName: row.QueueName, Method: row.Method, Path: row.Path,

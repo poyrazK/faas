@@ -38,6 +38,11 @@ func (s *PgStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInst
 	}); err != nil {
 		return Instance{}, err
 	}
+	if p.Inputs != nil && p.targetState() == string(StateRunning) {
+		if err := recordInstanceRuntimeConfigReceipt(ctx, tx, p.InstanceID, p.WakeID, *p.Inputs); err != nil {
+			return Instance{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Instance{}, err
 	}

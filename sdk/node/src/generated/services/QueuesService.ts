@@ -654,23 +654,33 @@ export class QueuesService {
    * Returns the durable mappings between logical queues and worker/job
    * workloads. Bindings are the configuration source for push consumers
    * and queue-depth autoscaling; queue messages remain under /queues*.
+   * Active bindings are returned by default. Set include_retired=true to
+   * retrieve retained identities and retirement timestamps for reviewed recovery.
    *
    * @returns QueueBindingResponse Queue bindings.
    * @throws ApiError
    */
   public static listQueueBindings({
     slug,
+    includeRetired = false,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Include retained retired bindings belonging to this app.
+     */
+    includeRetired?: boolean,
   }): CancelablePromise<Array<QueueBindingResponse>> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/queue-bindings',
       path: {
         'slug': slug,
+      },
+      query: {
+        'include_retired': includeRetired,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

@@ -22,7 +22,7 @@ type cloneBindingTestStore interface {
 	CreateAPIKey(context.Context, string, []byte, string, []string) (state.APIKey, error)
 }
 
-// ADR-568: independent buckets and credential/access policies belong to the
+// ADR-569: independent buckets and credential/access policies belong to the
 // frozen catalogue even when no application secret refers to them.
 func TestMemCloneBindingCatalogueSurvivesSourceDeletion(t *testing.T) {
 	cloneBindingCatalogueSurvivesSourceDeletion(t, state.NewMemStore())
@@ -197,12 +197,12 @@ func cloneBindingCatalogueSurvivesSourceDeletion(t *testing.T, s cloneBindingTes
 	}
 }
 
-// ADR-568: unready standalone data resources cannot disappear from a full capture.
+// ADR-569: unready standalone data resources cannot disappear from a full capture.
 func TestMemCloneBindingCatalogueRejectsUnreadyBucket(t *testing.T) {
 	cloneBindingCatalogueRejectsUnreadyBucket(t, state.NewMemStore())
 }
 
-// ADR-568: six managed object envelopes must agree with the frozen compute
+// ADR-569: six managed object envelopes must agree with the frozen compute
 // binding; customer credentials do not substitute for this ownership proof.
 func TestMemCloneBindingCatalogueCapturesObjectComputeBinding(t *testing.T) {
 	cloneBindingCatalogueCapturesObjectComputeBinding(t, state.NewMemStore())
@@ -258,7 +258,7 @@ func cloneBindingCatalogueRejectsUnreadyBucket(t *testing.T, s cloneBindingTestS
 	}
 }
 
-// ADR-568: the separate PostgreSQL memory store is not an atomic binding
+// ADR-569: the separate PostgreSQL memory store is not an atomic binding
 // catalogue. A managed-secret ID alone cannot prove a complete source capture.
 func TestMemCloneBindingCatalogueRequiresPostgresCatalogue(t *testing.T) {
 	ctx := context.Background()

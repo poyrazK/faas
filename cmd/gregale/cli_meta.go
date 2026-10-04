@@ -604,6 +604,7 @@ var cliCommands = []cliCommand{
 			{Name: "source", Short: "event source", Value: "SOURCE"},
 			{Name: "time", Short: "event time", Value: "RFC3339"},
 			{Name: "queue-name", Short: "target logical queue name", Value: "QUEUE"},
+			{Name: "environment", Short: "registered project environment with an enabled queue binding", Value: "ENV"},
 			{Name: "work-policy", Short: "named work policy for an unnamed queue", Value: "NAME"},
 			{Name: "work-key", Short: "JSON scalar identifying related work", Value: "JSON"},
 			{Name: "work-fairness-key", Short: "JSON scalar shared by related work keys", Value: "JSON"},
@@ -2401,6 +2402,7 @@ var cliCommands = []cliCommand{
 			{Name: "send", Short: "Enqueue a wake request", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "payload", Short: "JSON payload (inline | @file | -)", Value: "J"},
 				{Name: "queue-name", Short: "logical queue name", Value: "QUEUE"},
+				{Name: "environment", Short: "registered project environment with an enabled queue binding", Value: "ENV"},
 				{Name: "work-policy", Short: "named work policy for an unnamed queue", Value: "NAME"},
 				{Name: "work-key", Short: "JSON scalar identifying related work", Value: "JSON"},
 				{Name: "work-fairness-key", Short: "JSON scalar shared by related work keys", Value: "JSON"},
@@ -2422,7 +2424,9 @@ var cliCommands = []cliCommand{
 				{Name: "force", Short: "replace an existing default binding on another queue"},
 			}},
 			{Name: "bindings", Short: "Manage queue bindings", Subcommands: []cliSub{
-				{Name: "list", Short: "List queue bindings", Positionals: []string{"<slug>"}},
+				{Name: "list", Short: "List app queue bindings", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+					{Name: "include-retired", Short: "include retained binding UUIDs for reviewed recovery"},
+				}},
 				{Name: "create", Short: "Bind the app to a queue", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 					{Name: "name", Short: "binding name", Value: "NAME", Req: true},
 					{Name: "queue-name", Short: "queue to bind", Value: "QUEUE", Req: true},
@@ -2436,7 +2440,7 @@ var cliCommands = []cliCommand{
 					{Name: "workload-class", Short: "consumer workload class", Value: "CLASS", ClosedSet: []string{"worker", "job", "http"}},
 					{Name: "max-concurrency", Short: "maximum concurrent deliveries", Value: "N"},
 				}},
-				{Name: "rm", Short: "Delete a queue binding", Positionals: []string{"<slug>", "<binding-id>"}},
+				{Name: "rm", Short: "Retire a queue binding", Positionals: []string{"<slug>", "<binding-id>"}},
 			}},
 		},
 	},
@@ -2589,6 +2593,22 @@ var cliCommands = []cliCommand{
 					{Name: "get", Short: "Read queue definitions and their workload revision as JSON", Positionals: []string{"<project>", "<stage>", "<workload>"}, Examples: []string{"gregale projects environments queues get shop staging shop-worker"}},
 					{Name: "set", Short: "Replace queue definitions from JSON containing expected_revision and bindings; [] removes all stage bindings", Positionals: []string{"<project>", "<stage>", "<workload>"}, Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "JSON queue configuration file (choose --file or --stdin)"}, {Name: "stdin", Short: "read JSON queue configuration from stdin"}}, Examples: []string{"gregale projects environments queues set shop staging shop-worker --file queues.json"}},
 				}},
+				{Name: "gitops", Short: "Review Git definitions, adopt owned fields, and inspect reconciliation (JSON output)", Subcommands: []cliSub{
+					{Name: "status", Short: "Inspect the source and recent reconciliation attempts"},
+					{Name: "bind", Short: "Bind the verified project repository to a definition", Flags: []cliFlag{
+						{Name: "manifest-path", Value: "PATH", Short: "Environment definition path in Git"},
+						{Name: "ref", Value: "REF", Short: "Git ref selecting revision candidates"},
+						{Name: "mode", Value: "MODE", Short: "report (default) or enforce"},
+						{Name: "prune", Short: "Allow removal of previously owned fields"},
+					}},
+					{Name: "review", Short: "Fetch an immutable commit and output a review receipt", Flags: []cliFlag{{Name: "commit", Value: "SHA", Short: "Exact lowercase GitHub commit SHA"}}},
+					{Name: "approve", Short: "Approve the digest and generation in a reviewed receipt", Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "Saved revision review JSON"}, {Name: "yes", Short: "Confirm approval of the reviewed bytes"}}},
+					{Name: "adoption-preview", Short: "Inspect ownership transfer without changing values"},
+					{Name: "adopt", Short: "Transfer ownership from a reviewed adoption plan", Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "Saved adoption plan JSON"}, {Name: "yes", Short: "Confirm the reviewed ownership transfer"}}},
+					{Name: "controls", Short: "Update fenced report/enforce, pruning, or suspension controls", Flags: []cliFlag{{Name: "generation", Value: "N", Short: "Current source generation"}, {Name: "mode", Value: "MODE", Short: "report or enforce"}, {Name: "prune", Short: "Set pruning (accepts =false)"}, {Name: "suspended", Short: "Set suspension (accepts =false)"}}},
+					{Name: "override", Short: "Permit an expiring edit to an owned field", Flags: []cliFlag{{Name: "resource", Value: "RESOURCE", Short: "Logical resource"}, {Name: "path", Value: "PATH", Short: "Owned field path"}, {Name: "reason", Value: "REASON", Short: "Reason for the temporary edit"}, {Name: "expires", Value: "RFC3339", Short: "Expiry within twenty-four hours"}}},
+					{Name: "remove-override", Short: "Revoke a field override", Flags: []cliFlag{{Name: "resource", Value: "RESOURCE", Short: "Logical resource"}, {Name: "path", Value: "PATH", Short: "Owned field path"}}},
+				}},
 				{Name: "diff", Short: "Compare environments"},
 				{Name: "preview", Short: "Plan a promotion", Flags: []cliFlag{
 					{Name: "from", Short: "source environment", Value: "ENV", Req: true},
@@ -2652,8 +2672,13 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "secrets",
 		DocSlug: "secrets",
-		Short:   "Manage env secrets (secrets list|set|unset|list-all|audit|rotate)",
+		Short:   "Manage sealed secrets and environment secret references",
 		Subcommands: []cliSub{
+			{Name: "refs", Short: "Manage destination-to-source names in a registered environment", Subcommands: []cliSub{
+				{Name: "list", Short: "List reference names and shared environment-key quota", Examples: []string{"gregale secrets refs list --app my-api --environment production"}, Flags: secretReferenceCLIFlags()},
+				{Name: "set", Short: "Select an existing scoped secret; respects Git field ownership", Examples: []string{"gregale secrets refs set --app my-api --environment production DATABASE_URL=secret:DATABASE_PRIMARY"}, Positionals: []string{"<KEY=secret:NAME>"}, Flags: secretReferenceCLIFlags()},
+				{Name: "unset", Short: "Suppress a primary workload secret destination and preserve the sealed source", Examples: []string{"gregale secrets refs unset --app my-api --environment production DATABASE_URL"}, Positionals: []string{"<KEY>"}, Flags: secretReferenceCLIFlags()},
+			}},
 			{Name: "list", Short: "List sealed secrets", Examples: []string{"gregale secrets list --app my-api", "gregale secrets list --app my-api --scope __all__", "gregale secrets list --app my-api --class ephemeral", "gregale secrets list --app my-api --older-than 90d"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Value: "slug", Req: true},
 				{Name: "scope", Short: "env scope filter (defaults to linked project environment)", Value: "SCOPE|__all__"},

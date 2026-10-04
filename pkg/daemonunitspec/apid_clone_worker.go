@@ -2,6 +2,7 @@ package daemonunitspec
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
@@ -12,7 +13,14 @@ import (
 // automatic activation. It opens no API, advisory, bridge or metrics socket.
 func UnitApidCloneWorker() daemonunit.Unit {
 	u := UnitApid()
-	u.Description = "Gregale private project-environment clone worker (ADR-568)"
+	var files []string
+	for _, path := range strings.Fields(u.EnvironmentFile) {
+		if strings.TrimPrefix(path, "-") != "/etc/faas/sealed.env" {
+			files = append(files, path)
+		}
+	}
+	u.EnvironmentFile = strings.Join(files, " ")
+	u.Description = "Gregale private project-environment clone worker (ADR-569)"
 	u.After = []string{"network.target", "postgresql.service", "faas-cp.slice", "faas-apid.service"}
 	u.Requires = []string{"postgresql.service"}
 	u.ExecStart = `/opt/faas/current/bin/apid --clone-worker --config /etc/faas/apid.toml`

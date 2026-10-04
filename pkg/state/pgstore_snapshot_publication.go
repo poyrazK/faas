@@ -65,16 +65,41 @@ func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapsh
 			return Snapshot{}, ErrSnapshotRuntimeStale
 		}
 	}
-	changedAt, err := q.ReadSnapshotPublicationConfigChange(ctx, tx, params.AppID)
-	if err != nil && !errors.Is(mapErr(err), ErrNotFound) {
+	changedAt, changed, err := readEnvironmentRuntimeChangedAt(ctx, tx, deployment.AppID, owner.Scope)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	inputs, haveReceipt, err := readInstanceRuntimeConfigReceipt(ctx, tx, sourceInstanceID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	required, err := q.RuntimeConfigReceiptRequired(ctx, tx, sqlc.RuntimeConfigReceiptRequiredParams{AppID: params.AppID, Scope: owner.Scope})
+	if err != nil {
 		return Snapshot{}, mapErr(err)
 	}
-	if err == nil && !sourceStartedAt.After(changedAt.Time) {
+	if haveReceipt {
+		fresh, err := readRuntimeConfigInputsFresh(ctx, tx, deployment.AppID, inputs)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		if inputs.Scope != normalizedDeploymentScope(owner.Scope) || !fresh {
+			return Snapshot{}, ErrSnapshotRuntimeStale
+		}
+	} else if required || changed && !sourceStartedAt.After(changedAt) {
 		return Snapshot{}, ErrSnapshotRuntimeStale
 	}
 	stored, err := createSnapshotWithQuerier(ctx, tx, snap)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	if haveReceipt {
+		variables, secrets, refs, sidecars := runtimeConfigInputsJSON(inputs)
+		if err := q.InsertSnapshotRuntimeConfigReceipt(ctx, tx, sqlc.InsertSnapshotRuntimeConfigReceiptParams{
+			SnapshotID: mustPgUUID(stored.ID), Scope: inputs.Scope, BoundaryAt: gitOpsTime(inputs.Boundary),
+			Variables: variables, SecretVersions: secrets, SecretRefs: refs, SidecarSecretVersions: sidecars, AllSecrets: inputs.AllSecrets,
+		}); err != nil {
+			return Snapshot{}, mapErr(err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Snapshot{}, err

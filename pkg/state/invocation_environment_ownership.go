@@ -19,6 +19,9 @@ func resolveInvocationEnvironmentAdmission(ctx context.Context, store interface 
 	invocationEnvironmentStore
 }, inv Invocation) (Invocation, invocationWorkEnvironment, error) {
 	info := invocationWorkEnvironment{}
+	if bound, err := validateBoundQueueEnvironment(ctx, store, inv, inv.DeploymentScope); bound || err != nil {
+		return inv, info, err
+	}
 	var headers map[string]string
 	if len(inv.Headers) > 0 && json.Unmarshal(inv.Headers, &headers) != nil {
 		return inv, info, ErrInvalidArgument
@@ -157,6 +160,13 @@ func lockInvocationEnvironmentClaimDB(ctx context.Context, db sqlc.DBTX, id stri
 	if owned, err := validateInvocationQueueClaimDB(ctx, db, id, true); owned || err != nil {
 		return err
 	}
+	bound, err := sqlc.New().ValidateBoundQueueInvocationClaim(ctx, db, mustPgUUID(id))
+	if err != nil {
+		return mapErr(err)
+	}
+	if bound {
+		return nil
+	}
 	valid, err := sqlc.New().ValidateInvocationEnvironmentClaim(ctx, db, mustPgUUID(id))
 	if err != nil {
 		return mapErr(err)
@@ -169,6 +179,9 @@ func lockInvocationEnvironmentClaimDB(ctx context.Context, db sqlc.DBTX, id stri
 
 func (m *MemStore) validateInvocationEnvironmentClaimLocked(inv Invocation) error {
 	if owned, err := m.validateInvocationQueueClaimLocked(inv, true); owned || err != nil {
+		return err
+	}
+	if owned, err := m.validateBoundQueueClaimLocked(inv); owned || err != nil {
 		return err
 	}
 	if inv.EnvironmentID == "" {

@@ -1,4 +1,4 @@
-// adr: 568
+// adr: 569
 package state
 
 import (
@@ -13,12 +13,22 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
-		"financial_budget_policies":   CloneSchemaConfiguration,
-		"financial_budget_revisions":  CloneSchemaConfiguration,
-		"financial_usage_evidence":    CloneSchemaIdentity,
-		"financial_price_snapshots":   CloneSchemaIdentity,
-		"financial_evidence_coverage": CloneSchemaOperational,
-		"financial_sampling_windows":  CloneSchemaOperational,
+		"app_environment_secret_refs":             CloneSchemaConfiguration,
+		"app_environment_secret_ref_suppressions": CloneSchemaConfiguration,
+		"app_environment_workload_intents":        CloneSchemaConfiguration,
+		"environment_git_sources":                 CloneSchemaConfiguration,
+		"environment_desired_revisions":           CloneSchemaConfiguration,
+		"environment_managed_fields":              CloneSchemaConfiguration,
+		"environment_management_overrides":        CloneSchemaConfiguration,
+		"environment_workload_graphs":             CloneSchemaConfiguration,
+		"instance_runtime_config_receipts":        CloneSchemaOperational,
+		"snapshot_runtime_config_receipts":        CloneSchemaOperational,
+		"financial_budget_policies":               CloneSchemaConfiguration,
+		"financial_budget_revisions":              CloneSchemaConfiguration,
+		"financial_usage_evidence":                CloneSchemaIdentity,
+		"financial_price_snapshots":               CloneSchemaIdentity,
+		"financial_evidence_coverage":             CloneSchemaOperational,
+		"financial_sampling_windows":              CloneSchemaOperational,
 
 		"object_bucket_encryption":                 CloneSchemaConfiguration,
 		"object_bucket_lifecycle":                  CloneSchemaConfiguration,

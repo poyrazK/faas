@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 568
+// adr: 569
 package state_test
 
 import (
@@ -105,7 +105,7 @@ func TestPgInvocationSQLCReadersRetainDurableMetadata(t *testing.T) {
 	assertMetadata(t, row)
 }
 
-// ADR-568: synthetic production batches have correlation IDs, not durable row
+// ADR-569: synthetic production batches have correlation IDs, not durable row
 // UUIDs. They cannot claim environment-owned or keyed admission identities.
 func TestPgInvocationVersionAcceptsSyntheticProductionBatchWithoutOwnedAdmission(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)

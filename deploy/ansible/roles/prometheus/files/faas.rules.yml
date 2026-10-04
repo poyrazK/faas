@@ -20,6 +20,65 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  # ADR-387: source discovery health is separate from approved-intent/runtime
+  # convergence. Counts come from one durable fleet observation per scrape;
+  # max avoids counting the same sources again on every apid replica.
+  - name: faas_environment_git_sources
+    interval: 30s
+    rules:
+      - alert: FaasEnvironmentGitSourcePollingStalled
+        expr: |
+          max by (job) (
+            apid_environment_git_sources{condition="poll_stale"}
+            and on (job, instance) (apid_environment_git_source_health_up == 1)
+            and on (job, instance) (apid_environment_git_source_polling_enabled == 1)
+          ) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: environment_git_sources
+          public_status: internal
+        annotations:
+          summary: "Environment Git source checks have stalled"
+          description: "At least one active environment has gone ten minutes without a completed Git check. Inspect the durable poll leases and apid polling configuration. The last approved definition remains authoritative."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEnvironmentGitSourceHealth.md"
+
+      - alert: FaasEnvironmentGitSourceVerificationStale
+        expr: |
+          max by (job) (
+            apid_environment_git_sources{condition="verification_stale"}
+            and on (job, instance) (apid_environment_git_source_health_up == 1)
+            and on (job, instance) (apid_environment_git_source_polling_enabled == 1)
+          ) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: environment_git_sources
+          public_status: internal
+        annotations:
+          summary: "Environment Git definitions cannot be verified"
+          description: "At least one active environment has gone ten minutes without successful Git definition verification. Check repository installation access, Git transport health, and definition validation. A recent failed check does not renew verification."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEnvironmentGitSourceHealth.md"
+
+      - alert: FaasEnvironmentGitSourceHealthUnavailable
+        expr: |
+          max by (job) (
+            (apid_environment_git_source_polling_enabled == 1)
+            unless on (job, instance) (apid_environment_git_source_health_up == 1)
+          ) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: environment_git_sources
+          public_status: internal
+        annotations:
+          summary: "Environment Git source health is unavailable"
+          description: "An apid replica configured for Git polling cannot read durable source health. Counts and ages are omitted when the bounded database query fails; check PostgreSQL reachability and the GitOps migrations before relying on source freshness."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEnvironmentGitSourceHealth.md"
+
   - name: faas_commit
     interval: 30s
     rules:
@@ -1253,6 +1312,28 @@ groups:
           summary: "Compute metrics discovery is filtering invalid targets for {{ $labels.job }}"
           description: "apid omitted one or more active compute registry rows from the {{ $labels.job }} HTTP-SD response because the gateway target or stable node name failed validation. Metrics coverage is partial; repair the registry row and verify the next refresh."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+
+  # ────────────────────────────────────────────────────────────────────
+  # Dead-man's switch. FaasWatchdog fires permanently; Alertmanager routes
+  # it to the faas-heartbeat receiver, which posts to an external monitor
+  # every am_heartbeat_interval. When the posts stop (control plane down,
+  # Prometheus or Alertmanager stopped, rule evaluation broken) the
+  # external monitor alerts. This is the external monitor the next group
+  # refers to.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_watchdog
+    rules:
+      - alert: FaasWatchdog
+        expr: vector(1)
+        labels:
+          severity: info
+          component: alertmanager
+          family: watchdog
+          public_status: internal
+        annotations:
+          summary: "Always firing: proves the alerting pipeline works end to end"
+          description: "This alert never resolves. Alertmanager posts it to the external heartbeat monitor; if the monitor stops receiving it, Prometheus, Alertmanager or the control plane is down."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWatchdog.md"
 
   # ────────────────────────────────────────────────────────────────────
   # Prometheus and Alertmanager control-plane health.

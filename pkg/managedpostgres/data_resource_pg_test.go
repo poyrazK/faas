@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 568
+// adr: 569
 package managedpostgres
 
 import (

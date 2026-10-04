@@ -634,11 +634,14 @@ const (
 	// gateway cannot load or compile the contract required by an enabled app.
 	CodeDeclaredRoutePolicyUnavailable  = "declared_route_policy_unavailable"
 	CodeValidation                      = "validation_failed"
-	CodeConflict                        = "conflict"
-	CodeFullEnvironmentCloneUnavailable = "environment_full_clone_unavailable"
-	CodeNoLiveDeployment                = "no_live_deployment"
 	CodeAppAdmissionUnavailable         = "app_admission_unavailable"
 	CodeDatabaseCutoverFenced           = "database_cutover_fenced"
+	CodeConflict                        = "conflict"
+	CodeFullEnvironmentCloneUnavailable = "environment_full_clone_unavailable"
+	// ADR-568: the original private VM attempt cannot yet acknowledge its
+	// ownership or complete physical retirement. Keep its reservation charged.
+	CodeEnvironmentQualificationUnconfirmed = "environment_qualification_unconfirmed"
+	CodeNoLiveDeployment                    = "no_live_deployment"
 	// CodeInternal is returned by handlers when an unexpected server-side
 	// failure surfaces to the caller (DB Tx commit, network blip, partial
 	// state). Distinct from CodeCapacity (503, "we ran out of headroom")
@@ -909,7 +912,7 @@ const (
 	CodeEnvVarNotFound      = "env_var_not_found"
 
 	// Customer env-var scopes (ADR-090). The scope query param on
-	// /v1/apps/{slug}/envs?scope= accepts a domain-valid slug (3..40
+	// /v1/apps/{slug}/envs?scope= accepts a domain-valid slug (1..40
 	// lowercase alnum + dash) OR the reserved sentinel "__all__" on
 	// the read path. Two distinct codes so a CLI author can tell
 	// "you used the all-scopes sentinel on a write" (400
@@ -1919,7 +1922,7 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeDatabaseCutoverFenced, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
+	case CodeDatabaseCutoverFenced, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,

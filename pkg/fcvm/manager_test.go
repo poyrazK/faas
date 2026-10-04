@@ -945,6 +945,10 @@ func newTestManager(run Runner, vmm VMM) *Manager {
 // real /sys/fs/cgroup via the same helper, because the jailer writes
 // there regardless of what cgroupRoot is set to in this package.
 func TestMain(m *testing.M) {
+	runNativeLaunchHelperFixture()
+	if os.Getenv("GREGALE_NATIVE_PRODUCER_FIXTURE") == "1" {
+		os.Exit(m.Run()) // The crash fixture does not touch cgroups.
+	}
 	dir, err := os.MkdirTemp("", "fcvm-cgroup-test-")
 	if err != nil {
 		panic(err)

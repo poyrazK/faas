@@ -241,17 +241,11 @@ test-state-coverage: ## Assert pkg/state coverage ≥ 70% (excluding generated p
 check-state-coverage: ## Assert exact pkg/state package coverage ≥ 70% from existing profile (default: coverage/cover.out) without re-running tests
 	@COVERFILE="$${COVERFILE:-$(COVERAGE_DIR)/cover.out}" ; \
 	test -f "$$COVERFILE" || (echo "Coverage file $$COVERFILE not found — run tests with -coverprofile first" ; exit 1) ; \
-	total=$$(awk '/^github\.com\/.*\/pkg\/state\// { \
-		split($$0, a, " "); n=split(a[1], b, ":"); file=b[1]; \
-		prefix="/pkg/state/"; path=substr(file, index(file, prefix)+length(prefix)); \
-		if (path ~ /\// || path == "") next; \
-		count=a[length(a)]+0; stmts=a[length(a)-1]+0; \
-		tot_stmts += stmts; \
-		if (count > 0) tot_hit += stmts; \
-	} END { if (tot_stmts > 0) printf "%.1f", tot_hit*100/tot_stmts; else print "0.0" }' "$$COVERFILE") ; \
-	awk -v t="$$total" 'BEGIN { exit (t+0 >= 70 ? 0 : 1) }' \
-		&& echo "pkg/state coverage: $$total% ✓ (target ≥ 70%, exact package only)" \
-		|| (echo "pkg/state coverage: $$total% ✗ (target ≥ 70%, exact package only)"; exit 1)
+	python3 .claude/ci/coverage_floor.py --state-only "$$COVERFILE"
+
+.PHONY: coverage-checker-test
+coverage-checker-test: ## Exercise coverage block union and exact-package gates without Go or Postgres
+	python3 -m unittest discover -s .claude/ci -p test_coverage_floor.py
 
 .PHONY: memstore-stubs-check
 memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tests vacuous (issue #1529 / PR-2b)
@@ -318,13 +312,12 @@ canary-alert-test: ## Exercise the synthetic-canary Alertmanager payload against
 	bash scripts/ops/canary_alert_test.sh
 
 # coverage-floor: assert per-package coverage ≥ floor for each ship-blocking
-# package. Floors live in the `floors` dict inside the python heredoc below
-# (no separate Make variable — keeping the table adjacent to the verifier
-# keeps edits atomic). Reads every coverage/cover-shard*.out the same way
-# check-state-coverage does. Excludes generated sqlc. Floors are 5pp below
-# the post-PR number; the floor is a fixed line the suite must stay above,
+# package. Floors live beside the verifier in .claude/ci/coverage_floor.py.
+# Reads every coverage/cover-shard*.out and unions repeated source blocks,
+# using the same parser as check-state-coverage. Excludes generated sqlc.
+# The floor is a fixed line the suite must stay above,
 # not a moving goalpost (mirrors codecov.yml project.default.target).
-# Wired into the matrix-expanded unit-tests-pg-2a/2b CI jobs (see ci.yml).
+# Wired into the state aggregate and remaining package CI jobs (see ci.yml).
 .PHONY: coverage-floor
 coverage-floor: ## Assert ship-blocking package floors across all coverage/cover-shard*.out
 	@bash -c 'set -e; COVERDIR="$${COVERDIR:-$(COVERAGE_DIR)}"; \
@@ -374,7 +367,7 @@ migrations-check: ## Static legacy-contiguity + timestamp-ID checks (no Postgres
 .PHONY: migration-new
 migration-new: ## Create timestamped migration: make migration-new NAME=add_job_priority
 	@test -n "$(NAME)" || (echo "NAME is required, e.g. make migration-new NAME=add_job_priority"; exit 1)
-	@$(GO) run ./cmd/migration-new -name "$(NAME)"
+	@$(GO) run ./cmd/migration-new -name "$(NAME)" $(if $(AFTER),-after "$(AFTER)")
 
 .PHONY: grafana-jq-check
 grafana-jq-check: ## Validate every Grafana dashboard JSON parses cleanly (jq -e .). PR #837 (ADR-091 Amendment 1, issue #561) wired this into `test`.
@@ -399,6 +392,11 @@ grafana-mirror-check: ## SHA-256 byte-identity check for deploy/grafana/ → dep
 .PHONY: prometheus-alert-metadata-check
 prometheus-alert-metadata-check: ## Assert every checked-in Prometheus alert has a family label and an existing runbook.
 	bash scripts/ci/check_prometheus_alert_metadata.sh $(CURDIR)
+
+.PHONY: alertmanager-config-check
+alertmanager-config-check: ## Render alertmanager.yml for every delivery shape; amtool must parse it and route page/warn/watchdog as the role promises (AMTOOL= to skip the pinned download)
+	bash scripts/ci/check_alertmanager_config.sh $(CURDIR)
+	promtool test rules pkg/promqlrules/testdata/watchdog.test.yml
 
 .PHONY: verify-secrets
 verify-secrets: ## PR-P4: assert /etc/faas/sealed.env (or the file passed via SECRETS_FILE) is shaped correctly. CI runs this on every PR.
@@ -1380,6 +1378,37 @@ test-flags-metal: ## Validate Node Flags refresh after native VM restore (root, 
 	@cd sdk/node && npm ci --ignore-scripts --no-audit --no-fund && npm run build
 	@RUN_REGEX='^TestFeatureFlagsNativeParkRestoreMetal$$' $(MAKE) test-metal PKGS=./cmd/e2e/...
 
+.PHONY: test-environment-gitops-core
+test-environment-gitops-core: ## Strict contract, planner, worker, and real PostgreSQL lease/revision acceptance (no KVM).
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL is required; GitOps core acceptance refuses a skipped PostgreSQL run"; exit 1)
+	@GREGALE_GITOPS_ACCEPTANCE=1 $(GO) test -p 1 ./pkg/environmentsync/... ./pkg/environmentgitops ./pkg/gregalemanifest -count=1
+
+.PHONY: test-environment-gitops-controls
+test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashboard review workflows and SDK contracts; does not replace native runtime acceptance.
+	@$(GO) test -p 1 ./cmd/apid ./cmd/gregale ./pkg/dashboard -run '^(TestEnvironmentGit(Ops.*|Source(Polling|Metrics).*)|TestStubGithubdProtectedBranchEvidenceCannotQualify|TestSpecCompliance)$$' -count=1
+	@$(GO) test -p 1 ./pkg/gitapproval ./pkg/githubd ./pkg/githubdgrpc -run '^Test(HTTP(ProtectedBranch|ReviewedMerge)Evidence.*|(ProtectedBranch|ReviewedMerge)Evidence.*|ServerSplitBoxListenerPreservesLocalSocketAndRestrictsRemoteMethods)$$' -count=1
+	@$(GO) test -p 1 ./pkg/promqlrules -run '^TestEnvironmentGitSourceAlertsStayInternal$$' -count=1
+	@promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
+	@promtool test rules pkg/promqlrules/testdata/environment_git_sources.test.yml
+	@$(GO) test -p 1 ./pkg/state -run '^TestPgStoreEdgeRule(Batch|MutationLock)' -count=1
+	@$(GO) test -p 1 ./pkg/state -run '^Test(Mem|Pg)StoreConformance$$/^(runtime_input_receipt.*|scoped_runtime_changes.*|snapshot_publication_fences_runtime_config_changes|invocation_environment.*|keyed_invocation_environment.*|queue_batch_admission.*|queue_demand_uses_captured_environment|worker_pool_history_is_generation_scoped|worker_account_capacity_is_shared_and_released|worker_admission_identity_cannot_be_reinterpreted|queue_binding_consumer_publication_is_atomic|queue_binding_environment_identity_is_scoped_and_retained|queue_binding_retirement_holds_work_and_retains_receipts|queue_binding_identity_survives_rename_replacement_and_replay|queue_dead_letter_replay_rearms_original_receipt|queue_consumer_and_trigger_share_account_quota)$$' -count=1
+	@$(GO) test -p 1 ./pkg/state -run '^(TestPgQueue(Consumer.*|Replay.*|Binding(Retirement|Admission).*)|TestPgWorkerAccountReservationRace)$$' -count=1
+	@$(GO) test -p 1 ./cmd/apid -run '^(TestHTTPFunctionPushQueueBinding|TestQueueBinding.*|TestConfigureQueueWorkload.*|TestQueueEnvironmentHTTP.*|TestPGQueueEnvironmentHTTP.*)$$' -count=1
+	@$(GO) test -p 1 ./migrations -run '^(TestMigration(EnvironmentGitOpsQueueIntent|InvocationDeploymentScope|InvocationQueueBindingIdentity|QueueBindingEnvironmentScope|QueueReplayDeliveryFence|QueueConsumerBindingIdentity).*|TestEnvironmentGitOpsMigrationsReplayRetainsIdentityAndLeases|TestEnvironmentGitApprovalProvenance.*)$$' -count=1
+	@$(GO) test -p 1 ./pkg/state -run '^(TestPg_InvocationScope.*|TestResolveInvocationVersionUsesCapturedProjectScope)$$' -count=1
+	@$(GO) test -p 1 ./pkg/sched -run '^(TestDrain_StoredScope.*|TestWakeCoord_Scope.*|TestEnsureWake_SeparateScopes.*|TestLedgerRolloutScope.*|TestEngineSeedLedgerPreservesDeploymentScope)$$' -count=1
+	@$(GO) test -p 1 ./pkg/sched -run '^(TestWorkerScoped.*|TestWorkerAccountCapacityPrecedesVMAdmissionAndPrime)$$' -count=1
+	@$(GO) test -p 1 ./pkg/sched/targets ./cmd/schedd -run '^(TestTrigger_ReconcilesScopedWorkerPools|TestQueueDemandAggregatesSameNameAcrossEnvironmentBindings)$$' -count=1
+	@$(GO) test -p 1 ./pkg/sched -run '^(TestQueuePollerLinksTriggerAndInvocationOutcomes|TestQueuePollerRequiresAuthoritativeBindingIdentity|TestQueuePollerBindingIdentitySurvivesRename|TestQueuePollerEnvironmentIdentity.*|TestQueueReplay.*|TestNamedQueuePollerSharesWorkReservationsAndFencesAcknowledgement|TestBuildDispatchEnvelope_DurableIdentityIsTyped|TestQueueBatchDispatchPreservesCapturedScopes)$$' -count=1
+	@$(GO) test -p 1 ./pkg/gateway -run '^TestHandleInvocationDispatchBatch_DurableIdentity$$' -count=1
+	@$(GO) test -p 1 ./cmd/gatewayd-internal -run '^(TestSynthAdapterStoredScope.*|TestSynthAdapterPlatformTenant.*|TestSynthBatch.*)$$' -count=1
+	@$(GO) test -p 1 ./cmd/apid -run '^TestReplayInvocation_(PreservesCapturedEnvironment|BoundQueueRetainsDeliveryIdentity)$$' -count=1
+	@$(GO) test -p 1 ./pkg/state/conformance -run '^TestConformanceCoverage$$' -count=1
+	@$(GO) test -p 1 ./pkg/sched -run '^(TestRefreshRuntimeConfig.*|TestRuntimeConfig.*)$$' -count=1
+	@$(GO) test -p 1 ./pkg/vmmdgrpc -run '^TestMigrationAdoptionAcknowledges.*$$' -count=1
+	@cd sdk/go && $(GO) test -p 1 ./... -run '^TestEnvironmentGitOps' -count=1
+	@cd sdk/node && npm run test:build && node --test --test-concurrency=1 dist-test/test/environment-gitops.test.js dist-test/test/queue-batch-identity.test.js dist-test/test/queue-consumer-ownership.test.js
+	@cd sdk/python && python3 -m pytest tests/test_environment_gitops.py tests/test_queue_batch_identity.py tests/test_queue_consumer_ownership.py -q
 .PHONY: test-issues
 test-issues: ## Real PostgreSQL and SDK process acceptance for Gregale Issues
 	@bash scripts/test-issues.sh

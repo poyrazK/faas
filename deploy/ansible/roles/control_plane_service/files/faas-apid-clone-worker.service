@@ -1,5 +1,5 @@
 [Unit]
-Description=Gregale private project-environment clone worker (ADR-568)
+Description=Gregale private project-environment clone worker (ADR-569)
 Documentation=https://gregale.dev/docs/ops/apid
 After=network.target postgresql.service faas-cp.slice faas-apid.service
 Wants=faas-cp.slice
@@ -22,7 +22,6 @@ CPUQuota=100%
 TasksMax=64
 CapabilityBoundingSet=
 AmbientCapabilities=
-EnvironmentFile=/etc/faas/sealed.env
 EnvironmentFile=-/etc/faas/storage.env
 EnvironmentFile=-/etc/faas/otel.env
 Environment=FAAS_APID_ROLE=control-plane

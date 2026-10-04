@@ -14,13 +14,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
-func nullableWorkSequence(sequence int64) any {
-	if sequence == 0 {
-		return nil
-	}
-	return sequence
-}
-
 func nullableWorkFairnessLimit(limit int) any {
 	if limit == 0 {
 		return nil
@@ -205,7 +198,8 @@ func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, po
 	existing, err := scanInvocation(tx.QueryRow(ctx, `select `+invocationSelectCols+` from invocations where id = $1`, inv.ID))
 	if err == nil {
 		if existing.AppID != inv.AppID || existing.PlatformTenantID != inv.PlatformTenantID || existing.WorkPolicyName != policy.Name ||
-			!bytes.Equal(existing.WorkKeyDigest, digest[:]) {
+			!bytes.Equal(existing.WorkKeyDigest, digest[:]) || inv.DeploymentScope != "" && existing.DeploymentScope != inv.DeploymentScope ||
+			inv.QueueBindingID != "" && canonicalMemUUID(existing.QueueBindingID) != canonicalMemUUID(inv.QueueBindingID) {
 			return Invocation{}, ErrConflict
 		}
 		if err := validateWorkEnvironmentReplayDB(ctx, tx, environment, existing); err != nil {
@@ -382,6 +376,7 @@ func lockFairnessClaimTx(ctx context.Context, tx pgx.Tx, appID, policyName strin
 }
 
 func (m *MemStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error) {
+	requestedScope := inv.DeploymentScope
 	inv, environment, err := resolveKeyedInvocationEnvironment(ctx, m, inv, policy)
 	if err != nil {
 		return Invocation{}, err
@@ -402,6 +397,11 @@ func (m *MemStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, p
 	if _, ok := m.apps[inv.AppID]; !ok {
 		return Invocation{}, fmt.Errorf("state: invocation for unknown app %q", inv.AppID)
 	}
+	scope, err := invocationDeploymentScope(m.apps[inv.AppID], inv.DeploymentScope)
+	if err != nil {
+		return Invocation{}, err
+	}
+	inv.DeploymentScope = scope
 	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
 		return Invocation{}, err
 	}
@@ -416,13 +416,18 @@ func (m *MemStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, p
 	}
 	if existing, ok := m.invocations[inv.ID]; ok {
 		if existing.AppID != inv.AppID || existing.PlatformTenantID != inv.PlatformTenantID || existing.WorkPolicyName != policy.Name ||
-			!bytes.Equal(existing.WorkKeyDigest, digest[:]) {
+			!bytes.Equal(existing.WorkKeyDigest, digest[:]) || requestedScope != "" && existing.DeploymentScope != requestedScope ||
+			inv.QueueBindingID != "" && canonicalMemUUID(existing.QueueBindingID) != canonicalMemUUID(inv.QueueBindingID) {
 			return Invocation{}, ErrConflict
 		}
 		if err := m.validateWorkEnvironmentReplayLocked(environment, existing); err != nil {
 			return Invocation{}, err
 		}
 		return cloneInvocationWorkEnvelope(existing), nil
+	}
+	inv.WorkPolicyName = policy.Name
+	if err := m.captureInvocationQueueBindingLocked(&inv); err != nil {
+		return Invocation{}, err
 	}
 	now := time.Now().UTC()
 	inv.WorkPolicyName = policy.Name
@@ -456,6 +461,7 @@ func (m *MemStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, p
 	if inv.WorkSequence == 0 {
 		inv.WorkSequence = 1
 	}
+	inv.ReplayGeneration = 0
 	m.invocations[inv.ID] = cloneInvocationWorkEnvelope(inv)
 	if environment.environment.ID != "" {
 		m.invocationWorkEnvironmentAdmissions[inv.ID] = environment.admission(inv)

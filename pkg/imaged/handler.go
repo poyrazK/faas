@@ -1435,10 +1435,19 @@ func isDeploymentIDSafe(id string) bool {
 // worker passes it through to its retry path.
 func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) error {
 	switch n.Channel {
-	case db.NotifyDeploymentChanged:
+	case db.NotifyDeploymentChanged, db.NotifyEnvironmentWorkloadImage:
 		var p deploymentChangedPayload
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
-			return fmt.Errorf("decode deployment_changed payload: %w", err)
+			return fmt.Errorf("decode %s payload: %w", n.Channel, err)
+		}
+		if n.Channel == db.NotifyEnvironmentWorkloadImage {
+			dep, err := h.store.DeploymentByID(ctx, p.To)
+			if err != nil {
+				return err
+			}
+			if !dep.EnvironmentWorkloadHeld() || dep.AppID != p.AppID || dep.Kind != state.DeploymentKindImage || p.Kind != "image" {
+				return state.ErrInvalidArgument
+			}
 		}
 		// This event exists only to refresh gateway routing before the public
 		// smoke. Re-entering the image pipeline would create a self-notify loop.
@@ -1824,6 +1833,10 @@ func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChange
 	if err != nil {
 		return fmt.Errorf("imaged: load app: %w", err)
 	}
+	app, err = state.AppForDeploymentRuntime(app, dep)
+	if err != nil {
+		return err
+	}
 	acct, err := h.store.AccountByID(ctx, app.AccountID)
 	if err != nil {
 		return fmt.Errorf("imaged: load account: %w", err)
@@ -1915,6 +1928,11 @@ func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChange
 // deployment cannot silently skip its declared command. Deployments without
 // release intent keep the historical zero-query fast path.
 func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep state.Deployment) error {
+	if dep.EnvironmentWorkloadHeld() {
+		// Artifact assembly does not authorize a customer process, release
+		// command, queue consumer or serving deployment to execute.
+		return nil
+	}
 	if len(dep.ReleaseCommand) > 0 {
 		if !h.releasePhaseEnabled {
 			return h.failReleasePhaseUnavailable(ctx, dep)
@@ -2162,6 +2180,11 @@ func (h *Handler) markRegistryCredentialUsed(ctx context.Context, app state.App,
 // to docker.io/library/sha256:... and dials the wrong host for non-Docker
 // deploys (issue #53 / M5 acceptance on Lima).
 func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
+	var frozenErr error
+	app, frozenErr = state.AppForDeploymentRuntime(app, dep)
+	if frozenErr != nil {
+		return frozenErr
+	}
 	ref := dep.ImageDigest
 
 	// Issue #461 / ADR-062: resolve the per-app private-registry Basic
@@ -2239,7 +2262,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		return fmt.Errorf("imaged: pull image config: %w", err)
 	}
 
-	manifest, err := manifestFromImageConfigWithApp(imageCfg, app)
+	manifest, err := manifestFromImageConfigWithDeployment(imageCfg, app, dep)
 	if err != nil {
 		// Image declares neither Entrypoint nor Cmd — oci.ManifestFromConfig
 		// already wrapped it with ErrImageManifestInvalid; mark the deploy
@@ -2263,6 +2286,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
 	manifest = applyAppLifecycle(manifest, app)
+	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
+	if err != nil {
+		return fmt.Errorf("imaged: scoped runtime: %w", err)
+	}
 	if err := manifest.Validate(); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest invalid")
 		return fmt.Errorf("imaged: validate manifest: %w", err)
@@ -2714,6 +2741,11 @@ func (h *Handler) sidecarWorkloadManifest(sc api.Sidecar, cfg oci.ImageConfig) (
 // path is empty — silent omission meant production function deploys were
 // shipping a layer without /usr/local/bin/faas-runner (M8 readiness).
 func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
+	var frozenErr error
+	app, frozenErr = state.AppForDeploymentRuntime(app, dep)
+	if frozenErr != nil {
+		return frozenErr
+	}
 	// Stage ownership lives in handleDeployment (for direct image/function
 	// deploys) and handleSnapshotBoot (for builderd handoffs). Direct unit
 	// callers and legacy producers may still enter here before that boundary,
@@ -2849,6 +2881,10 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
 	manifest = applyAppLifecycle(manifest, app)
+	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
+	if err != nil {
+		return fmt.Errorf("imaged: scoped runtime: %w", err)
+	}
 	if err := manifest.Validate(); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest invalid")
 		return fmt.Errorf("imaged: validate manifest: %w", err)
@@ -3174,6 +3210,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		// artifacts while discarding an unused modern capture.
 		h.log.Info("imaged: snapshot publication skipped for inactive deployment", "deployment_id", dep.ID, "status", dep.Status)
 		return h.discardStaleSnapshotCapture(ctx, state.Snapshot{DeploymentID: dep.ID, StorageKey: snapshot.StorageKey, Tier: snapshot.Tier})
+	}
+	if dep.EnvironmentWorkloadHeld() {
+		return fmt.Errorf("imaged: %w: environment workload graph is not qualified", state.ErrInvalidArgument)
 	}
 	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
@@ -3741,6 +3780,10 @@ func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPa
 	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: load app: %w", err)
+	}
+	app, err = state.AppForDeploymentRuntime(app, dep)
+	if err != nil {
+		return err
 	}
 	acct, err := h.store.AccountByID(ctx, app.AccountID)
 	if err != nil {

@@ -1,8 +1,9 @@
-// adr: 568
+// adr: 569
 package sched
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -116,7 +117,7 @@ func TestQueuePollerCannotClaimOrAcknowledgeStageWork(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, action := range []string{"ack", "retry", "dead_letter", "partial_release"} {
-				poller.itemsInFlight[running.ID] = before.Attempts
+				poller.itemsInFlight[running.ID] = queueDeliveryClaim{Attempt: before.Attempts, ReplayGeneration: before.ReplayGeneration}
 				switch action {
 				case "ack":
 					err = poller.Ack(ctx, trigger, []string{running.ID})
@@ -125,9 +126,9 @@ func TestQueuePollerCannotClaimOrAcknowledgeStageWork(t *testing.T) {
 				case "dead_letter":
 					err = poller.Nack(ctx, trigger, []string{running.ID}, triggerReasonPoisonRecord)
 				case "partial_release":
-					err = poller.releaseNamedClaims(ctx, map[string]int{running.ID: before.Attempts}, trigger)
+					err = poller.releaseNamedClaims(ctx, map[string]queueDeliveryClaim{running.ID: {Attempt: before.Attempts, ReplayGeneration: before.ReplayGeneration}}, trigger)
 				}
-				if err != nil {
+				if err != nil && !errors.Is(err, state.ErrConflict) {
 					t.Fatalf("%s: %v", action, err)
 				}
 				if after, err := store.InvocationByID(ctx, running.ID); err != nil || !reflect.DeepEqual(before, after) {

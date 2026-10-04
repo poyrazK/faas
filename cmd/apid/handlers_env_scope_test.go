@@ -233,6 +233,31 @@ func TestEnv_ScopeAllSentinel_RejectedOnWrite(t *testing.T) {
 	}
 }
 
+func TestEnvCatalogScopeNamesAndAllSentinel(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := createApp(t, e, "catalog-scope-vars")
+	scopes := []string{"a", "1", "qa", "12", "1a", strings.Repeat("a", 33), strings.Repeat("b", 40)}
+	for _, scope := range scopes {
+		rec := e.do(t, http.MethodPut, "/v1/apps/"+app.Slug+"/env/MODE?scope="+scope, api.PutAppEnvRequest{Value: scope}, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("catalog scope write %s: %d %s", scope, rec.Code, rec.Body.String())
+		}
+	}
+	rec := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/env?scope=__all__", nil, nil)
+	var response api.AppEnvListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("all scopes: %d %v", rec.Code, err)
+	}
+	for _, scope := range scopes {
+		if rows := response.EnvByScope[scope]; len(rows) != 1 || rows[0].Scope != scope {
+			t.Fatalf("scope %s was merged or omitted: %+v", scope, rows)
+		}
+	}
+	if _, exists := response.EnvByScope["default"]; exists {
+		t.Fatal("explicit catalog writes fell back to default")
+	}
+}
+
 // TestEnv_ScopeMalformed_400 exercises the regex failure modes.
 // Empty, too long, leading dash, trailing dash, uppercase, and
 // underscores all return 400 env_scope_invalid. A future
@@ -244,7 +269,7 @@ func TestEnv_ScopeMalformed_400(t *testing.T) {
 
 	cases := []struct{ name, scope string }{
 		{"empty", ""},
-		{"too_short_2chars", "ab"},
+		{"dash_only", "-"},
 		{"leading_dash", "-foo"},
 		{"trailing_dash", "foo-"},
 		{"uppercase", "Staging"},

@@ -16,6 +16,7 @@ type RuntimeInstancePublication struct {
 	GuestUID                                     int
 	Fence                                        RuntimeAppSecretFence
 	ConfigFence                                  RuntimeAppConfigFence
+	Inputs                                       *RuntimeConfigInputs
 }
 
 type RuntimeInstancePublicationStore interface {
@@ -27,6 +28,14 @@ func validateRuntimeInstancePublication(p RuntimeInstancePublication) error {
 	if p.Fence.empty() || !validRuntimeAppSecretFence(p.Fence) || !validRuntimeAppConfigFence(p.ConfigFence) || p.Netns == "" || p.GuestUID <= 0 ||
 		!validRuntimePublicationTransition(p.ExpectedState, p.targetState()) {
 		return ErrInvalidArgument
+	}
+	if p.Inputs != nil {
+		if err := validateRuntimeConfigInputs(*p.Inputs); err != nil {
+			return err
+		}
+		if p.Inputs.Scope != normalizedDeploymentScope(p.Fence.Scope) {
+			return ErrConflict
+		}
 	}
 	for _, value := range []string{p.AccountID, p.AppID, p.InstanceID, p.NodeID, p.WakeID} {
 		if id, err := uuid.Parse(value); err != nil || id == uuid.Nil {

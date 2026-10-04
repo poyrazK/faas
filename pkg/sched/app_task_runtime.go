@@ -117,7 +117,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		return ResolvedAppTaskRuntime{}, errors.New("sched: app task runtime projection is incomplete")
 	}
 	if err := e.ledger.Admit(Request{
-		Instance: request.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: acct.Plan,
+		Instance: request.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
 		MaxConcurrency: app.MaxConcurrency, Kind: KindAppTask, NodeID: placement.NodeID,
 		NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget,

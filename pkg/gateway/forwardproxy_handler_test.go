@@ -71,6 +71,18 @@ type stubVmmdClient struct {
 	rawStream grpc.BidiStreamingClient[vmmdpb.ForwardRawRequest, vmmdpb.ForwardRawResponse]
 }
 
+func (s *stubVmmdClient) CreateEnvironmentQualification(context.Context, *vmmdpb.CreateEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.CreateEnvironmentQualificationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub cannot qualify workloads")
+}
+
+func (s *stubVmmdClient) RetireEnvironmentQualification(context.Context, *vmmdpb.RetireEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.RetireEnvironmentQualificationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub cannot qualify workloads")
+}
+
+func (s *stubVmmdClient) CaptureEnvironmentQualification(context.Context, *vmmdpb.CaptureEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.CaptureEnvironmentQualificationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub cannot qualify workloads")
+}
+
 func (s *stubVmmdClient) ForwardHTTPStream(ctx context.Context, _ ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ForwardHTTPStreamRequest, vmmdpb.ForwardHTTPStreamResponse], error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

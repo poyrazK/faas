@@ -15,6 +15,12 @@ func (m *MemStore) PublishOwnedInstanceRuntime(_ context.Context, p RuntimeInsta
 		return Instance{}, err
 	}
 	instance := m.instances[p.InstanceID]
+	if err := validateWorkerInstanceMutation(instance, p.targetState(), instance.Mode); err != nil {
+		return Instance{}, err
+	}
+	if err := m.requireInstanceLayerArtifactsLocked(instance.DeploymentID, p.targetState()); err != nil {
+		return Instance{}, err
+	}
 	if instance.State != p.ExpectedState || instance.WakeID != p.WakeID || instance.NodeID != p.NodeID {
 		return Instance{}, ErrConflict
 	}
@@ -32,12 +38,19 @@ func (m *MemStore) PublishOwnedInstanceRuntime(_ context.Context, p RuntimeInsta
 			return Instance{}, ErrConflict
 		}
 	}
+	prior := instance
 	instance.Netns, instance.HostIP, instance.GuestUID = p.Netns, p.HostIP, p.GuestUID
 	instance.StartedAt, instance.State = time.Now().UTC(), p.targetState()
 	if err := m.exclusiveRuntimeTransitionLocked(m.instances[p.InstanceID], instance); err != nil {
 		return Instance{}, err
 	}
 	m.instances[p.InstanceID] = instance
+	if p.Inputs != nil && p.targetState() == string(StateRunning) {
+		if err := m.recordInstanceRuntimeConfigReceiptLocked(p.InstanceID, p.WakeID, *p.Inputs); err != nil {
+			m.instances[p.InstanceID] = prior
+			return Instance{}, err
+		}
+	}
 	m.runtimeInstanceConfigProofs[p.InstanceID] = runtimeInstanceConfigProof{WakeID: p.WakeID, NodeID: p.NodeID, Fence: p.ConfigFence}
 	return instance, nil
 }

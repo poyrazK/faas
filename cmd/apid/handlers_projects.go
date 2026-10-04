@@ -329,7 +329,8 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		"environment_id": environment.ID, "environment_slug": environment.Slug,
 		"protected": environment.Protected, "cloned_from": req.FromEnvironment,
 		"variables_copied": clone.VariablesCopied, "secrets_copied": clone.SecretsCopied,
-		"bindings_copied": clone.BindingsCopied, "routes_copied": clone.RoutesCopied, "policies_copied": clone.PoliciesCopied,
+		"secret_references_copied": clone.SecretReferencesCopied,
+		"bindings_copied":          clone.BindingsCopied, "routes_copied": clone.RoutesCopied, "policies_copied": clone.PoliciesCopied,
 	})
 	response := projectEnvironmentResponse(environment)
 	if req.FromEnvironment != "" {
@@ -343,7 +344,8 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		response.Clone = &api.ProjectEnvironmentCloneResponse{
 			ConfigurationCopied: clone.ConfigurationCopied, VariablesCopied: clone.VariablesCopied,
 			SecretsCopied: clone.SecretsCopied, WorkloadsCopied: clone.WorkloadsCopied,
-			BindingsCopied: clone.BindingsCopied, RoutesCopied: clone.RoutesCopied, PoliciesCopied: clone.PoliciesCopied, SharedResources: sharedResources,
+			SecretReferencesCopied: clone.SecretReferencesCopied,
+			BindingsCopied:         clone.BindingsCopied, RoutesCopied: clone.RoutesCopied, PoliciesCopied: clone.PoliciesCopied, SharedResources: sharedResources,
 		}
 	}
 	writeJSON(w, http.StatusCreated, response)

@@ -338,13 +338,14 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
 		return
 	}
-	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.FlagContext, req.QueueName, req.RetryPolicy, req.Work)
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.FlagContext, req.QueueName, req.Environment, req.RetryPolicy, req.Work)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
 	setInvocationVersionResponseHeaders(w, inv)
 	writeJSON(w, http.StatusCreated, api.QueueSendResponse{
+		Environment: inv.DeploymentScope, QueueBindingID: inv.QueueBindingID,
 		ID:      inv.ID,
 		TraceID: traceID,
 	})
@@ -375,13 +376,14 @@ func (s *server) sendAppMessage(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, problem)
 		return
 	}
-	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, payload, req.FlagContext, req.QueueName, req.RetryPolicy, req.Work)
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, payload, req.FlagContext, req.QueueName, req.Environment, req.RetryPolicy, req.Work)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
 	setInvocationVersionResponseHeaders(w, inv)
 	writeJSON(w, http.StatusAccepted, api.SendAppMessageResponse{
+		Environment: inv.DeploymentScope, QueueBindingID: inv.QueueBindingID,
 		ID:        inv.ID,
 		EventID:   envelope.ID,
 		TargetApp: app.Slug,
@@ -420,10 +422,17 @@ func normalizeAppMessage(acct state.Account, req api.SendAppMessageRequest) (eve
 	return envelope, payload, nil
 }
 
-func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Header, acct state.Account, app state.App, payload json.RawMessage, rawFlagContext, queueName string, retryPolicy *api.RetryPolicyDTO, work *api.InvokeWork) (state.Invocation, string, *api.Problem) {
+func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Header, acct state.Account, app state.App, payload json.RawMessage, rawFlagContext, queueName, environment string, retryPolicy *api.RetryPolicyDTO, work *api.InvokeWork) (state.Invocation, string, *api.Problem) {
 	limits := api.MustLimitsFor(acct.Plan)
 	if limits.MaxQueueDepth == 0 {
 		return state.Invocation{}, "", api.ErrPlanFeatureGated("queues", acct.Plan)
+	}
+	selection, problem := s.resolveQueueSendSelection(ctx, acct, app, queueName, environment)
+	if problem != nil {
+		return state.Invocation{}, "", problem
+	}
+	if work != nil && selection.Binding != nil && selection.Binding.DeploymentScope != "" {
+		return state.Invocation{}, "", api.NewProblem(http.StatusConflict, "queue_environment_work_policy_unavailable", "Scoped work policy unavailable", "application-shared work policies cannot manage an environment-owned queue")
 	}
 	n, err := s.store.CountPendingInvocations(ctx, app.ID, state.InvocationQueue)
 	if err != nil {
@@ -445,34 +454,11 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 	if problem != nil {
 		return state.Invocation{}, "", problem
 	}
-	resolvedQueueName, problem := s.resolveQueueSendName(ctx, acct, app, queueName)
-	if problem != nil {
-		return state.Invocation{}, "", problem
-	}
-	if work != nil && resolvedQueueName != "" {
+	if work != nil && selection.Name != "" {
 		// A named keyed row is owned by the queue trigger poller. Require an
 		// enabled push consumer so it cannot be accepted into an arbitrary name
 		// that the generic invocation drain deliberately excludes.
-		bound := false
-		bindings, err := s.store.ListQueueBindingsForApp(ctx, acct.ID, app.ID)
-		if err != nil {
-			return state.Invocation{}, "", api.ErrCapacity("look up queue binding")
-		}
-		for _, binding := range bindings {
-			bound = bound || (binding.Enabled && binding.Mode == "push" && binding.QueueName == resolvedQueueName)
-		}
-		if !bound {
-			triggers, err := s.store.ListTriggersForApp(ctx, app.ID)
-			if err != nil {
-				return state.Invocation{}, "", api.ErrCapacity("look up queue consumer")
-			}
-			for _, trigger := range triggers {
-				bound = bound || (trigger.Enabled && trigger.Kind == string(api.TriggerKindQueue) &&
-					trigger.Source.Valid && trigger.Source.String == string(state.InvocationQueue) &&
-					trigger.Slug == resolvedQueueName)
-			}
-		}
-		if !bound {
+		if !selection.CanPush {
 			return state.Invocation{}, "", api.ErrValidation("named keyed queue requires an enabled push consumer")
 		}
 	}
@@ -494,12 +480,17 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 			return state.Invocation{}, "", api.ErrCapacity("encode queue flag context")
 		}
 	}
+	bindingID := ""
+	if selection.Binding != nil {
+		bindingID = selection.Binding.ID
+	}
 	inv, versionProblem := s.enqueueVersionedInvocation(ctx, requestHeaders, state.Invocation{
+		DeploymentScope: selection.Scope, QueueBindingID: bindingID,
 		AppID:            app.ID,
 		AccountID:        acct.ID,
 		PlatformTenantID: platformTenantID,
 		Source:           state.InvocationQueue,
-		QueueName:        resolvedQueueName,
+		QueueName:        selection.Name,
 		Payload:          payload,
 		Headers:          traceHeaders,
 		DueAt:            time.Now().UTC(),
@@ -654,84 +645,6 @@ func (s *server) queueAck(w http.ResponseWriter, r *http.Request, acct state.Acc
 type queueSendRequest = api.QueueSendRequest
 
 type delayedTaskRequest = api.DelayedTaskRequest
-
-// resolveQueueSendName keeps the legacy single per-app queue ergonomic while
-// making named queues deterministic once an app has more than one binding.
-// An explicit queue_name is always preferred; an omitted name adopts the
-// only active binding/trigger when there is one, otherwise it retains the
-// legacy empty queue name.
-func (s *server) resolveQueueSendName(ctx context.Context, acct state.Account, app state.App, requested string) (string, *api.Problem) {
-	if requested != "" {
-		if prob := validateQueueBindingName("queue_name", requested); prob != nil {
-			return "", prob
-		}
-		if bindings, err := s.store.ListQueueBindingsForApp(ctx, acct.ID, app.ID); err == nil {
-			active := 0
-			for _, binding := range bindings {
-				if !binding.Enabled {
-					continue
-				}
-				active++
-				if binding.QueueName == requested {
-					return requested, nil
-				}
-			}
-			if active > 0 {
-				return "", queueBindingProblem(fmt.Sprintf("queue_name %q is not an enabled binding for this app", requested))
-			}
-		}
-		if triggers, err := s.store.ListTriggersForApp(ctx, app.ID); err == nil {
-			active := 0
-			for _, trigger := range triggers {
-				if trigger.Kind != string(api.TriggerKindQueue) || !trigger.Enabled || !trigger.Source.Valid || trigger.Source.String != string(state.InvocationQueue) {
-					continue
-				}
-				active++
-				if trigger.Slug == requested {
-					return requested, nil
-				}
-			}
-			if active > 0 {
-				return "", queueBindingProblem(fmt.Sprintf("queue_name %q is not an enabled queue consumer for this app", requested))
-			}
-		}
-		return requested, nil
-	}
-	bindings, err := s.store.ListQueueBindingsForApp(ctx, acct.ID, app.ID)
-	if err == nil {
-		active := make([]state.QueueBinding, 0, len(bindings))
-		for _, binding := range bindings {
-			if binding.Enabled {
-				active = append(active, binding)
-			}
-		}
-		if len(active) == 1 {
-			return active[0].QueueName, nil
-		}
-		if len(active) > 1 {
-			return "", queueBindingProblem("queue_name is required when an app has multiple enabled queue bindings")
-		}
-	}
-	// Compatibility for pre-binding queue triggers. The old API exposed one
-	// app-scoped queue and used the trigger slug only as a label.
-	triggers, err := s.store.ListTriggersForApp(ctx, app.ID)
-	if err == nil {
-		var queueName string
-		for _, trigger := range triggers {
-			if trigger.Kind != string(api.TriggerKindQueue) || !trigger.Enabled || !trigger.Source.Valid || trigger.Source.String != string(state.InvocationQueue) {
-				continue
-			}
-			if queueName != "" {
-				return "", queueBindingProblem("queue_name is required when an app has multiple enabled queue consumers")
-			}
-			queueName = trigger.Slug
-		}
-		if queueName != "" {
-			return queueName, nil
-		}
-	}
-	return "", nil
-}
 
 // extractInvocationID parses {"invocation_id":"<uuid>"} out of a
 // pg_notify payload. Defensive against partial / extra-key payloads;
@@ -1181,6 +1094,14 @@ func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrInvocationNotReplayable(string(orig.State)))
 		return
 	}
+	// Generic replay creates a new HTTP invocation and cannot carry a queue
+	// binding's delivery namespace or keyed lane. Require the durable queue
+	// replay surface instead of silently moving its work out of that ledger.
+	if orig.QueueBindingID != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "queue_replay_requires_binding", "Queue replay requires its binding",
+			"use the app queue dead-letter replay endpoint to retain the original binding and work policy"))
+		return
+	}
 	// Re-issue the original against the same app; DueAt is "now"
 	// (the customer is replaying interactively, not on a schedule).
 	// Attempts is reset to 0 — the drain increments it on the new
@@ -1195,6 +1116,7 @@ func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct s
 	inv, versionProblem := s.enqueueVersionedInvocation(r.Context(), nil, state.Invocation{
 		AppID:                orig.AppID,
 		AccountID:            acct.ID,
+		DeploymentScope:      orig.DeploymentScope,
 		PlatformTenantID:     orig.PlatformTenantID,
 		Source:               state.InvocationReplay,
 		Method:               orig.Method,

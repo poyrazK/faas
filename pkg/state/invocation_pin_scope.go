@@ -30,6 +30,11 @@ func validateInvocationWorkEnvironment(ctx context.Context, store invocationPinS
 		return err
 	}
 	if invocationStageScope(scope) {
+		if reader, ok := store.(invocationAppReader); ok {
+			if bound, err := validateBoundQueueEnvironment(ctx, reader, inv, scope); bound || err != nil {
+				return err
+			}
+		}
 		return ErrInvocationEnvironmentWorkIsolation
 	}
 	return nil

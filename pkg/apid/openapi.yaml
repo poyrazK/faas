@@ -9845,7 +9845,7 @@ paths:
                   description: "Optional repository-relative directory to build from when source contains a workspace context. Empty or omitted means the archive root."
                 scope:
                   type: string
-                  pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+                  pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
                   description: "Named environment scope read by the developer deployment; omitted uses default."
                 source_url:
                   type: string
@@ -9984,7 +9984,7 @@ paths:
                   pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
                 scope:
                   type: string
-                  pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+                  pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
                   description: "Named environment scope read by the deployment; omitted uses default."
                 workflows:
                   type: string
@@ -11339,7 +11339,7 @@ paths:
         - name: scope
           in: query
           required: false
-          schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$' }
+          schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
           description: Deployment scope to compare; defaults to `prod`.
       responses:
         '200':
@@ -12574,6 +12574,85 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/secret-references:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SecretReferenceEnvironment'
+    get:
+      tags: [secrets]
+      operationId: listAppSecretReferences
+      summary: List destination-to-source secret references in a registered environment.
+      description: Requires the same read permission and MFA posture as secret metadata. Returns names only and shared variable/reference quota usage.
+      responses:
+        '200':
+          description: References and the current catalog environment identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppSecretReferenceListResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/secret-references/{key}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SecretKey'
+      - $ref: '#/components/parameters/SecretReferenceEnvironment'
+    put:
+      tags: [secrets]
+      operationId: setAppSecretReference
+      summary: Select a scoped secret source for a destination environment key.
+      description: |
+        Requires secrets write permission and the same MFA posture as sealed secret writes. The named source must exist in
+        the exact environment and a plaintext variable cannot shadow the destination.
+        References share the cross-environment variable quota. The write retains the
+        observed catalog identity, invalidates scoped snapshots and applies on a future
+        cold wake. Git-owned fields require an active temporary override in enforce mode.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutAppSecretReferenceRequest' }
+      responses:
+        '200':
+          description: Stored reference names and catalog identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppSecretReferenceResponse' }
+        '400':
+          description: 'code: validation_failed | env_var_invalid_key | secret_not_found'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 'Reference update rejected. code: environment_field_git_managed | secret_reference_conflict'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [secrets]
+      operationId: deleteAppSecretReference
+      summary: Suppress a primary workload secret destination while preserving the sealed source.
+      description: Requires secrets write permission and the same MFA posture as sealed secret writes. Uses the observed catalog identity and the same Git ownership/override contract as PUT. An already suppressed unowned destination is an idempotent success. Removing a reference preserves the sealed value and records durable suppression of this destination on future cold wakes, including original deployment references and automatic delivery. PUT clears that suppression. Suppressed destinations have a separate bound of 1024 keys per application across environments and do not consume the variable quota.
+      responses:
+        '204': { description: Destination suppressed on future cold wakes; the sealed source value is retained. }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 'Reference removal rejected. code: environment_field_git_managed | secret_reference_conflict'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/secrets/{key}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -13793,11 +13872,11 @@ paths:
         required: false
         schema:
           type: string
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
         description: |
           ADR-098 amendment (issue #954). Optional server-side filter
           that narrows the list to one deployment. Omitted = return
-          all deployments for the app. Same shape as `scope` (3..40
+          all deployments for the app. Same shape as `scope` (1..40
           chars, lowercase alnum + dash); empty string is treated as
           "no filter".
     get:
@@ -13908,7 +13987,7 @@ paths:
         required: false
         schema:
           type: string
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
         description: "Optional deployment scope filter from the ADR-098 issue #954 overlay."
     get:
       tags: [upstreams]
@@ -16779,6 +16858,9 @@ paths:
       tags: [triggers]
       operationId: updateTrigger
       summary: Partial-update a trigger.
+      description: |
+        Queue binding consumers are managed through the queue-binding API.
+        Direct mutations of those private projections return 409.
       requestBody:
         required: true
         content:
@@ -16793,6 +16875,7 @@ paths:
         '400': { $ref: '#/components/responses/TriggerInvalid' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/TriggerImmutable' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/TriggerSecretUnavailable' }
@@ -16800,10 +16883,14 @@ paths:
       tags: [triggers]
       operationId: deleteTrigger
       summary: Delete a trigger.
+      description: |
+        Delete an independent trigger. A private queue consumer must be removed
+        through its queue binding; direct deletion of that projection returns 409.
       responses:
         '204': { description: No body. The trigger was removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/triggers/{id}/work-binding:
@@ -16864,10 +16951,17 @@ paths:
         Sets `enabled=false` and pg_notify's `trigger_changed`. Schedd
         stops the broker poller on the next tick; in-flight records
         drain normally.
+        Queue binding consumers are managed through the queue-binding API;
+        direct pause/resume of those private projections returns 409.
       responses:
-        '204': { description: No body. }
+        '200':
+          description: The paused trigger with enabled set to false.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trigger' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/triggers/{id}/resume:
@@ -16880,10 +16974,17 @@ paths:
       description: |
         Sets `enabled=true` and pg_notify's `trigger_changed`.
         Schedd restarts the broker poller on the next tick.
+        Queue binding consumers are managed through the queue-binding API;
+        direct pause/resume of those private projections returns 409.
       responses:
-        '204': { description: 'Trigger resumed (no body).' }
+        '200':
+          description: The resumed trigger with enabled set to true.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trigger' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/triggers/{id}/records:
@@ -17024,21 +17125,27 @@ paths:
       summary: "Internal — schedd posts a batch envelope to the gateway."
       description: |
         Internal-only route. Schedd invokes this once per closed
-        batch (size / window / 6MB cap). The function under the
-        trigger responds with `{"batchItemFailures":[{"itemIdentifier":"..."}]}`.
-        Empty / missing response ⇒ full success. Mirrors AWS Lambda's
-        `ReportBatchItemFailures` contract verbatim.
+        batch. The gateway delivers records sequentially and returns one
+        result per item. Each function response may include
+        `{"batchItemFailures":[{"itemIdentifier":"..."}]}`.
+        Durable queue records include an invocation ID and current claim
+        attempt; source must be esm for these records.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [trigger_id, records]
+              required: [invocation_id, app_id, trigger_id, records]
               properties:
+                invocation_id:
+                  type: string
+                  description: Synthetic batch identity, typically trigger- followed by the trigger UUID.
                 trigger_id: { type: string, format: uuid }
                 app_id:     { type: string, format: uuid }
-                kind:       { $ref: '#/components/schemas/TriggerKind' }
+                source:
+                  type: string
+                  description: Internal dispatch source; esm for trigger and durable queue batches.
                 records:
                   type: array
                   items:
@@ -17046,6 +17153,14 @@ paths:
                     required: [item_identifier, payload_b64]
                     properties:
                       item_identifier: { type: string }
+                      invocation_id:
+                        type: string
+                        format: uuid
+                        description: Internal durable queue invocation ID; must equal item_identifier and have a current claimed lease.
+                      invocation_attempt:
+                        type: integer
+                        minimum: 1
+                        description: Required with invocation_id; fences delivery to the current durable queue claim attempt.
                       payload_b64:     { type: string }
                       headers:         { type: object, additionalProperties: { type: string } }
                       metadata:        { type: object, additionalProperties: true }
@@ -17056,16 +17171,18 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [results]
                 properties:
-                  succeeded:
+                  results:
                     type: array
-                    items: { type: string, description: "item_identifier." }
-                  retry:
-                    type: array
-                    items: { type: string }
-                  dead_letter:
-                    type: array
-                    items: { type: string }
+                    items:
+                      type: object
+                      required: [item_identifier, status]
+                      properties:
+                        item_identifier: { type: string }
+                        status: { type: string, enum: [succeeded, retry, dead_letter] }
+                        error: { type: string }
+                        code: { type: string }
 
   # ─── Projects (ADR-050 / Phase 3) ───────────────────────────────────
   # Two endpoints:
@@ -17484,6 +17601,326 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/gitops:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    get:
+      tags:
+      - projects
+      operationId: getEnvironmentGitOps
+      summary: Inspect Git source authority and reconciliation history.
+      responses:
+        '200':
+          description: Inspect Git source authority and reconciliation history. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentGitOpsStatusResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/source:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: createEnvironmentGitSource
+      summary: Bind a verified project repository to an environment definition.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        description: Bind a verified project repository to an environment definition. request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEnvironmentGitSourceRequest'
+      responses:
+        '201':
+          description: Bind a verified project repository to an environment definition. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentGitSource'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      tags:
+      - projects
+      operationId: updateEnvironmentGitSource
+      summary: Update report, enforce, pruning, and suspension controls.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        description: Update report, enforce, pruning, and suspension controls. request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvironmentGitSourceUpdate'
+      responses:
+        '200':
+          description: Update report, enforce, pruning, and suspension controls. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentGitSource'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: previewEnvironmentGitRevision
+      summary: Fetch an immutable commit and review its definition digest.
+      requestBody:
+        required: true
+        description: Fetch an immutable commit and review its definition digest. request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreviewEnvironmentGitRevisionRequest'
+      responses:
+        '200':
+          description: Fetch an immutable commit and review its definition digest. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewEnvironmentGitRevisionResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: approveEnvironmentGitRevision
+      summary: Approve reviewed Git bytes and enqueue durable reconciliation.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        description: Approve reviewed Git bytes and enqueue durable reconciliation. request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveEnvironmentGitRevisionRequest'
+      responses:
+        '202':
+          description: Approve reviewed Git bytes and enqueue durable reconciliation. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApproveEnvironmentGitRevisionResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/adoption-preview:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    get:
+      tags:
+      - projects
+      operationId: previewEnvironmentGitOpsAdoption
+      summary: Preview adoption without changing ownership or resource values.
+      responses:
+        '200':
+          description: Preview adoption without changing ownership or resource values. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentGitOpsPlan'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/adopt:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: adoptEnvironmentGitOps
+      summary: Adopt fields from a current reviewed plan while preserving their values.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        description: Adopt fields from a current reviewed plan while preserving their values. request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdoptEnvironmentGitOpsRequest'
+      responses:
+        '202':
+          description: Adopt fields from a current reviewed plan while preserving their values. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdoptEnvironmentGitOpsResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/overrides:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: createEnvironmentGitOpsOverride
+      summary: Permit a temporary edit to one Git-owned field.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        description: Permit a temporary edit to one Git-owned field. request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvironmentGitOpsOverrideRequest'
+      responses:
+        '201':
+          description: Permit a temporary edit to one Git-owned field. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentGitOpsOverrideRequest'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      tags:
+      - projects
+      operationId: removeEnvironmentGitOpsOverride
+      summary: Revoke a temporary field override and enqueue reconciliation.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        description: Revoke a temporary field override and enqueue reconciliation. request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoveEnvironmentGitOpsOverrideRequest'
+      responses:
+        '204':
+          description: Revoke a temporary field override and enqueue reconciliation. result.
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/projects/{slug}/environments/{environment}/config:
     parameters:
@@ -21411,8 +21848,15 @@ paths:
         Returns the durable mappings between logical queues and worker/job
         workloads. Bindings are the configuration source for push consumers
         and queue-depth autoscaling; queue messages remain under /queues/*.
+        Active bindings are returned by default. Set include_retired=true to
+        retrieve retained identities and retirement timestamps for reviewed recovery.
       parameters:
         - $ref: '#/components/parameters/Slug'
+        - name: include_retired
+          in: query
+          required: false
+          description: Include retained retired bindings belonging to this app.
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Queue bindings.
@@ -26437,6 +26881,31 @@ components:
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
 
   parameters:
+    SecretReferenceEnvironment:
+      name: environment
+      in: query
+      required: true
+      description: Registered project environment owning these references; default and __all__ are unavailable.
+      schema:
+        type: string
+        minLength: 3
+        maxLength: 33
+        pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+    EnvironmentGitOpsProjectSlug:
+      name: slug
+      in: path
+      required: true
+      description: Project owning the environment Git authority.
+      schema:
+        type: string
+    EnvironmentGitOpsEnvironment:
+      name: environment
+      in: path
+      required: true
+      description: Registered environment selected for Git intent management.
+      schema:
+        type: string
+
     FlagsProjectSlug:
       name: slug
       in: path
@@ -26543,7 +27012,7 @@ components:
 
     # ADR-090 PR-B: optional `?scope=` query param on the three
     # env routes (/v1/apps/{slug}/envs and .../{key}). The scope
-    # is a domain-valid slug (3..40 lowercase alnum + dash) or the
+    # is a domain-valid slug (1..40 lowercase alnum + dash) or the
     # reserved sentinel `__all__` on GET only. Omitted means
     # scope=default — the wire shape is byte-identical to
     # pre-PR-B. See EnvScopeInvalid / EnvScopeReserved in
@@ -26554,10 +27023,10 @@ components:
       required: false
       schema:
         type: string
-        pattern: '^([a-z0-9]([a-z0-9-]{1,38})[a-z0-9]|__all__)$'
+        pattern: '^([a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?|__all__)$'
         maxLength: 40
       description: |
-        Env-var scope (ADR-090). A domain-valid slug (3..40 chars,
+        Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
         lowercase alnum + dash, no leading/trailing dash) — e.g.
         `default`, `staging`, `prod-eu`. Or the reserved sentinel
         `__all__` on GET only, which returns the nested
@@ -26611,6 +27080,719 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    CreateEnvironmentGitSourceRequest:
+      type: object
+      description: Select a Git definition in the project repository; repository identities are verified by
+        the server.
+      properties:
+        ref:
+          type: string
+          description: Git ref selecting candidates; defaults to the project production branch.
+        manifest_path:
+          type: string
+          minLength: 1
+        mode:
+          type: string
+          enum:
+          - report
+          - enforce
+          default: report
+        approval_policy:
+          type: string
+          enum:
+          - manual
+          - protected_branch
+          default: manual
+        prune:
+          type: boolean
+          default: false
+      required:
+      - manifest_path
+      additionalProperties: false
+    PreviewEnvironmentGitRevisionRequest:
+      type: object
+      description: An exact GitHub commit to fetch and review.
+      properties:
+        commit_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+      required:
+      - commit_sha
+      additionalProperties: false
+    PreviewEnvironmentGitRevisionResponse:
+      type: object
+      description: Verified Git bytes with the digest and source generation needed for approval.
+      properties:
+        commit_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+        definition_digest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        definition:
+          $ref: '#/components/schemas/EnvironmentDefinition'
+        generation:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - commit_sha
+      - definition_digest
+      - definition
+      - generation
+    ApproveEnvironmentGitRevisionRequest:
+      type: object
+      description: Approve the reviewed digest for an immutable commit using the current source generation.
+      properties:
+        commit_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+        definition_digest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - commit_sha
+      - definition_digest
+      - expected_generation
+      additionalProperties: false
+    ApproveEnvironmentGitRevisionResponse:
+      type: object
+      description: Durable approved revision and the updated management source.
+      properties:
+        source:
+          $ref: '#/components/schemas/EnvironmentGitSource'
+        revision:
+          $ref: '#/components/schemas/EnvironmentDesiredRevision'
+      required:
+      - source
+      - revision
+    EnvironmentGitOpsStatusResponse:
+      type: object
+      description: Source authority and the twenty most recent durable reconciliation attempts.
+      properties:
+        approval:
+          $ref: '#/components/schemas/EnvironmentGitRevisionApproval'
+        source:
+          $ref: '#/components/schemas/EnvironmentGitSource'
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentGitOpsRun'
+      required:
+      - source
+      - runs
+    EnvironmentGitRevisionApproval:
+      type: object
+      description: Immutable reviewed-merge evidence bound to the approved definition and source generation.
+      properties:
+        id:
+          type: string
+          format: uuid
+        source_id:
+          type: string
+          format: uuid
+        revision_id:
+          type: string
+          format: uuid
+        generation:
+          type: integer
+          format: int64
+        definition_digest:
+          type: string
+        evidence:
+          $ref: '#/components/schemas/EnvironmentGitReviewedMergeEvidence'
+        recorded_at:
+          type: string
+          format: date-time
+      required: [id, source_id, revision_id, generation, definition_digest, evidence, recorded_at]
+    EnvironmentGitReviewedMergeEvidence:
+      type: object
+      description: Reviews of the final PR head before merge. Permissions and protection describe the check time, not historical policy.
+      properties:
+        reviewed_definition_digest:
+          type: string
+        qualified:
+          type: boolean
+        reason:
+          type: string
+          description: Qualification failure reason; absent from persisted approval evidence.
+        profile:
+          type: string
+        policy:
+          $ref: '#/components/schemas/EnvironmentGitProtectedBranchEvidence'
+        pull_request_id:
+          type: integer
+          format: int64
+        pull_request_number:
+          type: integer
+          format: int64
+        author_id:
+          type: integer
+          format: int64
+        head_sha:
+          type: string
+        merged_at:
+          type: string
+          format: date-time
+        reviews:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentGitReviewEvidence'
+        checked_at:
+          type: string
+          format: date-time
+      required: [reviewed_definition_digest, qualified, profile, policy, pull_request_id, pull_request_number, author_id, head_sha, merged_at, reviews, checked_at]
+    EnvironmentGitProtectedBranchEvidence:
+      description: Protected branch policy and approval checks bound to the exact environment definition commit.
+      type: object
+      properties:
+        qualified:
+          type: boolean
+        reason:
+          type: string
+          description: Protected branch check failure reason; excluded from durable approval evidence.
+        profile:
+          type: string
+        installation_id:
+          type: integer
+          format: int64
+        repository_id:
+          type: integer
+          format: int64
+        repository:
+          type: string
+        branch:
+          type: string
+        commit_sha:
+          type: string
+        policy_digest:
+          type: string
+        required_review_count:
+          type: integer
+        checked_at:
+          type: string
+          format: date-time
+      required: [qualified, profile, installation_id, repository_id, repository, branch, commit_sha, policy_digest, required_review_count, checked_at]
+    EnvironmentGitReviewEvidence:
+      description: One reviewer decision for the proposed environment definition at an exact commit.
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        reviewer_id:
+          type: integer
+          format: int64
+        reviewer:
+          type: string
+        head_sha:
+          type: string
+        submitted_at:
+          type: string
+          format: date-time
+      required: [id, reviewer_id, reviewer, head_sha, submitted_at]
+    AdoptEnvironmentGitOpsRequest:
+      type: object
+      description: Hash of the reviewed adoption plan; stale observations are rejected.
+      properties:
+        plan_hash:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+      required:
+      - plan_hash
+      additionalProperties: false
+    AdoptEnvironmentGitOpsResponse:
+      type: object
+      description: Ownership transfer result; adoption itself preserves resource values.
+      properties:
+        status:
+          type: string
+          enum:
+          - adopted
+      required:
+      - status
+    RemoveEnvironmentGitOpsOverrideRequest:
+      type: object
+      description: Owned field whose temporary override should be revoked.
+      properties:
+        resource:
+          type: string
+        path:
+          type: string
+      required:
+      - resource
+      - path
+      additionalProperties: false
+    EnvironmentGitSourceSpec:
+      type: object
+      description: Pinned repository identity and source-of-truth controls for one environment.
+      properties:
+        repository_id:
+          type: integer
+          format: int64
+          minimum: 0
+        installation_id:
+          type: integer
+          format: int64
+          minimum: 0
+        repository:
+          type: string
+        ref:
+          type: string
+        manifest_path:
+          type: string
+        mode:
+          type: string
+          enum:
+          - report
+          - enforce
+        approval_policy:
+          type: string
+          enum:
+          - manual
+          - protected_branch
+        prune:
+          type: boolean
+      required:
+      - repository_id
+      - installation_id
+      - repository
+      - ref
+      - manifest_path
+      - mode
+      - approval_policy
+      - prune
+    EnvironmentGitSource:
+      type: object
+      description: Durable environment authority with separate approved and fully applied revision pointers.
+      properties:
+        id:
+          type: string
+        account_id:
+          type: string
+        project_id:
+          type: string
+        environment_id:
+          type: string
+        environment:
+          type: string
+        source:
+          $ref: '#/components/schemas/EnvironmentGitSourceSpec'
+        suspended:
+          type: boolean
+        generation:
+          type: integer
+          format: int64
+          minimum: 0
+        intent_version:
+          type: integer
+          format: int64
+          minimum: 0
+        approved_revision_id:
+          type: string
+        applied_revision_id:
+          type: string
+        source_checked_at:
+          type: string
+          format: date-time
+        source_error_code:
+          type: string
+        source_commit_sha:
+          type: string
+          description: Last verified candidate at the bound ref; discovery does not grant approval.
+          pattern: ^([a-f0-9]{40}|[a-f0-9]{64})$
+        source_definition_digest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        source_verified_at:
+          type: string
+          format: date-time
+          description: Last successful candidate verification, preserved when a later poll fails.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - account_id
+      - project_id
+      - environment_id
+      - environment
+      - source
+      - suspended
+      - generation
+      - intent_version
+      - created_at
+      - updated_at
+    EnvironmentDesiredRevision:
+      type: object
+      description: Immutable approved definition retained for reconciliation during Git outages.
+      properties:
+        id:
+          type: string
+        source_id:
+          type: string
+        commit_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+        definition_digest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        definition:
+          $ref: '#/components/schemas/EnvironmentDefinition'
+        approved_by:
+          type: string
+        approved_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - source_id
+      - commit_sha
+      - definition_digest
+      - definition
+      - approved_by
+      - approved_at
+    EnvironmentGitOpsRun:
+      type: object
+      description: Fenced reconciliation attempt with its observed plan and resource-step journal.
+      properties:
+        id:
+          type: string
+        source_id:
+          type: string
+        revision_id:
+          type: string
+        generation:
+          type: integer
+          format: int64
+          minimum: 0
+        status:
+          type: string
+          enum:
+          - running
+          - converged
+          - drifted
+          - overridden
+          - blocked
+          - partial
+          - failed
+          - superseded
+        plan:
+          oneOf:
+          - $ref: '#/components/schemas/EnvironmentGitOpsPlan'
+          - type: 'null'
+        steps:
+          oneOf:
+          - type: array
+            items:
+              type: object
+              additionalProperties: true
+          - type: 'null'
+        error_code:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - source_id
+      - revision_id
+      - generation
+      - status
+      - plan
+      - steps
+      - started_at
+    EnvironmentGitSourceUpdate:
+      type: object
+      description: Change controls with a generation fence; suspended sources keep ownership.
+      properties:
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 0
+        mode:
+          type: string
+          enum:
+          - report
+          - enforce
+        prune:
+          type: boolean
+        suspended:
+          type: boolean
+      required:
+      - expected_generation
+      additionalProperties: false
+    EnvironmentGitOpsOverrideRequest:
+      type: object
+      description: Temporary permission to edit one Git-owned field, bounded to twenty-four hours.
+      properties:
+        resource:
+          type: string
+          minLength: 1
+        path:
+          type: string
+          minLength: 1
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        expires_at:
+          type: string
+          format: date-time
+      required:
+      - resource
+      - path
+      - reason
+      - expires_at
+      additionalProperties: false
+    EnvironmentGitOpsChange:
+      type: object
+      description: One ownership or intent difference in the deterministic plan.
+      properties:
+        resource:
+          type: string
+        path:
+          type: string
+        action:
+          type: string
+        before: {}
+        after: {}
+        reason:
+          type: string
+      required:
+      - resource
+      - path
+      - action
+    EnvironmentGitOpsPlan:
+      type: object
+      description: Observation-bound plan; blocking reasons prevent mutation and overrides prevent convergence.
+      properties:
+        manager:
+          type: string
+        revision:
+          type: string
+        commit_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+        generation:
+          type: integer
+          format: int64
+          minimum: 0
+        desired_digest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        observed_version:
+          type: integer
+          format: int64
+          minimum: 0
+        plan_hash:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentGitOpsChange'
+        blocking_reasons:
+          type: array
+          items:
+            type: string
+      required:
+      - manager
+      - revision
+      - generation
+      - desired_digest
+      - observed_version
+      - plan_hash
+      - changes
+      - blocking_reasons
+    EnvironmentDefinition:
+      type: object
+      description: Versioned Git intent; omitted settings are unmanaged and removal requires explicit pruning. The workloads map is required; an explicit empty map represents an empty environment.
+      properties:
+        api_version:
+          type: string
+          enum:
+          - gregale.dev/environment/v1
+        project:
+          type: string
+        environment:
+          type: string
+        queue_pruning_policy:
+          type: string
+          enum: [retain]
+          description: Explicit reviewed disposition for removed owned queues when pruning is enabled. Retires admission and dispatch while preserving binding IDs, accepted work and delivery receipts. Omit to block queue pruning.
+        configuration:
+          type: object
+          additionalProperties: {}
+        workloads:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/EnvironmentWorkload'
+      required:
+      - api_version
+      - project
+      - environment
+      - workloads
+      additionalProperties: false
+    EnvironmentWorkload:
+      type: object
+      description: Logical workload intent; unsupported adapters are reported as blocking reasons.
+      properties:
+        app:
+          type: string
+        source:
+          $ref: '#/components/schemas/EnvironmentWorkloadSource'
+        runtime:
+          $ref: '#/components/schemas/AppManifest'
+        variables:
+          type: object
+          additionalProperties:
+            type: string
+        secret_refs:
+          type: object
+          additionalProperties:
+            type: string
+        routes:
+          $ref: '#/components/schemas/EnvironmentRouteContract'
+        policies:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentPolicy'
+        queue_bindings:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/EnvironmentQueueBinding'
+        queue_recoveries:
+          type: object
+          description: Explicit recovery of retained queues, keyed by a declared binding name and pinned to its original scoped binding UUID. Requires reviewed adoption before reconciliation can resume retained work; adoption itself preserves the retirement hold.
+          additionalProperties:
+            type: string
+            format: uuid
+        service_bindings:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/EnvironmentServiceBinding'
+      additionalProperties: false
+    EnvironmentWorkloadSource:
+      type: object
+      description: Build source within the approved Git tree or an immutable OCI digest.
+      properties:
+        kind:
+          type: string
+          enum:
+          - source
+          - dockerfile
+          - image
+        directory:
+          type: string
+        dockerfile:
+          type: string
+        image:
+          type: string
+      required:
+      - kind
+      additionalProperties: false
+    EnvironmentRouteContract:
+      type: object
+      description: Atomic environment-scoped declared-route collection.
+      properties:
+        only_allow_declared_routes:
+          type: boolean
+        declared_routes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclaredRoute'
+          maxItems: 50
+      required:
+      - only_allow_declared_routes
+      - declared_routes
+      additionalProperties: false
+    EnvironmentPolicy:
+      type: object
+      description: Named environment-scoped headers or CORS rule.
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum:
+          - headers
+          - cors
+        match_path:
+          type: string
+        match_methods:
+          type: array
+          items:
+            type: string
+        match_headers:
+          type: object
+          additionalProperties:
+            type: string
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        enabled:
+          type: boolean
+        action:
+          oneOf:
+          - $ref: '#/components/schemas/EdgeRuleHeadersAction'
+          - $ref: '#/components/schemas/EdgeRuleCORSAction'
+      required:
+      - name
+      - kind
+      - match_path
+      - priority
+      - action
+      additionalProperties: false
+    EnvironmentQueueBinding:
+      type: object
+      description: Atomic queue binding intent in the named environment. Reviewed adoption preserves the original binding and consumer IDs and delivery history. Queue pruning and retired identity recovery require a separate reviewed disposition.
+      properties:
+        queue_name:
+          type: string
+        mode:
+          type: string
+          enum:
+          - pull
+          - push
+        workload_class:
+          type: string
+        enabled:
+          type: boolean
+        max_concurrency:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        retry_policy:
+          $ref: '#/components/schemas/RetryPolicyDTO'
+      required:
+      - queue_name
+      - workload_class
+      additionalProperties: false
+    EnvironmentServiceBinding:
+      type: object
+      description: Reference to another logical workload in the same environment.
+      properties:
+        workload:
+          type: string
+        env_key:
+          type: string
+      required:
+      - workload
+      - env_key
+      additionalProperties: false
+
     ObjectDeletionRequest:
       type: object
       description: One durable mutation; reuse the ID for retries of the same key and selector.
@@ -29336,7 +30518,7 @@ components:
         id: { type: string, minLength: 1, maxLength: 128 }
         database_id: { type: string, minLength: 1, maxLength: 128 }
         app_id: { type: string, minLength: 1, maxLength: 128 }
-        scope: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
         access: { type: string, enum: [read_write, read_only, migration] }
         credential_generation: { type: integer, format: int64, minimum: 1 }
@@ -29358,7 +30540,7 @@ components:
       required: [app_id, scope, environment_key, access]
       properties:
         app_id: { type: string, minLength: 1, maxLength: 128 }
-        scope: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
         access: { type: string, enum: [read_write, read_only, migration], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved. }
 
@@ -29371,7 +30553,7 @@ components:
         source_database_id: { type: string, format: uuid }
         target_database_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
-        scope: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
     ManagedPostgresCutover:
       description: Staged cutover metadata. Verified means control-plane SQL evidence; workloads still use the source. Provider identities and sealed credentials are never returned.
       type: object
@@ -29381,7 +30563,7 @@ components:
         source_database_id: { type: string, format: uuid }
         target_database_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
-        scope: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         state: { type: string, enum: [preparing, prepared, verifying, verified, cancelling, cancelled] }
         verification_fresh: { type: boolean, description: All staged members have SQL evidence no older than verification_max_age_seconds. }
         verification_max_age_seconds: { type: integer, format: int64, minimum: 1 }
@@ -30333,7 +31515,7 @@ components:
           maxProperties: 32
           additionalProperties:
             type: string
-            pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+            pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
           description: GitHub branch names mapped to deployment environment scopes. An empty object clears existing rules.
 
     InstallBindResponse:
@@ -31354,7 +32536,7 @@ components:
         # regardless of scope), so the field is always populated.
         scope:
           type: string
-          pattern: '^([a-z0-9]([a-z0-9-]{1,38})[a-z0-9]|__all__)$'
+          pattern: '^([a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?|__all__)$'
           maxLength: 40
           x-since: "2026-08"
           x-issue: "adr-092"
@@ -35198,7 +36380,7 @@ components:
         handler: { type: string }
         dockerfile: { type: boolean }
         source_root: { type: string }
-        scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', description: "Named environment scope applied when the upload is committed; omitted uses default." }
+        scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$', description: "Named environment scope applied when the upload is committed; omitted uses default." }
         source_url:
           { type: string, maxLength: 1024, description: "Informational repository provenance URL; never fetched by apid." }
         commit_sha:
@@ -35412,8 +36594,8 @@ components:
         # deployment_scope_collision.
         scope:
           type: [string, "null"]
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
-          description: "Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no leading/trailing dash. nil/omitted = `default`."
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: "Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash. nil/omitted = `default`."
           example: "staging"
         secret_scan:
           oneOf:
@@ -36614,6 +37796,7 @@ components:
       additionalProperties: false
       required: [type, data]
       properties:
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Registered project environment. Requires an enabled environment-owned queue binding; omitted uses the default environment and legacy shared queues." }
         id: { type: string, minLength: 1, maxLength: 256, description: Generated when omitted. }
         source: { type: string, minLength: 1, maxLength: 256, default: gregale.send }
         type: { type: string, minLength: 1, maxLength: 256 }
@@ -36626,7 +37809,7 @@ components:
         retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
         work:
           allOf: [{ $ref: '#/components/schemas/InvokeWork' }]
-          description: "Optional application-keyed policy for an unnamed queue without an active queue consumer."
+          description: "Optional application-keyed policy. Environment-owned queue bindings require a scoped policy adapter and currently reject this option."
 
     SendAppMessageResponse:
       description: Durable receipt for a queued app-to-app message.
@@ -36634,6 +37817,8 @@ components:
       additionalProperties: false
       required: [id, event_id, target_app, status, status_url]
       properties:
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Deployment scope captured when the message was accepted." }
+        queue_binding_id: { type: string, description: "Immutable captured queue binding identity; omitted for legacy unbound work." }
         id: { type: string, description: Durable invocation identifier. }
         event_id: { type: string }
         target_app: { type: string }
@@ -37040,8 +38225,8 @@ components:
         # same (app_id, scope) → 409 deployment_scope_collision.
         scope:
           type: [string, "null"]
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
-          description: "Top-level per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no leading/trailing dash. nil/omitted = `default`."
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: "Top-level per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash. nil/omitted = `default`."
           example: "prod"
         environment:
           type: string
@@ -37181,8 +38366,8 @@ components:
         # if both are absent.
         scope:
           type: [string, "null"]
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
-          description: "Override-object per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no leading/trailing dash. nil/omitted = inherit top-level scope or `default`."
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+          description: "Override-object per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash. nil/omitted = inherit top-level scope or `default`."
           example: "staging"
 
     # ─── Canary ladder (issue #976 / ADR-122 / SAFE-RELEASES-A) ───────────
@@ -39149,6 +40334,44 @@ components:
         clone: { $ref: '#/components/schemas/ProjectEnvironmentCloneResponse' }
         clone_operation: { $ref: '#/components/schemas/ProjectEnvironmentCloneOperationResponse' }
 
+    PutAppSecretReferenceRequest:
+      description: Named sealed source selected within the exact registered project environment; contains no secret value.
+      type: object
+      additionalProperties: false
+      required: [reference]
+      properties:
+        reference:
+          type: string
+          pattern: '^secret:[A-Z][A-Z0-9_]*$'
+          example: 'secret:DATABASE_PRIMARY'
+
+    AppSecretReferenceListResponse:
+      description: Current environment identity, destination-to-source names, suppressed destination keys and shared variable/reference quota usage.
+      type: object
+      required: [environment_id, environment, references, count, quota]
+      properties:
+        environment_id: { type: string, format: uuid }
+        environment: { type: string }
+        references:
+          type: object
+          additionalProperties: { type: string, pattern: '^secret:[A-Z][A-Z0-9_]*$' }
+        suppressed_keys:
+          type: array
+          description: Destinations excluded from primary workload secret delivery until an explicit PUT reference re-enables them. Omitted by older servers; consumes no variable slots.
+          items: { type: string }
+        count: { type: integer, minimum: 0, description: Shared variable/reference quota usage across all environments. }
+        quota: { type: integer, minimum: 0 }
+
+    AppSecretReferenceResponse:
+      description: Stored destination and sealed source names under the catalog environment identity captured for the write.
+      type: object
+      required: [environment_id, environment, key, reference]
+      properties:
+        environment_id: { type: string, format: uuid }
+        environment: { type: string }
+        key: { type: string }
+        reference: { type: string, pattern: '^secret:[A-Z][A-Z0-9_]*$' }
+
     ProjectEnvironmentCloneResponse:
       description: Non-secret copy counts for an environment clone. Managed database or bucket data appears as shared only after explicit opt-in.
       type: object
@@ -39157,6 +40380,10 @@ components:
         configuration_copied: { type: boolean }
         variables_copied: { type: integer, minimum: 0 }
         secrets_copied: { type: integer, minimum: 0 }
+        secret_references_copied:
+          type: integer
+          minimum: 0
+          description: Destination-to-source references copied under the new catalog environment identity. Git source bindings, ownership, overrides and runtime receipts are not copied.
         workloads_copied: { type: integer, minimum: 0 }
         bindings_copied: { type: integer, minimum: 0 }
         routes_copied: { type: integer, minimum: 0 }
@@ -40264,7 +41491,7 @@ components:
         # before they commit.
         scope:
           type: [string, "null"]
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
           description: "Pending per-deployment env scope (ADR-091 / SAFE-RELEASES production-leveling Stream E). Compared against Baseline.LatestScope; mismatch emits a scope_mismatch break. Empty = default."
           example: "prod"
         build_plan:
@@ -43234,7 +44461,7 @@ components:
         # AppEnvResponse.Scope.
         scope:
           type: string
-          pattern: '^([a-z0-9]([a-z0-9-]{1,38})[a-z0-9]|__all__)$'
+          pattern: '^([a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?|__all__)$'
           maxLength: 40
           example: "prod"
         secret_class: { type: string, enum: [persistent, ephemeral], description: "Storage policy for this row: ephemeral values prevent future VM snapshots in the row's scope." }
@@ -43307,7 +44534,7 @@ components:
       properties:
         scope:
           type: string
-          pattern: '^([a-z0-9]([a-z0-9-]{1,38})[a-z0-9]|__all__)$'
+          pattern: '^([a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?|__all__)$'
           maxLength: 40
           example: "staging"
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "DATABASE_URL" }
@@ -43479,7 +44706,7 @@ components:
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "LOG_LEVEL" }
         scope:
           type: string
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
           maxLength: 40
           description: "Env-var scope (ADR-090). Always 'default' for the pre-PR-B flat response; varies for the nested `env_by_scope` response."
           example: "default"
@@ -43500,7 +44727,7 @@ components:
       properties:
         scope:
           type: string
-          pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+          pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
           maxLength: 40
           example: "staging"
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "DB_URL" }
@@ -43564,10 +44791,10 @@ components:
           maximum: 65535
         scope:
           type: string
-          description: "ADR-090 deployment-scope filter (3..40 chars, lowercase alnum + dash). Omitted = default scope."
+          description: "ADR-090 deployment-scope filter (1..40 chars, lowercase alnum + dash). Omitted = default scope."
         deployment_scope:
           type: string
-          description: "ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same app. Same shape as `scope` (3..40 chars, lowercase alnum + dash). Omitted = default scope, the migration's SQL DEFAULT stamp."
+          description: "ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same app. Same shape as `scope` (1..40 chars, lowercase alnum + dash). Omitted = default scope, the migration's SQL DEFAULT stamp."
 
     EgressCircuitBreakerPolicy:
       description: |
@@ -43682,7 +44909,7 @@ components:
           maximum: 65535
         scope:
           type: string
-          description: "ADR-090 deployment-scope filter (3..40 chars, lowercase alnum + dash). Echoes the value persisted on the row; absent when the default scope applies."
+          description: "ADR-090 deployment-scope filter (1..40 chars, lowercase alnum + dash). Echoes the value persisted on the row; absent when the default scope applies."
         deployment_scope:
           type: string
           description: "ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same app. Echoes the value persisted on the row; absent when the default scope applies."
@@ -44826,7 +46053,7 @@ components:
         # group rows without a second GET.
         scope:
           type: string
-          pattern: '^([a-z0-9]([a-z0-9-]{1,38})[a-z0-9]|__all__)$'
+          pattern: '^([a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?|__all__)$'
           maxLength: 40
           x-since: "2026-08"
           x-issue: "adr-092"
@@ -44932,7 +46159,7 @@ components:
           example: "demo"
         scopes:
           type: array
-          items: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$' }
+          items: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
           description: "Sorted ASC list of scopes present in the matrix. Consumers iterate this list for column ordering."
         rows:
           type: array
@@ -45897,14 +47124,18 @@ components:
       type: object
       required: [id]
       properties:
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Environment recorded for the newly accepted queue message." }
+        queue_binding_id: { type: string, description: "Binding identity captured for this accepted message; absent for unbound legacy sends." }
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$', description: "Canonical platform trace id when the request carried a valid trace context." }
 
     QueueReceiveResponse:
-      description: "200 — a dequeued row (the long-poll hit). 204 (no body) on timeout."
+      description: "200 — a completed queue invocation observed by the long-poll feed. 204 (no body) on timeout."
       type: object
       required: [id, payload]
       properties:
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Original environment of the completed invocation in this queue feed." }
+        queue_binding_id: { type: string, description: "Retained binding identity of the completed queue invocation; absent for legacy work." }
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         payload: { type: object, additionalProperties: true }
         result: { type: object, additionalProperties: true }
@@ -46911,6 +48142,7 @@ components:
       description: "Body for POST /v1/apps/{slug}/queues/send. Cap-checked against MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key ordering."
       type: object
       properties:
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Target registered environment with an enabled scoped queue binding. Omission sends through the default environment and legacy shared queues." }
         payload: { type: object, additionalProperties: true }
         flag_context: { type: string, maxLength: 12288, description: "Optional bounded Gregale Flags context produced by the Node SDK from decisions marked used. The platform validates the envelope, binds it to its active customer, and restores it on the queued request." }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Optional logical queue name. Required when an app has multiple enabled queue consumers." }
@@ -46920,7 +48152,7 @@ components:
           description: Optional per-message retry curve override.
         work:
           allOf: [{ $ref: '#/components/schemas/InvokeWork' }]
-          description: "Optional policy for an unnamed queue send when the app has no active queue consumer."
+          description: "Optional keyed ordering policy for a queue message. Scoped environment bindings reject this option until their policy adapter is available."
 
     QueueWorkloadProfileRequest:
       description: |
@@ -46954,6 +48186,7 @@ components:
       type: object
       required: [name, queue_name]
       properties:
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Immutable registered project environment. The binding captures its catalog UUID; omitted creates a shared legacy binding." }
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         mode: { type: string, enum: [pull, push], default: pull }
@@ -46983,6 +48216,8 @@ components:
       type: object
       required: [id, app_id, account_id, name, queue_name, mode, workload_class, enabled, max_concurrency, created_at, updated_at]
       properties:
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Immutable project environment slug; omitted for a shared legacy binding." }
+        environment_id: { type: string, format: uuid, description: "Original catalog environment identity; omitted for a shared legacy binding." }
         id: { type: string, pattern: '^[0-9a-f]{32}$' }
         app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
         account_id: { type: string, format: uuid }
@@ -46995,6 +48230,7 @@ components:
         retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        retired_at: { type: string, format: date-time, description: "Retirement hold timestamp; present only for a retained retired binding." }
 
     QueueBindingStatusResponse:
       description: Read-only queue binding consumer projection and queue counters.
@@ -47002,6 +48238,8 @@ components:
       required: [binding_id, name, queue_name, mode, workload_class, enabled,
                  consumer_state, consumer_liveness, depth, in_flight, dead_letter, generated_at]
       properties:
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Captured environment slug of the observed consumer; absent for legacy shared consumers." }
+        environment_id: { type: string, format: uuid, description: "Original environment catalog UUID of this consumer status; absent for a shared legacy consumer." }
         binding_id: { type: string }
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
@@ -50939,6 +52177,12 @@ components:
 
     BadRequest:
       description: 'code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as `source_too_large`) ship as the `code` field.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    ValidationError:
+      description: 'code: validation_failed | env_var_invalid_key'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

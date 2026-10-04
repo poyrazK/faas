@@ -1,4 +1,4 @@
-// adr: 568
+// adr: 569
 package state_test
 
 import "context"
@@ -48,6 +48,36 @@ func testRuntimeInstancePublicationOwnership(t *testing.T, store runtimeAppEnvTe
 	f := seedRuntimeAppEnv(t, store)
 	node := runtimeSecretNodeForTest(t, store)
 	p := seedRuntimeInstancePublication(t, store, f, f.deployments["stage"], node)
+	snapshot, err := store.RuntimeAppValuesForDeployment(ctx, f.account.ID, f.app.ID, p.Fence.DeploymentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs := state.RuntimeConfigInputs{Scope: snapshot.Scope, Boundary: time.Now().UTC(), Variables: map[string]string{}, SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}
+	for _, row := range snapshot.Values {
+		inputs.Variables[row.Key] = row.Value
+	}
+	eligible, err := state.SelectAppSecretsForDelivery(snapshot.Secrets, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range eligible {
+		inputs.SecretVersions[row.Scope+"/"+row.Key] = row.DeliveryVersion
+		inputs.SecretRefs[row.Key] = "secret:" + row.Key
+	}
+	p.Inputs = &inputs
+	receipts := store.(state.RuntimeConfigReceiptStore)
+	wrongInputs := inputs
+	wrongInputs.Scope = "other"
+	forgedReceipt := p
+	forgedReceipt.Inputs = &wrongInputs
+	if _, err := store.PublishOwnedInstanceRuntime(ctx, forgedReceipt); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("foreign receipt publication: %v", err)
+	}
+	assertRuntimePublicationUnchanged(ctx, t, store, p)
+	if _, exists, err := receipts.InstanceRuntimeConfigReceipt(ctx, p.InstanceID); err != nil || exists {
+		t.Fatalf("rejected publication left receipt: %v %v", exists, err)
+	}
+
 	for _, change := range []struct {
 		name   string
 		mutate func(*state.RuntimeInstancePublication)
@@ -94,6 +124,9 @@ func testRuntimeInstancePublicationOwnership(t *testing.T, store runtimeAppEnvTe
 	if err != nil || row.State != string(state.StateRunning) || row.Netns != p.Netns || row.HostIP != p.HostIP || row.GuestUID != p.GuestUID ||
 		row.DeploymentID != p.Fence.DeploymentID || row.NodeID != p.NodeID || row.WakeID != p.WakeID || row.StartedAt.IsZero() || row.FrameworkReadyAt == nil || row.RequestCount != 3 {
 		t.Fatalf("owned publication lost identity or observations: %+v %v", row, err)
+	}
+	if receipt, exists, err := receipts.InstanceRuntimeConfigReceipt(ctx, p.InstanceID); err != nil || !exists || receipt.Scope != inputs.Scope || !receipt.Boundary.Equal(inputs.Boundary) {
+		t.Fatalf("owned runtime published without its input receipt: %+v %v %v", receipt, exists, err)
 	}
 	if _, err := store.PublishOwnedInstanceRuntime(ctx, p); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("replayed publication: %v", err)

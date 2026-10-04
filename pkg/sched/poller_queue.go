@@ -67,7 +67,53 @@ type queuePoller struct {
 	// subsequent Poll sees consistent state while the durable row
 	// transition is committed.
 	mu            sync.Mutex
-	itemsInFlight map[string]int
+	itemsInFlight map[string]queueDeliveryClaim
+	owner         *queuePoller
+}
+
+// Attempt alone is reusable after an operator replay. The generation keeps
+// every acknowledgement tied to the delivery that this poller actually read.
+type queueDeliveryClaim struct {
+	Attempt          int
+	ReplayGeneration int64
+}
+
+// Each dispatch gets an immutable view of its delivery handles. Polling can
+// reclaim an expired lease without changing the fence used by an older callback.
+func (q *queuePoller) deliveryPoller(records []SourceRecord) *queuePoller {
+	owner := q
+	if q.owner != nil {
+		owner = q.owner
+	}
+	delivery := &queuePoller{pool: q.pool, source: q.source, ops: q.ops, owner: owner, itemsInFlight: make(map[string]queueDeliveryClaim, len(records))}
+	for _, r := range records {
+		if r.InvocationID == r.ItemIdentifier && r.InvocationAttempt > 0 && r.InvocationReplayGeneration >= 0 {
+			delivery.itemsInFlight[r.ItemIdentifier] = queueDeliveryClaim{Attempt: r.InvocationAttempt, ReplayGeneration: r.InvocationReplayGeneration}
+		}
+	}
+	return delivery
+}
+
+func (q *queuePoller) forgetClaims(ids []string) {
+	q.mu.Lock()
+	claims := make(map[string]queueDeliveryClaim, len(ids))
+	for _, id := range ids {
+		if claim, ok := q.itemsInFlight[id]; ok {
+			claims[id] = claim
+			delete(q.itemsInFlight, id)
+		}
+	}
+	q.mu.Unlock()
+	if q.owner == nil {
+		return
+	}
+	q.owner.mu.Lock()
+	defer q.owner.mu.Unlock()
+	for id, claim := range claims {
+		if q.owner.itemsInFlight[id] == claim {
+			delete(q.owner.itemsInFlight, id)
+		}
+	}
 }
 
 // newQueuePoller constructs the queue poller for a kind=queue
@@ -82,11 +128,17 @@ func newQueuePoller(pool *pgxpool.Pool, t sqlc.Trigger, ops *wire.OpsMetrics) (t
 	if t.Source.String != "queue" && t.Source.String != "delayed_task" {
 		return nil, fmt.Errorf("poller_queue: unsupported source %q", t.Source.String)
 	}
+	var config map[string]json.RawMessage
+	if json.Unmarshal(t.Config, &config) == nil {
+		if _, marked := config["queue_binding_id"]; marked && !t.QueueBindingID.Valid {
+			return nil, fmt.Errorf("poller_queue: queue consumer binding identity requires review")
+		}
+	}
 	q := &queuePoller{
 		pool:          pool,
 		source:        t.Source.String,
 		ops:           ops,
-		itemsInFlight: map[string]int{},
+		itemsInFlight: map[string]queueDeliveryClaim{},
 	}
 	return q, nil
 }
@@ -120,15 +172,15 @@ func (q *queuePoller) pollNamedQueue(ctx context.Context, t sqlc.Trigger) PollRe
 		pollLimit = int(t.BatchSizeMax)
 	}
 	const candidateLimit = 1024
-	ids, err := sqlc.New().ListProductionNamedQueueCandidates(ctx, q.pool, sqlc.ListProductionNamedQueueCandidatesParams{
-		AppID: t.AppID, QueueName: t.Slug, TriggerID: t.ID, CandidateLimit: candidateLimit,
+	ids, err := sqlc.New().QueuePollCandidates(ctx, q.pool, sqlc.QueuePollCandidatesParams{
+		AppID: t.AppID, TriggerID: t.ID, QueueName: t.Slug, CandidateLimit: candidateLimit,
 	})
 	if err != nil {
 		return PollResult{Error: fmt.Errorf("poller_queue: list named candidates: %w", err)}
 	}
 	store := state.NewPgStore(q.pool)
 	out := make([]SourceRecord, 0, min(pollLimit, len(ids)))
-	claimedAttempts := make(map[string]int, min(pollLimit, len(ids)))
+	claimedAttempts := make(map[string]queueDeliveryClaim, min(pollLimit, len(ids)))
 	totalPayloadBytes := 0
 	for _, id := range ids {
 		claimed, err := store.ClaimQueueTriggerInvocation(ctx, id, t.ID.String(), t.AppID.String(), t.Slug, 600)
@@ -152,7 +204,7 @@ func (q *queuePoller) pollNamedQueue(ctx context.Context, t sqlc.Trigger) PollRe
 		}
 		if t.PayloadMaxBytes > 0 && totalPayloadBytes+len(claimed.Payload) > int(t.PayloadMaxBytes) && len(out) > 0 {
 			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			releaseErr := q.releaseNamedClaims(releaseCtx, map[string]int{claimed.ID: claimed.Attempts}, t)
+			releaseErr := q.releaseNamedClaims(releaseCtx, map[string]queueDeliveryClaim{claimed.ID: {Attempt: claimed.Attempts, ReplayGeneration: claimed.ReplayGeneration}}, t)
 			cancel()
 			if releaseErr != nil {
 				return PollResult{Error: releaseErr}
@@ -161,10 +213,11 @@ func (q *queuePoller) pollNamedQueue(ctx context.Context, t sqlc.Trigger) PollRe
 		}
 		out = append(out, SourceRecord{
 			ItemIdentifier: claimed.ID, Payload: claimed.Payload,
+			InvocationID: claimed.ID, InvocationAttempt: claimed.Attempts, InvocationReplayGeneration: claimed.ReplayGeneration,
 			Headers:  parseJSONHeaders(string(claimed.Headers)),
 			Metadata: map[string]any{}, ReceivedAt: claimed.CreatedAt,
 		})
-		claimedAttempts[claimed.ID] = claimed.Attempts
+		claimedAttempts[claimed.ID] = queueDeliveryClaim{Attempt: claimed.Attempts, ReplayGeneration: claimed.ReplayGeneration}
 		totalPayloadBytes += len(claimed.Payload)
 		if len(out) == pollLimit {
 			break
@@ -180,21 +233,30 @@ func (q *queuePoller) pollNamedQueue(ctx context.Context, t sqlc.Trigger) PollRe
 
 // Poll has not handed these claims to the dispatcher yet. Release a partial
 // batch on a later claim error so those rows can be offered again promptly.
-func (q *queuePoller) releaseNamedClaims(ctx context.Context, attemptsByID map[string]int, t sqlc.Trigger) error {
-	if len(attemptsByID) == 0 {
+func (q *queuePoller) releaseNamedClaims(ctx context.Context, claims map[string]queueDeliveryClaim, t sqlc.Trigger) error {
+	if len(claims) == 0 {
 		return nil
 	}
-	ids := make([]string, 0, len(attemptsByID))
-	attempts := make([]int32, 0, len(attemptsByID))
-	for id, attempt := range attemptsByID {
+	ids := make([]string, 0, len(claims))
+	attempts := make([]int32, 0, len(claims))
+	generations := make([]int64, 0, len(claims))
+	for id, claim := range claims {
 		ids = append(ids, id)
-		attempts = append(attempts, int32(attempt))
+		attempts = append(attempts, int32(claim.Attempt))
+		generations = append(generations, claim.ReplayGeneration)
 	}
-	err := sqlc.New().ReleaseProductionNamedQueueClaims(ctx, q.pool, sqlc.ReleaseProductionNamedQueueClaimsParams{
-		InvocationIds: ids, Attempts: attempts, AppID: t.AppID, QueueName: t.Slug,
+	err := sqlc.New().QueueReleasePendingBatchClaims(ctx, q.pool, sqlc.QueueReleasePendingBatchClaimsParams{
+		Ids: ids, Attempts: attempts, ReplayGenerations: generations, AppID: t.AppID, BindingID: t.QueueBindingID, QueueName: t.Slug,
 	})
 	if err != nil {
 		return fmt.Errorf("poller_queue: release partial named claims: %w", err)
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for id, claim := range claims {
+		if q.itemsInFlight[id] == claim {
+			delete(q.itemsInFlight, id)
+		}
 	}
 	return nil
 }
@@ -207,20 +269,20 @@ func (q *queuePoller) pollLegacyQueue(ctx context.Context, t sqlc.Trigger) PollR
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	limit := pollLimit
-	rows, err := sqlc.New().ClaimProductionLegacyQueueInvocations(ctx, tx, sqlc.ClaimProductionLegacyQueueInvocationsParams{
-		TriggerID: t.ID, AppID: t.AppID, Source: q.source, BatchLimit: int32(limit), QueueName: t.Slug,
+	rows, err := sqlc.New().QueuePollLegacyClaims(ctx, tx, sqlc.QueuePollLegacyClaimsParams{
+		TriggerID: t.ID, AppID: t.AppID, Source: q.source, PollLimit: int32(limit), QueueName: t.Slug,
 	})
 	if err != nil {
 		return PollResult{Error: fmt.Errorf("poller_queue: query invocations: %w", err)}
 	}
 	out := make([]SourceRecord, 0, len(rows))
-	claimedAttempts := make(map[string]int, len(rows))
+	claimedAttempts := make(map[string]queueDeliveryClaim, len(rows))
 	for _, row := range rows {
 		out = append(out, SourceRecord{
-			ItemIdentifier: row.ID, Payload: []byte(row.Payload), Headers: parseJSONHeaders(row.Headers),
-			Metadata: parseJSONMetadata(row.Metadata), ReceivedAt: row.CreatedAt.Time,
+			ItemIdentifier: row.ID, InvocationID: row.ID, InvocationAttempt: int(row.Attempts), InvocationReplayGeneration: row.ReplayGeneration,
+			Payload: []byte(row.Payload), Headers: parseJSONHeaders(row.Headers), Metadata: parseJSONMetadata(row.Metadata), ReceivedAt: row.CreatedAt.Time,
 		})
-		claimedAttempts[row.ID] = int(row.Attempts)
+		claimedAttempts[row.ID] = queueDeliveryClaim{Attempt: int(row.Attempts), ReplayGeneration: row.ReplayGeneration}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return PollResult{Error: fmt.Errorf("poller_queue: commit claim: %w", err)}
@@ -243,11 +305,7 @@ func (q *queuePoller) Ack(ctx context.Context, t sqlc.Trigger, ids []string) err
 	if err := q.finishInvocations(ctx, t, ids, "completed", "succeeded", "success", "", `{"trigger_dispatch":"succeeded"}`); err != nil {
 		return err
 	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	for _, id := range ids {
-		delete(q.itemsInFlight, id)
-	}
+	q.forgetClaims(ids)
 	return nil
 }
 
@@ -264,11 +322,7 @@ func (q *queuePoller) Nack(ctx context.Context, t sqlc.Trigger, ids []string, re
 	} else if err := q.retryInvocations(ctx, t, ids, reason); err != nil {
 		return err
 	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	for _, id := range ids {
-		delete(q.itemsInFlight, id)
-	}
+	q.forgetClaims(ids)
 	return nil
 }
 
@@ -280,43 +334,49 @@ func (q *queuePoller) NackTerminal(ctx context.Context, t sqlc.Trigger, ids []st
 	return q.Nack(ctx, t, ids, reason)
 }
 
-func (q *queuePoller) currentClaims(ids []string) ([]string, []int32) {
+func (q *queuePoller) currentClaims(ids []string) ([]string, []int32, []int64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	claimedIDs := make([]string, 0, len(ids))
 	attempts := make([]int32, 0, len(ids))
+	generations := make([]int64, 0, len(ids))
 	for _, id := range ids {
-		if attempt := q.itemsInFlight[id]; attempt > 0 {
+		if claim := q.itemsInFlight[id]; claim.Attempt > 0 {
 			claimedIDs = append(claimedIDs, id)
-			attempts = append(attempts, int32(attempt))
+			attempts = append(attempts, int32(claim.Attempt))
+			generations = append(generations, claim.ReplayGeneration)
 		}
 	}
-	return claimedIDs, attempts
+	return claimedIDs, attempts, generations
 }
 
 func (q *queuePoller) finishInvocations(ctx context.Context, t sqlc.Trigger, ids []string, invocationState, recordState, outcome, lastError, result string) error {
-	claimedIDs, attempts := q.currentClaims(ids)
+	claimedIDs, attempts, generations := q.currentClaims(ids)
 	if len(claimedIDs) == 0 {
 		return nil
 	}
-	err := sqlc.New().FinishProductionQueueTriggerInvocations(ctx, q.pool, sqlc.FinishProductionQueueTriggerInvocationsParams{
-		RecordState: recordState, TriggerID: t.ID, InvocationIds: claimedIDs, InvocationState: invocationState,
-		Outcome: pgtype.Text{String: outcome, Valid: true}, Result: []byte(result), AppID: t.AppID,
-		Source: q.source, LastError: lastError, Attempts: attempts,
+	finalized, err := sqlc.New().QueueFinishDeliveryClaims(ctx, q.pool, sqlc.QueueFinishDeliveryClaimsParams{
+		Ids: claimedIDs, Attempts: attempts, ReplayGenerations: generations, AppID: t.AppID, TriggerID: t.ID,
+		Source: q.source, InvocationState: invocationState, RecordState: recordState,
+		Outcome: pgtype.Text{String: outcome, Valid: true}, Result: []byte(result), LastError: pgtype.Text{String: lastError, Valid: true},
 	})
 	if err != nil {
 		return fmt.Errorf("poller_queue: finish invocations: %w", err)
+	}
+	if q.owner != nil && len(finalized) != len(claimedIDs) {
+		return state.ErrNotFound
 	}
 	return nil
 }
 
 func (q *queuePoller) retryInvocations(ctx context.Context, t sqlc.Trigger, ids []string, reason string) error {
-	claimedIDs, attempts := q.currentClaims(ids)
+	claimedIDs, attempts, generations := q.currentClaims(ids)
 	if len(claimedIDs) == 0 {
 		return nil
 	}
-	err := sqlc.New().RetryProductionQueueTriggerInvocations(ctx, q.pool, sqlc.RetryProductionQueueTriggerInvocationsParams{
-		TriggerID: t.ID, InvocationIds: claimedIDs, AppID: t.AppID, LastError: reason, Source: q.source, Attempts: attempts,
+	err := sqlc.New().QueueRetryDeliveryClaims(ctx, q.pool, sqlc.QueueRetryDeliveryClaimsParams{
+		Ids: claimedIDs, Attempts: attempts, ReplayGenerations: generations, AppID: t.AppID, TriggerID: t.ID,
+		Source: q.source, Reason: pgtype.Text{String: reason, Valid: true},
 	})
 	if err != nil {
 		return fmt.Errorf("poller_queue: retry invocations: %w", err)

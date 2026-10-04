@@ -50,6 +50,10 @@ func (m *MemStore) PutProjectEnvironmentRoutePolicy(_ context.Context, policy Pr
 	if err != nil {
 		return ProjectEnvironmentRoutePolicy{}, err
 	}
+	memory, err := m.gitOpsGuardScopedWriteLocked(policy.AccountID, policy.AppID, policy.EnvironmentSlug, []string{"routes"})
+	if err != nil {
+		return ProjectEnvironmentRoutePolicy{}, err
+	}
 	current := m.projectEnvironmentWorkloadSpecs[m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(environment.ID, app.ID)]]
 	settings := current.Settings
 	if current.ID == "" {
@@ -82,6 +86,7 @@ func (m *MemStore) PutProjectEnvironmentRoutePolicy(_ context.Context, policy Pr
 	policy.UpdatedAt = now
 	policy.DeclaredRoutes = cloneDeclaredRoutes(policy.DeclaredRoutes)
 	m.projectEnvironmentRoutePolicies[key] = policy
+	touchGitOpsMemoryIntent(memory)
 	policy.DeclaredRoutes = cloneDeclaredRoutes(policy.DeclaredRoutes)
 	return policy, nil
 }

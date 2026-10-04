@@ -111,7 +111,7 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 				e.log.Warn("sched: warm pool: repair missing ledger reservation", "instance", warm.ID, "err", ceilingErr)
 			}
 			if admitErr := e.ledger.Admit(Request{
-				Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: acct.Plan,
+				Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 				EnvironmentKey:        runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID),
 				ProductionEnvironment: production,
 				RAMMB:                 app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,

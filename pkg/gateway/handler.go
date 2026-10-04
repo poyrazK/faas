@@ -5679,7 +5679,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ADR-568: resolve source-host readiness before route substitution. Once
+	// ADR-569: resolve source-host readiness before route substitution. Once
 	// ready, the ADR-089 route matcher may select another app whose auth,
 	// admission and proxy settings apply to the rest of the request.
 	var (
@@ -6509,6 +6509,8 @@ haveApp:
 
 	burstDone := h.burstPressure.begin(app.ID)
 	defer burstDone()
+	h.metrics.AdjustAppInflight(app.ID, 1)
+	defer h.metrics.AdjustAppInflight(app.ID, -1)
 	limits, _ := api.LimitsFor(app.Plan)
 	var (
 		cold              bool

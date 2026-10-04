@@ -1671,6 +1671,9 @@ type WakeResult struct {
 // skips Phase 1 explicitly so a gateway can demand a new instance
 // even when others are already RUNNING.
 func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
+	if scope == "" {
+		scope = ScopeFrom(ctx)
+	}
 	// PR-B (issue #272 / ADR-095): scope-aware Wake. Stamp the
 	// scope on the ctx so every downstream helper (resolveApp,
 	// loadAPIEnv, LiveDeployment lookup, ledger admit) threads the
@@ -1819,6 +1822,20 @@ func (e *Engine) RestartApp(ctx context.Context, appID, wakeID string) (CoordOut
 func (e *Engine) RefreshRuntimeConfig(ctx context.Context, appID, wakeID string) (CoordOutcome, error) {
 	return e.restartApp(ctx, appID, wakeID, true)
 }
+
+// RefreshRuntimeConfigForEnvironment refreshes resident workloads in one
+// environment. A parked environment stays cold; its next ordinary wake uses
+// the committed configuration. Legacy refresh requests still cover all scopes.
+func (e *Engine) RefreshRuntimeConfigForEnvironment(ctx context.Context, appID, wakeID, scope string) (CoordOutcome, error) {
+	if !api.ValidProjectEnvironmentSlug(scope) {
+		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: invalid environment %q", scope)
+	}
+	return e.restartApp(context.WithValue(ctx, runtimeRefreshScopeKey{}, scope), appID, wakeID, true)
+}
+
+// Keep refresh selection separate from the ordinary wake context: a scoped
+// wake context must not silently narrow a legacy application-wide refresh.
+type runtimeRefreshScopeKey struct{}
 
 // restartApp serializes both restart policies behind the same app-level and
 // notification single-flight. EnsureWake retains the existing admission,
@@ -3140,6 +3157,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	ins, err := e.store.CreateInstanceWithMode(ctx, appID, dep.ID, string(initState), app.RAMMB, placement.NodeID, wakeID, mode)
 	if err != nil {
 		release()
+		if errors.Is(err, state.ErrAccountWorkerCapacity) {
+			e.IncAtCapacity(appID, "wake")
+			if liftCapacityToResult {
+				return WakeResult{AtCapacity: true}, nil
+			}
+			return WakeResult{}, api.ErrCapacity("The account worker replica limit is reached")
+		}
 		// ADR-193: a durable per-node refusal is a typed capacity Problem,
 		// not a wake failure — the chosen node is full, another may not be.
 		// The transaction rolled back, so there is no row to unwind.
@@ -3180,7 +3204,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	e.emitInstanceChanged(ctx, ins.ID, appID, initState, wakeID)
 
 	if err := e.ledger.Admit(Request{
-		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, Plan: acct.Plan,
+		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		EnvironmentKey:        environmentKey,
 		ProductionEnvironment: productionEnvironment,
 		RAMMB:                 app.RAMMB, VCPU: limits.VCPU, CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
@@ -3274,7 +3298,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// everything for the app" behaviour so tarball/dockerfile paths
 	// keep working unchanged.
 	//
-	// ADR-568: stamp the deployment's original environment on each successful
+	// ADR-569: stamp the deployment's original environment on each successful
 	// ordinary wake admission. Production also updates its App projection.
 	// Best-effort: a stamp failure
 	// logs a warning but does NOT roll back the wake — the wake
@@ -3331,6 +3355,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		})
 	}
 
+	runtimeInputs := runtimeValues.Inputs
 	sealedEnv := runtimeValues.MainSecrets
 	sidecars, sidecarSecretCandidates, err := e.sidecarsForDeploymentWithValues(ctx, dep, acct.ID, &runtimeValues.Snapshot)
 	if err != nil {
@@ -3343,6 +3368,21 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_secret_version_changed")
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: sidecar secret versions changed during preparation: %w", err)
+	}
+	addRuntimeSecretVersions(&runtimeInputs, sealedEnv.Candidates, sealedEnv.AllSecrets)
+	addRuntimeSidecarSecretVersions(&runtimeInputs, sidecarSecretCandidates)
+	runtimeInputs.SecretRefs = sealedEnv.References
+	var snapshotInputs *state.RuntimeConfigInputs
+	if receipts, ok := e.store.(state.RuntimeConfigReceiptStore); ok && haveSnap {
+		captured, exists, err := receipts.SnapshotRuntimeConfigReceipt(ctx, snap.ID)
+		if err != nil {
+			e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_snapshot_receipt_unavailable")
+			release()
+			return WakeResult{}, fmt.Errorf("sched: wake: read snapshot inputs: %w", err)
+		}
+		if exists {
+			snapshotInputs = &captured
+		}
 	}
 	mainDependencies, err := mainWorkloadDependenciesForDeployment(dep, sidecars)
 	if err != nil {
@@ -3457,6 +3497,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		secretDeliveries: sealedEnv.Candidates,
 		secretFence:      sealedEnv.Fence,
 		configFence:      runtimeValues.ConfigFence,
+		runtimeInputs:    &runtimeInputs,
+		snapshotInputs:   snapshotInputs,
 		accountID:        acct.ID,
 		// wakeID is the per-wake-attempt correlation handle (gaps
 		// analysis 2026-07-23). Carried across the unlocked Phase 3
@@ -3812,9 +3854,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// control-plane latency after a fast SSD restore, that load-then-write shape
 	// left a race between the watchdog check and the state update. The CAS makes
 	// a stolen state a failure without adding a read to the successful path.
+	confirmedInputs := bootInput.runtimeInputs
+	if bootInput.haveSnap && out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT {
+		confirmedInputs = bootInput.snapshotInputs
+	}
 	fresh, publishErr := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
 		AccountID: bootInput.accountID, AppID: bootInput.appID, InstanceID: bootInput.insID,
-		NodeID: bootInput.nodeID, WakeID: bootInput.wakeID, Fence: bootInput.secretFence, ConfigFence: bootInput.configFence,
+		NodeID: bootInput.nodeID, WakeID: bootInput.wakeID, Fence: bootInput.secretFence, ConfigFence: bootInput.configFence, Inputs: confirmedInputs,
 		ExpectedState: string(bootInput.initState), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID),
 	})
 	if errors.Is(publishErr, state.ErrConflict) {
@@ -4108,6 +4154,8 @@ type bootInput struct {
 	secretDeliveries []state.AppSecretDeliveryCandidate
 	secretFence      state.RuntimeAppSecretFence
 	configFence      state.RuntimeAppConfigFence
+	runtimeInputs    *state.RuntimeConfigInputs
+	snapshotInputs   *state.RuntimeConfigInputs
 	// wakeID is the per-wake-attempt correlation handle (gaps analysis
 	// 2026-07-23). UUIDv7 minted at Phase 2 under the lock, persisted
 	// on the instances row in CreateInstance, and carried across the
@@ -5149,6 +5197,21 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: workload settings: %w", err)
 	}
 	limits := api.MustLimitsFor(acct.Plan)
+	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
+	runtimeInputs := runtimeValues.Inputs
+	if err != nil {
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: runtime inputs: %w", err)
+	}
+	migrationInputs := &migrationRuntimeInputs{ExpectedWakeID: ins.WakeID, WakeID: uuid.NewString(), Cold: runtimeInputs}
+	if receipts, ok := e.store.(state.RuntimeConfigReceiptStore); ok && ins.DeploymentID != "" {
+		captured, exists, err := receipts.InstanceRuntimeConfigReceipt(ctx, ins.ID)
+		if err != nil {
+			return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: source receipt: %w", err)
+		}
+		if exists && captured.Scope == normalizedDeploymentScope(dep.Scope) {
+			migrationInputs.Restored = &captured
+		}
+	}
 	// Sealed env is filtered through dep.OverrideEnvSecrets
 	// (jsonb) when present, mirroring the Wake path at
 	// engine.go:907-910. A migration without the override
@@ -5156,17 +5219,20 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 	// ships only the requested env_keys. A missing-required
 	// key fails loud (the legacy "stage everything" path is
 	// preserved when OverrideEnvSecrets is nil).
-	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
-	if err != nil {
-		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: sealed env: %w", err)
-	}
 	sealedEnv := runtimeValues.MainSecrets
 	sidecars, sidecarCandidates, err := e.sidecarsForDeploymentWithValues(ctx, dep, app.AccountID, &runtimeValues.Snapshot)
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: sidecars: %w", err)
 	}
-	if _, err := mergeSecretDeliveryCandidates(sealedEnv.Candidates, sidecarCandidates); err != nil {
+	secretCandidates, err := mergeSecretDeliveryCandidates(sealedEnv.Candidates, sidecarCandidates)
+	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: sidecar secret versions changed during preparation: %w", err)
+	}
+	addRuntimeSecretVersions(&migrationInputs.Cold, secretCandidates, sealedEnv.AllSecrets)
+	addRuntimeSidecarSecretVersions(&migrationInputs.Cold, sidecarCandidates)
+	migrationInputs.Cold.SecretRefs = sealedEnv.References
+	if ins.DeploymentID == "" {
+		migrationInputs = nil // legacy rows cannot bind input evidence to a deployment
 	}
 	mainDependencies, err := mainWorkloadDependenciesForDeployment(dep, sidecars)
 	if err != nil {
@@ -5175,12 +5241,13 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	return AppSpec{
-		BaseKey:       baseKey(app.Runtime),
-		LayerKey:      layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount:     int32(limits.VCPU),
-		MemSizeMiB:    int32(app.RAMMB),
-		CPUMillicores: int32(effectiveAppCPUMillicores(app)),
-		EgressMbit:    int32(limits.EgressMbit),
+		migrationRuntime: migrationInputs,
+		BaseKey:          baseKey(app.Runtime),
+		LayerKey:         layerKey(dep.RootfsKey, dep.ID),
+		VCPUCount:        int32(limits.VCPU),
+		MemSizeMiB:       int32(app.RAMMB),
+		CPUMillicores:    int32(effectiveAppCPUMillicores(app)),
+		EgressMbit:       int32(limits.EgressMbit),
 		// M-3: migration must preserve the same readiness budget as the
 		// original wake, including a manifest override.
 		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
@@ -5193,7 +5260,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		SealedEnv:              sealedEnv.Entries,
 		Sidecars:               sidecars,
 		MainDependsOn:          mainDependencies,
-		// ADR-568: plaintext and sealed inputs share one owned snapshot.
+		// ADR-569: plaintext and sealed inputs share one owned snapshot.
 		// A lookup failure aborts migration before booting incomplete config.
 		APIEnv: appendPlatformIdentity(
 			runtimeValues.APIEnv,
@@ -5798,6 +5865,9 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	if err != nil {
 		return fmt.Errorf("sched: prime: load deployment: %w", err)
 	}
+	if dep.EnvironmentWorkloadHeld() {
+		return nil
+	}
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
 	if err != nil {
 		return fmt.Errorf("sched: prime: load workload settings: %w", err)
@@ -5851,6 +5921,9 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	primeWakeID := primeWakeUUID.String()
 	ins, err := e.store.CreateInstanceWithMode(ctx, appID, deploymentID, string(state.StateColdBooting), app.RAMMB, placement.NodeID, primeWakeID, instanceModeForApp(app))
 	if err != nil {
+		if errors.Is(err, state.ErrAccountWorkerCapacity) {
+			return api.ErrCapacity("The account worker replica limit is reached")
+		}
 		// ADR-193: see the wake path. Prime is cold boot by design, so a
 		// node-full refusal here fails the deployment rather than the wake;
 		// the typed Problem is what carries CodeCapacity to the deploy row.
@@ -5880,7 +5953,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	e.emitInstanceChanged(ctx, ins.ID, appID, state.StateColdBooting, primeWakeID)
 
 	if err := e.ledger.Admit(Request{
-		Instance: ins.ID, AppID: appID, DeploymentID: deploymentID, Plan: acct.Plan,
+		Instance: ins.ID, AppID: appID, DeploymentID: deploymentID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: primeConfiguredCPU, CPUStartupBoostMillicores: primeStartupCPU, CPUStartupBoostUntil: provisionalPrimeCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		Kind:                KindSnapshotPrime,
 		NodeID:              placement.NodeID,
@@ -5903,92 +5976,17 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// filtering — see Wake builder for the full contract. ColdBoot /
 	// Prime shares the wake path; the dep row is the same one Wake
 	// loaded (so no extra DB read).
-	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
+	prepared, err := e.prepareDeploymentPrimeBoot(ctx, app, acct, limits, dep, placement, ins)
 	if err != nil {
-		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_sealed_env_invalid")
-		return fmt.Errorf("sched: prime: load sealed env: %w", err)
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, prepared.RejectionReason)
+		return err
 	}
-	sealedEnv := runtimeValues.MainSecrets
-	sidecars, sidecarSecretCandidates, err := e.sidecarsForDeploymentWithValues(ctx, dep, acct.ID, &runtimeValues.Snapshot)
-	if err != nil {
-		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_sidecars_invalid")
-		return fmt.Errorf("sched: prime: load sidecars: %w", err)
-	}
-	sealedEnv.Candidates, err = mergeSecretDeliveryCandidates(sealedEnv.Candidates, sidecarSecretCandidates)
-	if err != nil {
-		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_secret_version_changed")
-		return fmt.Errorf("sched: prime: sidecar secret versions changed during preparation: %w", err)
-	}
-	mainDependencies, err := mainWorkloadDependenciesForDeployment(dep, sidecars)
-	if err != nil {
-		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_main_dependencies_invalid")
-		return fmt.Errorf("sched: prime: load primary workload dependencies: %w", err)
-	}
-	privateNetwork := e.privateNetworkProjection(ctx, app)
-	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
-	spec := AppSpec{
-		BaseKey: baseKey(app.Runtime), LayerKey: primeLayer,
-		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
-		EgressMbit: int32(limits.EgressMbit),
-		// M-3: deploy prime uses the same plan-resolved readiness budget
-		// as ordinary wakes, so first boot and later wakes agree.
-		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
-		DisableStartupCPUBoost: dep.DisableStartupCPUBoost,
-		ExecutionMode:          executionModeForApp(app),
-		Plan:                   acct.Plan, AccountID: acct.ID,
-		AppID: appID, DeploymentID: dep.ID,
-		SealedEnv:     sealedEnv.Entries,
-		Sidecars:      sidecars,
-		MainDependsOn: mainDependencies,
-		// Issue #395 / ADR-045: plaintext api_env layer mirrors the
-		// sealed secrets surface but stores non-sensitive runtime
-		// config. Precedence at the guest layer is "secrets >
-		// api_env > manifest_env > os.environ".
-		APIEnv: appendPlatformIdentity(
-			runtimeValues.APIEnv,
-			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
-		),
-		// ADR-031: see the Wake builder above. Prime is the
-		// deploy-pipeline first boot — same wire shape, same
-		// per-netns ruleset; a freshly-deployed app starts under
-		// its declared egress policy rather than awaiting a later
-		// wake.
-		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),
-		EgressPorts:                 app.EgressPorts,
-		PrivateNetworkCIDRs:         privateNetwork.CIDRs,
-		PrivateNetworkAllowedCIDRs:  privateNetwork.AllowedCIDRs,
-		PrivateNetworkFirewallRules: privateNetwork.FirewallRules,
-		PrivateNetworkID:            privateNetwork.NetworkID,
-		PrivateNetworkAddress:       privateNetwork.Address,
-		// ADR-119: see the Wake builder above. Prime threads
-		// the customer-supplied static IPv4 (BYOIP, Scale-only)
-		// onto the vmmd AppSpec so the per-netns renderer
-		// emits the SNAT-to-customer sibling rule.
-		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
-		// ADR-053: snapshot priming is the first cold boot for a source
-		// deployment, so it must use the same resolved guest port as later
-		// wakes. Without this field vmmd falls back to guest :8080 while the
-		// inferred profile starts Node/Python apps on their framework port.
-		Port:                   deploymentRuntimePort(dep),
-		HealthcheckPath:        healthcheckPathFromDep(dep),
-		HealthcheckGRPC:        healthcheckGRPC,
-		HealthcheckGRPCService: healthcheckGRPCService,
-		ReadinessProbeJSON:     string(dep.OverrideReadinessProbe),
-		// Issue #470 / PR #470-FU-B: per-deployment runner id
-		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
-		// the framework_ready DGRAM receipt path can label
-		// vmmd_guest_framework_warmup_seconds by runner. See
-		// buildAppSpec (engine.go:1757) for the same field
-		// wired on the (re)build path. Empty falls back to
-		// "unknown" in the histogram observer.
-		Runtime:     app.Runtime,
-		AppProtocol: app.AppProtocol,
-	}
+	runtimeInputs, spec := prepared.Inputs, prepared.Spec
 	primeDelivery := bootInput{
 		insID: ins.ID, appID: appID, accountID: acct.ID, wakeID: primeWakeID,
-		secretDeliveries: sealedEnv.Candidates,
-		secretFence:      sealedEnv.Fence,
-		configFence:      runtimeValues.ConfigFence,
+		secretDeliveries: prepared.SecretDeliveries,
+		secretFence:      prepared.SecretFence,
+		configFence:      prepared.ConfigFence,
 	}
 	deliveryFinalized := false
 	defer func() {
@@ -6038,7 +6036,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	}
 	primed, err := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
 		AccountID: acct.ID, AppID: appID, InstanceID: ins.ID, NodeID: placement.NodeID, WakeID: primeWakeID,
-		ExpectedState: string(state.StateColdBooting), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID), Fence: sealedEnv.Fence, ConfigFence: runtimeValues.ConfigFence,
+		ExpectedState: string(state.StateColdBooting), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID), Fence: prepared.SecretFence, ConfigFence: prepared.ConfigFence, Inputs: &runtimeInputs,
 	})
 	if err != nil {
 		// Best-effort destroy; same rationale as Wake above. Uses a
@@ -6054,7 +6052,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	e.recordAppSecretDelivery(ctx, primeDelivery, state.SecretDeliveryDelivered, "")
 	deliveryFinalized = true
 
-	ins.AppID, ins.DeploymentID = appID, deploymentID
+	ins = primed
 	if executionModeForApp(app) == api.ExecutionModeWorker {
 		if err := e.emitDeploymentReady(ctx, deploymentID, api.ExecutionModeWorker, ins.ID, ""); err != nil {
 			e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
@@ -7132,6 +7130,13 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				AllowCPUOvercommitRecovery: true,
 				Kind:                       kind,
 			}
+			// Preserve resident accounting even if scope recovery fails. Unknown
+			// scope cannot authorize an automatic rollout allowance.
+			request.DeploymentScope = "__unknown__"
+			if dep, depErr := e.store.DeploymentByID(ctx, ins.DeploymentID); depErr == nil && dep.AppID == app.ID {
+				request.DeploymentScope = dep.Scope
+			}
+
 			if until, ok := startupCPUBoosts[ins.ID]; ok {
 				request.CPUStartupBoostMillicores = startupCPUBoostQuota(acct.Plan, request.CPUMillicores)
 				request.CPUStartupBoostUntil = until
@@ -7803,45 +7808,19 @@ func (e *Engine) resolveAppForDeploy(ctx context.Context, appID string) (state.A
 	return app, acct, limits, nil
 }
 
-// loadSealedEnvFor returns the sealed env entries to stage at wake for the
-// given deployment.
-//
-// Issue #460 / ADR-053 §Decision 1: when the deployment's OverrideEnvSecrets
-// is non-empty, the result is filtered to ONLY those keys (the override is a
-// positive allowlist — "secret:DB_URL" resolves to the app_secrets row whose
-// Key == "DB_URL"). When OverrideEnvSecrets is empty (legacy behaviour for
-// source-tarball / dockerfile deploys that pre-date the override surface),
-// the entire app_secrets set for the app is returned.
-//
-// Missing-secret posture (mirrors ADR-053 §Decision 2 "fail-loud"): an
-// override entry referencing a NAME that has no row in app_secrets is
-// reported as a loud error — schedd aborts the wake so the deployment row
-// transitions to failed. The shape was already validated at apid-create time
-// (CreateDeploymentOverrides.Validate at pkg/api/dto.go using
-// api.SecretRefNameRe); the existence check is the wake-side equivalent.
-// Customers who specify an env_secrets override expect those keys to land in
-// the guest — silently dropping them surfaces as a confusing "env var
-// missing" without ever telling the customer why.
-//
-// When ANY override entry is missing its row, ALL missing keys are reported
-// in a single error — non-deterministic, but bounded: a customer with three
-// missing secrets sees all three in one wake failure, not three sequential
-// "fix one, retry, see the next" deploys.
-//
-// Behaviour change vs. the pre-PR-B loadSealedEnv: a ListAppSecrets error
-// (PG hiccup, replication lag, role separation dropping the connection)
-// now aborts the wake instead of being silently logged-and-swallowed. This
-// is intentional — a wake that comes up without the sealed env the customer
-// configured is exactly the "silent drop" ADR-053 §Decision 2 forbids.
-//
-// Ciphertext + key only — VALUES never appear here or in logs.
-//
-// We carry AccountID explicitly so a cross-account (accountID, appID) pair
-// returns ErrNotFound (consistent with apid's 404 contract).
+// loadSealedEnvFor resolves destination environment keys to sealed source names
+// in the exact deployment scope. Explicit deployment references select a subset;
+// legacy deployments start with all scoped secrets. Environment reference intent
+// overlays individual destinations without discarding unmanaged legacy secrets.
+// Missing or malformed references abort the boot before staging any values.
+// The delivery receipt retains source versions and destination mappings; neither
+// receipt nor errors contain ciphertext or secret plaintext.
 type sealedEnvDelivery struct {
 	Fence      state.RuntimeAppSecretFence
 	Entries    []fcvm.SealedEnvEntry
 	Candidates []state.AppSecretDeliveryCandidate
+	References map[string]string
+	AllSecrets bool
 }
 
 func (e *Engine) loadSealedEnvFor(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string) ([]fcvm.SealedEnvEntry, error) {
@@ -7850,10 +7829,22 @@ func (e *Engine) loadSealedEnvFor(ctx context.Context, accountID, appID, scope s
 }
 
 func (e *Engine) loadSealedEnvDeliveryFor(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string) (sealedEnvDelivery, error) {
-	return e.loadSealedEnvDeliveryForTask(ctx, accountID, appID, scope, overrideEnvSecrets, false)
+	return e.resolveSealedEnvDeliveryFor(ctx, accountID, appID, scope, overrideEnvSecrets, true)
 }
 
 func (e *Engine) loadSealedEnvDeliveryForTask(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string, release bool) (sealedEnvDelivery, error) {
+	return e.resolveSealedEnvDeliveryForRole(ctx, accountID, appID, scope, overrideEnvSecrets, true, release)
+}
+
+func (e *Engine) resolveSealedEnvDeliveryFor(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string, environmentIntent bool) (sealedEnvDelivery, error) {
+	return e.resolveSealedEnvDeliveryForRole(ctx, accountID, appID, scope, overrideEnvSecrets, environmentIntent, false)
+}
+
+func (e *Engine) resolveSealedEnvDeliveryForRole(ctx context.Context, accountID, appID, scope string, overrideEnvSecrets map[string]string, environmentIntent, release bool) (sealedEnvDelivery, error) {
+	// Defensive collapse: a deployment pre-PR-B may have dep.Scope
+	// empty (NULL column). The store surface uses scope='default'
+	// everywhere else, so this keeps wake-time behaviour identical
+	// to the pre-PR-A path for that deployment.
 	if scope == "" {
 		scope = api.DefaultEnvScope
 	}
@@ -7861,7 +7852,15 @@ func (e *Engine) loadSealedEnvDeliveryForTask(ctx context.Context, accountID, ap
 	if err != nil {
 		return sealedEnvDelivery{}, fmt.Errorf("load sealed env (account=%s app=%s scope=%s): %w", accountID, appID, scope, err)
 	}
-	return sealedEnvDeliveryFromRowsForTask(rows, accountID, appID, scope, overrideEnvSecrets, release)
+	var intent state.AppEnvironmentSecretIntent
+	if scoped, ok := e.store.(state.AppEnvironmentSecretIntentReader); ok && environmentIntent {
+		var err error
+		intent, err = scoped.AppEnvironmentSecretIntent(ctx, accountID, appID, scope)
+		if err != nil {
+			return sealedEnvDelivery{}, fmt.Errorf("load scoped secret references: %w", err)
+		}
+	}
+	return sealedEnvDeliveryFromRowsWithIntent(rows, accountID, appID, scope, overrideEnvSecrets, release, intent)
 }
 
 func sealedEnvDeliveryFromRows(rows []state.AppSecret, accountID, appID, scope string, overrideEnvSecrets map[string]string) (sealedEnvDelivery, error) {
@@ -7869,6 +7868,10 @@ func sealedEnvDeliveryFromRows(rows []state.AppSecret, accountID, appID, scope s
 }
 
 func sealedEnvDeliveryFromRowsForTask(rows []state.AppSecret, accountID, appID, scope string, overrideEnvSecrets map[string]string, release bool) (sealedEnvDelivery, error) {
+	return sealedEnvDeliveryFromRowsWithIntent(rows, accountID, appID, scope, overrideEnvSecrets, release, state.AppEnvironmentSecretIntent{})
+}
+
+func sealedEnvDeliveryFromRowsWithIntent(rows []state.AppSecret, accountID, appID, scope string, overrideEnvSecrets map[string]string, release bool, intent state.AppEnvironmentSecretIntent) (sealedEnvDelivery, error) {
 	seen := map[string]bool{}
 	for _, row := range rows {
 		if row.AccountID != accountID || row.AppID != appID || row.Scope != scope || api.ValidateEnvKey(row.Key) != nil || seen[row.Key] {
@@ -7876,31 +7879,135 @@ func sealedEnvDeliveryFromRowsForTask(rows []state.AppSecret, accountID, appID, 
 		}
 		seen[row.Key] = true
 	}
-	// Preserve the complete, sorted diagnostics for missing explicit references.
-	present := make(map[string]bool, len(rows))
-	for _, row := range rows {
-		present[row.Key] = true
-	}
-	var missing []string
+	refs := map[string]string{}
+	intentSources := map[string]bool{}
 	for key, ref := range overrideEnvSecrets {
-		if !present[key] {
-			missing = append(missing, fmt.Sprintf("%q (-> %q)", key, ref))
+		if api.ValidateEnvKey(key) != nil || !state.ValidSecretReference(ref) {
+			return sealedEnvDelivery{}, fmt.Errorf("invalid secret reference for environment key %q", key)
 		}
 	}
-	if len(missing) > 0 {
-		sort.Strings(missing)
-		return sealedEnvDelivery{}, fmt.Errorf("env_secrets[scope=%s]: missing app_secrets rows for %s on (account=%s, app=%s); set the secret first via gregale secrets set --scope %s", scope, strings.Join(missing, ", "), accountID, appID, scope)
+	all := len(overrideEnvSecrets) == 0
+	if all {
+		for _, row := range rows {
+			refs[row.Key] = api.SecretRefPrefix + row.Key
+		}
+	} else {
+		for key, ref := range overrideEnvSecrets {
+			refs[key] = ref
+		}
 	}
-	selected, err := state.SelectAppSecretsForDelivery(rows, overrideEnvSecrets, release)
+	refs = intent.EffectiveReferences(refs)
+	for key := range intent.References {
+		intentSources[key] = true
+	}
+	index := map[string]state.AppSecret{}
+	for _, row := range rows {
+		index[row.Key] = row
+	}
+	requestedSources := map[string]string{}
+	var absent []string
+	for envKey, ref := range refs {
+		if api.ValidateEnvKey(envKey) != nil || !state.ValidSecretReference(ref) {
+			return sealedEnvDelivery{}, fmt.Errorf("invalid secret reference for environment key %q", envKey)
+		}
+		source := strings.TrimPrefix(ref, api.SecretRefPrefix)
+		if _, exists := index[source]; !exists {
+			absent = append(absent, fmt.Sprintf("%q (-> %q)", envKey, ref))
+		}
+		if !all || intentSources[envKey] {
+			requestedSources[source] = ref
+		}
+	}
+	if len(absent) > 0 {
+		sort.Strings(absent)
+		return sealedEnvDelivery{}, fmt.Errorf("env_secrets[scope=%s]: missing app_secrets rows for %s; set the secret first via gregale secrets set --scope %s", scope, strings.Join(absent, ", "), scope)
+	}
+	selectionRequest := requestedSources
+	if all {
+		selectionRequest = nil
+	}
+	eligible, err := state.SelectAppSecretsForDelivery(rows, selectionRequest, release)
 	if err != nil {
 		return sealedEnvDelivery{}, err
 	}
-	out := sealedEnvDelivery{Entries: make([]fcvm.SealedEnvEntry, 0, len(selected)), Candidates: make([]state.AppSecretDeliveryCandidate, 0, len(selected))}
-	for _, row := range selected {
-		out.Entries = append(out.Entries, fcvm.SealedEnvEntry{Key: row.Key, Ciphertext: row.Ciphertext})
-		out.Candidates = append(out.Candidates, state.AppSecretDeliveryCandidate{Scope: row.Scope, Key: row.Key, Version: row.DeliveryVersion})
+	allowed := map[string]bool{}
+	for _, row := range eligible {
+		allowed[row.Key] = true
 	}
-	return out, nil
+	// Implicit legacy all-secrets delivery omits migration credentials, while
+	// explicit Git aliases cannot bypass the release-task privilege boundary.
+	for source := range requestedSources {
+		if !allowed[source] {
+			return sealedEnvDelivery{}, fmt.Errorf("secret %q is restricted to release tasks", source)
+		}
+	}
+	for envKey, ref := range refs {
+		if !allowed[strings.TrimPrefix(ref, api.SecretRefPrefix)] {
+			delete(refs, envKey)
+		}
+	}
+	if release {
+		for _, row := range eligible {
+			if row.ManagedPostgresBindingID != "" && row.ManagedPostgresAccess == "migration" {
+				// Preserve an explicit alias; release-only bindings absent from the
+				// serving allowlist still reach the migration task under their own key.
+				referenced := false
+				for _, ref := range refs {
+					if ref == api.SecretRefPrefix+row.Key {
+						referenced = true
+						break
+					}
+				}
+				if !referenced {
+					if _, occupied := refs[row.Key]; occupied {
+						return sealedEnvDelivery{}, fmt.Errorf("release secret key %q conflicts with a scoped alias", row.Key)
+					}
+					refs[row.Key] = api.SecretRefPrefix + row.Key
+				}
+			}
+		}
+	}
+	keys := make([]string, 0, len(refs))
+	for key := range refs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var missing []string
+	out := make([]fcvm.SealedEnvEntry, 0, len(refs))
+	candidates := make([]state.AppSecretDeliveryCandidate, 0, len(refs))
+	selected := map[string]bool{}
+	for _, envKey := range keys {
+		ref := refs[envKey]
+		if api.ValidateEnvKey(envKey) != nil || !state.ValidSecretReference(ref) {
+			return sealedEnvDelivery{}, fmt.Errorf("invalid secret reference for environment key %q", envKey)
+		}
+		row, ok := index[strings.TrimPrefix(ref, api.SecretRefPrefix)]
+		if !ok {
+			missing = append(missing, fmt.Sprintf("%q (-> %q)", envKey, ref))
+			continue
+		}
+		entry := fcvm.SealedEnvEntry{Key: envKey, Ciphertext: row.Ciphertext}
+		if envKey != row.Key || intentSources[envKey] {
+			entry.SourceKey = row.Key
+		}
+		out = append(out, entry)
+		if !selected[row.Key] {
+			candidates = append(candidates, state.AppSecretDeliveryCandidate{Scope: row.Scope, Key: row.Key, Version: row.DeliveryVersion})
+			selected[row.Key] = true
+		}
+	}
+	if len(missing) > 0 {
+		return sealedEnvDelivery{}, fmt.Errorf("env_secrets[scope=%s]: missing app_secrets rows for %s; set the secret first via gregale secrets set --scope %s", scope, strings.Join(missing, ", "), scope)
+	}
+	return sealedEnvDelivery{Entries: out, Candidates: candidates, References: refs, AllSecrets: all}, nil
+}
+
+func (e *Engine) loadDeploymentSealedEnvDelivery(ctx context.Context, accountID, appID string, dep state.Deployment) (sealedEnvDelivery, error) {
+	refs, err := envSecretsFromDep(dep)
+	if err != nil {
+		return sealedEnvDelivery{}, err
+	}
+	return e.loadSealedEnvDeliveryFor(ctx, accountID, appID, dep.Scope, refs)
 }
 
 func (e *Engine) recordAppSecretDelivery(ctx context.Context, boot bootInput, status state.SecretDeliveryStatus, errorCode string) {
@@ -7937,31 +8044,14 @@ func (e *Engine) recordAppSecretDelivery(ctx context.Context, boot bootInput, st
 	}
 }
 
-// envSecretsFromDep unmarshals dep.OverrideEnvSecrets (jsonb column) into a
-// map[string]string. Pre-PR-B deployments store nil here (the column didn't
-// exist); an empty result preserves the legacy "stage everything for the
-// app" behaviour. A malformed column is treated as no override rather than
-// fail-the-wake, because the apid path validates the shape at INSERT time —
-// a tampered column would need a direct DB write, which the spec gates
-// behind DB role separation (CLAUDE.md security rules).
-//
-// Returned map is owned by the caller; mutating it does not affect the
-// deployment row.
-func envSecretsFromDep(dep state.Deployment) map[string]string {
-	if len(dep.OverrideEnvSecrets) == 0 {
-		return nil
+// envSecretsFromDep preserves legacy empty references and rejects corrupt
+// persisted intent. A decode failure must not broaden delivery to all secrets.
+func envSecretsFromDep(dep state.Deployment) (map[string]string, error) {
+	refs, err := state.DeploymentSecretReferences(dep.OverrideEnvSecrets)
+	if err != nil {
+		return nil, fmt.Errorf("invalid persisted deployment secret references: %w", err)
 	}
-	out := make(map[string]string)
-	if err := json.Unmarshal(dep.OverrideEnvSecrets, &out); err != nil {
-		// Defensive: apid validates shape at INSERT. Treat malformed as
-		// no-override so a corrupted row doesn't compound with a missing
-		// secrets row to surface as a confusing wake failure.
-		return nil
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+	return refs, nil
 }
 
 // usableSnapshotForWake (issue #470 / PR A / ADR-055) is the tier-aware
@@ -8068,6 +8158,12 @@ func (e *Engine) snapshotRejection(ctx context.Context, snap state.Snapshot, exp
 	if (appProtocol == api.AppProtocolHTTP2 || appProtocol == api.AppProtocolGRPC) &&
 		snap.BaseImageVersion != fcvm.FAAS_BASE_IMAGE_VERSION {
 		return ColdReasonBaseImage
+	}
+	if fresh, err := e.snapshotRuntimeConfigFresh(ctx, snap); err != nil {
+		return ColdReasonLookupFailed
+	} else if !fresh {
+		e.retireUnrestorableSnapshot(ctx, snap, ColdReasonStale)
+		return ColdReasonStale
 	}
 	return ""
 }
@@ -9147,7 +9243,10 @@ func (e *Engine) recordCommittedInstanceTransition(ctx context.Context, ins stat
 	} else if to == state.StateFailed && ins.Mode == string(state.InstanceModeWorker) {
 		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
 	}
+	e.appendInstanceTransitionEvent(ctx, ins, from, to, kind, reason)
+}
 
+func (e *Engine) appendInstanceTransitionEvent(ctx context.Context, ins state.Instance, from, to state.State, kind, reason string) {
 	// Audit-log emission (spec §6.1). Best-effort: a failure logs
 	// and counts, never rolls back the transition. The state row is
 	// the source of truth; this is observation.
@@ -9389,8 +9488,16 @@ func (e *Engine) wakeServingCapacity(app state.App, limits api.Limits, deploymen
 		e.rolloutGrantAppliesForEnvironment(app.ID, deploymentID, environmentKey, production))
 }
 
-func (e *Engine) admitGate(ctx context.Context, app *state.App, limits api.Limits, deploymentID string) (wakeOutcome, int64, int64, int, bool) {
-	outcome, observedCents, capCents, concurrency, full, _ := e.admitGateForEnvironment(ctx, app, limits, deploymentID, "", true)
+func (e *Engine) admitGate(ctx context.Context, app *state.App, limits api.Limits, deploymentID string, scopes ...string) (wakeOutcome, int64, int64, int, bool) {
+	environmentKey, production := "", true
+	if len(scopes) > 0 && !reaperProductionScope(scopes[0]) {
+		selected, err := e.resolveWakeEnvironmentForDeployment(WithScope(ctx, scopes[0]), app.ID, app, deploymentID)
+		if err != nil {
+			return wakeRejectAtCap, 0, 0, 0, false
+		}
+		environmentKey, production = runtimeEnvironmentAdmissionKey(selected.owner.Scope, selected.owner.EnvironmentID), reaperProductionScope(selected.owner.Scope)
+	}
+	outcome, observedCents, capCents, concurrency, full, _ := e.admitGateForEnvironment(ctx, app, limits, deploymentID, environmentKey, production)
 	return outcome, observedCents, capCents, concurrency, full
 }
 
@@ -9403,7 +9510,7 @@ func (e *Engine) admitGateForEnvironment(ctx context.Context, app *state.App, li
 	// admit normally. Without the clamp, an app with MaxConcurrency=0
 	// would always return wakeRejectAtCap and every wake would 429.
 	//
-	// ADR-199 / ADR-568: a rollout adds one slot while a
+	// ADR-199 / ADR-569: a rollout adds one slot while a
 	// second deployment is coming up alongside the one already serving, so
 	// a canary can overlap two revisions on a plan whose cap equals its
 	// steady-state instance count (Free = 1).

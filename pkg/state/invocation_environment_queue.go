@@ -176,6 +176,9 @@ func validateInvocationEnvironmentQueueAdmission(ctx context.Context, store invo
 		}
 	}
 	if owner.InvocationID == "" {
+		if bound, err := validateBoundQueueEnvironment(ctx, store, inv, version.Scope); bound || err != nil {
+			return err
+		}
 		if invocationStageScope(version.Scope) && inv.Source == InvocationQueue {
 			return ErrInvocationEnvironmentWorkIsolation
 		}

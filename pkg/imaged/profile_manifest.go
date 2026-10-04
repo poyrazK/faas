@@ -74,6 +74,24 @@ func manifestFromImageConfigWithApp(config oci.ImageConfig, app state.App) (api.
 	return applyAppStartCommand(manifest, app), nil
 }
 
+func manifestFromImageConfigWithDeployment(config oci.ImageConfig, app state.App, dep state.Deployment) (api.AppManifest, error) {
+	frozen, err := dep.ScopedWorkloadRuntime()
+	if err != nil {
+		return api.AppManifest{}, err
+	}
+	// A reviewed entrypoint can supply the executable for a base image that
+	// deliberately declares no command. ApplyDeploymentRuntime still stamps
+	// the explicit contract after all other manifest overlays.
+	if frozen != nil && len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
+		if raw, explicit := frozen.Runtime["entrypoint"]; explicit {
+			if err := json.Unmarshal(raw, &config.Entrypoint); err != nil {
+				return api.AppManifest{}, state.ErrInvalidArgument
+			}
+		}
+	}
+	return manifestFromImageConfigWithApp(config, app)
+}
+
 // applyAppStartCommand enforces the documented app-level command override.
 // Profile commands are used only when the built OCI artifact has no command;
 // Railpack normally emits an optimized launcher that must be retained.

@@ -1,8 +1,9 @@
-// adr:568
+// adr: 569
 package daemonunitspec
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -11,6 +12,9 @@ import (
 
 func TestPrivateCloneWorkerResourceAndCredentialBoundary(t *testing.T) {
 	u := UnitApidCloneWorker()
+	if strings.Contains(u.EnvironmentFile, "/etc/faas/sealed.env") {
+		t.Fatal("private worker inherits unrelated API secrets")
+	}
 	if u.User != UnitApid().User || u.Slice != FaasCPSlice || u.MemoryMax != fmt.Sprint(api.PostgresCopyWorkerMemoryMaxBytes) ||
 		u.CPUQuota != "100%" || u.TasksMax != fmt.Sprint(api.PostgresCopyWorkerTasksMax) || u.Delegate {
 		t.Fatal("clone worker lost bounded APID ownership")

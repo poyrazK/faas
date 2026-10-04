@@ -1,4 +1,4 @@
-// adr:568
+// adr: 569
 package copyinventory
 
 import (

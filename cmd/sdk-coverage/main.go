@@ -166,16 +166,18 @@ var routeExclude = map[string]bool{
 	// is GitHub-side state — programmatic consumers shouldn't bind
 	// apps via API. Mirrors the "browser-only dashboard routes"
 	// exclusion above.
-	"POST /v1/install/repos/list":                       true, // bind picker hydrates from this; browser-only
-	"POST /v1/apps/{slug}/install/bind":                 true, // bind picker writes through this; browser-only
-	"GET /v1/apps/{slug}/install/bind":                  true, // dashboard connection status; session-cookie-only
-	"GET /v1/apps/{slug}/install":                       true, // canonical dashboard connection status; session-cookie-only
-	"DELETE /v1/apps/{slug}/install/bind":               true, // dashboard disconnect; session-cookie + CSRF-only
-	"POST /v1/apps/{slug}/install/sync":                 true, // dashboard repair action; session-cookie + CSRF-only
-	"POST /v1/apps/{slug}/install/activity/retry":       true, // dashboard activity recovery action; session-cookie + CSRF-only
-	"POST /dashboard/apps/{slug}/github/sync":           true, // dashboard repair form; session-cookie + CSRF-only
-	"POST /dashboard/apps/{slug}/github/disconnect":     true, // dashboard disconnect form; session-cookie + CSRF-only
-	"POST /dashboard/apps/{slug}/github/activity/retry": true, // dashboard activity recovery form; session-cookie + CSRF-only
+	"POST /v1/install/repos/list":                                true, // bind picker hydrates from this; browser-only
+	"POST /v1/apps/{slug}/install/bind":                          true, // bind picker writes through this; browser-only
+	"GET /v1/apps/{slug}/install/bind":                           true, // dashboard connection status; session-cookie-only
+	"GET /v1/apps/{slug}/install":                                true, // canonical dashboard connection status; session-cookie-only
+	"DELETE /v1/apps/{slug}/install/bind":                        true, // dashboard disconnect; session-cookie + CSRF-only
+	"POST /v1/apps/{slug}/install/sync":                          true, // dashboard repair action; session-cookie + CSRF-only
+	"POST /v1/apps/{slug}/install/activity/retry":                true, // dashboard activity recovery action; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/sync":                    true, // dashboard repair form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/disconnect":              true, // dashboard disconnect form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/activity/retry":          true, // dashboard activity recovery form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/secret-references":              true, // HTML reference form; public SDK uses the JSON PUT route
+	"POST /dashboard/apps/{slug}/secret-references/{key}/delete": true, // HTML reference removal; public SDK uses DELETE
 
 	// Issue #961 / Mega-B PR-3 / ADR-116. The dashboard's
 	// /dashboard/apps/new wizard renders GET /v1/templates as the
@@ -277,33 +279,42 @@ var sdkMethodExclude = map[string]bool{
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
 	// ADR-566: financial preview routes use financial-domain client names.
-	"GET /v1/billing/costs":                                 "GetFinancialCosts",
-	"GET /v1/billing/forecast":                              "GetFinancialForecast",
-	"POST /v1/billing/budgets/preview":                      "PreviewFinancialBudget",
-	"GET /v1/billing/budgets":                               "ListFinancialBudgets",
-	"GET /v1/billing/budgets/{id}":                          "GetFinancialBudget",
-	"POST /v1/billing/budgets":                              "CreateFinancialBudget",
-	"PUT /v1/billing/budgets/{id}":                          "UpdateFinancialBudget",
-	"DELETE /v1/billing/budgets/{id}":                       "DeleteFinancialBudget",
-	"GET /v1/billing/budgets/{id}/revisions":                "ListFinancialBudgetRevisions",
-	"POST /v1/execution-workflows":                          "CreateManagedExecutionWorkflow",
-	"GET /v1/execution-workflows/{workflow_id}":             "GetExecutionWorkflow",
-	"GET /v1/executions/capabilities":                       "GetExecutionCapabilities",
-	"POST /v1/executions/{id}/artifact-grants":              "CreateExecutionArtifactGrant",
-	"DELETE /v1/execution-artifact-grants/{id}":             "RevokeExecutionArtifactGrant",
-	"POST /v1/apps/{slug}/issue-events":                     "IngestIssueEvent",
-	"POST /v1/apps/{slug}/issue-events/otlp/{signal}":       "IngestIssueOTLP",
-	"GET /v1/apps/{slug}/issues":                            "ListIssues",
-	"GET /v1/apps/{slug}/issue-impact-alert-policy":         "GetIssueImpactAlertPolicy",
-	"PUT /v1/apps/{slug}/issue-impact-alert-policy":         "SetIssueImpactAlertPolicy",
-	"GET /v1/apps/{slug}/issue-ownership-rules":             "GetIssueOwnershipRules",
-	"PUT /v1/apps/{slug}/issue-ownership-rules":             "SetIssueOwnershipRules",
-	"GET /v1/apps/{slug}/issues/{issue_id}":                 "GetIssue",
-	"POST /v1/apps/{slug}/issues/{issue_id}/actions":        "ActOnIssue",
-	"POST /v1/apps/{slug}/issue-ingest-tokens":              "CreateIssueIngestToken",
-	"GET /v1/apps/{slug}/issue-ingest-tokens":               "ListIssueIngestTokens",
-	"DELETE /v1/apps/{slug}/issue-ingest-tokens/{token_id}": "RevokeIssueIngestToken",
-	"GET /v1/apps/{slug}/runtime-config-restarts/{wake_id}": "GetRuntimeConfigRestartStatus",
+	"GET /v1/billing/costs":                                                        "GetFinancialCosts",
+	"GET /v1/billing/forecast":                                                     "GetFinancialForecast",
+	"POST /v1/billing/budgets/preview":                                             "PreviewFinancialBudget",
+	"GET /v1/billing/budgets":                                                      "ListFinancialBudgets",
+	"GET /v1/billing/budgets/{id}":                                                 "GetFinancialBudget",
+	"POST /v1/billing/budgets":                                                     "CreateFinancialBudget",
+	"PUT /v1/billing/budgets/{id}":                                                 "UpdateFinancialBudget",
+	"DELETE /v1/billing/budgets/{id}":                                              "DeleteFinancialBudget",
+	"GET /v1/billing/budgets/{id}/revisions":                                       "ListFinancialBudgetRevisions",
+	"POST /v1/execution-workflows":                                                 "CreateManagedExecutionWorkflow",
+	"GET /v1/execution-workflows/{workflow_id}":                                    "GetExecutionWorkflow",
+	"GET /v1/executions/capabilities":                                              "GetExecutionCapabilities",
+	"POST /v1/executions/{id}/artifact-grants":                                     "CreateExecutionArtifactGrant",
+	"DELETE /v1/execution-artifact-grants/{id}":                                    "RevokeExecutionArtifactGrant",
+	"POST /v1/apps/{slug}/issue-events":                                            "IngestIssueEvent",
+	"POST /v1/apps/{slug}/issue-events/otlp/{signal}":                              "IngestIssueOTLP",
+	"GET /v1/apps/{slug}/issues":                                                   "ListIssues",
+	"GET /v1/apps/{slug}/issue-impact-alert-policy":                                "GetIssueImpactAlertPolicy",
+	"PUT /v1/apps/{slug}/issue-impact-alert-policy":                                "SetIssueImpactAlertPolicy",
+	"GET /v1/apps/{slug}/issue-ownership-rules":                                    "GetIssueOwnershipRules",
+	"PUT /v1/apps/{slug}/issue-ownership-rules":                                    "SetIssueOwnershipRules",
+	"GET /v1/apps/{slug}/issues/{issue_id}":                                        "GetIssue",
+	"POST /v1/apps/{slug}/issues/{issue_id}/actions":                               "ActOnIssue",
+	"POST /v1/apps/{slug}/issue-ingest-tokens":                                     "CreateIssueIngestToken",
+	"GET /v1/apps/{slug}/issue-ingest-tokens":                                      "ListIssueIngestTokens",
+	"DELETE /v1/apps/{slug}/issue-ingest-tokens/{token_id}":                        "RevokeIssueIngestToken",
+	"GET /v1/apps/{slug}/runtime-config-restarts/{wake_id}":                        "GetRuntimeConfigRestartStatus",
+	"GET /v1/projects/{slug}/environments/{environment}/gitops":                    "GetEnvironmentGitOps",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/source":            "CreateEnvironmentGitSource",
+	"PATCH /v1/projects/{slug}/environments/{environment}/gitops/source":           "UpdateEnvironmentGitSource",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview": "PreviewEnvironmentGitRevision",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve": "ApproveEnvironmentGitRevision",
+	"GET /v1/projects/{slug}/environments/{environment}/gitops/adoption-preview":   "PreviewEnvironmentGitOpsAdoption",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/adopt":             "AdoptEnvironmentGitOps",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/overrides":         "CreateEnvironmentGitOpsOverride",
+	"DELETE /v1/projects/{slug}/environments/{environment}/gitops/overrides":       "RemoveEnvironmentGitOpsOverride",
 
 	"GET /v1/dev/bridges":                                                             "ListDevBridges",
 	"GET /v1/dev/bridges/{id}/activity":                                               "GetDevBridgeActivity",
@@ -419,6 +430,9 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/secrets/{key}":                                      "UnsetSecret",
 	"GET /v1/apps/{slug}/secret-revocations/{revocation_id}":                    "GetSecretRevocation",
 	"PUT /v1/apps/{slug}/secrets/{key}":                                         "SetSecret",
+	"GET /v1/apps/{slug}/secret-references":                                     "ListAppSecretReferences",
+	"PUT /v1/apps/{slug}/secret-references/{key}":                               "SetAppSecretReference",
+	"DELETE /v1/apps/{slug}/secret-references/{key}":                            "DeleteAppSecretReference",
 	"POST /v1/apps/{slug}/secrets/{key}/rotate":                                 "RotateSecret",
 	"PATCH /v1/apps/{slug}":                                                     "UpdateApp",
 	"POST /v1/apps/{slug}/rename":                                               "RenameApp",

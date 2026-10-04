@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -17,6 +18,7 @@ type runtimeDeploymentValues struct {
 	APIEnv      []fcvm.APIEnvEntry
 	MainSecrets sealedEnvDelivery
 	ConfigFence state.RuntimeAppConfigFence
+	Inputs      state.RuntimeConfigInputs
 }
 
 func runtimeValuesHaveEphemeralSecrets(snapshot state.RuntimeAppValuesSnapshot) bool {
@@ -34,6 +36,13 @@ func (e *Engine) loadRuntimeDeploymentValues(ctx context.Context, app state.App,
 
 func (e *Engine) loadRuntimeDeploymentValuesForTask(ctx context.Context, app state.App, dep state.Deployment, release bool) (runtimeDeploymentValues, error) {
 	accountID := app.AccountID
+	boundary, stamped, err := state.RuntimeConfigChangedAtForScope(ctx, e.store, dep.AppID, dep.Scope)
+	if err != nil {
+		return runtimeDeploymentValues{}, err
+	}
+	if !stamped {
+		boundary = time.Unix(0, 0).UTC()
+	}
 	snapshot, err := e.store.RuntimeAppValuesForDeployment(ctx, accountID, dep.AppID, dep.ID)
 	if err != nil {
 		return runtimeDeploymentValues{}, fmt.Errorf("read owned deployment values: %w", err)
@@ -55,16 +64,27 @@ func (e *Engine) loadRuntimeDeploymentValuesForTask(ctx context.Context, app sta
 			return runtimeDeploymentValues{}, fmt.Errorf("invalid runtime secret grant: %w", state.ErrConflict)
 		}
 	}
-	result := runtimeDeploymentValues{Snapshot: snapshot}
+	result := runtimeDeploymentValues{Snapshot: snapshot, Inputs: state.RuntimeConfigInputs{Scope: snapshot.Scope, Boundary: boundary, Variables: map[string]string{}, SecretVersions: map[string]int64{}}}
 	keys := map[string]bool{}
 	for _, row := range snapshot.Values {
 		if row.AccountID != accountID || row.AppID != dep.AppID || row.Scope != snapshot.Scope || api.ValidateEnvKey(row.Key) != nil || keys[row.Key] {
 			return runtimeDeploymentValues{}, fmt.Errorf("invalid runtime environment projection: %w", state.ErrConflict)
 		}
 		keys[row.Key] = true
+		result.Inputs.Variables[row.Key] = row.Value
+		if row.UpdatedAt.After(result.Inputs.Boundary) {
+			result.Inputs.Boundary = row.UpdatedAt
+		}
 		result.APIEnv = append(result.APIEnv, fcvm.APIEnvEntry{Key: row.Key, Value: row.Value})
 	}
-	result.MainSecrets, err = sealedEnvDeliveryFromRowsForTask(snapshot.Secrets, accountID, dep.AppID, snapshot.Scope, refs, release)
+	var intent state.AppEnvironmentSecretIntent
+	if reader, ok := e.store.(state.AppEnvironmentSecretIntentReader); ok {
+		intent, err = reader.AppEnvironmentSecretIntent(ctx, accountID, dep.AppID, snapshot.Scope)
+		if err != nil {
+			return runtimeDeploymentValues{}, err
+		}
+	}
+	result.MainSecrets, err = sealedEnvDeliveryFromRowsWithIntent(snapshot.Secrets, accountID, dep.AppID, snapshot.Scope, refs, release, intent)
 	if err != nil {
 		return runtimeDeploymentValues{}, err
 	}

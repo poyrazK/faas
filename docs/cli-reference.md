@@ -84,7 +84,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`rollback`](#rollback) | Re-promote the previous deployment |
 | [`projects`](#projects) | Inspect and recover repository projects |
 | [`scan`](#scan) | Decomposition dry-run (--tarball \| --path \| --repo OWNER/NAME) |
-| [`secrets`](#secrets) | Manage env secrets (secrets list\|set\|unset\|list-all\|audit\|rotate) |
+| [`secrets`](#secrets) | Manage sealed secrets and environment secret references |
 | [`slo`](#slo) | Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]; slug defaults to linked context) |
 | [`status`](#status) | Personal SLO numbers (availability, wake p95, build success) |
 | [`tail`](#tail) | Live tail of the unified event stream (app defaults to linked context) |
@@ -1101,7 +1101,7 @@ Retry a bounded batch of terminal failures classified as retryable; pass --event
 
 Reliably send work to another Gregale application
 
-`gregale send <target-app> --type <TYPE> --data <J|@file|-> [--id <ID>] [--source <SOURCE>] [--time <RFC3339>] [--queue-name <QUEUE>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>] [--idempotency-key <KEY>]`
+`gregale send <target-app> --type <TYPE> --data <J|@file|-> [--id <ID>] [--source <SOURCE>] [--time <RFC3339>] [--queue-name <QUEUE>] [--environment <ENV>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>] [--idempotency-key <KEY>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1111,6 +1111,7 @@ Reliably send work to another Gregale application
 | `--source <SOURCE>` | event source |  |
 | `--time <RFC3339>` | event time |  |
 | `--queue-name <QUEUE>` | target logical queue name |  |
+| `--environment <ENV>` | registered project environment with an enabled queue binding |  |
 | `--work-policy <NAME>` | named work policy for an unnamed queue |  |
 | `--work-key <JSON>` | JSON scalar identifying related work |  |
 | `--work-fairness-key <JSON>` | JSON scalar shared by related work keys |  |
@@ -5267,12 +5268,13 @@ Tail the wake queue
 
 Enqueue a wake request
 
-`gregale queue send [--payload <J>] [--queue-name <QUEUE>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>] <slug>`
+`gregale queue send [--payload <J>] [--queue-name <QUEUE>] [--environment <ENV>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--payload <J>` | JSON payload (inline \| @file \| -) |  |
 | `--queue-name <QUEUE>` | logical queue name |  |
+| `--environment <ENV>` | registered project environment with an enabled queue binding |  |
 | `--work-policy <NAME>` | named work policy for an unnamed queue |  |
 | `--work-key <JSON>` | JSON scalar identifying related work |  |
 | `--work-fairness-key <JSON>` | JSON scalar shared by related work keys |  |
@@ -5336,9 +5338,13 @@ Manage queue bindings
 
 #### queue bindings list
 
-List queue bindings
+List app queue bindings
 
-`gregale queue bindings list <slug>`
+`gregale queue bindings list [--include-retired] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--include-retired` | include retained binding UUIDs for reviewed recovery |  |
 
 #### queue bindings create
 
@@ -5369,7 +5375,7 @@ Update a queue binding
 
 #### queue bindings rm
 
-Delete a queue binding
+Retire a queue binding
 
 `gregale queue bindings rm <slug> <binding-id>`
 
@@ -5742,6 +5748,12 @@ gregale projects environments queues get shop staging shop-worker
 gregale projects environments queues set shop staging shop-worker --file queues.json
 ```
 
+#### projects environments gitops
+
+Review Git definitions, adopt owned fields, and inspect reconciliation (JSON output)
+
+`gregale projects environments gitops`
+
 #### projects environments diff
 
 Compare environments
@@ -5836,9 +5848,64 @@ Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 
 ## secrets
 
-Manage env secrets (secrets list|set|unset|list-all|audit|rotate)
+Manage sealed secrets and environment secret references
 
 `gregale secrets [<subcommand>]`
+
+### secrets refs
+
+Manage destination-to-source names in a registered environment
+
+#### secrets refs list
+
+List reference names and shared environment-key quota
+
+`gregale secrets refs list --app <slug> --environment <ENV>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--environment <ENV>` | registered project environment | required |
+
+Examples:
+
+```sh
+gregale secrets refs list --app my-api --environment production
+```
+
+#### secrets refs set
+
+Select an existing scoped secret; respects Git field ownership
+
+`gregale secrets refs set --app <slug> --environment <ENV> <KEY=secret:NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--environment <ENV>` | registered project environment | required |
+
+Examples:
+
+```sh
+gregale secrets refs set --app my-api --environment production DATABASE_URL=secret:DATABASE_PRIMARY
+```
+
+#### secrets refs unset
+
+Suppress a primary workload secret destination and preserve the sealed source
+
+`gregale secrets refs unset --app <slug> --environment <ENV> <KEY>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--environment <ENV>` | registered project environment | required |
+
+Examples:
+
+```sh
+gregale secrets refs unset --app my-api --environment production DATABASE_URL
+```
 
 ### secrets list
 

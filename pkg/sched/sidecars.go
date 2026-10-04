@@ -96,7 +96,7 @@ func (e *Engine) sidecarsForDeploymentWithValues(ctx context.Context, dep state.
 		if values != nil {
 			loaded, err = sealedEnvDeliveryFromRows(values.Secrets, accountID, dep.AppID, values.Scope, declaration.EnvSecrets)
 		} else {
-			loaded, err = e.loadSealedEnvDeliveryFor(ctx, accountID, dep.AppID, dep.Scope, declaration.EnvSecrets)
+			loaded, err = e.resolveSealedEnvDeliveryFor(ctx, accountID, dep.AppID, dep.Scope, declaration.EnvSecrets, false)
 		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("sidecar %q secrets: %w", declaration.Name, err)

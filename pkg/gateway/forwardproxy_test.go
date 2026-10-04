@@ -409,6 +409,16 @@ func (f *fakeVmmdClient) CreateFromSnapshot(context.Context, *vmmdpb.CreateFromS
 func (f *fakeVmmdClient) CreateColdBoot(context.Context, *vmmdpb.CreateColdBootRequest, ...grpc.CallOption) (*vmmdpb.WakeResponse, error) {
 	panic("CreateColdBoot: not stubbed")
 }
+func (f *fakeVmmdClient) CreateEnvironmentQualification(context.Context, *vmmdpb.CreateEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.CreateEnvironmentQualificationResponse, error) {
+	panic("CreateEnvironmentQualification: not stubbed")
+}
+func (f *fakeVmmdClient) RetireEnvironmentQualification(context.Context, *vmmdpb.RetireEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.RetireEnvironmentQualificationResponse, error) {
+	panic("RetireEnvironmentQualification: not stubbed")
+}
+
+func (f *fakeVmmdClient) CaptureEnvironmentQualification(context.Context, *vmmdpb.CaptureEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.CaptureEnvironmentQualificationResponse, error) {
+	panic("CaptureEnvironmentQualification: not stubbed")
+}
 func (f *fakeVmmdClient) JobColdBoot(context.Context, *vmmdpb.JobColdBootRequest, ...grpc.CallOption) (*vmmdpb.JobColdBootResponse, error) {
 	panic("JobColdBoot: not stubbed")
 }

@@ -21,7 +21,7 @@ import (
 func TestRuntimeConfigStaleAnchorsOnWakeAdmission(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanPro, 256, 5)
+	_, app, deployment := seedApp(t, store, api.PlanPro, 256, 5)
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 
 	admittedWake, err := uuid.NewV7()
@@ -35,7 +35,7 @@ func TestRuntimeConfigStaleAnchorsOnWakeAdmission(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 	readyAfterChange := time.Now()
 
-	booting := state.Instance{ID: "ins-booting", AppID: app.ID, WakeID: admittedWake.String(), StartedAt: readyAfterChange}
+	booting := state.Instance{ID: "ins-booting", AppID: app.ID, DeploymentID: deployment.ID, WakeID: admittedWake.String(), StartedAt: readyAfterChange}
 	if !e.runtimeConfigStale(ctx, booting) {
 		t.Fatal("instance whose wake was admitted before the change was judged fresh; its capture would publish the old secrets")
 	}
@@ -45,19 +45,19 @@ func TestRuntimeConfigStaleAnchorsOnWakeAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh := state.Instance{ID: "ins-fresh", AppID: app.ID, WakeID: laterWake.String(), StartedAt: time.Now()}
+	fresh := state.Instance{ID: "ins-fresh", AppID: app.ID, DeploymentID: deployment.ID, WakeID: laterWake.String(), StartedAt: time.Now()}
 	if e.runtimeConfigStale(ctx, fresh) {
 		t.Fatal("instance admitted after the change was judged stale")
 	}
 
 	// Legacy or non-v7 wake ids fall back to started_at.
-	legacy := state.Instance{ID: "ins-legacy", AppID: app.ID, WakeID: "not-a-uuid", StartedAt: readyAfterChange}
+	legacy := state.Instance{ID: "ins-legacy", AppID: app.ID, DeploymentID: deployment.ID, WakeID: "not-a-uuid", StartedAt: readyAfterChange}
 	if e.runtimeConfigStale(ctx, legacy) {
 		t.Fatal("non-v7 wake id must fall back to started_at")
 	}
 }
 
-// adr: 568
+// adr: 569
 func TestStageSnapshotFreshnessKeepsAdmissionClockAndEnvironmentOwner(t *testing.T) {
 	ctx := t.Context()
 	f := seedStageSnapshotPolicy(t, 0, false)

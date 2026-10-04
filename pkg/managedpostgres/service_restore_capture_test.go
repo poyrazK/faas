@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// ADR-568: a restore uses the frozen source spec while preserving its physical
+// ADR-569: a restore uses the frozen source spec while preserving its physical
 // source identity. Later desired source edits cannot change the stage copy.
 func TestRestoreUsesCapturedSourceDefinition(t *testing.T) {
 	ctx := context.Background()
@@ -39,7 +39,7 @@ func TestRestoreUsesCapturedSourceDefinition(t *testing.T) {
 	}
 }
 
-// ADR-568: captured restoration rejects physical-identity changes, expired
+// ADR-569: captured restoration rejects physical-identity changes, expired
 // recovery windows and conflicting adopted targets before provider I/O.
 func TestRestoreCapturedDefinitionRejectsDriftBeforeProviderIO(t *testing.T) {
 	for _, fault := range []string{"provider_identity", "backend_identity", "fingerprint", "invalid_spec", "shortened_retention", "target_spec", "target_origin"} {

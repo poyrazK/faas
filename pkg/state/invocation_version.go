@@ -81,11 +81,14 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
-	scope := DefaultEnvScope
+	capturedScope := inv.DeploymentScope != ""
 	projectApp := app.ProjectID != "" && app.PreviewOfSlug == ""
-	if projectApp {
-		scope = "production"
-	} else if release != "" {
+	scope, err := invocationDeploymentScope(app, inv.DeploymentScope)
+	if err != nil {
+		return inv, InvocationVersion{}, err
+	}
+	inv.DeploymentScope = scope
+	if !projectApp && release != "" {
 		return inv, InvocationVersion{}, ErrNotFound
 	}
 	if ingress {
@@ -103,7 +106,7 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 			if scopeErr != nil {
 				return inv, InvocationVersion{}, scopeErr
 			}
-			if ingress && !invocationScopesMatch(projectApp, scope, pinScope) {
+			if (ingress || capturedScope) && !invocationScopesMatch(projectApp, scope, pinScope) {
 				return inv, InvocationVersion{}, ErrNotFound
 			}
 			scope = pinScope
@@ -117,6 +120,10 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if !projectApp && scope != DefaultEnvScope {
 		return inv, InvocationVersion{}, ErrNotFound
 	}
+	boundQueue, err := validateBoundQueueEnvironment(ctx, store, inv, scope)
+	if err != nil {
+		return inv, InvocationVersion{}, err
+	}
 	if invocationStageScope(scope) {
 		reader, ok := store.(invocationEnvironmentStore)
 		if !ok {
@@ -129,11 +136,12 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 		if env.AccountID != app.AccountID || env.ProjectID != app.ProjectID || env.Slug != scope {
 			return inv, InvocationVersion{}, ErrConflict
 		}
-		if (invocationHasSharedWorkProducer(inv) && (inv.ID == "" || inv.EnvironmentID == "" || !stageQueueInvocationShape(inv))) ||
+		if (!boundQueue && invocationHasSharedWorkProducer(inv) && (inv.ID == "" || inv.EnvironmentID == "" || !stageQueueInvocationShape(inv))) ||
 			inv.OnSuccessDestinationID != "" || inv.OnFailureDestinationID != "" {
 			return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
 		}
 	}
+	inv.DeploymentScope = scope
 	version := InvocationVersion{Scope: scope}
 	if revision == "" && !projectApp {
 		if err := validateInvocationWorkEnvironmentAdmission(ctx, store, inv, version); err != nil {
@@ -161,7 +169,7 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 		return inv, InvocationVersion{}, err
 	}
 	if version.DeploymentID == "" {
-		if invocationStageScope(scope) {
+		if invocationStageScope(scope) && !boundQueue {
 			return inv, InvocationVersion{}, ErrNotFound
 		}
 		return inv, version, nil
@@ -201,6 +209,25 @@ func invocationScopesMatch(projectApp bool, expected, actual string) bool {
 		return workloadEnvironmentSlug(expected) == workloadEnvironmentSlug(actual)
 	}
 	return normalizedDeploymentScope(expected) == normalizedDeploymentScope(actual)
+}
+
+// DefaultInvocationDeploymentScope is the admission scope for producers that
+// have no explicit environment. It must never reinterpret already stored work.
+func DefaultInvocationDeploymentScope(app App) string {
+	if app.ProjectID != "" && app.PreviewOfSlug == "" {
+		return "production"
+	}
+	return DefaultEnvScope
+}
+
+func invocationDeploymentScope(app App, scope string) (string, error) {
+	if scope == "" {
+		scope = DefaultInvocationDeploymentScope(app)
+	}
+	if err := api.ValidateScope(scope); err != nil {
+		return "", ErrInvalidArgument
+	}
+	return scope, nil
 }
 
 func invocationPinHeaders(headers map[string]string) (revision, release string, err error) {
