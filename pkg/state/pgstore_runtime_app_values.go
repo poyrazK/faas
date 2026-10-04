@@ -83,7 +83,7 @@ func runtimeAppValuesDB(ctx context.Context, db sqlc.DBTX, accountID, appID, dep
 		if json.Unmarshal(row.Artifact, &stored) != nil {
 			return RuntimeAppValuesSnapshot{}, ErrConflict
 		}
-		stored.EnvironmentWorkloadDeploymentInputs.apply(&candidate)
+		stored.apply(&candidate)
 		candidate.BuildID, candidate.SourcePath, candidate.SourceBytes = stored.BuildID, stored.SourcePath, stored.SourceBytes
 		candidate.SourceRoot, candidate.LogPath = stored.SourceRoot, stored.LogPath
 		app, applyErr = AppForDeploymentRuntime(app, candidate)
