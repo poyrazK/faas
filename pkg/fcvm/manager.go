@@ -416,6 +416,7 @@ func (w *wakePhases) attrs() []any {
 }
 
 type Instance struct {
+	primeOnly       bool                    // immutable host-only snapshot-prime purpose
 	regionalRuntime *runtimequota.Placement // immutable host-only authority pins
 	Lease           Lease
 	Net             netns.Config
@@ -3176,6 +3177,7 @@ func (m *Manager) preparesWakeStateBeforeBoot() bool {
 // *Path fields used, so single-box behaviour is preserved. Field
 // names changed from *Path → *Key to match the new semantics.
 type WakeRequest struct {
+	PrimeOnly       bool                    `json:"-"` // snapshot prime, never ordinary serving
 	RegionalRuntime *runtimequota.Placement `json:"-"` // internal capacity pins, never guest-visible
 	Instance        string
 	// ExecutionOnly is an internal vmmd/schedd fence for the disposable
@@ -3439,7 +3441,7 @@ func (m *Manager) WakeAppTask(ctx context.Context, req AppTaskWakeRequest) (*Ins
 		wake.VcpuCount <= 0 || wake.MemSizeMiB <= 0 || wake.CPUMillicores <= 0 {
 		return nil, errors.New("fcvm: incomplete app task wake envelope")
 	}
-	if wake.ExecutionOnly || wake.AppTaskOnly || wake.Snapshot != nil || wake.KeepPaused || wake.ExportDir != "" {
+	if wake.ExecutionOnly || wake.AppTaskOnly || wake.PrimeOnly || wake.Snapshot != nil || wake.KeepPaused || wake.ExportDir != "" {
 		return nil, errors.New("fcvm: app task wake requires a fresh dedicated app VM")
 	}
 	wake.AppTaskOnly = true
@@ -3854,6 +3856,9 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
+	if req.PrimeOnly && (req.Snapshot != nil || req.KeepPaused || req.AppTaskOnly || req.ExecutionOnly || req.ExportDir != "" || req.ExecutionMode == string(api.ExecutionModeWorker) || req.ExecutionMode == string(api.ExecutionModeJob)) {
+		return nil, runtimequotahost.ErrBinding
+	}
 	req.RegionalRuntime = cloneRuntimePlacement(req.RegionalRuntime)
 	finish, admissionErr := m.beginRuntimeLaunch(ctx, admissionForWake(req))
 	if admissionErr != nil {
@@ -4458,6 +4463,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		executionID = req.Instance
 	}
 	inst := &Instance{
+		primeOnly:       req.PrimeOnly,
 		regionalRuntime: cloneRuntimePlacement(req.RegionalRuntime),
 		Lease:           lease, Net: nc, Method: method,
 		ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, Paused: req.KeepPaused,
@@ -5061,6 +5067,11 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("park %s: app task instances cannot be snapshotted", instance)
 	}
+	// Destructive capture never needs to resume the guest. Do not let a
+	// caller reuse warm-publication options to escape the retained purpose
+	// or resume without the lifecycle admission boundary.
+	spec.ResumeBeforePublish = false
+	spec.BeforeResume = nil
 	// Stop liveness before pausing/snapshotting. A parked VM is expected to
 	// stop answering probes; leaving the loop active through Snapshot lets it
 	// race this teardown and report a second failure for the same instance.
@@ -5127,6 +5138,9 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	}
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: app task instances cannot be snapshotted", instance)
+	}
+	if inst.primeOnly {
+		return SnapshotInfo{}, runtimequotahost.ErrBinding
 	}
 	finish, admissionErr := m.beginRuntimeSnapshot(ctx, admissionForInstance(inst))
 	if admissionErr != nil {
@@ -5206,6 +5220,9 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: app task instances cannot be snapshotted", instance)
 	}
+	if inst.primeOnly {
+		return SnapshotInfo{}, runtimequotahost.ErrBinding
+	}
 	if m.vmm == nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil vmm", instance)
 	}
@@ -5271,6 +5288,9 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 	}
 	if inst.AppTaskOnly {
 		return fmt.Errorf("resume_vm %s: app task instances are never resumable", instance)
+	}
+	if inst.primeOnly {
+		return runtimequotahost.ErrBinding
 	}
 	if m.vmm == nil {
 		return fmt.Errorf("resume_vm %s: nil vmm", instance)
@@ -5649,7 +5669,7 @@ func (m *Manager) NetnsFor(instance string) (string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	inst, ok := m.live[instance]
-	if !ok {
+	if !ok || inst.primeOnly || inst.AppTaskOnly || inst.ExecutionOnly || inst.Lease.IsBuilder {
 		return "", false
 	}
 	return inst.Lease.Netns, true

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/runtimequotahost"
 )
@@ -17,6 +18,8 @@ type RuntimeAdmission struct {
 	AppTaskOnly, ExecutionOnly, IsBuilder, Command bool
 	RegionalRuntime                                *runtimequota.Placement
 	KeepPaused                                     bool
+	Plan                                           api.Plan
+	PrimeOnly                                      bool
 }
 type RuntimeAuthorizer func(context.Context, RuntimeAdmission) error
 
@@ -27,10 +30,10 @@ func (m *Manager) WithRuntimeAuthorizer(authorize RuntimeAuthorizer) *Manager {
 	return m
 }
 func admissionForWake(req WakeRequest) RuntimeAdmission {
-	return RuntimeAdmission{Instance: req.Instance, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, AppTaskOnly: req.AppTaskOnly, ExecutionOnly: req.ExecutionOnly, IsBuilder: req.ExportDir != "", RegionalRuntime: cloneRuntimePlacement(req.RegionalRuntime), KeepPaused: req.KeepPaused}
+	return RuntimeAdmission{Instance: req.Instance, AppID: req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID, AppTaskOnly: req.AppTaskOnly, ExecutionOnly: req.ExecutionOnly, IsBuilder: req.ExportDir != "", RegionalRuntime: cloneRuntimePlacement(req.RegionalRuntime), KeepPaused: req.KeepPaused, Plan: req.Plan, PrimeOnly: req.PrimeOnly}
 }
 func admissionForInstance(inst *Instance) RuntimeAdmission {
-	return RuntimeAdmission{Instance: inst.Lease.Instance, AppID: inst.AppID, AccountID: inst.AccountID, DeploymentID: inst.DeploymentID, AppTaskOnly: inst.AppTaskOnly, ExecutionOnly: inst.ExecutionOnly, IsBuilder: inst.Lease.IsBuilder, RegionalRuntime: cloneRuntimePlacement(inst.regionalRuntime)}
+	return RuntimeAdmission{Instance: inst.Lease.Instance, AppID: inst.AppID, AccountID: inst.AccountID, DeploymentID: inst.DeploymentID, AppTaskOnly: inst.AppTaskOnly, ExecutionOnly: inst.ExecutionOnly, IsBuilder: inst.Lease.IsBuilder, RegionalRuntime: cloneRuntimePlacement(inst.regionalRuntime), Plan: inst.Lease.Plan, PrimeOnly: inst.primeOnly}
 }
 func (m *Manager) authorizeRuntimeOwner(ctx context.Context, admission RuntimeAdmission) error {
 	if err := validateRuntimePlacement(admission); err != nil {
@@ -76,18 +79,20 @@ func validateRuntimePlacement(a RuntimeAdmission) error {
 	if a.RegionalRuntime == nil {
 		return nil
 	}
-	p := *a.RegionalRuntime
-	if p.Validate() != nil || a.IsBuilder || a.ExecutionOnly || p.Permit.InstanceID != a.Instance || p.Permit.DeploymentID != a.DeploymentID || p.Permit.Grant.Binding.RegionalAppID != a.AppID || p.Permit.Grant.Binding.RegionalAccountID != a.AccountID || (p.Permit.Kind == runtimequota.CapacityAppTask) != a.AppTaskOnly {
+	if a.IsBuilder || a.ExecutionOnly || (a.PrimeOnly && (a.AppTaskOnly || a.KeepPaused)) || (a.AppTaskOnly && a.KeepPaused) {
 		return runtimequotahost.ErrBinding
 	}
-	if a.KeepPaused {
-		if p.Permit.Kind != runtimequota.CapacityWarm || p.Seat != nil {
-			return runtimequotahost.ErrBinding
-		}
-	} else if p.Permit.Kind == runtimequota.CapacityServing || p.Permit.Kind == runtimequota.CapacityWarm {
-		if p.Seat == nil {
-			return runtimequotahost.ErrBinding
-		}
+	purpose := runtimequota.CapacityServing
+	switch {
+	case a.PrimeOnly:
+		purpose = runtimequota.CapacityPrime
+	case a.AppTaskOnly:
+		purpose = runtimequota.CapacityAppTask
+	case a.KeepPaused:
+		purpose = runtimequota.CapacityWarm
+	}
+	if a.RegionalRuntime.ValidateBinding(runtimequota.LifecycleBinding{InstanceID: a.Instance, AppID: a.AppID, AccountID: a.AccountID, DeploymentID: a.DeploymentID, Plan: a.Plan, Purpose: purpose}) != nil {
+		return runtimequotahost.ErrBinding
 	}
 	return nil
 }

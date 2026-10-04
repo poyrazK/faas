@@ -8,6 +8,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -26,7 +27,10 @@ type AppTaskRestoreOutcome struct {
 }
 
 func (c *VMMClient) RestoreAppTask(ctx context.Context, spec AppTaskRestoreSpec) (*AppTaskRestoreOutcome, error) {
-	placement, placementErr := regionalRuntimeToProto(spec.App.RegionalRuntime)
+	if spec.App.PrimeOnly || (spec.App.RegionalRuntime != nil && spec.DeploymentID != spec.App.DeploymentID) {
+		return nil, runtimequota.ErrBinding
+	}
+	placement, placementErr := regionalRuntimeForLaunch(spec.Instance, spec.App, runtimequota.CapacityAppTask)
 	if placementErr != nil {
 		return nil, placementErr
 	}

@@ -425,6 +425,7 @@ type VMInstanceStat struct {
 // Empty slice = no allowlist rule emitted in the per-netns forward chain
 // (current behaviour preserved).
 type AppSpec struct {
+	PrimeOnly       bool                    `json:"-"` // host-only snapshot-prime purpose
 	RegionalRuntime *runtimequota.Placement `json:"-"` // host-only, omitted from guest AppSpec
 	// ComputeRegion is scheduler-only intent used to fence live handoff destinations.
 	ComputeRegion string
@@ -673,7 +674,11 @@ func (c *VMMClient) Close() error {
 }
 
 func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app AppSpec) (*WakeOutcome, error) {
-	placement, placementErr := regionalRuntimeToProto(app.RegionalRuntime)
+	purpose := runtimequota.CapacityServing
+	if app.PrimeOnly {
+		purpose = runtimequota.CapacityPrime
+	}
+	placement, placementErr := regionalRuntimeForLaunch(instance, app, purpose)
 	if placementErr != nil {
 		return nil, placementErr
 	}
@@ -684,8 +689,13 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	// in vmmdgrpc.Logs consults MD as the runtime source; the
 	// proto field is the documentation seam.
 	fields, _ := wire.FromContext(ctx)
+	fields, placementErr = regionalRuntimeCorrelation(fields, app)
+	if placementErr != nil {
+		return nil, placementErr
+	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.CreateColdBoot(ctx, &vmmdpb.CreateColdBootRequest{
+		PrimeOnly:       app.PrimeOnly,
 		RegionalRuntime: placement,
 		Instance:        instance,
 		App:             app.toProto(),
@@ -992,12 +1002,23 @@ func (c *VMMClient) CreatePausedFromSnapshot(ctx context.Context, instance strin
 }
 
 func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app AppSpec, snap SnapshotRef, keepPaused bool) (*WakeOutcome, error) {
-	placement, placementErr := regionalRuntimeToProto(app.RegionalRuntime)
+	if app.PrimeOnly {
+		return nil, runtimequota.ErrBinding
+	}
+	purpose := runtimequota.CapacityServing
+	if keepPaused {
+		purpose = runtimequota.CapacityWarm
+	}
+	placement, placementErr := regionalRuntimeForLaunch(instance, app, purpose)
 	if placementErr != nil {
 		return nil, placementErr
 	}
 	// issue #517: see CreateColdBoot above for the rationale.
 	fields, _ := wire.FromContext(ctx)
+	fields, placementErr = regionalRuntimeCorrelation(fields, app)
+	if placementErr != nil {
+		return nil, placementErr
+	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.CreateFromSnapshot(ctx, &vmmdpb.CreateFromSnapshotRequest{
 		RegionalRuntime: placement,
@@ -1400,7 +1421,10 @@ func (c *VMMClient) PrepareLiveMigration(ctx context.Context, _, instanceID, sna
 // wrote at Phase 1 and returns the new instance's network
 // identifiers.
 func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID string, app AppSpec, memKey, vmstateKey, leaseToken string) (LiveMigrationAdopt, error) {
-	placement, placementErr := regionalRuntimeToProto(app.RegionalRuntime)
+	if app.PrimeOnly {
+		return LiveMigrationAdopt{}, runtimequota.ErrBinding
+	}
+	placement, placementErr := regionalRuntimeForLaunch(instanceID, app, runtimequota.CapacityServing)
 	if placementErr != nil {
 		return LiveMigrationAdopt{}, placementErr
 	}

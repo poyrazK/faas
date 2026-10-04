@@ -29,6 +29,7 @@ func regionalHostFixture(t *testing.T, vmm VMM) (*Manager, *runtimequotahost.Jou
 		Binding: runtimequota.Binding{CellID: uuid.NewString(), Region: "eu-fsn", CellGeneration: 1, RegionalAccountID: uuid.NewString(), RegionalAppID: uuid.NewString(), RegionalAppSlug: "host-test", APIBase: "https://cell.example.com"}}
 	p := runtimequota.CapacityPermit{Grant: g, ID: uuid.NewString(), InstanceID: uuid.NewString(), RunID: uuid.NewString(), DeploymentID: uuid.NewString(), NodeID: j.Identity().NodeID, HostEpochID: j.Identity().EpochID, Kind: runtimequota.CapacityServing}
 	req := wakeReq(p.InstanceID, nil)
+	req.Plan = policy.Plan
 	req.AppID, req.AccountID, req.DeploymentID = g.Binding.RegionalAppID, g.Binding.RegionalAccountID, p.DeploymentID
 	req.RegionalRuntime = &runtimequota.Placement{Permit: p, Seat: &runtimequota.ServingSeat{Permit: p, ID: uuid.NewString()}}
 	m := newTestManager(&fakeRunner{}, vmm).WithRuntimeHostJournal(j).WithRuntimeAuthorizer(func(context.Context, RuntimeAdmission) error { return nil })

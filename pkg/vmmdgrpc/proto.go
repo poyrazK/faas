@@ -472,6 +472,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		return fcvm.WakeRequest{}, problem
 	}
 	return fcvm.WakeRequest{
+		PrimeOnly:       req.GetPrimeOnly(),
 		RegionalRuntime: placement,
 		Instance:        req.GetInstance(),
 		// issue #463 / ADR-069 / PR-B AC #1 — see toWakeRequest's

@@ -970,6 +970,8 @@ message CreateColdBootRequest {
   // CreateFromSnapshotRequest.wake_id.
   string wake_id = 6;
   bytes regional_runtime = 7; // ADR-493, same semantics as snapshot restore.
+  // ADR-495: initialization for snapshot capture only; never routed serving.
+  bool prime_only = 8;
 }
 
 // JobColdBoot is the schedd → vmmd envelope for one claimed job task.

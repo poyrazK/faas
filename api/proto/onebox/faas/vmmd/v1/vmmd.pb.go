@@ -1547,8 +1547,10 @@ type CreateColdBootRequest struct {
 	// CreateFromSnapshotRequest.wake_id.
 	WakeId          string `protobuf:"bytes,6,opt,name=wake_id,json=wakeId,proto3" json:"wake_id,omitempty"`
 	RegionalRuntime []byte `protobuf:"bytes,7,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"` // ADR-493, same semantics as snapshot restore.
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// ADR-495: initialization for snapshot capture only; never routed serving.
+	PrimeOnly     bool `protobuf:"varint,8,opt,name=prime_only,json=primeOnly,proto3" json:"prime_only,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreateColdBootRequest) Reset() {
@@ -1628,6 +1630,13 @@ func (x *CreateColdBootRequest) GetRegionalRuntime() []byte {
 		return x.RegionalRuntime
 	}
 	return nil
+}
+
+func (x *CreateColdBootRequest) GetPrimeOnly() bool {
+	if x != nil {
+		return x.PrimeOnly
+	}
+	return false
 }
 
 // JobColdBoot is the schedd → vmmd envelope for one claimed job task.
@@ -9233,7 +9242,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x05build\x18\a \x01(\v2\x1e.onebox.faas.vmmd.v1.BuildSpecR\x05build\x12\x1f\n" +
 	"\vkeep_paused\x18\b \x01(\bR\n" +
 	"keepPaused\x12)\n" +
-	"\x10regional_runtime\x18\t \x01(\fR\x0fregionalRuntime\"\x90\x02\n" +
+	"\x10regional_runtime\x18\t \x01(\fR\x0fregionalRuntime\"\xaf\x02\n" +
 	"\x15CreateColdBootRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x124\n" +
@@ -9242,7 +9251,9 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
 	"account_id\x18\x05 \x01(\tR\taccountId\x12\x17\n" +
 	"\awake_id\x18\x06 \x01(\tR\x06wakeId\x12)\n" +
-	"\x10regional_runtime\x18\a \x01(\fR\x0fregionalRuntime\"\xab\x04\n" +
+	"\x10regional_runtime\x18\a \x01(\fR\x0fregionalRuntime\x12\x1d\n" +
+	"\n" +
+	"prime_only\x18\b \x01(\bR\tprimeOnly\"\xab\x04\n" +
 	"\x12JobColdBootRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1d\n" +
 	"\n" +

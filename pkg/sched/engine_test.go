@@ -2565,6 +2565,9 @@ func TestEnginePrime_BootsSnapshotsParks(t *testing.T) {
 	if vmm.coldBoots != 1 || vmm.snapshots != 1 {
 		t.Errorf("coldBoots=%d snapshots=%d, want 1/1", vmm.coldBoots, vmm.snapshots)
 	}
+	if !vmm.lastColdBootSpec.PrimeOnly {
+		t.Fatal("snapshot prime entered ordinary serving purpose")
+	}
 	rows, _ := store.ListInstancesForApp(context.Background(), app.ID)
 	if len(rows) != 1 || rows[0].State != string(state.StateParked) {
 		t.Fatalf("rows = %+v, want one parked row", rows)
@@ -4469,6 +4472,33 @@ func TestCaptureWarmSnapshot_HappyPath(t *testing.T) {
 	ins, _ := store.InstanceByID(context.Background(), insID)
 	if ins.State != string(state.StateParked) {
 		t.Errorf("state = %q, want parked", ins.State)
+	}
+}
+
+func TestPrimeCaptureSkipsWarmEvenWhenServingWarmGatesAreOpen(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+	enableWarmSnapshot(t, store, app.ID)
+	vmm := &fakeVMM{}
+	notif := &fakeNotifier{}
+	e := newEngine(t, store, vmm, notif, "1.10.0")
+	insID := primeRunPlusFrameworkReady(t, store, vmm, notif, e, app.ID, dep.ID)
+	ins, err := store.InstanceByID(t.Context(), insID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The ordinary park happy path above proves these gates permit warm
+	// capture. A prime must still avoid the embedded resume and publish init.
+	vmm.warmSnapErr = errors.New("prime entered serving warm capture")
+	if err := e.snapshotAndParkPrime(t.Context(), ins); err != nil {
+		t.Fatal(err)
+	}
+	if vmm.warmSnapshots != 0 || vmm.snapshots != 1 || notif.count("snapshot_written") != 1 {
+		t.Fatalf("prime capture: warm=%d init=%d notifications=%d", vmm.warmSnapshots, vmm.snapshots, notif.count("snapshot_written"))
+	}
+	row, err := store.InstanceByID(t.Context(), insID)
+	if err != nil || row.State != string(state.StateParked) || e.Ledger().ResidentRAM() != 0 {
+		t.Fatalf("prime did not finish capture and teardown: %+v %v", row, err)
 	}
 }
 

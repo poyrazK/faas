@@ -23,16 +23,9 @@ func regionalRuntimeQuotaAuthorizer(store state.Store) (fcvm.RuntimeAuthorizer, 
 	}
 	reader := store
 	return func(ctx context.Context, operation fcvm.RuntimeAdmission) error {
-		if operation.RegionalRuntime != nil {
-			head, err := reader.RegionalRuntimeQuotaHead(ctx, operation.AppID)
-			if errors.Is(err, state.ErrNotFound) {
-				return runtimequota.ErrTrust
-			}
-			if err != nil {
+		if operation.RegionalRuntime != nil || (!operation.IsBuilder && !operation.ExecutionOnly) {
+			if err := checkRegionalRuntimeOperation(ctx, reader, operation); err != nil {
 				return err
-			}
-			if operation.IsBuilder || operation.ExecutionOnly || head.Grant != operation.RegionalRuntime.Permit.Grant {
-				return runtimequota.ErrBinding
 			}
 		}
 		if operation.IsBuilder || operation.ExecutionOnly {
@@ -61,6 +54,26 @@ func regionalRuntimeQuotaAuthorizer(store state.Store) (fcvm.RuntimeAuthorizer, 
 		}
 		return state.CheckRegionalRuntimeQuotaAdmission(ctx, reader, instance.AppID)
 	}, nil
+}
+
+func checkRegionalRuntimeOperation(ctx context.Context, reader state.RegionalRuntimeQuotaAdmissionReader, operation fcvm.RuntimeAdmission) error {
+	head, err := reader.RegionalRuntimeQuotaHead(ctx, operation.AppID)
+	if errors.Is(err, state.ErrNotFound) {
+		if operation.RegionalRuntime != nil {
+			return runtimequota.ErrTrust
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if operation.RegionalRuntime == nil {
+		return runtimequota.ErrTrust
+	}
+	if operation.IsBuilder || operation.ExecutionOnly || head.Grant != operation.RegionalRuntime.Permit.Grant || operation.Plan != head.Grant.Policy.Plan {
+		return runtimequota.ErrBinding
+	}
+	return nil
 }
 
 func openRegionalRuntimeHostJournal(dir, nodeID string, readBootID func() ([]byte, error)) (*runtimequotahost.Journal, error) {

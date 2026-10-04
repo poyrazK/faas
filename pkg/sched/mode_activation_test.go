@@ -84,6 +84,9 @@ func TestPrimeWorkerRemainsRunningWithoutSnapshot(t *testing.T) {
 	if vmm.coldBoots != 1 || vmm.restores != 0 || vmm.snapshots != 0 {
 		t.Fatalf("worker prime calls: cold=%d restore=%d snapshot=%d; want 1/0/0", vmm.coldBoots, vmm.restores, vmm.snapshots)
 	}
+	if vmm.lastColdBootSpec.PrimeOnly {
+		t.Fatal("worker deployment start became snapshot-prime-only")
+	}
 	instances, err := store.ListInstancesForApp(context.Background(), app.ID)
 	if err != nil || len(instances) != 1 {
 		t.Fatalf("worker prime instances = %d, %v; want one", len(instances), err)

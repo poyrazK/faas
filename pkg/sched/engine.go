@@ -5930,6 +5930,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	spec := AppSpec{
 		BaseKey: baseKey(app.Runtime), LayerKey: primeLayer,
+		PrimeOnly: executionModeForApp(app) != api.ExecutionModeWorker,
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(effectiveAppCPUMillicores(app)),
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: deploy prime uses the same plan-resolved readiness budget
@@ -7325,14 +7326,19 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// already Destroyed the VM and transitioned the row to STOPPED
 	// (the state machine forbids PARKED→STOPPED, so the warm
 	// failure must land BEFORE the PARKED transition).
-	warmInfo, warmErr := e.captureWarmSnapshotLocked(ctx, ins, app)
-	if warmErr != nil {
-		// Init blob on disk is orphaned — the next wake cold-boots
-		// (ADR-005) and PR C's GC sweep evicts the orphaned init row.
-		e.log.Warn("sched: capture warm snapshot failed", "instance", ins.ID, "err", warmErr)
-		return warmErr
+	var warmInfo SnapshotBytes
+	if allowReuse {
+		// A deployment prime owns only capture and teardown. Warm capture
+		// resumes the guest, so it belongs to an ordinary serving instance.
+		var warmErr error
+		warmInfo, warmErr = e.captureWarmSnapshotLocked(ctx, ins, app)
+		if warmErr != nil {
+			// Init blob on disk is orphaned — the next wake cold-boots
+			// (ADR-005) and PR C's GC sweep evicts the orphaned init row.
+			e.log.Warn("sched: capture warm snapshot failed", "instance", ins.ID, "err", warmErr)
+			return warmErr
+		}
 	}
-	_ = warmInfo
 	if warmInfo.MemBytes > 0 {
 		// Shared-storage publication can take seconds. The warm capture
 		// resumes the guest immediately after Firecracker creates its local

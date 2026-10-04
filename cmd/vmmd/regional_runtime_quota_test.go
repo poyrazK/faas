@@ -59,6 +59,7 @@ func TestRegionalRuntimeQuotaAuthorizerUsesDurableApp(t *testing.T) {
 	policy, _ := api.RuntimeQuotaPolicyForPlan(api.PlanPro)
 	binding := runtimequota.Binding{CellID: uuid.NewString(), Region: "eu-fsn", CellGeneration: 1, RegionalAccountID: uuid.MustParse(account.ID).String(), RegionalAppID: app.ID, RegionalAppSlug: app.Slug, APIBase: "https://fsn.example.com"}
 	grant := runtimequota.Grant{IssuerID: issuer, GlobalAppID: uuid.NewString(), OwnerID: uuid.NewString(), AllocationID: uuid.NewString(), Generation: 1, Binding: binding, Policy: policy, Concurrency: 2, IssuedAtMicros: time.Now().UnixMicro()}
+	request.Plan = policy.Plan
 	request.RegionalRuntime = &runtimequota.Placement{Permit: runtimequota.CapacityPermit{Grant: grant}}
 	if err = authorize(t.Context(), request); !errors.Is(err, runtimequota.ErrTrust) {
 		t.Fatalf("metadata on independent app bypassed cell authority: %v", err)
@@ -83,8 +84,13 @@ func TestRegionalRuntimeQuotaAuthorizerUsesDurableApp(t *testing.T) {
 	if err = authorize(t.Context(), wrongGrant); !errors.Is(err, runtimequota.ErrBinding) {
 		t.Fatalf("metadata replaced durable allocation: %v", err)
 	}
-	if err = authorize(t.Context(), fcvm.RuntimeAdmission{Instance: "missing", AppID: app.ID}); !errors.Is(err, state.ErrNotFound) {
-		t.Fatal("unknown instance allowed", err)
+	if err = authorize(t.Context(), fcvm.RuntimeAdmission{Instance: "missing", AppID: app.ID}); !errors.Is(err, runtimequota.ErrTrust) {
+		t.Fatal("regional instance without placement allowed", err)
+	}
+	wrongPlan := request
+	wrongPlan.Plan = api.PlanScale
+	if err = authorize(t.Context(), wrongPlan); !errors.Is(err, runtimequota.ErrBinding) {
+		t.Fatal("wire plan replaced canonical grant plan", err)
 	}
 	if err = authorize(t.Context(), fcvm.RuntimeAdmission{Instance: "builder", IsBuilder: true}); err != nil {
 		t.Fatal("independent builder claim path changed", err)
