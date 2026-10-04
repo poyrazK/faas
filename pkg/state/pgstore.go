@@ -15211,7 +15211,7 @@ const invocationSelectCols = `id, app_id, account_id, source, queue_name, state,
        last_replayed_at, on_success_destination_id,
        on_failure_destination_id, work_policy_name, work_key_digest,
        work_expires_at, work_sequence, work_policy_revision,
-       work_fairness_digest, work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id, replay_generation, occurrence_id, start_deadline_at, failure_rules, work_decision, outcome_code`
+       work_fairness_digest, work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id, replay_generation, occurrence_id, start_deadline_at, failure_rules, work_decision, outcome_code, replayed_from_invocation_id, replay_root_invocation_id, replay_root_created_at`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	if inv.WorkPolicyName != "" {
@@ -16448,6 +16448,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	var workFairnessDigest []byte
 	var workFairnessLimit *int
 	var platformTenantID, queueBindingID *string
+	var replayedFrom, replayRoot *string
 	if err := scan(
 		&inv.ID, &inv.AppID, &inv.AccountID, &source, &queueName, &state, &inv.Method, &inv.Path,
 		&payload, &headers, &inv.DueAt, &scheduledAt, &cronID, &ackURL,
@@ -16457,11 +16458,17 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 		&workPolicyName, &workKeyDigest, &workExpiresAt, &workSequence, &workPolicyRevision,
 		&workFairnessDigest, &workFairnessLimit, &platformTenantID, &inv.DeploymentScope, &queueBindingID, &inv.ReplayGeneration, &occurrenceID, &startDeadlineAt,
-		&failureRules, &workDecision, &outcomeCode,
+		&failureRules, &workDecision, &outcomeCode, &replayedFrom, &replayRoot, &inv.ReplayRootCreatedAt,
 	); err != nil {
 		return Invocation{}, err
 	}
 	inv.Source = InvocationSource(source)
+	if replayedFrom != nil {
+		inv.ReplayedFromInvocationID = *replayedFrom
+	}
+	if replayRoot != nil {
+		inv.ReplayRootInvocationID = *replayRoot
+	}
 	if platformTenantID != nil {
 		inv.PlatformTenantID = *platformTenantID
 	}

@@ -154,6 +154,9 @@ func TestReplayInvocation_HappyPath(t *testing.T) {
 	if got.Source != state.InvocationReplay {
 		t.Errorf("new row Source = %q, want %q", got.Source, state.InvocationReplay)
 	}
+	if got.ReplayedFromInvocationID != id || got.ReplayRootInvocationID != id {
+		t.Fatalf("replay lineage = %q/%q, want original %q", got.ReplayedFromInvocationID, got.ReplayRootInvocationID, id)
+	}
 	if got.AccountID != e.acct.ID {
 		t.Errorf("new row AccountID = %q, want %q (must be the replayer's account, not the original's)",
 			got.AccountID, e.acct.ID)

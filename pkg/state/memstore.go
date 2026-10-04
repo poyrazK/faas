@@ -12666,7 +12666,29 @@ func (m *MemStore) EnqueueInvocation(_ context.Context, inv Invocation) (Invocat
 		inv.CreatedAt = time.Now()
 	}
 	inv.ReplayGeneration = 0
+	inv.ReplayRootInvocationID = ""
+	inv.ReplayRootCreatedAt = nil
+	if inv.ReplayedFromInvocationID != "" {
+		parent, exists := m.invocations[inv.ReplayedFromInvocationID]
+		if !exists || inv.Source != InvocationReplay || !sameMemUUID(parent.AccountID, inv.AccountID) ||
+			!sameMemUUID(parent.AppID, inv.AppID) || parent.DeploymentScope != inv.DeploymentScope ||
+			!sameMemUUID(parent.PlatformTenantID, inv.PlatformTenantID) || !sameMemUUID(m.apps[inv.AppID].AccountID, inv.AccountID) ||
+			(parent.State != InvocationFailed && parent.State != InvocationDeadLetter) || sameMemUUID(inv.ID, parent.ID) {
+			return Invocation{}, ErrNotFound
+		}
+		inv.ReplayRootInvocationID = parent.ReplayRootInvocationID
+		inv.ReplayRootCreatedAt = cloneEventReceiptTime(parent.ReplayRootCreatedAt)
+		if inv.ReplayRootInvocationID == "" {
+			inv.ReplayRootInvocationID = parent.ID
+			at := parent.CreatedAt
+			inv.ReplayRootCreatedAt = &at
+		}
+		if sameMemUUID(inv.ID, inv.ReplayRootInvocationID) {
+			return Invocation{}, ErrInvalidArgument
+		}
+	}
 	m.invocations[inv.ID] = inv
+	inv.ReplayRootCreatedAt = cloneEventReceiptTime(inv.ReplayRootCreatedAt)
 	return inv, nil
 }
 
@@ -12677,6 +12699,7 @@ func (m *MemStore) InvocationByID(_ context.Context, id string) (Invocation, err
 	if !ok {
 		return Invocation{}, ErrNotFound
 	}
+	inv.ReplayRootCreatedAt = cloneEventReceiptTime(inv.ReplayRootCreatedAt)
 	return inv, nil
 }
 

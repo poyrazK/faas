@@ -69,6 +69,7 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 		{"platform_tenant_id", inv.PlatformTenantID, false, &params.PlatformTenantID},
 		{"queue_binding_id", inv.QueueBindingID, false, &params.QueueBindingID},
 		{"occurrence_id", inv.OccurrenceID, false, &params.OccurrenceID},
+		{"replayed_from_invocation_id", inv.ReplayedFromInvocationID, false, &params.ReplayedFromInvocationID},
 	} {
 		if input.value == "" && !input.required {
 			continue
@@ -113,7 +114,9 @@ func invocationFromSQL(row sqlc.Invocation) (Invocation, error) {
 		AckURL: row.AckUrl.String, Result: row.Result,
 		LeaseExpiresAt: timestamptzToTimePtr(row.LeaseExpiresAt), ReceivedAt: timestamptzToTimePtr(row.ReceivedAt),
 		CompletedAt: timestamptzToTimePtr(row.CompletedAt), Attempts: int(row.Attempts), ReplayGeneration: row.ReplayGeneration,
-		QuotaReserved: row.QuotaReserved, LastError: row.LastError.String, CreatedAt: timestamptzToTime(row.CreatedAt),
+		ReplayedFromInvocationID: uuidString(row.ReplayedFromInvocationID), ReplayRootInvocationID: uuidString(row.ReplayRootInvocationID),
+		ReplayRootCreatedAt: timestamptzToTimePtr(row.ReplayRootCreatedAt),
+		QuotaReserved:       row.QuotaReserved, LastError: row.LastError.String, CreatedAt: timestamptzToTime(row.CreatedAt),
 		WorkPolicyName: row.WorkPolicyName.String, WorkPolicyRevision: row.WorkPolicyRevision.Int64,
 		WorkKeyDigest: row.WorkKeyDigest, WorkFairnessDigest: row.WorkFairnessDigest,
 		WorkFairnessLimit: int(row.WorkFairnessLimit.Int32), WorkExpiresAt: timestamptzToTimePtr(row.WorkExpiresAt),

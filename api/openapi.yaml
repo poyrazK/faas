@@ -2996,8 +2996,10 @@ paths:
         counts cover the entire snapshot, including recipients without invocations.
         Enqueued routing does not imply handler success: keyed cancellation can
         produce a cancellation receipt instead. The original deterministic
-        invocation is shown when retained; generic invocation replays create new
-        rows in app delivery history. Recovery actions require their existing
+        invocation is shown when retained; trusted generic replay lineage adds
+        the latest replay and a paginated history URL without replacing the
+        original failure. Recovery actions target the latest retained replay
+        when present. Recovery actions require their existing
         write scopes and are revalidated when called. Legacy receipts without
         snapshots report snapshot_captured=false and cannot reconstruct recipients.
         Pages follow acceptance order while outcomes may change between requests.
@@ -3013,6 +3015,41 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EventReceiptResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /v1/events/receipt/replays:
+    get:
+      tags: [events]
+      operationId: getEventReceiptReplays
+      summary: Inspect retained handler replay history for one captured recipient.
+      description: |
+        Requires apps:read or admin. Returns generic invocation replays linked by
+        ledger-owned parent/root identity, newest first by created_at and ID.
+        Original and intermediate execution records may expire independently;
+        surviving descendants remain visible. Legacy replays without trusted
+        lineage cannot be reconstructed from guest headers. Unknown or foreign
+        receipts, recipients and current app owners return 404. Cursors bind the
+        account, source, event ID, subscription and retained receipt identity;
+        mismatched or stale cursors return 400. Cursor anchors remain usable after
+        their execution record expires. Outcomes may change between requests.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: source, in: query, required: true, description: Published event source., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: id, in: query, required: true, description: Published event ID., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: subscription_id, in: query, required: true, description: Captured consumer identifier whose retained handler replay history is requested., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: after, in: query, description: Opaque next_after cursor for this replay history., schema: { type: string, maxLength: 8192 } }
+        - { name: limit, in: query, description: Maximum retained replays in this page., schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+      responses:
+        '200':
+          description: Retained replay execution evidence and pagination cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReceiptReplayHistoryResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -37811,7 +37848,7 @@ components:
         next_after: { type: string, description: Opaque cursor for the next acceptance-ordered recipient page. }
 
     EventReceiptRecipientResponse:
-      description: One captured recipient with independent routing and original invocation or cancellation evidence.
+      description: One captured recipient with independent routing, original execution or cancellation evidence, and retained generic replay recovery.
       type: object
       additionalProperties: false
       required: [subscription_id, app_id, routing, recovery_actions]
@@ -37821,6 +37858,7 @@ components:
         app_slug: { type: string, description: Current slug when the target still belongs to the authenticated account. }
         routing: { $ref: '#/components/schemas/EventReceiptRoutingResponse' }
         execution: { $ref: '#/components/schemas/EventReceiptExecutionResponse' }
+        recovery: { $ref: '#/components/schemas/EventReceiptRecoveryResponse' }
         cancellation: { $ref: '#/components/schemas/EventReceiptCancellationResponse' }
         execution_unavailable:
           type: string
@@ -37852,19 +37890,45 @@ components:
         last_replayed_at: { type: string, format: date-time }
 
     EventReceiptExecutionResponse:
-      description: Current retained state of the original deterministic delivery invocation. New generic replay rows appear in app delivery history.
+      description: Current retained invocation state. The recipient execution is the original deterministic invocation; recovery and history contain trusted generic replay invocations.
       type: object
       additionalProperties: false
       required: [invocation_id, state, attempts, replay_generation, created_at]
       properties:
         invocation_id: { type: string, format: uuid }
+        replayed_from_invocation_id: { type: string, format: uuid, description: Trusted immediate parent for a generic replay; its execution record may have expired. }
         state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, superseded, expired, dead_letter] }
         attempts: { type: integer, minimum: 0 }
-        replay_generation: { type: integer, format: int64, minimum: 0, description: Original invocation budget generation, updated by in-place dead-letter replay. }
+        replay_generation: { type: integer, format: int64, minimum: 0, description: This invocation's budget generation, updated by in-place dead-letter replay. }
         next_attempt_at: { type: string, format: date-time, description: Next pending invocation due time; dispatch may be delayed by admission. }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
         last_error: { type: string }
+
+    EventReceiptRecoveryResponse:
+      description: Latest retained generic replay and history; original execution remains separate. Completed means this latest replay recovered; counts may decrease as execution records expire. Absence does not prove that no historical replay occurred.
+      type: object
+      additionalProperties: false
+      required: [retained_replay_count, latest_replay, history_url]
+      properties:
+        retained_replay_count: { type: integer, format: int64, minimum: 1 }
+        latest_replay: { $ref: '#/components/schemas/EventReceiptExecutionResponse' }
+        history_url: { type: string, format: uri-reference, description: Account-authenticated paginated replay history for this captured recipient. }
+
+    EventReceiptReplayHistoryResponse:
+      description: A page of retained generic replay executions for one captured event consumer.
+      type: object
+      additionalProperties: false
+      required: [event_source, event_id, subscription_id, original_invocation_id, replays]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        subscription_id: { type: string }
+        original_invocation_id: { type: string, format: uuid, description: Deterministic root delivery ID; its execution record may have expired. }
+        replays:
+          type: array
+          items: { $ref: '#/components/schemas/EventReceiptExecutionResponse' }
+        next_after: { type: string, description: Opaque cursor for the next older page; omit after when starting a fresh history read. }
 
     EventReceiptCancellationResponse:
       description: Durable work-policy cancel_pending operation receipt, which creates no handler invocation.

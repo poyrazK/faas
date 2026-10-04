@@ -26,6 +26,7 @@ type recipientClaimTestStore interface {
 	state.EventFanoutAttemptHistoryStore
 	state.PublishedEventRetentionStore
 	state.EventReceiptStore
+	state.EventReceiptReplayStore
 	state.EventReceiptAcceptanceStore
 	state.WorkCancellationStore
 }

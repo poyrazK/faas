@@ -52,14 +52,20 @@ type EventReceiptRouting struct {
 }
 
 type EventReceiptExecution struct {
-	InvocationID     string     `json:"invocation_id"`
-	State            string     `json:"state"`
-	Attempts         int        `json:"attempts"`
-	ReplayGeneration int64      `json:"replay_generation"`
-	NextAttemptAt    *time.Time `json:"next_attempt_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	CompletedAt      *time.Time `json:"completed_at,omitempty"`
-	LastError        string     `json:"last_error,omitempty"`
+	InvocationID             string     `json:"invocation_id"`
+	State                    string     `json:"state"`
+	Attempts                 int        `json:"attempts"`
+	ReplayGeneration         int64      `json:"replay_generation"`
+	NextAttemptAt            *time.Time `json:"next_attempt_at,omitempty"`
+	CreatedAt                time.Time  `json:"created_at"`
+	CompletedAt              *time.Time `json:"completed_at,omitempty"`
+	LastError                string     `json:"last_error,omitempty"`
+	ReplayedFromInvocationID string     `json:"replayed_from_invocation_id,omitempty"`
+}
+
+type EventReceiptRecovery struct {
+	RetainedReplayCount int64
+	LatestReplay        *EventReceiptExecution
 }
 
 type EventReceiptCancellation struct {
@@ -73,11 +79,13 @@ type EventReceiptRecipient struct {
 	SubscriptionID, AppID, AppSlug string
 	Routing                        EventReceiptRouting
 	Execution                      *EventReceiptExecution
+	Recovery                       *EventReceiptRecovery
 	Cancellation                   *EventReceiptCancellation
 	ExecutionUnavailable           string
 	TargetAvailable                bool
 	RoutingReplayEligible          bool
 	HandlerReplayMode              string
+	HandlerReplayInvocationID      string
 }
 
 func receiptLimit(limit int) int {
@@ -173,7 +181,8 @@ func enrichPgEventReceipt(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, recei
 	if len(ids) == 0 {
 		return nil
 	}
-	invocations, err := q.EventReceiptInvocations(ctx, tx, sqlc.EventReceiptInvocationsParams{AccountID: mustPgUUID(accountID), InvocationIds: ids})
+	acceptedAt := pgtype.Timestamptz{Time: receipt.AcceptedAt, Valid: true}
+	invocations, err := q.EventReceiptInvocations(ctx, tx, sqlc.EventReceiptInvocationsParams{AccountID: mustPgUUID(accountID), InvocationIds: ids, AcceptedAt: acceptedAt})
 	if err != nil {
 		return fmt.Errorf("read receipt executions: %w", err)
 	}
@@ -181,7 +190,7 @@ func enrichPgEventReceipt(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, recei
 	for _, invocation := range invocations {
 		byID[uuidFromPgtype(invocation.ID).String()] = invocation
 	}
-	cancellations, err := q.EventReceiptCancellations(ctx, tx, sqlc.EventReceiptCancellationsParams{AccountID: mustPgUUID(accountID), InvocationIds: ids})
+	cancellations, err := q.EventReceiptCancellations(ctx, tx, sqlc.EventReceiptCancellationsParams{AccountID: mustPgUUID(accountID), InvocationIds: ids, AcceptedAt: acceptedAt})
 	if err != nil {
 		return fmt.Errorf("read receipt cancellations: %w", err)
 	}
@@ -204,7 +213,7 @@ func enrichPgEventReceipt(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, recei
 			receiptMissingExecution(entry)
 		}
 	}
-	return nil
+	return enrichPgEventReceiptReplays(ctx, q, tx, receipt, accountID, ids)
 }
 
 func receiptExecution(id, status string, attempts int, generation int64, dueAt, createdAt time.Time, completedAt *time.Time, lastError string) *EventReceiptExecution {
@@ -327,17 +336,18 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 			}
 		}
 		id := PublishedEventInvocationID(invocationAccountID, source, eventID, recipient.ID)
-		if invocation, ok := m.invocations[id]; ok && owned && sameMemUUID(invocation.AccountID, accountID) && sameMemUUID(invocation.AppID, recipient.AppID) {
+		if invocation, ok := m.invocations[id]; ok && owned && sameMemUUID(invocation.AccountID, accountID) && sameMemUUID(invocation.AppID, recipient.AppID) && !invocation.CreatedAt.Before(work.CreatedAt) {
 			entry.Execution = receiptExecution(id, string(invocation.State), invocation.Attempts, invocation.ReplayGeneration, invocation.DueAt, invocation.CreatedAt, cloneEventReceiptTime(invocation.CompletedAt), invocation.LastError)
 			if entry.TargetAvailable {
 				entry.HandlerReplayMode = receiptHandlerReplay(string(invocation.State), invocation.WorkPolicyName, invocation.QueueBindingID != "", entry.AppSlug)
 			}
-		} else if cancellation, ok := m.workCancellations[id]; ok && owned && sameMemUUID(cancellation.AppID, recipient.AppID) {
+		} else if cancellation, ok := m.workCancellations[id]; ok && owned && sameMemUUID(cancellation.AppID, recipient.AppID) && !cancellation.CreatedAt.Before(work.CreatedAt) {
 			entry.Cancellation = &EventReceiptCancellation{ReceiptID: id, CancelledCount: cancellation.CancelledCount, CreatedAt: cancellation.CreatedAt}
 			entry.ExecutionUnavailable = "cancel_pending"
 		} else {
 			receiptMissingExecution(&entry)
 		}
+		m.enrichMemEventReceiptReplays(&entry, accountID, id, owned, receipt.AcceptedAt)
 		receipt.Recipients = append(receipt.Recipients, entry)
 	}
 	return receipt, nil

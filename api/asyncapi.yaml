@@ -146,11 +146,14 @@ channels:
       The HTTP 202 response includes a receipt_url (also the Location header)
       for GET /v1/events/receipt?source=SOURCE&id=ID. It exposes all captured
       candidates, routing checkpoints, original execution or cancellation
-      evidence, and selective recovery requests. Identical publish retries
+      evidence, latest trusted handler replay recovery and paginated replay
+      history, and selective recovery requests. Identical publish retries
       preserve the original accepted_at timestamp.
       With independent recipient routing enabled, each captured subscription
       has its own routing lease, retry schedule, and selective replay budget.
-      Handler execution is at least once; recovery preserves invocation identity.
+      Handler execution is at least once. Routing and in-place dead-letter
+      recovery preserve invocation identity; generic handler replay creates a
+      new invocation with ledger-owned parent/root lineage.
       Events have no publication-order guarantee across or within subscriptions.
     servers:
       - $ref: '#/servers/api'

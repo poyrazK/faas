@@ -7126,3 +7126,15 @@ func (c *Client) GetEventReceipt(ctx context.Context, source, id, after string, 
 	}
 	return out, c.do(ctx, "GET", "/v1/events/receipt?"+query.Encode(), nil, &out)
 }
+
+func (c *Client) GetEventReceiptReplays(ctx context.Context, source, id, subscriptionID, after string, limit int) (EventReceiptReplayHistoryResponse, error) {
+	var out EventReceiptReplayHistoryResponse
+	query := url.Values{"source": {source}, "id": {id}, "subscription_id": {subscriptionID}}
+	if after != "" {
+		query.Set("after", after)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	return out, c.do(ctx, "GET", "/v1/events/receipt/replays?"+query.Encode(), nil, &out)
+}

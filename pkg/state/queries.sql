@@ -6462,6 +6462,17 @@ ORDER BY totals.request_count DESC, totals.decision_type, totals.decision_value
 LIMIT 101;
 
 -- name: EnqueueInvocationRow :one
+WITH replay_parent AS (
+  SELECT i.id, i.replay_root_invocation_id, coalesce(i.replay_root_created_at, i.created_at) AS root_created_at
+  FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+  WHERE i.id=sqlc.narg(replayed_from_invocation_id)::uuid
+    AND i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid
+    AND i.deployment_scope=coalesce(nullif(sqlc.arg(deployment_scope)::text, ''),
+      CASE WHEN a.project_id IS NOT NULL AND coalesce(a.preview_of_slug, '')='' THEN 'production' ELSE 'default' END)
+    AND i.platform_tenant_id IS NOT DISTINCT FROM sqlc.narg(platform_tenant_id)::uuid
+    AND i.state IN ('failed', 'dead_letter') AND sqlc.arg(source)::text='replay'
+  FOR SHARE OF i, a
+)
 INSERT INTO invocations (
   id, app_id, account_id, source, queue_name, state, method, path,
   payload, headers, due_at, scheduled_at, cron_id, ack_url, lease_expires_at,
@@ -6470,8 +6481,8 @@ INSERT INTO invocations (
   work_policy_name, work_key_digest, work_expires_at,
   work_sequence, work_policy_revision, work_fairness_digest,
   work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id,
-  occurrence_id, start_deadline_at, failure_rules
-) VALUES (
+  occurrence_id, start_deadline_at, failure_rules, replayed_from_invocation_id, replay_root_invocation_id, replay_root_created_at
+) SELECT
   coalesce(sqlc.narg(id)::uuid, gen_random_uuid()), sqlc.arg(app_id), sqlc.arg(account_id),
   sqlc.arg(source), sqlc.arg(queue_name), coalesce(nullif(sqlc.arg(state)::text, ''), 'pending'),
   sqlc.arg(method), sqlc.arg(path), sqlc.arg(payload), sqlc.arg(headers), sqlc.arg(due_at),
@@ -6482,8 +6493,11 @@ INSERT INTO invocations (
   sqlc.narg(work_key_digest), sqlc.narg(work_expires_at), sqlc.narg(work_sequence),
   sqlc.narg(work_policy_revision), sqlc.narg(work_fairness_digest), sqlc.narg(work_fairness_limit),
   sqlc.narg(platform_tenant_id), nullif(sqlc.arg(deployment_scope)::text, ''), sqlc.narg(queue_binding_id),
-  sqlc.narg(occurrence_id)::uuid, sqlc.narg(start_deadline_at)::timestamptz, sqlc.narg(failure_rules)::jsonb
-) RETURNING *;
+  sqlc.narg(occurrence_id)::uuid, sqlc.narg(start_deadline_at)::timestamptz, sqlc.narg(failure_rules)::jsonb,
+  replay_parent.id, coalesce(replay_parent.replay_root_invocation_id, replay_parent.id), replay_parent.root_created_at
+FROM (SELECT 1) seed LEFT JOIN replay_parent ON true
+WHERE sqlc.narg(replayed_from_invocation_id)::uuid IS NULL OR replay_parent.id IS NOT NULL
+RETURNING *;
 
 -- Queue binding/consumer publication (ADR-393). Parent locks also serialize
 -- trigger admission, so quota checks and the projection share the same commit.

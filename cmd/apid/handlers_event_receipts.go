@@ -113,6 +113,11 @@ func eventReceiptResponse(accountID string, receipt state.EventReceipt) api.Even
 			execution := api.EventReceiptExecutionResponse(*entry.Execution)
 			recipient.Execution = &execution
 		}
+		if entry.Recovery != nil {
+			latest := api.EventReceiptExecutionResponse(*entry.Recovery.LatestReplay)
+			recipient.Recovery = &api.EventReceiptRecoveryResponse{RetainedReplayCount: entry.Recovery.RetainedReplayCount, LatestReplay: &latest,
+				HistoryURL: eventReceiptReplayURL(receipt.EventSource, receipt.EventID, entry.SubscriptionID)}
+		}
 		if entry.Cancellation != nil {
 			cancellation := api.EventReceiptCancellationResponse(*entry.Cancellation)
 			recipient.Cancellation = &cancellation
@@ -133,10 +138,14 @@ func eventReceiptActions(receipt state.EventReceipt, entry state.EventReceiptRec
 			URL:  "/v1/apps/" + url.PathEscape(entry.AppSlug) + "/event-deliveries:replay-fanout-failure",
 			Body: &api.ReplayEventFanoutFailureRequest{EventSource: receipt.EventSource, EventID: receipt.EventID, SubscriptionID: entry.SubscriptionID}})
 	}
-	if entry.Execution != nil && entry.HandlerReplayMode != "" {
-		path := "/v1/invocations/" + url.PathEscape(entry.Execution.InvocationID) + "/replay"
+	if entry.HandlerReplayMode != "" {
+		id := entry.HandlerReplayInvocationID
+		if id == "" && entry.Execution != nil {
+			id = entry.Execution.InvocationID
+		}
+		path := "/v1/invocations/" + url.PathEscape(id) + "/replay"
 		if entry.HandlerReplayMode == "dead_letter_replay" {
-			path = "/v1/apps/" + url.PathEscape(entry.AppSlug) + "/queues/dead_letter/" + url.PathEscape(entry.Execution.InvocationID) + "/replay"
+			path = "/v1/apps/" + url.PathEscape(entry.AppSlug) + "/queues/dead_letter/" + url.PathEscape(id) + "/replay"
 		}
 		actions = append(actions, api.EventReceiptRecoveryAction{Kind: entry.HandlerReplayMode, Method: http.MethodPost, URL: path})
 	}

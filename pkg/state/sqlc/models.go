@@ -2707,6 +2707,8 @@ type Invocation struct {
 	QueueBindingID           pgtype.UUID
 	ReplayGeneration         int64
 	OutcomeCode              string
+	ReplayRootInvocationID   pgtype.UUID
+	ReplayRootCreatedAt      pgtype.Timestamptz
 }
 
 type InvocationWorkCancellation struct {

@@ -12566,6 +12566,8 @@ CREATE TABLE public.invocations (
     queue_binding_id uuid,
     replay_generation bigint DEFAULT 0 NOT NULL,
     outcome_code text DEFAULT ''::text NOT NULL,
+    replay_root_invocation_id uuid,
+    replay_root_created_at timestamp with time zone,
     CONSTRAINT invocation_deployment_scope_check CHECK ((deployment_scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT invocation_platform_tenant_source CHECK (((platform_tenant_id IS NULL) OR (source = ANY (ARRAY['async_invoke'::text, 'replay'::text, 'queue'::text])))),
     CONSTRAINT invocation_queue_binding_source CHECK (((queue_binding_id IS NULL) OR (source = 'queue'::text))),
@@ -12573,6 +12575,7 @@ CREATE TABLE public.invocations (
     CONSTRAINT invocations_outcome_code_check CHECK ((octet_length(outcome_code) <= 64)),
     CONSTRAINT invocations_queue_name_shape CHECK (((queue_name = ''::text) OR (queue_name ~ '^[a-z][a-z0-9-]{0,62}$'::text))),
     CONSTRAINT invocations_replay_generation_check CHECK ((replay_generation >= 0)),
+    CONSTRAINT invocations_replay_lineage_check CHECK (((replay_root_invocation_id IS NULL) OR ((source = 'replay'::text) AND (replayed_from_invocation_id IS NOT NULL) AND (replayed_from_invocation_id <> id) AND (replay_root_invocation_id <> id) AND (replay_root_created_at IS NOT NULL)))),
     CONSTRAINT invocations_source_check CHECK ((source = ANY (ARRAY['async_invoke'::text, 'inbound_webhook'::text, 'queue'::text, 'delayed_task'::text, 'cron'::text, 'replay'::text, 'esm'::text]))),
     CONSTRAINT invocations_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text, 'superseded'::text, 'expired'::text]))),
     CONSTRAINT invocations_work_fairness_check CHECK ((((work_fairness_digest IS NULL) AND (work_fairness_limit IS NULL)) OR ((work_policy_name IS NOT NULL) AND (work_fairness_digest IS NOT NULL) AND (work_fairness_limit IS NOT NULL) AND (length(work_fairness_digest) = 32) AND ((work_fairness_limit >= 1) AND (work_fairness_limit <= 1000))))),
@@ -24142,6 +24145,13 @@ CREATE INDEX invocations_platform_tenant_idx ON public.invocations USING btree (
 --
 
 CREATE INDEX invocations_queue_binding_scope_idx ON public.invocations USING btree (app_id, queue_binding_id, deployment_scope, state, created_at) WHERE ((source = 'queue'::text) AND (state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'dead_letter'::text])));
+
+
+--
+-- Name: invocations_replay_root_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_replay_root_idx ON public.invocations USING btree (account_id, replay_root_invocation_id, created_at DESC, id DESC) WHERE (replay_root_invocation_id IS NOT NULL);
 
 
 --

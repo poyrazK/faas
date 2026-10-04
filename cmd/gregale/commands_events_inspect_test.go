@@ -65,3 +65,45 @@ func TestCmdEventsInspectJSONAndLegacyEvidence(t *testing.T) {
 		t.Fatalf("legacy text: %s", stdout)
 	}
 }
+
+func TestCmdEventsInspectReplayRecovery(t *testing.T) {
+	resetJSONOut(t)
+	authedFakeAPI(t, `{"event_id":"evt","event_source":"orders","snapshot_captured":true,"recipient_count":1,"routing_summary":{"enqueued":1},"recipients":[{"subscription_id":"sub","routing":{"state":"enqueued"},"execution":{"state":"failed","last_error":"original failure"},"recovery":{"retained_replay_count":2,"latest_replay":{"invocation_id":"replay-two","state":"completed","attempts":1},"history_url":"/history"},"recovery_actions":[]}]}`, http.StatusOK)
+	stdout, restore := swapStdout(t)
+	defer restore()
+	if code := cmdEventsInspect([]string{"--source", "orders", "--id", "evt"}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	for _, want := range []string{"failed", "original failure", "Recovery: recovered", "retained replays: 2", "--subscription sub"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("missing %q: %s", want, stdout)
+		}
+	}
+}
+
+func TestCmdEventsInspectReplayHistory(t *testing.T) {
+	resetJSONOut(t)
+	fake := authedFakeAPI(t, `{"event_id":"evt","event_source":"orders","subscription_id":"sub","original_invocation_id":"original","replays":[{"invocation_id":"replay-two","replayed_from_invocation_id":"replay-one","state":"completed","attempts":1,"created_at":"2026-10-05T00:00:00Z"}],"next_after":"err1.next"}`, http.StatusOK)
+	stdout, restore := swapStdout(t)
+	defer restore()
+	if code := cmdEventsInspect([]string{"--source", "orders/?+", "--id", "evt&1", "--subscription", "sub/?+", "--after", "err1.previous", "--limit", "1"}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	query, err := url.ParseQuery(fake.sawQuery)
+	if err != nil || fake.sawPath != "/v1/events/receipt/replays" || query.Get("subscription_id") != "sub/?+" || query.Get("source") != "orders/?+" || query.Get("id") != "evt&1" || query.Get("after") != "err1.previous" || query.Get("limit") != "1" {
+		t.Fatalf("history request: %s %s %v", fake.sawPath, fake.sawQuery, err)
+	}
+	for _, want := range []string{"original invocation: original", "replay-two", "replay-one", "completed", "Next page: --subscription sub/?+ --after err1.next"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("missing %q: %s", want, stdout)
+		}
+	}
+	jsonOutput = true
+	stdout.Reset()
+	if code := cmdEventsInspect([]string{"--source", "orders", "--id", "evt", "--subscription", "sub"}); code != 0 {
+		t.Fatalf("json exit=%d", code)
+	}
+	if !strings.Contains(stdout.String(), `"replayed_from_invocation_id"`) {
+		t.Fatalf("missing JSON lineage: %s", stdout)
+	}
+}

@@ -563,6 +563,13 @@ var cliCommands = []cliCommand{
 				{Name: "data", Short: "JSON event data (inline | @file | -)", Req: true, Value: "J|@file|-"},
 				{Name: "time", Short: "event time (RFC3339; defaults to server time)", Value: "RFC3339"},
 			}},
+			{Name: "inspect", Short: "Inspect event routing, execution and replay recovery", Flags: []cliFlag{
+				{Name: "source", Short: "published event source", Req: true, Value: "SOURCE"},
+				{Name: "id", Short: "published event id", Req: true, Value: "ID"},
+				{Name: "subscription", Short: "list retained handler replays for one captured recipient", Value: "SUB"},
+				{Name: "after", Short: "opaque next_after cursor for recipients or replays", Value: "CURSOR"},
+				{Name: "limit", Short: "max recipients or replays (1..200, default 100)", Value: "N"},
+			}},
 			{Name: "subscriptions", Short: "List subscriptions reconciled from the app manifest", Positionals: []string{"<app>"}},
 			{Name: "deliveries", Short: "Inspect event deliveries, replays, and pre-invocation fanout failures", Positionals: []string{"<app>"}, Flags: []cliFlag{
 				{Name: "event-source", Short: "narrow event filter to one published source; requires --event-id", Value: "SOURCE"},

@@ -710,8 +710,31 @@ routing; it does not assert success. Execution records have independent
 retention. The JSON response supplies applicable selective recovery requests;
 calling them requires the existing write scopes and rechecks current eligibility.
 Routing replay and in-place dead-letter replay remain visible on the original
-receipt. Generic handler replay creates a new invocation, visible in app delivery
-history. Captured target IDs remain, but current metadata and recovery actions
+receipt. Generic handler replay creates a new invocation with ledger-owned parent
+and root identity. The receipt preserves the original failure and adds `recovery`
+with `latest_replay`, `retained_replay_count`, and `history_url`. A completed latest
+replay means that replay succeeded; text inspection labels it `recovered`.
+Recovery requests target the latest retained replay, and are absent while that
+replay is active or completed. Independent consumer outcomes remain separate.
+
+List a consumer's retained replay executions, newest first:
+
+```bash
+gregale events inspect --source billing.stripe --id evt-123 --subscription SUB
+gregale events inspect --source billing.stripe --id evt-123 --subscription SUB --json
+```
+
+This reads `GET /v1/events/receipt/replays` with the same source, ID and captured
+`subscription_id`. Use `--limit` and the returned `next_after` with `--after` to
+read older pages. Replay cursors are separate from recipient cursors and remain
+usable when their execution anchor expires. Root identity and its creation time
+survive on descendants, so expired intermediate rows cannot sever recovery or
+attach it to a later reuse of the event identity. Counts cover retained rows,
+not lifetime replays. When all replay records expire, absence of `recovery` does
+not establish that recovery never happened. Older generic replays without trusted
+lineage remain in app delivery history; guest headers cannot reconstruct it.
+
+Captured target IDs remain, but current metadata and recovery actions
 are unavailable when the target no longer belongs to the account.
 
 After publishing, use `events deliveries` to see the matching event id,

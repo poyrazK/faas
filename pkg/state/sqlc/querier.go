@@ -388,6 +388,9 @@ type Querier interface {
 	EventReceiptInvocations(ctx context.Context, db DBTX, arg EventReceiptInvocationsParams) ([]EventReceiptInvocationsRow, error)
 	EventReceiptMetadata(ctx context.Context, db DBTX, arg EventReceiptMetadataParams) (EventReceiptMetadataRow, error)
 	EventReceiptRecipients(ctx context.Context, db DBTX, arg EventReceiptRecipientsParams) ([]EventReceiptRecipientsRow, error)
+	EventReceiptReplayHistory(ctx context.Context, db DBTX, arg EventReceiptReplayHistoryParams) ([]EventReceiptReplayHistoryRow, error)
+	EventReceiptReplaySummaries(ctx context.Context, db DBTX, arg EventReceiptReplaySummariesParams) ([]EventReceiptReplaySummariesRow, error)
+	EventReceiptReplayTarget(ctx context.Context, db DBTX, arg EventReceiptReplayTargetParams) (pgtype.UUID, error)
 	EventRecipientAppendHistory(ctx context.Context, db DBTX, arg EventRecipientAppendHistoryParams) error
 	EventRecipientClaim(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (EventRecipientClaimRow, error)
 	EventRecipientFinish(ctx context.Context, db DBTX, arg EventRecipientFinishParams) (int64, error)

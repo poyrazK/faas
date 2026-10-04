@@ -33,11 +33,13 @@ const eventReceiptCancellations = `-- name: EventReceiptCancellations :many
 SELECT c.id, c.app_id, c.cancelled_count, c.created_at
 FROM invocation_work_cancellations c JOIN apps a ON a.id=c.app_id
 WHERE a.account_id=$1::uuid AND c.id=ANY($2::uuid[])
+  AND c.created_at >= $3::timestamptz
 `
 
 type EventReceiptCancellationsParams struct {
 	AccountID     pgtype.UUID
 	InvocationIds []pgtype.UUID
+	AcceptedAt    pgtype.Timestamptz
 }
 
 type EventReceiptCancellationsRow struct {
@@ -48,7 +50,7 @@ type EventReceiptCancellationsRow struct {
 }
 
 func (q *Queries) EventReceiptCancellations(ctx context.Context, db DBTX, arg EventReceiptCancellationsParams) ([]EventReceiptCancellationsRow, error) {
-	rows, err := db.Query(ctx, eventReceiptCancellations, arg.AccountID, arg.InvocationIds)
+	rows, err := db.Query(ctx, eventReceiptCancellations, arg.AccountID, arg.InvocationIds, arg.AcceptedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -78,11 +80,13 @@ SELECT i.id, i.app_id, i.state, i.attempts, i.replay_generation, coalesce(i.last
        i.queue_binding_id
 FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
 WHERE i.account_id=$1::uuid AND i.id=ANY($2::uuid[])
+  AND i.created_at >= $3::timestamptz
 `
 
 type EventReceiptInvocationsParams struct {
 	AccountID     pgtype.UUID
 	InvocationIds []pgtype.UUID
+	AcceptedAt    pgtype.Timestamptz
 }
 
 type EventReceiptInvocationsRow struct {
@@ -100,7 +104,7 @@ type EventReceiptInvocationsRow struct {
 }
 
 func (q *Queries) EventReceiptInvocations(ctx context.Context, db DBTX, arg EventReceiptInvocationsParams) ([]EventReceiptInvocationsRow, error) {
-	rows, err := db.Query(ctx, eventReceiptInvocations, arg.AccountID, arg.InvocationIds)
+	rows, err := db.Query(ctx, eventReceiptInvocations, arg.AccountID, arg.InvocationIds, arg.AcceptedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -272,4 +276,169 @@ func (q *Queries) EventReceiptRecipients(ctx context.Context, db DBTX, arg Event
 		return nil, err
 	}
 	return items, nil
+}
+
+const eventReceiptReplayHistory = `-- name: EventReceiptReplayHistory :many
+SELECT i.id, i.state, i.attempts, i.replay_generation, i.replayed_from_invocation_id,
+       coalesce(i.last_error, '')::text AS last_error, i.due_at, i.created_at, i.completed_at
+FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+WHERE i.account_id=$1::uuid AND i.app_id=$2::uuid
+  AND i.replay_root_invocation_id=$3::uuid
+  AND i.replay_root_created_at >= $4::timestamptz
+  AND ($5::timestamptz IS NULL OR
+       (i.created_at, i.id)<($5::timestamptz, $6::uuid))
+ORDER BY i.created_at DESC, i.id DESC LIMIT $7::integer
+`
+
+type EventReceiptReplayHistoryParams struct {
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	RootInvocationID pgtype.UUID
+	AcceptedAt       pgtype.Timestamptz
+	AfterCreatedAt   pgtype.Timestamptz
+	AfterID          pgtype.UUID
+	PageLimit        int32
+}
+
+type EventReceiptReplayHistoryRow struct {
+	ID                       pgtype.UUID
+	State                    string
+	Attempts                 int32
+	ReplayGeneration         int64
+	ReplayedFromInvocationID pgtype.UUID
+	LastError                string
+	DueAt                    pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	CompletedAt              pgtype.Timestamptz
+}
+
+func (q *Queries) EventReceiptReplayHistory(ctx context.Context, db DBTX, arg EventReceiptReplayHistoryParams) ([]EventReceiptReplayHistoryRow, error) {
+	rows, err := db.Query(ctx, eventReceiptReplayHistory,
+		arg.AccountID,
+		arg.AppID,
+		arg.RootInvocationID,
+		arg.AcceptedAt,
+		arg.AfterCreatedAt,
+		arg.AfterID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventReceiptReplayHistoryRow{}
+	for rows.Next() {
+		var i EventReceiptReplayHistoryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.State,
+			&i.Attempts,
+			&i.ReplayGeneration,
+			&i.ReplayedFromInvocationID,
+			&i.LastError,
+			&i.DueAt,
+			&i.CreatedAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventReceiptReplaySummaries = `-- name: EventReceiptReplaySummaries :many
+SELECT roots.id::uuid AS root_id, latest.id, latest.app_id, latest.state, latest.attempts, latest.replay_generation, latest.replayed_from_invocation_id, latest.last_error, latest.due_at, latest.created_at, latest.completed_at, latest.work_policy_name, latest.queue_binding_id, latest.retained_replay_count FROM unnest($1::uuid[]) roots(id)
+CROSS JOIN LATERAL (
+  SELECT i.id, i.app_id, i.state, i.attempts, i.replay_generation, i.replayed_from_invocation_id,
+         coalesce(i.last_error, '')::text AS last_error, i.due_at, i.created_at, i.completed_at,
+         coalesce(i.work_policy_name, '')::text AS work_policy_name, i.queue_binding_id,
+         count(*) OVER ()::bigint AS retained_replay_count
+  FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+  WHERE i.account_id=$2::uuid AND i.replay_root_invocation_id=roots.id
+    AND i.replay_root_created_at >= $3::timestamptz
+  ORDER BY i.created_at DESC, i.id DESC LIMIT 1
+) latest
+`
+
+type EventReceiptReplaySummariesParams struct {
+	InvocationIds []pgtype.UUID
+	AccountID     pgtype.UUID
+	AcceptedAt    pgtype.Timestamptz
+}
+
+type EventReceiptReplaySummariesRow struct {
+	RootID                   pgtype.UUID
+	ID                       pgtype.UUID
+	AppID                    pgtype.UUID
+	State                    string
+	Attempts                 int32
+	ReplayGeneration         int64
+	ReplayedFromInvocationID pgtype.UUID
+	LastError                string
+	DueAt                    pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	CompletedAt              pgtype.Timestamptz
+	WorkPolicyName           string
+	QueueBindingID           pgtype.UUID
+	RetainedReplayCount      int64
+}
+
+func (q *Queries) EventReceiptReplaySummaries(ctx context.Context, db DBTX, arg EventReceiptReplaySummariesParams) ([]EventReceiptReplaySummariesRow, error) {
+	rows, err := db.Query(ctx, eventReceiptReplaySummaries, arg.InvocationIds, arg.AccountID, arg.AcceptedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventReceiptReplaySummariesRow{}
+	for rows.Next() {
+		var i EventReceiptReplaySummariesRow
+		if err := rows.Scan(
+			&i.RootID,
+			&i.ID,
+			&i.AppID,
+			&i.State,
+			&i.Attempts,
+			&i.ReplayGeneration,
+			&i.ReplayedFromInvocationID,
+			&i.LastError,
+			&i.DueAt,
+			&i.CreatedAt,
+			&i.CompletedAt,
+			&i.WorkPolicyName,
+			&i.QueueBindingID,
+			&i.RetainedReplayCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventReceiptReplayTarget = `-- name: EventReceiptReplayTarget :one
+SELECT a.id AS app_id FROM event_fanout_outbox o
+CROSS JOIN LATERAL jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb)) s(recipient)
+JOIN apps a ON a.id=(s.recipient->>'app_id')::uuid AND a.account_id=o.account_id
+WHERE o.id=$1::bigint AND o.account_id=$2::uuid
+  AND s.recipient->>'id'=$3::text
+`
+
+type EventReceiptReplayTargetParams struct {
+	OutboxID       int64
+	AccountID      pgtype.UUID
+	SubscriptionID string
+}
+
+func (q *Queries) EventReceiptReplayTarget(ctx context.Context, db DBTX, arg EventReceiptReplayTargetParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, eventReceiptReplayTarget, arg.OutboxID, arg.AccountID, arg.SubscriptionID)
+	var app_id pgtype.UUID
+	err := row.Scan(&app_id)
+	return app_id, err
 }

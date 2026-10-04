@@ -60,6 +60,9 @@ Routing recovery and in-place dead-letter replay therefore remain visible here.
 Generic invocation replay creates a new invocation without trusted parent
 lineage in the current Store model; those rows remain available in app delivery
 history. This change does not infer lineage from caller-controlled headers.
+[ADR-583](583-event-receipt-replay-lineage.md) subsequently adds trusted parent
+and root lineage for new generic replays, including recovery summaries and
+paginated history on this receipt surface.
 
 The response supplies applicable selective POST actions: recipient routing replay,
 in-place dead-letter replay, and generic failed-handler replay for plain unbound

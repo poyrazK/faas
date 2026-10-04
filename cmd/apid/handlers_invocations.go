@@ -1104,19 +1104,20 @@ func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	inv, versionProblem := s.enqueueVersionedInvocation(r.Context(), nil, state.Invocation{
-		AppID:                orig.AppID,
-		AccountID:            acct.ID,
-		DeploymentScope:      orig.DeploymentScope,
-		PlatformTenantID:     orig.PlatformTenantID,
-		Source:               state.InvocationReplay,
-		Method:               orig.Method,
-		Path:                 orig.Path,
-		Payload:              orig.Payload,
-		Headers:              invocationHeaders,
-		DueAt:                time.Now().UTC(),
-		RetryPolicyJSON:      effectiveInvocationRetryPolicy(app, nil, api.MustLimitsFor(acct.Plan).MaxQueueAttempts),
-		DeadlineAt:           deadlineForRequest(nil, acct),
-		ResultRetentionUntil: retentionForRequest(nil, acct),
+		AppID:                    orig.AppID,
+		AccountID:                acct.ID,
+		DeploymentScope:          orig.DeploymentScope,
+		PlatformTenantID:         orig.PlatformTenantID,
+		Source:                   state.InvocationReplay,
+		ReplayedFromInvocationID: orig.ID,
+		Method:                   orig.Method,
+		Path:                     orig.Path,
+		Payload:                  orig.Payload,
+		Headers:                  invocationHeaders,
+		DueAt:                    time.Now().UTC(),
+		RetryPolicyJSON:          effectiveInvocationRetryPolicy(app, nil, api.MustLimitsFor(acct.Plan).MaxQueueAttempts),
+		DeadlineAt:               deadlineForRequest(nil, acct),
+		ResultRetentionUntil:     retentionForRequest(nil, acct),
 	}, "enqueue replay invocation")
 	if versionProblem != nil {
 		api.WriteProblem(w, versionProblem)

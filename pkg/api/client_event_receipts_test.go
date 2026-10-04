@@ -30,3 +30,24 @@ func TestGetEventReceiptSerializesIdentityAndPage(t *testing.T) {
 		t.Fatalf("query=%v receipt=%+v", query, receipt)
 	}
 }
+
+func TestGetEventReceiptReplaysSerializesIdentityAndPage(t *testing.T) {
+	var query url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/v1/events/receipt/replays" {
+			t.Errorf("request: %s %s", r.Method, r.URL)
+		}
+		query = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"original_invocation_id":"original","subscription_id":"sub/?+","replays":[{"invocation_id":"child","replayed_from_invocation_id":"parent","state":"completed"}],"next_after":"next"}`))
+	}))
+	defer server.Close()
+	history, err := NewClient(server.URL, "").GetEventReceiptReplays(context.Background(), "https://orders.example/a?b=1&c=2", "evt/?+", "sub/?+", "err1.a+/?", 17)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := url.Values{"source": {"https://orders.example/a?b=1&c=2"}, "id": {"evt/?+"}, "subscription_id": {"sub/?+"}, "after": {"err1.a+/?"}, "limit": {"17"}}
+	if !reflect.DeepEqual(query, want) || len(history.Replays) != 1 || history.Replays[0].ReplayedFromInvocationID != "parent" || history.NextAfter != "next" {
+		t.Fatalf("query=%v history=%+v", query, history)
+	}
+}

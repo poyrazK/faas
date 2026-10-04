@@ -5525,6 +5525,17 @@ func (q *Queries) EnqueueEnvironmentGitOps(ctx context.Context, db DBTX, arg Enq
 }
 
 const enqueueInvocationRow = `-- name: EnqueueInvocationRow :one
+WITH replay_parent AS (
+  SELECT i.id, i.replay_root_invocation_id, coalesce(i.replay_root_created_at, i.created_at) AS root_created_at
+  FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+  WHERE i.id=$34::uuid
+    AND i.account_id=$3::uuid AND i.app_id=$2::uuid
+    AND i.deployment_scope=coalesce(nullif($29::text, ''),
+      CASE WHEN a.project_id IS NOT NULL AND coalesce(a.preview_of_slug, '')='' THEN 'production' ELSE 'default' END)
+    AND i.platform_tenant_id IS NOT DISTINCT FROM $28::uuid
+    AND i.state IN ('failed', 'dead_letter') AND $4::text='replay'
+  FOR SHARE OF i, a
+)
 INSERT INTO invocations (
   id, app_id, account_id, source, queue_name, state, method, path,
   payload, headers, due_at, scheduled_at, cron_id, ack_url, lease_expires_at,
@@ -5533,8 +5544,8 @@ INSERT INTO invocations (
   work_policy_name, work_key_digest, work_expires_at,
   work_sequence, work_policy_revision, work_fairness_digest,
   work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id,
-  occurrence_id, start_deadline_at, failure_rules
-) VALUES (
+  occurrence_id, start_deadline_at, failure_rules, replayed_from_invocation_id, replay_root_invocation_id, replay_root_created_at
+) SELECT
   coalesce($1::uuid, gen_random_uuid()), $2, $3,
   $4, $5, coalesce(nullif($6::text, ''), 'pending'),
   $7, $8, $9, $10, $11,
@@ -5545,44 +5556,48 @@ INSERT INTO invocations (
   $22, $23, $24,
   $25, $26, $27,
   $28, nullif($29::text, ''), $30,
-  $31::uuid, $32::timestamptz, $33::jsonb
-) RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code
+  $31::uuid, $32::timestamptz, $33::jsonb,
+  replay_parent.id, coalesce(replay_parent.replay_root_invocation_id, replay_parent.id), replay_parent.root_created_at
+FROM (SELECT 1) seed LEFT JOIN replay_parent ON true
+WHERE $34::uuid IS NULL OR replay_parent.id IS NOT NULL
+RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, replay_root_invocation_id, replay_root_created_at
 `
 
 type EnqueueInvocationRowParams struct {
-	ID                     pgtype.UUID
-	AppID                  pgtype.UUID
-	AccountID              pgtype.UUID
-	Source                 string
-	QueueName              string
-	State                  string
-	Method                 string
-	Path                   string
-	Payload                []byte
-	Headers                []byte
-	DueAt                  pgtype.Timestamptz
-	ScheduledAt            pgtype.Timestamptz
-	CronID                 pgtype.UUID
-	AckUrl                 string
-	LeaseExpiresAt         pgtype.Timestamptz
-	DeadlineAt             pgtype.Timestamptz
-	RetryPolicy            []byte
-	ResultRetentionUntil   pgtype.Timestamptz
-	OnSuccessDestinationID pgtype.UUID
-	OnFailureDestinationID pgtype.UUID
-	WorkPolicyName         string
-	WorkKeyDigest          []byte
-	WorkExpiresAt          pgtype.Timestamptz
-	WorkSequence           pgtype.Int8
-	WorkPolicyRevision     pgtype.Int8
-	WorkFairnessDigest     []byte
-	WorkFairnessLimit      pgtype.Int4
-	PlatformTenantID       pgtype.UUID
-	DeploymentScope        string
-	QueueBindingID         pgtype.UUID
-	OccurrenceID           pgtype.UUID
-	StartDeadlineAt        pgtype.Timestamptz
-	FailureRules           []byte
+	ID                       pgtype.UUID
+	AppID                    pgtype.UUID
+	AccountID                pgtype.UUID
+	Source                   string
+	QueueName                string
+	State                    string
+	Method                   string
+	Path                     string
+	Payload                  []byte
+	Headers                  []byte
+	DueAt                    pgtype.Timestamptz
+	ScheduledAt              pgtype.Timestamptz
+	CronID                   pgtype.UUID
+	AckUrl                   string
+	LeaseExpiresAt           pgtype.Timestamptz
+	DeadlineAt               pgtype.Timestamptz
+	RetryPolicy              []byte
+	ResultRetentionUntil     pgtype.Timestamptz
+	OnSuccessDestinationID   pgtype.UUID
+	OnFailureDestinationID   pgtype.UUID
+	WorkPolicyName           string
+	WorkKeyDigest            []byte
+	WorkExpiresAt            pgtype.Timestamptz
+	WorkSequence             pgtype.Int8
+	WorkPolicyRevision       pgtype.Int8
+	WorkFairnessDigest       []byte
+	WorkFairnessLimit        pgtype.Int4
+	PlatformTenantID         pgtype.UUID
+	DeploymentScope          string
+	QueueBindingID           pgtype.UUID
+	OccurrenceID             pgtype.UUID
+	StartDeadlineAt          pgtype.Timestamptz
+	FailureRules             []byte
+	ReplayedFromInvocationID pgtype.UUID
 }
 
 func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg EnqueueInvocationRowParams) (Invocation, error) {
@@ -5620,6 +5635,7 @@ func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg Enqueue
 		arg.OccurrenceID,
 		arg.StartDeadlineAt,
 		arg.FailureRules,
+		arg.ReplayedFromInvocationID,
 	)
 	var i Invocation
 	err := row.Scan(
@@ -5672,6 +5688,8 @@ func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg Enqueue
 		&i.QueueBindingID,
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -18895,7 +18913,7 @@ func (q *Queries) LockCustomerOperationExecution(ctx context.Context, db DBTX, i
 }
 
 const lockCustomerOperationInvocation = `-- name: LockCustomerOperationInvocation :one
-SELECT id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code FROM invocations WHERE id=$1::uuid FOR UPDATE
+SELECT id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, replay_root_invocation_id, replay_root_created_at FROM invocations WHERE id=$1::uuid FOR UPDATE
 `
 
 func (q *Queries) LockCustomerOperationInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error) {
@@ -18951,6 +18969,8 @@ func (q *Queries) LockCustomerOperationInvocation(ctx context.Context, db DBTX, 
 		&i.QueueBindingID,
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -29544,7 +29564,7 @@ where i.id=$2::uuid and i.app_id=$3::uuid and i.source='queue'
     and tr.item_identifier=i.id::text
     and not ((tr.state in ('pending','retry') and tr.next_fire_at<=clock_timestamp())
       or (tr.state='claimed' and tr.claim_expires_at<=clock_timestamp())))
-returning i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code
+returning i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.replay_root_invocation_id, i.replay_root_created_at
 `
 
 type QueueClaimPendingInvocationParams struct {
@@ -29618,6 +29638,8 @@ func (q *Queries) QueueClaimPendingInvocation(ctx context.Context, db DBTX, arg 
 		&i.QueueBindingID,
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -30078,7 +30100,7 @@ func (q *Queries) QueueFinishDeliveryClaims(ctx context.Context, db DBTX, arg Qu
 }
 
 const queueInvocationForTriggerReceipt = `-- name: QueueInvocationForTriggerReceipt :one
-select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code from trigger_records r join triggers t on t.id=r.trigger_id
+select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.replay_root_invocation_id, i.replay_root_created_at from trigger_records r join triggers t on t.id=r.trigger_id
 join invocations i on i.id::text=r.item_identifier and i.app_id=t.app_id and i.account_id=t.account_id
   and i.source=t.source
 where r.id=$1::uuid and t.kind='queue' and t.source in ('queue','delayed_task')
@@ -30139,6 +30161,8 @@ func (q *Queries) QueueInvocationForTriggerReceipt(ctx context.Context, db DBTX,
 		&i.QueueBindingID,
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }
@@ -34197,7 +34221,7 @@ update invocations set state='pending', attempts=0, last_error=null, outcome=nul
   due_at=clock_timestamp(), lease_expires_at=null, instance_id=null,
   last_replayed_at=clock_timestamp(), completed_at=null, result=null
 where id=$1::uuid and account_id=$2::uuid and state='dead_letter'
-returning id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code
+returning id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, replay_root_invocation_id, replay_root_created_at
 `
 
 type RetryQueueDeadLetterInvocationParams struct {
@@ -34258,6 +34282,8 @@ func (q *Queries) RetryQueueDeadLetterInvocation(ctx context.Context, db DBTX, a
 		&i.QueueBindingID,
 		&i.ReplayGeneration,
 		&i.OutcomeCode,
+		&i.ReplayRootInvocationID,
+		&i.ReplayRootCreatedAt,
 	)
 	return i, err
 }

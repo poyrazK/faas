@@ -11760,6 +11760,7 @@ type EventReceiptRecipientResponse struct {
 	AppSlug              string                            `json:"app_slug,omitempty"`
 	Routing              EventReceiptRoutingResponse       `json:"routing"`
 	Execution            *EventReceiptExecutionResponse    `json:"execution,omitempty"`
+	Recovery             *EventReceiptRecoveryResponse     `json:"recovery,omitempty"`
 	Cancellation         *EventReceiptCancellationResponse `json:"cancellation,omitempty"`
 	ExecutionUnavailable string                            `json:"execution_unavailable,omitempty"`
 	RecoveryActions      []EventReceiptRecoveryAction      `json:"recovery_actions"`
@@ -11782,14 +11783,32 @@ type EventReceiptRoutingResponse struct {
 }
 
 type EventReceiptExecutionResponse struct {
-	InvocationID     string     `json:"invocation_id"`
-	State            string     `json:"state"`
-	Attempts         int        `json:"attempts"`
-	ReplayGeneration int64      `json:"replay_generation"`
-	NextAttemptAt    *time.Time `json:"next_attempt_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	CompletedAt      *time.Time `json:"completed_at,omitempty"`
-	LastError        string     `json:"last_error,omitempty"`
+	InvocationID             string     `json:"invocation_id"`
+	State                    string     `json:"state"`
+	Attempts                 int        `json:"attempts"`
+	ReplayGeneration         int64      `json:"replay_generation"`
+	NextAttemptAt            *time.Time `json:"next_attempt_at,omitempty"`
+	CreatedAt                time.Time  `json:"created_at"`
+	CompletedAt              *time.Time `json:"completed_at,omitempty"`
+	LastError                string     `json:"last_error,omitempty"`
+	ReplayedFromInvocationID string     `json:"replayed_from_invocation_id,omitempty"`
+}
+
+// Recovery describes retained generic replays without replacing the original
+// failure. Counts may decrease as execution records expire independently.
+type EventReceiptRecoveryResponse struct {
+	RetainedReplayCount int64                          `json:"retained_replay_count"`
+	LatestReplay        *EventReceiptExecutionResponse `json:"latest_replay"`
+	HistoryURL          string                         `json:"history_url"`
+}
+
+type EventReceiptReplayHistoryResponse struct {
+	EventSource          string                          `json:"event_source"`
+	EventID              string                          `json:"event_id"`
+	SubscriptionID       string                          `json:"subscription_id"`
+	OriginalInvocationID string                          `json:"original_invocation_id"`
+	Replays              []EventReceiptExecutionResponse `json:"replays"`
+	NextAfter            string                          `json:"next_after,omitempty"`
 }
 
 type EventReceiptCancellationResponse struct {
