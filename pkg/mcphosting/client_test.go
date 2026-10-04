@@ -23,7 +23,7 @@ func testClient(t *testing.T, h http.HandlerFunc) *Client {
 }
 
 func TestStatelessDiscoveryAndStreaming(t *testing.T) {
-	// adr: 423 — POST metadata, JSON/SSE, origin validation and unbuffered progress.
+	// adr: 426 — POST metadata, JSON/SSE, origin validation and unbuffered progress.
 	calls := 0
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Origin") != "" {
@@ -121,7 +121,7 @@ func TestCallDoesNotRetryToolErrors(t *testing.T) {
 }
 
 func TestCallRejectsIncompleteResults(t *testing.T) {
-	// adr: 423 — diagnostics require a complete result and never resume work.
+	// adr: 426 — diagnostics require a complete result and never resume work.
 	for _, result := range []string{`{}`, `{"content":null}`, `{"resultType":"task","content":[]}`, `{"resultType":"input_required","content":[]}`} {
 		t.Run(result, func(t *testing.T) {
 			calls := 0
@@ -138,7 +138,7 @@ func TestCallRejectsIncompleteResults(t *testing.T) {
 }
 
 func TestCallRejectsSessionCreatedDuringExecution(t *testing.T) {
-	// adr: 423 — stateless qualification applies to tool execution as well as discovery.
+	// adr: 426 — stateless qualification applies to tool execution as well as discovery.
 	c := testClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Mcp-Session-Id", "new-session")
@@ -215,5 +215,42 @@ func TestMirroredHeaderValidation(t *testing.T) {
 	}
 	if encodeHeader(" padded ") != "=?base64?IHBhZGRlZCA=?=" || encodeHeader("=?base64?literal?=") == "=?base64?literal?=" {
 		t.Fatal("ambiguous header encoding")
+	}
+}
+
+func TestClientDiscoveryRejectsIndividualToolsAcrossPages(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			ID     int `json:"id"`
+			Params struct {
+				Cursor string `json:"cursor"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if request.Params.Cursor == "next" {
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"bad2","inputSchema":{"properties":{"n":{"type":"number","x-mcp-header":"N"}}}},{"name":"good2","inputSchema":{"type":"object"}}]}}`, request.ID)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"bad1","inputSchema":{"properties":{"x":{"type":"string","x-mcp-header":"bad name"}}}},{"name":"good1","inputSchema":{"type":"object"}}],"nextCursor":"next"}}`, request.ID)
+	})
+	tools, discovery, err := c.Tools(context.Background())
+	if err != nil || len(tools) != 2 || tools[0].Name != "good1" || tools[1].Name != "good2" {
+		t.Fatalf("tools=%+v err=%v", tools, err)
+	}
+	if len(discovery.RejectedTools) != 2 || discovery.RejectedTools[0].Name != "bad1" || discovery.RejectedTools[1].Name != "bad2" || discovery.RejectedTools[0].Reason == "" {
+		t.Fatalf("rejections=%+v", discovery.RejectedTools)
+	}
+}
+
+func TestClientDiscoveryRetainsDuplicateDefenseAfterRejection(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"same","inputSchema":null},{"name":"same","inputSchema":{"type":"object"}}]}}`)
+	})
+	if _, _, err := c.Tools(context.Background()); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("duplicate accepted after rejection: %v", err)
 	}
 }

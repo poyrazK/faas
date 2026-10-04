@@ -53,7 +53,7 @@ func (r *observedMaterializationReader) LinkTo(path string) error {
 	return r.ReadCloser.(storage.LocalFileLinker).LinkTo(path)
 }
 
-// adr: 423
+// adr: 425
 func TestMaterializeStorageRetainsCacheFileOrCopiesOpenedStream(t *testing.T) {
 	for _, mode := range []string{"cache-miss", "oversized", "cross-device", "evicted"} {
 		t.Run(mode, func(t *testing.T) {
@@ -81,7 +81,11 @@ func TestMaterializeStorageRetainsCacheFileOrCopiesOpenedStream(t *testing.T) {
 				}
 			}
 			v := NewJailerVMM(t.TempDir(), 0).WithStorage(backend)
-			t.Cleanup(func() { v.sweepMaterialised("instance") })
+			t.Cleanup(func() {
+				if err := v.sweepMaterialised("instance"); err != nil {
+					t.Error(err)
+				}
+			})
 			path, timing, err := v.resolveRestoreBlob(context.Background(), "instance", "mem", "snap/dep/mem", "")
 			if err != nil {
 				t.Fatal(err)
@@ -126,7 +130,9 @@ func TestMaterializeStorageRetainsCacheFileOrCopiesOpenedStream(t *testing.T) {
 			if err != nil || string(got) != "remote" {
 				t.Fatalf("writable staging changed shared source: %q, %v", got, err)
 			}
-			v.sweepMaterialised("instance")
+			if err := v.sweepMaterialised("instance"); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := os.Stat(path); !os.IsNotExist(err) {
 				t.Fatalf("teardown left materialization: %v", err)
 			}

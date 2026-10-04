@@ -28,6 +28,8 @@ const runtimeConfigMaxRequestFrame = 32 << 10
 const VsockRuntimeConfigHostPort uint32 = fcvm.VsockRuntimeConfigHostPort
 
 type runtimeConfigRequest struct {
+	Generation              string `json:"generation,omitempty"`
+	PreviousGeneration      string `json:"previous_generation,omitempty"`
 	Kind                    string `json:"kind,omitempty"`
 	Scope                   string `json:"scope"`
 	WorkloadName            string `json:"workload_name,omitempty"`
@@ -40,12 +42,13 @@ type runtimeConfigRequest struct {
 }
 
 type runtimeConfigResponse struct {
-	Env       map[string]string  `json:"env,omitempty"`
-	Secrets   *map[string]string `json:"secrets,omitempty"`
-	Revision  string             `json:"revision,omitempty"`
-	Unchanged bool               `json:"unchanged,omitempty"`
-	Accepted  bool               `json:"accepted,omitempty"`
-	Error     string             `json:"error,omitempty"`
+	Generation string             `json:"generation,omitempty"`
+	Env        map[string]string  `json:"env,omitempty"`
+	Secrets    *map[string]string `json:"secrets,omitempty"`
+	Revision   string             `json:"revision,omitempty"`
+	Unchanged  bool               `json:"unchanged,omitempty"`
+	Accepted   bool               `json:"accepted,omitempty"`
+	Error      string             `json:"error,omitempty"`
 }
 
 type runtimeConfigStore interface {
@@ -87,19 +90,25 @@ func (r *runtimeConfigReceiver) handleGuestStream(instance string, conn net.Conn
 		_ = writeRuntimeConfigResponse(conn, runtimeConfigResponse{Error: "unsupported_scope"})
 		return "protocol", errors.New("runtime config request has unsupported scope")
 	}
+	if req.Kind == "secret_generation_start" || req.Kind == "secret_generation_retire" {
+		if !validRuntimeSecretProcessRequest(req) {
+			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
+		}
+		return r.handleRuntimeSecretProcess(instance, req, conn)
+	}
 	if req.Kind == "secrets" {
 		if req.Scope != "" {
 			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "unsupported_scope"})
 		}
 		if !state.ValidSecretRuntimeWorkloadName(req.WorkloadName) || !validRuntimeSecretRevision(req.Revision) || req.Projection != "" || req.Signal != "" || req.ErrorCode != "" ||
-			req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" {
+			req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" || req.Generation != "" || req.PreviousGeneration != "" {
 			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 		}
 		return r.handleRuntimeSecrets(instance, req.WorkloadName, req.Revision, conn)
 	}
 	if req.Kind == "secret_reload_status" {
 		if req.Scope != "" || !state.ValidSecretRuntimeWorkloadName(req.WorkloadName) || !validRuntimeSecretRevision(req.Revision) || req.Revision == "" || !validRuntimeSecretReloadRequest(req) ||
-			req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" {
+			req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" || req.Generation != "" || req.PreviousGeneration != "" {
 			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 		}
 		return r.handleRuntimeSecretReloadStatus(instance, req, conn)
@@ -107,13 +116,13 @@ func (r *runtimeConfigReceiver) handleGuestStream(instance string, conn net.Conn
 	if req.Kind == "secret_reload_ack" {
 		if req.Scope != "" || !state.ValidSecretRuntimeWorkloadName(req.WorkloadName) || !state.ValidSecretApplicationReloadAck(req.Revision,
 			state.SecretApplicationReloadAckStatus(req.ApplicationAck), req.ApplicationAckErrorCode) ||
-			req.Projection != "" || req.Signal != "" || req.ErrorCode != "" {
+			req.Projection != "" || req.Signal != "" || req.ErrorCode != "" || req.PreviousGeneration != "" || (req.Generation != "" && !state.ValidSecretProcessGeneration(req.Generation)) {
 			return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 		}
 		return r.handleRuntimeSecretReloadAck(instance, req, conn)
 	}
 	if (req.Kind != "" && req.Kind != "env") || req.WorkloadName != "" || req.Revision != "" || req.Projection != "" || req.Signal != "" || req.ErrorCode != "" ||
-		req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" {
+		req.ApplicationAck != "" || req.ApplicationAckErrorCode != "" || req.Generation != "" || req.PreviousGeneration != "" {
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "invalid_request"})
 	}
 	return r.handleRuntimeEnv(instance, conn)
@@ -232,7 +241,7 @@ func (r *runtimeConfigReceiver) handleRuntimeSecretReloadAck(instance string, re
 	}
 	_, err = ackStore.RecordAppSecretRuntimeReloadAck(requestCtx, state.AppSecretRuntimeReloadAckResult{
 		Fence:     selection.Fence,
-		AccountID: accountID, AppID: appID, InstanceID: instance, WorkloadName: req.WorkloadName, Revision: req.Revision,
+		AccountID: accountID, AppID: appID, InstanceID: instance, WorkloadName: req.WorkloadName, Revision: req.Revision, Generation: req.Generation,
 		Status: state.SecretApplicationReloadAckStatus(req.ApplicationAck), ErrorCode: req.ApplicationAckErrorCode,
 		AttemptedAt: time.Now().UTC(), Candidates: candidates,
 	})
@@ -311,6 +320,16 @@ func selectRuntimeSecretRowsForWorkload(ctx context.Context, store runtimeSecret
 	}
 	scope := snapshot.Scope
 	rows := snapshot.Secrets
+	requested := make(map[string]string)
+	for _, row := range rows {
+		if _, ok := allowedKeys[row.Key]; ok {
+			requested[row.Key] = api.SecretRefPrefix + row.Key
+		}
+	}
+	rows, err = state.SelectAppSecretsForDelivery(rows, requested, false)
+	if err != nil {
+		return runtimeSecretSelection{}, err
+	}
 	selected := make([]state.AppSecret, 0, len(rows))
 	entries := make([]fcvm.SealedEnvEntry, 0, len(rows))
 	foundKeys := make(map[string]struct{}, len(rows))

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppBindingInventory } from '../models/AppBindingInventory.js';
 import type { AppErrorRequestsResponse } from '../models/AppErrorRequestsResponse.js';
 import type { AppErrorSampleResponse } from '../models/AppErrorSampleResponse.js';
 import type { AppErrorsSummaryResponse } from '../models/AppErrorsSummaryResponse.js';
@@ -15,6 +16,9 @@ import type { AppStreamingStatus } from '../models/AppStreamingStatus.js';
 import type { AppUsageSummaryResponse } from '../models/AppUsageSummaryResponse.js';
 import type { AppWakeResponse } from '../models/AppWakeResponse.js';
 import type { AppWakeTimelineResponse } from '../models/AppWakeTimelineResponse.js';
+import type { AutomaticRouteCheck } from '../models/AutomaticRouteCheck.js';
+import type { CanaryRouteGate } from '../models/CanaryRouteGate.js';
+import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirementsRequest.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
 import type { CreateIssueIngestTokenRequest } from '../models/CreateIssueIngestTokenRequest.js';
@@ -45,6 +49,7 @@ import type { IssueEvent } from '../models/IssueEvent.js';
 import type { IssueEventResponse } from '../models/IssueEventResponse.js';
 import type { IssueImpactAlertPolicy } from '../models/IssueImpactAlertPolicy.js';
 import type { IssueIngestToken } from '../models/IssueIngestToken.js';
+import type { IssueOwnershipRules } from '../models/IssueOwnershipRules.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
 import type { ListIssuesResponse } from '../models/ListIssuesResponse.js';
@@ -57,8 +62,31 @@ import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyt
 import type { RequestAuditListResponse } from '../models/RequestAuditListResponse.js';
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
+import type { RouteCheckHistoryEntry } from '../models/RouteCheckHistoryEntry.js';
+import type { RouteCheckHistoryPage } from '../models/RouteCheckHistoryPage.js';
+import type { RouteCustomerUsageResponse } from '../models/RouteCustomerUsageResponse.js';
+import type { RouteHealthGate } from '../models/RouteHealthGate.js';
+import type { RouteHealthHistoryEntry } from '../models/RouteHealthHistoryEntry.js';
+import type { RouteHealthHistoryPage } from '../models/RouteHealthHistoryPage.js';
+import type { RouteHealthInvestigation } from '../models/RouteHealthInvestigation.js';
+import type { RouteHealthReport } from '../models/RouteHealthReport.js';
+import type { RouteMonitorConfig } from '../models/RouteMonitorConfig.js';
+import type { RouteMonitorIncident } from '../models/RouteMonitorIncident.js';
+import type { RouteMonitorIncidentPage } from '../models/RouteMonitorIncidentPage.js';
+import type { RouteMonitorReport } from '../models/RouteMonitorReport.js';
+import type { RoutePolicyApplyRequest } from '../models/RoutePolicyApplyRequest.js';
+import type { RoutePolicyApplyResponse } from '../models/RoutePolicyApplyResponse.js';
+import type { RoutePolicyPlan } from '../models/RoutePolicyPlan.js';
+import type { RoutePolicyPlanRequest } from '../models/RoutePolicyPlanRequest.js';
+import type { RoutePolicyReceipt } from '../models/RoutePolicyReceipt.js';
+import type { RouteRequirementsCheck } from '../models/RouteRequirementsCheck.js';
 import type { RuntimeConfigRestartStatusResponse } from '../models/RuntimeConfigRestartStatusResponse.js';
 import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusResponse.js';
+import type { SavedRouteRequirements } from '../models/SavedRouteRequirements.js';
+import type { SaveRouteRequirementsRequest } from '../models/SaveRouteRequirementsRequest.js';
+import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
+import type { SetRouteHealthGateRequest } from '../models/SetRouteHealthGateRequest.js';
+import type { SetRouteMonitorRequest } from '../models/SetRouteMonitorRequest.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
@@ -72,6 +100,68 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AppsService {
+  /**
+   * Inspect all runtime resource bindings attached to an app.
+   * Read-only, best-effort metadata for service, PostgreSQL, object-storage,
+   * queue and outbound bindings. Requires apps:read or admin. PostgreSQL
+   * sections additionally require managed-postgres:read or admin; object
+   * storage sections require storage:manage or admin, matching the existing
+   * compute-binding read surface. MFA-pending sessions are rejected.
+   * Missing permissions and failed sections appear as structured issues in
+   * a 200 response with complete=false; successfully read sections remain.
+   * An unconfigured managed PostgreSQL feature is a warning. Other issues
+   * have error severity. No provider calls, workload probes or writes occur.
+   * State describes configuration/provisioning, not applied runtime health.
+   * Runtime status is unknown unless a scheduler queue observation exists;
+   * verification status includes durable service, PostgreSQL and object-storage task-guest canary results. GeneratedAt is collection time, not a
+   * promise of an atomic snapshot. Credential material and raw errors are
+   * excluded. Responses use Cache-Control: no-store.
+   *
+   * @returns AppBindingInventory Complete or partial binding inventory, without credentials.
+   * @throws ApiError
+   */
+  public static getAppBindingInventory({
+    slug,
+    deploymentId,
+    scope,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Select evidence for this exact app-owned, materialized live deployment, including zero-traffic candidates. No fallback to evidence from another deployment. Omit to use the manual-task selection.
+     */
+    deploymentId?: string,
+    /**
+     * Filter database and bucket binding scopes. Omit to include all scopes. App-wide service, queue and outbound bindings always remain included.
+     */
+    scope?: string,
+  }): CancelablePromise<AppBindingInventory> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'deployment_id': deploymentId,
+        'scope': scope,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
   /**
    * List apps on the account.
    * @returns AppResponse Apps on the account.
@@ -1280,6 +1370,81 @@ export class AppsService {
     });
   }
   /**
+   * Observed customer usage by route and deployment.
+   * Returns retained route usage for one immutable deployment owned by the
+   * app. Consumer and platform-tenant identities come from request-time
+   * telemetry; current consumer-to-tenant links are never used to infer
+   * historical attribution. Identity ownership is checked against the app
+   * and account. Revoked customers remain part of historical observations.
+   *
+   * Counts include collapsed row weights. The top 200 route/method rows
+   * each contain at most 20 identity groups, ordered by observed requests.
+   * Distinct consumer and tenant counts precede these caps and overlap;
+   * do not add them together. Omitted customer requests and truncation flags
+   * remain explicit. Anonymous and unresolved identities are separate.
+   * Observation timestamps may represent minute buckets.
+   *
+   * Coverage is always observed_only: disabled recording, sampling, dropped
+   * events and expired telemetry prevent proof of complete customer exposure
+   * or that an unobserved route is unused. Route usage does not establish
+   * which clients will break. No customer names, external references,
+   * credentials, payloads, query strings or request identifiers are returned.
+   * This read uses the normal read scopes and DebugTelemetryEnabled plan gate.
+   *
+   * @returns RouteCustomerUsageResponse Observed route customer exposure for the selected deployment.
+   * @throws ApiError
+   */
+  public static getAppRouteCustomerUsage({
+    slug,
+    deploymentId,
+    since = '24h',
+    until,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Immutable deployment UUID owned by this app; missing or foreign deployments return 404.
+     */
+    deploymentId: string,
+    /**
+     * Positive lookback duration or RFC3339 start timestamp; clamped to current plan retention.
+     */
+    since?: string,
+    /**
+     * Exclusive upper bound, default now; must be within current retained telemetry and not in the future.
+     */
+    until?: string,
+  }): CancelablePromise<RouteCustomerUsageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/analytics/route-customers',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'deployment_id': deploymentId,
+        'since': since,
+        'until': until,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * Request analytics time series by hour.
    * Returns zero-filled UTC hourly buckets for customer request analytics.
    * Each bucket contains request and error counts, error rate, cold boots,
@@ -1767,6 +1932,75 @@ export class AppsService {
     return __request(OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/issue-impact-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the app's automatic issue ownership rules.
+   * Rules are ordered and only apply when Gregale creates a new issue group. Every populated matcher on a rule must match; route prefixes respect path-segment boundaries.
+   * @returns IssueOwnershipRules The current ordered policy; apps without rules return an empty list.
+   * @throws ApiError
+   */
+  public static getIssueOwnershipRules({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<IssueOwnershipRules> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-ownership-rules',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace the app's automatic issue ownership rules.
+   * Replaces the complete ordered policy and applies prospectively to new issue groups. Existing assignments are unchanged, and later manual assignments remain authoritative. Each target must be the app owner or an active organization member.
+   * @returns IssueOwnershipRules The updated ordered policy.
+   * @throws ApiError
+   */
+  public static setIssueOwnershipRules({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: IssueOwnershipRules,
+  }): CancelablePromise<IssueOwnershipRules> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-ownership-rules',
       path: {
         'slug': slug,
       },
@@ -2937,6 +3171,982 @@ export class AppsService {
     });
   }
   /**
+   * Read saved route requirements.
+   * Read the current normalized version 2 route intent and its revision. Public exception rationale is replaced before storage. Requires apps:read or admin and completed MFA. This is the current record; previous revisions remain in customer version control.
+   * @returns SavedRouteRequirements Current saved route intent.
+   * @throws ApiError
+   */
+  public static getSavedRouteRequirements({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<SavedRouteRequirements> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-requirements',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Save route requirements with a revision check.
+   * Save version 2 route groups or exact assignments after comparing expected_revision. Use 0 to create the first record. Identical normalized intent at the current revision is a no-op. Requires deploy:write or admin and completed MFA. Does not change gateway configuration or invoke application routes.
+   * @returns SavedRouteRequirements Saved normalized route intent and current revision.
+   * @throws ApiError
+   */
+  public static saveRouteRequirements({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SaveRouteRequirementsRequest,
+  }): CancelablePromise<SavedRouteRequirements> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/route-requirements',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid revision or requirements document.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Check saved intent against a captured deployment.
+   * Read saved requirements, current account/app policy and the selected app-owned capture in one consistent snapshot. Requires apps:read or admin and completed MFA. Violated and unknown findings return a report with 200; unavailable inventory never passes. The result checks current configured policy rather than historical gateway behavior or runtime authorization. No report is persisted and no application request is sent.
+   * @returns RouteRequirementsCheck Current policy coverage with saved revision and capture provenance.
+   * @throws ApiError
+   */
+  public static checkRouteRequirements({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CheckRouteRequirementsRequest,
+  }): CancelablePromise<RouteRequirementsCheck> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-requirements/check',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid deployment identity or expected revision.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read advisory production route monitoring intent.
+   * Defaults to disabled, revision zero and no routes. Requires app read access and completed MFA. Configuration is independent of the canary guard. customer_group_by optionally evaluates the same absolute budgets per request-time tenant or API consumer.
+   * @returns RouteMonitorConfig Current advisory production monitor configuration.
+   * @throws ApiError
+   */
+  public static getRouteMonitor({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<RouteMonitorConfig> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-monitor',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Save advisory production route budgets with a revision check.
+   * Requires deployment write access and completed MFA. Enabling requires request telemetry entitlement and routes with absolute budgets. customer_group_by optionally evaluates the same budgets per request-time tenant or API consumer. Replacement intent requires expected_revision; identical intent is a no-op. Changed intent supersedes an open incident without claiming recovery and requires fresh windows. Disabled intent remains writable after a downgrade. Body limit is 16 KiB.
+   * @returns RouteMonitorConfig Updated or unchanged production monitoring intent.
+   * @throws ApiError
+   */
+  public static setRouteMonitor({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetRouteMonitorRequest,
+  }): CancelablePromise<RouteMonitorConfig> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/route-monitor',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `Enabling production monitoring requires request telemetry entitlement.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Monitor revision changed.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read observed route budgets for the fully serving production deployment.
+   * Read-only evaluation of two closed UTC minute windows with a 30 second ingestion allowance. Selects the sole fully serving default-scope live deployment; split, incomplete, sparse or unavailable context is unknown. Errors require 20 represented requests and at least two errors to confirm a budget violation; latency requires 100 requests per window. Both windows must start after configuration and serving anchors. If customer_group_by is configured, the same budgets are evaluated per observed request-time identity and sustained cohort violations can make the overall result violated. Customer identities are redacted by default; customer_details=true explicitly includes observed tenant or consumer UUIDs. Coverage is observed_only, not an SLO or full capture. Does not create incidents or change traffic.
+   * @returns RouteMonitorReport Current observed production route budget evaluation.
+   * @throws ApiError
+   */
+  public static getRouteMonitorReport({
+    slug,
+    customerDetails = false,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Explicitly include request-time tenant or consumer UUIDs when customer_group_by is configured. Defaults to false.
+     */
+    customerDetails?: boolean,
+  }): CancelablePromise<RouteMonitorReport> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-monitor/report',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'customer_details': customerDetails,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List bounded saved production route incidents.
+   * Requires app read access, completed MFA and current request telemetry entitlement. Returns opening reports and bounded saved redacted debugger evidence. History retains the active incident plus the newest 100 closed incidents within 8 MiB. Pruned or foreign cursors return not found.
+   * @returns RouteMonitorIncidentPage One bounded page of retained production route incidents.
+   * @throws ApiError
+   */
+  public static listRouteMonitorIncidents({
+    slug,
+    limit = 5,
+    before,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Maximum incidents to return.
+     */
+    limit?: number,
+    /**
+     * Page before this owned retained incident UUID.
+     */
+    before?: string,
+  }): CancelablePromise<RouteMonitorIncidentPage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-monitor/incidents',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `Listing saved production incidents requires current telemetry entitlement.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read the opening evidence and closure of one saved production route incident.
+   * Requires app read access, completed MFA and current request telemetry entitlement. Opening windows, deployment, commit, budgets, request references and dependency summaries are captured when the worker opens the incident. Recovered means comparable healthy windows for all selected budgets and all customers recorded as violating during the incident; superseded means context changed and never emits recovery. Customer identities are redacted by default; customer_details=true explicitly includes saved request-time tenant or consumer UUIDs. Debugger links recheck current retention and authorization.
+   * @returns RouteMonitorIncident Saved production incident opening evidence and closure.
+   * @throws ApiError
+   */
+  public static getRouteMonitorIncident({
+    slug,
+    incident,
+    customerDetails = false,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Owned retained production route incident UUID.
+     */
+    incident: string,
+    /**
+     * Explicitly include saved request-time tenant or consumer UUIDs when customer_group_by is configured. Defaults to false.
+     */
+    customerDetails?: boolean,
+  }): CancelablePromise<RouteMonitorIncident> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-monitor/incidents/{incident}',
+      path: {
+        'slug': slug,
+        'incident': incident,
+      },
+      query: {
+        'customer_details': customerDetails,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `Inspecting this saved production incident requires current telemetry entitlement.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read critical telemetry routes, guard mode and revision.
+   * Defaults to report mode with no selected routes and revision 0. Requires apps:read or admin and completed MFA. Applies to subsequent traffic increases of an existing canary.
+   * @returns RouteHealthGate Current app canary route gate.
+   * @throws ApiError
+   */
+  public static getRouteHealthGate({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<RouteHealthGate> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-health/gate',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Save exact route selectors and guard mode with a revision check.
+   * Requires deploy:write or admin and completed MFA. Enforce mode requires traffic split and request telemetry entitlement, and at least one selected route. Maximum 20 distinct exact normalized telemetry method/path selectors. Optional max_p95_ms enables an absolute latency budget; check_latency enables the independent relative slowdown check. expected_revision is mandatory; use 0 initially. Identical configuration is a no-op after checking the revision. Changing selectors, latency checks or mode resets the observation anchor. Request body limit is 16 KiB.
+   * @returns RouteHealthGate Updated or unchanged gate configuration.
+   * @throws ApiError
+   */
+  public static setRouteHealthGate({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetRouteHealthGateRequest,
+  }): CancelablePromise<RouteHealthGate> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/route-health/gate',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Configuration revision changed.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Compare observed critical route errors and optional p95 latency for candidate and stable deployments.
+   * Requires apps:read or admin and completed MFA. Compares exact normalized telemetry labels and weighted counts in two consecutive closed UTC minute windows, behind a 30 second ingestion allowance. Error checks need 20 represented requests on each deployment per window. Selected latency checks need 100, with p95 estimates weighted by collapsed telemetry counts. A positive max_p95_ms is an absolute candidate budget; check_latency independently checks for at least 1.5 times stable p95 and at least 100 ms additional latency. Each signal is confirmed independently across both windows. Both windows must begin after the current stage and latest configuration update. Missing, sparse, ambiguous or unavailable evidence is unknown. Coverage is observed_only; full capture and requests dropped before storage cannot be established. Enforce mode holds subsequent advances unless every selected route is healthy. This read does not change traffic; the configured recovery action is evaluated separately by the canary worker. Stable deployment is the sole other live serving deployment in the same scope.
+   * @returns RouteHealthReport Current observation evidence, identities and route verdicts.
+   * @throws ApiError
+   */
+  public static getRouteHealthReport({
+    slug,
+    deployment,
+    customers = false,
+    customerGroupBy,
+    customerDetails = false,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Owned canary deployment UUID whose current critical-route telemetry is compared with its serving predecessor.
+     */
+    deployment: string,
+    /**
+     * Include advisory customer health cohorts. Never changes aggregate health or rollout decisions.
+     */
+    customers?: boolean,
+    /**
+     * Request-time identity dimension. Requires customers=true. Tenant is the default; consumer groups API consumers independently.
+     */
+    customerGroupBy?: 'tenant' | 'consumer',
+    /**
+     * Include scoped customer UUIDs. Requires customers=true. IDs are omitted by default.
+     */
+    customerDetails?: boolean,
+  }): CancelablePromise<RouteHealthReport> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-health/deployments/{deployment}',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      query: {
+        'customers': customers,
+        'customer_group_by': customerGroupBy,
+        'customer_details': customerDetails,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Investigate route errors or latency using retained request evidence.
+   * Requires app read access, completed MFA and request telemetry entitlement. Aggregate report, selected finding and bounded examples share one read-only repeatable-read snapshot, exact candidate/stable pair and closed health windows. The default errors signal selects all 5xx or a watched status code. Latency requires a configured latency check and status_code zero, includes successful responses, and compares retained dependency, guest and wake timings separately from full route p95. Optional customer selection uses recorded tenant or consumer attribution, including identities outside the customer report cap and revoked consumers. Customer UUID input explicitly includes the selected ID; other customer identities are excluded. Counts preserve publisher weights; examples are telemetry rows and may represent multiple requests. Trace links do not guarantee retained spans. This diagnostic read changes no rollout state and includes no payloads, credentials, request headers or raw URLs.
+   * @returns RouteHealthInvestigation Current health evidence and bounded metadata references for the requested signal.
+   * @throws ApiError
+   */
+  public static getRouteHealthInvestigation({
+    slug,
+    deployment,
+    method,
+    path,
+    signal,
+    statusCode = 0,
+    customerGroupBy,
+    customerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Owned in-flight candidate deployment to investigate against its serving stable revision.
+     */
+    deployment: string,
+    /**
+     * Exact configured HTTP method for the normalized telemetry label.
+     */
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS',
+    /**
+     * Exact configured normalized route path, without a method prefix or expanded parameters.
+     */
+    path: string,
+    /**
+     * Errors is the default. Latency requires check_latency or a positive max_p95_ms and cannot be combined with a nonzero status_code.
+     */
+    signal?: 'errors' | 'latency',
+    /**
+     * Zero compares all 5xx responses; a nonzero code must be selected in this route's watch_statuses.
+     */
+    statusCode?: 0 | 401 | 403 | 404 | 422 | 429,
+    /**
+     * Recorded identity dimension for a selected customer UUID. Requires customer_id; defaults to tenant when supplied.
+     */
+    customerGroupBy?: 'tenant' | 'consumer',
+    /**
+     * Canonical UUID of an owned tenant or app consumer. Selection explicitly exposes this UUID in the investigation.
+     */
+    customerId?: string,
+  }): CancelablePromise<RouteHealthInvestigation> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-health/deployments/{deployment}/investigation',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      query: {
+        'method': method,
+        'path': path,
+        'signal': signal,
+        'status_code': statusCode,
+        'customer_group_by': customerGroupBy,
+        'customer_id': customerId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Explain saved canary route health decisions with an immutable timeline.
+   * Requires apps:read or admin and completed MFA. Available after plan downgrade and rollout completion. Only real advance evaluations with selected routes create snapshots; reads never create history. Identical retries reuse the original decision. Retains the newest 100 entries within 4 MiB per deployment, with each encoded entry bounded to 64 KiB. Pages are newest first by checked_at and id. A missing, foreign or pruned cursor returns 404. Historical evidence does not establish current health or continuous incident duration.
+   * @returns RouteHealthHistoryPage Saved decision page; entries is empty when no evaluations have been saved.
+   * @throws ApiError
+   */
+  public static listRouteHealthHistory({
+    slug,
+    deployment,
+    limit = 5,
+    before,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deployment UUID whose retained canary route-health decisions are listed.
+     */
+    deployment: string,
+    /**
+     * Maximum number of saved health decisions to return in this page; defaults to 5 and cannot exceed 10.
+     */
+    limit?: number,
+    /**
+     * Retained decision UUID from this deployment; excludes this entry and every newer entry.
+     */
+    before?: string,
+  }): CancelablePromise<RouteHealthHistoryPage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-health/deployments/{deployment}/history',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read the exact observations and thresholds behind a retained rollout decision.
+   * Requires apps:read or admin and completed MFA. Account, app and deployment scoped. Available after plan downgrade and rollout completion. Returns 404 for a missing, foreign or pruned decision. Reads never evaluate telemetry or change traffic. Allowed entries committed with the traffic transaction; blocked entries preserve only the held evaluation. Later failed traffic transactions leave no allowed snapshot.
+   * @returns RouteHealthHistoryEntry Immutable saved decision, including error and latency evidence and observation context.
+   * @throws ApiError
+   */
+  public static getRouteHealthHistoryEntry({
+    slug,
+    deployment,
+    decisionId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deployment UUID that owns the requested saved canary health decision.
+     */
+    deployment: string,
+    /**
+     * Retained health decision UUID identifying the exact rollout evaluation evidence to retrieve.
+     */
+    decisionId: string,
+  }): CancelablePromise<RouteHealthHistoryEntry> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-health/deployments/{deployment}/history/{decision_id}',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'decision_id': decisionId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read canary route gate mode and revision.
+   * Defaults to report mode and revision 0. Requires apps:read or admin and completed MFA. Gates advances of an existing canary, not its initial activation.
+   * @returns CanaryRouteGate Current saved route-requirements gate mode and revision.
+   * @throws ApiError
+   */
+  public static getCanaryRouteGate({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<CanaryRouteGate> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-requirements/gate',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Set report or enforce mode with a gate revision check.
+   * Requires deploy:write or admin and completed MFA. Enforce mode requires saved route requirements and a plan with canaries and captured endpoint discovery. Report mode remains available after downgrade. expected_revision is mandatory; use 0 initially. Identical mode is a no-op after checking the revision.
+   * @returns CanaryRouteGate Saved or unchanged canary route-requirements gate configuration.
+   * @throws ApiError
+   */
+  public static setCanaryRouteGate({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetCanaryRouteGateRequest,
+  }): CancelablePromise<CanaryRouteGate> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/route-requirements/gate',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Gate revision changed or route requirements are missing.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read the latest automatic route check and freshness.
+   * Read queue state and the latest stored deployment verdict in a consistent snapshot. Freshness compares current intent revision/hash, capture hash/truncation and configuration hash. A historical satisfied result can be stale. Requires apps:read or admin, completed MFA and current captured endpoint discovery entitlement. Does not run a new check or gate deployment.
+   * @returns AutomaticRouteCheck Latest stored verdict with current queue and freshness state.
+   * @throws ApiError
+   */
+  public static getAutomaticRouteCheck({
+    slug,
+    deployment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * App-owned captured deployment UUID whose latest automatic requirement check and freshness are requested.
+     */
+    deployment: string,
+  }): CancelablePromise<AutomaticRouteCheck> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-requirements/checks/{deployment}',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `Current plan does not include captured endpoint discovery.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List retained route check history.
+   * Read bounded completed evidence newest first. Retains at most 20 entries and 64 MiB of encoded history per deployment. A missing/pruned cursor returns 404. Requires app read access, completed MFA and current captured endpoint discovery entitlement. Historical satisfied evidence cannot satisfy a current deployment gate.
+   * @returns RouteCheckHistoryPage Retained completed checks and optional next cursor.
+   * @throws ApiError
+   */
+  public static listRouteCheckHistory({
+    slug,
+    deployment,
+    limit = 5,
+    before,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Captured deployment UUID whose retained route requirement check history is listed.
+     */
+    deployment: string,
+    /**
+     * Maximum number of completed requirement-check summaries in this page; defaults to 5 with a maximum of 10.
+     */
+    limit?: number,
+    /**
+     * Retained check UUID from this deployment; return only older entries and exclude the selected entry.
+     */
+    before?: string,
+  }): CancelablePromise<RouteCheckHistoryPage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-requirements/checks/{deployment}/history',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `Current plan lacks the captured endpoint discovery entitlement required to list route check history.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read one retained immutable route check.
+   * Read the exact completion identified by a change notification. Missing or expired evidence returns 404. Requires app read access, completed MFA and current captured endpoint discovery entitlement. Historical evidence does not establish current safety.
+   * @returns RouteCheckHistoryEntry Retained immutable check and finding changes.
+   * @throws ApiError
+   */
+  public static getRouteCheckHistoryEntry({
+    slug,
+    deployment,
+    checkId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Captured deployment UUID that owns the requested historical route requirement check.
+     */
+    deployment: string,
+    /**
+     * Retained completed check UUID selecting the exact immutable requirement and finding-change evidence.
+     */
+    checkId: string,
+  }): CancelablePromise<RouteCheckHistoryEntry> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-requirements/checks/{deployment}/history/{check_id}',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'check_id': checkId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `Reading retained requirement-check evidence requires captured endpoint discovery on the current plan.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Queue a current route check for one deployment.
+   * Accept an empty body and durably queue current saved intent, capture and policy evaluation. Coalesces with pending work and resets a failed retry. Requires apps:read or admin, completed MFA and captured endpoint discovery entitlement. This action changes no gateway policy and makes no application requests. Poll getAutomaticRouteCheck for completion.
+   * @returns any Durable check queued or existing pending check retained.
+   * @throws ApiError
+   */
+  public static refreshAutomaticRouteCheck({
+    slug,
+    deployment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * App-owned captured deployment UUID to queue for automatic route requirements reevaluation.
+     */
+    deployment: string,
+  }): CancelablePromise<{
+    app_id: string;
+    deployment_id: string;
+    status: 'queued';
+  }> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-requirements/checks/{deployment}/refresh',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `The current plan cannot queue route requirement reevaluation because captured endpoint discovery is unavailable.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * plan route policy.
+   * Read a consistent app policy snapshot and propose throttle and budget changes for concrete requests or captured route groups. Group plans bind an app-owned captured deployment contract and report full inventory impact. Requires apps:read or admin and completed MFA. This POST only reads configuration.
+   * @returns RoutePolicyPlan Consistent policy snapshot with proposed rule changes and before/after coverage.
+   * @throws ApiError
+   */
+  public static planRoutePolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: RoutePolicyPlanRequest,
+  }): CancelablePromise<RoutePolicyPlan> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-policy/plan',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed. Invalid or oversized route requirements document.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * apply route policy.
+   * Recompute the reviewed fingerprint under account, app, and rule locks, plus deployment and captured-contract locks for group plans. Commit all changes and a durable receipt in one transaction. Requires deploy:write or admin and completed MFA. The same idempotency key and request recover the original receipt after a lost response. Gateway state is a separate observation; converging or unknown does not undo a committed receipt.
+   * @returns RoutePolicyApplyResponse Committed transaction receipt and gateway acknowledgment observation.
+   * @throws ApiError
+   */
+  public static applyRoutePolicy({
+    slug,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable retry key, retained with the receipt for the app lifetime. Reuse with a different request returns conflict.
+     */
+    idempotencyKey: string,
+    requestBody: RoutePolicyApplyRequest,
+  }): CancelablePromise<RoutePolicyApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-policy/apply',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed. Missing confirmation, invalid fingerprint, or invalid retry key.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * get route policyReceipt.
+   * Recover the committed rule IDs and configuration verification for this owned app. The receipt is historical evidence, not a fresh live policy or gateway check.
+   * @returns RoutePolicyReceipt Historical configuration verification and real rule IDs.
+   * @throws ApiError
+   */
+  public static getRoutePolicyReceipt({
+    slug,
+    receiptId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Durable route policy receipt ID.
+     */
+    receiptId: string,
+  }): CancelablePromise<RoutePolicyReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-policy/receipts/{receipt_id}',
+      path: {
+        'slug': slug,
+        'receipt_id': receiptId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Manually park all running instances.
    * @returns void
    * @throws ApiError
@@ -2981,7 +4191,7 @@ export class AppsService {
   }
   /**
    * Queue a durable instance pre-warm.
-   * @returns AppWakeResponse Wake accepted and correlated.
+   * @returns AppWakeResponse The app already has a routable running instance; no wake is queued. wake_id is that instance's wake id.
    * @throws ApiError
    */
   public static wakeApp({

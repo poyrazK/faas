@@ -399,12 +399,14 @@ func mapPostgresError(err error) error {
 		return err
 	}
 	switch postgresError.Code {
+	case pgerrcode.DeadlockDetected, pgerrcode.SerializationFailure:
+		return ErrConflict
 	case pgerrcode.UniqueViolation:
 		return fmt.Errorf("%w: %s", ErrConflict, postgresError.ConstraintName)
 	case pgerrcode.ForeignKeyViolation:
 		return ErrNotFound
 	case pgerrcode.CheckViolation:
-		if postgresError.ConstraintName == "managed_postgres_database_has_bindings" || postgresError.ConstraintName == "managed_postgres_database_has_restore_descendants" {
+		if postgresError.ConstraintName == "managed_postgres_cutover_conflict" || postgresError.ConstraintName == "managed_postgres_database_has_bindings" || postgresError.ConstraintName == "managed_postgres_database_has_restore_descendants" {
 			return ErrConflict
 		}
 		return fmt.Errorf("%w: %s", ErrInvalid, postgresError.ConstraintName)

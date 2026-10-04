@@ -14,6 +14,10 @@ const (
 	secondsPerHour                 = int64(time.Hour / time.Second)
 	bytesPerGiB                    = int64(1 << 30)
 	byteSecondsPerGiBHour          = secondsPerHour * bytesPerGiB
+	// Recovery and correction replay share this per-database request budget.
+	// Committed coverage resumes remaining recovery windows on the next run.
+	maximumUsageWindowsPerSweep  = 24
+	recentUsageCorrectionWindows = 3
 )
 
 type UsageCollectionObservation struct {
@@ -161,8 +165,14 @@ func (c *UsageCollector) collectOne(ctx context.Context, database Database, from
 		// The source resource reports a provider-shared aggregate. Recording
 		// it against every restore descendant would multiply COGS and could
 		// make admission decisions depend on how many targets were restored.
-		outcome = "included_in_source"
-		summary.IncludedInSourceUsage++
+		collectErr = c.recordSharedUsage(ctx, database)
+		if collectErr == nil {
+			outcome = "included_in_source"
+			summary.IncludedInSourceUsage++
+		} else {
+			outcome = "deferred"
+			summary.Deferred++
+		}
 	} else if err := c.collectDatabase(ctx, database, from, to, now); err != nil {
 		outcome = "deferred"
 		summary.Deferred++
@@ -184,6 +194,75 @@ func (c *UsageCollector) collectDatabase(ctx context.Context, database Database,
 	if err != nil {
 		return ErrUnavailable
 	}
+	progress, err := c.store.UsageProgress(ctx, database.AccountID, database.ID, c.policy.Window)
+	if err != nil {
+		return err
+	}
+	if !progress.CollectedUntil.IsZero() {
+		from = progress.CollectedUntil
+	} else if !database.CreatedAt.IsZero() {
+		from = database.CreatedAt.UTC().Truncate(c.policy.Window)
+	}
+	if !from.Before(to) && progress.CollectedUntil.IsZero() {
+		return ErrUsageStale
+	}
+	collectedFrom := progress.CollectedFrom
+	if collectedFrom.IsZero() {
+		collectedFrom = from
+	}
+	// Only replay windows that existed before this sweep. New windows are
+	// recovered first and do not need an immediate second provider request.
+	replayUntil := from
+	if replayUntil.After(to) {
+		replayUntil = to
+	}
+	count := 0
+	for ; from.Before(to) && count < maximumUsageWindowsPerSweep; count++ {
+		windowTo := from.Add(c.policy.Window)
+		if err := c.collectWindow(ctx, database, backend, from, windowTo, observedAt); err != nil {
+			return err
+		}
+		from = windowTo
+	}
+	if from.Before(to) {
+		return ErrUsageStale
+	}
+	replayFrom := to.Add(-recentUsageCorrectionWindows * c.policy.Window)
+	if replayFrom.Before(collectedFrom) {
+		replayFrom = collectedFrom
+	}
+	for replayUntil.After(replayFrom) && count < maximumUsageWindowsPerSweep {
+		windowFrom := replayUntil.Add(-c.policy.Window)
+		if err := c.collectWindow(ctx, database, backend, windowFrom, replayUntil, observedAt); err != nil {
+			return err
+		}
+		replayUntil = windowFrom
+		count++
+	}
+	return nil
+}
+
+func (c *UsageCollector) recordSharedUsage(ctx context.Context, database Database) error {
+	source := database
+	seen := map[string]bool{database.ID: true}
+	for source.RestoreSourceDatabaseID != "" {
+		if seen[source.RestoreSourceDatabaseID] {
+			return ErrConflict
+		}
+		seen[source.RestoreSourceDatabaseID] = true
+		var err error
+		source, err = c.store.Get(ctx, database.AccountID, source.RestoreSourceDatabaseID)
+		if err != nil {
+			return err
+		}
+		if source.State != StateReady || source.BackendID != database.BackendID || source.BackendFingerprint != database.BackendFingerprint {
+			return ErrConflict
+		}
+	}
+	return c.store.RecordSharedUsage(ctx, database.AccountID, database.ID, source.ID, c.policy.Window)
+}
+
+func (c *UsageCollector) collectWindow(ctx context.Context, database Database, backend Backend, from, to, observedAt time.Time) error {
 	usage, err := backend.Provider.Usage(ctx, database.ProviderResourceID, UsageWindow{From: from, To: to})
 	if err != nil {
 		return normalizeProviderError(err)
@@ -191,8 +270,22 @@ func (c *UsageCollector) collectDatabase(ctx context.Context, database Database,
 	if err := usage.Validate(); err != nil {
 		return ErrUnavailable
 	}
-	if usage.Window.From.UTC() != from || usage.Window.To.UTC() != to {
+	// PostgreSQL checkpoints can carry time.Local; compare instants rather
+	// than time.Time's location pointer or monotonic clock representation.
+	if !usage.Window.From.Equal(from) || !usage.Window.To.Equal(to) {
 		return ErrUnavailable
+	}
+	for _, meter := range backend.Capabilities.UsageMeters {
+		found := false
+		for _, reading := range usage.Readings {
+			if reading.Meter == meter {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return ErrUnavailable
+		}
 	}
 	records := make([]UsageRecord, 0, len(usage.Readings))
 	for _, reading := range usage.Readings {

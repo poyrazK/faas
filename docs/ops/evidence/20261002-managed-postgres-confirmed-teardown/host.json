@@ -1,0 +1,12 @@
+{
+  "advancedMachineFeatures": {
+    "enableNestedVirtualization": true
+  },
+  "labels": {
+    "environment": "test",
+    "fleet": "excluded",
+    "purpose": "internal-tests"
+  },
+  "machineType": "https://www.googleapis.com/compute/v1/projects/gregale-prod/zones/us-east1-b/machineTypes/n2-highmem-2",
+  "name": "gregale-internal-test-1"
+}

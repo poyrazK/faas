@@ -766,10 +766,12 @@ type Manager struct {
 	// that began with an older app config but has not yet published as live.
 	appCPUPolicyUpdates sync.Mutex
 	appCPUPolicies      map[string]appCPUPolicy
-	// jobBoots covers the artifact restore and VMM boot interval before a job
-	// enters live. Destroy/Stop must cancel and join this interval; otherwise a
-	// late boot can publish a VM after its task was already cancelled.
-	jobBoots map[string]*jobBootFlight
+	// instanceFlights covers boots and live operations that can resume a guest.
+	// Destroy/Stop cancel and join them before looking up the VM for teardown.
+	instanceFlights   map[string]*instanceFlight
+	instanceStops     map[string]*instanceStop
+	pendingCleanup    map[string]*instanceCleanup
+	appAdmissionGuard func(context.Context, string) error // configured before serving
 	// pendingProcessExits closes the small hand-off race between
 	// JailerVMM reporting a child exit and Wake publishing the
 	// instance into live. A process can pass readiness and exit
@@ -777,6 +779,21 @@ type Manager struct {
 	// same mutex lets Wake fail closed instead of registering a dead
 	// instance. Entries are consumed by Wake or cleared by cleanup.
 	pendingProcessExits map[string]int
+	// ADR-472: observed restart survivors have no reconstructed lifecycle
+	// owner. Their slots and IDs stay quarantined; they are never live-map
+	// entries, cleanup identities or permission to replay a failure report.
+	restartQuarantine     map[string]struct{}
+	restartInventoryDone  bool
+	resourceJournal       *ResourceJournal
+	resourceLinks         map[string]ownedResourceLink
+	linkProbe             func(string, int) (*resourceLinkIdentity, error)
+	linkContext           func() (*resourceMountIdentity, error)
+	linkDelete            func(int) error
+	resourceNetworks      map[string]resourceAsset             // observed by this running owner only
+	namespaceProbe        func(string) (*resourceAsset, error) // tests inject kernel observations
+	namespaceContext      func() (*resourceMountIdentity, error)
+	processGenerations    map[string]uint64
+	nextProcessGeneration uint64
 	// waking marks leases between acquisition and live-map publication.
 	// ProcessExited records a pending marker only for this narrow phase;
 	// an exit observed after explicit Destroy has removed live must not
@@ -954,6 +971,11 @@ type Manager struct {
 	// pkg/fcvm/manager_test.go) take this path today and continue to
 	// pass after the change.
 	storage storage.StorageBackend
+	// ADR-510 snapshot backing identity: file digests memoized per immutable
+	// file version, and the identity each live instance booted with.
+	backingMu       sync.Mutex
+	backingDigests  map[fileIdentityKey]string
+	instanceBacking map[string]BackingIdentity
 	// baseGenerations binds each logical runtime base key to the immutable
 	// OCI reference configured for this node. The separate mutex serializes
 	// the rare cross-node cache adoption path without holding Manager.mu
@@ -1153,8 +1175,9 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		live:                 make(map[string]*Instance),
 		readinessLoopCancels: make(map[string]context.CancelFunc),
 		appCPUPolicies:       make(map[string]appCPUPolicy),
-		jobBoots:             make(map[string]*jobBootFlight),
+		instanceFlights:      make(map[string]*instanceFlight),
 		pendingProcessExits:  make(map[string]int),
+		processGenerations:   make(map[string]uint64),
 		waking:               make(map[string]struct{}),
 		exportDirs:           make(map[string]string),
 		// Issue #470 / PR #470-FU-B: O(1) CID→instance lookup
@@ -1700,14 +1723,29 @@ func (m *Manager) WithLifecycleContext(ctx context.Context) *Manager { //nolint:
 // resource cleanup. If no relay is wired (development/test mode), it falls
 // back to local cleanup so the allocator and network cannot leak.
 func (m *Manager) ProcessExited(instance string, exitCode int) {
+	m.processExited(instance, exitCode, nil)
+}
+
+// ProcessExitedAttempt fences late notifications from a retired process. A
+// failed restore and its cold-boot replacement share the instance ID.
+func (m *Manager) ProcessExitedAttempt(instance string, generation uint64, exitCode int) {
+	m.processExited(instance, exitCode, &generation)
+}
+
+func (m *Manager) processExited(instance string, exitCode int, generation *uint64) {
 	if m == nil || instance == "" {
 		return
 	}
 	m.mu.Lock()
+	if generation != nil && m.processGenerations[instance] != *generation {
+		m.mu.Unlock()
+		return
+	}
 	inst, live := m.live[instance]
 	relay := m.livenessRelay
 	lifecycle := m.lifecycleCtx
 	_, waking := m.waking[instance]
+	stopping := m.instanceStops[instance] != nil || m.pendingCleanup[instance] != nil
 	if !live && waking {
 		if m.pendingProcessExits == nil {
 			m.pendingProcessExits = make(map[string]int)
@@ -1715,7 +1753,7 @@ func (m *Manager) ProcessExited(instance string, exitCode int) {
 		m.pendingProcessExits[instance] = exitCode
 	}
 	m.mu.Unlock()
-	if !live {
+	if stopping || !live {
 		// An exit during the Wake hand-off is consumed by Wake. An
 		// exit after explicit Park/Destroy removed live is expected
 		// teardown and is deliberately ignored.
@@ -1751,23 +1789,9 @@ func (m *Manager) ProcessExited(instance string, exitCode int) {
 		return
 	}
 
-	m.mu.Lock()
-	inst, ok := m.live[instance]
-	if ok {
-		delete(m.live, instance)
-		delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
+	if err := m.Destroy(context.WithoutCancel(lifecycle), instance); err != nil {
+		m.log.Warn("process-exit cleanup pending", "instance", instance, "err", err)
 	}
-	m.mu.Unlock()
-	if ok {
-		m.rebuildHostSMTPAllowlistRules(context.WithoutCancel(lifecycle))
-	}
-	if m.diskMetrics != nil {
-		m.diskMetrics.Delete(instance)
-	}
-	if !ok {
-		return
-	}
-	m.cleanup(context.WithoutCancel(lifecycle), inst.Lease, inst.Net, inst.WorkloadNames)
 	m.log.Warn("firecracker process exited without schedd relay",
 		"instance", instance, "exit_code", exitCode)
 }
@@ -1815,10 +1839,9 @@ func (m *Manager) WithWorkloadOOMSink(relay WorkloadOOMSink) *Manager {
 // unit test that doesn't construct a relay doesn't have to stub
 // one.
 //
-// Best-effort: the workload is dead at the time of the call, so a
-// failed relay is logged + dropped. The relay's own context
-// cancellation (from vmmd shutdown) is honoured by the closing
-// goroutine.
+// Production wiring persists this report in vmmd's failure outbox before
+// returning, then retries delivery independently of the receiver context
+// (ADR-471). A storage error is logged and retained for persistence retry.
 func (m *Manager) ReportWorkloadOOM(ctx context.Context, instanceID string, peakMB, planMB int) {
 	if m.workloadOOMRelay == nil {
 		return
@@ -1878,7 +1901,7 @@ func (m *Manager) ReportLivenessFailed(ctx context.Context, instanceID, reason s
 		ctx = context.Background()
 	}
 	if m.livenessRelay != nil {
-		// The relay synchronously asks schedd to destroy the instance. That
+		// The relay may synchronously ask schedd to destroy the instance. That
 		// destroy RPC cancels vmmd's liveness loop as part of teardown; passing
 		// the loop context through would cancel the RPC itself midway through
 		// the state transition and leave a stale RUNNING row. Preserve values
@@ -2609,6 +2632,18 @@ func (m *Manager) InstanceIdentity(instance string) (appID, accountID string, er
 		return "", "", fmt.Errorf("fcvm: InstanceIdentity %s: not live", instance)
 	}
 	return inst.AppID, inst.AccountID, nil
+}
+
+// HasInstanceOwnership gates recovered failure reports (ADR-471). An absent
+// entry after vmmd restart is not evidence that Firecracker or its resources
+// have gone. Include failed teardown ownership even when it is no longer live.
+func (m *Manager) HasInstanceOwnership(instance string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, waking := m.waking[instance]
+	// A stop reservation alone can exist for an unknown ID and does not
+	// establish ownership of any process, lease or resource identity.
+	return m.live[instance] != nil || waking || m.pendingCleanup[instance] != nil
 }
 
 // ExecutionOutboundIdentity returns the current lease-fenced Runs principal
@@ -3645,11 +3680,11 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	if m.vmm == nil {
 		return nil, fmt.Errorf("manager: BootJob: nil vmm")
 	}
-	bootCtx, flight, err := m.beginJobBoot(ctx, req.Instance)
+	bootCtx, flight, err := m.beginInstanceBoot(ctx, req.Instance)
 	if err != nil {
 		return nil, err
 	}
-	defer m.finishJobBoot(req.Instance, flight)
+	defer m.finishInstanceFlight(req.Instance, flight)
 	if err = bootCtx.Err(); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: cancelled before lease: %w", req.Instance, err)
 	}
@@ -3679,9 +3714,9 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		if err != nil {
 			// Drain whatever partial state we accumulated so a
 			// rejected job boot doesn't leak a netns / cgroup.
-			m.cleanup(context.WithoutCancel(ctx), lease, netns.NewConfig(
+			err = errors.Join(err, m.cleanup(context.WithoutCancel(ctx), lease, netns.NewConfig(
 				lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP,
-			), nil)
+			), nil))
 		}
 	}()
 
@@ -3692,6 +3727,9 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// job VM is rejected the same way.
 	if !req.Plan.Valid() {
 		return nil, fmt.Errorf("boot job %s: invalid plan %q (issue #301 / ADR-043)", req.Instance, req.Plan)
+	}
+	if err = m.journalLease(lease); err != nil {
+		return nil, err
 	}
 
 	// Plumb the netns (tap0, 10.0.0.2/30, NAT, jailer cgroup).
@@ -3852,6 +3890,17 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if err := validateMainWorkloadDependencyTargets(req.MainDependsOn, req.Sidecars); err != nil {
 		return nil, fmt.Errorf("wake %s: primary workload dependencies: %w", req.Instance, err)
 	}
+	ctx, flight, err := m.beginInstanceBoot(ctx, req.Instance)
+	if err != nil {
+		return nil, err
+	}
+	defer m.finishInstanceFlight(req.Instance, flight)
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("wake %s: cancelled before lease: %w", req.Instance, err)
+	}
+	if err := m.checkWakeAdmission(ctx, req); err != nil {
+		return nil, fmt.Errorf("wake %s: %w", req.Instance, err)
+	}
 	var wakeID string
 	if fields, ok := wire.FromContext(ctx); ok {
 		wakeID = fields.WakeID
@@ -3908,6 +3957,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	}
 	m.waking[req.Instance] = struct{}{}
 	m.mu.Unlock()
+	lease = m.beginProcessAttempt(lease)
 	// Any failure from this point — Plan validation, wire-side
 	// allowlist checks, bringUp, cgroup write — must fully clean up.
 	// Registering the cleanup BEFORE the validation loop is
@@ -3925,7 +3975,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			if req.ExecutionOnly {
 				cleanupNet = netns.Config{Instance: lease.Instance}
 			}
-			m.cleanup(context.WithoutCancel(ctx), lease, cleanupNet, nil)
+			err = errors.Join(err, m.cleanup(context.WithoutCancel(ctx), lease, cleanupNet, nil))
 		}
 	}()
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
@@ -3968,6 +4018,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	}
 	if !validCharacterizationExecutionMode(req.ExecutionMode) {
 		err = fmt.Errorf("wake %s: invalid execution_mode %q (ADR-137)", req.Instance, req.ExecutionMode)
+		return nil, err
+	}
+	if err = m.journalLease(lease); err != nil {
 		return nil, err
 	}
 	// Prepare runtime files before any VMM boot path. The concrete JailerVMM
@@ -4537,6 +4590,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 
 		m.mu.Lock()
 		currentPolicy, currentHasPolicy := m.appCPUPolicies[req.AppID]
+		if flight.cancelled || ctx.Err() != nil {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("wake %s: cancelled before publication: %w", req.Instance, context.Canceled)
+		}
 		if currentHasPolicy != hasPolicy || (hasPolicy && currentPolicy.revision != policy.revision) {
 			m.mu.Unlock()
 			continue
@@ -4630,7 +4687,29 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	if scanErr != nil {
 		return WakeColdBoot, scanErr
 	}
-	if PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req) {
+	restorable := PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req)
+	if restorable {
+		// ADR-510: never load a snapshot's RAM onto kernel/base images other
+		// than the ones it was captured with. The refusal happens before any
+		// VM process starts, so there is nothing to kill; the wake cold-boots
+		// and schedd marks the snapshot stale.
+		if refusal := m.verifySnapshotBacking(ctx, req.Snapshot, req.BaseKey); refusal != nil {
+			if req.KeepPaused {
+				return WakeRestore, fmt.Errorf("warm-pool paused restore: %w", refusal)
+			}
+			m.log.Warn("snapshot backing images not verified, cold booting instead of restoring",
+				"instance", req.Instance, "storage_key", req.Snapshot.StorageKey, "err", refusal)
+			if timings != nil {
+				timings.restoreError = refusal.Error()
+			}
+			m.metrics.ObserveFallback()
+			if m.wakeFailureMetrics != nil {
+				m.wakeFailureMetrics.WakeFailure("", req.AppID, ClassifyWakeError(refusal, WakeContext{Snapshot: req.Snapshot, FCVersion: m.fcVersion})).Inc()
+			}
+			restorable = false
+		}
+	}
+	if restorable {
 		rs := RestoreSpec{
 			VMStatePath: req.Snapshot.VMStatePath,
 			// #96 / ADR-025 axis 2: thread the canonical storage key the
@@ -4696,6 +4775,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			timings.restoreMs = time.Since(restoreStart).Milliseconds()
 		}
 		if rErr == nil {
+			m.rememberInstanceBacking(req.Instance, req.BaseKey)
 			return WakeRestore, nil
 		} else {
 			if req.KeepPaused {
@@ -4741,7 +4821,10 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				reason := ClassifyWakeError(rErr, WakeContext{Snapshot: req.Snapshot, FCVersion: m.fcVersion})
 				m.wakeFailureMetrics.WakeFailure("", req.AppID, reason).Inc()
 			}
-			_ = m.vmm.Kill(ctx, lease)
+			if killErr := m.vmm.Kill(context.WithoutCancel(ctx), lease); killErr != nil {
+				return WakeColdBoot, fmt.Errorf("wake %s: cannot clean failed restore before cold boot: %w", req.Instance, errors.Join(rErr, killErr))
+			}
+			lease = m.beginProcessAttempt(lease)
 		}
 	}
 
@@ -4803,6 +4886,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		}
 		return WakeColdBoot, fmt.Errorf("wake %s: cold boot: %w", req.Instance, coldBootErr)
 	}
+	m.rememberInstanceBacking(req.Instance, req.BaseKey)
 	return WakeColdBoot, nil
 }
 
@@ -4932,10 +5016,30 @@ func (m *Manager) ensureBaseGeneration(ctx context.Context, baseKey, scanKey str
 	if err := baseCache.MarkGeneration(baseCacheKey, expected); err != nil {
 		return fmt.Errorf("commit runtime base generation: %w", err)
 	}
+	// ADR-510: identify the refreshed base now, while this admission is
+	// already paying for the refresh, rather than in a later restore.
+	if path, err := m.resolveBackingFile(baseKey); err == nil {
+		if _, err := m.fileDigest(path); err != nil && m.log != nil {
+			m.log.Warn("identify refreshed runtime base", "base_key", baseKey, "err", err)
+		}
+	}
 	if m.log != nil {
 		m.log.Info("runtime base cache generation refresh completed", "base_key", baseKey, "generation", expected)
 	}
 	return nil
+}
+
+func (m *Manager) beginProcessAttempt(lease Lease) Lease {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.processGenerations == nil {
+		m.processGenerations = make(map[string]uint64)
+	}
+	m.nextProcessGeneration++
+	lease.processGeneration = m.nextProcessGeneration
+	m.processGenerations[lease.Instance] = lease.processGeneration
+	delete(m.pendingProcessExits, lease.Instance)
+	return lease
 }
 
 func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
@@ -4996,12 +5100,11 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 // (invariant §6.2-4: a parked app's cgroup is gone). The snapshot files are
 // written to spec's paths. Returns the snapshot info for schedd/imaged to record.
 func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
-	m.mu.Lock()
-	inst, ok := m.live[instance]
-	m.mu.Unlock()
-	if !ok {
-		return SnapshotInfo{}, fmt.Errorf("park %s: not live", instance)
+	operationCtx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
+	if err != nil {
+		return SnapshotInfo{}, fmt.Errorf("park %s: %w", instance, err)
 	}
+	defer m.finishInstanceFlight(instance, flight)
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("park %s: app task instances cannot be snapshotted", instance)
 	}
@@ -5013,28 +5116,17 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
-	info, err := m.vmm.Snapshot(ctx, inst.Lease, spec)
-	// Release resources on both outcomes. A failed capture can leave a paused
-	// VM, which cannot exit on its own. DestroyWithExport waits for a builder
-	// to finish and must not delay cleanup of this failed app snapshot.
-	m.mu.Lock()
-	delete(m.live, instance)
-	// Park drops the VM and releases its CID (the lease is freed by
-	// cleanup below); the reverse index must drop with it so a
-	// subsequent framework_ready DGRAM racing the park falls through
-	// to the "unknown CID" Debug log instead of stamping a tile
-	// whose Lease.Slot was just freed.
-	delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
-	m.mu.Unlock()
-	m.rebuildHostSMTPAllowlistRules(context.WithoutCancel(ctx))
-	if m.diskMetrics != nil {
-		m.diskMetrics.Delete(instance)
+	info, snapshotErr := m.vmm.Snapshot(operationCtx, inst.Lease, spec)
+	if snapshotErr != nil {
+		snapshotErr = fmt.Errorf("snapshot: %w", snapshotErr)
 	}
-	// An upload deadline must not cancel the cleanup owed by Park.
-	m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
-	if err != nil {
-		return SnapshotInfo{}, fmt.Errorf("park %s: snapshot: %w", instance, err)
+	// Even a failed capture can leave a paused guest. Retain ownership if
+	// teardown fails, and never report a successful park before releasing RAM.
+	cleanupErr := m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+	if err := errors.Join(snapshotErr, cleanupErr); err != nil {
+		return SnapshotInfo{}, fmt.Errorf("park %s: %w", instance, err)
 	}
+	m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey)
 	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
 }
@@ -5063,11 +5155,13 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 // engine owns the destroy so the audit/state-machine transitions
 // stay in one place.
 func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
-	m.mu.Lock()
-	inst, ok := m.live[instance]
-	m.mu.Unlock()
-	if !ok {
-		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: not live", instance)
+	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
+	if err != nil {
+		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, err)
+	}
+	defer m.finishInstanceFlight(instance, flight)
+	if err := m.checkLiveAdmission(ctx, inst); err != nil {
+		return SnapshotInfo{}, err
 	}
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: app task instances cannot be snapshotted", instance)
@@ -5078,14 +5172,24 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 		// A failure before the early resume may leave the VM paused;
 		// a publication failure occurs after it is already running.
 		// ResumeVM is idempotent across both cases.
+		if cancelled := ctx.Err(); cancelled != nil {
+			return SnapshotInfo{}, errors.Join(err, cancelled)
+		}
 		if rerr := m.vmm.ResumeVM(ctx, inst.Lease); rerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", rerr)))
 		}
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: snapshot: %w", instance, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return SnapshotInfo{}, err
+	}
 	if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: resume: %w", instance, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return SnapshotInfo{}, err
+	}
+	m.writeSnapshotBacking(ctx, instance, spec.StorageKey)
 	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
 }
@@ -5133,11 +5237,13 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if m == nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil manager", instance)
 	}
-	m.mu.Lock()
-	inst, ok := m.live[instance]
-	m.mu.Unlock()
-	if !ok {
-		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: not live", instance)
+	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
+	if err != nil {
+		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance, err)
+	}
+	defer m.finishInstanceFlight(instance, flight)
+	if err := m.checkLiveAdmission(ctx, inst); err != nil {
+		return SnapshotInfo{}, err
 	}
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: app task instances cannot be snapshotted", instance)
@@ -5153,12 +5259,20 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if err == nil {
 		return info, nil
 	}
-	resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	resumeErr := m.vmm.ResumeVM(resumeCtx, inst.Lease)
-	cancel()
+	// Preserve best-effort recovery after an expired RPC, but let Destroy
+	// cancel and join that recovery through the same registered flight.
+	resumeCtx, cancel := context.WithTimeout(flight.recoveryCtx, 5*time.Second)
+	defer cancel()
+	if cancelled := resumeCtx.Err(); cancelled != nil {
+		return SnapshotInfo{}, errors.Join(err, cancelled)
+	}
+	resumeErr := m.vmm.ResumeVM(resumeCtx, inst.Lease) //nolint:contextcheck // The registered flight recovery context outlives the RPC and is cancelled and joined by Destroy.
 	if resumeErr != nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance,
 			errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", resumeErr)))
+	}
+	if cancelled := resumeCtx.Err(); cancelled != nil {
+		return SnapshotInfo{}, errors.Join(err, cancelled)
 	}
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
 	m.startReadinessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.ReadinessProbe)
@@ -5195,11 +5309,13 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 	if m == nil {
 		return fmt.Errorf("resume_vm %s: nil manager", instance)
 	}
-	m.mu.Lock()
-	inst, ok := m.live[instance]
-	m.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("resume_vm %s: not live", instance)
+	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
+	if err != nil {
+		return fmt.Errorf("resume_vm %s: %w", instance, err)
+	}
+	defer m.finishInstanceFlight(instance, flight)
+	if err := m.checkLiveAdmission(ctx, inst); err != nil {
+		return err
 	}
 	if inst.AppTaskOnly {
 		return fmt.Errorf("resume_vm %s: app task instances are never resumable", instance)
@@ -5208,6 +5324,9 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 		return fmt.Errorf("resume_vm %s: nil vmm", instance)
 	}
 	if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
+		return fmt.Errorf("resume_vm %s: %w", instance, err)
+	}
+	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("resume_vm %s: %w", instance, err)
 	}
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
@@ -5225,145 +5344,62 @@ func (m *Manager) Destroy(ctx context.Context, instance string) error {
 	return err
 }
 
-// DestroyWithExport is the builder-VM teardown. It blocks until the
-// firecracker child exits, captures the exit code, and copies build artifacts
-// into exportDir (loopback-mounted from the chroot). See
-// pkg/fcvm/vmm.go::DestroyWithExport for the full contract.
-//
-// Returns the captured exit code (0 for app VMs / unknown instances). Like
-// Destroy, it tears down network + lease on the success path; on failure it
-// still runs cleanup (invariant §6.2-4/5).
-
-// SignalAndKill (M-2 / ADR-138 §Decision 1) is the Manager-level
-// wrapper around JailerVMM.SignalAndKill — the graceful
-// signal-grace-SIGKILL stop sequence used by Engine.StopInstance
-// for worker / job mode instances. Returns
-// (killSignalSent, exitCode, err); killSignalSent is true iff
-// vmmd had to escalate to SIGKILL after the grace window
-// expired.
-//
-// Like Destroy, the Manager drops the live row + CID→instance
-// join + calls cleanup() unconditionally on the way out so
-// §6.2-4/5 invariants are preserved even when the inner
-// SignalAndKill returns an error (the error is surfaced; cleanup
-// has already happened). Caller (vmmdgrpc.Server.StopInstance)
-// translates the (killSignalSent, exitCode) pair into the
-// StopInstanceResponse wire envelope.
-//
-// Returns (false, 0, nil) when the instance is unknown to the
-// Manager — same idempotent-on-unknown contract as Destroy.
-func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal syscall.Signal, grace time.Duration) (killSignalSent bool, exitCode int32, err error) {
-	if err := m.cancelInFlightJobBoot(ctx, instance); err != nil {
+// SignalAndKill runs the graceful stop sequence. Failed cleanup retains the
+// live identity and lease for retry. Concurrent stops wait for the teardown owner.
+func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal syscall.Signal, grace time.Duration) (bool, int32, error) {
+	// Interrupt a builder without waiting behind the export owner that is
+	// itself waiting for the child to finish. Only that owner frees resources.
+	if handled, code, err := m.interruptExport(ctx, instance); handled {
+		return true, code, err
+	}
+	stop, err := m.beginInstanceStop(ctx, instance)
+	if err != nil {
 		return false, 0, err
 	}
-	m.cancelFrameworkReadyLoop(instance)
-	m.mu.Lock()
-	// Builder Destroy removes live before waiting. Keep its export registration
-	// until cleanup finishes, and interrupt without starting another teardown.
-	if m.exportDirs[instance] != "" {
-		m.mu.Unlock()
-		if interrupter, ok := m.vmm.(interface {
-			InterruptBuild(context.Context, string) (int32, error)
-		}); ok {
-			code, err := interrupter.InterruptBuild(ctx, instance)
-			return true, code, err
-		}
-		return false, 0, fmt.Errorf("vmm: builder interruption unsupported")
+	defer m.finishInstanceStop(instance, stop)
+	if err := m.joinForTeardown(ctx, instance); err != nil {
+		return false, 0, err
 	}
-
-	inst, ok := m.live[instance]
-	if ok {
-		delete(m.live, instance)
-		delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
+	if handled, code, err := m.interruptExport(ctx, instance); handled {
+		return true, code, err
 	}
-	m.mu.Unlock()
-	if ok && !inst.ExecutionOnly {
-		m.rebuildHostSMTPAllowlistRules(context.WithoutCancel(ctx))
+	inst := m.teardownIdentity(instance)
+	if inst == nil {
+		return m.vmm.SignalAndKill(ctx, Lease{Instance: instance}, signal, grace)
 	}
-	if m.diskMetrics != nil {
-		m.diskMetrics.Delete(instance)
-	}
-	if !ok {
-		// Unknown instance — match Destroy's idempotent shape.
-		return false, 0, nil
-	}
-	if inst.IsJob {
-		// Job workloads are children of guest-init, not host processes. Ask the
-		// guest supervisor to signal the workload process group; implementations
-		// without this optional extension retain the hard-stop fallback.
-		if signaler, supported := m.vmm.(interface {
-			SignalJob(context.Context, Lease, syscall.Signal, time.Duration) (bool, int32, error)
-		}); supported {
-			killSignalSent, exitCode, err = signaler.SignalJob(ctx, inst.Lease, signal, grace)
-		} else {
-			killSignalSent, exitCode, err = m.vmm.SignalAndKill(ctx, inst.Lease, signal, grace)
-		}
+	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
+	var killed bool
+	var code int32
+	if signaler, ok := m.vmm.(interface {
+		SignalJob(context.Context, Lease, syscall.Signal, time.Duration) (bool, int32, error)
+	}); inst.IsJob && ok {
+		killed, code, err = signaler.SignalJob(ctx, inst.Lease, signal, grace)
 	} else {
-		killSignalSent, exitCode, err = m.vmm.SignalAndKill(ctx, inst.Lease, signal, grace)
+		killed, code, err = m.vmm.SignalAndKill(ctx, inst.Lease, signal, grace)
 	}
-	// Cleanup uses a context detached from the caller's (same
-	// rationale as DestroyWithExport above — a cancelled caller's
-	// ctx must not leak netns / cgroup).
-	m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
-	m.mu.Lock()
-	delete(m.exportDirs, instance)
-	m.mu.Unlock()
-	return killSignalSent, exitCode, err
+	cleanupErr := m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+	return killed, code, errors.Join(err, cleanupErr)
 }
 
+// DestroyWithExport captures builder artifacts before teardown. Live and failed
+// boot identities stay owned until cleanup confirms exit and releases the lease.
 func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir string) (int, error) {
-	if err := m.cancelInFlightJobBoot(ctx, instance); err != nil {
+	stop, err := m.beginInstanceStop(ctx, instance)
+	if err != nil {
 		return 0, err
 	}
-	// Stop background liveness work before removing the live entry or
-	// waiting on the VMM. A liveness report can race this destroy path;
-	// cancelling first prevents the loop from probing an instance whose
-	// resources are already being torn down. Keep this outside the live-map
-	// branch so an idempotent destroy also cleans up a stale registration.
-	m.DeleteLivenessConsecutiveFailures(instance)
-	m.cancelLivenessLoop(instance)
-	m.cancelReadinessLoop(instance)
-	m.cancelFrameworkReadyLoop(instance)
-
-	m.mu.Lock()
-	inst, ok := m.live[instance]
-	if ok {
-		delete(m.live, instance)
-		// Drop the CID→instance join at the same instant the live
-		// row goes away. A framework_ready DGRAM racing this
-		// teardown will see "unknown CID" and log at Debug — the
-		// guest has already been torn down, so the stamp would be
-		// useless anyway.
-		delete(m.cidToID, GuestVsockCID(inst.Lease.Slot))
+	defer m.finishInstanceStop(instance, stop)
+	if err := m.joinForTeardown(ctx, instance); err != nil {
+		return 0, err
 	}
-	m.mu.Unlock()
-	if ok && !inst.ExecutionOnly {
-		m.rebuildHostSMTPAllowlistRules(context.WithoutCancel(ctx))
+	inst := m.teardownIdentity(instance)
+	if inst == nil {
+		return m.vmm.DestroyWithExport(ctx, Lease{Instance: instance}, exportDir)
 	}
-	if m.diskMetrics != nil {
-		m.diskMetrics.Delete(instance)
-	}
-	if !ok {
-		// Already gone — still safe to export (idempotent), and the exit code
-		// is meaningless here.
-		if exportDir != "" {
-			_ = m.vmm // touch nothing; vmmd's recursion handles unknown
-		}
-		code, err := m.vmm.DestroyWithExport(ctx, Lease{Instance: instance}, exportDir)
-		return code, err
-	}
-	code, err := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
-	// Teardown uses a context detached from the caller's: if the caller's ctx
-	// has already expired (test deadline, caller gave up), we still owe the
-	// invariant §6.2-4/5 cleanup. Without this, a 30s test deadline firing
-	// mid-Destroy leaves the netns + cgroup on disk; observed on the Lima
-	// arm64 metal path where nested-KVM cold boot can take >25s. The vmm wait
-	// above used the original ctx and is allowed to be cancelled by it.
-	m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
-	m.mu.Lock()
-	delete(m.exportDirs, instance)
-	m.mu.Unlock()
-	if err != nil {
+	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
+	code, destroyErr := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
+	cleanupErr := m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+	if err := errors.Join(destroyErr, cleanupErr); err != nil {
 		return code, err
 	}
 	m.log.Info("destroyed", "instance", instance, "exit_code", code)
@@ -6154,6 +6190,9 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 
 	newHandles := make(map[string]struct{ h4, h6 uint64 }, len(targets))
 	for _, t := range targets {
+		if err := errors.Join(m.checkOwnedNamespace(t.net.Netns), m.checkNetworkLinks(t.net)); err != nil {
+			return fmt.Errorf("fcvm: private network resource identity: %w", err)
+		}
 		if samePrefixSet(t.prior, cidrs) && samePrefixSet(t.priorPolicy, allowedCIDRs) && sameFirewallRules(t.net.PrivateNetworkFirewallRules, renderedRules) && (len(cidrs) != 0 || t.net.PrivateVethHost == "") {
 			newHandles[t.id] = struct{ h4, h6 uint64 }{t.h4, t.h6}
 			continue
@@ -6260,8 +6299,8 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 			// Remove the private side-link and rebuild the per-netns table so
 			// its NAT rules cannot reference a detached interface. Public
 			// egress rules are rendered from the same cached Config.
-			if err := m.run.Run(ctx, []string{"ip", "link", "del", t.net.PrivateVethHost}); err != nil {
-				m.log.Warn("fcvm: private side-link removal failed", "netns", t.netns, "veth", t.net.PrivateVethHost, "err", err)
+			if err := m.removeNetworkLink(ctx, t.net.Instance, t.net.PrivateVethHost); err != nil {
+				return fmt.Errorf("fcvm: private side-link removal: %w", err)
 			}
 			clean := t.net
 			clean.PrivateNetworkCIDRs = nil
@@ -6373,6 +6412,9 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 	m.mu.Unlock()
 	for _, t := range targets {
 		nc := t.net
+		if err := errors.Join(m.checkOwnedNamespace(nc.Netns), m.checkNetworkLinks(nc)); err != nil {
+			return fmt.Errorf("fcvm: private attachment resource identity: %w", err)
+		}
 		if t.account == "" {
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s: account identity is missing", appID, t.id)
 		}
@@ -6399,7 +6441,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 			continue
 		}
 		if nc.PrivateVethHost != "" && (nc.PrivateNetworkBridge != desiredBridge || nc.PrivateNetworkAddress != address) {
-			if err := m.run.Run(ctx, []string{"ip", "link", "del", nc.PrivateVethHost}); err != nil {
+			if err := m.removeNetworkLink(ctx, nc.Instance, nc.PrivateVethHost); err != nil {
 				return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s remove old side-link: %w", appID, t.id, err)
 			}
 			clean := nc
@@ -6427,8 +6469,8 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		nc.PrivateNetworkAllowedCIDRs = allowedCIDRs
 		nc.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 		nc.PrivateVethHost, nc.PrivateVethPeer = privateVethNames(t.slot)
-		if err := m.runCommands(ctx, nc.PrivateNetworkSetupCommands()); err != nil {
-			_ = m.run.Run(context.WithoutCancel(ctx), []string{"ip", "link", "del", nc.PrivateVethHost})
+		if err := m.runJournalIPSetup(ctx, nc, nc.PrivateNetworkSetupCommands()); err != nil {
+			_ = m.removeNetworkLink(context.WithoutCancel(ctx), nc.Instance, nc.PrivateVethHost)
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s side-link: %w", appID, t.id, err)
 		}
 		// A fresh side-link needs both directions of the complete policy. The
@@ -6437,7 +6479,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 		// fail-closed before publishing the link in the live instance state.
 		_ = m.runCommands(ctx, nc.NftResetCommands())
 		if err := m.runNftCommands(ctx, nc.Netns, nc.NftCommands()); err != nil {
-			_ = m.run.Run(context.WithoutCancel(ctx), []string{"ip", "link", "del", nc.PrivateVethHost})
+			_ = m.removeNetworkLink(context.WithoutCancel(ctx), nc.Instance, nc.PrivateVethHost)
 			return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment app=%s instance=%s private policy: %w", appID, t.id, err)
 		}
 		m.mu.Lock()
@@ -6819,6 +6861,9 @@ func toNetnsPrivateNetworkFirewallRules(raw []api.PrivateNetworkFirewallRule) ([
 // exit non-zero on a fresh netns / brand-new veth; those failures are
 // expected and logged at Debug.
 func (m *Manager) setupNetwork(ctx context.Context, nc netns.Config) error {
+	if m.resourceJournal != nil {
+		return m.setupJournalNetwork(ctx, nc)
+	}
 	// A crashed vmmd/jailer can leave a regular namespace marker behind even
 	// after `ip netns del` reports an invalid peer. Clear that exact stale
 	// marker before reusing the allocator-derived name; a real mounted netns
@@ -7124,82 +7169,6 @@ func listPrivateNetworkHandle(ctx context.Context, cap CaptureRunner, netnsName,
 		}
 	}
 	return 0, nil
-}
-
-// cleanup is the unwind path: best-effort kill the VM, best-effort tear down the
-// network, and always release the lease. Errors are logged, never returned — a
-// cleanup that gives up would leak.
-func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, workloadNames []string) {
-	// A child can report its exit after an explicit Destroy/failed Wake
-	// removed the live entry but before Kill has finished. Do not let that
-	// expected exit poison a later Wake using the same instance id.
-	m.mu.Lock()
-	delete(m.pendingProcessExits, lease.Instance)
-	delete(m.waking, lease.Instance)
-	m.mu.Unlock()
-	// Issue #463 / ADR-069 / PR-B: tear down per-workload cgroup child
-	// scopes BEFORE vmm.Kill removes the parent scope. The kernel
-	// cascade-removes children when the parent goes, but the parent
-	// removal needs cgroup.procs to be empty in the parent first;
-	// reaping the workload children explicitly shortens the leak
-	// window for a `make leakcheck` run that immediately follows
-	// cleanup. Best-effort: children with EBUSY are logged and
-	// swallowed (same posture as vmm.Kill's parent removal below).
-	if len(workloadNames) > 0 {
-		parentCgroup := ParentCgroupFor(lease.Plan)
-		if lease.IsBuilder {
-			parentCgroup = BuilderCgroupParent
-		}
-		parentScope := filepath.Join(cgroupRoot, parentCgroup, PerInstanceScope(lease.Instance))
-		removeWorkloadCgroups(parentScope, workloadNames)
-	}
-	if err := m.vmm.Kill(ctx, lease); err != nil {
-		m.log.Warn("cleanup: kill vm", "instance", lease.Instance, "err", err)
-	}
-	if !lease.Networkless {
-		for _, argv := range nc.TeardownCommands() {
-			if err := m.run.Run(ctx, argv); err != nil {
-				// Teardown commands are expected to fail if the resource was never
-				// created (e.g. netns del on a boot that failed before netns add).
-				m.log.Debug("cleanup: teardown cmd", "cmd", argv, "err", err)
-			}
-		}
-	}
-
-	// A teardown command failing is genuinely ambiguous: the resource may
-	// never have been created (benign — the loop runs unconditionally), or
-	// it may exist and have refused to go away (a real leak). Both used to
-	// land on the same Debug line, so in production, which runs at INFO,
-	// every leak was invisible.
-	//
-	// That is how 21 netns and 14 veth accumulated on one compute node by
-	// 2026-09-04. The cost is not cosmetic: netns operations slow as the
-	// namespace count grows, and a `tc qdisc add` inside setupNetwork
-	// eventually consumed the entire 35s cold-boot budget, so no
-	// deployment could reach `live`. §6.2-4/5 and `make leakcheck` both
-	// require zero leaked netns/TAPs; nothing enforced that at runtime.
-	//
-	// Checking the marker after the fact separates the two cases. Only a
-	// namespace that still exists is reported, so the benign path stays
-	// quiet and a real leak is greppable and countable.
-	if !lease.Networkless && nc.Netns != "" {
-		if _, statErr := os.Lstat(filepath.Join("/run/netns", nc.Netns)); statErr == nil {
-			// Log only. Deliberately NOT counted on
-			// vmmd_wake_failure_total{reason=netns_fail}: that series
-			// means "a wake failed because netns setup failed", and a
-			// leak during cleanup is a different event. Folding them
-			// together would corrupt the §12 panel legend that the
-			// setupNetwork call site documents as load-bearing. A
-			// dedicated counter belongs with the leak reaper.
-			m.log.Warn("cleanup: netns survived teardown (leak)",
-				"instance", lease.Instance, "netns", nc.Netns)
-		}
-	}
-	// cleanup runs exactly once per lease (failed boot OR Destroy, never both),
-	// so Release should succeed; a failure here is a real leak signal, not noise.
-	if err := m.alloc.Release(lease.Instance); err != nil {
-		m.log.Warn("cleanup: release lease", "instance", lease.Instance, "err", err)
-	}
 }
 
 // discard is an io.Writer sink for the nil-logger fallback.

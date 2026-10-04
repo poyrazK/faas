@@ -102,6 +102,9 @@ from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
 from .api_key_response import APIKeyResponse
 from .api_key_response_scopes_item import APIKeyResponseScopesItem
 from .api_key_response_status import APIKeyResponseStatus
+from .app_binding_inventory import AppBindingInventory
+from .app_binding_inventory_item import AppBindingInventoryItem
+from .app_binding_inventory_item_type import AppBindingInventoryItemType
 from .app_configured_resources import AppConfiguredResources
 from .app_configured_resources_cpu_millicores import AppConfiguredResourcesCpuMillicores
 from .app_effective_limits import AppEffectiveLimits
@@ -272,6 +275,11 @@ from .audit_log_entry import AuditLogEntry
 from .audit_log_entry_data import AuditLogEntryData
 from .auth_capabilities import AuthCapabilities
 from .auth_providers import AuthProviders
+from .automatic_route_check import AutomaticRouteCheck
+from .automatic_route_check_freshness import AutomaticRouteCheckFreshness
+from .automatic_route_check_last_error_code import AutomaticRouteCheckLastErrorCode
+from .automatic_route_check_stale_reasons_item import AutomaticRouteCheckStaleReasonsItem
+from .automatic_route_check_state import AutomaticRouteCheckState
 from .before_checkpoint_hook import BeforeCheckpointHook
 from .billing_cancel_response import BillingCancelResponse
 from .billing_catalog_entry import BillingCatalogEntry
@@ -286,6 +294,35 @@ from .billing_status_response import BillingStatusResponse
 from .billing_status_response_account_status import BillingStatusResponseAccountStatus
 from .billing_status_response_mode import BillingStatusResponseMode
 from .billing_status_response_plan import BillingStatusResponsePlan
+from .binding_adoption_counts import BindingAdoptionCounts
+from .binding_application_ack_target import BindingApplicationAckTarget
+from .binding_application_ack_target_application_ack import BindingApplicationAckTargetApplicationAck
+from .binding_application_ack_target_application_ack_reason import BindingApplicationAckTargetApplicationAckReason
+from .binding_application_ack_target_application_ack_status import BindingApplicationAckTargetApplicationAckStatus
+from .binding_application_ack_target_projection import BindingApplicationAckTargetProjection
+from .binding_application_ack_target_reload_reason import BindingApplicationAckTargetReloadReason
+from .binding_application_ack_target_reload_status import BindingApplicationAckTargetReloadStatus
+from .binding_application_ack_target_reload_support import BindingApplicationAckTargetReloadSupport
+from .binding_application_ack_target_signal import BindingApplicationAckTargetSignal
+from .binding_application_adoption import BindingApplicationAdoption
+from .binding_application_adoption_source import BindingApplicationAdoptionSource
+from .binding_application_adoption_status import BindingApplicationAdoptionStatus
+from .binding_check_binding_result import BindingCheckBindingResult
+from .binding_check_finding import BindingCheckFinding
+from .binding_check_report import BindingCheckReport
+from .binding_inventory_issue import BindingInventoryIssue
+from .binding_inventory_issue_severity import BindingInventoryIssueSeverity
+from .binding_promotion_request import BindingPromotionRequest
+from .binding_promotion_response import BindingPromotionResponse
+from .binding_refresh import BindingRefresh
+from .binding_refresh_failure_reason import BindingRefreshFailureReason
+from .binding_refresh_status import BindingRefreshStatus
+from .binding_runtime_deployment import BindingRuntimeDeployment
+from .binding_runtime_deployment_status import BindingRuntimeDeploymentStatus
+from .binding_runtime_freshness import BindingRuntimeFreshness
+from .binding_runtime_instance_counts import BindingRuntimeInstanceCounts
+from .binding_verification import BindingVerification
+from .binding_verification_check import BindingVerificationCheck
 from .budget_threshold_webhook_payload import BudgetThresholdWebhookPayload
 from .build_export_response import BuildExportResponse
 from .build_list_response import BuildListResponse
@@ -303,6 +340,8 @@ from .build_response_status import BuildResponseStatus
 from .canary_advance_response import CanaryAdvanceResponse
 from .canary_preset_spec import CanaryPresetSpec
 from .canary_preset_spec_preset import CanaryPresetSpecPreset
+from .canary_route_gate import CanaryRouteGate
+from .canary_route_gate_mode import CanaryRouteGateMode
 from .cancel_deployment_request import CancelDeploymentRequest
 from .cancel_deployment_request_reason import CancelDeploymentRequestReason
 from .cancel_deployment_response_200 import CancelDeploymentResponse200
@@ -313,13 +352,22 @@ from .capabilities_response_plan import CapabilitiesResponsePlan
 from .capability_status import CapabilityStatus
 from .capability_status_maturity import CapabilityStatusMaturity
 from .capability_status_plans_item import CapabilityStatusPlansItem
+from .capability_status_unavailable_reason import CapabilityStatusUnavailableReason
 from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
+from .check_route_requirements_request import CheckRouteRequirementsRequest
 from .claim_api_consumer_usage_statement_request import ClaimAPIConsumerUsageStatementRequest
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
+from .commit_blocked_event_response import CommitBlockedEventResponse
+from .commit_blocked_events_response import CommitBlockedEventsResponse
+from .commit_event_request import CommitEventRequest
+from .commit_operation_response import CommitOperationResponse
+from .commit_operation_response_state import CommitOperationResponseState
+from .commit_receipt_response import CommitReceiptResponse
+from .commit_source_response import CommitSourceResponse
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
@@ -361,6 +409,7 @@ from .create_app_webhook_request import CreateAppWebhookRequest
 from .create_app_webhook_request_delivery_format import CreateAppWebhookRequestDeliveryFormat
 from .create_app_webhook_request_event_filter_item import CreateAppWebhookRequestEventFilterItem
 from .create_app_webhook_request_retry_policy import CreateAppWebhookRequestRetryPolicy
+from .create_commit_source_body import CreateCommitSourceBody
 from .create_consumer_key_request import CreateConsumerKeyRequest
 from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestScopesItem
 from .create_cors_preset_request import CreateCorsPresetRequest
@@ -397,6 +446,12 @@ from .create_job_run_request_execution_class import CreateJobRunRequestExecution
 from .create_job_run_request_failure_policy import CreateJobRunRequestFailurePolicy
 from .create_key_request import CreateKeyRequest
 from .create_key_request_scopes_item import CreateKeyRequestScopesItem
+from .create_managed_execution_workflow_request import CreateManagedExecutionWorkflowRequest
+from .create_managed_execution_workflow_request_failure_policy import CreateManagedExecutionWorkflowRequestFailurePolicy
+from .create_managed_execution_workflow_step import CreateManagedExecutionWorkflowStep
+from .create_managed_execution_workflow_step_result_schema_type_0 import (
+    CreateManagedExecutionWorkflowStepResultSchemaType0,
+)
 from .create_managed_postgres_binding_request import CreateManagedPostgresBindingRequest
 from .create_managed_postgres_binding_request_access import CreateManagedPostgresBindingRequestAccess
 from .create_managed_postgres_database_request import CreateManagedPostgresDatabaseRequest
@@ -673,6 +728,9 @@ from .dispatch_invocation_batch_body_records_item import DispatchInvocationBatch
 from .dispatch_invocation_batch_body_records_item_headers import DispatchInvocationBatchBodyRecordsItemHeaders
 from .dispatch_invocation_batch_body_records_item_metadata import DispatchInvocationBatchBodyRecordsItemMetadata
 from .dispatch_invocation_batch_response_200 import DispatchInvocationBatchResponse200
+from .dns_record_instruction import DNSRecordInstruction
+from .dns_record_instruction_purpose import DNSRecordInstructionPurpose
+from .dns_record_instruction_type import DNSRecordInstructionType
 from .domain_doctor_check import DomainDoctorCheck
 from .domain_doctor_check_name import DomainDoctorCheckName
 from .domain_doctor_check_status import DomainDoctorCheckStatus
@@ -866,6 +924,11 @@ from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperatio
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
+from .get_route_health_investigation_customer_group_by import GetRouteHealthInvestigationCustomerGroupBy
+from .get_route_health_investigation_method import GetRouteHealthInvestigationMethod
+from .get_route_health_investigation_signal import GetRouteHealthInvestigationSignal
+from .get_route_health_investigation_status_code import GetRouteHealthInvestigationStatusCode
+from .get_route_health_report_customer_group_by import GetRouteHealthReportCustomerGroupBy
 from .git_hub_activity_retry_response import GitHubActivityRetryResponse
 from .git_hub_check_activity import GitHubCheckActivity
 from .git_hub_check_activity_status import GitHubCheckActivityStatus
@@ -966,6 +1029,9 @@ from .issue_impact_alert_policy import IssueImpactAlertPolicy
 from .issue_impact_summary import IssueImpactSummary
 from .issue_ingest_token import IssueIngestToken
 from .issue_occurrence import IssueOccurrence
+from .issue_ownership_rule import IssueOwnershipRule
+from .issue_ownership_rule_source_kind import IssueOwnershipRuleSourceKind
+from .issue_ownership_rules import IssueOwnershipRules
 from .issue_release import IssueRelease
 from .issue_state import IssueState
 from .job_artifact_download_response import JobArtifactDownloadResponse
@@ -1051,15 +1117,28 @@ from .log_query_event_level import LogQueryEventLevel
 from .log_query_event_source import LogQueryEventSource
 from .log_query_event_stream import LogQueryEventStream
 from .magic_link_signup_request import MagicLinkSignupRequest
+from .managed_execution_workflow_artifact_input import ManagedExecutionWorkflowArtifactInput
+from .managed_execution_workflow_response import ManagedExecutionWorkflowResponse
+from .managed_execution_workflow_response_status import ManagedExecutionWorkflowResponseStatus
 from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
 from .managed_postgres_binding_state import ManagedPostgresBindingState
+from .managed_postgres_cutover import ManagedPostgresCutover
+from .managed_postgres_cutover_member import ManagedPostgresCutoverMember
+from .managed_postgres_cutover_member_access import ManagedPostgresCutoverMemberAccess
+from .managed_postgres_cutover_member_state import ManagedPostgresCutoverMemberState
+from .managed_postgres_cutover_state import ManagedPostgresCutoverState
 from .managed_postgres_database import ManagedPostgresDatabase
 from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
 from .managed_postgres_database_list import ManagedPostgresDatabaseList
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
 from .managed_postgres_database_state import ManagedPostgresDatabaseState
+from .managed_postgres_health import ManagedPostgresHealth
+from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeState
+from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
+from .managed_postgres_health_provider_status import ManagedPostgresHealthProviderStatus
+from .managed_postgres_health_status import ManagedPostgresHealthStatus
 from .managed_postgres_usage_line_item import ManagedPostgresUsageLineItem
 from .managed_postgres_usage_line_item_code import ManagedPostgresUsageLineItemCode
 from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperatorResponse
@@ -1220,6 +1299,8 @@ from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
 from .outbound_app_binding import OutboundAppBinding
 from .outbound_app_binding_list import OutboundAppBindingList
+from .outbound_binding_probe_policy import OutboundBindingProbePolicy
+from .outbound_binding_probe_policy_method import OutboundBindingProbePolicyMethod
 from .outbound_binding_usage_response import OutboundBindingUsageResponse
 from .outbound_integration_offer import OutboundIntegrationOffer
 from .outbound_integration_offer_credential_source import OutboundIntegrationOfferCredentialSource
@@ -1391,6 +1472,7 @@ from .preflight_profile import PreflightProfile
 from .preflight_report import PreflightReport
 from .preflight_source import PreflightSource
 from .preflight_verdict import PreflightVerdict
+from .prepare_managed_postgres_cutover_request import PrepareManagedPostgresCutoverRequest
 from .preview_artifact_response import PreviewArtifactResponse
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
 from .preview_environment_member_response import PreviewEnvironmentMemberResponse
@@ -1596,6 +1678,7 @@ from .put_app_env_request import PutAppEnvRequest
 from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
 from .put_app_secret_request import PutAppSecretRequest
 from .put_app_secret_request_secret_class import PutAppSecretRequestSecretClass
+from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
@@ -1634,6 +1717,8 @@ from .record_dev_sync_request import RecordDevSyncRequest
 from .record_dev_sync_request_status import RecordDevSyncRequestStatus
 from .recover_rollout_request import RecoverRolloutRequest
 from .recover_rollout_request_action import RecoverRolloutRequestAction
+from .refresh_automatic_route_check_response_202 import RefreshAutomaticRouteCheckResponse202
+from .refresh_automatic_route_check_response_202_status import RefreshAutomaticRouteCheckResponse202Status
 from .refund_account_invoice_body import RefundAccountInvoiceBody
 from .register_event_schema_request import RegisterEventSchemaRequest
 from .register_event_schema_response import RegisterEventSchemaResponse
@@ -1709,7 +1794,174 @@ from .rotate_managed_realtime_auth_response import RotateManagedRealtimeAuthResp
 from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealtimeAuthResponseAuthMode
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
+from .route_assigned_check import RouteAssignedCheck
+from .route_assignment import RouteAssignment
+from .route_budget_requirement import RouteBudgetRequirement
+from .route_check_change_summary import RouteCheckChangeSummary
+from .route_check_changes import RouteCheckChanges
+from .route_check_changes_status import RouteCheckChangesStatus
+from .route_check_history_entry import RouteCheckHistoryEntry
+from .route_check_history_page import RouteCheckHistoryPage
+from .route_check_history_summary import RouteCheckHistorySummary
+from .route_check_history_summary_comparison_status import RouteCheckHistorySummaryComparisonStatus
+from .route_check_history_summary_status import RouteCheckHistorySummaryStatus
+from .route_checks import RouteChecks
+from .route_checks_authentication import RouteChecksAuthentication
+from .route_coverage_inventory import RouteCoverageInventory
+from .route_customer_health_attribution import RouteCustomerHealthAttribution
+from .route_customer_health_cohort import RouteCustomerHealthCohort
+from .route_customer_health_report import RouteCustomerHealthReport
+from .route_customer_health_report_coverage import RouteCustomerHealthReportCoverage
+from .route_customer_health_report_group_by import RouteCustomerHealthReportGroupBy
+from .route_customer_health_report_status import RouteCustomerHealthReportStatus
+from .route_customer_health_route import RouteCustomerHealthRoute
+from .route_customer_health_route_method import RouteCustomerHealthRouteMethod
+from .route_customer_observation import RouteCustomerObservation
+from .route_customer_usage import RouteCustomerUsage
+from .route_customer_usage_method import RouteCustomerUsageMethod
+from .route_customer_usage_response import RouteCustomerUsageResponse
+from .route_customer_usage_response_coverage import RouteCustomerUsageResponseCoverage
+from .route_finding_change import RouteFindingChange
+from .route_finding_change_kind import RouteFindingChangeKind
+from .route_gate_decision import RouteGateDecision
+from .route_gate_decision_mode import RouteGateDecisionMode
+from .route_gate_decision_reasons_item import RouteGateDecisionReasonsItem
+from .route_gate_decision_status import RouteGateDecisionStatus
+from .route_group import RouteGroup
+from .route_group_methods_item import RouteGroupMethodsItem
+from .route_group_result import RouteGroupResult
+from .route_health_client_error_finding import RouteHealthClientErrorFinding
+from .route_health_client_error_finding_status import RouteHealthClientErrorFindingStatus
+from .route_health_client_error_finding_status_code import RouteHealthClientErrorFindingStatusCode
+from .route_health_client_error_report import RouteHealthClientErrorReport
+from .route_health_client_error_report_status import RouteHealthClientErrorReportStatus
+from .route_health_client_error_window import RouteHealthClientErrorWindow
+from .route_health_client_error_window_status import RouteHealthClientErrorWindowStatus
+from .route_health_counts import RouteHealthCounts
+from .route_health_decision import RouteHealthDecision
+from .route_health_decision_mode import RouteHealthDecisionMode
+from .route_health_decision_on_regression import RouteHealthDecisionOnRegression
+from .route_health_decision_status import RouteHealthDecisionStatus
+from .route_health_dependency_comparison import RouteHealthDependencyComparison
+from .route_health_dependency_comparison_status import RouteHealthDependencyComparisonStatus
+from .route_health_dependency_comparison_type import RouteHealthDependencyComparisonType
+from .route_health_dependency_timing import RouteHealthDependencyTiming
+from .route_health_evaluation_policy import RouteHealthEvaluationPolicy
+from .route_health_evaluation_policy_version import RouteHealthEvaluationPolicyVersion
+from .route_health_finding import RouteHealthFinding
+from .route_health_finding_error_status import RouteHealthFindingErrorStatus
+from .route_health_finding_latency_status import RouteHealthFindingLatencyStatus
+from .route_health_finding_status import RouteHealthFindingStatus
+from .route_health_finding_watch_statuses_item import RouteHealthFindingWatchStatusesItem
+from .route_health_gate import RouteHealthGate
+from .route_health_gate_mode import RouteHealthGateMode
+from .route_health_gate_on_regression import RouteHealthGateOnRegression
+from .route_health_history_entry import RouteHealthHistoryEntry
+from .route_health_history_entry_purpose import RouteHealthHistoryEntryPurpose
+from .route_health_history_entry_source import RouteHealthHistoryEntrySource
+from .route_health_history_entry_version import RouteHealthHistoryEntryVersion
+from .route_health_history_page import RouteHealthHistoryPage
+from .route_health_investigation import RouteHealthInvestigation
+from .route_health_investigation_coverage import RouteHealthInvestigationCoverage
+from .route_health_investigation_evidence_status import RouteHealthInvestigationEvidenceStatus
+from .route_health_investigation_example import RouteHealthInvestigationExample
+from .route_health_investigation_selection import RouteHealthInvestigationSelection
+from .route_health_investigation_selection_customer_group_by import RouteHealthInvestigationSelectionCustomerGroupBy
+from .route_health_investigation_selection_signal import RouteHealthInvestigationSelectionSignal
+from .route_health_investigation_selection_status_code import RouteHealthInvestigationSelectionStatusCode
+from .route_health_investigation_side import RouteHealthInvestigationSide
+from .route_health_investigation_status import RouteHealthInvestigationStatus
+from .route_health_investigation_window import RouteHealthInvestigationWindow
+from .route_health_latency_diagnostics import RouteHealthLatencyDiagnostics
+from .route_health_latency_diagnostics_coverage import RouteHealthLatencyDiagnosticsCoverage
+from .route_health_latency_sample import RouteHealthLatencySample
+from .route_health_report import RouteHealthReport
+from .route_health_report_client_error_status import RouteHealthReportClientErrorStatus
+from .route_health_report_coverage import RouteHealthReportCoverage
+from .route_health_report_mode import RouteHealthReportMode
+from .route_health_report_on_regression import RouteHealthReportOnRegression
+from .route_health_report_status import RouteHealthReportStatus
+from .route_health_route import RouteHealthRoute
+from .route_health_route_method import RouteHealthRouteMethod
+from .route_health_route_watch_statuses_item import RouteHealthRouteWatchStatusesItem
+from .route_health_status_counts import RouteHealthStatusCounts
+from .route_health_transition_webhook_payload import RouteHealthTransitionWebhookPayload
+from .route_health_transition_webhook_payload_health_status import RouteHealthTransitionWebhookPayloadHealthStatus
+from .route_health_transition_webhook_payload_source import RouteHealthTransitionWebhookPayloadSource
+from .route_health_transition_webhook_payload_status import RouteHealthTransitionWebhookPayloadStatus
+from .route_health_transition_webhook_payload_version import RouteHealthTransitionWebhookPayloadVersion
+from .route_health_window_evidence import RouteHealthWindowEvidence
+from .route_health_window_evidence_error_status import RouteHealthWindowEvidenceErrorStatus
+from .route_health_window_evidence_latency_status import RouteHealthWindowEvidenceLatencyStatus
+from .route_health_window_evidence_status import RouteHealthWindowEvidenceStatus
+from .route_monitor_config import RouteMonitorConfig
+from .route_monitor_config_customer_group_by import RouteMonitorConfigCustomerGroupBy
+from .route_monitor_customer_cohort import RouteMonitorCustomerCohort
+from .route_monitor_customer_cohort_error_status import RouteMonitorCustomerCohortErrorStatus
+from .route_monitor_customer_cohort_latency_status import RouteMonitorCustomerCohortLatencyStatus
+from .route_monitor_customer_cohort_status import RouteMonitorCustomerCohortStatus
+from .route_monitor_customer_impact import RouteMonitorCustomerImpact
+from .route_monitor_customer_impact_coverage import RouteMonitorCustomerImpactCoverage
+from .route_monitor_customer_impact_group_by import RouteMonitorCustomerImpactGroupBy
+from .route_monitor_customer_report import RouteMonitorCustomerReport
+from .route_monitor_customer_report_coverage import RouteMonitorCustomerReportCoverage
+from .route_monitor_customer_report_group_by import RouteMonitorCustomerReportGroupBy
+from .route_monitor_customer_report_status import RouteMonitorCustomerReportStatus
+from .route_monitor_customer_route import RouteMonitorCustomerRoute
+from .route_monitor_customer_route_method import RouteMonitorCustomerRouteMethod
+from .route_monitor_customer_window import RouteMonitorCustomerWindow
+from .route_monitor_evidence import RouteMonitorEvidence
+from .route_monitor_evidence_customer_group_by import RouteMonitorEvidenceCustomerGroupBy
+from .route_monitor_evidence_method import RouteMonitorEvidenceMethod
+from .route_monitor_evidence_signal import RouteMonitorEvidenceSignal
+from .route_monitor_evidence_window import RouteMonitorEvidenceWindow
+from .route_monitor_finding import RouteMonitorFinding
+from .route_monitor_finding_error_status import RouteMonitorFindingErrorStatus
+from .route_monitor_finding_latency_status import RouteMonitorFindingLatencyStatus
+from .route_monitor_finding_status import RouteMonitorFindingStatus
+from .route_monitor_incident import RouteMonitorIncident
+from .route_monitor_incident_page import RouteMonitorIncidentPage
+from .route_monitor_incident_status import RouteMonitorIncidentStatus
+from .route_monitor_report import RouteMonitorReport
+from .route_monitor_report_coverage import RouteMonitorReportCoverage
+from .route_monitor_report_customer_group_by import RouteMonitorReportCustomerGroupBy
+from .route_monitor_report_status import RouteMonitorReportStatus
+from .route_monitor_route import RouteMonitorRoute
+from .route_monitor_route_method import RouteMonitorRouteMethod
+from .route_monitor_webhook_payload import RouteMonitorWebhookPayload
+from .route_monitor_webhook_payload_status import RouteMonitorWebhookPayloadStatus
+from .route_monitor_window import RouteMonitorWindow
+from .route_monitor_window_error_status import RouteMonitorWindowErrorStatus
+from .route_monitor_window_latency_status import RouteMonitorWindowLatencyStatus
+from .route_plan_unresolved import RoutePlanUnresolved
+from .route_policy_affected_operation import RoutePolicyAffectedOperation
+from .route_policy_applied_change import RoutePolicyAppliedChange
+from .route_policy_apply_request import RoutePolicyApplyRequest
+from .route_policy_apply_response import RoutePolicyApplyResponse
+from .route_policy_apply_response_gateway_state import RoutePolicyApplyResponseGatewayState
+from .route_policy_change import RoutePolicyChange
+from .route_policy_impact import RoutePolicyImpact
+from .route_policy_plan import RoutePolicyPlan
+from .route_policy_plan_authority import RoutePolicyPlanAuthority
+from .route_policy_plan_request import RoutePolicyPlanRequest
+from .route_policy_plan_status import RoutePolicyPlanStatus
+from .route_policy_plan_version import RoutePolicyPlanVersion
+from .route_policy_receipt import RoutePolicyReceipt
+from .route_policy_rule_usage import RoutePolicyRuleUsage
+from .route_public_exception import RoutePublicException
+from .route_public_exception_method import RoutePublicExceptionMethod
+from .route_requirement import RouteRequirement
+from .route_requirement_method import RouteRequirementMethod
+from .route_requirements_check import RouteRequirementsCheck
+from .route_requirements_config import RouteRequirementsConfig
+from .route_requirements_config_version import RouteRequirementsConfigVersion
+from .route_requirements_finding import RouteRequirementsFinding
+from .route_requirements_report import RouteRequirementsReport
+from .route_requirements_result import RouteRequirementsResult
 from .route_row import RouteRow
+from .route_throttle_requirement import RouteThrottleRequirement
+from .route_throttle_requirement_key_by import RouteThrottleRequirementKeyBy
+from .route_throttle_requirement_missing_key_policy import RouteThrottleRequirementMissingKeyPolicy
 from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
 from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
 from .runtime_config_restart_status_response_status import RuntimeConfigRestartStatusResponseStatus
@@ -1724,6 +1976,8 @@ from .runtime_policy_scheduler_status_scope import RuntimePolicySchedulerStatusS
 from .runtime_policy_scheduler_status_state import RuntimePolicySchedulerStatusState
 from .runtime_policy_status_response import RuntimePolicyStatusResponse
 from .runtime_policy_status_response_state import RuntimePolicyStatusResponseState
+from .save_route_requirements_request import SaveRouteRequirementsRequest
+from .saved_route_requirements import SavedRouteRequirements
 from .scaling_policy import ScalingPolicy
 from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
 from .scaling_schedule import ScalingSchedule
@@ -1798,6 +2052,9 @@ from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
+from .set_canary_route_gate_request import SetCanaryRouteGateRequest
+from .set_canary_route_gate_request_mode import SetCanaryRouteGateRequestMode
+from .set_commit_source_enabled_body import SetCommitSourceEnabledBody
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
@@ -1812,6 +2069,11 @@ from .set_platform_tenant_hostname_policy_request import SetPlatformTenantHostna
 from .set_platform_tenant_request_budget_request import SetPlatformTenantRequestBudgetRequest
 from .set_platform_tenant_status_request import SetPlatformTenantStatusRequest
 from .set_platform_tenant_status_request_status import SetPlatformTenantStatusRequestStatus
+from .set_route_health_gate_request import SetRouteHealthGateRequest
+from .set_route_health_gate_request_mode import SetRouteHealthGateRequestMode
+from .set_route_health_gate_request_on_regression import SetRouteHealthGateRequestOnRegression
+from .set_route_monitor_request import SetRouteMonitorRequest
+from .set_route_monitor_request_customer_group_by import SetRouteMonitorRequestCustomerGroupBy
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
@@ -2150,6 +2412,9 @@ __all__ = (
     "APIKeyResponse",
     "APIKeyResponseScopesItem",
     "APIKeyResponseStatus",
+    "AppBindingInventory",
+    "AppBindingInventoryItem",
+    "AppBindingInventoryItemType",
     "AppConfiguredResources",
     "AppConfiguredResourcesCpuMillicores",
     "AppEffectiveLimits",
@@ -2320,6 +2585,11 @@ __all__ = (
     "AuditLogEntryData",
     "AuthCapabilities",
     "AuthProviders",
+    "AutomaticRouteCheck",
+    "AutomaticRouteCheckFreshness",
+    "AutomaticRouteCheckLastErrorCode",
+    "AutomaticRouteCheckStaleReasonsItem",
+    "AutomaticRouteCheckState",
     "BeforeCheckpointHook",
     "BillingCancelResponse",
     "BillingCatalogEntry",
@@ -2334,6 +2604,35 @@ __all__ = (
     "BillingStatusResponseAccountStatus",
     "BillingStatusResponseMode",
     "BillingStatusResponsePlan",
+    "BindingAdoptionCounts",
+    "BindingApplicationAckTarget",
+    "BindingApplicationAckTargetApplicationAck",
+    "BindingApplicationAckTargetApplicationAckReason",
+    "BindingApplicationAckTargetApplicationAckStatus",
+    "BindingApplicationAckTargetProjection",
+    "BindingApplicationAckTargetReloadReason",
+    "BindingApplicationAckTargetReloadStatus",
+    "BindingApplicationAckTargetReloadSupport",
+    "BindingApplicationAckTargetSignal",
+    "BindingApplicationAdoption",
+    "BindingApplicationAdoptionSource",
+    "BindingApplicationAdoptionStatus",
+    "BindingCheckBindingResult",
+    "BindingCheckFinding",
+    "BindingCheckReport",
+    "BindingInventoryIssue",
+    "BindingInventoryIssueSeverity",
+    "BindingPromotionRequest",
+    "BindingPromotionResponse",
+    "BindingRefresh",
+    "BindingRefreshFailureReason",
+    "BindingRefreshStatus",
+    "BindingRuntimeDeployment",
+    "BindingRuntimeDeploymentStatus",
+    "BindingRuntimeFreshness",
+    "BindingRuntimeInstanceCounts",
+    "BindingVerification",
+    "BindingVerificationCheck",
     "BudgetThresholdWebhookPayload",
     "BuildExportResponse",
     "BuildListResponse",
@@ -2351,6 +2650,8 @@ __all__ = (
     "CanaryAdvanceResponse",
     "CanaryPresetSpec",
     "CanaryPresetSpecPreset",
+    "CanaryRouteGate",
+    "CanaryRouteGateMode",
     "CancelDeploymentRequest",
     "CancelDeploymentRequestReason",
     "CancelDeploymentResponse200",
@@ -2361,13 +2662,22 @@ __all__ = (
     "CapabilityStatus",
     "CapabilityStatusMaturity",
     "CapabilityStatusPlansItem",
+    "CapabilityStatusUnavailableReason",
     "ChangeMemberRoleRequest",
     "ChangeMemberRoleRequestRole",
     "ChangePlanRequest",
     "ChangePlanRequestPlan",
+    "CheckRouteRequirementsRequest",
     "ClaimAPIConsumerUsageStatementRequest",
     "ClearObsoleteDeploymentsBody",
     "ClearObsoleteReport",
+    "CommitBlockedEventResponse",
+    "CommitBlockedEventsResponse",
+    "CommitEventRequest",
+    "CommitOperationResponse",
+    "CommitOperationResponseState",
+    "CommitReceiptResponse",
+    "CommitSourceResponse",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
@@ -2409,6 +2719,7 @@ __all__ = (
     "CreateAppWebhookRequestDeliveryFormat",
     "CreateAppWebhookRequestEventFilterItem",
     "CreateAppWebhookRequestRetryPolicy",
+    "CreateCommitSourceBody",
     "CreateConsumerKeyRequest",
     "CreateConsumerKeyRequestScopesItem",
     "CreateCorsPresetRequest",
@@ -2445,6 +2756,10 @@ __all__ = (
     "CreateJobRunRequestFailurePolicy",
     "CreateKeyRequest",
     "CreateKeyRequestScopesItem",
+    "CreateManagedExecutionWorkflowRequest",
+    "CreateManagedExecutionWorkflowRequestFailurePolicy",
+    "CreateManagedExecutionWorkflowStep",
+    "CreateManagedExecutionWorkflowStepResultSchemaType0",
     "CreateManagedPostgresBindingRequest",
     "CreateManagedPostgresBindingRequestAccess",
     "CreateManagedPostgresDatabaseRequest",
@@ -2709,6 +3024,9 @@ __all__ = (
     "DispatchInvocationBatchBodyRecordsItemHeaders",
     "DispatchInvocationBatchBodyRecordsItemMetadata",
     "DispatchInvocationBatchResponse200",
+    "DNSRecordInstruction",
+    "DNSRecordInstructionPurpose",
+    "DNSRecordInstructionType",
     "DomainDoctorCheck",
     "DomainDoctorCheckName",
     "DomainDoctorCheckStatus",
@@ -2900,6 +3218,11 @@ __all__ = (
     "GetGithubRecoveryStatusStatus",
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
+    "GetRouteHealthInvestigationCustomerGroupBy",
+    "GetRouteHealthInvestigationMethod",
+    "GetRouteHealthInvestigationSignal",
+    "GetRouteHealthInvestigationStatusCode",
+    "GetRouteHealthReportCustomerGroupBy",
     "GitHubActivityRetryResponse",
     "GitHubCheckActivity",
     "GitHubCheckActivityStatus",
@@ -3000,6 +3323,9 @@ __all__ = (
     "IssueImpactSummary",
     "IssueIngestToken",
     "IssueOccurrence",
+    "IssueOwnershipRule",
+    "IssueOwnershipRules",
+    "IssueOwnershipRuleSourceKind",
     "IssueRelease",
     "IssueState",
     "JobArtifactDownloadResponse",
@@ -3085,15 +3411,28 @@ __all__ = (
     "LogQueryEventSource",
     "LogQueryEventStream",
     "MagicLinkSignupRequest",
+    "ManagedExecutionWorkflowArtifactInput",
+    "ManagedExecutionWorkflowResponse",
+    "ManagedExecutionWorkflowResponseStatus",
     "ManagedPostgresBinding",
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",
     "ManagedPostgresBindingState",
+    "ManagedPostgresCutover",
+    "ManagedPostgresCutoverMember",
+    "ManagedPostgresCutoverMemberAccess",
+    "ManagedPostgresCutoverMemberState",
+    "ManagedPostgresCutoverState",
     "ManagedPostgresDatabase",
     "ManagedPostgresDatabaseAvailability",
     "ManagedPostgresDatabaseList",
     "ManagedPostgresDatabaseServiceClass",
     "ManagedPostgresDatabaseState",
+    "ManagedPostgresHealth",
+    "ManagedPostgresHealthComputeState",
+    "ManagedPostgresHealthLastErrorCode",
+    "ManagedPostgresHealthProviderStatus",
+    "ManagedPostgresHealthStatus",
     "ManagedPostgresUsageLineItem",
     "ManagedPostgresUsageLineItemCode",
     "ManagedPostgresUsageOperatorResponse",
@@ -3250,6 +3589,8 @@ __all__ = (
     "OrgWithRoleRole",
     "OutboundAppBinding",
     "OutboundAppBindingList",
+    "OutboundBindingProbePolicy",
+    "OutboundBindingProbePolicyMethod",
     "OutboundBindingUsageResponse",
     "OutboundIntegrationOffer",
     "OutboundIntegrationOfferCredentialSource",
@@ -3403,6 +3744,7 @@ __all__ = (
     "PreflightReport",
     "PreflightSource",
     "PreflightVerdict",
+    "PrepareManagedPostgresCutoverRequest",
     "PreviewArtifactResponse",
     "PreviewCreatedWebhookPayload",
     "PreviewEnvironmentMemberResponse",
@@ -3582,6 +3924,7 @@ __all__ = (
     "PutAppRegistryCredentialRequest",
     "PutAppSecretRequest",
     "PutAppSecretRequestSecretClass",
+    "PutCommitSourceConnectionBody",
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutJobRegistryCredentialRequest",
@@ -3620,6 +3963,8 @@ __all__ = (
     "RecordDevSyncRequestStatus",
     "RecoverRolloutRequest",
     "RecoverRolloutRequestAction",
+    "RefreshAutomaticRouteCheckResponse202",
+    "RefreshAutomaticRouteCheckResponse202Status",
     "RefundAccountInvoiceBody",
     "RegisterEventSchemaRequest",
     "RegisterEventSchemaResponse",
@@ -3693,7 +4038,174 @@ __all__ = (
     "RotateManagedRealtimeAuthResponseAuthMode",
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
+    "RouteAssignedCheck",
+    "RouteAssignment",
+    "RouteBudgetRequirement",
+    "RouteCheckChanges",
+    "RouteCheckChangesStatus",
+    "RouteCheckChangeSummary",
+    "RouteCheckHistoryEntry",
+    "RouteCheckHistoryPage",
+    "RouteCheckHistorySummary",
+    "RouteCheckHistorySummaryComparisonStatus",
+    "RouteCheckHistorySummaryStatus",
+    "RouteChecks",
+    "RouteChecksAuthentication",
+    "RouteCoverageInventory",
+    "RouteCustomerHealthAttribution",
+    "RouteCustomerHealthCohort",
+    "RouteCustomerHealthReport",
+    "RouteCustomerHealthReportCoverage",
+    "RouteCustomerHealthReportGroupBy",
+    "RouteCustomerHealthReportStatus",
+    "RouteCustomerHealthRoute",
+    "RouteCustomerHealthRouteMethod",
+    "RouteCustomerObservation",
+    "RouteCustomerUsage",
+    "RouteCustomerUsageMethod",
+    "RouteCustomerUsageResponse",
+    "RouteCustomerUsageResponseCoverage",
+    "RouteFindingChange",
+    "RouteFindingChangeKind",
+    "RouteGateDecision",
+    "RouteGateDecisionMode",
+    "RouteGateDecisionReasonsItem",
+    "RouteGateDecisionStatus",
+    "RouteGroup",
+    "RouteGroupMethodsItem",
+    "RouteGroupResult",
+    "RouteHealthClientErrorFinding",
+    "RouteHealthClientErrorFindingStatus",
+    "RouteHealthClientErrorFindingStatusCode",
+    "RouteHealthClientErrorReport",
+    "RouteHealthClientErrorReportStatus",
+    "RouteHealthClientErrorWindow",
+    "RouteHealthClientErrorWindowStatus",
+    "RouteHealthCounts",
+    "RouteHealthDecision",
+    "RouteHealthDecisionMode",
+    "RouteHealthDecisionOnRegression",
+    "RouteHealthDecisionStatus",
+    "RouteHealthDependencyComparison",
+    "RouteHealthDependencyComparisonStatus",
+    "RouteHealthDependencyComparisonType",
+    "RouteHealthDependencyTiming",
+    "RouteHealthEvaluationPolicy",
+    "RouteHealthEvaluationPolicyVersion",
+    "RouteHealthFinding",
+    "RouteHealthFindingErrorStatus",
+    "RouteHealthFindingLatencyStatus",
+    "RouteHealthFindingStatus",
+    "RouteHealthFindingWatchStatusesItem",
+    "RouteHealthGate",
+    "RouteHealthGateMode",
+    "RouteHealthGateOnRegression",
+    "RouteHealthHistoryEntry",
+    "RouteHealthHistoryEntryPurpose",
+    "RouteHealthHistoryEntrySource",
+    "RouteHealthHistoryEntryVersion",
+    "RouteHealthHistoryPage",
+    "RouteHealthInvestigation",
+    "RouteHealthInvestigationCoverage",
+    "RouteHealthInvestigationEvidenceStatus",
+    "RouteHealthInvestigationExample",
+    "RouteHealthInvestigationSelection",
+    "RouteHealthInvestigationSelectionCustomerGroupBy",
+    "RouteHealthInvestigationSelectionSignal",
+    "RouteHealthInvestigationSelectionStatusCode",
+    "RouteHealthInvestigationSide",
+    "RouteHealthInvestigationStatus",
+    "RouteHealthInvestigationWindow",
+    "RouteHealthLatencyDiagnostics",
+    "RouteHealthLatencyDiagnosticsCoverage",
+    "RouteHealthLatencySample",
+    "RouteHealthReport",
+    "RouteHealthReportClientErrorStatus",
+    "RouteHealthReportCoverage",
+    "RouteHealthReportMode",
+    "RouteHealthReportOnRegression",
+    "RouteHealthReportStatus",
+    "RouteHealthRoute",
+    "RouteHealthRouteMethod",
+    "RouteHealthRouteWatchStatusesItem",
+    "RouteHealthStatusCounts",
+    "RouteHealthTransitionWebhookPayload",
+    "RouteHealthTransitionWebhookPayloadHealthStatus",
+    "RouteHealthTransitionWebhookPayloadSource",
+    "RouteHealthTransitionWebhookPayloadStatus",
+    "RouteHealthTransitionWebhookPayloadVersion",
+    "RouteHealthWindowEvidence",
+    "RouteHealthWindowEvidenceErrorStatus",
+    "RouteHealthWindowEvidenceLatencyStatus",
+    "RouteHealthWindowEvidenceStatus",
+    "RouteMonitorConfig",
+    "RouteMonitorConfigCustomerGroupBy",
+    "RouteMonitorCustomerCohort",
+    "RouteMonitorCustomerCohortErrorStatus",
+    "RouteMonitorCustomerCohortLatencyStatus",
+    "RouteMonitorCustomerCohortStatus",
+    "RouteMonitorCustomerImpact",
+    "RouteMonitorCustomerImpactCoverage",
+    "RouteMonitorCustomerImpactGroupBy",
+    "RouteMonitorCustomerReport",
+    "RouteMonitorCustomerReportCoverage",
+    "RouteMonitorCustomerReportGroupBy",
+    "RouteMonitorCustomerReportStatus",
+    "RouteMonitorCustomerRoute",
+    "RouteMonitorCustomerRouteMethod",
+    "RouteMonitorCustomerWindow",
+    "RouteMonitorEvidence",
+    "RouteMonitorEvidenceCustomerGroupBy",
+    "RouteMonitorEvidenceMethod",
+    "RouteMonitorEvidenceSignal",
+    "RouteMonitorEvidenceWindow",
+    "RouteMonitorFinding",
+    "RouteMonitorFindingErrorStatus",
+    "RouteMonitorFindingLatencyStatus",
+    "RouteMonitorFindingStatus",
+    "RouteMonitorIncident",
+    "RouteMonitorIncidentPage",
+    "RouteMonitorIncidentStatus",
+    "RouteMonitorReport",
+    "RouteMonitorReportCoverage",
+    "RouteMonitorReportCustomerGroupBy",
+    "RouteMonitorReportStatus",
+    "RouteMonitorRoute",
+    "RouteMonitorRouteMethod",
+    "RouteMonitorWebhookPayload",
+    "RouteMonitorWebhookPayloadStatus",
+    "RouteMonitorWindow",
+    "RouteMonitorWindowErrorStatus",
+    "RouteMonitorWindowLatencyStatus",
+    "RoutePlanUnresolved",
+    "RoutePolicyAffectedOperation",
+    "RoutePolicyAppliedChange",
+    "RoutePolicyApplyRequest",
+    "RoutePolicyApplyResponse",
+    "RoutePolicyApplyResponseGatewayState",
+    "RoutePolicyChange",
+    "RoutePolicyImpact",
+    "RoutePolicyPlan",
+    "RoutePolicyPlanAuthority",
+    "RoutePolicyPlanRequest",
+    "RoutePolicyPlanStatus",
+    "RoutePolicyPlanVersion",
+    "RoutePolicyReceipt",
+    "RoutePolicyRuleUsage",
+    "RoutePublicException",
+    "RoutePublicExceptionMethod",
+    "RouteRequirement",
+    "RouteRequirementMethod",
+    "RouteRequirementsCheck",
+    "RouteRequirementsConfig",
+    "RouteRequirementsConfigVersion",
+    "RouteRequirementsFinding",
+    "RouteRequirementsReport",
+    "RouteRequirementsResult",
     "RouteRow",
+    "RouteThrottleRequirement",
+    "RouteThrottleRequirementKeyBy",
+    "RouteThrottleRequirementMissingKeyPolicy",
     "RuntimeConfigRestartStatusResponse",
     "RuntimeConfigRestartStatusResponseFailureReason",
     "RuntimeConfigRestartStatusResponseStatus",
@@ -3708,6 +4220,8 @@ __all__ = (
     "RuntimePolicySchedulerStatusState",
     "RuntimePolicyStatusResponse",
     "RuntimePolicyStatusResponseState",
+    "SavedRouteRequirements",
+    "SaveRouteRequirementsRequest",
     "ScalingPolicy",
     "ScalingPolicyConcurrencyOverflow",
     "ScalingSchedule",
@@ -3778,6 +4292,9 @@ __all__ = (
     "SessionsRevokeAllResponse",
     "SetAccountEgressAllowlistExtraRequest",
     "SetAppStaticEgressIPRequest",
+    "SetCanaryRouteGateRequest",
+    "SetCanaryRouteGateRequestMode",
+    "SetCommitSourceEnabledBody",
     "SetDeploymentAliasRequest",
     "SetGraceWindowRequest",
     "SetObjectBucketAccessGrantRequest",
@@ -3790,6 +4307,11 @@ __all__ = (
     "SetPlatformTenantRequestBudgetRequest",
     "SetPlatformTenantStatusRequest",
     "SetPlatformTenantStatusRequestStatus",
+    "SetRouteHealthGateRequest",
+    "SetRouteHealthGateRequestMode",
+    "SetRouteHealthGateRequestOnRegression",
+    "SetRouteMonitorRequest",
+    "SetRouteMonitorRequestCustomerGroupBy",
     "SeverityCounts",
     "Sidecar",
     "SidecarCpuMillicores",

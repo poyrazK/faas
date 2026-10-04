@@ -36,9 +36,11 @@ func TestMetalRestoreSkipsUnchangedPreBootFiles(t *testing.T) {
 	defer capture.restore()
 	ctx := context.Background()
 
-	if row := preBootSkipRow(t, r, capture, nil); row["stage_pre_boot_files_skipped"] != 1 {
+	row := preBootSkipRow(t, r, capture, nil)
+	if row["stage_pre_boot_files_skipped"] != 1 {
 		t.Fatalf("restore of an unchanged capture did not skip the pre-boot mount: %v", row)
 	}
+	assertPreBootTimingRow(t, row, false)
 	if _, err := r.m.Park(ctx, "prefetch-metal", r.spec); err != nil {
 		t.Fatal(err)
 	}
@@ -56,8 +58,29 @@ func TestMetalRestoreSkipsUnchangedPreBootFiles(t *testing.T) {
 	}
 
 	withEnv := func(req *WakeRequest) { req.APIEnvEntries = []APIEnvEntry{{Key: "CHANGED", Value: "1"}} }
-	if row := preBootSkipRow(t, r, capture, withEnv); row["stage_pre_boot_files_skipped"] != 0 {
+	row = preBootSkipRow(t, r, capture, withEnv)
+	if row["stage_pre_boot_files_skipped"] != 0 {
 		t.Fatalf("restore with changed env skipped its pre-boot writes: %v", row)
+	}
+	assertPreBootTimingRow(t, row, true)
+}
+
+func assertPreBootTimingRow(t *testing.T, row map[string]int64, wrote bool) {
+	t.Helper()
+	for _, key := range []string{"pre_boot_prepare_us", "pre_boot_mount_ms", "pre_boot_check_us", "pre_boot_write_us", "pre_boot_unmount_ms", "pre_boot_files_total", "pre_boot_files_written"} {
+		if value, ok := row[key]; !ok || value < 0 {
+			t.Fatalf("missing or negative staging diagnostic %s: %v", key, row)
+		}
+	}
+	if row["pre_boot_files_total"] < 1 || (row["pre_boot_files_written"] > 0) != wrote {
+		t.Fatalf("staging writer counts do not match skip/write path: %v", row)
+	}
+	if !wrote {
+		for _, key := range []string{"pre_boot_mount_ms", "pre_boot_check_us", "pre_boot_write_us", "pre_boot_unmount_ms"} {
+			if row[key] != 0 {
+				t.Fatalf("skipped mount reported %s work: %v", key, row)
+			}
+		}
 	}
 }
 

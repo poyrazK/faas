@@ -45,6 +45,44 @@ Direct OCI images use TCP listener readiness by default; Gregale does not
 invent a `/healthz` endpoint that the image never declared. An explicit
 deployment health-path override selects HTTP readiness instead.
 
+For an image with TCP readiness and no HTTP health path, the post-readiness
+public smoke checks candidate route connectivity at `/`. A candidate-authored
+2xx, 3xx, 401, 403, or 404 response can verify connectivity; an API does not
+need to implement a successful root route. Gateway errors, missing candidate
+response evidence, a different revision, 429, and 5xx still fail verification.
+An explicit HTTP health path (including `/`) continues to require 2xx.
+
+The deployment's `hosting_receipt.smoke.verification` records `http_health`
+or `route_connectivity`, alongside the actual response status.
+`authentication: platform_challenge` means the platform probe bypassed Gregale
+customer access gates; it does not prove anonymous access or bypass
+application-owned authentication. Connectivity probes record redirects without
+following them. Roll out the gateway response-proof support before the new
+imaged verifier; older gateways cannot satisfy the connectivity check.
+
+Both candidate verification contracts require an authenticated candidate
+response, including explicit HTTP health checks. A deployment header alone,
+gateway error, or missing/invalid response proof cannot verify the candidate.
+Candidate redirects are never followed; HTTP health requires a proven 2xx on
+the configured path.
+
+If challenge publication, the public gateway response, or the verification
+transport remains unavailable, the candidate stays `snapshotting` and retries
+through the durable notification outbox. A transport failure does not establish
+whether the app or platform caused it. The existing serving deployment keeps
+traffic. Recovery progress is
+available in `stage_state.hosting_verification`: `attempts`, `deadline_at`,
+`last_error_code`, and `retry_not_before` (the earliest eligible retry, not a
+promised delivery time). `last_error_code` distinguishes publication, gateway,
+transport, missing-proof and wrong-deployment failures. The five-minute
+recovery window survives imaged restarts and changes of outage reason. If it
+expires, the deployment fails with `deployment_verification_unavailable`;
+inspect deployment and gateway diagnostics before retrying. A proven candidate
+response with an unhealthy status retains `deployment_smoke_failed`.
+
+Roll out response-proof support to all gateways before enabling this verifier
+for HTTP health checks; an older gateway cannot verify a candidate.
+
 Gregale adds the managed infrastructure around that process: TLS, readiness,
 logs and metrics, snapshots, autoscaling, and scale-to-zero.
 
@@ -71,6 +109,31 @@ compatibility table. In particular, container deployment is beta while
 companions and worker pools are preview.
 
 ## Image preflight
+
+During self-contained full-rootfs assembly, Gregale checks the effective startup
+command after applying all image layers and deployment command overrides. An
+explicit command path must resolve to a regular file with an execute bit;
+relative paths resolve from the image working directory. Shell-form startup
+commands therefore require their selected shell (usually `/bin/sh`) in the
+image. Missing commands, invalid symlinks, directories, and non-executable files
+fail the deployment with `image_manifest_invalid` before ext4 publication or VM
+boot. The failure identifies the command without exposing arguments or
+environment values.
+
+For bare commands, assembly uses the image/deployment `PATH` plus the current
+scoped app environment, with the same absolute-directory lookup as guest-init.
+A sealed `PATH` or unavailable runtime environment defers that lookup to the
+guest. Assembly never decrypts secrets or copies runtime `PATH` into the image.
+Later environment changes remain subject to guest launch validation.
+Commands under guest-provided mounts (`/dev`, `/proc`, `/sys`, `/tmp`, and
+companion roots), including image symlinks to those paths, also defer to launch
+because their contents are supplied or replaced at boot.
+
+This check does not run image code or prove ELF/script interpreter compatibility,
+user permissions, healthcheck execution, shell command contents, or readiness.
+It applies to the complete full-rootfs main image; the shared-base upper-layer
+path cannot prove whether a command exists in its base and retains its guest
+validation. The metadata-only doctor command below retains its fast path.
 
 `gregale doctor --image REF --json` reports `image.serving_port` as inferred
 from image metadata before deployment overrides. Human output shows the same

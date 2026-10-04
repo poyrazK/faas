@@ -81,6 +81,10 @@ var AllowedAppWebhookEvents = []string{
 	"job.finished",
 	"usage_statement.finalized",
 	"debug.regression.detected", "debug.regression.resolved",
+	"routes.requirements.changed", "routes.requirements.violated",
+	"routes.requirements.recovered",
+	"routes.health.blocked", "routes.health.resumed", "routes.health.aborted",
+	"routes.monitor.violated", "routes.monitor.recovered",
 	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached",
 }
 

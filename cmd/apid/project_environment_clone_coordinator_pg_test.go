@@ -128,7 +128,7 @@ func newCloneCoordinatorFixture(t *testing.T, withData bool) cloneCoordinatorFix
 		if err != nil {
 			t.Fatal(err)
 		}
-		srv.WithManagedPostgres(service, nil, bindings, nil, nil)
+		srv.WithManagedPostgres(service, nil, bindings, nil, nil, nil)
 		source, err := service.Create(ctx, managedpostgres.CreateRequest{AccountID: account.ID, Name: "orders", Spec: managedpostgres.Spec{Region: "eu", PostgresMajor: 17,
 			Class: managedpostgres.ClassDevelopment, Availability: managedpostgres.AvailabilitySingleZone, ScaleToZero: true, StorageLimitBytes: 1 << 30, RestoreWindowSeconds: 3600}})
 		if err != nil {

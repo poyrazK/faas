@@ -328,13 +328,14 @@ func (s *server) getQueueBindingStatus(w http.ResponseWriter, r *http.Request, a
 	writeJSON(w, http.StatusOK, resp)
 }
 
-const queueBindingConsumerStaleAfter = 30 * time.Second
-
 func queueBindingConsumerLiveness(now time.Time, health state.TriggerConsumerHealth) string {
-	if health.LastPollAt == nil {
+	if health.LastPollAt == nil || health.LastPollAt.IsZero() {
 		return "not_observed"
 	}
-	if now.Sub(*health.LastPollAt) > queueBindingConsumerStaleAfter {
+	if health.LastPollAt.After(now) {
+		return "unknown"
+	}
+	if now.Sub(*health.LastPollAt) > api.QueueConsumerMaxPollAge {
 		return "stale"
 	}
 	if health.LastErrorAt != nil && (health.LastSuccessAt == nil || health.LastErrorAt.After(*health.LastSuccessAt)) {

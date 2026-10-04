@@ -43,6 +43,14 @@ ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook
 .DEFAULT_GOAL := help
 
 .PHONY: test-customer-platform
+.PHONY: test-commit
+test-commit: ## Run strict PostgreSQL and Linux process acceptance for Gregale Commit
+	@GO="$(GO)" sh scripts/test-commit.sh
+
+.PHONY: test-commit-native
+test-commit-native: ## Run native x86 KVM Commit snapshot and cold-boot completion gates
+	@GO="$(GO)" sh scripts/test-commit-native.sh
+
 test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
 	@GO="$(GO)" sh scripts/test-customer-platform.sh
 
@@ -1388,6 +1396,11 @@ udp-alert-check: ## Verify UDP ingress alert syntax and pressure/failure versus 
 
 .PHONY: udp-postgres-check
 .PHONY: tcp-tls-alert-check
+.PHONY: commit-alert-check
+commit-alert-check: ## Verify Commit backlog, unknown observation, blocked-event and recovery alerts
+	promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
+	promtool test rules deploy/ansible/roles/prometheus/files/commit.rules.test.yml
+
 tcp-tls-alert-check: ## Verify raw TCP TLS certificate availability and expiry alerts
 	promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
 	promtool test rules deploy/ansible/roles/prometheus/files/tcp-tls.rules.test.yml
@@ -1411,3 +1424,7 @@ tcp-tls-deployment-check: ## Verify TCP TLS path validation and environment rend
 issues-smoke: ## Send controlled Gregale Issues failures to an explicitly confirmed staging API
 	@npm run build --prefix sdk/node
 	@node tests/issues-smoke/run.mjs
+
+.PHONY: test-commit-sdk
+test-commit-sdk:
+	sh scripts/test-commit-sdk.sh

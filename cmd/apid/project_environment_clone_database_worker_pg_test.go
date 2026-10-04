@@ -128,7 +128,7 @@ func TestPGCapturedCloneDatabaseWorkerRecoversUncheckpointedRestore(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithManagedPostgres(service, nil, bindings, nil, nil)
+	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithManagedPostgres(service, nil, bindings, nil, nil, nil)
 	source, err := service.Create(ctx, managedpostgres.CreateRequest{AccountID: acct.ID, Name: "orders", Spec: managedpostgres.Spec{
 		Region: "eu", PostgresMajor: 17, Class: managedpostgres.ClassDevelopment, Availability: managedpostgres.AvailabilitySingleZone,
 		ScaleToZero: true, StorageLimitBytes: 1 << 30, RestoreWindowSeconds: 3600}})

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -42,6 +43,13 @@ type Exchange struct {
 	StreamingStatus api.StreamingStatus `json:"streaming_status,omitempty"`
 	HTTPStatus      int                 `json:"-"`
 	AuthChallenge   string              `json:"-"`
+	RejectedTools   []RejectedTool      `json:"rejected_tools,omitempty"`
+}
+
+// RejectedTool makes incomplete discovery visible without hiding valid tools.
+type RejectedTool struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 type Tool struct {
@@ -131,10 +139,7 @@ func (c *Client) request(ctx context.Context, method string, params map[string]a
 	defer func() { _ = res.Body.Close() }()
 	x := Exchange{WakeTier: res.Header.Get(wire.WakeHeader), SessionID: res.Header.Get("Mcp-Session-Id"), StreamingStatus: api.StreamingStatus(res.Header.Get(api.StreamingStatusHeader)), HTTPStatus: res.StatusCode, AuthChallenge: res.Header.Get("WWW-Authenticate")}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
-		if res.StatusCode == http.StatusUnauthorized {
-			return x, fmt.Errorf("MCP authentication required (HTTP 401); supply a client token with --token-env")
-		}
-		return x, fmt.Errorf("MCP endpoint returned HTTP %d", res.StatusCode)
+		return x, httpResponseError(res)
 	}
 	if notification {
 		if res.StatusCode != http.StatusAccepted {
@@ -289,7 +294,9 @@ func (c *Client) Tools(ctx context.Context) ([]Tool, Exchange, error) {
 			Tools      *[]Tool `json:"tools"`
 			NextCursor string  `json:"nextCursor"`
 		}
-		if err := json.Unmarshal(x.Result, &result); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(x.Result))
+		decoder.UseNumber() // Preserve exact numbers in discovered schema constraints.
+		if err := decoder.Decode(&result); err != nil {
 			return nil, first, fmt.Errorf("decode tools/list: %w", err)
 		}
 		if result.Tools == nil {
@@ -300,7 +307,9 @@ func (c *Client) Tools(ctx context.Context) ([]Tool, Exchange, error) {
 				return nil, first, fmt.Errorf("invalid or duplicate MCP tool name")
 			}
 			if _, err := parameterHeaders(tool.InputSchema, nil); err != nil {
-				return nil, first, fmt.Errorf("tool %q: %w", tool.Name, err)
+				first.RejectedTools = append(first.RejectedTools, RejectedTool{Name: tool.Name, Reason: err.Error()})
+				seen["tool:"+tool.Name] = true
+				continue
 			}
 			seen["tool:"+tool.Name] = true
 			tools = append(tools, tool)
@@ -355,7 +364,8 @@ func (c *Client) Call(ctx context.Context, tool Tool, args map[string]any, progr
 
 func (c *Client) RejectsUntrustedOrigin(ctx context.Context) error {
 	_, err := c.request(ctx, "tools/list", nil, http.Header{"Origin": []string{"https://gregale-mcp-origin-check.invalid"}}, false)
-	if err == nil || err.Error() != "MCP endpoint returned HTTP 403" {
+	var upstream *api.APIError
+	if !errors.As(err, &upstream) || upstream.Problem.Status != http.StatusForbidden {
 		return fmt.Errorf("untrusted Origin must return HTTP 403")
 	}
 	return nil

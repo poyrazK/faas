@@ -29,6 +29,10 @@ func runtimeValuesHaveEphemeralSecrets(snapshot state.RuntimeAppValuesSnapshot) 
 }
 
 func (e *Engine) loadRuntimeDeploymentValues(ctx context.Context, app state.App, dep state.Deployment) (runtimeDeploymentValues, error) {
+	return e.loadRuntimeDeploymentValuesForTask(ctx, app, dep, false)
+}
+
+func (e *Engine) loadRuntimeDeploymentValuesForTask(ctx context.Context, app state.App, dep state.Deployment, release bool) (runtimeDeploymentValues, error) {
 	accountID := app.AccountID
 	snapshot, err := e.store.RuntimeAppValuesForDeployment(ctx, accountID, dep.AppID, dep.ID)
 	if err != nil {
@@ -60,7 +64,7 @@ func (e *Engine) loadRuntimeDeploymentValues(ctx context.Context, app state.App,
 		keys[row.Key] = true
 		result.APIEnv = append(result.APIEnv, fcvm.APIEnvEntry{Key: row.Key, Value: row.Value})
 	}
-	result.MainSecrets, err = sealedEnvDeliveryFromRows(snapshot.Secrets, accountID, dep.AppID, snapshot.Scope, refs)
+	result.MainSecrets, err = sealedEnvDeliveryFromRowsForTask(snapshot.Secrets, accountID, dep.AppID, snapshot.Scope, refs, release)
 	if err != nil {
 		return runtimeDeploymentValues{}, err
 	}

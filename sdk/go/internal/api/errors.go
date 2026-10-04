@@ -47,6 +47,7 @@ func AsProblem(err error) *Problem {
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
+	BindingsCheck *BindingCheckReport `json:"bindings_check,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -218,6 +219,7 @@ const (
 	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
 	CodeValidation                     = "validation_failed"
 	CodeConflict                       = "conflict"
+	CodeRouteGateBlocked               = "route_gate_blocked"
 	CodeDomainNotVerified              = "domain_not_verified"
 	CodeCronInvalid                    = "cron_invalid"
 	CodeHandlerMissing                 = "handler_missing"
@@ -469,7 +471,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeDeclaredRoutePolicyUnavailable:
 		return http.StatusServiceUnavailable
-	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget:
+	case CodeConflict, CodeRouteGateBlocked, CodeDomainNotVerified, CodeNoRollbackTarget:
 		return http.StatusConflict
 	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile:
 		return http.StatusUnprocessableEntity
@@ -919,3 +921,5 @@ func ErrInvalidRegistryHost(detail error) *Problem {
 		"Invalid registry host", detail.Error()).
 		WithDocs(docsBase + "/registry-credentials#registry-format")
 }
+
+const CodeRouteHealthBlocked = "route_health_blocked"

@@ -363,6 +363,9 @@ type CanaryAdvanceParams struct {
 	RequireCanaryStageElapsed bool
 	CanaryStageDuration       time.Duration
 	Audit                     DeploymentAudit
+	RouteCheckFingerprint     RouteCheckFingerprinter
+	RouteGateDecision         *api.RouteGateDecision
+	RouteHealthDecision       *api.RouteHealthDecision
 }
 
 // CanaryAdvancer is intentionally separate from Store so existing narrow test
@@ -377,6 +380,21 @@ type CanaryAdvancer interface {
 // type-assert before persisting a hosting receipt.
 type DeploymentHostingReceiptStore interface {
 	UpsertDeploymentHostingReceipt(ctx context.Context, deploymentID string, receipt []byte) (Deployment, error)
+}
+
+// DeploymentHostingFailureStore commits a failed hosting verdict with the
+// deployment's terminal status, stage, traffic and outcome activity. Only a
+// snapshotting candidate can transition; terminal rows are unchanged. changed
+// tells the caller whether it owns the post-commit notification.
+type DeploymentHostingFailureStore interface {
+	FailDeploymentWithHostingReceipt(ctx context.Context, deploymentID string, receipt []byte, code, message string) (changed bool, err error)
+}
+
+// DeploymentHostingVerificationStore fences durable verification progress to
+// the snapshotting candidate and the current attempt. It does not own retries;
+// the notification outbox remains the delivery mechanism.
+type DeploymentHostingVerificationStore interface {
+	UpdateDeploymentHostingVerification(ctx context.Context, deploymentID string, update HostingVerificationUpdate) (HostingVerificationProgress, error)
 }
 
 // OpenAPISnapshotStore is the optional persistence seam for the API contract
@@ -5176,7 +5194,9 @@ type Store interface {
 	//
 	// The stage_state jsonb is owned entirely by these two methods —
 	// callers MUST NOT write the column directly. The atomic JSONB
-	// merge is the load-bearing contract: the SSE handler's 2s
+	// merge preserves additive hosting verification progress, whose nested
+	// object is owned by DeploymentHostingVerificationStore.
+	// The merge is the load-bearing contract: the SSE handler's 2s
 	// polling tick (`statusTicker` at
 	// cmd/apid/handlers_ext.go:4156-4157) reads `stage_state`
 	// verbatim and emits `event: stage` frames per transition, so
@@ -5783,6 +5803,8 @@ type Store interface {
 	// RecordAppSecretRuntimeReloadAck records an app's explicit, version-fenced
 	// claim that it applied (or failed to apply) the current secret revision.
 	RecordAppSecretRuntimeReloadAck(ctx context.Context, result AppSecretRuntimeReloadAckResult) (int, error)
+	BeginAppSecretRuntimeProcess(context.Context, AppSecretRuntimeProcess) error
+	RetireAppSecretRuntimeProcess(context.Context, AppSecretRuntimeProcess) error
 	// ListAppSecretRuntimeReloadObservations returns the latest report for each
 	// active runtime and secret in one app. An empty scope lists all scopes.
 	// Only non-sensitive version, instance and guest-init outcome metadata is

@@ -44,7 +44,7 @@ func runtimeAppValuesDB(ctx context.Context, db sqlc.DBTX, accountID, appID, dep
 		result.Secrets = append(result.Secrets, AppSecret{AccountID: accountID, AppID: appID, Scope: owner.Scope, Key: value.Key,
 			Ciphertext: value.Ciphertext, SecretClass: value.SecretClass, Kid: value.Kid, ValueHash: value.ValueHash,
 			SecretVersion: value.SecretVersion, DeliveryVersion: value.DeliveryVersion, CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt,
-			ManagedPostgresBindingID: value.ManagedPostgresBindingID, ManagedCredentialRef: value.ManagedCredentialRef,
+			ManagedPostgresBindingID: value.ManagedPostgresBindingID, ManagedPostgresAccess: value.ManagedPostgresAccess, ManagedCredentialRef: value.ManagedCredentialRef,
 			ManagedCredentialGeneration: value.ManagedCredentialGeneration, ManagedObjectStorageCredentialID: value.ManagedObjectStorageCredentialID,
 		})
 	}
@@ -73,6 +73,7 @@ func runtimeAppValuesDB(ctx context.Context, db sqlc.DBTX, accountID, appID, dep
 }
 
 type runtimeAppSealedSecretRow struct {
+	ManagedPostgresAccess            string    `json:"managed_postgres_access"`
 	Key                              string    `json:"key"`
 	Ciphertext                       []byte    `json:"ciphertext"`
 	SecretClass                      string    `json:"secret_class"`

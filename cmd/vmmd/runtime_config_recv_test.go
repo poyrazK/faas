@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -108,13 +107,13 @@ func TestRuntimeSecretApplicationAckIsVersionFenced(t *testing.T) {
 	manager := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil).RegisterInstanceForTest("instance-1", "dep-1", "app-1", "acct-1")
 	receiver := &runtimeConfigReceiver{ctx: context.Background(), mgr: manager, store: store}
 	revision := runtimeSecretTestRevision(t, *store, "")
-	request := runtimeConfigRequest{Kind: "secret_reload_ack", Revision: revision, ApplicationAck: "applied"}
+	request := runtimeConfigRequest{Kind: "secret_reload_ack", Revision: revision, ApplicationAck: "applied", Generation: strings.Repeat("a", 32)}
 	response := sendRuntimeConfigTestRequest(t, receiver, request)
 	if !response.Accepted || response.Error != "" || len(store.ackResults) != 1 {
 		t.Fatalf("ack response = %+v, records = %d", response, len(store.ackResults))
 	}
 	result := store.ackResults[0]
-	if result.Candidates[0].Version != 3 || result.InstanceID != "instance-1" || result.Status != state.SecretApplicationReloadAckApplied {
+	if result.Candidates[0].Version != 3 || result.InstanceID != "instance-1" || result.Status != state.SecretApplicationReloadAckApplied || result.Generation != request.Generation {
 		t.Fatalf("recorded application ack = %+v", result)
 	}
 
@@ -220,14 +219,18 @@ func TestLoadRuntimeSecretsHonorsDeploymentScopeAndAllowlist(t *testing.T) {
 	}
 }
 
-func TestLoadRuntimeSecretsRejectsSidecarDeployment(t *testing.T) {
+func TestLoadRuntimeSecretsMainWithSidecarsHasNoImplicitGrants(t *testing.T) {
 	manager := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil)
 	store := runtimeSecretsStoreStub{deployment: state.Deployment{
 		ID: "dep-1", AppID: "app-1", Scope: "default", Sidecars: json.RawMessage(`[{"name":"metrics"}]`),
 	}}
-	_, err := loadRuntimeSecrets(context.Background(), store, manager, "dep-1", "app-1", "acct-1")
-	if err == nil || !errors.Is(err, errRuntimeSecretSidecarsUnsupported) {
-		t.Fatalf("loadRuntimeSecrets error = %v, want sidecars unsupported", err)
+	store.secretRows = []state.AppSecret{{AccountID: "acct-1", AppID: "app-1", Scope: "default", Key: "SIDE_TOKEN", Ciphertext: []byte("must-not-unseal"), DeliveryVersion: 1}}
+	for _, grants := range []json.RawMessage{nil, json.RawMessage(`{}`), json.RawMessage(`null`)} {
+		store.deployment.OverrideEnvSecrets = grants
+		response, err := loadRuntimeSecrets(context.Background(), store, manager, "dep-1", "app-1", "acct-1")
+		if err != nil || response.Secrets == nil || len(*response.Secrets) != 0 {
+			t.Fatalf("main without grants: %+v %v", response, err)
+		}
 	}
 }
 
@@ -272,8 +275,9 @@ func TestLoadRuntimeSecretsForWorkloadUsesOnlySidecarGrant(t *testing.T) {
 	if _, err := loadRuntimeSecretsForWorkloadIfChanged(context.Background(), store, manager, "dep-1", "app-1", "acct-1", "unknown", ""); err == nil {
 		t.Fatal("undeclared workload was allowed to request secrets")
 	}
-	if _, err := loadRuntimeSecretsForWorkloadIfChanged(context.Background(), store, manager, "dep-1", "app-1", "acct-1", "", ""); !errors.Is(err, errRuntimeSecretSidecarsUnsupported) {
-		t.Fatalf("main workload error = %v, want the existing sidecar deployment restriction", err)
+	main, err := loadRuntimeSecretsForWorkloadIfChanged(context.Background(), store, manager, "dep-1", "app-1", "acct-1", "", "")
+	if err != nil || main.Secrets == nil || len(*main.Secrets) != 1 || (*main.Secrets)["MAIN_TOKEN"] != "main-value" {
+		t.Fatalf("main secrets = %+v %v, want only MAIN_TOKEN", main, err)
 	}
 }
 

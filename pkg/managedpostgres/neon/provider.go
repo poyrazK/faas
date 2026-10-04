@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -165,7 +163,7 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		PostgresMajors:               []int{14, 15, 16, 17, 18},
 		ServiceClasses:               []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction},
 		Availability:                 []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
-		CredentialAccess:             []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite},
+		CredentialAccess:             []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialMigration},
 		ScaleToZero:                  true,
 		PooledConnections:            true,
 		PointInTimeRestore:           p.maxRestoreWindow > 0,
@@ -287,34 +285,17 @@ func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (mana
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	projectPath := "/projects/" + url.PathEscape(ref.projectID)
-	var projectResult projectResponse
-	var branchesResult branchesResponse
-	var endpointsResult endpointsResponse
-	var operationsResult operationsResponse
-	group, groupContext := errgroup.WithContext(ctx)
-	group.Go(func() error {
-		return p.doJSON(groupContext, http.MethodGet, projectPath, nil, nil, &projectResult, http.StatusOK)
-	})
-	group.Go(func() error {
-		return p.doJSON(groupContext, http.MethodGet, projectPath+"/branches", nil, nil, &branchesResult, http.StatusOK)
-	})
-	group.Go(func() error {
-		return p.doJSON(groupContext, http.MethodGet, projectPath+"/endpoints", nil, nil, &endpointsResult, http.StatusOK)
-	})
-	group.Go(func() error {
-		query := url.Values{"limit": {"1000"}}
-		return p.doJSON(groupContext, http.MethodGet, projectPath+"/operations", query, nil, &operationsResult, http.StatusOK)
-	})
-	if err := group.Wait(); err != nil {
+	metadata, err := p.readDatabaseMetadata(ctx, ref, true)
+	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	if projectResult.Project.ID != ref.projectID || operationsResult.Pagination.Cursor != "" {
+	if metadata.operations.Pagination.Cursor != "" {
 		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
 	}
-	selectedBranch, primaryEndpoint, resourcesReady := selectBranch(branchesResult.Branches, endpointsResult.Endpoints, ref.branchID)
-	status := operationStatus(operationsResult.Operations, resourcesReady)
-	observedSpec := p.observedSpec(projectResult.Project, primaryEndpoint)
+	selectedBranch, primaryEndpoint, resourcesReady := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, ref.branchID)
+	status := operationStatus(metadata.operations.Operations, resourcesReady)
+	observedComputeState := computeState(primaryEndpoint.CurrentState)
+	observedSpec := p.observedSpec(metadata.project.Project, primaryEndpoint)
 	if selectedBranch.ID == "" {
 		status = managedpostgres.ProviderStatusPending
 	}
@@ -329,12 +310,23 @@ func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (mana
 		}
 		dataID = (resourceRef{projectID: ref.projectID, branchID: selectedBranch.ID}).String()
 	}
-	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, DataResourceID: dataID, Status: status, ComputeState: computeState(primaryEndpoint.CurrentState), Spec: observedSpec, RestoreLineage: lineage}, nil
+	if ref.branchID != "" && status == managedpostgres.ProviderStatusReady {
+		owner, err := p.ownerCredentials(ctx, ref.projectID, ref.branchID)
+		if err != nil {
+			return managedpostgres.ObservedDatabase{}, err
+		}
+		role := p.credentialRole(managedpostgres.CredentialRequest{ProviderResourceID: providerResourceID, Access: managedpostgres.CredentialReadWrite})
+		if err := p.roles.RestrictInherited(ctx, owner, role.scope); err != nil {
+			return managedpostgres.ObservedDatabase{}, credentialSQLError(err)
+		}
+		observedComputeState = managedpostgres.ComputeStateActive
+	}
+	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, DataResourceID: dataID, Status: status, ComputeState: observedComputeState, Spec: observedSpec, RestoreLineage: lineage}, nil
 }
 
 // ProbeScaleToZero is used only by the isolated operator qualification run.
 // It proves the configured endpoint actually suspends and wakes; lifecycle
-// reconciliation never opens customer connections.
+// routine source lifecycle reconciliation never opens customer connections.
 func (p *Provider) ProbeScaleToZero(ctx context.Context, providerResourceID string, material managedpostgres.CredentialMaterial) (managedpostgres.ScaleToZeroProbeResult, error) {
 	dsn, err := probeDSN(material)
 	if err != nil {
@@ -483,7 +475,7 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 	if ref.branchID != "" {
 		path += "/branches/" + url.PathEscape(ref.branchID)
 	}
-	var response projectResponse
+	var response createdBranchResponse
 	accepted := []int{http.StatusOK, http.StatusNoContent}
 	err = p.doJSON(ctx, http.MethodDelete, path, nil, nil, &response, accepted...)
 	if errors.Is(err, managedpostgres.ErrNotFound) {
@@ -491,6 +483,28 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 	}
 	if err != nil {
 		return managedpostgres.DeleteResult{}, err
+	}
+	if ref.branchID != "" {
+		for _, op := range response.Operations {
+			if op.Status == "error" || op.Status == "cancelled" {
+				return managedpostgres.DeleteResult{}, managedpostgres.ErrUnavailable
+			}
+		}
+		for _, op := range response.Operations {
+			if op.ID == "" || !operationFinished(op.Status) {
+				return managedpostgres.DeleteResult{Done: false}, nil
+			}
+		}
+		if len(response.Operations) == 0 {
+			// An accepted request alone is not evidence that the branch has
+			// disappeared. Confirm synchronous/empty-operation responses.
+			var remaining createdBranchResponse
+			err := p.doJSON(ctx, http.MethodGet, path, nil, nil, &remaining, http.StatusOK)
+			if errors.Is(err, managedpostgres.ErrNotFound) {
+				return managedpostgres.DeleteResult{Done: true}, nil
+			}
+			return managedpostgres.DeleteResult{Done: false}, err
+		}
 	}
 	return managedpostgres.DeleteResult{Done: true}, nil
 }
@@ -506,7 +520,7 @@ func (p *Provider) projectPayload(name string, spec managedpostgres.Spec) create
 	request.Project.DefaultEndpointSettings = endpointSettingsForSpec(spec)
 	request.Project.Settings.Quota.LogicalSizeBytes = &spec.StorageLimitBytes
 	request.Project.Branch.Name = "production"
-	request.Project.Branch.RoleName = maintenanceSourceRole
+	request.Project.Branch.RoleName = ownerLogin
 	request.Project.Branch.DatabaseName = p.databaseName
 	return request
 }

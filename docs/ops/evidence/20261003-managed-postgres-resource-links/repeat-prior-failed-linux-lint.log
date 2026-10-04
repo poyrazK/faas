@@ -1,0 +1,5 @@
+pkg/fcvm/resource_links.go:259:4: QF1001: could apply De Morgan's law (staticcheck)
+			!((argv[3] == nc.VethHost && argv[8] == nc.VethPeer) || (argv[3] == nc.PrivateVethHost && argv[8] == nc.PrivateVethPeer)) {
+			^
+1 issues:
+* staticcheck: 1

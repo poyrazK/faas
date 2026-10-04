@@ -244,6 +244,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		return Database{}, false, ErrConflict
 	}
 	now := s.now()
+	currentRestoreWindow := source.Spec.RestoreWindowSeconds
 	if request.SourceDefinition != nil {
 		definition := *request.SourceDefinition
 		if definition.Spec.Validate() != nil || definition.Spec.RestoreWindowSeconds <= 0 || definition.BackendID == "" || definition.BackendFingerprint == "" || definition.ProviderResourceID == "" || definition.DataResourceID != "" && !validDataResourceID(definition.DataResourceID) {
@@ -252,16 +253,10 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		if source.BackendID != definition.BackendID || source.BackendFingerprint != definition.BackendFingerprint || source.ProviderResourceID != definition.ProviderResourceID || source.DataResourceID != definition.DataResourceID {
 			return Database{}, false, ErrConflict
 		}
-		// Current retention may have been shortened since capture. Never
-		// promise recovery outside either the captured or current window.
-		if source.Spec.RestoreWindowSeconds <= 0 || now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
-			return Database{}, false, ErrInvalid
-		}
 		source.Spec = definition.Spec
 	}
-	if !request.PointInTime.Before(now) || source.Spec.RestoreWindowSeconds <= 0 || now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
-		return Database{}, false, ErrInvalid
-	}
+	// Returning an existing restore does not require its original point to
+	// remain in retention: the durable target has already been reserved.
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
 		if _, err := s.Get(ctx, request.AccountID, existing.ID); err != nil {
@@ -281,6 +276,11 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return Database{}, false, err
+	}
+	if !request.PointInTime.Before(now) || currentRestoreWindow <= 0 || source.Spec.RestoreWindowSeconds <= 0 ||
+		now.Sub(request.PointInTime) > time.Duration(currentRestoreWindow)*time.Second ||
+		now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
+		return Database{}, false, ErrInvalid
 	}
 	reservationLimit, err := s.AdmitRestoreReservation(ctx, request.AccountID, RestoreSourceDefinition{
 		Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID, DataResourceID: source.DataResourceID})
@@ -558,7 +558,15 @@ func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Dat
 }
 
 func (s *Service) Get(ctx context.Context, accountID, databaseID string) (Database, error) {
-	return customerDatabase(ctx, s.store, accountID, databaseID)
+	database, err := customerDatabase(ctx, s.store, accountID, databaseID)
+	if err != nil {
+		return Database{}, err
+	}
+	rows, err := s.withHealth(ctx, accountID, []Database{database})
+	if err != nil {
+		return Database{}, err
+	}
+	return rows[0], nil
 }
 
 // FindByName locates an account-owned durable reservation. Clone workers use
@@ -572,17 +580,23 @@ func (s *Service) List(ctx context.Context, accountID string) ([]Database, error
 	if accountID == "" {
 		return nil, ErrInvalid
 	}
+	var items []Database
+	var err error
 	if customers, ok := s.store.(CustomerDatabaseStore); ok {
-		return customers.ListCustomerDatabases(ctx, accountID)
+		items, err = customers.ListCustomerDatabases(ctx, accountID)
+	} else {
+		items, err = s.store.List(ctx, accountID)
 	}
-	items, err := s.store.List(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
 	visible := make([]Database, 0, len(items))
 	for _, database := range items {
 		if database.EnvironmentCloneOperationID == "" {
 			visible = append(visible, database)
 		}
 	}
-	return visible, err
+	return s.withHealth(ctx, accountID, visible)
 }
 
 func (s *Service) releaseProviderError(ctx context.Context, database Database, next State, providerErr error) error {

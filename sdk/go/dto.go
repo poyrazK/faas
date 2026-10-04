@@ -17,6 +17,10 @@ import "github.com/poyrazK/faas/sdk/go/internal/api"
 // (dto.go, build.go, appmanifest.go, cliauth.go, secrets.go). New
 // DTOs in internal/api should be added here on the next PR.
 type (
+	RouteCustomerUsageOptions  = api.RouteCustomerUsageOptions
+	RouteCustomerUsageResponse = api.RouteCustomerUsageResponse
+	RouteCustomerUsage         = api.RouteCustomerUsage
+	RouteCustomerObservation   = api.RouteCustomerObservation
 	// App lifecycle.
 	CreateAppRequest          = api.CreateAppRequest
 	UpdateAppRequest          = api.UpdateAppRequest
@@ -337,6 +341,8 @@ type (
 	IssueImpact                         = api.IssueImpact
 	IssueImpactAlertPolicy              = api.IssueImpactAlertPolicy
 	UpdateIssueImpactAlertPolicyRequest = api.UpdateIssueImpactAlertPolicyRequest
+	IssueOwnershipRule                  = api.IssueOwnershipRule
+	IssueOwnershipRules                 = api.IssueOwnershipRules
 	IssueDetail                         = api.IssueDetail
 	ListIssuesResponse                  = api.ListIssuesResponse
 	IssueEventResponse                  = api.IssueEventResponse
@@ -344,3 +350,10 @@ type (
 	CreateIssueIngestTokenRequest       = api.CreateIssueIngestTokenRequest
 	IssueIngestToken                    = api.IssueIngestToken
 )
+type CommitSourceResponse = api.CommitSourceResponse
+type CommitReceiptResponse = api.CommitReceiptResponse
+type CommitOperationResponse = api.CommitOperationResponse
+type CommitEventRequest = api.CommitEventRequest
+
+type CommitBlockedEventResponse = api.CommitBlockedEventResponse
+type CommitBlockedEventsResponse = api.CommitBlockedEventsResponse

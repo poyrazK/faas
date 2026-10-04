@@ -237,6 +237,19 @@ grep -Fq 'native_e2e_lane_tests containers "$GITHUB_WORKSPACE"' "${workflow}" ||
 # selection, while full/qualify continue to use the platform-wide contract.
 grep -Fq 'native_e2e_lane_tests smoke "$GITHUB_WORKSPACE"' "${workflow}" ||
   fail "the smoke lane does not derive its selected tests for its verdict"
+
+# The unit must outlast the test alarm, including compilation and cleanup.
+# A 60m smoke test budget inside the former 25m unit never reaches its verdict.
+smoke_test_minutes="$(sed -n 's/^[[:space:]]*smoke) phase_timeout=\([0-9]*\)m ;;$/\1/p' "${runner}")"
+smoke_unit_minutes="$(awk '
+  /id: phase_smoke$/ { in_smoke = 1 }
+  in_smoke && /--property=RuntimeMaxSec=/ { print; exit }
+' "${workflow}" | sed -n 's/.*--property=RuntimeMaxSec=\([0-9]*\)m .*/\1/p')"
+[[ "${smoke_test_minutes}" =~ ^[0-9]+$ && "${smoke_unit_minutes}" =~ ^[0-9]+$ ]] ||
+  fail "cannot determine smoke test and unit budgets"
+[[ "${smoke_unit_minutes}" -gt "${smoke_test_minutes}" ]] ||
+  fail "smoke unit ${smoke_unit_minutes}m cannot outlast test budget ${smoke_test_minutes}m"
+
 grep -Fq 'native_e2e_phase_tests jobs "$GITHUB_WORKSPACE"' "${workflow}" ||
   fail "the Jobs-only lane does not derive its selected tests for its verdict"
 grep -Fq 'native_e2e_lane_tests exclusive-operations-only "$GITHUB_WORKSPACE"' "${workflow}" ||

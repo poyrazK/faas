@@ -213,7 +213,9 @@ func (m *MemStore) DeleteOutboundIntegration(_ context.Context, accountID, integ
 		return ErrNotFound
 	}
 	delete(m.outboundIntegrationOffers, integrationID)
+	m.outboundCredentialRevisions[integrationID]++
 	delete(m.outboundCredentials, integrationID)
+	delete(m.outboundProbePolicies, integrationID)
 	for key, binding := range m.outboundAppBindings {
 		if binding.ID == integrationID {
 			delete(m.outboundAppBindings, key)
@@ -229,6 +231,7 @@ func (m *MemStore) SetOutboundCredential(_ context.Context, accountID, integrati
 	if !ok || offer.AccountID != accountID || !offer.Enabled || offer.CredentialSource != "customer_sealed" || len(sealed) == 0 {
 		return ErrNotFound
 	}
+	m.outboundCredentialRevisions[integrationID]++
 	m.outboundCredentials[integrationID] = append([]byte(nil), sealed...)
 	offer.CredentialConfigured = true
 	m.outboundIntegrationOffers[integrationID] = offer
@@ -242,6 +245,7 @@ func (m *MemStore) DeleteOutboundCredential(_ context.Context, accountID, integr
 	if !ok || offer.AccountID != accountID || offer.CredentialSource != "customer_sealed" {
 		return ErrNotFound
 	}
+	m.outboundCredentialRevisions[integrationID]++
 	delete(m.outboundCredentials, integrationID)
 	offer.CredentialConfigured = false
 	offer.RunsEnabled = false

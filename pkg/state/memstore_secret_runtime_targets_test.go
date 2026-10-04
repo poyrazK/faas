@@ -258,3 +258,21 @@ func TestMemStoreSecretRevocationAckTracksRemovalAndReintroduction(t *testing.T)
 		}
 	}
 }
+
+func TestMemStoreMigrationBindingsHaveNoServingReloadTargets(t *testing.T) {
+	store, ctx, account, app := memValueHashFixture(t)
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:migration-targets", Status: state.DeployLive, Scope: "prod"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 256, "node-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutManagedPostgresSecret(ctx, state.AppSecret{AccountID: account.ID, AppID: app.ID, Scope: "prod", Key: "SCHEMA_DSN", Ciphertext: []byte("sealed"), ManagedPostgresBindingID: "migration", ManagedPostgresAccess: "migration", ManagedCredentialRef: "credential", ManagedCredentialGeneration: 1}); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := store.ListAppSecretRuntimeReloadTargets(ctx, account.ID, app.ID, "")
+	if err != nil || len(targets) != 0 {
+		t.Fatalf("migration serving targets = %+v, %v", targets, err)
+	}
+}

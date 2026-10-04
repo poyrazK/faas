@@ -320,14 +320,19 @@ message LivenessFailedReport {
   // goroutine: timeout / conn_refused / conn_err / non_200 /
   // n_consecutive. Lands in the audit row's data JSON.
   string reason = 2;
+  // Observer node, retained across retries; instance IDs survive migration.
+  string source_node_id = 3;
 }
 
 message LivenessFailedAck {
-  // ok is true when the schedd engine accepted the report (a
-  // non-RUNNING instance is also "ok" — the state-machine
-  // guard makes the destroy a no-op rather than an error so
-  // a re-report doesn't trip the gRPC error path).
+  // ok retains the legacy acceptance/no-op acknowledgement.
   bool ok = 1;
+  // ADR-471: true once the observation is applied/superseded by a cold
+  // instance state. False means pending (including cross-node notify relay).
+  // vmmd retains its durable report and retries; this is not a drain receipt.
+  // Old schedds omit this field and therefore cannot prematurely retire it.
+  bool applied = 2;
+
 }
 
 // ReportWorkloadOOMRequest (Cluster C, ADR-121) is the vmmd → schedd
@@ -340,8 +345,7 @@ message LivenessFailedAck {
 // into Why and "at least peak_mb + 8 MB" into Fix).
 //
 // Wire is additive per ADR-016 — pre-Cluster-C schedds reject the
-// RPC with codes.Unimplemented; vmmd tolerates the rejection
-// (the workload is dead; the signal is best-effort).
+// RPC with codes.Unimplemented; vmmd retains the report for retry (ADR-471).
 message ReportWorkloadOOMRequest {
   // instance_id is the instances.id row vmmd observed the OOM
   // kill on. The schedd engine resolves the parent app +
@@ -359,16 +363,17 @@ message ReportWorkloadOOMRequest {
   // "your app exceeded the plan's RAM cap" framing on the
   // dashboard. Templated into the whycopy Fix string.
   uint32 plan_mb     = 3;
+  // Observer node, retained across retries; instance IDs survive migration.
+  string source_node_id = 4;
 }
 
-// ReportWorkloadOOMAck is the typed "I consumed your report"
-// signal vmmd sees after the dial-and-recv completes. ok=true
-// when the schedd engine accepted the report (state-machine
-// guard makes a duplicate report a no-op rather than an error).
-//
-// Additive per ADR-016.
+// ReportWorkloadOOMAck separates acceptance from application (ADR-471).
+// This is not a fleet drain receipt. Additive per ADR-16.
 message ReportWorkloadOOMAck {
   bool ok = 1;
+  // False until a cold outcome is observed; older schedds omit this field.
+  bool applied = 2;
+
 }
 
 message WakeRequest {

@@ -494,7 +494,16 @@ func (d *Drain) dispatchExclusiveOperation(ctx context.Context, owners state.Exc
 		_ = owners.FailPendingExclusiveOperation(ctx, op.AccountID, op.ID, "accepted deployment version is unavailable")
 		return
 	}
-	wake, err := d.engine.Wake(ctx, op.AppID, version.DeploymentID, scope, TriggerMeterd)
+	coordinated, err := d.engine.EnsureWakeForDeployment(ctx, op.AppID, version.DeploymentID, scope, TriggerMeterd)
+	if err == nil {
+		err = coordinated.Err
+	}
+	var wake WakeResult
+	if err == nil && coordinated.Instance != nil {
+		wake = WakeResult{InstanceID: coordinated.Instance.InstanceID, NodeID: coordinated.Instance.NodeID,
+			DeploymentID: coordinated.Instance.DeploymentID, WakeID: coordinated.Instance.WakeID,
+			Port: int(coordinated.Instance.Port), Identity: coordinated.Instance.Identity}
+	}
 	if err != nil || wake.AtCapacity || wake.InstanceID == "" || wake.NodeID == "" || wake.WakeID == "" || (version.DeploymentID != "" && wake.DeploymentID != version.DeploymentID) {
 		if errors.Is(err, ErrPermanentWake) || errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrInvalidArgument) {
 			_ = owners.FailPendingExclusiveOperation(ctx, op.AccountID, op.ID, "application cannot be woken")

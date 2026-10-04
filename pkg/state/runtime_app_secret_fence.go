@@ -68,7 +68,7 @@ func NewRuntimeAppSecretFence(snapshot RuntimeAppValuesSnapshot) (RuntimeAppSecr
 		rows = append(rows, runtimeSecretFingerprintRow{Key: secret.Key, Ciphertext: secret.Ciphertext,
 			Class: secret.SecretClass, Kid: secret.Kid, ValueHash: secret.ValueHash, SecretVersion: secret.SecretVersion,
 			DeliveryVersion: secret.DeliveryVersion, CreatedAt: secret.CreatedAt.UTC(),
-			ManagedPostgresBindingID: secret.ManagedPostgresBindingID, ManagedCredentialRef: secret.ManagedCredentialRef,
+			ManagedPostgresBindingID: secret.ManagedPostgresBindingID, ManagedPostgresAccess: secret.ManagedPostgresAccess, ManagedCredentialRef: secret.ManagedCredentialRef,
 			ManagedCredentialGeneration: secret.ManagedCredentialGeneration, ManagedObjectStorageCredentialID: secret.ManagedObjectStorageCredentialID})
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Key < rows[j].Key })
@@ -104,8 +104,8 @@ func canonicalRuntimeSecretJSON(raw []byte) (json.RawMessage, error) {
 }
 
 type runtimeSecretFingerprintRow struct {
-	Key, Class, Kid, ValueHash, ManagedPostgresBindingID, ManagedCredentialRef, ManagedObjectStorageCredentialID string
-	Ciphertext                                                                                                   []byte
-	SecretVersion, DeliveryVersion, ManagedCredentialGeneration                                                  int64
-	CreatedAt                                                                                                    time.Time
+	Key, Class, Kid, ValueHash, ManagedPostgresAccess, ManagedPostgresBindingID, ManagedCredentialRef, ManagedObjectStorageCredentialID string
+	Ciphertext                                                                                                                          []byte
+	SecretVersion, DeliveryVersion, ManagedCredentialGeneration                                                                         int64
+	CreatedAt                                                                                                                           time.Time
 }

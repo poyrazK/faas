@@ -35,6 +35,7 @@ export { InvocationsService } from './generated/services/InvocationsService.js';
 export { KeysService } from './generated/services/KeysService.js';
 export { MetaService } from './generated/services/MetaService.js';
 export { MfaService } from './generated/services/MfaService.js';
+export { OutboundService } from './generated/services/OutboundService.js';
 export { QueuesService } from './generated/services/QueuesService.js';
 export { RunsService } from './generated/services/RunsService.js';
 export { SecretsService } from './generated/services/SecretsService.js';
@@ -153,3 +154,4 @@ export {
 } from './dev-bridge.js';
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
+export { insertCommitEvent, type CommitEvent, type CommitTransaction } from "./commit.js";

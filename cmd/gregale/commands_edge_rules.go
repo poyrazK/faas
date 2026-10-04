@@ -93,7 +93,7 @@ func cmdEdgeRules(args []string) int {
 	case subRm:
 		return cmdEdgeRulesRm(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown edge-rules subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown edge-rules subcommand %q\n", args[0])
 	if sug, _ := suggestSubcommand(args[0], parent); sug != "" {
 		maybeSuggestSub(sug)
 	}

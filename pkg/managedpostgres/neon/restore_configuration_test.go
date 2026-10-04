@@ -94,6 +94,11 @@ func testRestoreCapturedEndpointConfiguration(t *testing.T, class managedpostgre
 			writeResponse(t, w, http.StatusOK, map[string]any{"endpoints": []endpoint{
 				{ID: "ep-source", BranchID: "br-source", Type: "read_write", CurrentState: "active", MinimumCU: 8, MaximumCU: 16, SuspendTimeoutSecond: -1}, target,
 			}})
+		case projectPath + "/connection_uri":
+			if r.URL.Query().Get("branch_id") != "br-stage" || r.URL.Query().Get("role_name") != ownerLogin || r.URL.Query().Get("pooled") != "false" {
+				t.Errorf("inherited credential restriction crossed target identity: %s", r.URL.RawQuery)
+			}
+			writeResponse(t, w, http.StatusOK, connectionURIResponse{URI: "postgres://gregale_owner:test@ep-stage.example.test/gregale?sslmode=require"})
 		case projectPath + "/operations":
 			writeResponse(t, w, http.StatusOK, map[string]any{"operations": []operation{}})
 		default:
@@ -110,6 +115,9 @@ func testRestoreCapturedEndpointConfiguration(t *testing.T, class managedpostgre
 	actual, err := provider.Inspect(t.Context(), accepted.ProviderResourceID)
 	if err != nil || actual.Status != managedpostgres.ProviderStatusReady || actual.Spec != spec {
 		t.Fatalf("restored endpoint did not retain captured configuration: %+v, %v", actual, err)
+	}
+	if provider.roles.(*fakeCredentialRoles).restrictions != 1 {
+		t.Fatal("ready restore did not restrict inherited runtime credentials")
 	}
 	if actual.RestoreLineage == nil || actual.RestoreLineage.SourceResourceID != request.SourceResourceID || !actual.RestoreLineage.PointInTime.Equal(point) {
 		t.Fatal("configured endpoint lost exact data lineage")

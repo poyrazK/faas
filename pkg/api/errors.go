@@ -70,6 +70,7 @@ func AsProblem(err error) *Problem {
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
+	BindingsCheck *BindingCheckReport `json:"bindings_check,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -636,6 +637,8 @@ const (
 	CodeConflict                        = "conflict"
 	CodeFullEnvironmentCloneUnavailable = "environment_full_clone_unavailable"
 	CodeNoLiveDeployment                = "no_live_deployment"
+	CodeAppAdmissionUnavailable         = "app_admission_unavailable"
+	CodeDatabaseCutoverFenced           = "database_cutover_fenced"
 	// CodeInternal is returned by handlers when an unexpected server-side
 	// failure surfaces to the caller (DB Tx commit, network blip, partial
 	// state). Distinct from CodeCapacity (503, "we ran out of headroom")
@@ -1068,6 +1071,9 @@ const (
 	// re-read the deployment on its next tick; it must never retry the
 	// traffic write against a stale step.
 	CodeCanaryStepConflict = "canary_step_conflict"
+	// Route enforcement blocks traffic advancement until current evidence passes.
+	CodeRouteGateBlocked   = "route_gate_blocked"
+	CodeRouteHealthBlocked = "route_health_blocked"
 	// CodeTrafficPercentSumInvalid (issue #556) is a 409
 	// (Conflict) for the defensive backstop: post-write
 	// Σ(traffic_percent WHERE status='live') != 100. In
@@ -1550,6 +1556,9 @@ const (
 	// failures so operators can tell serving-path regressions from image
 	// startup regressions.
 	CodeDeploymentSmokeFailed = "deployment_smoke_failed"
+	// Public candidate verification stayed unavailable within the durable
+	// recovery window. This does not establish an application health verdict.
+	CodeDeploymentVerificationUnavailable = "deployment_verification_unavailable"
 	// CodeReleaseCommandFailed means the deployment's pre-boot release task
 	// failed, timed out, or was cancelled. The previous deployment remains
 	// live; task output is available through the app-task inspection surface.
@@ -1872,7 +1881,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotImplemented
 	case CodeWorkflowCallbackExpired:
 		return http.StatusGone
-	case CodeCapacity, CodeServiceRecoveryCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
+	case CodeAppAdmissionUnavailable, CodeCapacity, CodeDeploymentVerificationUnavailable, CodeServiceRecoveryCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeAppUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
 		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable:
 		return http.StatusServiceUnavailable
@@ -1910,14 +1919,14 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
+	case CodeDatabaseCutoverFenced, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked:
 		return http.StatusConflict
-	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeDeploymentNotLive:
+	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the

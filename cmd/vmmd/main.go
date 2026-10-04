@@ -35,7 +35,6 @@ import (
 
 	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
-	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
@@ -274,28 +273,6 @@ func loadNodeSigningKey(pathOverride string) (*ecdsa.PrivateKey, string, error) 
 
 const metricsPath = "/metrics"
 
-// ReportLivenessFailedCtxTimeout caps the vmmd→schedd
-// drain for the liveness-failed RPC (issue #554 / ADR-078).
-// 3 s matches the gRPC client default but is a separate,
-// named constant so a future ops review can lift the cap if
-// the schedd-side state-machine guard grows. The dial + RPC
-// are both bounded by this; a wedged schedd surfaces as a
-// log warning, the vmmd loop exits cleanly on its end, and
-// the next probe will re-trigger if the guest is still
-// wedged.
-const ReportLivenessFailedCtxTimeout = 3 * time.Second
-
-// ReportWorkloadOOMCtxTimeout (Cluster C / ADR-121) caps the
-// vmmd→schedd drain for the workload-OOM RPC. The wire path
-// is best-effort (the guest-init listener exits on its end
-// after one emit; the workload is dead, the VM is about to be
-// torn down) so 3 s matches the liveness constant — a wedged
-// schedd surfaces as a Warn log, the vmmd loop exits cleanly
-// on its end, and the customer's deployment was going to
-// fail anyway (the stamp path on the guest side is the source
-// of truth).
-const ReportWorkloadOOMCtxTimeout = 3 * time.Second
-
 func main() {
 	if runMountBindHelper() {
 		return
@@ -310,8 +287,8 @@ type runDeps struct {
 	configPath string                                                                                                // defaults to /etc/faas/vmmd.toml
 	detectFC   func(context.Context) (string, error)                                                                 // defaults to fcvm.DetectFirecrackerVersion
 	listen     func(ctx context.Context, target string, tlsCfg *tls.Config, daemonUser string) (net.Listener, error) // defaults to wire.ListenAs (issue #95 / ADR-025)
-	// openDB / openStore: only invoked when [compute_node].name is set;
-	// the legacy default-local path skips the DB entirely (no upsert).
+	// openDB / openStore: invoked when a DB URL is configured, including
+	// default-local nodes that need durable managed PostgreSQL admission.
 	openDB    func(context.Context, string) (*pgxpool.Pool, error)
 	openStore func(*pgxpool.Pool) *state.PgStore
 	// detectOverlayIP — best-effort, default shelles out to
@@ -399,6 +376,9 @@ type runDeps struct {
 	// prepareJailHelper moves the release helper copy onto daemon startup.
 	// nil lets orchestration tests avoid writing the production chroot.
 	prepareJailHelper func(*fcvm.JailerVMM) error
+	// recoverResources permits deterministic cancellation during startup inventory.
+	// nil selects the platform restart quarantine implementation.
+	recoverResources func(context.Context, *fcvm.Manager, string, string, *slog.Logger) (*fcvm.ResourceJournal, error)
 }
 
 func defaultDeps() runDeps {
@@ -700,20 +680,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// before the gRPC listener binds. Fail-closed: if the upsert
 	// fails (Postgres down, schema drift), vmmd exits rather than
 	// serving traffic with no identity. The legacy default-local
-	// path (NodeName empty) skips the DB entirely — no migration
-	// is required on a fresh single-box dev install beyond what
-	// already exists.
+	// path skips self-registration. A configured DB URL also enables
+	// durable app admission on that node (ADR-468).
 	var nodeID string
 	var pool *pgxpool.Pool
 	var store state.Store
-	if cfg.ComputeNode.NodeName != "" {
-		dbURL := cfg.DBURL
-		if dbURL == "" {
-			dbURL = envOr("FAAS_VMMD_DBURL", "")
-		}
-		if dbURL == "" {
-			return errors.New("vmmd: [compute_node].name set but [db_url] (or FAAS_VMMD_DBURL) is empty")
-		}
+	dbURL := cfg.DBURL
+	if dbURL == "" {
+		dbURL = envOr("FAAS_VMMD_DBURL", "")
+	}
+	if cfg.ComputeNode.NodeName != "" && dbURL == "" {
+		return errors.New("vmmd: [compute_node].name set but [db_url] (or FAAS_VMMD_DBURL) is empty")
+	}
+	if dbURL != "" {
 		// Issue #938 / PR-A Blocker 2: the original code was
 		// `pool, err := deps.openDB(ctx, dbURL)` — Go 1.22's shadowing
 		// rules treated `err` as already declared (from the outer
@@ -727,10 +706,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		var err error
 		pool, err = deps.openDB(ctx, dbURL)
 		if err != nil {
-			return fmt.Errorf("vmmd: open db for self-registration: %w", err)
+			return fmt.Errorf("vmmd: open db for admission and self-registration: %w", err)
 		}
 		defer pool.Close()
 		store = deps.openStore(pool)
+	}
+	if cfg.ComputeNode.NodeName != "" {
 		cn, err := registerComputeNode(ctx, store, cfg.ComputeNode, targetURL,
 			func(ctx context.Context) (string, error) {
 				return defaultDetectOverlayIP(ctx, cfg.ComputeNode)
@@ -943,16 +924,52 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	// ADR-471: install durable failure delivery before accepting Wake RPCs.
+	failureNodeID := nodeID
+	if deps.scheddTarget != "" && failureNodeID == "" && store != nil {
+		localNode, lookupErr := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+		if lookupErr != nil {
+			return fmt.Errorf("vmmd: resolve local failure-report node: %w", lookupErr)
+		}
+		failureNodeID = localNode.ID
+	}
+	failureReports, err := wireFailureReports(failureNodeID, mgr, cfg, deps, log)
+	if err != nil {
+		return err
+	}
+	if failureReports != nil {
+		defer func() { _ = failureReports.Close() }()
+	}
+	mgr.WithAppAdmissionGuard(managedPostgresAdmissionGuard(store))
+	// ADR-472: preserve restart-survivor identities before a prepared pool
+	// or any Wake RPC can consume the new allocator's initially free slots.
+	recoverResources := deps.recoverResources
+	if recoverResources == nil {
+		recoverResources = recoverRestartResources
+	}
+	resourceJournal, err := recoverResources(ctx, mgr, jailer.JailRoot(), cfg.ResourceJournalDir, log)
+	if err != nil {
+		if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
+			return nil
+		}
+		return err
+	}
+	if resourceJournal != nil {
+		defer func() { _ = resourceJournal.Close() }()
+	}
 	// ADR-373: DNS-gated egress is on unless the operator turns it off for
 	// this node, e.g. while the node's resolver hook is unavailable.
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_EGRESS_DNS_GATING")), "off") {
 		log.Warn("vmmd: DNS-gated egress disabled by FAAS_EGRESS_DNS_GATING=off")
 		mgr.WithDNSGatedEgress(false)
 	}
-	// Recover only unused cache names from a previous daemon, including when
-	// an operator has disabled the cache. Active instance names are excluded.
+	// ADR-477: journal survivors remain quarantined. The legacy name reaper
+	// is only available to portable wiring without a journal.
 	preparedCleanupCtx, preparedCleanupCancel := context.WithTimeout(ctx, 5*time.Second)
-	preparedCleanupErr := fcvm.ReapPreparedNetworks(preparedCleanupCtx, wire.ExecRunner{})
+	var preparedCleanupErr error
+	if resourceJournal == nil {
+		preparedCleanupErr = fcvm.ReapPreparedNetworks(preparedCleanupCtx, wire.ExecRunner{})
+	} // Journal survivors require verified recovery, never name-based deletion.
 	preparedCleanupCancel()
 	if preparedCleanupErr != nil {
 		return fmt.Errorf("vmmd: recover prepared networks: %w", preparedCleanupErr)
@@ -965,7 +982,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Error("vmmd: prepared network cleanup", "err", err)
 		}
 	}()
-	jailer.WithProcessExitSink(mgr.ProcessExited)
+	jailer.WithProcessExitAttemptSink(mgr.ProcessExitedAttempt)
 	// Issue #554 / ADR-078 / PR review fix: wire the per-instance
 	// liveness probe registry + starter so the Manager's bringUp /
 	// Park hooks actually launch + cancel the probe loops. The
@@ -1011,6 +1028,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	mgr.WithBaseGenerations(baseGenerations)
+	// ADR-510: identify the kernel and cached bases in the background so the
+	// first restore after this start does not hash a base in its wake path.
+	go mgr.PrimeBackingDigests(ctx)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// (pkg/events.Platform) on the VMM. vmmd is the canonical emit
 	// site for wake.readiness_200 (the first 2xx probe) and a
@@ -1517,6 +1537,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		grpcBound.MarkBound()
 		serveErr <- gsrv.Serve(lis)
 	}()
+	if failureReports != nil {
+		failureReports.Start(ctx)
+	}
 
 	// PR-E egress-deny counter poll adapter. Reads `nft list counters`
 	// every EgressPollInterval (15 s by default) and emits the per-CIDR
@@ -1620,152 +1643,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			go runCapacityPublish(ctx, mgr, nodeID, cfg.ComputeNode, deps.scheddTarget, deps.scheddClientTLS, interval, resident, nodeKey, nodeKeyID, log, stats)
 		}
 		log.Info("vmmd: capacity publisher wired", "node_id", nodeID, "target", deps.scheddTarget, "interval", interval.String())
-	}
-
-	// Issue #554 / ADR-078 / PR-review fix F2: vmmd → schedd
-	// drain for the liveness-probe failure path. The per-instance
-	// poll goroutine (cmd/vmmd/liveness_recv.go::livenessProbeLoop)
-	// invokes Manager.ReportLivenessFailed once the
-	// consecutive-failure counter reaches the per-plan N. The
-	// relay dials schedd over the same gRPC channel the capacity
-	// publisher uses (deps.scheddTarget + deps.scheddClientTLS),
-	// calls scheddpb.ReportLivenessFailed, and ignores the
-	// returned ack — schedd's Engine.DestroyForLivenessFailure
-	// is the source of truth for the state transition, and the
-	// vmmd-side loop has already exited on its end.
-	//
-	// Why a fresh dial per call: the failure is rare (default
-	// 3 consecutive misses, with the plan's liveness cooldown
-	// keeping the per-app rate well under one-per-second), so
-	// the connection-pool cost is negligible vs. the complexity
-	// of maintaining a long-lived stream on a fire-and-forget
-	// path. The dial is bounded by ReportLivenessFailedCtxTimeout
-	// so a wedged schedd doesn't bleed back into the poll
-	// goroutine.
-	//
-	// Skipping on the single-box default-local path
-	// (deps.scheddTarget == ""): the liveness probe loop is
-	// still wired and will increment its counter, but the relay
-	// is a no-op. The single-box dev loop has no schedd to
-	// drain into; the operator runs the test on a multi-node
-	// fleet to exercise the full path. Mirrors the capacity
-	// publisher's gating above.
-	if deps.scheddTarget != "" {
-		mgr.WithLivenessSink(func(ctx context.Context, instanceID, reason string) {
-			dialCtx, cancel := context.WithTimeout(ctx, ReportLivenessFailedCtxTimeout)
-			defer cancel()
-			conn, err := wire.DialContext(dialCtx, deps.scheddTarget, deps.scheddClientTLS)
-			if err != nil {
-				log.Warn("vmmd: liveness-failed dial failed; engine will not be notified",
-					"instance_id", instanceID, "reason", reason, "err", err)
-				return
-			}
-			defer func() { _ = conn.Close() }()
-			cli := scheddpb.NewScheddClient(conn)
-			if _, err := cli.ReportLivenessFailed(dialCtx, &scheddpb.LivenessFailedReport{
-				InstanceId: instanceID,
-				Reason:     reason,
-			}); err != nil {
-				log.Warn("vmmd: ReportLivenessFailed RPC failed",
-					"instance_id", instanceID, "reason", reason, "err", err)
-				return
-			}
-			log.Info("vmmd: liveness-failure drained to schedd",
-				"instance_id", instanceID, "reason", reason)
-		})
-		log.Info("vmmd: liveness-failed relay wired",
-			"target", deps.scheddTarget,
-			"timeout", ReportLivenessFailedCtxTimeout.String())
-	}
-
-	// Cluster C / ADR-121: vmmd → schedd drain for the
-	// workload-OOM signal. The framework_ready receiver
-	// (cmd/vmmd/framework_ready_recv.go) invokes
-	// Manager.ReportWorkloadOOM when a guest-init
-	// cgroup.events listener detects an oom_kill on the
-	// per-VM cgroup v2 leaf and emits DGRAM type=0x05.
-	// The relay dials schedd over the same gRPC channel as
-	// the liveness relay (deps.scheddTarget +
-	// deps.scheddClientTLS), calls
-	// scheddpb.ReportWorkloadOOM, and ignores the returned
-	// ack — schedd's
-	// Engine.DestroyForWorkloadOOMFailure is the source of
-	// truth for the stamp, and the guest-init listener has
-	// already exited on its end.
-	//
-	// Why a fresh dial per call: same rationale as the
-	// liveness relay above (failure is rare, fire-and-forget,
-	// connection-pool cost negligible). The dial is bounded
-	// by ReportWorkloadOOMCtxTimeout so a wedged schedd
-	// doesn't bleed back into the framework_ready dispatch
-	// loop.
-	//
-	// Skipping on the single-box default-local path
-	// (deps.scheddTarget == ""): mirrors the liveness
-	// relay gating. The framework_ready receiver still
-	// parses + dispatch type=0x05 DGRAMs (the type
-	// validation is host-local), but the sink is a no-op.
-	if deps.scheddTarget != "" {
-		mgr.WithWorkloadOOMSink(func(ctx context.Context, instanceID string, peakMB, planMB int) {
-			// Review finding #6: spawn the relay in a
-			// goroutine so the framework_ready recv loop
-			// returns immediately. The previous shape ran
-			// the dial + RPC synchronously inside the
-			// dispatchWorkloadOOM call, which is invoked
-			// from the framework_ready recv loop's
-			// single-threaded switch. A wedged schedd (or
-			// a slow TLS handshake) would block the entire
-			// DGRAM loop for the
-			// ReportWorkloadOOMCtxTimeout (3s) ceiling per
-			// OOM — and a fleet-wide OOM storm (10
-			// instances of the same app all hitting the
-			// plan cap) would queue a backlog of VMs
-			// waiting for the loop to drain. The
-			// goroutine shape lets the recv loop keep
-			// polling; each relay runs independently. The
-			// receiver's stored ctx (the closure's `ctx`
-			// here) is long-lived; the goroutine respects
-			// it via the dialCtx cancel propagation.
-			//
-			// Note: the liveness relay above still uses
-			// the synchronous shape — the liveness path
-			// is one-at-a-time per instance (a probe
-			// cycle is ~3s, so the relay throughput is
-			// bounded by the probe schedule). The
-			// workload-OOM path is bursty
-			// (fleet-wide OOMs from a single bad
-			// customer app), so the async shape is the
-			// correct fit here. A future PR can lift
-			// the liveness relay to the same shape if
-			// the operator's dashboard shows an
-			// liveness-driven backlog.
-			go func() {
-				dialCtx, cancel := context.WithTimeout(ctx, ReportWorkloadOOMCtxTimeout)
-				defer cancel()
-				conn, err := wire.DialContext(dialCtx, deps.scheddTarget, deps.scheddClientTLS)
-				if err != nil {
-					log.Warn("vmmd: workload-OOM dial failed; engine will not be notified",
-						"instance_id", instanceID, "peak_mb", peakMB, "plan_mb", planMB, "err", err)
-					return
-				}
-				defer func() { _ = conn.Close() }()
-				cli := scheddpb.NewScheddClient(conn)
-				if _, err := cli.ReportWorkloadOOM(dialCtx, &scheddpb.ReportWorkloadOOMRequest{
-					InstanceId: instanceID,
-					PeakMb:     uint32(peakMB),
-					PlanMb:     uint32(planMB),
-				}); err != nil {
-					log.Warn("vmmd: ReportWorkloadOOM RPC failed",
-						"instance_id", instanceID, "peak_mb", peakMB, "plan_mb", planMB, "err", err)
-					return
-				}
-				log.Info("vmmd: workload-OOM drained to schedd",
-					"instance_id", instanceID, "peak_mb", peakMB, "plan_mb", planMB)
-			}()
-		})
-		log.Info("vmmd: workload-OOM relay wired",
-			"target", deps.scheddTarget,
-			"timeout", ReportWorkloadOOMCtxTimeout.String())
 	}
 
 	// ADR-055 / Tier 1 Phase 4: the per-host egress policy watcher.

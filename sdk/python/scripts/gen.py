@@ -171,6 +171,7 @@ def regen(overwrite: bool = True) -> None:
             "pre_auth_target.py",
             "issues.py",
             "flags.py",
+            "commit.py",
         ]
         target = OUT / "faas_sdk"
         if target.exists():
@@ -684,6 +685,7 @@ from .dev_bridge import (
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
+from .commit import insert_commit_event
 from .idempotency import (
     IdempotencyKey,
     current_idempotency_key,
@@ -782,6 +784,7 @@ __all__ = (
     "DevBridgeTransport",
     "current_dev_bridge_context",
     "with_dev_bridge_context",
+    "insert_commit_event",
 )
 '''
 

@@ -100,8 +100,10 @@ func (h *Handler) matchAsyncRoute(r *http.Request, sidecarName string) *EdgeRule
 	return matcher.MatchAsync(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
 }
 
-func (h *Handler) applyEdgeRuleCacheUnlessAsync(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, asyncRule *EdgeRuleAsyncResolved) (bool, *EdgeRuleCacheResolved) {
-	if asyncRule != nil {
+func (h *Handler) applyEdgeRuleCacheUnlessAsync(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, asyncRule *EdgeRuleAsyncResolved, deploymentSmoke bool) (bool, *EdgeRuleCacheResolved) {
+	// Reuse the established challenge verdict so a slow policy evaluation or
+	// challenge expiry cannot send a candidate probe through customer caches.
+	if asyncRule != nil || deploymentSmoke {
 		return false, nil
 	}
 	return h.applyEdgeRuleCache(w, r, app, rec)

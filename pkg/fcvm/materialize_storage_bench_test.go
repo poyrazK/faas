@@ -26,7 +26,7 @@ func (b copyMaterializationBackend) Get(ctx context.Context, key string) (io.Rea
 	}{r, r.(io.WriterTo)}, nil
 }
 
-// adr: 423
+// adr: 425
 func BenchmarkMaterializeOpenedCacheFile(b *testing.B) {
 	root := b.TempDir()
 	b.Setenv("TMPDIR", root)
@@ -80,7 +80,9 @@ func BenchmarkMaterializeOpenedCacheFile(b *testing.B) {
 				if _, err := v.materializeFromStorage(context.Background(), "bench", key); err != nil {
 					b.Fatal(err)
 				}
-				v.sweepMaterialised("bench")
+				if err := v.sweepMaterialised("bench"); err != nil {
+					b.Fatal(err)
+				}
 			}
 		})
 	}

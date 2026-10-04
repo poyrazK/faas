@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -52,6 +53,7 @@ func Run(t *testing.T, open Open) {
 		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
 		{"app_secret_class_survives_legacy_writes", testAppSecretClassSurvivesLegacyWrites},
 		{"app_secret_runtime_reload_is_version_fenced", testAppSecretRuntimeReloadVersionFence},
+		{"app_secret_runtime_process_generation_is_fenced", testAppSecretRuntimeProcessGenerationFence},
 		{"sidecar_secret_reload_signal_controls_target_support", testSidecarSecretReloadSignal},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
@@ -3146,6 +3148,107 @@ func testAppSecretRuntimeReloadVersionFence(t *testing.T, fx *Fixture) {
 	observations, err = fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
 	if err != nil || len(observations) != 1 || observations[0].ApplicationAckVersion != 2 || observations[0].ApplicationAck != state.SecretApplicationReloadAckApplied {
 		t.Fatalf("ListAppSecretRuntimeReloadObservations(app ack) = %+v, %v", observations, err)
+	}
+}
+
+func testAppSecretRuntimeProcessGenerationFence(t *testing.T, fx *Fixture) {
+	const (
+		key      = "DATABASE_URL"
+		revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	)
+	scope := api.DefaultEnvScope
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if err := fx.Store.UpsertAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key, []byte("cipher")); err != nil {
+		t.Fatalf("UpsertAppSecretInScope: %v", err)
+	}
+	secret, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
+	if err != nil {
+		t.Fatalf("GetAppSecretInScope: %v", err)
+	}
+	candidates := []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: secret.DeliveryVersion}}
+	if updated, err := fx.Store.RecordAppSecretRuntimeReload(fx.Ctx, state.AppSecretRuntimeReloadResult{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID,
+		Revision: revision, Projection: state.SecretReloadProjectionUpdated,
+		Signal: state.SecretReloadSignalNotAttempted, Candidates: candidates,
+	}); err != nil || updated != 1 {
+		t.Fatalf("RecordAppSecretRuntimeReload: updated=%d err=%v", updated, err)
+	}
+	process := func(generation, previous string) state.AppSecretRuntimeProcess {
+		return state.AppSecretRuntimeProcess{AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID,
+			Generation: generation, PreviousGeneration: previous}
+	}
+	ack := func(generation string) error {
+		t.Helper()
+		updated, err := fx.Store.RecordAppSecretRuntimeReloadAck(fx.Ctx, state.AppSecretRuntimeReloadAckResult{
+			AccountID: fx.Account.ID, AppID: fx.App.ID, InstanceID: instance.ID, Generation: generation,
+			Revision: revision, Status: state.SecretApplicationReloadAckApplied, Candidates: candidates,
+		})
+		if err == nil && updated != 1 {
+			return fmt.Errorf("updated %d ACK rows, want 1", updated)
+		}
+		return err
+	}
+	observedAckGeneration := func() string {
+		t.Helper()
+		observations, err := fx.Store.ListAppSecretRuntimeReloadObservations(fx.Ctx, fx.Account.ID, fx.App.ID, scope)
+		if err != nil || len(observations) != 1 {
+			t.Fatalf("ListAppSecretRuntimeReloadObservations = %+v, %v; want one observation", observations, err)
+		}
+		return observations[0].ApplicationAckGeneration
+	}
+
+	first, second, third := strings.Repeat("a", 32), strings.Repeat("b", 32), strings.Repeat("c", 32)
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(first, "")); err != nil {
+		t.Fatalf("BeginAppSecretRuntimeProcess(first): %v", err)
+	}
+	if err := ack(first); err != nil {
+		t.Fatalf("ACK first process: %v", err)
+	}
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(first, "")); err != nil {
+		t.Fatalf("idempotent BeginAppSecretRuntimeProcess(first): %v", err)
+	}
+	if got := observedAckGeneration(); got != first {
+		t.Fatalf("idempotent begin cleared the current ACK generation: %q", got)
+	}
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(second, first)); err != nil {
+		t.Fatalf("BeginAppSecretRuntimeProcess(replacement): %v", err)
+	}
+	if got := observedAckGeneration(); got != "" {
+		t.Fatalf("process replacement retained stale ACK generation %q", got)
+	}
+	if err := ack(first); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("accepted stale process ACK: %v", err)
+	}
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(third, "")); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("accepted replacement without previous generation: %v", err)
+	}
+	if err := fx.Store.RetireAppSecretRuntimeProcess(fx.Ctx, process(first, "")); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("retired a stale process generation: %v", err)
+	}
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(third, second)); err != nil {
+		t.Fatalf("BeginAppSecretRuntimeProcess(second replacement): %v", err)
+	}
+	if err := ack(third); err != nil {
+		t.Fatalf("ACK third process: %v", err)
+	}
+	if err := fx.Store.RetireAppSecretRuntimeProcess(fx.Ctx, process(third, "")); err != nil {
+		t.Fatalf("RetireAppSecretRuntimeProcess: %v", err)
+	}
+	if got := observedAckGeneration(); got != "" {
+		t.Fatalf("retiring a process retained stale ACK generation %q", got)
+	}
+	if err := fx.Store.RetireAppSecretRuntimeProcess(fx.Ctx, process(third, "")); err != nil {
+		t.Fatalf("idempotent RetireAppSecretRuntimeProcess: %v", err)
+	}
+	if err := ack(third); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("accepted ACK from a retired process: %v", err)
+	}
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(third, third)); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("reactivated a retired generation: %v", err)
 	}
 }
 

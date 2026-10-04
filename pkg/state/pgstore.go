@@ -7670,6 +7670,10 @@ func (s *PgStore) UpdateDeploymentMinInstances(ctx context.Context, id string, m
 // third layer; any out-of-range value reaching this method trips a
 // 23514 SQLSTATE.
 func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID ...string) (Deployment, error) {
+	return s.updateDeploymentTraffic(ctx, id, newPercent, expectedServingID, nil)
+}
+
+func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (Deployment, error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, fmt.Errorf("state: update deployment traffic %d: %w", newPercent, ErrInvalidTrafficPercent)
 	}
@@ -7732,6 +7736,19 @@ func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPer
 	}
 	if activeCanary {
 		return Deployment{}, ErrTrafficChangeDuringCanary
+	}
+
+	if guard != nil {
+		current, err := s.checkBindingTrafficGuard(ctx, tx, guard)
+		if err != nil {
+			return Deployment{}, err
+		}
+		if current.TrafficPercent == 100 {
+			if err := tx.Commit(ctx); err != nil {
+				return Deployment{}, fmt.Errorf("state: commit checked promotion: %w", err)
+			}
+			return current, nil
+		}
 	}
 
 	// (4) Stamp target + redistribute residual across siblings via
@@ -7867,6 +7884,11 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		}
 	}
 
+	snapshot, err := pgLockCanaryRouteSnapshot(ctx, tx, id)
+	if err != nil {
+		return Deployment{}, 0, err
+	}
+
 	dep, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
 		   from deployments where id = $1 for update`, id))
@@ -7930,6 +7952,42 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	if params.RequireCanaryStageElapsed && (dep.CanaryStepStartedAt == nil ||
 		now.Sub(*dep.CanaryStepStartedAt) < params.CanaryStageDuration) {
 		return Deployment{}, 0, ErrCanaryStageNotElapsed
+	}
+
+	if err := pgCheckCanaryRouteGate(ctx, tx, snapshot, dep, params); err != nil {
+		var blocked *RouteGateBlockedError
+		if errors.As(err, &blocked) {
+			if commitErr := tx.Commit(ctx); commitErr != nil {
+				return Deployment{}, 0, fmt.Errorf("commit blocked canary check request: %w", commitErr)
+			}
+		}
+		return Deployment{}, 0, err
+	}
+
+	if err := pgCheckRouteHealth(ctx, tx, snapshot, dep, now, params); err != nil {
+		var blocked *RouteHealthBlockedError
+		if errors.As(err, &blocked) {
+			if commitErr := tx.Commit(ctx); commitErr != nil {
+				return Deployment{}, 0, fmt.Errorf("commit held canary health evidence: %w", commitErr)
+			}
+		}
+		return Deployment{}, 0, err
+	}
+	if err := stampRouteHealthAudit(&params); err != nil {
+		return Deployment{}, 0, err
+	}
+	// A telemetry query must not carry an expired worker lease into a traffic write.
+	transitionClock, err := (&sqlc.Queries{}).RouteHealthClock(ctx, tx)
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("read canary transition clock after health checks: %w", err)
+	}
+	now = transitionClock.Time
+	if params.RequireSafeReleaseLease && !safeReleaseLeaseExpiresAt.After(now) {
+		return Deployment{}, 0, ErrSafeReleaseLeaseUnavailable
+	}
+
+	if err := stampRouteGateAudit(&params); err != nil {
+		return Deployment{}, 0, err
 	}
 
 	newStep := params.ExpectedStep + 1
@@ -8614,6 +8672,22 @@ func (s *PgStore) AbortCanaryOnExpiredWorkerLease(ctx context.Context, appID, de
 }
 
 func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, emergencyGrace *time.Duration) (Deployment, int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: recover_rollout begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	updated, auditID, err := s.recoverRolloutTx(ctx, tx, appID, deploymentID, expectedPredecessorID, action, reason, emergencyGrace, nil)
+	if err != nil {
+		return updated, auditID, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, 0, fmt.Errorf("state: recover_rollout commit: %w", err)
+	}
+	return updated, auditID, nil
+}
+
+func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploymentID, expectedPredecessorID, action, reason string, emergencyGrace *time.Duration, auditOverride *DeploymentAudit) (Deployment, int64, error) {
 	switch action {
 	case "advance", "promote", "abort":
 	default:
@@ -8626,11 +8700,6 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 	// the recovery itself. Normalize once, here.
 	reason = normalizeRolloutReason(reason)
 
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return Deployment{}, 0, fmt.Errorf("state: recover_rollout begin: %w", err)
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
 	if emergencyGrace != nil {
 		var expiresAt time.Time
 		if err := tx.QueryRow(ctx, `select expires_at from safe_release_worker_lease where singleton = true for update`).Scan(&expiresAt); err != nil {
@@ -8649,12 +8718,11 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 			return Deployment{}, 0, ErrSafeReleaseLeaseNotExpired
 		}
 	}
-	if deploymentID != "" {
+	{
 		// Deployment creation already serializes on the app row. Taking the
 		// same lock prevents a new release from changing the candidate or its
 		// predecessor between the health decision and this transaction.
-		var lockedAppID string
-		if err := tx.QueryRow(ctx, `select id from apps where id = $1 for update`, appID).Scan(&lockedAppID); err != nil {
+		if _, err := (&sqlc.Queries{}).LockCanaryRouteGateApp(ctx, tx, appID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return Deployment{}, 0, ErrNotFound
 			}
@@ -8687,6 +8755,26 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 	}
 	if dep.CanaryTotalSteps <= 0 && !IsServiceRollout(dep) {
 		return dep, 0, ErrRolloutStateInvalid
+	}
+	if action != "abort" && dep.CanaryTotalSteps > 0 {
+		owner, err := (&sqlc.Queries{}).ReadCanaryRouteGateOwner(ctx, tx, dep.ID)
+		if err != nil {
+			return dep, 0, routePolicyReadError(err)
+		}
+		gate, err := pgCanaryRouteGate(ctx, tx, owner.AccountID, dep.AppID)
+		if err != nil {
+			return dep, 0, err
+		}
+		if err := legacyCanaryRouteGate(gate, dep, action); err != nil {
+			return dep, 0, err
+		}
+		healthGate, err := pgRouteHealthGate(ctx, tx, owner.AccountID, dep.AppID)
+		if err != nil {
+			return dep, 0, err
+		}
+		if err := legacyRouteHealth(healthGate, dep, action); err != nil {
+			return dep, 0, err
+		}
 	}
 	if emergencyGrace != nil {
 		rolloutState := NormalizeRolloutState(dep.RolloutState)
@@ -8813,9 +8901,6 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 			`select `+deploymentSelectColumnsWithRootfs+` from deployments where id = $1`, dep.ID))
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: request service rollout abort readback: %w", err)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return Deployment{}, 0, fmt.Errorf("state: request service rollout abort commit: %w", err)
 		}
 		return updated, auditID, nil
 	}
@@ -9017,6 +9102,11 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 	if emergencyGrace != nil {
 		actor = "apid:safe_release_lease_expired"
 	}
+	var auditAccountID *uuid.UUID
+	if auditOverride != nil {
+		auditKind, auditData, actor, now = auditOverride.Kind, auditOverride.Data, auditOverride.Actor, auditOverride.At
+		auditAccountID = auditOverride.AccountID
+	}
 	var auditID int64
 	if err := tx.QueryRow(ctx,
 		`insert into deployment_audit
@@ -9024,7 +9114,7 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 		 values ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb)
 		 returning id`,
 		dep.ID,
-		nil, // account_id is nullable; actor records the operator or APID fallback
+		auditAccountID, // nullable for existing operator and emergency recoveries
 		string(auditKind),
 		actor,
 		now,
@@ -9055,9 +9145,6 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 		if _, err := tx.Exec(ctx, `select pg_notify($1, $2)`, db.NotifyDeploymentChanged, string(payload)); err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: emergency recovery notify deployment changed: %w", err)
 		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return Deployment{}, 0, fmt.Errorf("state: recover_rollout commit: %w", err)
 	}
 	return updated, auditID, nil
 }
@@ -11436,6 +11523,19 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 		return Deployment{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	failed, err := setDeploymentFailedTx(ctx, tx, id, code, message)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, err
+	}
+	return failed, nil
+}
+
+// setDeploymentFailedTx keeps the existing failure side effects in the
+// caller's transaction, including when hosting evidence must commit with it.
+func setDeploymentFailedTx(ctx context.Context, tx pgx.Tx, id, code, message string) (Deployment, error) {
 	stageState, err := failedDeploymentStageStateTx(ctx, tx, id, message)
 	if err != nil {
 		return Deployment{}, err
@@ -11459,9 +11559,6 @@ func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message str
 		return Deployment{}, err
 	}
 	if err := enqueueDeploymentOutcomeActivityTx(ctx, tx, id, "failed", code); err != nil {
-		return Deployment{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, err
 	}
 	return failed, nil
@@ -16549,6 +16646,9 @@ func scanCreatedInstance(row pgx.Row, wakeID, appID string) (Instance, error) {
 	inst, err := scanInstanceCols(row.Scan)
 	if err != nil {
 		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "managed_postgres_cutover_admission_fenced" {
+			return Instance{}, ErrManagedPostgresAdmissionFenced
+		}
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return Instance{}, fmt.Errorf(
 				"state: %w: wake_id=%s app_id=%s already in-flight — recover via ReadActiveInstanceForWakeID",
@@ -23009,44 +23109,15 @@ func lockAppSecretTarget(ctx context.Context, tx pgx.Tx, appID, scope, key strin
 // caller-supplied value, scoped to accountID. Order: by scope
 // ASC, key ASC for deterministic wake staging.
 func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, scope string) ([]AppSecret, error) {
-	rows, err := s.pool.Query(ctx,
-		`select account_id, app_id, scope, key, ciphertext, coalesce(kid, '') as kid, coalesce(value_hash, '') as value_hash,
-		        coalesce(managed_postgres_binding_id::text, ''), coalesce(managed_credential_ref, ''),
-		        coalesce(managed_credential_generation, 0), coalesce(managed_object_storage_credential_id::text, ''),
-		        coalesce(secret_version, 0), delivery_version, coalesce(delivered_version, 0), delivery_status,
-		        last_delivery_attempt_at, last_delivered_at, coalesce(last_delivery_error_code, ''),
-		        coalesce(last_delivered_wake_id, ''), coalesce(last_delivered_instance_id, ''),
-		        coalesce(last_runtime_reload_version, 0), coalesce(last_runtime_reload_revision, ''),
-		        coalesce(last_runtime_reload_projection, ''), coalesce(last_runtime_reload_signal, ''),
-		        last_runtime_reload_at, coalesce(last_runtime_reload_error_code, ''),
-		        coalesce(last_runtime_reload_instance_id, ''), created_at, updated_at, coalesce(secret_class, 'persistent')
-		 from app_secrets
-		 where account_id = $1 and app_id = $2 and scope = $3
-		 order by scope asc, key asc`,
-		accountID, appID, scope)
+	rows, err := sqlc.New().ListAppSecretsWithBindingAccessInScope(ctx, s.pool, sqlc.ListAppSecretsWithBindingAccessInScopeParams{AccountID: accountID, AppID: appID, Scope: scope})
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
-	defer rows.Close()
-	var out []AppSecret
-	for rows.Next() {
-		var r AppSecret
-		if err := rows.Scan(
-			&r.AccountID, &r.AppID, &r.Scope, &r.Key, &r.Ciphertext, &r.Kid, &r.ValueHash,
-			&r.ManagedPostgresBindingID, &r.ManagedCredentialRef, &r.ManagedCredentialGeneration, &r.ManagedObjectStorageCredentialID,
-			&r.SecretVersion, &r.DeliveryVersion, &r.DeliveredVersion, &r.DeliveryStatus,
-			&r.LastDeliveryAttemptAt, &r.LastDeliveredAt, &r.LastDeliveryErrorCode,
-			&r.LastDeliveredWakeID, &r.LastDeliveredInstanceID,
-			&r.LastRuntimeReloadVersion, &r.LastRuntimeReloadRevision,
-			&r.LastRuntimeReloadProjection, &r.LastRuntimeReloadSignal,
-			&r.LastRuntimeReloadAt, &r.LastRuntimeReloadErrorCode, &r.LastRuntimeReloadInstanceID,
-			&r.CreatedAt, &r.UpdatedAt, &r.SecretClass,
-		); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
+	out := make([]AppSecret, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, appSecretFromDeliveryRow(row))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ListAppSecrets returns every secret on the app where scope =
@@ -23280,16 +23351,15 @@ func (s *PgStore) RecordAppSecretRuntimeReload(ctx context.Context, result AppSe
 				return 0, ErrConflict
 			}
 		}
-		count, err := queries.RecordAppSecretRuntimeReloadObservation(ctx, tx, sqlc.RecordAppSecretRuntimeReloadObservationParams{
-			AccountID: mustPgUUID(result.AccountID), AppID: mustPgUUID(result.AppID), InstanceID: mustPgUUID(result.InstanceID),
-			Scope: candidate.Scope, Key: candidate.Key, Version: candidate.Version, WorkloadName: result.WorkloadName,
-			Projection: string(result.Projection), Signal: string(result.Signal), ErrorCode: result.ErrorCode,
-			ObservedAt: pgtype.Timestamptz{Time: attemptedAt, Valid: true},
+		observationTag, err := sqlc.New().RecordAppSecretRuntimeProjection(ctx, tx, sqlc.RecordAppSecretRuntimeProjectionParams{
+			AccountID: mustPgUUID(result.AccountID), AppID: mustPgUUID(result.AppID), Scope: candidate.Scope, Key: candidate.Key,
+			SecretVersion: candidate.Version, InstanceID: mustPgUUID(result.InstanceID), Projection: string(result.Projection), Signal: string(result.Signal),
+			ObservedAt: pgtype.Timestamptz{Time: attemptedAt, Valid: true}, ErrorCode: result.ErrorCode, WorkloadName: result.WorkloadName,
 		})
 		if err != nil {
 			return 0, mapErr(err)
 		}
-		if count != 1 {
+		if observationTag != 1 {
 			return 0, ErrConflict
 		}
 		updated++
@@ -23318,20 +23388,28 @@ func (s *PgStore) RecordAppSecretRuntimeReloadAck(ctx context.Context, result Ap
 		return 0, err
 	}
 	queries := sqlc.New()
+	process, err := lockAppSecretRuntimeProcess(ctx, tx, AppSecretRuntimeProcess{AccountID: result.AccountID, AppID: result.AppID,
+		InstanceID: result.InstanceID, WorkloadName: result.WorkloadName})
+	if err != nil {
+		return 0, err
+	}
+	if !secretRuntimeProcessAllowsAck(process.Generation, process.Active, result.Generation) {
+		return 0, ErrConflict
+	}
 	updated := 0
 	for _, candidate := range result.Candidates {
 		if candidate.Scope != scope {
 			return 0, ErrConflict
 		}
-		count, err := queries.RecordAppSecretRuntimeReloadApplicationAck(ctx, tx, sqlc.RecordAppSecretRuntimeReloadApplicationAckParams{
-			AccountID: mustPgUUID(result.AccountID), AppID: mustPgUUID(result.AppID), InstanceID: mustPgUUID(result.InstanceID),
-			Scope: candidate.Scope, Key: candidate.Key, Version: candidate.Version, WorkloadName: result.WorkloadName,
-			Status: string(result.Status), ErrorCode: result.ErrorCode, AckAt: pgtype.Timestamptz{Time: attemptedAt, Valid: true},
+		tag, err := sqlc.New().RecordAppSecretRuntimeProcessAck(ctx, tx, sqlc.RecordAppSecretRuntimeProcessAckParams{
+			AccountID: mustPgUUID(result.AccountID), AppID: mustPgUUID(result.AppID), InstanceID: mustPgUUID(result.InstanceID), WorkloadName: result.WorkloadName,
+			Scope: candidate.Scope, Key: candidate.Key, SecretVersion: candidate.Version, Status: string(result.Status),
+			AckAt: pgtype.Timestamptz{Time: attemptedAt, Valid: true}, ErrorCode: result.ErrorCode, Generation: result.Generation,
 		})
 		if err != nil {
 			return 0, mapErr(err)
 		}
-		if count != 1 {
+		if tag != 1 {
 			return 0, ErrConflict
 		}
 		updated++
@@ -23356,37 +23434,17 @@ func (s *PgStore) ListAppSecretRuntimeReloadObservations(ctx context.Context, ac
 	if accountID == "" || appID == "" {
 		return nil, ErrInvalidArgument
 	}
-	rows, err := s.pool.Query(ctx,
-		`select o.scope, o.key, o.instance_id::text, o.workload_name, o.secret_version,
-		        o.projection, o.signal, o.observed_at, coalesce(o.error_code, ''),
-	        coalesce(o.application_ack_version, 0), coalesce(o.application_ack_status, ''),
-	        o.application_ack_at, coalesce(o.application_ack_error_code, '')
-	   from app_secret_runtime_reload_observations o
-	   join app_secrets s on s.app_id = o.app_id and s.scope = o.scope and s.key = o.key
-	   join instances i on i.id = o.instance_id and i.app_id = o.app_id
-	  where s.account_id = $1 and o.app_id = $2 and ($3 = '' or o.scope = $3)
-	    and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
-	  order by o.scope asc, o.key asc, o.instance_id asc, o.workload_name asc`, accountID, appID, scope)
+	rows, err := sqlc.New().ListAppSecretRuntimeProcessObservations(ctx, s.pool, sqlc.ListAppSecretRuntimeProcessObservationsParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: scope})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list secret runtime observations: %w", mapErr(err))
 	}
-	defer rows.Close()
-	var out []AppSecretRuntimeReloadObservation
-	for rows.Next() {
-		var observation AppSecretRuntimeReloadObservation
-		var projection, signal string
-		var ackStatus string
-		if err := rows.Scan(&observation.Scope, &observation.Key, &observation.InstanceID, &observation.WorkloadName,
-			&observation.Version, &projection, &signal, &observation.ObservedAt, &observation.ErrorCode,
-			&observation.ApplicationAckVersion, &ackStatus, &observation.ApplicationAckAt, &observation.ApplicationAckErrorCode); err != nil {
-			return nil, err
-		}
-		observation.Projection = SecretReloadProjectionStatus(projection)
-		observation.Signal = SecretReloadSignalStatus(signal)
-		observation.ApplicationAck = SecretApplicationReloadAckStatus(ackStatus)
-		out = append(out, observation)
+	out := make([]AppSecretRuntimeReloadObservation, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, AppSecretRuntimeReloadObservation{Scope: row.Scope, Key: row.Key, InstanceID: row.InstanceID, WorkloadName: row.WorkloadName,
+			Version: row.SecretVersion, Projection: SecretReloadProjectionStatus(row.Projection), Signal: SecretReloadSignalStatus(row.Signal), ObservedAt: row.ObservedAt.Time, ErrorCode: row.ErrorCode,
+			ApplicationAckVersion: row.ApplicationAckVersion, ApplicationAck: SecretApplicationReloadAckStatus(row.ApplicationAckStatus), ApplicationAckAt: optionalHealthTime(row.ApplicationAckAt), ApplicationAckErrorCode: row.ApplicationAckErrorCode, ApplicationAckGeneration: row.ApplicationAckGeneration})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *PgStore) SetDeploymentSecretReloadSignal(ctx context.Context, id, signal string) error {
@@ -25114,6 +25172,9 @@ func mapErr(err error) error {
 			}
 			return err
 		case pgerrcode.CheckViolation:
+			if pgErr.ConstraintName == "managed_postgres_cutover_admission_fenced" {
+				return ErrManagedPostgresAdmissionFenced
+			}
 			if pgErr.ConstraintName == "service_capacity_protection" {
 				return &ServiceCapacityError{}
 			}
@@ -30534,7 +30595,8 @@ const mirrorResultSelectCols = `id, mirror_rule_id, account_id, app_id,
        source_deployment_id, mirror_deployment_id, instance_id, source_instance_id,
        status_code, source_status_code, latency_ms, source_latency_ms,
        body_hash, source_body_hash, schema_hash, source_schema_hash,
-       status_diff, schema_diff, body_diff, crashed, comparison_incomplete, request_id, completed_at`
+       status_diff, schema_diff, body_diff, crashed, comparison_incomplete,
+       admission_failure_reason, request_id, completed_at`
 
 // scanMirrorRule reads a single mirror_rule row. ErrNotFound on
 // no-rows; mapErr handles raw errors (e.g. constraint violations).
@@ -30601,7 +30663,8 @@ func scanMirrorResult(scan func(...any) error) (MirrorInvocationResult, error) {
 		&r.SourceDeploymentID, &r.MirrorDeploymentID, &instanceID, &sourceInstanceID,
 		&statusCode, &sourceStatusCode, &latencyMs, &sourceLatencyMs,
 		&r.BodyHash, &r.SourceBodyHash, &r.SchemaHash, &r.SourceSchemaHash,
-		&r.StatusDiff, &r.SchemaDiff, &r.BodyDiff, &r.Crashed, &r.ComparisonIncomplete, &r.RequestID, &r.CompletedAt,
+		&r.StatusDiff, &r.SchemaDiff, &r.BodyDiff, &r.Crashed, &r.ComparisonIncomplete,
+		&r.AdmissionFailureReason, &r.RequestID, &r.CompletedAt,
 	); err != nil {
 		return MirrorInvocationResult{}, err
 	}
@@ -30938,21 +31001,23 @@ func (s *PgStore) InsertMirrorResult(ctx context.Context, r MirrorInvocationResu
 			instance_id, source_instance_id,
 			status_code, source_status_code, latency_ms, source_latency_ms,
 		    body_hash, source_body_hash, schema_hash, source_schema_hash,
-		    status_diff, schema_diff, body_diff, crashed, comparison_incomplete, request_id, completed_at
+		    status_diff, schema_diff, body_diff, crashed, comparison_incomplete,
+		    admission_failure_reason, request_id, completed_at
 		) values (
 			$1::uuid, $2::uuid, $3::uuid,
 			$4::uuid, $5::uuid,
 			$6, $7,
 			$8, $9, $10, $11,
 			$12, $13, $14, $15,
-		    $16, $17, $18, $19, $20, $21, $22
+		    $16, $17, $18, $19, $20, $21, $22, $23
 		)`,
 		r.MirrorRuleID, r.AccountID, r.AppID,
 		r.SourceDeploymentID, r.MirrorDeploymentID,
 		instanceID, srcInstanceID,
 		statusCode, srcStatusCode, latencyMs, srcLatencyMs,
 		bodyHash, srcBodyHash, schemaHash, srcSchemaHash,
-		r.StatusDiff, r.SchemaDiff, r.BodyDiff, r.Crashed, r.ComparisonIncomplete, r.RequestID, r.CompletedAt,
+		r.StatusDiff, r.SchemaDiff, r.BodyDiff, r.Crashed, r.ComparisonIncomplete,
+		r.AdmissionFailureReason, r.RequestID, r.CompletedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("state: insert mirror_invocation_result: %w", err)
@@ -30970,7 +31035,7 @@ func (s *PgStore) ListMirrorResults(ctx context.Context, ruleID string, since ti
 		where mirror_rule_id = $1::uuid
 		  and completed_at >= $2
 		order by completed_at desc
-		limit $3`,
+		limit case when $3 > 0 then $3 else null end`,
 		ruleID, since, limit)
 	if err != nil {
 		return nil, fmt.Errorf("state: list mirror_invocation_results for rule %s: %w", ruleID, err)
@@ -31004,6 +31069,9 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 			coalesce(sum(case when not comparison_incomplete and body_diff   then 1 else 0 end), 0),
 			coalesce(sum(case when crashed     then 1 else 0 end), 0),
 			coalesce(sum(case when comparison_incomplete then 1 else 0 end), 0),
+			coalesce(sum(case when admission_failure_reason = 'scheduler_admission_timeout' then 1 else 0 end), 0),
+			coalesce(sum(case when admission_failure_reason = 'scheduler_admission_rejected' then 1 else 0 end), 0),
+			coalesce(sum(case when admission_failure_reason = 'scheduler_admission_error' then 1 else 0 end), 0),
 			avg(case when latency_ms is not null and source_latency_ms is not null
 			         then (latency_ms - source_latency_ms)::double precision
 			         else null end),
@@ -31015,7 +31083,9 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 		where mirror_rule_id = $1::uuid
 		  and completed_at >= $2`,
 		ruleID, since,
-	).Scan(&s2.TotalInvocations, &s2.ChangedResponseCount, &s2.StatusDiffCount, &s2.SchemaDiffCount, &s2.BodyDiffCount, &s2.CrashCount, &s2.IncompleteComparisonCount, &meanLatencyDiff, &p99LatencyDiff); err != nil {
+	).Scan(&s2.TotalInvocations, &s2.ChangedResponseCount, &s2.StatusDiffCount, &s2.SchemaDiffCount, &s2.BodyDiffCount, &s2.CrashCount, &s2.IncompleteComparisonCount,
+		&s2.SchedulerAdmissionTimeoutCount, &s2.SchedulerAdmissionRejectedCount, &s2.SchedulerAdmissionErrorCount,
+		&meanLatencyDiff, &p99LatencyDiff); err != nil {
 		return MirrorSummary{}, fmt.Errorf("state: mirror summary for rule %s: %w", ruleID, err)
 	}
 	if meanLatencyDiff != nil {

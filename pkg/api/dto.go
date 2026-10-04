@@ -1870,9 +1870,15 @@ type RuntimeConfigRestartStatusResponse struct {
 }
 
 // AppWakeResponse is returned when an explicit pre-warm request has been
-// durably queued for the scheduler.
+// durably queued for the scheduler (202), or when the app already has a
+// routable running instance (200, AlreadyRunning). schedd treats a wake for
+// a running app as satisfied and stamps no new instance, so the 200 form
+// carries the running instance's own wake id: a client polling for an
+// instance with that wake id finds it running immediately.
 type AppWakeResponse struct {
-	WakeID string `json:"wake_id"`
+	WakeID         string `json:"wake_id"`
+	AlreadyRunning bool   `json:"already_running,omitempty"`
+	InstanceID     string `json:"instance_id,omitempty"`
 }
 
 // ParkedDeploymentRef is the reference shape returned in
@@ -3247,8 +3253,10 @@ type AdvanceCanaryRequest struct {
 // CanaryAdvanceResponse carries the atomically advanced deployment and the
 // deployment_audit row id written in the same transaction.
 type CanaryAdvanceResponse struct {
-	Deployment DeploymentResponse `json:"deployment"`
-	AuditID    string             `json:"audit_id"`
+	Deployment  DeploymentResponse   `json:"deployment"`
+	AuditID     string               `json:"audit_id"`
+	RouteGate   *RouteGateDecision   `json:"route_gate,omitempty"`
+	RouteHealth *RouteHealthDecision `json:"route_health,omitempty"`
 }
 
 // CreateMirrorRuleRequest is the body for
@@ -3334,23 +3342,26 @@ type MirrorRuleListResponse struct {
 // server-side via SQL aggregates (COUNT / SUM / p99_cont) — the
 // client never iterates the ledger. MeanLatencyDiffMs /
 // P99LatencyDiffMs are *signed* (mirror_ms − source_ms; positive
-// = mirror is slower). CrashCount counts the rows where the
-// mirror VM exited abnormally before producing a response (the
-// customer's source request still succeeded). WindowSeconds is
-// the parsed window in seconds so the CLI can render "last 1h"
-// without parsing the query string.
+// = mirror is slower). CrashCount counts missing or 5xx responses
+// after admission; scheduler admission failures are incomplete
+// comparisons and are exposed through their own reason counts.
+// WindowSeconds is the parsed window in seconds so the CLI can
+// render "last 1h" without parsing the query string.
 type MirrorSummaryResponse struct {
-	TotalInvocations          int64   `json:"total_invocations"`
-	ChangedResponseCount      int64   `json:"changed_response_count"`
-	ChangedResponsePct        float64 `json:"changed_response_percent"`
-	StatusDiffCount           int64   `json:"status_diff_count"`
-	SchemaDiffCount           int64   `json:"schema_diff_count"`
-	BodyDiffCount             int64   `json:"body_diff_count"`
-	MeanLatencyDiffMs         int64   `json:"mean_latency_diff_ms"`
-	P99LatencyDiffMs          int64   `json:"p99_latency_diff_ms"`
-	CrashCount                int64   `json:"crash_count"`
-	IncompleteComparisonCount int64   `json:"incomplete_comparison_count"`
-	WindowSeconds             int     `json:"window_seconds"`
+	TotalInvocations                int64   `json:"total_invocations"`
+	ChangedResponseCount            int64   `json:"changed_response_count"`
+	ChangedResponsePct              float64 `json:"changed_response_percent"`
+	StatusDiffCount                 int64   `json:"status_diff_count"`
+	SchemaDiffCount                 int64   `json:"schema_diff_count"`
+	BodyDiffCount                   int64   `json:"body_diff_count"`
+	MeanLatencyDiffMs               int64   `json:"mean_latency_diff_ms"`
+	P99LatencyDiffMs                int64   `json:"p99_latency_diff_ms"`
+	CrashCount                      int64   `json:"crash_count"`
+	IncompleteComparisonCount       int64   `json:"incomplete_comparison_count"`
+	SchedulerAdmissionTimeoutCount  int64   `json:"scheduler_admission_timeout_count"`
+	SchedulerAdmissionRejectedCount int64   `json:"scheduler_admission_rejected_count"`
+	SchedulerAdmissionErrorCount    int64   `json:"scheduler_admission_error_count"`
+	WindowSeconds                   int     `json:"window_seconds"`
 }
 
 // MirrorReplayBatchRequest is an explicitly sanitized historical request
@@ -3502,6 +3513,10 @@ type CapabilityStatus struct {
 	DocsURL     string             `json:"docs_url"`
 	Acceptance  string             `json:"acceptance"`
 	Enabled     bool               `json:"enabled"`
+	// UnavailableReason is a stable code for automation. Both explanation
+	// fields are omitted when enabled; older servers may omit them entirely.
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+	UnavailableDetail string `json:"unavailable_detail,omitempty"`
 }
 
 // CapabilitiesResponse is the account-scoped response from
@@ -3827,6 +3842,26 @@ type CustomDomainResponse struct {
 	// failed, or dns_drifted). The per-domain show endpoint may temporarily override it with
 	// a live "dial_failed:<reason>" probe result; list/status remain durable.
 	CertStatus string `json:"cert_status,omitempty"`
+	// DNSRecords lists the records the customer publishes (ADR-520): the
+	// TXT ownership proof and where to route traffic.
+	DNSRecords []DNSRecordInstruction `json:"dns_records,omitempty"`
+}
+
+// DNS record purposes for DNSRecordInstruction.Purpose.
+const (
+	DNSRecordPurposeVerification = "verification"
+	DNSRecordPurposeRouting      = "routing"
+)
+
+// DNSRecordInstruction is one DNS record a customer publishes for a custom
+// domain. Alternative marks an A/AAAA routing record that replaces the CNAME
+// where a CNAME is not allowed, such as at a zone apex.
+type DNSRecordInstruction struct {
+	Type        string `json:"type"`
+	Name        string `json:"name"`
+	Value       string `json:"value"`
+	Purpose     string `json:"purpose"`
+	Alternative bool   `json:"alternative,omitempty"`
 }
 
 // CreateCustomDomainRequest accepts a domain to bind.

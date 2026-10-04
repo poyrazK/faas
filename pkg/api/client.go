@@ -353,7 +353,14 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	data, err := readBoundedResponse(resp, maxResponseBodyBytes)
+	limit := maxResponseBodyBytes
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		switch out.(type) {
+		case *RouteCheckHistoryEntry, *AutomaticRouteCheck:
+			limit = RouteCheckHistoryEntryMaxBytes
+		}
+	}
+	data, err := readBoundedResponse(resp, limit)
 	if err != nil {
 		return err
 	}
@@ -3661,6 +3668,12 @@ func (c *Client) ListExclusiveWorkPolicies(ctx context.Context) (ExclusiveWorkPo
 func (c *Client) UpsertExclusiveWorkPolicy(ctx context.Context, name string, policy ExclusivePolicyRequest) (ExclusiveWorkPolicyRecord, error) {
 	var out ExclusiveWorkPolicyRecord
 	return out, c.do(ctx, http.MethodPut, "/v1/account/operation-policies/"+url.PathEscape(name), policy, &out)
+}
+
+func (c *Client) RetireExclusiveWorkPolicy(ctx context.Context, name string) (ExclusiveWorkPolicyRecord, error) {
+	var out ExclusiveWorkPolicyRecord
+	err := c.do(ctx, http.MethodDelete, "/v1/account/operation-policies/"+url.PathEscape(name), nil, &out)
+	return out, err
 }
 
 func (c *Client) UpsertExclusiveTriggerBinding(ctx context.Context, source, triggerID string, binding ExclusiveTriggerBindingRequest) (ExclusiveTriggerBindingRecord, error) {

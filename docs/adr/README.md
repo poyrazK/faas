@@ -56,7 +56,32 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 520 | [Self-hosted TLS for customer custom domains](520-self-hosted-custom-domain-tls.md) | proposed | Caddy on-demand certificates gated by gatewayd-public's ask endpoint; durable per-wildcard issuance budget; no CDN in the customer-domain path |
+| 510 | [Snapshot backing image identity](510-snapshot-backing-image-identity.md) | proposed | Restore only onto the kernel and read-only base a capture was taken with; refuse and cold-boot otherwise |
+| 516 | [Replay recent managed PostgreSQL usage corrections](516-managed-postgres-usage-correction-replay.md) | accepted | Recover missing windows first, bound recent revision replay, and reject unsafe collection windows |
+| 529 | [Bindings gate at traffic promotion](529-binding-gated-promotion.md) | accepted | Require evidence and atomically fence traffic promotion on observed revisions |
+| 528 | [Deployment selection for bindings verification](528-deployment-binding-verification.md) | accepted | Probe the exact deployment artifact with its scoped runtime configuration |
+| 527 | [Bindings preflight policy](527-binding-preflight-policy.md) | accepted | Apply configurable readiness, age, rotation and runtime gates |
+| 526 | [Object-storage binding verification](526-object-storage-binding-verification.md) | accepted | Verify storage credentials and identity through task guest and rotation metadata |
+| 525 | [Binding runtime configuration freshness](525-binding-runtime-freshness.md) | accepted | Expose configuration and secret revisions for resident instances without reading values |
+| 524 | [Durable binding verification evidence](524-binding-verification-evidence.md) | accepted | Persist versioned verification evidence for exact binding configurations |
+| 509 | [Per-target binding adoption diagnostics](509-binding-adoption-target-diagnostics.md) | accepted | Return stable, sanitized workload-secret statuses and blocker reasons in binding checks |
+| 508 | [Process-generation secret acknowledgements](508-process-generation-secret-acknowledgements.md) | accepted | Register each execution before start and require matching generation evidence for strict adoption |
+| 507 | [Wait for the initial secret revision](507-initial-secret-revision-wait.md) | accepted | Bound bootstrap polling for an empty initial revision, cancel on shutdown and serve only after application ACK |
+| 506 | [Startup-safe runtime secret notifications](506-startup-safe-runtime-secret-notifications.md) | accepted | Gate reloads on per-process readiness, skip redundant startup signals and recover queued or failed delivery |
+| 505 | [Atomic runtime secret snapshots](505-atomic-runtime-secret-snapshots.md) | accepted | Publish values, revision and legacy views as one generation; bind application reads and acknowledgements to one envelope |
+| 504 | [Workload secret reload restart consistency](504-workload-secret-reload-restart-consistency.md) | accepted | Prepare projections once, preserve revisions across sidecar restarts and remove revoked credentials from restart environments |
+| 503 | [Main-workload secret reload with sidecars](503-main-secret-reload-with-sidecars.md) | accepted | Independent main and sidecar reload, grants and application receipts in the same deployment |
+| 502 | [Version-bound application adoption for managed bindings](502-binding-application-adoption.md) | accepted | Require an application receipt for the exact deployed binding version |
+| 523 | [Queue consumer readiness at bindings promotion](523-queue-binding-readiness.md) | accepted | Include queue consumer health and poll freshness in promotion checks |
+| 522 | [Deployment-pinned outbound binding verification](522-outbound-binding-verification.md) | accepted | Verify configured outbound probes without disclosing credential material |
+| 480 | [Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md) | proposed | App, preview and custom-domain hosts own /v1, /status, /docs, /login, /oauth/* and the edge well-known documents |
+| 460 | [Prepared network policy retention](460-prepared-network-policy-retention.md) | proposed | Preserve fresh unused exact-policy spares within ADR-149's existing global capacity |
+| 499 | [Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) | accepted | Opt-in tenant/consumer budgets, redacted identity details, aggregate impact counts, and a bounded recovery inventory |
 | 424 | [Managed outbound integrations for stateless Runs](424-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
+| 427 | [Exclusive operation policy retirement](427-exclusive-operation-policy-retirement.md) | accepted | Idle retirement preserves ownership history and releases the active policy quota slot |
+| 428 | [Native gRPC request stream admission](428-native-grpc-request-stream-admission.md) | accepted | Incremental bounded native gRPC requests and duplex response controls through the gateway handler |
+| 429 | [Handled internal service request evidence](429-handled-service-request-evidence.md) | accepted | Actual guest response evidence, exact registered-scenario timestamps and truthful cleanup phases |
 | 423 | [Scenario-scoped chaos testing](423-scenario-scoped-chaos-testing.md) | accepted | Bounded request faults on registered test-run service calls, with deterministic selection, expiry, and lifecycle-profile execution |
 | 392 | [Event and trace wire conformance](392-event-and-trace-wire-conformance.md) | accepted | OTLP/HTTP encodings and standard responses, CloudEvents attributes, and pinned official AsyncAPI validation |
 | 391 | [Provider invoice history discovery and backfill](391-provider-invoice-history-backfill.md) | accepted | Authenticated provider history discovery with bounded, customer-scoped imports |
@@ -64,6 +89,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 389 | [Invoice detail lifecycle tracking](389-invoice-detail-lifecycle.md) | accepted | Independent record timestamps, exact row fingerprints, and historical coverage |
 | 388 | [Provider invoice facts for FOCUS](388-provider-invoice-facts.md) | accepted | Durable provider facts, reconciled line classifications, and source coverage |
 | 387 | [FOCUS invoice projection](387-focus-invoice-projection.md) | accepted | Account-scoped invoice CSV and metadata, exact reconciliation, and declared source gaps |
+| 461 | [Managed PostgreSQL credential privileges](482-managed-postgres-credential-privileges.md) | accepted for gated preview | SQL runtime and migration logins, stable schema ownership, and verified role isolation |
 | 386 | [HTTP/1 upgrade socket ownership](386-http1-upgrade-socket-ownership.md) | accepted | Hijack successful raw upgrades, retain buffered duplex bytes, and cancel both directions on session closure |
 | 385 | [Durable scheduled work policies](385-scheduled-work-policies.md) | accepted for recurring Jobs and deployment-command Crons | Persist versioned schedule decisions and classified retries with per-occurrence history |
 | 384 | [Fetch-compatible internal service port](384-fetch-compatible-internal-service-port.md) | accepted | Canonical HTTP bindings use 10081 with the existing authorization path; legacy 10080 remains available |
@@ -75,6 +101,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 393 | [Managed exclusive operations](393-managed-exclusive-operations.md) | implementation in progress | Account and trusted customer scope, explicit contention modes, durable ownership generations, lease recovery, and stale-owner fencing |
 | 378 | [Local processes in development environments](378-development-bridge.md) | accepted for internal HTTP use | Scoped one-hour sessions, local service routing, bounded inspection and webhook replay; operator-gated pending native acceptance |
 | 375 | [Complete project-environment clones and qualified promotion](375-complete-project-environment-clones.md) | proposed | Complete effective-state snapshots, isolated data capture, exact qualification, and guarded full promotion |
+| 430 | [Managed PostgreSQL Commit outbox](430-managed-postgresql-commit-outbox.md) | accepted; gated | Customer transaction outbox → managed relay → atomic durable HTTP operation receipt; at-least-once delivery with consumer-owned deduplication |
 | 374 | [Application-keyed background work policies](374-application-keyed-work-policy.md) | accepted | Shared durable policy for per-key admission, claim, replacement, debounce, expiry, and fairness |
 | 372 | [Tenant egress through a dedicated WireGuard gateway](372-tenant-egress-gateway.md) | accepted | Opt-in manifest gateway; bridged tenant IPv4 leaves from the gateway's address, fails closed, and gets a second deny layer there |
 | 370 | [GitHub Actions immutable OIDC subject bootstrap](370-github-actions-immutable-oidc-subjects.md) | accepted | Resolve immutable GitHub repository IDs for binding lookup while pinning the complete subject in the OIDC trust policy |
@@ -228,6 +255,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 157 | [Developer config parity](157-developer-config-parity.md): explicit `gregale dev --env-file` secret sync with key-only output and archive exclusion | accepted | `gregale dev` DX follow-up to ADR-156 |
 | 156 | [Direct object storage accounting and safety budgets](156-object-storage-accounting.md) | accepted | S3 accounting plus default-off Polar month-close billing; live provider qualification remains a launch gate |
 | 155 | [Provider-neutral managed PostgreSQL](155-provider-neutral-managed-postgres.md): account-owned databases, app-scoped bindings, durable placement, lifecycle reconciliation, and canonical usage meters | foundation accepted; preview pending | Managed PostgreSQL foundation; provider qualification, billing, and recovery remain launch gates |
+| 492 | [Validate the Neon consumption contract](492-managed-postgres-consumption-contract.md) | accepted | Correct byte-month normalization, require complete usage coverage, and reconcile prior ledgers |
+| 500 | [Managed PostgreSQL provider rate-limit cooldowns](500-managed-postgres-provider-rate-limit-cooldowns.md) | accepted | Honor retry guidance, isolate consumption throttling, and preserve canceled response reads |
 | 154 | [Disposable developer source deltas](154-developer-source-delta.md): changed-entry transfer with full-archive reconstruction and automatic full fallback | accepted | `gregale dev` DX follow-up to ADR-153 |
 | 153 | [Developer BuildKit dependency cache](153-developer-buildkit-cache.md): tenant/workspace-scoped Railpack cache across ephemeral developer builder VMs | accepted | `gregale dev` rebuild latency |
 | 152 | [Configurable sustained CPU per app](152-configurable-app-cpu.md): 250m, 500m, and 1000m cgroup quotas with configured/effective API visibility | accepted | Cloud Run gap analysis |
@@ -318,7 +347,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 158 | [Explicit ephemeral disk boundary](158-ephemeral-disk-boundary.md): expose the existing plan-capped writable `drive1` capacity as `ephemeral_disk_max_mb` while retaining `app_layer_max_mb` compatibility; no persistent volumes or second quota source | accepted | container runtime storage contract; no migration |
 | 144 | Zero-config workspace build context — explicit `--path` workspace members upload repository context and persist `source_root`; builderd/guest-init build from the selected nested directory | accepted | zero-config deploy follow-up; ADR-086/088/090 |
 | 422 | [Bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) | accepted | Durable, atomic one-host recovery headroom and operator certificate |
-| 423 | [MCP hosting contract](423-mcp-hosting-contract.md) | proposed | Stateless MCP starter, deployment verification, client OAuth and diagnostics on the app lifecycle |
+| 426 | [MCP hosting contract](426-mcp-hosting-contract.md) | proposed | Stateless MCP starter, deployment verification, client OAuth and diagnostics on the app lifecycle |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
@@ -413,10 +442,57 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-148: nonblocking resume hardware entropy](148-nonblocking-resume-hardware-entropy.md)
 - [ADR-149: prepared unused network cache](149-prepared-unused-network-cache.md)
 - [ADR-150: firecracker tsc restore order canary](150-firecracker-tsc-restore-order-canary.md)
-- [ADR-423: retained cache materialization](423-retained-cache-materialization.md) — avoid the redundant copy while retaining the opened artifact through eviction
+- [ADR-425: retained cache materialization](425-retained-cache-materialization.md) — avoid the redundant copy while retaining the opened artifact through eviction
 
 ## Managed service recovery decisions
 
 - [ADR-420: continuous service recovery](420-continuous-service-recovery.md) — periodic desired-capacity reconciliation with durable claims and retry deadlines
 - [ADR-421: continuous app ownership recovery](421-continuous-app-ownership-recovery.md) — paged periodic ownership transfer with node-health fencing
 - [ADR-422: bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) — durable admission protection for one-host recovery
+
+## API hosting verification decisions
+
+- [ADR-433: candidate connectivity and HTTP health verification](433-candidate-connectivity-verification.md) — preserve TCP-ready API compatibility with proof of a candidate response
+- [ADR-434: atomic hosting failure finalization](434-atomic-hosting-failure-finalization.md) — commit failed verdicts with terminal state and retry interrupted persistence through the existing notification outbox
+- [ADR-459: candidate verification cache isolation](459-candidate-verification-cache-isolation.md) — bypass response caches for validated candidate probes
+- [ADR-481: durable challenge-publication recovery](481-durable-challenge-publication-recovery.md) — recover temporary publication outages on the same candidate with a persisted deadline
+- [ADR-482: candidate verdict attribution and durable verification recovery](482-candidate-verdict-attribution.md) — require proof for app verdicts and retry unavailable gateway/transport evidence
+- [ADR-483: node-owned deployment handoffs](483-node-owned-deployment-handoffs.md) — only the owning imaged claims or acknowledges a local builder export
+- [ADR-484: resumable image preparation](484-resumable-image-preparation.md) — resume layer publication, scanning and snapshot handoff across imaged restarts
+- [ADR-485: renewable notification ownership](485-renewable-notification-ownership.md) — share fenced delivery claims between imaged LISTEN and replay, with renewal during long work
+- [ADR-486: recover interrupted snapshot primes](486-recover-interrupted-snapshot-primes.md) — keep graceful schedd shutdown from terminally failing snapshot preparation and clean up its specific VM before recovery
+
+## Route review and release protection
+
+- [ADR-435: Read-only preview route change reports](435-preview-route-change-reports.md)
+- [ADR-436: Customer-owned route requirements in preview reports](436-route-requirements.md)
+- [ADR-437: Read-only route policy patch planning](437-route-policy-plans.md)
+- [ADR-438: Transactional application of reviewed route policy plans](438-transactional-route-policy-apply.md)
+- [ADR-439: Static FastAPI route impact between Git source revisions](439-static-fastapi-route-impact.md)
+- [ADR-440: Function references and semantic source changes for route impact](440-function-level-route-impact.md)
+- [ADR-441: Source impact joins and priorities in preview reviews](441-source-impact-preview-reviews.md)
+- [ADR-442: Directional request compatibility in preview reports](442-request-input-compatibility.md)
+- [ADR-443: Validation bounds and nullable request unions](443-request-validation-compatibility.md)
+- [ADR-444: Captured route authentication comparison](444-declared-route-security-comparison.md)
+- [ADR-445: Preview route-family policy coverage](445-preview-route-family-policy-coverage.md)
+- [ADR-446: Route-group policy plans and captured impact](446-route-group-policy-planning.md)
+- [ADR-447: Opt-in route-group budget consolidation](447-route-group-budget-consolidation.md)
+- [ADR-448: Saved app route requirements and snapshot checks](448-saved-route-requirements.md)
+- [ADR-449: Durable automatic route checks and freshness](449-automatic-route-checks.md)
+- [ADR-450: Opt-in route safety gates for canary advancement](450-canary-route-safety-gates.md)
+- [ADR-451: Continuous route policy checks and safety transition events](451-continuous-route-policy-monitoring.md)
+- [ADR-452: Repair plans bound to saved route intent](452-saved-route-policy-repairs.md)
+- [ADR-453: Retained route checks and finding regressions](453-route-finding-history.md)
+- [ADR-454: Observed route health gates for canary progression](454-observed-route-canary-health.md)
+- [ADR-455: Critical route p95 latency budgets during canaries](455-critical-route-canary-latency.md)
+- [ADR-456: Saved canary route health decisions and explanations](456-saved-canary-route-health-decisions.md)
+- [ADR-457: Critical route health hold and resume notifications](457-route-health-transition-notifications.md)
+- [ADR-458: Opt-in automatic recovery for critical route error regressions](458-critical-route-automatic-rollback.md)
+- [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
+- [ADR-493: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
+- [ADR-494: Advisory customer route health](494-advisory-customer-route-health.md) — compare tenant or consumer route health while preserving sparse and attribution coverage
+- [ADR-495: Advisory watched response codes](495-advisory-route-client-errors.md) — detect selected 4xx regressions without changing rollout decisions
+- [ADR-496: Route regression investigation](496-route-regression-investigation.md) — connect route findings to bounded, scoped request examples
+- [ADR-497: Route latency investigation](497-route-latency-investigation.md) — add dependency and execution evidence to route latency findings
+- [ADR-498: Advisory production route budgets and saved incidents](498-production-route-monitoring.md) — continuously evaluate serving-route budgets and retain bounded incidents
+- [ADR-499: Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) — attribute incidents to request-time tenant or consumer cohorts with bounded recovery tracking

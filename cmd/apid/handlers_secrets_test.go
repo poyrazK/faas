@@ -662,6 +662,7 @@ func TestSecrets_ManagedPostgresTargetReturnsConflict(t *testing.T) {
 		Ciphertext:                  []byte("sealed-managed-credential"),
 		Kid:                         "age1managed",
 		ManagedPostgresBindingID:    "binding-a",
+		ManagedPostgresAccess:       "read_write",
 		ManagedCredentialRef:        "credential-a",
 		ManagedCredentialGeneration: 1,
 	}); err != nil {

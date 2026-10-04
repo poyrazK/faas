@@ -34,6 +34,9 @@ func (m *MemStore) PublishOwnedInstanceRuntime(_ context.Context, p RuntimeInsta
 	}
 	instance.Netns, instance.HostIP, instance.GuestUID = p.Netns, p.HostIP, p.GuestUID
 	instance.StartedAt, instance.State = time.Now().UTC(), p.targetState()
+	if err := m.exclusiveRuntimeTransitionLocked(m.instances[p.InstanceID], instance); err != nil {
+		return Instance{}, err
+	}
 	m.instances[p.InstanceID] = instance
 	m.runtimeInstanceConfigProofs[p.InstanceID] = runtimeInstanceConfigProof{WakeID: p.WakeID, NodeID: p.NodeID, Fence: p.ConfigFence}
 	return instance, nil

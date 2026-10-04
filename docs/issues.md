@@ -143,6 +143,39 @@ Use `--assignee me`, `--assignee unassigned`, or an account UUID to narrow
 the CLI list. The dashboard provides Mine and Unassigned owner views and shows
 each issue's owner and recurrence count.
 
+Configure prospective automatic ownership rules in the Issues dashboard or
+with the CLI. The file uses an ordered `rules` array; every populated matcher
+on a rule must match, and the first matching rule wins:
+
+```json
+{
+  "rules": [
+    {"source_kind": "worker", "assignee_account_id": "ACCOUNT_UUID"},
+    {"exception_type": "DateFormatError", "route_prefix": "/exports", "assignee_account_id": "ACCOUNT_UUID"}
+  ]
+}
+```
+
+Read the configured rules or replace the complete policy (an empty rules array
+disables routing):
+
+```sh
+gregale issues ownership-rules --app exports
+gregale issues ownership-rules --app exports --rules-file issue-routing.json
+```
+
+The `GET /v1/apps/{slug}/issue-ownership-rules` endpoint reads the policy, and
+`PUT /v1/apps/{slug}/issue-ownership-rules` accepts the same `{ "rules": [...] }`
+object to replace it. A rule can match an exact exception
+type, one source kind (`exception`, `http`, `runtime`, or `worker`), and/or a
+route path prefix. Route prefixes match the exact path or a following `/`, so
+`/exports` matches `/exports/42` but not `/export-service`. Each target must be
+the app owner or an active organization member; at most 50 rules are allowed.
+Only new issue groups are routed. Existing issues and their assignments are
+unchanged, and future occurrences do not override a manual assignment. The
+automatic assignment is recorded as normal issue activity and emits
+`issue.assigned` for configured webhooks.
+
 By default, issue lists are ordered by most recently seen. Use `--sort impact`
 to rank by verified distinct customers with observed failures in the previous
 24 hours, or `--min-customers N` to hide issues below a customer threshold.

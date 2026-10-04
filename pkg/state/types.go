@@ -2740,11 +2740,12 @@ func (d Deployment) DeploymentAliasActive() bool {
 // the shape so unit tests can exercise the read path without
 // spinning Postgres.
 type StageState struct {
-	RetryRequestedStage StageName        `json:"retry_requested_stage,omitempty"`
-	RetryRestartReason  string           `json:"retry_restart_reason,omitempty"`
-	Current             StageName        `json:"current"`
-	CurrentStartedAt    *time.Time       `json:"current_started_at,omitempty"`
-	History             []StageStateItem `json:"history"`
+	HostingVerification *HostingVerificationProgress `json:"hosting_verification,omitempty"`
+	RetryRequestedStage StageName                    `json:"retry_requested_stage,omitempty"`
+	RetryRestartReason  string                       `json:"retry_restart_reason,omitempty"`
+	Current             StageName                    `json:"current"`
+	CurrentStartedAt    *time.Time                   `json:"current_started_at,omitempty"`
+	History             []StageStateItem             `json:"history"`
 }
 
 // StageStateItem is one closed stage transition in the
@@ -3461,6 +3462,14 @@ const (
 	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
 	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
+	AppWebhookEventRouteMonitorViolated             AppWebhookEvent = "routes.monitor.violated"
+	AppWebhookEventRouteMonitorRecovered            AppWebhookEvent = "routes.monitor.recovered"
+	AppWebhookEventRouteHealthAborted               AppWebhookEvent = "routes.health.aborted"
+	AppWebhookEventRouteHealthBlocked               AppWebhookEvent = "routes.health.blocked"
+	AppWebhookEventRouteHealthResumed               AppWebhookEvent = "routes.health.resumed"
+	AppWebhookEventRouteRequirementsChanged         AppWebhookEvent = "routes.requirements.changed"
+	AppWebhookEventRouteRequirementsViolated        AppWebhookEvent = "routes.requirements.violated"
+	AppWebhookEventRouteRequirementsRecovered       AppWebhookEvent = "routes.requirements.recovered"
 	AppWebhookEventIssueCreated                     AppWebhookEvent = "issue.created"
 	AppWebhookEventIssueAssigned                    AppWebhookEvent = "issue.assigned"
 	AppWebhookEventIssueResolved                    AppWebhookEvent = "issue.resolved"
@@ -3496,6 +3505,11 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,
+	AppWebhookEventRouteMonitorViolated,
+	AppWebhookEventRouteMonitorRecovered,
+	AppWebhookEventRouteRequirementsChanged,
+	AppWebhookEventRouteRequirementsViolated,
+	AppWebhookEventRouteRequirementsRecovered,
 	AppWebhookEventIssueCreated,
 	AppWebhookEventIssueAssigned,
 	AppWebhookEventIssueResolved,
@@ -4694,32 +4708,48 @@ type CreateMirrorRuleParams struct {
 // Hash fields are 32-byte SHA-256 fingerprints. Body hashes are nil when
 // `include_body=false`; schema fingerprints are present only for complete JSON
 // responses. Any hash can be nil when its source/mirror snapshot is missing or
-// truncated.
+// truncated. AdmissionFailureReason is set only when schedd does not return an
+// admitted target; these rows are incomplete and do not represent guest crashes.
 type MirrorInvocationResult struct {
-	ID                   string
-	MirrorRuleID         string
-	AccountID            string
-	AppID                string
-	SourceDeploymentID   string
-	MirrorDeploymentID   string
-	InstanceID           string
-	SourceInstanceID     string
-	StatusCode           int
-	SourceStatusCode     int
-	LatencyMs            int
-	SourceLatencyMs      int
-	BodyHash             []byte
-	SourceBodyHash       []byte
-	SchemaHash           []byte
-	SourceSchemaHash     []byte
-	StatusDiff           bool
-	SchemaDiff           bool
-	BodyDiff             bool
-	Crashed              bool
-	ComparisonIncomplete bool
-	RequestID            string
-	CompletedAt          time.Time
+	ID                     string
+	MirrorRuleID           string
+	AccountID              string
+	AppID                  string
+	SourceDeploymentID     string
+	MirrorDeploymentID     string
+	InstanceID             string
+	SourceInstanceID       string
+	StatusCode             int
+	SourceStatusCode       int
+	LatencyMs              int
+	SourceLatencyMs        int
+	BodyHash               []byte
+	SourceBodyHash         []byte
+	SchemaHash             []byte
+	SourceSchemaHash       []byte
+	StatusDiff             bool
+	SchemaDiff             bool
+	BodyDiff               bool
+	Crashed                bool
+	ComparisonIncomplete   bool
+	AdmissionFailureReason MirrorAdmissionFailureReason
+	RequestID              string
+	CompletedAt            time.Time
 }
+
+// MirrorAdmissionFailureReason records why the scheduler did not return an
+// admitted mirror target. These outcomes are incomplete comparisons, not
+// guest crashes. The value is persisted on the invocation row so later
+// summaries can distinguish admission timeouts, capacity rejections, and
+// other scheduler errors.
+type MirrorAdmissionFailureReason string
+
+const (
+	MirrorAdmissionFailureNone     MirrorAdmissionFailureReason = ""
+	MirrorAdmissionFailureTimeout  MirrorAdmissionFailureReason = "scheduler_admission_timeout"
+	MirrorAdmissionFailureRejected MirrorAdmissionFailureReason = "scheduler_admission_rejected"
+	MirrorAdmissionFailureError    MirrorAdmissionFailureReason = "scheduler_admission_error"
+)
 
 // MirrorSummary (issue #72 / ADR-125) is the aggregate the
 // GET /v1/apps/{slug}/mirrors/{id}/summary endpoint returns over
@@ -4729,16 +4759,19 @@ type MirrorInvocationResult struct {
 // = mirror is slower). `P99LatencyDiffMs` is signed and is the
 // operator's drift signal.
 type MirrorSummary struct {
-	TotalInvocations          int
-	ChangedResponseCount      int
-	StatusDiffCount           int
-	SchemaDiffCount           int
-	BodyDiffCount             int
-	MeanLatencyDiffMs         int
-	P99LatencyDiffMs          int
-	CrashCount                int
-	IncompleteComparisonCount int
-	WindowSeconds             int
+	TotalInvocations                int
+	ChangedResponseCount            int
+	StatusDiffCount                 int
+	SchemaDiffCount                 int
+	BodyDiffCount                   int
+	MeanLatencyDiffMs               int
+	P99LatencyDiffMs                int
+	CrashCount                      int
+	IncompleteComparisonCount       int
+	SchedulerAdmissionTimeoutCount  int
+	SchedulerAdmissionRejectedCount int
+	SchedulerAdmissionErrorCount    int
+	WindowSeconds                   int
 }
 
 // ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis
@@ -6317,7 +6350,10 @@ type AppSecret struct {
 	// ManagedPostgresBindingID and its opaque credential fields are populated
 	// only by the managed PostgreSQL credential sink. Customer writes cannot
 	// replace or delete an owned row while its binding is active.
-	ManagedPostgresBindingID    string
+	ManagedPostgresBindingID string
+	// ManagedPostgresAccess is delivery metadata projected from the binding
+	// catalog by scoped reads. It is never inferred from an environment key.
+	ManagedPostgresAccess       string
 	ManagedCredentialRef        string
 	ManagedCredentialGeneration int64
 	// ManagedObjectStorageCredentialID is populated only by a compute
@@ -6432,6 +6468,7 @@ type AppSecretRuntimeReloadAckResult struct {
 	AppID        string
 	InstanceID   string
 	WorkloadName string
+	Generation   string
 	Revision     string
 	Status       SecretApplicationReloadAckStatus
 	ErrorCode    string
@@ -6444,19 +6481,20 @@ type AppSecretRuntimeReloadAckResult struct {
 // optional separately-versioned application self-attestation. It contains no
 // secret values and does not independently verify the app's internal state.
 type AppSecretRuntimeReloadObservation struct {
-	Scope                   string
-	Key                     string
-	InstanceID              string
-	WorkloadName            string
-	Version                 int64
-	Projection              SecretReloadProjectionStatus
-	Signal                  SecretReloadSignalStatus
-	ObservedAt              time.Time
-	ErrorCode               string
-	ApplicationAckVersion   int64
-	ApplicationAck          SecretApplicationReloadAckStatus
-	ApplicationAckAt        *time.Time
-	ApplicationAckErrorCode string
+	Scope                    string
+	Key                      string
+	InstanceID               string
+	WorkloadName             string
+	Version                  int64
+	Projection               SecretReloadProjectionStatus
+	Signal                   SecretReloadSignalStatus
+	ObservedAt               time.Time
+	ErrorCode                string
+	ApplicationAckVersion    int64
+	ApplicationAck           SecretApplicationReloadAckStatus
+	ApplicationAckAt         *time.Time
+	ApplicationAckErrorCode  string
+	ApplicationAckGeneration string
 }
 
 // AppSecretRuntimeReloadTarget is one active runtime authorized for a secret

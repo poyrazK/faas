@@ -213,6 +213,7 @@ type CredentialAccess string
 const (
 	CredentialReadWrite CredentialAccess = "read_write"
 	CredentialReadOnly  CredentialAccess = "read_only"
+	CredentialMigration CredentialAccess = "migration"
 )
 
 type EndpointRole string
@@ -385,7 +386,7 @@ func (p UsagePolicy) Validate() error {
 	if !p.Enabled {
 		return nil
 	}
-	if p.CollectionInterval < time.Minute || p.Window < time.Hour || p.Window > 24*time.Hour || p.StaleAfter < p.Window || p.StaleAfter > 7*24*time.Hour {
+	if p.CollectionInterval < time.Minute || !validUsageWindow(p.Window) || p.StaleAfter < p.Window || p.StaleAfter > 7*24*time.Hour {
 		return ErrInvalid
 	}
 	if p.MaxMonthlyCostMillicents <= 0 || p.MaxMonthlyComputeUnitSeconds <= 0 || p.MaxMonthlyStorageByteSeconds <= 0 || p.MaxMonthlyEgressBytes <= 0 {
@@ -395,6 +396,12 @@ func (p UsagePolicy) Validate() error {
 		return ErrInvalid
 	}
 	return nil
+}
+
+// Whole-hour windows partitioning UTC days cannot cross UTC billing months.
+// Neon can also represent their boundaries without rounding the request.
+func validUsageWindow(window time.Duration) bool {
+	return window >= time.Hour && window <= 24*time.Hour && window%time.Hour == 0 && (24*time.Hour)%window == 0
 }
 
 // UsageRecord is one provider observation for one complete window and meter.
@@ -431,6 +438,21 @@ type UsageSnapshot struct {
 	HistoryByteSeconds int64
 	EgressBytes        int64
 	CostMillicents     int64
+	// Databases carries completeness for every ready database. Restores whose
+	// usage is included in a source resolve to that source's coverage.
+	Databases []UsageProgress
+}
+
+// UsageProgress is a contiguous series of complete provider windows. Keeping
+// it separate from observations prevents a newly refreshed old window from
+// making an incomplete account look current.
+type UsageProgress struct {
+	Window           time.Duration
+	CollectedFrom    time.Time
+	CollectedUntil   time.Time
+	ObservedAt       time.Time
+	SourceDatabaseID string
+	UpdatedAt        time.Time
 }
 
 // UsageLineItem is a normalized, provider-neutral meter line. It is an
@@ -482,6 +504,16 @@ func (p UsagePolicy) LineItems(snapshot UsageSnapshot) ([]UsageLineItem, error) 
 func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
 	if !policy.Enabled || s.ReadyDatabases == 0 {
 		return false
+	}
+	if len(s.Databases) > 0 && len(s.Databases) != s.ReadyDatabases {
+		return true
+	}
+	for _, progress := range s.Databases {
+		if progress.Window != policy.Window || progress.ObservedAt.IsZero() ||
+			now.Sub(progress.ObservedAt) > policy.StaleAfter ||
+			progress.CollectedUntil.Before(now.UTC().Truncate(policy.Window)) {
+			return true
+		}
 	}
 	return s.LastObservedAt.IsZero() || now.Sub(s.LastObservedAt) > policy.StaleAfter
 }
@@ -548,7 +580,7 @@ func (c Capabilities) Validate() error {
 		}
 	}
 	for _, access := range c.CredentialAccess {
-		if access != CredentialReadWrite && access != CredentialReadOnly {
+		if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration {
 			return ErrInvalid
 		}
 	}
@@ -565,7 +597,7 @@ func (c Capabilities) Validate() error {
 // the backend prevents Gregale from reserving work that the provider can never
 // reconcile.
 func (c Capabilities) SupportsCredentialAccess(access CredentialAccess) error {
-	if access != CredentialReadWrite && access != CredentialReadOnly {
+	if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration {
 		return ErrInvalid
 	}
 	if !contains(c.CredentialAccess, access) {
@@ -617,7 +649,37 @@ type ScaleToZeroProber interface {
 	ProbeScaleToZero(context.Context, string, CredentialMaterial) (ScaleToZeroProbeResult, error)
 }
 
+// CredentialPrivilegeProber checks actual SQL permissions on disposable
+// qualification resources, including migration credential retirement.
+type CredentialPrivilegeProber interface {
+	ProbeCredentialPrivileges(context.Context, string, CredentialMaterial) (CredentialPrivilegeEvidence, error)
+}
+
+// RestoreCredentialIsolationProber verifies that the source login cannot
+// authenticate against the restored target.
+type RestoreCredentialIsolationProber interface {
+	VerifyRestoreCredentialIsolation(context.Context, CredentialMaterial, CredentialMaterial) error
+}
+
+// RestoreProbe is held only during an isolated qualification run. The marker
+// proves data predates the requested restore point and is never persisted in
+// approval evidence.
+type RestoreProbe struct {
+	PointInTime time.Time
+	Marker      string
+}
+
+// RestoreDataProber exercises data recovery on disposable qualification
+// resources only. It is never called during customer lifecycle reconciliation.
+type RestoreDataProber interface {
+	PrepareRestore(context.Context, string, CredentialMaterial) (RestoreProbe, error)
+	VerifyRestore(context.Context, string, CredentialMaterial, RestoreProbe) error
+	CleanupRestore(context.Context, string, CredentialMaterial) error
+}
+
 type Database struct {
+	// Health is a non-persistent read projection populated by Service.Get/List.
+	Health                      *HealthSummary
 	ID                          string
 	AccountID                   string
 	Name                        string
@@ -734,7 +796,13 @@ type UsageStore interface {
 	// (updated_at, id), strictly after the cursor. The zero cursor starts
 	// from the beginning; a sweep pages until a short page.
 	ListUsageDatabases(ctx context.Context, after UsageDatabaseCursor, limit int) ([]Database, error)
+	Get(context.Context, string, string) (Database, error)
+	UsageProgress(context.Context, string, string, time.Duration) (UsageProgress, error)
+	// RecordUsage atomically replaces one complete window and advances coverage
+	// only when the window is contiguous with the previously committed series.
 	RecordUsage(context.Context, []UsageRecord) error
+	// RecordSharedUsage links a restore to its independently metered root.
+	RecordSharedUsage(context.Context, string, string, string, time.Duration) error
 	UsageSnapshot(context.Context, string, time.Time) (UsageSnapshot, error)
 }
 

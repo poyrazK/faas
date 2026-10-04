@@ -1,0 +1,11 @@
+[{"ifindex":3001,"link":"grp-f8b10c6a","ifname":"grd-f8b10c6a","flags":["BROADCAST","MULTICAST","M-DOWN"],"mtu":1500,"qdisc":"noop","operstate":"DOWN","linkmode":"DEFAULT","group":"default","txqlen":1000,"link_type":"ether","address":"12:cd:b1:51:74:e6","broadcast":"ff:ff:ff:ff:ff:ff","promiscuity":0,"allmulti":0,"min_mtu":68,"max_mtu":65535,"linkinfo":{"info_kind":"veth"},"inet6_addr_gen_mode":"eui64","num_tx_queues":2,"num_rx_queues":2,"gso_max_size":65536,"gso_max_segs":65535,"tso_max_size":524280,"tso_max_segs":65535,"gro_max_size":65536}]
+[{"ifindex":3000,"link":"grd-f8b10c6a","ifname":"grp-f8b10c6a","flags":["BROADCAST","MULTICAST","M-DOWN"],"mtu":1500,"qdisc":"noop","operstate":"DOWN","linkmode":"DEFAULT","group":"default","txqlen":1000,"link_type":"ether","address":"a2:58:5e:f2:22:a5","broadcast":"ff:ff:ff:ff:ff:ff","promiscuity":0,"allmulti":0,"min_mtu":68,"max_mtu":65535,"linkinfo":{"info_kind":"veth"},"inet6_addr_gen_mode":"eui64","num_tx_queues":2,"num_rx_queues":2,"gso_max_size":65536,"gso_max_segs":65535,"tso_max_size":524280,"tso_max_segs":65535,"gro_max_size":65536}]
+[{"ifindex":3003,"link":"grp-f8b10c6a","ifname":"grd-f8b10c6a","flags":["BROADCAST","MULTICAST","M-DOWN"],"mtu":1500,"qdisc":"noop","operstate":"DOWN","linkmode":"DEFAULT","group":"default","txqlen":1000,"link_type":"ether","address":"12:cd:b1:51:74:e6","broadcast":"ff:ff:ff:ff:ff:ff","promiscuity":0,"allmulti":0,"min_mtu":68,"max_mtu":65535,"linkinfo":{"info_kind":"veth"},"inet6_addr_gen_mode":"eui64","num_tx_queues":2,"num_rx_queues":2,"gso_max_size":65536,"gso_max_segs":65535,"tso_max_size":524280,"tso_max_segs":65535,"gro_max_size":65536}]
+make: Entering directory '/var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/source-bounded'
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+make: Leaving directory '/var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/source-bounded'
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth

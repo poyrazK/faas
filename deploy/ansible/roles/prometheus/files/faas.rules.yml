@@ -20,6 +20,66 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  - name: faas_commit
+    interval: 30s
+    rules:
+      # Every scheduler reads the same durable source ledger. max avoids
+      # counting the same backlog once per scheduler replica.
+      - alert: FaasCommitBacklogOverdue
+        expr: (time() - max(schedd_commit_relay_oldest_pending_timestamp_seconds) > 900) and (max(schedd_commit_relay_oldest_pending_timestamp_seconds) > 0)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Committed outbox work has waited more than fifteen minutes"
+          description: "A fresh source observation contains an unaccepted row older than fifteen minutes. Inspect Commit source health, blocked events and Operations capacity. Age is measured from insertion, not transaction commit."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitBlockedEvents
+        expr: max(schedd_commit_relay_blocked_events) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Committed outbox events require repair"
+          description: "Fresh source observations contain blocked events. Inspect their stable reason codes, correct unaccepted rows and request replay with the same event IDs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitSourceObservationUnknown
+        expr: max(schedd_commit_relay_unknown_sources) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Commit source backlog cannot be established"
+          description: "An enabled source has no fresh known backlog observation. Check scheduler relay configuration, database access and source diagnostics. Unknown counts must not be treated as an empty queue."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitRelaySourceFailure
+        expr: max(schedd_commit_relay_failing_sources) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Commit relay source recovery is pending"
+          description: "A fresh source observation reports a relay failure. Inspect the source health code and recover database access, schema, binding, cleanup or downstream acceptance without deleting pending events."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitObservationUnavailable
+        expr: max(schedd_commit_relay_observation_snapshot_success) == 0
+        for: 2m
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Commit relay observations are unavailable"
+          description: "No reporting scheduler can read the shared Commit health ledger. Check the platform PostgreSQL connection and scheduler health; backlog totals are unavailable."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
   - name: faas_realtime_callbacks
     interval: 30s
     rules:
@@ -3560,6 +3620,49 @@ groups:
         annotations:
           summary: "Managed PostgreSQL usage collection is partially deferred"
           description: "At least one managed PostgreSQL usage sweep was degraded or failed during the last 15m. The collector preserves complete-window accounting and leaves incomplete resources for retry; inspect deferred counts before changing COGS ceilings."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+      # Each replica reports the whole catalog. max avoids counting tenants twice.
+      - alert: FaasManagedPostgresHealthDegraded
+        expr: max(apid_managed_postgres_health_databases{status="degraded"} and on(job, instance) (apid_managed_postgres_health_enabled == 1)) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL provider health is degraded"
+          description: "At least one ready database has a fresh provider failure, missing resource, or specification mismatch. Inspect cached customer health and provider metadata; suspended compute is healthy and health collection never opens SQL connections or repairs resources."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+      - alert: FaasManagedPostgresHealthStale
+        expr: max(apid_managed_postgres_health_databases{status="stale"} and on(job, instance) (apid_managed_postgres_health_enabled == 1)) > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL health observations are stale"
+          description: "At least one ready database has no recent metadata check. Check collector capacity, provider backoff, and apid catalog connectivity before relying on cached health."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+      - alert: FaasManagedPostgresHealthCollectorStalled
+        expr: |
+          apid_managed_postgres_health_enabled == 1
+          and
+          (
+            apid_managed_postgres_health_last_sweep_timestamp_seconds == 0
+            or time() - apid_managed_postgres_health_last_sweep_timestamp_seconds > apid_managed_postgres_health_stale_after_seconds
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL health collector is stalled"
+          description: "An enabled apid health collector has not completed a catalog sweep within its freshness window. Check apid logs and catalog connectivity; provider failures are recorded as degraded checks and do not stop successful sweeps."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
 
   - name: faas_stale_deployments

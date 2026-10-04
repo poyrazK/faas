@@ -746,7 +746,13 @@ func cmdApp(args []string) int {
 		} else {
 			fmt.Printf("%-30s %d\n", "concurrency per vm:", a.ConcurrencyPerVMBound)
 		}
-		fmt.Printf("%-30s %ds\n", "idle timeout:", a.IdleTimeoutS)
+		// An unset idle timeout is stored as NULL and the plan default
+		// applies (600 s on Scale); printing "0s" read as "parks at once".
+		if a.IdleTimeoutS == 0 {
+			fmt.Printf("%-30s %s\n", "idle timeout:", "plan default")
+		} else {
+			fmt.Printf("%-30s %ds\n", "idle timeout:", a.IdleTimeoutS)
+		}
 		if a.RequestTimeoutS == 0 {
 			fmt.Printf("%-30s %s\n", "request timeout:", "plan default")
 		} else {
@@ -4230,6 +4236,18 @@ func cmdWake(args []string) int {
 	if err != nil {
 		return printErr("Wake failed", err)
 	}
+	if response.AlreadyRunning {
+		// No wake was queued: the app was already serving. --wait is
+		// satisfied immediately instead of polling for an instance that
+		// schedd will never create.
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]string{
+				"slug": slug, "status": "running", "wake_id": response.WakeID, "instance_id": response.InstanceID,
+			}))
+		}
+		PrintOK(osStdout, "Already running (instance %s)", response.InstanceID)
+		return 0
+	}
 	if strings.TrimSpace(response.WakeID) == "" {
 		return printErr("Wake failed", errors.New("server accepted the wake without returning a wake_id"))
 	}
@@ -4273,7 +4291,12 @@ func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, ti
 	for {
 		instances, err := client.ListInstancesWithHistory(waitCtx, slug, true)
 		if err != nil {
-			lastReadErr = err
+			// The poll in flight when the wait deadline fires fails with the
+			// wait's own context error. Recording it made the timeout read as
+			// "Could not reach Gregale … check your network connection".
+			if waitCtx.Err() == nil {
+				lastReadErr = err
+			}
 		} else {
 			for _, instance := range instances {
 				if instance.WakeID != wakeID {
@@ -4357,10 +4380,11 @@ func cmdTrafficSet(args []string) int {
 // row after the atomic sibling rebalance; the transition fields let automation
 // distinguish a real promotion from an idempotent retry.
 type TrafficPromotionReceipt struct {
-	Deployment      api.DeploymentResponse `json:"deployment"`
-	FromPercent     int                    `json:"from_percent"`
-	ToPercent       int                    `json:"to_percent"`
-	AlreadyPromoted bool                   `json:"already_promoted"`
+	Deployment      api.DeploymentResponse  `json:"deployment"`
+	FromPercent     int                     `json:"from_percent"`
+	ToPercent       int                     `json:"to_percent"`
+	AlreadyPromoted bool                    `json:"already_promoted"`
+	BindingsCheck   *api.BindingCheckReport `json:"bindings_check,omitempty"`
 }
 
 // cmdTrafficPromote is the intent-level counterpart to traffic set. It keeps
@@ -4372,6 +4396,10 @@ func cmdTrafficPromote(args []string) int {
 	app := fs.String("app", "", "app slug; only needed to resolve a vN revision outside a linked project")
 	deployment := fs.String("deployment", "", "deployment id or vN revision to promote to 100% production traffic")
 	ifServing := fs.String("if-serving", "", "promote only if this deployment id or vN revision still serves 100% of production traffic")
+	requireBindings := fs.Bool("require-bindings", false, "require the server to enforce a fresh bindings check before promoting")
+	maxAge := fs.Duration("max-verification-age", api.DefaultBindingVerificationAge, "maximum binding verification age (requires --require-bindings)")
+	allowUnsupported := fs.Bool("allow-unsupported", false, "waive unsupported queue/outbound probes (requires --require-bindings)")
+	requireAck := fs.Bool("require-application-ack", false, "require current PostgreSQL/object-storage application acknowledgements (requires --require-bindings)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -4382,8 +4410,14 @@ func cmdTrafficPromote(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale traffic promote [--app <slug>] --deployment <id|vN> [--if-serving <id|vN>]", "traffic")
 		return 1
 	}
-	var ifServingSet bool
-	fs.Visit(func(f *flag.Flag) { ifServingSet = ifServingSet || f.Name == "if-serving" })
+	var ifServingSet, policySet bool
+	fs.Visit(func(f *flag.Flag) {
+		ifServingSet = ifServingSet || f.Name == "if-serving"
+		policySet = policySet || f.Name == "max-verification-age" || f.Name == "allow-unsupported" || f.Name == "require-application-ack"
+	})
+	if policySet && !*requireBindings || *maxAge <= 0 {
+		return printErr("Traffic promote failed", fmt.Errorf("--max-verification-age must be positive; binding policy flags require --require-bindings"))
+	}
 	if ifServingSet && !validDeploymentRef(*ifServing) {
 		return printErr("Traffic promote failed", fmt.Errorf("--if-serving requires a deployment id or vN revision"))
 	}
@@ -4417,6 +4451,9 @@ func cmdTrafficPromote(args []string) int {
 	}
 	if current.Status != statusLive {
 		return printErr("Traffic promote failed", fmt.Errorf("deployment %s is %s; only live deployments can be promoted", deploymentLabel(current), current.Status))
+	}
+	if *requireBindings {
+		return promoteTrafficWithBindings(ctx, client, current, servingID, *maxAge, *allowUnsupported, *requireAck)
 	}
 
 	receipt := TrafficPromotionReceipt{
@@ -4585,8 +4622,9 @@ func cmdDomains(args []string) int {
 		if err != nil {
 			return printErr("Could not add domain", err)
 		}
-		fmt.Printf("Add this TXT record to your DNS:\n\n")
-		fmt.Printf("  _faas-verify.%s  TXT  %s\n\n", d.Domain, d.ChallengeToken)
+		fmt.Printf("Add these records to your DNS:\n\n")
+		printDomainDNSRecords(osStdout, d)
+		fmt.Printf("\nKeep them in place: the certificate is issued and renewed automatically.\n")
 		fmt.Printf("Then run 'gregale domains list' to see when verification completes.\n")
 		return 0
 	case subRm:
@@ -4630,7 +4668,7 @@ func cmdDomains(args []string) int {
 	case subDomainsDoctor:
 		return cmdDomainsDoctor(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown domains subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown domains subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -4831,7 +4869,7 @@ func cmdCrons(args []string) int {
 		// commands_crons_fire_now.go (cmdCronsFireNowGet).
 		return cmdCronsFireNowGet(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown crons subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown crons subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -5043,6 +5081,13 @@ func cmdKeys(args []string) int {
 			return jsonOut(writeNDJSON(out))
 		}
 		for _, k := range out {
+			// Revoked and grace-period keys looked identical to live ones,
+			// so a customer could not see which listed keys still work.
+			// Active rows keep their two-column shape for existing scripts.
+			if k.Status != "" && k.Status != "active" {
+				fmt.Printf("%-30s %-22s %s\n", k.Label, k.Prefix, k.Status)
+				continue
+			}
 			fmt.Printf("%-30s %s\n", k.Label, k.Prefix)
 		}
 		return 0
@@ -5114,7 +5159,7 @@ func cmdKeys(args []string) int {
 	case "grace-window":
 		return cmdKeysGraceWindow(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "unknown keys subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown keys subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -5251,7 +5296,7 @@ func cmdUsage(args []string) int {
 		return cmdUsageStorage(args[1:])
 	}
 	PrintUsage(os.Stderr, "usage: gregale usage [--month YYYY-MM] | gregale usage summary [--month YYYY-MM] | gregale usage daily [--day YYYY-MM-DD] | gregale usage storage [--day YYYY-MM-DD]", "usage")
-	fmt.Fprintf(os.Stderr, "unknown usage subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "unknown usage subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)
 	maybeSuggestSub(sug)
 	return 1
@@ -5591,7 +5636,15 @@ func cmdOpen(args []string) int {
 	if *dash {
 		// Dashboard page is always served; skip the cold-wake probe.
 		target = dashboardAppURL(apiBase(), slug)
-	} else {
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(struct {
+			Slug      string `json:"slug"`
+			URL       string `json:"url"`
+			Dashboard bool   `json:"dashboard"`
+		}{slug, target, *dash}))
+	}
+	if !*dash {
 		// Cold-wake transparency (UX §6.4, issue #65 D1). Probe with
 		// a 2 s deadline; if the response carries the cold-wake header
 		// (see pkg/wire.WakeHeader), print the cold-start line
@@ -6129,7 +6182,11 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			return true, 0
 		}
 		if e.Data != "" {
-			_, _ = fmt.Fprintln(osStdout, e.Data)
+			line := e.Data
+			if !jsonOutput {
+				line = formatRuntimeLogLine(e.Data)
+			}
+			_, _ = fmt.Fprintln(osStdout, line)
 			if collector != nil {
 				collector.observe(e.Data)
 			}

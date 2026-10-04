@@ -40,7 +40,7 @@ func (m *MemStore) runtimeAppValuesLocked(accountID, appID, deploymentID string)
 		result.Secrets = append(result.Secrets, AppSecret{AccountID: accountID, AppID: appID, Scope: owner.Scope, Key: row.Key,
 			Ciphertext: append([]byte(nil), row.Ciphertext...), SecretClass: row.SecretClass, Kid: row.Kid, ValueHash: row.ValueHash,
 			SecretVersion: row.SecretVersion, DeliveryVersion: row.DeliveryVersion, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
-			ManagedPostgresBindingID: row.ManagedPostgresBindingID, ManagedCredentialRef: row.ManagedCredentialRef,
+			ManagedPostgresBindingID: row.ManagedPostgresBindingID, ManagedPostgresAccess: row.ManagedPostgresAccess, ManagedCredentialRef: row.ManagedCredentialRef,
 			ManagedCredentialGeneration: row.ManagedCredentialGeneration, ManagedObjectStorageCredentialID: row.ManagedObjectStorageCredentialID,
 		})
 	}

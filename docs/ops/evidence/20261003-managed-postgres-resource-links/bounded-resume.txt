@@ -1,0 +1,7 @@
+set -eu
+sudo systemctl show gregale-managed-pg-resource-links-f8b10c6a -p ActiveState -p SubState -p Result -p ExecMainStatus -p InvocationID | sudo tee /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/initial/unit-final.txt >/dev/null
+mv /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/bounded-runner.sh /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/runner.sh
+printf %s '2a57c650aadefb707a1c9ea95cbafd3be3c9f9270ade75e0e7ff85e08808a608  /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/runner.sh
+' | sha256sum -c -
+sudo systemd-run --unit=gregale-managed-pg-resource-links-f8b10c6a-bounded '--property=TemporaryFileSystem=/run/mpl-f8b10c6a-bounded:rw,size=4G,mode=1777 /srv/fc/jail:rw,size=1G,mode=0755' --property=MemoryMax=10G /usr/bin/bash -c 'exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/runner.sh > /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/run.log 2>&1'
+sudo systemctl show gregale-managed-pg-resource-links-f8b10c6a-bounded -p InvocationID -p ActiveState -p SubState -p MemoryMax

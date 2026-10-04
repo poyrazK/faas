@@ -38,7 +38,9 @@ type AppRestartResponse struct {
 }
 
 type AppWakeResponse struct {
-	WakeID string `json:"wake_id"`
+	WakeID         string `json:"wake_id"`
+	AlreadyRunning bool   `json:"already_running,omitempty"`
+	InstanceID     string `json:"instance_id,omitempty"`
 }
 
 // RetryPolicyDTO configures exponential retry behavior for invocations.
@@ -685,7 +687,7 @@ type AccountResponse struct {
 }
 
 // CapabilityStatus is a customer-visible capability with the account plan
-// gate resolved by the API.
+// entitlement and runtime gate resolved by the API.
 type CapabilityStatus struct {
 	Key         string   `json:"key"`
 	Name        string   `json:"name"`
@@ -696,6 +698,10 @@ type CapabilityStatus struct {
 	DocsURL     string   `json:"docs_url"`
 	Acceptance  string   `json:"acceptance"`
 	Enabled     bool     `json:"enabled"`
+	// Optional explanations are omitted for enabled capabilities and may be
+	// absent when communicating with older servers.
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+	UnavailableDetail string `json:"unavailable_detail,omitempty"`
 }
 
 // CapabilitiesResponse is the account-scoped capability registry returned by
