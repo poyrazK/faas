@@ -2030,7 +2030,12 @@ These portable checks do not establish native smoke or snapshot acceptance.
 
 The additive `CaptureEnvironmentQualification` RPC carries the complete original
 execution and selects its recorded node. Generic snapshots and older node
-capabilities cannot substitute for it. vmmd validates the live instance's original
+capabilities cannot substitute for it. The production JailerVMM still blocks
+private-drive snapshot export because its durable producer adapter is missing.
+The Manager checks that capability before recording start or beginning snapshot
+effects. This checkpoint implements the original-attempt boundary and transport;
+the real native capture adapter remains required. With a supported adapter, vmmd
+validates the live instance's original
 physical generation and complete lease against both host journals, pins the
 Manager flight, and serializes capture with incoming revocation. Destroy cancels
 and joins that flight. The stored incoming deadline bounds every capture.
@@ -2058,7 +2063,7 @@ fences. Production qualification polling and enforcement remain gated.
 Portable qualification checks cover capture replay, failed capture/resume/backing
 publication, changed live and physical identity, cancellation joins, racing
 delivery and damaged journal recovery. The final original-attempt host checks
-pass 28 top-level tests / 95 cases with race detection. Scheduler qualification
+pass with race detection. Scheduler qualification
 and RPC checks pass 41 top-level tests / 116 cases. The broader portable VM,
 wire and RPC regression run passed 2,039 cases with six platform-dependent skips;
 the final app/deployment identity guards were subsequently covered by the focused

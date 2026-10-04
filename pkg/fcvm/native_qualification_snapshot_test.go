@@ -25,6 +25,9 @@ type qualificationCaptureVMM struct {
 	capture func(context.Context, Lease, SnapshotSpec) (SnapshotInfo, error)
 }
 
+// This is a portable producer fixture, not a supported native export adapter.
+func (v *qualificationCaptureVMM) checkEnvironmentQualificationSnapshotSupport() error { return nil }
+
 func (v *qualificationCaptureVMM) SnapshotKeepAlive(ctx context.Context, lease Lease, spec SnapshotSpec) (SnapshotInfo, error) {
 	return v.capture(ctx, lease, spec)
 }
@@ -114,6 +117,26 @@ func TestNativeQualificationSnapshotCompletesOriginalImmutableCapture(t *testing
 	restarted.WithStorage(m.storage)
 	if got, err := restarted.CaptureEnvironmentQualification(ctx, frame); err == nil || got != (state.EnvironmentQualificationSnapshot{}) || restarted.LiveCount() != 0 {
 		t.Fatal("journal recovery manufactured a live qualified VM", err)
+	}
+}
+
+func TestNativeQualificationSnapshotRealBackendRemainsUnavailableBeforeEffects(t *testing.T) {
+	for _, backend := range []string{"native_jailer", "generic_native_fixture"} {
+		t.Run(backend, func(t *testing.T) {
+			m, j, frame, ctx, v, calls := qualificationCaptureFixture(t)
+			m.vmm = v.recoveryVMMFixture
+			if backend == "native_jailer" {
+				m.vmm = v.jailer
+			}
+			proof, err := m.CaptureEnvironmentQualification(ctx, frame)
+			if !errors.Is(err, state.ErrConflict) || proof != (state.EnvironmentQualificationSnapshot{}) || calls.Load() != 0 || m.hasInstanceOperation(frame.InstanceID) {
+				t.Fatal("missing native producer capability entered capture", err)
+			}
+			path, _ := j.capturePath(frame.InstanceID)
+			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("unsupported native backend recorded capture start", err)
+			}
+		})
 	}
 }
 

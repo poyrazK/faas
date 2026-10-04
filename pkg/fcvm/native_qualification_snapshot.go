@@ -11,6 +11,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// A native backend must fence its private-drive export and publication
+// producers before the Manager can start a capture. Native journal ownership
+// alone does not implement this surface.
+type environmentQualificationSnapshotBackend interface {
+	checkEnvironmentQualificationSnapshotSupport() error
+}
+
+// Native drive export still needs its durable producer adapter. Preserve the
+// existing freezeSnapshotDrive gate, and refuse before pause/snapshot effects.
+func (v *JailerVMM) checkEnvironmentQualificationSnapshotSupport() error {
+	return fmt.Errorf("native qualification: private-drive capture producer is unavailable: %w", state.ErrConflict)
+}
+
 // CaptureEnvironmentQualification captures exactly the original private VM.
 // vmmd chooses all object keys; callers cannot redirect capture to host paths,
 // shared deployment keys, or another attempt. This is capture evidence only,
@@ -18,6 +31,13 @@ import (
 func (m *Manager) CaptureEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution) (proof state.EnvironmentQualificationSnapshot, result error) {
 	j, err := m.qualificationJournal(frame)
 	if err != nil {
+		return proof, err
+	}
+	backend, ok := m.vmm.(environmentQualificationSnapshotBackend)
+	if !ok {
+		return proof, state.ErrConflict
+	}
+	if err := backend.checkEnvironmentQualificationSnapshotSupport(); err != nil {
 		return proof, err
 	}
 	incoming, err := j.snapshotAuthority(ctx, frame)
