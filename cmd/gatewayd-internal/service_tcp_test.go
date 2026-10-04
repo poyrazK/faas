@@ -180,8 +180,7 @@ func TestStartServiceTCPProxy(t *testing.T) {
 	}
 
 	// The bridge address does not exist on a test host: bind loopback and
-	// check that an accepted connection is served and refused (there is no
-	// conntrack original destination for a direct dial).
+	// check that an accepted connection is served and refused.
 	var bound net.Listener
 	deps := newDeps(func(network, _ string) (net.Listener, error) {
 		ln, err := net.Listen(network, "127.0.0.1:0")
@@ -203,8 +202,11 @@ func TestStartServiceTCPProxy(t *testing.T) {
 	if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
 		t.Fatalf("a connection without an original destination was not closed: %v", err)
 	}
-	if got := serviceTCPRejected(t, deps.metrics, "original_destination"); got != 1 {
-		t.Fatalf("rejected{original_destination} = %v, want 1", got)
+	// Without conntrack the destination lookup fails; with it (a Linux host
+	// with nf_conntrack loaded) a direct dial reports its own loopback
+	// address. Either way the session is refused before any resolution.
+	if got := serviceTCPRejected(t, deps.metrics, "original_destination") + serviceTCPRejected(t, deps.metrics, "not_service_address"); got != 1 {
+		t.Fatalf("rejected{original_destination|not_service_address} = %v, want 1", got)
 	}
 	cancel()
 	select {
