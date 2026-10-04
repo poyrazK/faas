@@ -1290,11 +1290,17 @@ The production PGBackend also validates exact instance, deployment, node and
 effective port against its current local picker. Managed service leases refresh
 when a cached target fails this check. Empty leases reread discovery so observed
 readiness recovery is available without waiting for lease expiry. Every HTTP,
-gRPC routing attempt, retry and Upgrade selection rechecks eligibility before
-asking the circuit breaker, preserving its single half-open probe. A readiness
+gRPC routing attempt, retry, Upgrade and private service TCP selection rechecks
+eligibility before asking the circuit breaker, preserving its single half-open probe. A readiness
 refusal is capacity evidence; a currently eligible target denied by its breaker
 remains circuit evidence. Explicit retained zero-traffic revision pins remain
 eligible when ready; ordinary routing still excludes them.
+
+The private TCP proxy shares this selector and exact deployment wake path with
+the HTTP proxy. A stale readiness, wake or node snapshot cannot be dialed;
+recovery rereads the current endpoint without waiting for the lease. A pinned
+zero-traffic deployment can be woken and served without routing ordinary calls
+to it. This does not add raw TCP to the HTTP deadline or admission guarantees.
 
 These are point-in-time local checks after this gateway observes a transition.
 They do not cancel an already admitted exchange, guarantee instant delivery to
