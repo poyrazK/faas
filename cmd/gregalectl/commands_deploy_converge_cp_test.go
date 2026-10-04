@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/manifest"
 )
 
 // adr: 580
@@ -287,5 +290,214 @@ func TestControlPlaneConvergePlaybookRecordsContractOnlyAfterBootstrap(t *testin
 	}
 	if !strings.Contains(string(bootstrap), "when: faas_join_bootstrap_contract_current | default(false) | bool") {
 		t.Fatal("bootstrap.yml no longer honors faas_join_bootstrap_contract_current; an unchanged control-plane contract would reconverge every rollout")
+	}
+}
+
+// convergeFixture returns valid options against the example split-box
+// manifest with DNS and Ansible seams installed; tests override pieces.
+func convergeFixture(t *testing.T) deployConvergeControlPlaneOptions {
+	t.Helper()
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	knownHosts := filepath.Join(dir, "known_hosts")
+	if err := os.WriteFile(knownHosts, []byte("fsn-1.gregale.dev ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBJcCV3B7r6Ey6qjXgmPLQxZQ6Ho9dJv0h5vPXLqyYV3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	varsFile := filepath.Join(dir, "prod-vars.yml")
+	if err := os.WriteFile(varsFile, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldLookup, oldRunner := joinPrivateAddressLookup, ansiblePlaybookRunner
+	t.Cleanup(func() { joinPrivateAddressLookup, ansiblePlaybookRunner = oldLookup, oldRunner })
+	joinPrivateAddressLookup = func(_ context.Context, _, host string) ([]net.IP, error) {
+		switch host {
+		case "fsn-1.gregale.dev":
+			return []net.IP{net.ParseIP("10.42.0.1")}, nil
+		case "fsn-2.gregale.dev":
+			return []net.IP{net.ParseIP("10.42.0.2")}, nil
+		}
+		return nil, fmt.Errorf("unexpected private host %s", host)
+	}
+	ansiblePlaybookRunner = func(context.Context, string, []string) error { return nil }
+	return deployConvergeControlPlaneOptions{
+		ManifestFile:      filepath.Join(repoRoot, "deploy", "manifest", "examples", "splitbox.example.yaml"),
+		SSHKnownHostsFile: knownHosts,
+		SSHUser:           "root",
+		AnsibleVarsFile:   varsFile,
+		RepoRoot:          repoRoot,
+	}
+}
+
+func TestCmdDeployConvergeControlPlaneExitCodesAndOutput(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       func(o deployConvergeControlPlaneOptions) []string
+		runnerErr  error
+		wantCode   int
+		wantStdout string
+	}{
+		{
+			name:     "missing required flags",
+			args:     func(deployConvergeControlPlaneOptions) []string { return nil },
+			wantCode: 2,
+		},
+		{
+			name:     "unknown flag",
+			args:     func(deployConvergeControlPlaneOptions) []string { return []string{"--no-such-flag"} },
+			wantCode: 2,
+		},
+		{
+			name: "text report",
+			args: func(o deployConvergeControlPlaneOptions) []string {
+				return []string{"--manifest-file", o.ManifestFile, "--ssh-known-hosts-file", o.SSHKnownHostsFile, "--ansible-vars-file", o.AnsibleVarsFile, "--repo-root", o.RepoRoot}
+			},
+			wantCode:   0,
+			wantStdout: "deploy converge-control-plane: host=fsn-1 contract=sha256:",
+		},
+		{
+			name: "json report",
+			args: func(o deployConvergeControlPlaneOptions) []string {
+				return []string{"--manifest-file", o.ManifestFile, "--ssh-known-hosts-file", o.SSHKnownHostsFile, "--ansible-vars-file", o.AnsibleVarsFile, "--repo-root", o.RepoRoot, "--json"}
+			},
+			wantCode:   0,
+			wantStdout: `"contract_sha256":"sha256:`,
+		},
+		{
+			name: "ansible failure",
+			args: func(o deployConvergeControlPlaneOptions) []string {
+				return []string{"--manifest-file", o.ManifestFile, "--ssh-known-hosts-file", o.SSHKnownHostsFile, "--ansible-vars-file", o.AnsibleVarsFile, "--repo-root", o.RepoRoot}
+			},
+			runnerErr: errors.New("play failed"),
+			wantCode:  3,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := convergeFixture(t)
+			ansiblePlaybookRunner = func(context.Context, string, []string) error { return tt.runnerErr }
+			var code int
+			buf, _ := captureStdoutComputeNodes(t, func() {
+				_ = captureStderrComputeNodes(t, func() { code = cmdDeployDispatch(append([]string{"converge-control-plane"}, tt.args(opts)...)) })
+			})
+			if code != tt.wantCode {
+				t.Fatalf("exit code = %d, want %d (stdout %q)", code, tt.wantCode, buf.String())
+			}
+			if tt.wantStdout != "" && !strings.Contains(strings.ReplaceAll(buf.String(), " ", ""), strings.ReplaceAll(tt.wantStdout, " ", "")) {
+				t.Fatalf("stdout = %q, want it to contain %q", buf.String(), tt.wantStdout)
+			}
+		})
+	}
+}
+
+func TestConvergeControlPlaneFailurePaths(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(t *testing.T, o *deployConvergeControlPlaneOptions)
+		want   string
+	}{
+		{
+			name: "release predates the converge playbook",
+			mutate: func(t *testing.T, o *deployConvergeControlPlaneOptions) {
+				o.RepoRoot = t.TempDir()
+			},
+			want: "control_plane_converge.yml",
+		},
+		{
+			name: "unreadable manifest",
+			mutate: func(t *testing.T, o *deployConvergeControlPlaneOptions) {
+				o.ManifestFile = filepath.Join(t.TempDir(), "missing.yaml")
+			},
+			want: "missing.yaml",
+		},
+		{
+			name: "manifest without a control plane",
+			mutate: func(t *testing.T, o *deployConvergeControlPlaneOptions) {
+				body, err := os.ReadFile(o.ManifestFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(t.TempDir(), "no-cp.yaml")
+				rewritten := strings.Replace(string(body), "role: control-plane", "role: compute-only", 1)
+				if err := os.WriteFile(path, []byte(rewritten), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				o.ManifestFile = path
+			},
+			want: "control-plane",
+		},
+		{
+			name: "peer private name does not resolve",
+			mutate: func(t *testing.T, o *deployConvergeControlPlaneOptions) {
+				joinPrivateAddressLookup = func(context.Context, string, string) ([]net.IP, error) {
+					return nil, errors.New("no such host")
+				}
+			},
+			want: "resolve fleet private addresses",
+		},
+		{
+			name: "ansible play fails",
+			mutate: func(t *testing.T, o *deployConvergeControlPlaneOptions) {
+				ansiblePlaybookRunner = func(context.Context, string, []string) error { return errors.New("exit status 2") }
+			},
+			want: "control-plane convergence: exit status 2",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := convergeFixture(t)
+			tt.mutate(t, &opts)
+			_, err := convergeControlPlane(context.Background(), opts)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("convergeControlPlane() = %v, want an error containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestSoleControlPlaneHostRequiresExactlyOne(t *testing.T) {
+	tests := []struct {
+		name  string
+		roles []string
+		want  string
+	}{
+		{name: "one", roles: []string{roleControlPlane, roleComputeOnly}, want: "cp-0"},
+		{name: "none", roles: []string{roleComputeOnly}},
+		{name: "two", roles: []string{roleControlPlane, roleControlPlane}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &manifest.Manifest{}
+			for i, role := range tt.roles {
+				m.Fleet.Hosts = append(m.Fleet.Hosts, manifest.Host{Name: fmt.Sprintf("cp-%d", i), Role: role})
+			}
+			got, err := soleControlPlaneHost(m)
+			if tt.want == "" {
+				if err == nil {
+					t.Fatalf("soleControlPlaneHost() = %+v, want an error", got)
+				}
+				return
+			}
+			if err != nil || got.Name != tt.want {
+				t.Fatalf("soleControlPlaneHost() = %+v, %v; want %s", got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestControlPlaneBootstrapContractHashRequiresAControlPlanePlay(t *testing.T) {
+	dir := t.TempDir()
+	writeContractTree(t, dir, map[string]string{
+		"bootstrap.yml":    "---\n- hosts: compute_nodes\n  roles:\n    - role: compute\n",
+		"prod-vars.yml":    "{}\n",
+		"requirements.yml": "collections: []\n",
+	})
+	if _, err := controlPlaneBootstrapContractHash(dir, dir, nil, filepath.Join(dir, "prod-vars.yml")); err == nil || !strings.Contains(err.Error(), "no control_plane play") {
+		t.Fatalf("contract without a control_plane play = %v, want an error", err)
+	}
+	if _, err := controlPlaneBootstrapContractHash(t.TempDir(), dir, nil, filepath.Join(dir, "prod-vars.yml")); err == nil {
+		t.Fatal("contract without bootstrap.yml must fail")
 	}
 }
