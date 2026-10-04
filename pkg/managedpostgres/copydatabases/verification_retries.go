@@ -37,7 +37,22 @@ func (r Receipt) WithVerificationRetryAccess(ctx context.Context, conn *pgx.Conn
 	if err != nil {
 		return VerificationClosure{}, err
 	}
-	return v.withAccess(ctx, run)
+	return v.withAccess(ctx, run, nil)
+}
+
+// WithVerificationRetryAccessAdmitted adds durable work admission after the
+// exact closed predecessor and never-opened successor are authenticated under
+// the shared lock. An existing successor never consumes a new admission.
+func (r Receipt) WithVerificationRetryAccessAdmitted(ctx context.Context, conn *pgx.Conn, source copyinventory.ExportPlan,
+	imported, owner uuid.UUID, previous VerificationClosure, authorize, admit copyroles.Authorize, run VerificationRun) (VerificationClosure, error) {
+	if run == nil || admit == nil {
+		return VerificationClosure{}, pgerrors.ErrInvalid
+	}
+	v, err := newVerificationRetry(r, conn, source, imported, owner, previous, authorize)
+	if err != nil {
+		return VerificationClosure{}, err
+	}
+	return v.withAccess(ctx, run, admit)
 }
 
 func newVerificationRetry(r Receipt, conn *pgx.Conn, source copyinventory.ExportPlan, imported, owner uuid.UUID,

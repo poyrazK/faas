@@ -28,7 +28,8 @@ func (s *server) projectEnvironmentClonePostgresVerification(ctx context.Context
 	contents, contentsOK := s.store.(state.ProjectEnvironmentClonePostgresContentsStore)
 	imports, importOK := s.store.(state.ProjectEnvironmentClonePostgresImportStore)
 	pins, pinsOK := s.store.(state.ProjectEnvironmentClonePostgresDatabaseSQLPinsStore)
-	if !verificationOK || !contentsOK || !importOK || !pinsOK || mfaIdentities == nil {
+	budgets, budgetsOK := s.store.(state.ProjectEnvironmentClonePostgresVerificationReadBudgetStore)
+	if !verificationOK || !contentsOK || !importOK || !pinsOK || !budgetsOK || mfaIdentities == nil {
 		return zero, managedpostgres.ErrUnavailable
 	}
 	ctx, cancel := context.WithDeadline(ctx, l.ExpiresAt)
@@ -95,6 +96,10 @@ func (s *server) projectEnvironmentClonePostgresVerification(ctx context.Context
 	if err != nil || importErr != nil {
 		return zero, managedpostgres.ErrConflict
 	}
+	budget, err := clonePostgresVerificationReadBudget(ctx, budgets, l, owner, cfg, true)
+	if err != nil {
+		return zero, err
+	}
 	if owner.State == "reserved" {
 		owner, _, err = verifications.ClaimProjectEnvironmentClonePostgresVerification(ctx, l, id, oid)
 		if err != nil {
@@ -109,6 +114,9 @@ func (s *server) projectEnvironmentClonePostgresVerification(ctx context.Context
 		child, err := pins.ProjectEnvironmentClonePostgresDatabaseSQLPinsForLease(ctx, l, id, oid)
 		if err == nil && (target != prepared.bootstrap || !reflect.DeepEqual(fresh, owner) || !sameClonePostgresDatabaseSQLPins(child, prepared.owner)) {
 			err = managedpostgres.ErrConflict
+		}
+		if err == nil {
+			err = authorizeClonePostgresVerificationReadBudget(ctx, budgets, l, owner, budget)
 		}
 		return err
 	}
@@ -137,7 +145,15 @@ func (s *server) projectEnvironmentClonePostgresVerification(ctx context.Context
 		err = s.managedPostgres.WithSnapshotCopyTargetDatabaseSQL(ctx, clonePostgresSnapshotDefinition(source), bootstrapRequest,
 			func(ctx context.Context, conn *pgx.Conn, _ managedpostgres.SnapshotCopyTargetSQLIdentity) error {
 				var err error
-				closure, err = prepared.receipt.WithVerificationAccess(ctx, conn, exports, importID, verificationID, authorize,
+				closure, err = prepared.receipt.WithVerificationAccessAdmitted(ctx, conn, exports, importID, verificationID, authorize,
+					func(ctx context.Context, target copyarchive.RestoreTarget) error {
+						if err := authorize(ctx, target); err != nil {
+							return err
+						}
+						var err error
+						cfg, err = allocateClonePostgresVerificationRead(ctx, budgets, l, owner, owner.VerificationID, 1, &budget, cfg)
+						return err
+					},
 					func(ctx context.Context, access copydatabases.VerificationTarget) error {
 						var err error
 						retained, err = s.projectEnvironmentClonePostgresCompare(ctx, source, prepared.bootstrap, childRequest, manifest, actual, verificationID, importID, 1, recipient, identities, cfg, authorize, access,

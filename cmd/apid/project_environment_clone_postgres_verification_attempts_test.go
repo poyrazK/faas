@@ -116,6 +116,10 @@ func reserveClaimVerificationAttempt(t *testing.T, v *verificationWorkerFixture,
 	if err != nil || first || !reflect.DeepEqual(a, replay) {
 		t.Fatal("lost claim reply changed dispatch", err)
 	}
+	if _, _, err := v.store.AllocateProjectEnvironmentClonePostgresVerificationRead(t.Context(), x.f.lease, state.ProjectEnvironmentClonePostgresVerificationReadRequest{
+		SourceDatabaseID: r.Scope.SourceDatabaseID, DatabaseOID: r.DatabaseOID, VerificationID: a.VerificationID, Attempt: a.Attempt, ReadBytes: v.cfg.MaxBytes, SortMemoryBytes: int64(v.cfg.SortMemoryBytes), SortDiskBytes: v.cfg.SortDiskBytes}); err != nil {
+		t.Fatal("manual native composition read debit", err)
+	}
 	return a
 }
 

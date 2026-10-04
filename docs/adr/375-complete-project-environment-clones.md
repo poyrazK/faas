@@ -6278,3 +6278,62 @@ config/data cut and source writer closure, complete schema/data/globals and fina
 authority, object copying, provider isolation and PostgreSQL 14/15 qualification,
 and production-preserving promotion/rollback remain incomplete. The public full
 database/object clone gate remains closed.
+
+### Verification worker read admission (2026-10-04)
+
+Original and retry APID verification workers now consume the durable read-credit
+ledger. The original worker reserves up to three times its normalized per-read
+maximum before claiming the first owner. Existing holds keep their original
+read and sort caps. Workers require the optional private budget-store capability;
+a store without it cannot dispatch verification SQL or read target data.
+
+Native `WithVerificationAccessAdmitted` and
+`WithVerificationRetryAccessAdmitted` invoke a required admission callback only
+after authenticating the never-opened owner, closed import and exact retry
+predecessor under the shared bootstrap lock. The callback commits that owner's
+planned debit before native SQL opening. Fresh authorization follows admission
+and surrounds opening, read-only child comparison, provider postchecks and proof
+publication. Existing windows recover close-only without invoking admission or
+comparison, preventing retroactive funding of uncertain legacy work. The older
+native primitives remain private composable capabilities; production rollout
+must fence every older data-reading worker before relying on this policy.
+
+The admission helper authenticates the original held prefix and exact successful
+store extension. A committed debit whose response was lost retains its complete
+planned charge without opening a native window. A subsequent fresh worker recovers
+its first read/sort quantities and timestamps, uses those caps for the actual
+comparison and does not debit again. Limits configured on a later worker cannot
+replace a held debit. A newly selected attempt must fit the original remaining
+aggregate and sort caps. Quota denial leaves it claimed but never opened, allowing
+a subsequent bounded dispatch of that same owner after the caller selects limits
+that fit. Exhausted or failed reads retain their debits; no failure, cancellation,
+response loss or handoff refunds them. Ledger quota rejection is mapped to the
+native protocol's stable managed-PostgreSQL quota error.
+
+Every worker authorization also re-authenticates its held ledger. Changed scopes,
+parents, debits or aggregate arithmetic prevent comparison/proof publication.
+Legacy matched proof with no budget may still recover its actual retained match
+and native closure without data access or reader configuration. An unmatched
+legacy owner may recover its exact closed native failure, but cannot receive a
+retroactive hold/debit or authorize a newly owned retry. Close-only proof recovery
+spends no new credits and accepts an absent reader configuration.
+
+Local PostgreSQL 16 qualification uses actual encrypted archive restore between
+independent clusters and original-manifest data comparison. It covers lost
+aggregate/first-debit/retry-debit responses, debit-before-opening assertions,
+changed limits after handoff, immutable matched replay, aggregate and sort cap
+rejection before SQL opening, charged failed attempts, unmatched and matched
+legacy recovery, missing private store capability and ledger corruption during
+actual reads. Existing original/retry worker and native/store composition
+contracts also retain their gates for keys, provider failures, cancellation,
+uncertain import, native response loss and comparison/closure publication.
+Provider observations remain synthetic fixtures; paid-provider permission
+qualification is still pending.
+
+This wires planned target-verification read credits, not complete production
+resource admission. Source capture admission, CPU/host placement, aggregate spool
+capacity, backoff, measured usage, billing and qualified retirement remain
+required, alongside the common config/data cut and source writer closure, full
+schema/data/globals and final authority, object copying, PostgreSQL 14/15 and
+mixed-version qualification, full coordinator and production-preserving
+promotion/rollback. The public full database/object clone gate remains closed.

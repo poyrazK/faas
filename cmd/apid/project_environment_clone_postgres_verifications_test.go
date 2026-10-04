@@ -146,6 +146,23 @@ func (v *verificationWorkerFixture) importData(t *testing.T, uncertain bool) {
 		if err != nil || len(history) > 0 && history[len(history)-1].State != "verifying" {
 			return nil, errors.New("verification child borrow preceded current attempt claim")
 		}
+		budget, err := v.store.ProjectEnvironmentClonePostgresVerificationReadBudgetForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
+		if err != nil {
+			return nil, err
+		}
+		expectedOwner, expectedAttempt := owner.VerificationID, int32(1)
+		if len(history) > 0 {
+			expectedOwner, expectedAttempt = history[len(history)-1].VerificationID, history[len(history)-1].Attempt
+		}
+		allocated := false
+		for _, a := range budget.Allocations {
+			if a.VerificationID == expectedOwner && a.Attempt == expectedAttempt {
+				allocated = true
+			}
+		}
+		if !allocated {
+			return nil, errors.New("verification child borrow preceded durable read debit")
+		}
 		cfg := x.targetRoot.Config().Copy()
 		cfg.Database, cfg.Password = selected, "verification-fixture-password"
 		cfg.RuntimeParams = map[string]string{"default_transaction_read_only": "off", "search_path": "pg_catalog"}

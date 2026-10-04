@@ -76,10 +76,24 @@ func (r Receipt) WithVerificationAccess(ctx context.Context, conn *pgx.Conn, sou
 	if err != nil {
 		return result, err
 	}
-	return v.withAccess(ctx, run)
+	return v.withAccess(ctx, run, nil)
 }
 
-func (v *verification) withAccess(ctx context.Context, run VerificationRun) (result VerificationClosure, err error) {
+// WithVerificationAccessAdmitted invokes admission only for an authenticated
+// never-opened owner, under the shared bootstrap lock and before SQL opening.
+// Existing windows recover close-only without invoking admission or run.
+func (r Receipt) WithVerificationAccessAdmitted(ctx context.Context, conn *pgx.Conn, source copyinventory.ExportPlan, imported, owner uuid.UUID, authorize, admit copyroles.Authorize, run VerificationRun) (VerificationClosure, error) {
+	if run == nil || admit == nil {
+		return VerificationClosure{}, pgerrors.ErrInvalid
+	}
+	v, err := newVerification(r, conn, source, imported, owner, authorize)
+	if err != nil {
+		return VerificationClosure{}, err
+	}
+	return v.withAccess(ctx, run, admit)
+}
+
+func (v *verification) withAccess(ctx context.Context, run VerificationRun, admit copyroles.Authorize) (result VerificationClosure, err error) {
 	r, owner, conn := v.receipt, v.owner, v.conn
 	if err = v.lock(ctx); err != nil {
 		return result, err
@@ -111,6 +125,14 @@ func (v *verification) withAccess(ctx context.Context, run VerificationRun) (res
 	}
 	if err = v.verify(ctx, rows, windows); err != nil {
 		return result, err
+	}
+	if admit != nil {
+		if err = authorization(ctx, v.target, admit); err != nil {
+			return result, err
+		}
+		if err = v.check(ctx); err != nil {
+			return result, err
+		}
 	}
 	absentOK := true
 	defer func() {

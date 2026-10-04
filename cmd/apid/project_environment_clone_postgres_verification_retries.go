@@ -51,6 +51,9 @@ func (s *server) projectEnvironmentClonePostgresVerificationWithRetries(ctx cont
 	}
 	head := w.head()
 	if head.State == "failed" {
+		if w.budget.OriginalVerificationID == "" {
+			return zero, managedpostgres.ErrConflict
+		}
 		if setSecretRecipient == nil {
 			return zero, managedpostgres.ErrUnavailable
 		}
@@ -111,6 +114,8 @@ type clonePostgresVerificationRetryWorker struct {
 	attempts      state.ProjectEnvironmentClonePostgresVerificationAttemptStore
 	verifications state.ProjectEnvironmentClonePostgresVerificationStore
 	pins          state.ProjectEnvironmentClonePostgresDatabaseSQLPinsStore
+	budgets       state.ProjectEnvironmentClonePostgresVerificationReadBudgetStore
+	budget        state.ProjectEnvironmentClonePostgresVerificationReadBudget
 }
 
 func (w *clonePostgresVerificationRetryWorker) head() state.ProjectEnvironmentClonePostgresVerificationAttempt {
@@ -135,6 +140,10 @@ func (s *server) openProjectEnvironmentClonePostgresVerificationRetry(ctx contex
 		return nil, managedpostgres.ErrUnavailable
 	}
 	w.pins, ok = s.store.(state.ProjectEnvironmentClonePostgresDatabaseSQLPinsStore)
+	if !ok {
+		return nil, managedpostgres.ErrUnavailable
+	}
+	w.budgets, ok = s.store.(state.ProjectEnvironmentClonePostgresVerificationReadBudgetStore)
 	if !ok {
 		return nil, managedpostgres.ErrUnavailable
 	}
@@ -165,6 +174,10 @@ func (s *server) openProjectEnvironmentClonePostgresVerificationRetry(ctx contex
 	if w.recipient == nil {
 		return nil, managedpostgres.ErrUnavailable
 	}
+	w.budget, err = clonePostgresVerificationReadBudget(ctx, w.budgets, l, original, copycontents.Config{}, false)
+	if err != nil {
+		return nil, err
+	}
 	if err = w.authorize(ctx, w.prepared.bootstrap); err != nil {
 		return nil, err
 	}
@@ -182,6 +195,9 @@ func (w *clonePostgresVerificationRetryWorker) authorize(ctx context.Context, ta
 	child, err := w.pins.ProjectEnvironmentClonePostgresDatabaseSQLPinsForLease(ctx, w.lease, w.source.source.ID, w.oid)
 	if err == nil && (target != w.prepared.bootstrap || !reflect.DeepEqual(original, w.original) || !reflect.DeepEqual(history, w.history) || !sameClonePostgresDatabaseSQLPins(child, w.prepared.owner)) {
 		err = managedpostgres.ErrConflict
+	}
+	if err == nil {
+		err = authorizeClonePostgresVerificationReadBudget(ctx, w.budgets, w.lease, w.original, w.budget)
 	}
 	return err
 }
@@ -317,7 +333,15 @@ func (w *clonePostgresVerificationRetryWorker) run(ctx context.Context, cfg copy
 		}
 		err = w.bootstrap(ctx, func(ctx context.Context, conn *pgx.Conn) error {
 			var err error
-			closure, err = w.prepared.receipt.WithVerificationRetryAccess(ctx, conn, w.exports, imported, owner, predecessor, w.authorize,
+			closure, err = w.prepared.receipt.WithVerificationRetryAccessAdmitted(ctx, conn, w.exports, imported, owner, predecessor, w.authorize,
+				func(ctx context.Context, target copyarchive.RestoreTarget) error {
+					if err := w.authorize(ctx, target); err != nil {
+						return err
+					}
+					var err error
+					cfg, err = allocateClonePostgresVerificationRead(ctx, w.budgets, w.lease, w.original, a.VerificationID, a.Attempt, &w.budget, cfg)
+					return err
+				},
 				func(ctx context.Context, access copydatabases.VerificationTarget) error {
 					var err error
 					retained, err = w.server.projectEnvironmentClonePostgresCompare(ctx, w.source, w.prepared.bootstrap, childRequest, w.manifest, w.actual, owner, imported, a.Attempt, w.recipient, w.identities, cfg, w.authorize, access,

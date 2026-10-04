@@ -89,12 +89,11 @@ func verificationRetryHistory(t *testing.T, v *verificationWorkerFixture) []stat
 }
 func failFirstVerificationWorker(t *testing.T, v *verificationWorkerFixture) {
 	t.Helper()
-	old := v.cfg.MaxBytes
-	v.cfg.MaxBytes = 1
-	if got, err := runVerificationRetryWorker(t, v); !errors.Is(err, managedpostgres.ErrQuotaExceeded) || !reflect.DeepEqual(got, state.ProjectEnvironmentClonePostgresVerificationAttempt{}) {
-		t.Fatal("first exhausted comparison became proof", err)
+	v.f.childPostError = managedpostgres.ErrUnavailable
+	if got, err := runVerificationRetryWorker(t, v); !errors.Is(err, managedpostgres.ErrUnavailable) || !reflect.DeepEqual(got, state.ProjectEnvironmentClonePostgresVerificationAttempt{}) {
+		t.Fatal("first failed provider postcheck became proof", err)
 	}
-	v.cfg.MaxBytes = old
+	v.f.childPostError = nil
 	history := verificationRetryHistory(t, v)
 	if len(history) != 1 || history[0].State != "failed" || v.dataReads != 1 {
 		t.Fatal("first failure not retained")

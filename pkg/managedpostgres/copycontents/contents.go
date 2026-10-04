@@ -36,7 +36,7 @@ func (Config) String() string               { return "private PostgreSQL content
 func (c Config) GoString() string           { return c.String() }
 func (Config) MarshalJSON() ([]byte, error) { return json.Marshal(struct{}{}) }
 
-func (c Config) validated() (Config, error) {
+func (c Config) readConfig() (Config, error) {
 	if c.MaxBytes == 0 {
 		c.MaxBytes = api.PostgresCopyArchiveMaxBytes
 	}
@@ -46,7 +46,25 @@ func (c Config) validated() (Config, error) {
 	if c.SortDiskBytes == 0 {
 		c.SortDiskBytes = api.PostgresCopyContentsSortDiskMax
 	}
-	if !filepath.IsAbs(c.SpoolDir) || c.Key == ([32]byte{}) || c.MaxBytes < 1 || c.MaxBytes > api.PostgresCopyArchiveMaxBytes || c.SortMemoryBytes < 32 || c.SortMemoryBytes > api.PostgresCopyContentsSortMemoryMax || c.SortDiskBytes < 32 || c.SortDiskBytes > api.PostgresCopyContentsSortDiskMax {
+	if !filepath.IsAbs(c.SpoolDir) || c.MaxBytes < 1 || c.MaxBytes > api.PostgresCopyArchiveMaxBytes || c.SortMemoryBytes < 32 || c.SortMemoryBytes > api.PostgresCopyContentsSortMemoryMax || c.SortDiskBytes < 32 || c.SortDiskBytes > api.PostgresCopyContentsSortDiskMax {
+		return Config{}, pgerrors.ErrInvalid
+	}
+	return c, nil
+}
+
+// ReadLimitsForWorker normalizes the bounded comparison limits and validates
+// its private spool path. The retained manifest supplies the comparison key;
+// source capture still separately requires its caller's nonzero key.
+func (c Config) ReadLimitsForWorker() (int64, int, int64, error) {
+	c, err := c.readConfig()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return c.MaxBytes, c.SortMemoryBytes, c.SortDiskBytes, nil
+}
+func (c Config) validated() (Config, error) {
+	c, err := c.readConfig()
+	if err != nil || c.Key == ([32]byte{}) {
 		return Config{}, pgerrors.ErrInvalid
 	}
 	return c, nil
