@@ -52,13 +52,16 @@ func TestPKIRenewWorkflowUsesRoleScopedSSHIdentities(t *testing.T) {
 // FaasInternalMTLSRenewalNeverCompleted paged on both nodes. The schedule
 // renews every fleet on that fleet's runner with that fleet's secrets, and a
 // fleet whose runner is offline cannot hold another fleet's renewal behind a
-// shared concurrency group.
+// shared concurrency group. The schedule lists live fleets only: the retired
+// EU `production` fleet stays a manual dispatch option, because its scheduled
+// leg queued on offline runners and was cancelled every day, turning the
+// daily renewal red.
 func TestPKIRenewTargetsEveryFleet(t *testing.T) {
 	workflow := readWorkflow(t, "pki-renew.yml")
 	for _, want := range []string{
 		"      deploy_environment:\n",
 		"          - production\n          - production-us\n",
-		`deploy_environment: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.deploy_environment) || '["production","production-us"]') }}`,
+		`deploy_environment: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.deploy_environment) || '["production-us"]') }}`,
 		"fail-fast: false",
 		"group: internal-pki-renewal-${{ matrix.deploy_environment }}",
 		"environment: ${{ matrix.deploy_environment }}",
