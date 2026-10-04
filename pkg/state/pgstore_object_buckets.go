@@ -38,7 +38,7 @@ func (s *PgStore) ReserveObjectBucketWithResult(ctx context.Context, b ObjectBuc
 
 func reserveObjectBucketTx(ctx context.Context, tx pgx.Tx, b ObjectBucket, limit int) (ObjectBucket, bool, error) {
 	q := sqlc.New()
-	if _, err = q.ObjectBucketReserveLockAccount(ctx, tx, mustPgUUID(b.AccountID)); err != nil {
+	if _, err := q.ObjectBucketReserveLockAccount(ctx, tx, mustPgUUID(b.AccountID)); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ObjectBucket{}, false, ErrConflict
 		}
