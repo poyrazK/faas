@@ -382,38 +382,48 @@ func (*Provider) Update(context.Context, managedpostgres.UpdateRequest) (managed
 	return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
 }
 
+func (p *Provider) Discover(ctx context.Context, request managedpostgres.ResourceDiscoveryRequest) (string, error) {
+	if request.ResourceID == "" || len(request.ResourceID) > 255 {
+		return "", managedpostgres.ErrInvalid
+	}
+	if request.RestoreSourceResourceID != "" {
+		source, err := parseResourceRef(request.RestoreSourceResourceID)
+		if err != nil {
+			return "", err
+		}
+		candidate, err := p.findBranch(ctx, source.projectID, p.restoreBranchName(request.ResourceID))
+		if err != nil {
+			return "", err
+		}
+		if candidate.ID == "" {
+			return "", managedpostgres.ErrNotFound
+		}
+		return (resourceRef{projectID: source.projectID, branchID: candidate.ID}).String(), nil
+	}
+	identity, err := p.findProject(ctx, p.projectName(request.ResourceID))
+	if err == nil && identity == "" {
+		err = managedpostgres.ErrNotFound
+	}
+	return identity, err
+}
+
 func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteRequest) (managedpostgres.DeleteResult, error) {
 	if request.IdempotencyKey == "" || (request.ProviderResourceID == "" && request.ResourceID == "") {
 		return managedpostgres.DeleteResult{}, managedpostgres.ErrInvalid
 	}
 	providerResourceID := request.ProviderResourceID
 	if providerResourceID == "" {
-		if request.RestoreSourceResourceID != "" {
-			source, sourceErr := parseResourceRef(request.RestoreSourceResourceID)
-			if sourceErr != nil {
-				return managedpostgres.DeleteResult{}, sourceErr
-			}
-			candidate, findErr := p.findBranch(ctx, source.projectID, p.restoreBranchName(request.ResourceID))
-			if findErr != nil {
-				return managedpostgres.DeleteResult{}, findErr
-			}
-			if candidate.ID == "" {
-				return managedpostgres.DeleteResult{Done: true}, nil
-			}
-			providerResourceID = (resourceRef{projectID: source.projectID, branchID: candidate.ID}).String()
-		}
-	}
-	if providerResourceID == "" {
-		if len(request.ResourceID) > 255 {
-			return managedpostgres.DeleteResult{}, managedpostgres.ErrInvalid
-		}
+		// Disposable qualification cleanup also supports logical-name lookup.
+		// Customer lifecycle deletion discovers and persists identity first.
 		var err error
-		providerResourceID, err = p.findProject(ctx, p.projectName(request.ResourceID))
+		providerResourceID, err = p.Discover(ctx, managedpostgres.ResourceDiscoveryRequest{
+			ResourceID: request.ResourceID, RestoreSourceResourceID: request.RestoreSourceResourceID,
+		})
+		if errors.Is(err, managedpostgres.ErrNotFound) {
+			return managedpostgres.DeleteResult{Done: true}, nil
+		}
 		if err != nil {
 			return managedpostgres.DeleteResult{}, err
-		}
-		if providerResourceID == "" {
-			return managedpostgres.DeleteResult{Done: true}, nil
 		}
 	}
 	ref, err := parseResourceRef(providerResourceID)
