@@ -636,6 +636,9 @@ const (
 	CodeValidation                     = "validation_failed"
 	CodeAppAdmissionUnavailable        = "app_admission_unavailable"
 	CodeDatabaseCutoverFenced          = "database_cutover_fenced"
+	CodeAutomationVersionConflict      = "automation_version_conflict"
+	CodeAutomationOwnershipConflict    = "automation_ownership_conflict"
+	CodeAutomationInvalid              = "automation_invalid"
 	CodeConflict                       = "conflict"
 	// ADR-568: the original private VM attempt cannot yet acknowledge its
 	// ownership or complete physical retirement. Keep its reservation charged.
@@ -1815,6 +1818,11 @@ const (
 	CodeWorkflowRunNotFound             = "workflow_run_not_found"
 	CodeWorkflowDefinitionNotFound      = "workflow_definition_not_found"
 	CodeWorkflowEventNotFound           = "workflow_event_not_found"
+	CodeWebhookAutomationUnavailable    = "webhook_automation_unavailable"
+	CodeWebhookAutomationConflict       = "webhook_automation_conflict"
+	CodeWorkflowResumeConflict          = "workflow_resume_conflict"
+	CodeWorkflowResumeUnsafe            = "workflow_resume_unsafe"
+	CodeWorkflowResumeLimit             = "workflow_resume_limit"
 	CodeWorkflowNotRunning              = "workflow_not_running"
 	CodeWorkflowDeploymentUnavailable   = "workflow_deployment_unavailable"
 	CodeWorkflowCallbackClosed          = "workflow_callback_closed"
@@ -1857,6 +1865,8 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
+	case CodeAutomationInvalid:
+		return http.StatusUnprocessableEntity
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
 		CodeAccountAbuseHold:
@@ -1913,7 +1923,7 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeNotFound, CodeUndeclaredRoute:
 		return http.StatusNotFound
-	case CodeDeclaredRoutePolicyUnavailable:
+	case CodeWebhookAutomationUnavailable, CodeDeclaredRoutePolicyUnavailable:
 		return http.StatusServiceUnavailable
 	case CodeNotImplemented:
 		return http.StatusNotImplemented
@@ -1921,7 +1931,11 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeDatabaseCutoverFenced, CodeConflict, CodeEnvironmentQualificationUnconfirmed, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
+	case CodeDatabaseCutoverFenced, CodeConflict, CodeEnvironmentQualificationUnconfirmed,
+		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
+		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
+		CodeWebhookAutomationConflict, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
+		CodeWorkflowResumeLimit,
 		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,

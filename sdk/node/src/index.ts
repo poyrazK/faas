@@ -43,6 +43,8 @@ export { RunsService } from './generated/services/RunsService.js';
 export { SecretsService } from './generated/services/SecretsService.js';
 export { UsageService } from './generated/services/UsageService.js';
 export { WebhooksService } from './generated/services/WebhooksService.js';
+export { WorkflowsService } from './generated/services/WorkflowsService.js';
+export { InboundWebhooksService } from './generated/services/InboundWebhooksService.js';
 
 // Generated models (one type per OpenAPI schema).
 export type * from './generated/models/index.js';

@@ -426,7 +426,6 @@ MarkTriggerRecordRetry
 MarkTriggerRecordSucceeded
 MarkUploadSessionCommitted
 MarkWorkflowRunStatus
-MarkWorkflowStepStatus
 MatchEdgeRulesForHost
 MatchRecoveryCode
 MinCertExpiryForApp
