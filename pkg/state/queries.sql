@@ -6680,3 +6680,31 @@ RETURNING *;
 
 -- name: LockRegionalRuntimeQuotaTenant :one
 SELECT id FROM orgs WHERE id = sqlc.arg(org_id)::uuid AND status = 'active' AND NOT deleted_pending FOR SHARE;
+
+-- ADR-491: frozen quota streams remain queued; independent tasks can still
+-- claim in the same sweep. The row trigger rechecks after the journal lock.
+-- name: CancelExpiredQueuedAppTasks :exec
+UPDATE app_tasks task SET status='cancelled', retry_at=NULL, finished_at=sqlc.arg(sampled_at), updated_at=sqlc.arg(sampled_at)
+WHERE task.status='queued' AND task.start_deadline_at<sqlc.arg(sampled_at)
+AND (task.occurrence_id IS NULL OR NOT EXISTS (
+ SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=task.occurrence_id AND occurrence.started_at IS NOT NULL));
+
+-- name: ClaimAppTaskWithRegionalQuota :one
+WITH candidate AS (
+ SELECT id FROM app_tasks
+ WHERE status='queued' AND cancel_requested_at IS NULL
+ AND created_at<=sqlc.arg(claimed_at) AND (retry_at IS NULL OR retry_at<=sqlc.arg(claimed_at))
+ AND NOT EXISTS (SELECT 1 FROM regional_runtime_quota_heads head WHERE head.app_id=app_tasks.app_id)
+ AND (start_deadline_at IS NULL OR start_deadline_at>=sqlc.arg(claimed_at) OR EXISTS (
+  SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=app_tasks.occurrence_id AND occurrence.started_at IS NOT NULL))
+ AND (exclusive_operation_id IS NULL OR EXISTS (
+  SELECT 1 FROM exclusive_work_operations operation WHERE operation.id=app_tasks.exclusive_operation_id
+  AND operation.account_id=app_tasks.account_id AND operation.app_id=app_tasks.app_id
+  AND operation.state='running' AND operation.generation=app_tasks.exclusive_generation
+  AND operation.lease_expires_at>clock_timestamp() AND operation.attempt_deadline>clock_timestamp()))
+ ORDER BY coalesce(retry_at,created_at),created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
+)
+UPDATE app_tasks task SET status='restoring', lease_token=gen_random_uuid(), lease_owner=sqlc.arg(owner),
+ lease_expires_at=sqlc.arg(expires_at), retry_at=NULL, stdout_tail='', stderr_tail='', output_truncated=false,
+ exit_code=NULL, failure_code=NULL, failure_message=NULL, updated_at=sqlc.arg(claimed_at)
+FROM candidate WHERE task.id=candidate.id RETURNING task.*;

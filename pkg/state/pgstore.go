@@ -3597,7 +3597,7 @@ func (s *PgStore) MigrateInstanceOwner(ctx context.Context, instanceID, fromNode
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConflict
 		}
-		return fmt.Errorf("state: migrate instance owner: %w", err)
+		return fmt.Errorf("state: migrate instance owner: %w", mapErr(err))
 	}
 	if _, err := tx.Exec(ctx,
 		`update apps set migrated_at = now() where id = $1`,
@@ -3740,7 +3740,7 @@ func (s *PgStore) ReinviteMigratingInstance(ctx context.Context, instanceID, lea
 		    and lease_token = $2`,
 		instanceID, leaseToken)
 	if err != nil {
-		return fmt.Errorf("state: reinvite migrating instance: %w", err)
+		return fmt.Errorf("state: reinvite migrating instance: %w", mapErr(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrConflict
@@ -17031,7 +17031,7 @@ func (s *PgStore) SetInstanceMode(ctx context.Context, id string, mode InstanceM
 		`update instances set mode = $2 where id = $1`,
 		id, string(mode))
 	if err != nil {
-		return fmt.Errorf("state: set instance %s mode: %w", id, err)
+		return fmt.Errorf("state: set instance %s mode: %w", id, mapErr(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -17339,7 +17339,7 @@ func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP stri
 		`update instances set netns = $2, host_ip = $3::inet, guest_uid = $4, started_at = now()
 		 where id = $1`, id, netns, hostIP, guestUID)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -25252,6 +25252,8 @@ func mapErr(err error) error {
 			return err
 		case pgerrcode.CheckViolation:
 			switch pgErr.ConstraintName {
+			case "regional_runtime_quota_frozen":
+				return ErrRegionalRuntimeQuotaFrozen
 			case "control_plane_cell_region":
 				return api.ErrComputeRegionOutsideCell(pgErr.Detail)
 			case "compute_region_unknown":

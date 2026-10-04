@@ -719,59 +719,17 @@ func (s *PgStore) ClaimNextAppTask(ctx context.Context, owner string, claimedAt 
 	}
 	claimedAt = claimedAt.UTC()
 	expiresAt := claimedAt.Add(leaseDuration)
-	if _, err := s.pool.Exec(ctx, `
-		update app_tasks task
-		   set status = 'cancelled', retry_at = null, finished_at = $1, updated_at = $1
-		 where task.status = 'queued' and task.start_deadline_at < $1
-		   and (task.occurrence_id is null or not exists (
-		       select 1 from schedule_occurrences occurrence
-		        where occurrence.id = task.occurrence_id and occurrence.started_at is not null))`, claimedAt); err != nil {
+	q := sqlc.New()
+	if err := q.CancelExpiredQueuedAppTasks(ctx, s.pool, executionTime(claimedAt)); err != nil {
 		return AppTask{}, mapErr(err)
 	}
-	task, err := scanAppTask(s.pool.QueryRow(ctx, `
-		with candidate as (
-			select id
-			  from app_tasks
-			 where status = 'queued'
-			   and cancel_requested_at is null
-			   and created_at <= $2
-			   and (retry_at is null or retry_at <= $2)
-			   and (start_deadline_at is null or start_deadline_at >= $2 or exists (
-			       select 1 from schedule_occurrences occurrence
-			        where occurrence.id = app_tasks.occurrence_id and occurrence.started_at is not null))
-			   and (exclusive_operation_id is null or exists (
-			       select 1 from exclusive_work_operations operation
-			        where operation.id = app_tasks.exclusive_operation_id
-			          and operation.account_id = app_tasks.account_id
-			          and operation.app_id = app_tasks.app_id
-			          and operation.state = 'running'
-			          and operation.generation = app_tasks.exclusive_generation
-			          and operation.lease_expires_at > clock_timestamp()
-			          and operation.attempt_deadline > clock_timestamp()
-			   ))
-			 order by coalesce(retry_at, created_at), created_at, id
-			 for update skip locked
-			 limit 1
-		)
-		update app_tasks as task
-		   set status = 'restoring',
-		       lease_token = gen_random_uuid(),
-		       lease_owner = $1,
-		       lease_expires_at = $3,
-		       retry_at = null,
-		       stdout_tail = '', stderr_tail = '', output_truncated = false,
-		       exit_code = null, failure_code = null, failure_message = null,
-		       updated_at = $2
-		  from candidate
-		 where task.id = candidate.id
-		returning `+prefixedAppTaskColumns("task"), owner, claimedAt, expiresAt))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return AppTask{}, ErrNotFound
-	}
+	row, err := q.ClaimAppTaskWithRegionalQuota(ctx, s.pool, sqlc.ClaimAppTaskWithRegionalQuotaParams{
+		ClaimedAt: executionTime(claimedAt), Owner: pgtype.Text{String: owner, Valid: true}, ExpiresAt: executionTime(expiresAt),
+	})
 	if err != nil {
 		return AppTask{}, mapErr(err)
 	}
-	return task, nil
+	return appTaskFromQuotaClaim(row)
 }
 
 func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken string, startedAt time.Time) (AppTask, error) {

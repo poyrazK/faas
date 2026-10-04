@@ -841,6 +841,20 @@ func (q *Queries) BumpInstanceTailCount(ctx context.Context, db DBTX, arg BumpIn
 	return tail_count, err
 }
 
+const cancelExpiredQueuedAppTasks = `-- name: CancelExpiredQueuedAppTasks :exec
+UPDATE app_tasks task SET status='cancelled', retry_at=NULL, finished_at=$1, updated_at=$1
+WHERE task.status='queued' AND task.start_deadline_at<$1
+AND (task.occurrence_id IS NULL OR NOT EXISTS (
+ SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=task.occurrence_id AND occurrence.started_at IS NOT NULL))
+`
+
+// ADR-491: frozen quota streams remain queued; independent tasks can still
+// claim in the same sweep. The row trigger rechecks after the journal lock.
+func (q *Queries) CancelExpiredQueuedAppTasks(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error {
+	_, err := db.Exec(ctx, cancelExpiredQueuedAppTasks, sampledAt)
+	return err
+}
+
 const cancelUploadSession = `-- name: CancelUploadSession :exec
 UPDATE upload_sessions
    SET status = 'cancelled'
@@ -939,6 +953,81 @@ func (q *Queries) CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg Ch
 	var i_id string
 	err := row.Scan(&i_id)
 	return i_id, err
+}
+
+const claimAppTaskWithRegionalQuota = `-- name: ClaimAppTaskWithRegionalQuota :one
+WITH candidate AS (
+ SELECT id FROM app_tasks
+ WHERE status='queued' AND cancel_requested_at IS NULL
+ AND created_at<=$3 AND (retry_at IS NULL OR retry_at<=$3)
+ AND NOT EXISTS (SELECT 1 FROM regional_runtime_quota_heads head WHERE head.app_id=app_tasks.app_id)
+ AND (start_deadline_at IS NULL OR start_deadline_at>=$3 OR EXISTS (
+  SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=app_tasks.occurrence_id AND occurrence.started_at IS NOT NULL))
+ AND (exclusive_operation_id IS NULL OR EXISTS (
+  SELECT 1 FROM exclusive_work_operations operation WHERE operation.id=app_tasks.exclusive_operation_id
+  AND operation.account_id=app_tasks.account_id AND operation.app_id=app_tasks.app_id
+  AND operation.state='running' AND operation.generation=app_tasks.exclusive_generation
+  AND operation.lease_expires_at>clock_timestamp() AND operation.attempt_deadline>clock_timestamp()))
+ ORDER BY coalesce(retry_at,created_at),created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
+)
+UPDATE app_tasks task SET status='restoring', lease_token=gen_random_uuid(), lease_owner=$1,
+ lease_expires_at=$2, retry_at=NULL, stdout_tail='', stderr_tail='', output_truncated=false,
+ exit_code=NULL, failure_code=NULL, failure_message=NULL, updated_at=$3
+FROM candidate WHERE task.id=candidate.id RETURNING task.id, task.account_id, task.app_id, task.deployment_id, task.kind, task.command, task.command_shell, task.deployment_scope, task.artifact_key, task.image_digest, task.status, task.timeout_seconds, task.max_output_bytes, task.lease_token, task.lease_owner, task.lease_expires_at, task.cancel_requested_at, task.stdout_tail, task.stderr_tail, task.output_truncated, task.exit_code, task.failure_code, task.failure_message, task.started_at, task.finished_at, task.created_at, task.updated_at, task.cron_id, task.scheduled_for, task.retry_max, task.retry_backoff_seconds, task.attempt_count, task.retry_at, task.failure_rules, task.occurrence_id, task.start_deadline_at, task.work_decision, task.outcome_code, task.exclusive_operation_id, task.exclusive_generation
+`
+
+type ClaimAppTaskWithRegionalQuotaParams struct {
+	Owner     pgtype.Text
+	ExpiresAt pgtype.Timestamptz
+	ClaimedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ClaimAppTaskWithRegionalQuota(ctx context.Context, db DBTX, arg ClaimAppTaskWithRegionalQuotaParams) (AppTask, error) {
+	row := db.QueryRow(ctx, claimAppTaskWithRegionalQuota, arg.Owner, arg.ExpiresAt, arg.ClaimedAt)
+	var i AppTask
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.Kind,
+		&i.Command,
+		&i.CommandShell,
+		&i.DeploymentScope,
+		&i.ArtifactKey,
+		&i.ImageDigest,
+		&i.Status,
+		&i.TimeoutSeconds,
+		&i.MaxOutputBytes,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.StdoutTail,
+		&i.StderrTail,
+		&i.OutputTruncated,
+		&i.ExitCode,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CronID,
+		&i.ScheduledFor,
+		&i.RetryMax,
+		&i.RetryBackoffSeconds,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.FailureRules,
+		&i.OccurrenceID,
+		&i.StartDeadlineAt,
+		&i.WorkDecision,
+		&i.OutcomeCode,
+		&i.ExclusiveOperationID,
+		&i.ExclusiveGeneration,
+	)
+	return i, err
 }
 
 const claimAutomaticRouteCheck = `-- name: ClaimAutomaticRouteCheck :one

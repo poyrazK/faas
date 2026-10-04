@@ -695,6 +695,9 @@ func (m *MemStore) ClaimNextAppTask(_ context.Context, owner string, claimedAt t
 			m.syncAppTaskOccurrenceLocked(candidate, claimedAt)
 			continue
 		}
+		if m.regionalQuotaFrozenLocked(candidate.AppID) {
+			continue
+		}
 		priority := candidate.CreatedAt
 		if candidate.RetryAt != nil {
 			priority = *candidate.RetryAt
@@ -758,6 +761,9 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 		m.appTasks[task.ID] = task
 		m.syncAppTaskOccurrenceLocked(task, startedAt)
 		return AppTask{}, ErrAppTaskLeaseLost
+	}
+	if m.regionalQuotaFrozenLocked(task.AppID) {
+		return AppTask{}, ErrRegionalRuntimeQuotaFrozen
 	}
 	task.Status = AppTaskRunning
 	task.StartedAt = appTaskTimePtr(startedAt)

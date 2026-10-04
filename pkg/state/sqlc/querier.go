@@ -94,6 +94,9 @@ type Querier interface {
 	// follow-up SELECT. Returns ErrNotFound when the instance row is
 	// missing (pgx.ErrNoRows maps to state.ErrNotFound in pgstore).
 	BumpInstanceTailCount(ctx context.Context, db DBTX, arg BumpInstanceTailCountParams) (int32, error)
+	// ADR-491: frozen quota streams remain queued; independent tasks can still
+	// claim in the same sweep. The row trigger rechecks after the journal lock.
+	CancelExpiredQueuedAppTasks(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error
 	// Explicit cancel from DELETE /v1/uploads/{id}. The handler also
 	// removes the .part file via os.Remove AFTER the UPDATE commits —
 	// doing it before would leak a file if the UPDATE rolled back.
@@ -103,6 +106,7 @@ type Querier interface {
 	CancelUploadSession(ctx context.Context, db DBTX, arg CancelUploadSessionParams) error
 	CaptureRuntimeLogArchiveBinding(ctx context.Context, db DBTX, arg CaptureRuntimeLogArchiveBindingParams) (CaptureRuntimeLogArchiveBindingRow, error)
 	CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg CheckExclusiveWorkRuntimeParams) (string, error)
+	ClaimAppTaskWithRegionalQuota(ctx context.Context, db DBTX, arg ClaimAppTaskWithRegionalQuotaParams) (AppTask, error)
 	ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg ClaimAutomaticRouteCheckParams) ([]byte, error)
 	ClaimBuildVMCleanupOnNode(ctx context.Context, db DBTX, arg ClaimBuildVMCleanupOnNodeParams) ([]ClaimBuildVMCleanupOnNodeRow, error)
 	ClaimGlobalRecovery(ctx context.Context, db DBTX, arg ClaimGlobalRecoveryParams) ([]ClaimGlobalRecoveryRow, error)

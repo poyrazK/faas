@@ -419,6 +419,9 @@ func (m *MemStore) checkServiceCapacityAppLocked(app App) error {
 }
 
 func (m *MemStore) checkServiceCapacityInstanceLocked(ins Instance) error {
+	if err := m.checkRegionalQuotaInstanceWriteLocked(m.instances[ins.ID], ins); err != nil {
+		return err
+	}
 	if !m.serviceCapacityProtection {
 		return nil
 	}

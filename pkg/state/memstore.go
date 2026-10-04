@@ -5126,7 +5126,7 @@ func (m *MemStore) FailRunningInstanceIfOwnedByNode(_ context.Context, id, nodeI
 		return ErrConflict
 	}
 	ins.State = string(StateFailed)
-	if err := m.exclusiveRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+	if err := m.checkInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
 		return err
 	}
 	ts := terminalAt
@@ -5362,7 +5362,7 @@ func (m *MemStore) MarkInstanceMigrating(_ context.Context, instanceID, currentN
 		return ErrConflict
 	}
 	ins.State = string(StateMigrating)
-	if err := m.exclusiveRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+	if err := m.checkInstanceRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
 		return err
 	}
 	ins.LeaseToken = leaseToken
@@ -5415,7 +5415,7 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
 		return err
 	}
-	if err := m.exclusiveRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+	if err := m.checkInstanceRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
 		return err
 	}
 	m.instances[instanceID] = ins
@@ -5449,7 +5449,7 @@ func (m *MemStore) CancelInstanceMigration(_ context.Context, instanceID, origin
 		return ErrConflict
 	}
 	ins.State = "parked"
-	if err := m.exclusiveRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+	if err := m.checkInstanceRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
 		return err
 	}
 	ins.LeaseToken = ""
@@ -5526,7 +5526,7 @@ func (m *MemStore) ReinviteMigratingInstance(_ context.Context, instanceID, leas
 		return ErrConflict
 	}
 	ins.State = string(StateRunning)
-	if err := m.exclusiveRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+	if err := m.checkInstanceRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
 		return err
 	}
 	now := time.Now().UTC()
@@ -5562,7 +5562,7 @@ func (m *MemStore) AbortMigratingInstance(_ context.Context, instanceID, leaseTo
 		return ErrConflict
 	}
 	ins.State = string(StateParked)
-	if err := m.exclusiveRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+	if err := m.checkInstanceRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
 		return err
 	}
 	ins.LeaseToken = ""
@@ -5666,7 +5666,7 @@ func (m *MemStore) FailRunningInstanceOnDeadNode(_ context.Context, instanceID, 
 		}
 	}
 	ins.State = string(StateFailed)
-	if err := m.exclusiveRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+	if err := m.checkInstanceRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
 		return err
 	}
 	now := m.clock()
@@ -14116,7 +14116,7 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
 		return err
 	}
-	if err := m.exclusiveRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+	if err := m.checkInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
 		return err
 	}
 	m.instances[id] = ins
@@ -14144,7 +14144,7 @@ func (m *MemStore) UpdateInstanceStateIf(_ context.Context, id, expectedState, n
 	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
 		return err
 	}
-	if err := m.exclusiveRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+	if err := m.checkInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
 		return err
 	}
 	m.instances[id] = ins
@@ -14188,7 +14188,7 @@ func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state
 	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
 		return err
 	}
-	if err := m.exclusiveRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+	if err := m.checkInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
 		return err
 	}
 	m.instances[id] = ins
@@ -14210,7 +14210,7 @@ func (m *MemStore) UpdateInstanceStateToTerminal(_ context.Context, id, state st
 		return ErrNotFound
 	}
 	ins.State = state
-	if err := m.exclusiveRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+	if err := m.checkInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
 		return err
 	}
 	ts := terminalAt
@@ -14253,6 +14253,9 @@ func (m *MemStore) SetInstanceMode(_ context.Context, id string, mode InstanceMo
 		return ErrNotFound
 	}
 	ins.Mode = string(mode)
+	if err := m.checkRegionalQuotaInstanceWriteLocked(m.instances[id], ins); err != nil {
+		return err
+	}
 	m.instances[id] = ins
 	return nil
 }
@@ -14466,6 +14469,9 @@ func (m *MemStore) SetInstanceRuntime(_ context.Context, id, netns, hostIP strin
 	ins.HostIP = hostIP
 	ins.GuestUID = guestUID
 	ins.StartedAt = time.Now()
+	if err := m.checkRegionalQuotaInstanceWriteLocked(m.instances[id], ins); err != nil {
+		return err
+	}
 	m.instances[id] = ins
 	return nil
 }
@@ -14482,7 +14488,7 @@ func (m *MemStore) PublishInstanceRuntime(_ context.Context, id, expectedState, 
 	ins.GuestUID = guestUID
 	ins.StartedAt = time.Now().UTC()
 	ins.State = string(StateRunning)
-	if err := m.exclusiveRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+	if err := m.checkInstanceRuntimeTransitionLocked(m.instances[id], ins); err != nil {
 		return Instance{}, err
 	}
 	m.instances[id] = ins
