@@ -65,8 +65,8 @@ func seedFloorPgApp(t *testing.T, s *state.PgStore, ctx context.Context) (acctID
 	return acct.ID, app.ID
 }
 
-// adr: 195, 566 — production closed-minute floors retain exact partial windows
-// and replay only once into canonical usage and the financial ledger.
+// adr: 195 — production closed-minute floors retain exact partial windows.
+// adr: 566 — replay only once into canonical usage and the financial ledger.
 func TestPgScheduledFloorClosedMinuteReplay(t *testing.T) {
 	store, ctx := floorPgStore(t)
 	account, err := store.CreateAccount(ctx, "scheduled-floor-pg@example.test", api.PlanHobby)
