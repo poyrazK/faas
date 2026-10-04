@@ -28,6 +28,12 @@ type OwnerStore interface {
 	CreateOrgApp(context.Context, string, string, api.Plan, string, int) (App, error)
 }
 
+// OrgTargetStore rechecks live authority when committing verified shared bindings.
+type OrgTargetStore interface {
+	AttachOrgTarget(context.Context, string, string, string, Binding) (Target, error)
+	DetachOrgTarget(context.Context, string, string, string, string) error
+}
+
 // OrgAuthority supplies live tenant state to the portable adapter. PostgreSQL
 // checks these rows under locks in create_global_org_app instead.
 type OrgAuthority interface {

@@ -267,7 +267,7 @@ export class AppsService {
   }
   /**
    * Verify and attach an existing regional app.
-   * Requires personal directory-account deploy-write access and verified email. Probes only the registered HTTPS origin with the supplied regional personal account-admin key; never follows redirects or retains that key. Checks cell UUID, region and app ownership and atomically fences registry generation. Same-identity retries always repeat verification; responses are never replay-cached. Existing identities cannot be replaced without explicit detachment. Shared organization apps are unsupported.
+   * Requires directory tenant deploy-write access and verified email. Probes only the registered HTTPS origin with the supplied regional tenant admin key; never follows redirects or retains that key. Checks cell UUID, region and app ownership and atomically fences registry generation. Same-identity retries always repeat verification; responses are never replay-cached. Existing identities cannot be replaced without explicit detachment. Shared targets require current directory and regional organization owner/admin consent.
    * @returns GlobalAppTargetResponse Verified identity of the attached regional app.
    * @throws ApiError
    */
@@ -315,7 +315,7 @@ export class AppsService {
   }
   /**
    * Detach a selected regional app identity.
-   * Requires personal directory-account deploy-write access and verified email. Removes only the directory binding; it does not delete the regional app. The immutable regional account mapping remains.
+   * Requires directory deploy-write access and verified email. Shared targets require current organization owner/admin consent. Removes only the directory binding; it does not delete the regional app. The immutable regional tenant mapping remains.
    * @returns void
    * @throws ApiError
    */
@@ -396,16 +396,16 @@ export class AppsService {
     });
   }
   /**
-   * Verify regional personal account and app identity.
-   * Requires a regional personal account-admin API key and a configured immutable cell identity. Normal auth, MFA and ownership checks apply. Org-member keys, scoped deploy tokens and shared organization apps cannot prove personal ownership. Returns no credentials and makes no readiness claim. Responses use Cache-Control no-store.
-   * @returns CellAppBindingResponse Authenticated personal account and regional app identity.
+   * Verify regional tenant and app identity.
+   * Requires a regional admin API key or purpose-scoped release grant and a configured immutable cell identity. Shared apps require a bound organization key and current owner/admin membership. Normal auth, MFA, verified email and tenant isolation checks apply. Returns app creator metadata and optional organization identity; no credentials or readiness claim. Responses use Cache-Control no-store.
+   * @returns CellAppBindingResponse Authenticated regional tenant and app identity.
    * @throws ApiError
    */
   public static getCellAppBinding({
     slug,
   }: {
     /**
-     * Canonical slug of an existing personally owned regional app.
+     * Canonical slug of an existing regional app.
      */
     slug: string,
   }): CancelablePromise<CellAppBindingResponse> {

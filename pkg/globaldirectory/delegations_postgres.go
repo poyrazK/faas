@@ -16,7 +16,7 @@ import (
 
 func delegationRow(r sqlc.GlobalReleaseDelegation) Delegation {
 	return Delegation{ID: uuid.UUID(r.ID.Bytes).String(), GlobalAppID: uuid.UUID(r.GlobalAppID.Bytes).String(), OwnerID: uuid.UUID(r.OwnerID.Bytes).String(), Slug: r.GlobalAppSlug,
-		Binding: Binding{CellID: uuid.UUID(r.CellID.Bytes).String(), Region: r.Region, CellGeneration: r.CellGeneration, RegionalAccountID: uuid.UUID(r.RegionalAccountID.Bytes).String(), RegionalAppID: uuid.UUID(r.RegionalAppID.Bytes).String(), RegionalAppSlug: r.RegionalAppSlug},
+		Binding: Binding{CellID: uuid.UUID(r.CellID.Bytes).String(), Region: r.Region, CellGeneration: r.CellGeneration, RegionalAccountID: uuid.UUID(r.RegionalAccountID.Bytes).String(), RegionalOrgID: uuidText(r.RegionalOrgID), RegionalAppID: uuid.UUID(r.RegionalAppID.Bytes).String(), RegionalAppSlug: r.RegionalAppSlug},
 		APIBase: r.ApiBase, Hash: append([]byte(nil), r.TokenSha256...), Sealed: append([]byte(nil), r.SealedCredential...), ExpiresAt: r.ExpiresAt.Time, CreatedAt: r.CreatedAt.Time, Status: r.Status}
 }
 func delegationError(err error) error {
@@ -77,7 +77,7 @@ func (s *PgStore) EnsureDelegation(ctx context.Context, owner, slug string, g De
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		row, err = q.InsertGlobalDelegation(ctx, tx, sqlc.InsertGlobalDelegationParams{GrantID: idArg(g.ID), GlobalAppID: idArg(g.GlobalAppID), OwnerID: idArg(g.OwnerID), Slug: g.Slug, CellID: idArg(g.Binding.CellID), Region: g.Binding.Region, CellGeneration: g.Binding.CellGeneration, ApiBase: g.APIBase, RegionalAccountID: idArg(g.Binding.RegionalAccountID), RegionalAppID: idArg(g.Binding.RegionalAppID), RegionalAppSlug: g.Binding.RegionalAppSlug, TokenSha256: g.Hash, SealedCredential: g.Sealed, ExpiresAt: pgtype.Timestamptz{Time: g.ExpiresAt, Valid: true}})
+		row, err = q.InsertGlobalDelegation(ctx, tx, sqlc.InsertGlobalDelegationParams{GrantID: idArg(g.ID), GlobalAppID: idArg(g.GlobalAppID), OwnerID: idArg(g.OwnerID), Slug: g.Slug, CellID: idArg(g.Binding.CellID), Region: g.Binding.Region, CellGeneration: g.Binding.CellGeneration, ApiBase: g.APIBase, RegionalAccountID: idArg(g.Binding.RegionalAccountID), RegionalOrgID: idArg(g.Binding.RegionalOrgID), RegionalAppID: idArg(g.Binding.RegionalAppID), RegionalAppSlug: g.Binding.RegionalAppSlug, TokenSha256: g.Hash, SealedCredential: g.Sealed, ExpiresAt: pgtype.Timestamptz{Time: g.ExpiresAt, Valid: true}})
 		out = delegationRow(row)
 		return delegationError(err)
 	})

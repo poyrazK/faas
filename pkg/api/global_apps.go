@@ -46,6 +46,7 @@ type GlobalAppTargetResponse struct {
 	Region            string    `json:"region"`
 	CellGeneration    int64     `json:"cell_generation"`
 	RegionalAccountID string    `json:"regional_account_id"`
+	RegionalOrgID     string    `json:"regional_org_id,omitempty"`
 	RegionalAppID     string    `json:"regional_app_id"`
 	RegionalAppSlug   string    `json:"regional_app_slug"`
 	VerifiedAt        time.Time `json:"verified_at"`
@@ -74,6 +75,7 @@ type CellAppBindingResponse struct {
 	CellID    string `json:"cell_id"`
 	Region    string `json:"region"`
 	AccountID string `json:"account_id"`
+	OrgID     string `json:"org_id,omitempty"`
 	AppID     string `json:"app_id"`
 	AppSlug   string `json:"app_slug"`
 }

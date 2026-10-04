@@ -111,12 +111,12 @@ def sync_detailed(
 ) -> Response[GlobalAppTargetResponse | Problem]:
     """Verify and attach an existing regional app.
 
-     Requires personal directory-account deploy-write access and verified email. Probes only the
-    registered HTTPS origin with the supplied regional personal account-admin key; never follows
-    redirects or retains that key. Checks cell UUID, region and app ownership and atomically fences
-    registry generation. Same-identity retries always repeat verification; responses are never replay-
-    cached. Existing identities cannot be replaced without explicit detachment. Shared organization apps
-    are unsupported.
+     Requires directory tenant deploy-write access and verified email. Probes only the registered HTTPS
+    origin with the supplied regional tenant admin key; never follows redirects or retains that key.
+    Checks cell UUID, region and app ownership and atomically fences registry generation. Same-identity
+    retries always repeat verification; responses are never replay-cached. Existing identities cannot be
+    replaced without explicit detachment. Shared targets require current directory and regional
+    organization owner/admin consent.
 
     Args:
         slug (str):
@@ -154,12 +154,12 @@ def sync(
 ) -> GlobalAppTargetResponse | Problem | None:
     """Verify and attach an existing regional app.
 
-     Requires personal directory-account deploy-write access and verified email. Probes only the
-    registered HTTPS origin with the supplied regional personal account-admin key; never follows
-    redirects or retains that key. Checks cell UUID, region and app ownership and atomically fences
-    registry generation. Same-identity retries always repeat verification; responses are never replay-
-    cached. Existing identities cannot be replaced without explicit detachment. Shared organization apps
-    are unsupported.
+     Requires directory tenant deploy-write access and verified email. Probes only the registered HTTPS
+    origin with the supplied regional tenant admin key; never follows redirects or retains that key.
+    Checks cell UUID, region and app ownership and atomically fences registry generation. Same-identity
+    retries always repeat verification; responses are never replay-cached. Existing identities cannot be
+    replaced without explicit detachment. Shared targets require current directory and regional
+    organization owner/admin consent.
 
     Args:
         slug (str):
@@ -192,12 +192,12 @@ async def asyncio_detailed(
 ) -> Response[GlobalAppTargetResponse | Problem]:
     """Verify and attach an existing regional app.
 
-     Requires personal directory-account deploy-write access and verified email. Probes only the
-    registered HTTPS origin with the supplied regional personal account-admin key; never follows
-    redirects or retains that key. Checks cell UUID, region and app ownership and atomically fences
-    registry generation. Same-identity retries always repeat verification; responses are never replay-
-    cached. Existing identities cannot be replaced without explicit detachment. Shared organization apps
-    are unsupported.
+     Requires directory tenant deploy-write access and verified email. Probes only the registered HTTPS
+    origin with the supplied regional tenant admin key; never follows redirects or retains that key.
+    Checks cell UUID, region and app ownership and atomically fences registry generation. Same-identity
+    retries always repeat verification; responses are never replay-cached. Existing identities cannot be
+    replaced without explicit detachment. Shared targets require current directory and regional
+    organization owner/admin consent.
 
     Args:
         slug (str):
@@ -233,12 +233,12 @@ async def asyncio(
 ) -> GlobalAppTargetResponse | Problem | None:
     """Verify and attach an existing regional app.
 
-     Requires personal directory-account deploy-write access and verified email. Probes only the
-    registered HTTPS origin with the supplied regional personal account-admin key; never follows
-    redirects or retains that key. Checks cell UUID, region and app ownership and atomically fences
-    registry generation. Same-identity retries always repeat verification; responses are never replay-
-    cached. Existing identities cannot be replaced without explicit detachment. Shared organization apps
-    are unsupported.
+     Requires directory tenant deploy-write access and verified email. Probes only the registered HTTPS
+    origin with the supplied regional tenant admin key; never follows redirects or retains that key.
+    Checks cell UUID, region and app ownership and atomically fences registry generation. Same-identity
+    retries always repeat verification; responses are never replay-cached. Existing identities cannot be
+    replaced without explicit detachment. Shared targets require current directory and regional
+    organization owner/admin consent.
 
     Args:
         slug (str):

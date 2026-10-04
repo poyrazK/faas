@@ -10,6 +10,10 @@ export type GlobalAppTargetResponse = {
   region: string;
   cell_generation: number;
   regional_account_id: string;
+  /**
+   * Verified organization owning this regional target; omitted for personal apps.
+   */
+  regional_org_id?: string;
   regional_app_id: string;
   regional_app_slug: string;
   verified_at: string;

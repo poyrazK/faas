@@ -47,7 +47,7 @@ func (v Verifier) Verify(ctx context.Context, cell Cell, slug, token string) (Bi
 	if decoder.Decode(&proof) != nil || decoder.Decode(&struct{}{}) != io.EOF || proof.CellID != cell.ID || proof.Region != cell.Region || proof.AppSlug != slug {
 		return Binding{}, ErrVerification
 	}
-	binding := Binding{CellID: proof.CellID, Region: proof.Region, CellGeneration: cell.Generation, RegionalAccountID: proof.AccountID, RegionalAppID: proof.AppID, RegionalAppSlug: proof.AppSlug}
+	binding := Binding{CellID: proof.CellID, Region: proof.Region, CellGeneration: cell.Generation, RegionalAccountID: proof.AccountID, RegionalOrgID: proof.OrgID, RegionalAppID: proof.AppID, RegionalAppSlug: proof.AppSlug}
 	if binding.Validate() != nil {
 		return Binding{}, ErrVerification
 	}

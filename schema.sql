@@ -3328,6 +3328,36 @@ $$;
 
 
 --
+-- Name: lock_global_org_target_owner(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_global_org_target_owner(wanted_owner uuid, actor uuid) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+DECLARE tenant uuid;
+BEGIN
+ PERFORM assert_global_directory_scope();
+ SELECT org_id INTO tenant FROM global_directory_owners WHERE id=wanted_owner;
+ IF tenant IS NULL THEN RAISE EXCEPTION 'shared owner required' USING ERRCODE='23514',CONSTRAINT='global_directory_identity'; END IF;
+ PERFORM 1 FROM orgs WHERE id=tenant FOR SHARE;
+ IF NOT EXISTS(SELECT 1 FROM orgs WHERE id=tenant AND NOT personal_org AND status='active' AND NOT deleted_pending) THEN
+  RAISE EXCEPTION 'organization inactive' USING ERRCODE='23514',CONSTRAINT='global_directory_owner_inactive';
+ END IF;
+ PERFORM 1 FROM accounts WHERE id=actor FOR SHARE;
+ PERFORM 1 FROM org_memberships WHERE org_id=tenant AND account_id=actor FOR SHARE;
+ IF NOT EXISTS(SELECT 1 FROM accounts a JOIN org_memberships m ON m.account_id=a.id AND m.org_id=tenant
+   WHERE a.id=actor AND a.status='active' AND a.abuse_hold_at IS NULL AND a.email_verified_at IS NOT NULL
+     AND m.removed_at IS NULL AND m.role IN ('owner','admin')) THEN
+  RAISE EXCEPTION 'organization consent role required' USING ERRCODE='23514',CONSTRAINT='global_directory_owner_forbidden';
+ END IF;
+ PERFORM 1 FROM global_directory_owners WHERE id=wanted_owner AND org_id=tenant FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'shared owner changed' USING ERRCODE='23514',CONSTRAINT='global_directory_identity'; END IF;
+ RETURN wanted_owner;
+END;
+$$;
+
+
+--
 -- Name: lock_global_release_target_app(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3643,6 +3673,9 @@ BEGIN
     PERFORM assert_global_directory_scope();
     SELECT * INTO app FROM global_apps WHERE global_apps.owner_id=plan_global_image_release.owner_id AND slug=wanted_slug FOR UPDATE;
     IF NOT FOUND THEN RETURN NULL; END IF;
+    IF EXISTS(SELECT 1 FROM global_directory_owners WHERE id=app.owner_id AND org_id IS NOT NULL) THEN
+        RAISE EXCEPTION 'shared runtime admission pending' USING ERRCODE='23514',CONSTRAINT='global_directory_org_targets_unavailable';
+    END IF;
     SELECT * INTO old FROM global_image_releases WHERE global_app_id=app.id AND release_id=wanted_release;
     IF FOUND THEN
         IF old.image_ref<>wanted_image THEN
@@ -3668,8 +3701,8 @@ BEGIN
     END IF;
     INSERT INTO global_image_releases(global_app_id,release_id,generation,image_ref)
         VALUES(app.id,wanted_release,app.desired_release_generation+1,wanted_image);
-    INSERT INTO global_image_release_targets(global_app_id,release_id,region,cell_id,cell_generation,api_base,regional_account_id,regional_app_id,regional_app_slug,verified_at)
-        SELECT t.global_app_id,wanted_release,t.region,t.cell_id,t.cell_generation,c.api_base,t.regional_account_id,t.regional_app_id,t.regional_app_slug,t.verified_at
+    INSERT INTO global_image_release_targets(global_app_id,release_id,region,cell_id,cell_generation,api_base,regional_account_id,regional_org_id,regional_app_id,regional_app_slug,verified_at)
+        SELECT t.global_app_id,wanted_release,t.region,t.cell_id,t.cell_generation,c.api_base,t.regional_account_id,t.regional_org_id,t.regional_app_id,t.regional_app_slug,t.verified_at
         FROM global_app_targets t JOIN global_directory_cells c ON c.id=t.cell_id WHERE t.global_app_id=app.id;
     UPDATE global_apps SET desired_release_generation=app.desired_release_generation+1 WHERE id=app.id;
     RETURN app.id;
@@ -4020,6 +4053,31 @@ BEGIN
  END IF;
  IF TG_OP='UPDATE' AND (NEW.global_app_id,NEW.owner_id,NEW.global_app_slug) IS DISTINCT FROM (OLD.global_app_id,OLD.owner_id,OLD.global_app_slug) THEN
   RAISE EXCEPTION 'recovery identity immutable' USING ERRCODE='23514',CONSTRAINT='global_delegation_identity';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: protect_global_regional_org_anchor(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_global_regional_org_anchor() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE current_org uuid; check_current boolean;
+BEGIN
+ IF TG_OP='UPDATE' AND NEW.regional_org_id IS DISTINCT FROM OLD.regional_org_id THEN
+  RAISE EXCEPTION 'regional organization anchor immutable' USING ERRCODE='23514',CONSTRAINT='global_directory_identity';
+ END IF;
+ check_current := TG_OP='INSERT';
+ IF TG_TABLE_NAME='global_release_delegations' THEN check_current := check_current OR NEW.status IN ('pending','active'); END IF;
+ IF check_current THEN
+  SELECT regional_org_id INTO current_org FROM global_app_targets WHERE global_app_id=NEW.global_app_id AND region=NEW.region;
+  IF NOT FOUND OR current_org IS DISTINCT FROM NEW.regional_org_id THEN
+   RAISE EXCEPTION 'regional organization anchor changed' USING ERRCODE='23514',CONSTRAINT='global_directory_stale_cell';
+  END IF;
  END IF;
  RETURN NEW;
 END;
@@ -4434,16 +4492,59 @@ $$;
 
 
 --
+-- Name: reject_shared_global_runtime(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reject_shared_global_runtime() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM global_apps a JOIN global_directory_owners o ON o.id=a.owner_id WHERE a.id=NEW.global_app_id AND o.org_id IS NOT NULL) THEN
+  RAISE EXCEPTION 'shared runtime admission pending' USING ERRCODE='23514',CONSTRAINT='global_directory_org_targets_unavailable';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: reject_shared_global_target(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.reject_shared_global_target() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE tenant uuid; mapped_account uuid; mapped_org uuid;
 BEGIN
- PERFORM 1 FROM global_directory_owners WHERE id=NEW.owner_id AND account_id IS NOT NULL FOR SHARE;
- IF NOT FOUND THEN
-  RAISE EXCEPTION 'shared regional authorization not available' USING ERRCODE='23514', CONSTRAINT='global_directory_org_targets_unavailable';
+ PERFORM assert_global_directory_scope();
+ IF TG_OP='TRUNCATE' THEN RAISE EXCEPTION 'regional tenant mappings retained' USING ERRCODE='23514',CONSTRAINT='global_directory_identity'; END IF;
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM global_directory_owners WHERE id=OLD.owner_id) THEN
+   RAISE EXCEPTION 'regional tenant mapping retained' USING ERRCODE='23514',CONSTRAINT='global_directory_identity';
+  END IF;
+  RETURN OLD;
+ END IF;
+ SELECT org_id INTO tenant FROM global_directory_owners WHERE id=NEW.owner_id FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'directory owner missing' USING ERRCODE='23514',CONSTRAINT='global_directory_identity'; END IF;
+ IF tenant IS NOT NULL THEN
+  IF NEW.regional_org_id IS NULL THEN RAISE EXCEPTION 'regional organization identity required' USING ERRCODE='23514',CONSTRAINT='global_directory_org_targets_unavailable'; END IF;
+  PERFORM 1 FROM orgs WHERE id=tenant AND NOT personal_org AND status='active' AND NOT deleted_pending FOR SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'organization inactive' USING ERRCODE='23514',CONSTRAINT='global_directory_owner_inactive'; END IF;
+ ELSIF NEW.regional_org_id IS NOT NULL THEN
+  RAISE EXCEPTION 'personal owner requires personal proof' USING ERRCODE='23514',CONSTRAINT='global_directory_identity';
+ END IF;
+ IF TG_OP='UPDATE' AND NEW.regional_org_id IS DISTINCT FROM OLD.regional_org_id THEN
+  RAISE EXCEPTION 'regional organization anchor immutable' USING ERRCODE='23514',CONSTRAINT='global_directory_identity';
+ END IF;
+ IF TG_TABLE_NAME='global_owner_cell_bindings' THEN
+  IF (tenant IS NOT NULL AND NEW.regional_account_id IS NOT NULL) OR (tenant IS NULL AND NEW.regional_account_id IS NULL) THEN
+   RAISE EXCEPTION 'regional tenant kind mismatch' USING ERRCODE='23514',CONSTRAINT='global_directory_identity';
+  END IF;
+ ELSE
+  SELECT regional_account_id,regional_org_id INTO mapped_account,mapped_org FROM global_owner_cell_bindings WHERE owner_id=NEW.owner_id AND cell_id=NEW.cell_id FOR SHARE;
+  IF NOT FOUND OR mapped_org IS DISTINCT FROM NEW.regional_org_id OR (tenant IS NULL AND mapped_account IS DISTINCT FROM NEW.regional_account_id) THEN
+   RAISE EXCEPTION 'regional tenant does not match mapping' USING ERRCODE='23514',CONSTRAINT='global_directory_identity';
+  END IF;
  END IF;
  RETURN NEW;
 END;
@@ -9172,9 +9273,11 @@ CREATE TABLE public.global_app_targets (
     regional_app_id uuid NOT NULL,
     regional_app_slug text NOT NULL,
     verified_at timestamp with time zone DEFAULT now() NOT NULL,
+    regional_org_id uuid,
     CONSTRAINT global_app_targets_cell_generation_check CHECK ((cell_generation > 0)),
     CONSTRAINT global_app_targets_regional_app_id_check CHECK ((regional_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT global_app_targets_regional_app_slug_check CHECK ((((length(regional_app_slug) >= 3) AND (length(regional_app_slug) <= 40)) AND (regional_app_slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))
+    CONSTRAINT global_app_targets_regional_app_slug_check CHECK ((((length(regional_app_slug) >= 3) AND (length(regional_app_slug) <= 40)) AND (regional_app_slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text))),
+    CONSTRAINT global_app_targets_regional_org_id_check CHECK ((regional_org_id <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
 
 
@@ -9246,6 +9349,7 @@ CREATE TABLE public.global_image_release_targets (
     diagnostic text DEFAULT ''::text NOT NULL,
     deployment_id uuid,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    regional_org_id uuid,
     CONSTRAINT global_image_release_targets_api_base_check CHECK (((length(api_base) <= 2048) AND (api_base ~ '^https://([a-z0-9.-]+|\[[0-9a-f:]+\])(:[0-9]{1,5})?$'::text))),
     CONSTRAINT global_image_release_targets_cell_generation_check CHECK ((cell_generation > 0)),
     CONSTRAINT global_image_release_targets_cell_id_check CHECK ((cell_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
@@ -9256,7 +9360,8 @@ CREATE TABLE public.global_image_release_targets (
     CONSTRAINT global_image_release_targets_region_check CHECK ((((length(region) >= 1) AND (length(region) <= 63)) AND (region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text))),
     CONSTRAINT global_image_release_targets_regional_account_id_check CHECK ((regional_account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT global_image_release_targets_regional_app_id_check CHECK ((regional_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT global_image_release_targets_regional_app_slug_check CHECK ((((length(regional_app_slug) >= 3) AND (length(regional_app_slug) <= 40)) AND (regional_app_slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))
+    CONSTRAINT global_image_release_targets_regional_app_slug_check CHECK ((((length(regional_app_slug) >= 3) AND (length(regional_app_slug) <= 40)) AND (regional_app_slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text))),
+    CONSTRAINT global_image_release_targets_regional_org_id_check CHECK ((regional_org_id <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
 
 
@@ -9283,8 +9388,11 @@ CREATE TABLE public.global_image_releases (
 CREATE TABLE public.global_owner_cell_bindings (
     owner_id uuid NOT NULL,
     cell_id uuid NOT NULL,
-    regional_account_id uuid NOT NULL,
-    CONSTRAINT global_account_cell_bindings_regional_account_id_check CHECK ((regional_account_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+    regional_account_id uuid,
+    regional_org_id uuid,
+    CONSTRAINT global_account_cell_bindings_regional_account_id_check CHECK ((regional_account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_owner_cell_bindings_regional_org_id_check CHECK ((regional_org_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT global_regional_owner_exactly_one CHECK (((((regional_account_id IS NOT NULL))::integer + ((regional_org_id IS NOT NULL))::integer) = 1))
 );
 
 
@@ -9309,6 +9417,7 @@ CREATE TABLE public.global_release_delegations (
     expires_at timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     status text DEFAULT 'pending'::text NOT NULL,
+    regional_org_id uuid,
     CONSTRAINT global_release_delegations_account_id_check CHECK ((owner_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT global_release_delegations_api_base_check CHECK (((length(api_base) <= 2048) AND (api_base ~ '^https://([a-z0-9.-]+|\[[0-9a-f:]+\])(:[0-9]{1,5})?$'::text))),
     CONSTRAINT global_release_delegations_cell_generation_check CHECK ((cell_generation > 0)),
@@ -9322,6 +9431,7 @@ CREATE TABLE public.global_release_delegations (
     CONSTRAINT global_release_delegations_regional_account_id_check CHECK ((regional_account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT global_release_delegations_regional_app_id_check CHECK ((regional_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT global_release_delegations_regional_app_slug_check CHECK (((length(regional_app_slug) >= 3) AND (length(regional_app_slug) <= 40))),
+    CONSTRAINT global_release_delegations_regional_org_id_check CHECK ((regional_org_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT global_release_delegations_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'active'::text, 'revoking'::text, 'revoked'::text, 'expired'::text]))),
     CONSTRAINT global_release_delegations_token_sha256_check CHECK ((octet_length(token_sha256) = 32))
 );
@@ -15693,6 +15803,14 @@ ALTER TABLE ONLY public.global_image_releases
 
 ALTER TABLE ONLY public.global_image_releases
     ADD CONSTRAINT global_image_releases_pkey PRIMARY KEY (global_app_id, release_id);
+
+
+--
+-- Name: global_owner_cell_bindings global_regional_org_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_owner_cell_bindings
+    ADD CONSTRAINT global_regional_org_unique UNIQUE (cell_id, regional_org_id);
 
 
 --
@@ -23390,10 +23508,24 @@ CREATE TRIGGER global_delegation_guard BEFORE INSERT OR DELETE OR UPDATE ON publ
 
 
 --
+-- Name: global_release_delegations global_delegation_org_anchor; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_delegation_org_anchor BEFORE INSERT OR UPDATE ON public.global_release_delegations FOR EACH ROW EXECUTE FUNCTION public.protect_global_regional_org_anchor();
+
+
+--
 -- Name: global_release_delegations global_delegation_retirement_wakeup; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER global_delegation_retirement_wakeup AFTER UPDATE ON public.global_release_delegations FOR EACH ROW EXECUTE FUNCTION public.wake_retired_global_delegation();
+
+
+--
+-- Name: global_release_delegations global_delegation_shared_runtime; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_delegation_shared_runtime BEFORE INSERT ON public.global_release_delegations FOR EACH ROW EXECUTE FUNCTION public.reject_shared_global_runtime();
 
 
 --
@@ -23467,10 +23599,24 @@ CREATE TRIGGER global_image_releases_truncate_guard BEFORE TRUNCATE ON public.gl
 
 
 --
+-- Name: global_owner_cell_bindings global_owner_cell_binding_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_owner_cell_binding_delete BEFORE DELETE ON public.global_owner_cell_bindings FOR EACH ROW EXECUTE FUNCTION public.reject_shared_global_target();
+
+
+--
 -- Name: global_owner_cell_bindings global_owner_cell_binding_kind; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER global_owner_cell_binding_kind BEFORE INSERT OR UPDATE ON public.global_owner_cell_bindings FOR EACH ROW EXECUTE FUNCTION public.reject_shared_global_target();
+
+
+--
+-- Name: global_owner_cell_bindings global_owner_cell_binding_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_owner_cell_binding_truncate BEFORE TRUNCATE ON public.global_owner_cell_bindings FOR EACH STATEMENT EXECUTE FUNCTION public.reject_shared_global_target();
 
 
 --
@@ -23485,6 +23631,20 @@ CREATE TRIGGER global_recovery_guard BEFORE INSERT OR DELETE OR UPDATE ON public
 --
 
 CREATE TRIGGER global_recovery_truncate BEFORE TRUNCATE ON public.global_release_recovery_work FOR EACH STATEMENT EXECUTE FUNCTION public.protect_global_recovery_work();
+
+
+--
+-- Name: global_image_releases global_release_shared_runtime; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_release_shared_runtime BEFORE INSERT ON public.global_image_releases FOR EACH ROW EXECUTE FUNCTION public.reject_shared_global_runtime();
+
+
+--
+-- Name: global_image_release_targets global_release_target_org_anchor; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER global_release_target_org_anchor BEFORE INSERT OR UPDATE ON public.global_image_release_targets FOR EACH ROW EXECUTE FUNCTION public.protect_global_regional_org_anchor();
 
 
 --
@@ -26132,14 +26292,6 @@ ALTER TABLE ONLY public.global_owner_cell_bindings
 
 
 --
--- Name: global_app_targets global_app_targets_account_id_cell_id_regional_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.global_app_targets
-    ADD CONSTRAINT global_app_targets_account_id_cell_id_regional_account_id_fkey FOREIGN KEY (owner_id, cell_id, regional_account_id) REFERENCES public.global_owner_cell_bindings(owner_id, cell_id, regional_account_id);
-
-
---
 -- Name: global_app_targets global_app_targets_cell_id_region_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26201,6 +26353,14 @@ ALTER TABLE ONLY public.global_image_releases
 
 ALTER TABLE ONLY public.global_owner_cell_bindings
     ADD CONSTRAINT global_owner_cell_bindings_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.global_directory_owners(id) ON DELETE CASCADE;
+
+
+--
+-- Name: global_app_targets global_target_owner_cell_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.global_app_targets
+    ADD CONSTRAINT global_target_owner_cell_fkey FOREIGN KEY (owner_id, cell_id) REFERENCES public.global_owner_cell_bindings(owner_id, cell_id);
 
 
 --

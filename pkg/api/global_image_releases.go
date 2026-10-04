@@ -31,6 +31,7 @@ type GlobalImageReleaseTargetResponse struct {
 	Region            string    `json:"region"`
 	CellGeneration    int64     `json:"cell_generation"`
 	RegionalAccountID string    `json:"regional_account_id"`
+	RegionalOrgID     string    `json:"regional_org_id,omitempty"`
 	RegionalAppID     string    `json:"regional_app_id"`
 	RegionalAppSlug   string    `json:"regional_app_slug"`
 	Outcome           string    `json:"outcome"`

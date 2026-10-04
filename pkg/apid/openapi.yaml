@@ -4262,7 +4262,7 @@ paths:
       tags: [apps]
       operationId: attachGlobalAppTarget
       summary: Verify and attach an existing regional app.
-      description: "Requires personal directory-account deploy-write access and verified email. Probes only the registered HTTPS origin with the supplied regional personal account-admin key; never follows redirects or retains that key. Checks cell UUID, region and app ownership and atomically fences registry generation. Same-identity retries always repeat verification; responses are never replay-cached. Existing identities cannot be replaced without explicit detachment. Shared organization apps are unsupported."
+      description: "Requires directory tenant deploy-write access and verified email. Probes only the registered HTTPS origin with the supplied regional tenant admin key; never follows redirects or retains that key. Checks cell UUID, region and app ownership and atomically fences registry generation. Same-identity retries always repeat verification; responses are never replay-cached. Existing identities cannot be replaced without explicit detachment. Shared targets require current directory and regional organization owner/admin consent."
       parameters:
         - name: slug
           in: path
@@ -4301,7 +4301,7 @@ paths:
       tags: [apps]
       operationId: detachGlobalAppTarget
       summary: Detach a selected regional app identity.
-      description: "Requires personal directory-account deploy-write access and verified email. Removes only the directory binding; it does not delete the regional app. The immutable regional account mapping remains."
+      description: "Requires directory deploy-write access and verified email. Shared targets require current organization owner/admin consent. Removes only the directory binding; it does not delete the regional app. The immutable regional tenant mapping remains."
       parameters:
         - name: slug
           in: path
@@ -4353,17 +4353,17 @@ paths:
     get:
       tags: [apps]
       operationId: getCellAppBinding
-      summary: Verify regional personal account and app identity.
-      description: "Requires a regional personal account-admin API key and a configured immutable cell identity. Normal auth, MFA and ownership checks apply. Org-member keys, scoped deploy tokens and shared organization apps cannot prove personal ownership. Returns no credentials and makes no readiness claim. Responses use Cache-Control no-store."
+      summary: Verify regional tenant and app identity.
+      description: "Requires a regional admin API key or purpose-scoped release grant and a configured immutable cell identity. Shared apps require a bound organization key and current owner/admin membership. Normal auth, MFA, verified email and tenant isolation checks apply. Returns app creator metadata and optional organization identity; no credentials or readiness claim. Responses use Cache-Control no-store."
       parameters:
         - name: slug
           in: path
-          description: Canonical slug of an existing personally owned regional app.
+          description: Canonical slug of an existing regional app.
           required: true
           schema: { type: string, minLength: 3, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
       responses:
         '200':
-          description: Authenticated personal account and regional app identity.
+          description: Authenticated regional tenant and app identity.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CellAppBindingResponse' }
@@ -30858,6 +30858,7 @@ components:
         region: { type: string }
         cell_generation: { type: integer, format: int64, minimum: 1 }
         regional_account_id: { type: string, format: uuid }
+        regional_org_id: { type: string, format: uuid, description: Verified organization owning this regional target; omitted for personal apps. }
         regional_app_id: { type: string, format: uuid }
         regional_app_slug: { type: string }
         verified_at: { type: string, format: date-time }
@@ -30869,7 +30870,7 @@ components:
       required: [regional_app_slug, regional_api_key]
       properties:
         regional_app_slug: { type: string, minLength: 3, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
-        regional_api_key: { type: string, writeOnly: true, description: Existing regional personal account-admin API key used only for this verification. }
+        regional_api_key: { type: string, writeOnly: true, description: Regional admin API key used only for verification. Shared apps require a current organization owner/admin key. }
     GlobalAppResolutionResponse:
       type: object
       description: Explicit regional API origin and app identity. Use independent regional credentials when calling that API.
@@ -30884,12 +30885,13 @@ components:
         cell_generation: { type: integer, format: int64, minimum: 1 }
     CellAppBindingResponse:
       type: object
-      description: Authenticated regional identity attestation for one personally owned non-deleted app. Not deployment readiness.
+      description: Authenticated regional identity attestation for one non-deleted app. account_id retains app creator metadata; org_id identifies a shared organization. Not deployment readiness.
       required: [cell_id, region, account_id, app_id, app_slug]
       properties:
         cell_id: { type: string, format: uuid }
         region: { type: string }
         account_id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid, description: Shared organization attested by this ownership proof; omitted for personal apps. }
         app_id: { type: string, format: uuid }
         app_slug: { type: string }
     PutGlobalImageReleaseRequest:
@@ -30935,6 +30937,7 @@ components:
         region: { type: string }
         cell_generation: { type: integer, format: int64, minimum: 1 }
         regional_account_id: { type: string, format: uuid }
+        regional_org_id: { type: string, format: uuid, description: Regional organization retained by this release snapshot; omitted for personal apps. }
         regional_app_id: { type: string, format: uuid }
         regional_app_slug: { type: string }
         outcome: { type: string, enum: [pending, accepted, expired, blocked] }

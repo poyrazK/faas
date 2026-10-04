@@ -2120,6 +2120,7 @@ type GlobalAppTarget struct {
 	RegionalAppID     pgtype.UUID
 	RegionalAppSlug   string
 	VerifiedAt        pgtype.Timestamptz
+	RegionalOrgID     pgtype.UUID
 }
 
 type GlobalDirectoryCell struct {
@@ -2159,12 +2160,14 @@ type GlobalImageReleaseTarget struct {
 	Diagnostic        string
 	DeploymentID      pgtype.UUID
 	UpdatedAt         pgtype.Timestamptz
+	RegionalOrgID     pgtype.UUID
 }
 
 type GlobalOwnerCellBinding struct {
 	OwnerID           pgtype.UUID
 	CellID            pgtype.UUID
 	RegionalAccountID pgtype.UUID
+	RegionalOrgID     pgtype.UUID
 }
 
 type GlobalReleaseDelegation struct {
@@ -2184,6 +2187,7 @@ type GlobalReleaseDelegation struct {
 	ExpiresAt         pgtype.Timestamptz
 	CreatedAt         pgtype.Timestamptz
 	Status            string
+	RegionalOrgID     pgtype.UUID
 }
 
 type GlobalReleaseRecoveryWork struct {

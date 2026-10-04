@@ -980,6 +980,8 @@ type Querier interface {
 	LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg LockFeatureFlagEnvironmentParams) (pgtype.UUID, error)
 	LockGlobalAppIdentity(ctx context.Context, db DBTX, arg LockGlobalAppIdentityParams) (LockGlobalAppIdentityRow, error)
 	LockGlobalDirectoryCell(ctx context.Context, db DBTX, arg LockGlobalDirectoryCellParams) (LockGlobalDirectoryCellRow, error)
+	// ADR-485: current organization consent is held through binding commit.
+	LockGlobalOrgTargetOwner(ctx context.Context, db DBTX, arg LockGlobalOrgTargetOwnerParams) (pgtype.UUID, error)
 	LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.UUID) (LockInvoiceForRefundRow, error)
 	// Serializes reservation attempts for one rule across every gateway replica.
 	LockMirrorRuleForSlotLease(ctx context.Context, db DBTX, ruleID pgtype.UUID) (string, error)
@@ -1229,7 +1231,7 @@ type Querier interface {
 	// ADR-483: directory tenant roots, separate from authentication actors.
 	ReadGlobalDirectoryOwner(ctx context.Context, db DBTX, ownerID pgtype.UUID) (ReadGlobalDirectoryOwnerRow, error)
 	ReadGlobalImageRelease(ctx context.Context, db DBTX, arg ReadGlobalImageReleaseParams) (ReadGlobalImageReleaseRow, error)
-	ReadGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg ReadGlobalOwnerCellBindingParams) (string, error)
+	ReadGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg ReadGlobalOwnerCellBindingParams) (ReadGlobalOwnerCellBindingRow, error)
 	// A single statement reads the pointer and its complete membership together.
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)
 	ReadRouteCheckHistoryEntry(ctx context.Context, db DBTX, arg ReadRouteCheckHistoryEntryParams) ([]byte, error)

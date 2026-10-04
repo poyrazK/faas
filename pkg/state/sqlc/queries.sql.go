@@ -651,11 +651,12 @@ func (q *Queries) AssertGlobalDirectoryScope(ctx context.Context, db DBTX) error
 }
 
 const attachGlobalAppTarget = `-- name: AttachGlobalAppTarget :one
-INSERT INTO global_app_targets(global_app_id, owner_id, cell_id, region, cell_generation, regional_account_id, regional_app_id, regional_app_slug)
+INSERT INTO global_app_targets(global_app_id, owner_id, cell_id, region, cell_generation, regional_account_id, regional_org_id, regional_app_id, regional_app_slug)
 VALUES ($1::uuid, $2::uuid, $3::uuid, $4::text, $5::bigint,
-        $6::uuid, $7::uuid, $8::text)
+        $6::uuid, $7::uuid, $8::uuid, $9::text)
 ON CONFLICT (global_app_id, region) DO UPDATE SET cell_generation = EXCLUDED.cell_generation, verified_at = now()
 WHERE global_app_targets.cell_id = EXCLUDED.cell_id AND global_app_targets.regional_account_id = EXCLUDED.regional_account_id
+  AND global_app_targets.regional_org_id IS NOT DISTINCT FROM EXCLUDED.regional_org_id
   AND global_app_targets.regional_app_id = EXCLUDED.regional_app_id AND global_app_targets.regional_app_slug = EXCLUDED.regional_app_slug
 RETURNING global_app_id::text AS global_app_id
 `
@@ -667,6 +668,7 @@ type AttachGlobalAppTargetParams struct {
 	Region            string
 	CellGeneration    int64
 	RegionalAccountID pgtype.UUID
+	RegionalOrgID     pgtype.UUID
 	RegionalAppID     pgtype.UUID
 	RegionalAppSlug   string
 }
@@ -679,6 +681,7 @@ func (q *Queries) AttachGlobalAppTarget(ctx context.Context, db DBTX, arg Attach
 		arg.Region,
 		arg.CellGeneration,
 		arg.RegionalAccountID,
+		arg.RegionalOrgID,
 		arg.RegionalAppID,
 		arg.RegionalAppSlug,
 	)
@@ -3122,6 +3125,7 @@ func (q *Queries) CronByID(ctx context.Context, db DBTX, id pgtype.UUID) (CronBy
 
 const currentGlobalReleaseBinding = `-- name: CurrentGlobalReleaseBinding :one
 SELECT cell_id::text AS cell_id,cell_generation,regional_account_id::text AS regional_account_id,
+    coalesce(regional_org_id::text,'')::text AS regional_org_id,
     regional_app_id::text AS regional_app_id,regional_app_slug
 FROM global_app_targets WHERE global_app_id=$1::uuid AND region=$2::text
 `
@@ -3135,6 +3139,7 @@ type CurrentGlobalReleaseBindingRow struct {
 	CellID            string
 	CellGeneration    int64
 	RegionalAccountID string
+	RegionalOrgID     string
 	RegionalAppID     string
 	RegionalAppSlug   string
 }
@@ -3146,6 +3151,7 @@ func (q *Queries) CurrentGlobalReleaseBinding(ctx context.Context, db DBTX, arg 
 		&i.CellID,
 		&i.CellGeneration,
 		&i.RegionalAccountID,
+		&i.RegionalOrgID,
 		&i.RegionalAppID,
 		&i.RegionalAppSlug,
 	)
@@ -7484,8 +7490,8 @@ func (q *Queries) InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg Ins
 }
 
 const insertGlobalDelegation = `-- name: InsertGlobalDelegation :one
-INSERT INTO global_release_delegations(id,global_app_id,owner_id,global_app_slug,cell_id,region,cell_generation,api_base,regional_account_id,regional_app_id,regional_app_slug,token_sha256,sealed_credential,expires_at)
-VALUES($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid,$6::text,$7::bigint,$8::text,$9::uuid,$10::uuid,$11::text,$12::bytea,$13::bytea,$14::timestamptz) RETURNING id, global_app_id, owner_id, global_app_slug, cell_id, region, cell_generation, api_base, regional_account_id, regional_app_id, regional_app_slug, token_sha256, sealed_credential, expires_at, created_at, status
+INSERT INTO global_release_delegations(id,global_app_id,owner_id,global_app_slug,cell_id,region,cell_generation,api_base,regional_account_id,regional_org_id,regional_app_id,regional_app_slug,token_sha256,sealed_credential,expires_at)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid,$6::text,$7::bigint,$8::text,$9::uuid,$10::uuid,$11::uuid,$12::text,$13::bytea,$14::bytea,$15::timestamptz) RETURNING id, global_app_id, owner_id, global_app_slug, cell_id, region, cell_generation, api_base, regional_account_id, regional_app_id, regional_app_slug, token_sha256, sealed_credential, expires_at, created_at, status, regional_org_id
 `
 
 type InsertGlobalDelegationParams struct {
@@ -7498,6 +7504,7 @@ type InsertGlobalDelegationParams struct {
 	CellGeneration    int64
 	ApiBase           string
 	RegionalAccountID pgtype.UUID
+	RegionalOrgID     pgtype.UUID
 	RegionalAppID     pgtype.UUID
 	RegionalAppSlug   string
 	TokenSha256       []byte
@@ -7517,6 +7524,7 @@ func (q *Queries) InsertGlobalDelegation(ctx context.Context, db DBTX, arg Inser
 		arg.CellGeneration,
 		arg.ApiBase,
 		arg.RegionalAccountID,
+		arg.RegionalOrgID,
 		arg.RegionalAppID,
 		arg.RegionalAppSlug,
 		arg.TokenSha256,
@@ -7541,24 +7549,31 @@ func (q *Queries) InsertGlobalDelegation(ctx context.Context, db DBTX, arg Inser
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.Status,
+		&i.RegionalOrgID,
 	)
 	return i, err
 }
 
 const insertGlobalOwnerCellBinding = `-- name: InsertGlobalOwnerCellBinding :exec
-INSERT INTO global_owner_cell_bindings(owner_id, cell_id, regional_account_id)
-VALUES ($1::uuid, $2::uuid, $3::uuid)
+INSERT INTO global_owner_cell_bindings(owner_id, cell_id, regional_account_id, regional_org_id)
+VALUES ($1::uuid, $2::uuid, CASE WHEN $3::uuid IS NULL THEN $4::uuid END, $3::uuid)
 ON CONFLICT (owner_id, cell_id) DO NOTHING
 `
 
 type InsertGlobalOwnerCellBindingParams struct {
 	OwnerID           pgtype.UUID
 	CellID            pgtype.UUID
+	RegionalOrgID     pgtype.UUID
 	RegionalAccountID pgtype.UUID
 }
 
 func (q *Queries) InsertGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg InsertGlobalOwnerCellBindingParams) error {
-	_, err := db.Exec(ctx, insertGlobalOwnerCellBinding, arg.OwnerID, arg.CellID, arg.RegionalAccountID)
+	_, err := db.Exec(ctx, insertGlobalOwnerCellBinding,
+		arg.OwnerID,
+		arg.CellID,
+		arg.RegionalOrgID,
+		arg.RegionalAccountID,
+	)
 	return err
 }
 
@@ -12356,7 +12371,7 @@ func (q *Queries) ListGlobalAppIdentities(ctx context.Context, db DBTX, ownerID 
 
 const listGlobalAppTargets = `-- name: ListGlobalAppTargets :many
 SELECT t.global_app_id::text AS global_app_id, t.cell_id::text AS cell_id, t.region, t.cell_generation,
-       t.regional_account_id::text AS regional_account_id, t.regional_app_id::text AS regional_app_id, t.regional_app_slug, t.verified_at,
+       t.regional_account_id::text AS regional_account_id, coalesce(t.regional_org_id::text,'')::text AS regional_org_id, t.regional_app_id::text AS regional_app_id, t.regional_app_slug, t.verified_at,
        c.api_base, c.enabled AS cell_enabled, c.generation AS registry_generation
 FROM global_app_targets t JOIN global_apps a ON a.id = t.global_app_id
 JOIN global_directory_cells c ON c.id = t.cell_id
@@ -12374,6 +12389,7 @@ type ListGlobalAppTargetsRow struct {
 	Region             string
 	CellGeneration     int64
 	RegionalAccountID  string
+	RegionalOrgID      string
 	RegionalAppID      string
 	RegionalAppSlug    string
 	VerifiedAt         pgtype.Timestamptz
@@ -12397,6 +12413,7 @@ func (q *Queries) ListGlobalAppTargets(ctx context.Context, db DBTX, arg ListGlo
 			&i.Region,
 			&i.CellGeneration,
 			&i.RegionalAccountID,
+			&i.RegionalOrgID,
 			&i.RegionalAppID,
 			&i.RegionalAppSlug,
 			&i.VerifiedAt,
@@ -12454,6 +12471,7 @@ func (q *Queries) ListGlobalDirectoryCells(ctx context.Context, db DBTX) ([]List
 
 const listGlobalImageReleaseTargets = `-- name: ListGlobalImageReleaseTargets :many
 SELECT region,cell_id::text AS cell_id,cell_generation,api_base,regional_account_id::text AS regional_account_id,
+    coalesce(regional_org_id::text,'')::text AS regional_org_id,
     regional_app_id::text AS regional_app_id,regional_app_slug,verified_at,outcome,diagnostic,
     COALESCE(deployment_id::text,'')::text AS deployment_id,updated_at
 FROM global_image_release_targets WHERE global_app_id=$1::uuid AND release_id=$2::uuid ORDER BY region
@@ -12470,6 +12488,7 @@ type ListGlobalImageReleaseTargetsRow struct {
 	CellGeneration    int64
 	ApiBase           string
 	RegionalAccountID string
+	RegionalOrgID     string
 	RegionalAppID     string
 	RegionalAppSlug   string
 	VerifiedAt        pgtype.Timestamptz
@@ -12494,6 +12513,7 @@ func (q *Queries) ListGlobalImageReleaseTargets(ctx context.Context, db DBTX, ar
 			&i.CellGeneration,
 			&i.ApiBase,
 			&i.RegionalAccountID,
+			&i.RegionalOrgID,
 			&i.RegionalAppID,
 			&i.RegionalAppSlug,
 			&i.VerifiedAt,
@@ -13313,7 +13333,7 @@ func (q *Queries) ListRecentEventsForAccount(ctx context.Context, db DBTX, arg L
 }
 
 const listRecoveryDelegations = `-- name: ListRecoveryDelegations :many
-SELECT id, global_app_id, owner_id, global_app_slug, cell_id, region, cell_generation, api_base, regional_account_id, regional_app_id, regional_app_slug, token_sha256, sealed_credential, expires_at, created_at, status FROM global_release_delegations WHERE global_app_id=$1::uuid AND owner_id=$2::uuid AND status IN ('pending','active','revoking') ORDER BY id
+SELECT id, global_app_id, owner_id, global_app_slug, cell_id, region, cell_generation, api_base, regional_account_id, regional_app_id, regional_app_slug, token_sha256, sealed_credential, expires_at, created_at, status, regional_org_id FROM global_release_delegations WHERE global_app_id=$1::uuid AND owner_id=$2::uuid AND status IN ('pending','active','revoking') ORDER BY id
 `
 
 type ListRecoveryDelegationsParams struct {
@@ -13347,6 +13367,7 @@ func (q *Queries) ListRecoveryDelegations(ctx context.Context, db DBTX, arg List
 			&i.ExpiresAt,
 			&i.CreatedAt,
 			&i.Status,
+			&i.RegionalOrgID,
 		); err != nil {
 			return nil, err
 		}
@@ -14316,7 +14337,7 @@ func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID str
 }
 
 const liveGlobalDelegation = `-- name: LiveGlobalDelegation :one
-SELECT id, global_app_id, owner_id, global_app_slug, cell_id, region, cell_generation, api_base, regional_account_id, regional_app_id, regional_app_slug, token_sha256, sealed_credential, expires_at, created_at, status FROM global_release_delegations WHERE global_app_id=$1::uuid AND region=$2::text AND status IN ('pending','active')
+SELECT id, global_app_id, owner_id, global_app_slug, cell_id, region, cell_generation, api_base, regional_account_id, regional_app_id, regional_app_slug, token_sha256, sealed_credential, expires_at, created_at, status, regional_org_id FROM global_release_delegations WHERE global_app_id=$1::uuid AND region=$2::text AND status IN ('pending','active')
 `
 
 type LiveGlobalDelegationParams struct {
@@ -14344,6 +14365,7 @@ func (q *Queries) LiveGlobalDelegation(ctx context.Context, db DBTX, arg LiveGlo
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.Status,
+		&i.RegionalOrgID,
 	)
 	return i, err
 }
@@ -14568,6 +14590,23 @@ func (q *Queries) LockGlobalDirectoryCell(ctx context.Context, db DBTX, arg Lock
 		&i.Generation,
 	)
 	return i, err
+}
+
+const lockGlobalOrgTargetOwner = `-- name: LockGlobalOrgTargetOwner :one
+SELECT lock_global_org_target_owner($1::uuid,$2::uuid)::uuid AS owner_id
+`
+
+type LockGlobalOrgTargetOwnerParams struct {
+	OwnerID pgtype.UUID
+	ActorID pgtype.UUID
+}
+
+// ADR-485: current organization consent is held through binding commit.
+func (q *Queries) LockGlobalOrgTargetOwner(ctx context.Context, db DBTX, arg LockGlobalOrgTargetOwnerParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockGlobalOrgTargetOwner, arg.OwnerID, arg.ActorID)
+	var owner_id pgtype.UUID
+	err := row.Scan(&owner_id)
+	return owner_id, err
 }
 
 const lockInvoiceForRefund = `-- name: LockInvoiceForRefund :one
@@ -19037,7 +19076,7 @@ func (q *Queries) ReadExclusiveWorkReplay(ctx context.Context, db DBTX, arg Read
 }
 
 const readGlobalDelegation = `-- name: ReadGlobalDelegation :one
-SELECT id, global_app_id, owner_id, global_app_slug, cell_id, region, cell_generation, api_base, regional_account_id, regional_app_id, regional_app_slug, token_sha256, sealed_credential, expires_at, created_at, status FROM global_release_delegations WHERE id=$1::uuid AND owner_id=$2::uuid AND global_app_id=$3::uuid
+SELECT id, global_app_id, owner_id, global_app_slug, cell_id, region, cell_generation, api_base, regional_account_id, regional_app_id, regional_app_slug, token_sha256, sealed_credential, expires_at, created_at, status, regional_org_id FROM global_release_delegations WHERE id=$1::uuid AND owner_id=$2::uuid AND global_app_id=$3::uuid
 `
 
 type ReadGlobalDelegationParams struct {
@@ -19066,6 +19105,7 @@ func (q *Queries) ReadGlobalDelegation(ctx context.Context, db DBTX, arg ReadGlo
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.Status,
+		&i.RegionalOrgID,
 	)
 	return i, err
 }
@@ -19129,7 +19169,7 @@ func (q *Queries) ReadGlobalImageRelease(ctx context.Context, db DBTX, arg ReadG
 }
 
 const readGlobalOwnerCellBinding = `-- name: ReadGlobalOwnerCellBinding :one
-SELECT regional_account_id::text AS regional_account_id FROM global_owner_cell_bindings
+SELECT coalesce(regional_account_id::text,'')::text AS regional_account_id, coalesce(regional_org_id::text,'')::text AS regional_org_id FROM global_owner_cell_bindings
 WHERE owner_id = $1::uuid AND cell_id = $2::uuid
 `
 
@@ -19138,11 +19178,16 @@ type ReadGlobalOwnerCellBindingParams struct {
 	CellID  pgtype.UUID
 }
 
-func (q *Queries) ReadGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg ReadGlobalOwnerCellBindingParams) (string, error) {
+type ReadGlobalOwnerCellBindingRow struct {
+	RegionalAccountID string
+	RegionalOrgID     string
+}
+
+func (q *Queries) ReadGlobalOwnerCellBinding(ctx context.Context, db DBTX, arg ReadGlobalOwnerCellBindingParams) (ReadGlobalOwnerCellBindingRow, error) {
 	row := db.QueryRow(ctx, readGlobalOwnerCellBinding, arg.OwnerID, arg.CellID)
-	var regional_account_id string
-	err := row.Scan(&regional_account_id)
-	return regional_account_id, err
+	var i ReadGlobalOwnerCellBindingRow
+	err := row.Scan(&i.RegionalAccountID, &i.RegionalOrgID)
+	return i, err
 }
 
 const readProjectReleaseSet = `-- name: ReadProjectReleaseSet :one

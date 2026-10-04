@@ -42,6 +42,9 @@ func TestGlobalDirectoryVerifierProof(t *testing.T) {
 		ok         bool
 	}{
 		{"valid", string(valid), 200, true},
+		{"organization", changed(func(p *api.CellAppBindingResponse) { p.OrgID = uuid.NewString() }), 200, true},
+		{"zero_org", changed(func(p *api.CellAppBindingResponse) { p.OrgID = uuid.Nil.String() }), 200, false},
+		{"invalid_org", changed(func(p *api.CellAppBindingResponse) { p.OrgID = "bad-org" }), 200, false},
 		{"wrong_cell", changed(func(p *api.CellAppBindingResponse) { p.CellID = uuid.NewString() }), 200, false},
 		{"wrong_region", changed(func(p *api.CellAppBindingResponse) { p.Region = "eu-hel" }), 200, false},
 		{"wrong_slug", changed(func(p *api.CellAppBindingResponse) { p.AppSlug = "other-shop" }), 200, false},
@@ -67,7 +70,11 @@ func TestGlobalDirectoryVerifierProof(t *testing.T) {
 			candidate.APIBase = srv.URL
 			binding, verifyErr := (Verifier{Client: srv.Client()}).Verify(t.Context(), candidate, proof.AppSlug, token)
 			if tc.ok {
-				if verifyErr != nil || binding.CellGeneration != 7 || binding.RegionalAppID != proof.AppID || binding.RegionalAccountID != proof.AccountID {
+				var expected api.CellAppBindingResponse
+				if err := json.Unmarshal([]byte(tc.body), &expected); err != nil {
+					t.Fatal(err)
+				}
+				if verifyErr != nil || binding.CellGeneration != 7 || binding.RegionalAppID != proof.AppID || binding.RegionalAccountID != proof.AccountID || binding.RegionalOrgID != expected.OrgID {
 					t.Fatalf("proof=%+v err=%v", binding, verifyErr)
 				}
 			} else if !errors.Is(verifyErr, ErrVerification) || strings.Contains(verifyErr.Error(), token) || binding != (Binding{}) {

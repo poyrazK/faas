@@ -311,10 +311,7 @@ func TestGlobalDirectoryProofAcceptsPersonalOrgAndRefusesSharedOrg(t *testing.T)
 			}
 			e.key = token
 			rec := e.do(t, http.MethodGet, "/v1/cell/apps/regional-shop/binding", nil, nil)
-			want := http.StatusForbidden
-			if personal {
-				want = http.StatusOK
-			}
+			want := http.StatusOK
 			if rec.Code != want {
 				t.Fatalf("personal=%t proof: %d %s", personal, rec.Code, rec.Body)
 			}

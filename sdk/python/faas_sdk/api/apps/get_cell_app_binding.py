@@ -80,12 +80,13 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[CellAppBindingResponse | Problem]:
-    """Verify regional personal account and app identity.
+    """Verify regional tenant and app identity.
 
-     Requires a regional personal account-admin API key and a configured immutable cell identity. Normal
-    auth, MFA and ownership checks apply. Org-member keys, scoped deploy tokens and shared organization
-    apps cannot prove personal ownership. Returns no credentials and makes no readiness claim. Responses
-    use Cache-Control no-store.
+     Requires a regional admin API key or purpose-scoped release grant and a configured immutable cell
+    identity. Shared apps require a bound organization key and current owner/admin membership. Normal
+    auth, MFA, verified email and tenant isolation checks apply. Returns app creator metadata and
+    optional organization identity; no credentials or readiness claim. Responses use Cache-Control no-
+    store.
 
     Args:
         slug (str):
@@ -114,12 +115,13 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> CellAppBindingResponse | Problem | None:
-    """Verify regional personal account and app identity.
+    """Verify regional tenant and app identity.
 
-     Requires a regional personal account-admin API key and a configured immutable cell identity. Normal
-    auth, MFA and ownership checks apply. Org-member keys, scoped deploy tokens and shared organization
-    apps cannot prove personal ownership. Returns no credentials and makes no readiness claim. Responses
-    use Cache-Control no-store.
+     Requires a regional admin API key or purpose-scoped release grant and a configured immutable cell
+    identity. Shared apps require a bound organization key and current owner/admin membership. Normal
+    auth, MFA, verified email and tenant isolation checks apply. Returns app creator metadata and
+    optional organization identity; no credentials or readiness claim. Responses use Cache-Control no-
+    store.
 
     Args:
         slug (str):
@@ -143,12 +145,13 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[CellAppBindingResponse | Problem]:
-    """Verify regional personal account and app identity.
+    """Verify regional tenant and app identity.
 
-     Requires a regional personal account-admin API key and a configured immutable cell identity. Normal
-    auth, MFA and ownership checks apply. Org-member keys, scoped deploy tokens and shared organization
-    apps cannot prove personal ownership. Returns no credentials and makes no readiness claim. Responses
-    use Cache-Control no-store.
+     Requires a regional admin API key or purpose-scoped release grant and a configured immutable cell
+    identity. Shared apps require a bound organization key and current owner/admin membership. Normal
+    auth, MFA, verified email and tenant isolation checks apply. Returns app creator metadata and
+    optional organization identity; no credentials or readiness claim. Responses use Cache-Control no-
+    store.
 
     Args:
         slug (str):
@@ -175,12 +178,13 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> CellAppBindingResponse | Problem | None:
-    """Verify regional personal account and app identity.
+    """Verify regional tenant and app identity.
 
-     Requires a regional personal account-admin API key and a configured immutable cell identity. Normal
-    auth, MFA and ownership checks apply. Org-member keys, scoped deploy tokens and shared organization
-    apps cannot prove personal ownership. Returns no credentials and makes no readiness claim. Responses
-    use Cache-Control no-store.
+     Requires a regional admin API key or purpose-scoped release grant and a configured immutable cell
+    identity. Shared apps require a bound organization key and current owner/admin membership. Normal
+    auth, MFA, verified email and tenant isolation checks apply. Returns app creator metadata and
+    optional organization identity; no credentials or readiness claim. Responses use Cache-Control no-
+    store.
 
     Args:
         slug (str):

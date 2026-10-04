@@ -16,6 +16,7 @@ from ..models.global_image_release_target_response_outcome import (
     GlobalImageReleaseTargetResponseOutcome,
     check_global_image_release_target_response_outcome,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="GlobalImageReleaseTargetResponse")
 
@@ -34,6 +35,8 @@ class GlobalImageReleaseTargetResponse:
     diagnostic: GlobalImageReleaseTargetResponseDiagnostic
     deployment_id: None | UUID
     updated_at: datetime.datetime
+    regional_org_id: UUID | Unset = UNSET
+    """Regional organization retained by this release snapshot; omitted for personal apps."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,6 +64,10 @@ class GlobalImageReleaseTargetResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        regional_org_id: str | Unset = UNSET
+        if not isinstance(self.regional_org_id, Unset):
+            regional_org_id = str(self.regional_org_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -77,6 +84,8 @@ class GlobalImageReleaseTargetResponse:
                 "updated_at": updated_at,
             }
         )
+        if regional_org_id is not UNSET:
+            field_dict["regional_org_id"] = regional_org_id
 
         return field_dict
 
@@ -116,6 +125,13 @@ class GlobalImageReleaseTargetResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        _regional_org_id = d.pop("regional_org_id", UNSET)
+        regional_org_id: UUID | Unset
+        if isinstance(_regional_org_id, Unset):
+            regional_org_id = UNSET
+        else:
+            regional_org_id = UUID(_regional_org_id)
+
         global_image_release_target_response = cls(
             cell_id=cell_id,
             region=region,
@@ -127,6 +143,7 @@ class GlobalImageReleaseTargetResponse:
             diagnostic=diagnostic,
             deployment_id=deployment_id,
             updated_at=updated_at,
+            regional_org_id=regional_org_id,
         )
 
         global_image_release_target_response.additional_properties = d

@@ -12,6 +12,7 @@ from ..models.global_app_target_response_resolution_status import (
     GlobalAppTargetResponseResolutionStatus,
     check_global_app_target_response_resolution_status,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="GlobalAppTargetResponse")
 
@@ -28,6 +29,8 @@ class GlobalAppTargetResponse:
     regional_app_slug: str
     verified_at: datetime.datetime
     resolution_status: GlobalAppTargetResponseResolutionStatus
+    regional_org_id: UUID | Unset = UNSET
+    """Verified organization owning this regional target; omitted for personal apps."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -47,6 +50,10 @@ class GlobalAppTargetResponse:
 
         resolution_status: str = self.resolution_status
 
+        regional_org_id: str | Unset = UNSET
+        if not isinstance(self.regional_org_id, Unset):
+            regional_org_id = str(self.regional_org_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -61,6 +68,8 @@ class GlobalAppTargetResponse:
                 "resolution_status": resolution_status,
             }
         )
+        if regional_org_id is not UNSET:
+            field_dict["regional_org_id"] = regional_org_id
 
         return field_dict
 
@@ -83,6 +92,13 @@ class GlobalAppTargetResponse:
 
         resolution_status = check_global_app_target_response_resolution_status(d.pop("resolution_status"))
 
+        _regional_org_id = d.pop("regional_org_id", UNSET)
+        regional_org_id: UUID | Unset
+        if isinstance(_regional_org_id, Unset):
+            regional_org_id = UNSET
+        else:
+            regional_org_id = UUID(_regional_org_id)
+
         global_app_target_response = cls(
             cell_id=cell_id,
             region=region,
@@ -92,6 +108,7 @@ class GlobalAppTargetResponse:
             regional_app_slug=regional_app_slug,
             verified_at=verified_at,
             resolution_status=resolution_status,
+            regional_org_id=regional_org_id,
         )
 
         global_app_target_response.additional_properties = d

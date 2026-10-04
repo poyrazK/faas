@@ -21,7 +21,7 @@ func (s *PgStore) readRelease(ctx context.Context, db sqlc.DBTX, owner, slug, re
 	}
 	out.Targets = make([]ReleaseTarget, 0, len(rows))
 	for _, row := range rows {
-		out.Targets = append(out.Targets, ReleaseTarget{Target: Target{Binding: Binding{CellID: row.CellID, Region: row.Region, CellGeneration: row.CellGeneration, RegionalAccountID: row.RegionalAccountID, RegionalAppID: row.RegionalAppID, RegionalAppSlug: row.RegionalAppSlug}, GlobalAppID: out.GlobalAppID, VerifiedAt: row.VerifiedAt.Time, APIBase: row.ApiBase, CellEnabled: true, RegistryGeneration: row.CellGeneration}, Outcome: row.Outcome, Diagnostic: row.Diagnostic, DeploymentID: row.DeploymentID, UpdatedAt: row.UpdatedAt.Time})
+		out.Targets = append(out.Targets, ReleaseTarget{Target: Target{Binding: Binding{CellID: row.CellID, Region: row.Region, CellGeneration: row.CellGeneration, RegionalAccountID: row.RegionalAccountID, RegionalOrgID: row.RegionalOrgID, RegionalAppID: row.RegionalAppID, RegionalAppSlug: row.RegionalAppSlug}, GlobalAppID: out.GlobalAppID, VerifiedAt: row.VerifiedAt.Time, APIBase: row.ApiBase, CellEnabled: true, RegistryGeneration: row.CellGeneration}, Outcome: row.Outcome, Diagnostic: row.Diagnostic, DeploymentID: row.DeploymentID, UpdatedAt: row.UpdatedAt.Time})
 	}
 	return out, nil
 }
@@ -88,7 +88,7 @@ func (s *PgStore) checkReleaseSnapshot(ctx context.Context, tx pgx.Tx, r Release
 		if err != nil {
 			return err
 		}
-		binding := Binding{CellID: current.CellID, Region: region, CellGeneration: current.CellGeneration, RegionalAccountID: current.RegionalAccountID, RegionalAppID: current.RegionalAppID, RegionalAppSlug: current.RegionalAppSlug}
+		binding := Binding{CellID: current.CellID, Region: region, CellGeneration: current.CellGeneration, RegionalAccountID: current.RegionalAccountID, RegionalOrgID: current.RegionalOrgID, RegionalAppID: current.RegionalAppID, RegionalAppSlug: current.RegionalAppSlug}
 		if binding != target.Binding || cell.ApiBase != target.APIBase {
 			return ErrStaleCell
 		}

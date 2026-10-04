@@ -3,8 +3,8 @@
 ADR-476 introduces a gated directory identity API. A global app has one UUID
 and `all_selected_regions` as its serving policy. This slice attaches existing
 regional apps and resolves their identities. It does not provision deployments
-or publish ingress routes. Global deployment orchestration, shared org/auth,
-runtime quota allocation, data/secret replication, and independent native KVM
+or publish ingress routes. Regional provisioning, shared runtime admission, global
+runtime quota allocation, ingress health, data/secret replication, and independent native KVM
 recovery acceptance remain required for the complete multi-region feature.
 
 ## Organization directory identities
@@ -22,9 +22,10 @@ account. Registration uses the organization's plan app-count limit, with live
 membership and plan checks during allocation. This limit counts directory
 identities; it does not allocate runtime capacity or change billing.
 
-Shared organization attachment and image releases remain unavailable until the
-regional organization grant and billing protocol is integrated. PostgreSQL
-also rejects shared target bindings. Personal regional operation remains
+Shared organizations can attach existing regional organization apps with current
+owner/admin consent (ADR-485). Image releases remain unavailable until global
+runtime quotas and regional organization billing admission are integrated.
+PostgreSQL also refuses shared image release allocation. Personal regional operation remains
 available. Rollback of ADR-483 refuses retained shared directory roots.
 
 ## Configure the directory and regional cells
@@ -88,11 +89,16 @@ Bounds live in `pkg/api/limits.go`; directory registrations use the account
 plan's existing `DeployedApps` count and create no runtime resource entitlement.
 
 Legacy personal apps and apps owned by the caller's active personal organization
-can be attached. Shared organization apps, non-personal org keys, read-only
-keys, revoked keys, and scoped deploy tokens cannot establish personal ownership.
+can be attached. Shared organization apps require a regional organization-bound admin key from a
+current owner or administrator. They return an additional organization UUID;
+app account UUIDs remain creator metadata. Read-only keys, revoked keys and
+ordinary scoped deploy tokens cannot establish ownership.
 Matching email addresses or app names never establish cross-cell identity.
-The first successful attachment fixes the directory account's regional account
-mapping; other directory accounts cannot claim that regional account. A cell's
+The first successful attachment fixes the directory tenant's regional account or
+organization mapping. Other directory roots cannot claim the same regional
+tenant in that cell. Shared mappings use the organization UUID, allowing apps
+with different creators and surviving creator departure. Both directory and
+regional sides require current owner/admin consent for shared attachment. A cell's
 regional app UUID can be claimed by only one global app at a time.
 
 Resolution returns an API origin plus regional app UUID and slug for an
@@ -303,9 +309,9 @@ current administrator can revoke consent after the issuer leaves. Issuer account
 deletion retains grant identity; revocation remains terminal after role changes.
 Header and query organization hints cannot switch a bound key's tenant.
 
-Shared grant management is available; shared ownership proof, directory target
-attachment and image release admission still require organization identity,
-quota and billing integration. Creating a shared grant allocates no capacity and
+Shared grant management, ownership proof and directory target attachment are
+available. Shared image release admission still requires global runtime quota
+and regional organization billing integration. Creating a shared grant allocates no capacity and
 cannot bypass those deployment gates.
 
 Directory apid seals the scoped token and complete immutable binding with its

@@ -79,9 +79,9 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Detach a selected regional app identity.
 
-     Requires personal directory-account deploy-write access and verified email. Removes only the
-    directory binding; it does not delete the regional app. The immutable regional account mapping
-    remains.
+     Requires directory deploy-write access and verified email. Shared targets require current
+    organization owner/admin consent. Removes only the directory binding; it does not delete the
+    regional app. The immutable regional tenant mapping remains.
 
     Args:
         slug (str):
@@ -115,9 +115,9 @@ def sync(
 ) -> Any | Problem | None:
     """Detach a selected regional app identity.
 
-     Requires personal directory-account deploy-write access and verified email. Removes only the
-    directory binding; it does not delete the regional app. The immutable regional account mapping
-    remains.
+     Requires directory deploy-write access and verified email. Shared targets require current
+    organization owner/admin consent. Removes only the directory binding; it does not delete the
+    regional app. The immutable regional tenant mapping remains.
 
     Args:
         slug (str):
@@ -146,9 +146,9 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Detach a selected regional app identity.
 
-     Requires personal directory-account deploy-write access and verified email. Removes only the
-    directory binding; it does not delete the regional app. The immutable regional account mapping
-    remains.
+     Requires directory deploy-write access and verified email. Shared targets require current
+    organization owner/admin consent. Removes only the directory binding; it does not delete the
+    regional app. The immutable regional tenant mapping remains.
 
     Args:
         slug (str):
@@ -180,9 +180,9 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Detach a selected regional app identity.
 
-     Requires personal directory-account deploy-write access and verified email. Removes only the
-    directory binding; it does not delete the regional app. The immutable regional account mapping
-    remains.
+     Requires directory deploy-write access and verified email. Shared targets require current
+    organization owner/admin consent. Removes only the directory binding; it does not delete the
+    regional app. The immutable regional tenant mapping remains.
 
     Args:
         slug (str):

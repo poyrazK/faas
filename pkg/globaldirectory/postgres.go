@@ -165,9 +165,28 @@ func (s *PgStore) AttachTarget(ctx context.Context, accountID, slug string, bind
 	if err := binding.Validate(); err != nil {
 		return Target{}, err
 	}
+	owner, err := s.OwnerByID(ctx, accountID)
+	if err != nil {
+		return Target{}, err
+	}
+	if owner.Shared() {
+		return Target{}, ErrOrgTargetsUnavailable
+	}
+	if binding.RegionalOrgID != "" {
+		return Target{}, ErrConflict
+	}
+	return s.attachTarget(ctx, accountID, "", slug, binding)
+}
+
+func (s *PgStore) attachTarget(ctx context.Context, accountID, actor, slug string, binding Binding) (Target, error) {
 	queries := &sqlc.Queries{}
 	var out Target
 	err := s.transaction(ctx, "attach target", func(tx pgx.Tx) error {
+		if actor != "" {
+			if _, err := queries.LockGlobalOrgTargetOwner(ctx, tx, sqlc.LockGlobalOrgTargetOwnerParams{OwnerID: idArg(accountID), ActorID: idArg(actor)}); err != nil {
+				return err
+			}
+		}
 		app, err := queries.LockGlobalAppIdentity(ctx, tx, sqlc.LockGlobalAppIdentityParams{OwnerID: idArg(accountID), Slug: slug})
 		if err != nil {
 			return err
@@ -179,7 +198,7 @@ func (s *PgStore) AttachTarget(ctx context.Context, accountID, slug string, bind
 		if err != nil {
 			return err
 		}
-		mapArgs := sqlc.InsertGlobalOwnerCellBindingParams{OwnerID: idArg(accountID), CellID: idArg(binding.CellID), RegionalAccountID: idArg(binding.RegionalAccountID)}
+		mapArgs := sqlc.InsertGlobalOwnerCellBindingParams{OwnerID: idArg(accountID), CellID: idArg(binding.CellID), RegionalAccountID: idArg(binding.RegionalAccountID), RegionalOrgID: idArg(binding.RegionalOrgID)}
 		if err := queries.InsertGlobalOwnerCellBinding(ctx, tx, mapArgs); err != nil {
 			return err
 		}
@@ -187,10 +206,10 @@ func (s *PgStore) AttachTarget(ctx context.Context, accountID, slug string, bind
 		if err != nil {
 			return err
 		}
-		if mapped != binding.RegionalAccountID {
+		if mapped.RegionalOrgID != binding.RegionalOrgID || (binding.RegionalOrgID == "" && mapped.RegionalAccountID != binding.RegionalAccountID) {
 			return ErrConflict
 		}
-		id, err := queries.AttachGlobalAppTarget(ctx, tx, sqlc.AttachGlobalAppTargetParams{GlobalAppID: idArg(app.GlobalAppID), OwnerID: idArg(accountID), CellID: idArg(binding.CellID), Region: binding.Region, CellGeneration: binding.CellGeneration, RegionalAccountID: idArg(binding.RegionalAccountID), RegionalAppID: idArg(binding.RegionalAppID), RegionalAppSlug: binding.RegionalAppSlug})
+		id, err := queries.AttachGlobalAppTarget(ctx, tx, sqlc.AttachGlobalAppTargetParams{GlobalAppID: idArg(app.GlobalAppID), OwnerID: idArg(accountID), CellID: idArg(binding.CellID), Region: binding.Region, CellGeneration: binding.CellGeneration, RegionalAccountID: idArg(binding.RegionalAccountID), RegionalOrgID: idArg(binding.RegionalOrgID), RegionalAppID: idArg(binding.RegionalAppID), RegionalAppSlug: binding.RegionalAppSlug})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConflict
 		}
@@ -213,7 +232,7 @@ func (s *PgStore) AttachTarget(ctx context.Context, accountID, slug string, bind
 }
 
 func targetFromRow(row sqlc.ListGlobalAppTargetsRow) Target {
-	return Target{Binding: Binding{CellID: row.CellID, Region: row.Region, CellGeneration: row.CellGeneration, RegionalAccountID: row.RegionalAccountID, RegionalAppID: row.RegionalAppID, RegionalAppSlug: row.RegionalAppSlug}, GlobalAppID: row.GlobalAppID, VerifiedAt: row.VerifiedAt.Time, APIBase: row.ApiBase, CellEnabled: row.CellEnabled, RegistryGeneration: row.RegistryGeneration}
+	return Target{Binding: Binding{CellID: row.CellID, Region: row.Region, CellGeneration: row.CellGeneration, RegionalAccountID: row.RegionalAccountID, RegionalOrgID: row.RegionalOrgID, RegionalAppID: row.RegionalAppID, RegionalAppSlug: row.RegionalAppSlug}, GlobalAppID: row.GlobalAppID, VerifiedAt: row.VerifiedAt.Time, APIBase: row.ApiBase, CellEnabled: row.CellEnabled, RegistryGeneration: row.RegistryGeneration}
 }
 
 func (s *PgStore) ListTargets(ctx context.Context, accountID, slug string) ([]Target, error) {
@@ -232,7 +251,23 @@ func (s *PgStore) ListTargets(ctx context.Context, accountID, slug string) ([]Ta
 }
 
 func (s *PgStore) DetachTarget(ctx context.Context, accountID, slug, region string) error {
+	owner, err := s.OwnerByID(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	if owner.Shared() {
+		return ErrOrgTargetsUnavailable
+	}
+	return s.detachTarget(ctx, accountID, "", slug, region)
+}
+
+func (s *PgStore) detachTarget(ctx context.Context, accountID, actor, slug, region string) error {
 	return s.transaction(ctx, "detach target", func(tx pgx.Tx) error {
+		if actor != "" {
+			if _, err := (&sqlc.Queries{}).LockGlobalOrgTargetOwner(ctx, tx, sqlc.LockGlobalOrgTargetOwnerParams{OwnerID: idArg(accountID), ActorID: idArg(actor)}); err != nil {
+				return err
+			}
+		}
 		// Match attachment/allocation lock order before DELETE locks a target row.
 		_, err := (&sqlc.Queries{}).LockGlobalAppIdentity(ctx, tx, sqlc.LockGlobalAppIdentityParams{OwnerID: idArg(accountID), Slug: slug})
 		if err != nil {

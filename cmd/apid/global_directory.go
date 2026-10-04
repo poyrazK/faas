@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/globaldirectory"
@@ -44,8 +43,8 @@ func (s *server) registerGlobalDirectoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/global-apps/{slug}", read(s.getGlobalApp))
 	mux.HandleFunc("PUT /v1/global-apps/{slug}/image-releases/{release_id}", write(s.requirePersonalGlobalTarget(s.putGlobalImageRelease)))
 	mux.HandleFunc("GET /v1/global-apps/{slug}/image-releases/{release_id}", read(s.getGlobalImageRelease))
-	mux.HandleFunc("PUT /v1/global-apps/{slug}/targets/{region}", write(s.requirePersonalGlobalTarget(s.attachGlobalAppTarget)))
-	mux.HandleFunc("DELETE /v1/global-apps/{slug}/targets/{region}", write(s.requirePersonalGlobalTarget(s.detachGlobalAppTarget)))
+	mux.HandleFunc("PUT /v1/global-apps/{slug}/targets/{region}", write(s.requireGlobalTargetConsent(s.attachGlobalAppTarget)))
+	mux.HandleFunc("DELETE /v1/global-apps/{slug}/targets/{region}", write(s.requireGlobalTargetConsent(s.detachGlobalAppTarget)))
 	mux.HandleFunc("GET /v1/global-apps/{slug}/targets/{region}/resolve", read(s.resolveGlobalApp))
 	cellDeploy := s.requireRegionalAccountKey(s.requireDirectoryAccount(s.requireVerifiedEmail(s.requireCellDeploymentApp(s.idempotent(s.createDeployment)))))
 	mux.HandleFunc("POST /v1/cells/{cell_id}/apps/{app_id}/deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(cellDeploy))))
@@ -54,7 +53,7 @@ func (s *server) registerGlobalDirectoryRoutes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("PUT /v1/cells/{cell_id}/apps/{app_id}/image-releases/{release_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeDeployWrite, api.ScopeRegionalImageRelease)(cellRelease(s.putCellImageRelease)))))
 	mux.HandleFunc("GET /v1/cells/{cell_id}/apps/{app_id}/image-releases/{release_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeAppsRead, api.ScopeDeployWrite, api.ScopeRegionalImageRelease)(cellRelease(s.getCellImageRelease)))))
-	mux.HandleFunc("GET /v1/cell/apps/{slug}/binding", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeRegionalImageRelease)(s.requireRegionalReleasePrincipal(s.cellAppBinding)))))
+	mux.HandleFunc("GET /v1/cell/apps/{slug}/binding", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeRegionalImageRelease)(s.requireVerifiedEmail(s.requireRegionalBindingApp(s.regionalBindingResponse))))))
 	grantRoute := func(h accountHandler) accountHandler {
 		return s.requireVerifiedEmail(s.requireRegionalGrantApp(h))
 	}
@@ -92,7 +91,7 @@ func (s *server) globalDirectoryError(w http.ResponseWriter, r *http.Request, ac
 	case errors.Is(err, globaldirectory.ErrOwnerPlanChanged):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Organization plan changed", "Retry registration using the current organization plan."))
 	case errors.Is(err, globaldirectory.ErrOrgTargetsUnavailable):
-		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Shared regional authorization unavailable", "Organization identities can be registered. Regional attachment and releases require the organization grant protocol."))
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Shared runtime admission unavailable", "Organization identities and bindings are available. Image releases require global runtime quota and regional organization billing admission."))
 	case errors.Is(err, globaldirectory.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Directory identity not found", "No matching global app or regional binding exists for this tenant."))
 	case errors.Is(err, globaldirectory.ErrConflict):
@@ -124,7 +123,7 @@ func globalTargetResponse(target globaldirectory.Target) api.GlobalAppTargetResp
 	} else if !target.Resolvable() {
 		status = "reverify_required"
 	}
-	return api.GlobalAppTargetResponse{CellID: target.CellID, Region: target.Region, CellGeneration: target.CellGeneration, RegionalAccountID: target.RegionalAccountID, RegionalAppID: target.RegionalAppID, RegionalAppSlug: target.RegionalAppSlug, VerifiedAt: target.VerifiedAt, ResolutionStatus: status}
+	return api.GlobalAppTargetResponse{CellID: target.CellID, Region: target.Region, CellGeneration: target.CellGeneration, RegionalAccountID: target.RegionalAccountID, RegionalOrgID: target.RegionalOrgID, RegionalAppID: target.RegionalAppID, RegionalAppSlug: target.RegionalAppSlug, VerifiedAt: target.VerifiedAt, ResolutionStatus: status}
 }
 
 func (s *server) globalAppResponse(r *http.Request, app globaldirectory.App) (api.GlobalAppResponse, error) {
@@ -264,7 +263,7 @@ func (s *server) attachGlobalAppTarget(w http.ResponseWriter, r *http.Request, a
 		s.globalDirectoryError(w, r, acct, err)
 		return
 	}
-	target, err := s.globalDirectory.AttachTarget(r.Context(), globalOwnerID(r, acct), slug, binding)
+	target, err := s.commitGlobalTarget(r, acct, binding)
 	if err != nil {
 		s.globalDirectoryError(w, r, acct, err)
 		return
@@ -288,7 +287,7 @@ func (s *server) detachGlobalAppTarget(w http.ResponseWriter, r *http.Request, a
 	if !s.globalDirectoryAvailable(w) {
 		return
 	}
-	if err := s.globalDirectory.DetachTarget(r.Context(), globalOwnerID(r, acct), r.PathValue("slug"), r.PathValue("region")); err != nil {
+	if err := s.removeGlobalTarget(r, acct); err != nil {
 		s.globalDirectoryError(w, r, acct, err)
 		return
 	}
@@ -306,32 +305,4 @@ func (s *server) resolveGlobalApp(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	writeJSON(w, http.StatusOK, api.GlobalAppResolutionResponse{GlobalAppID: target.GlobalAppID, CellID: target.CellID, Region: target.Region, APIBase: target.APIBase, RegionalAppID: target.RegionalAppID, RegionalAppSlug: target.RegionalAppSlug, CellGeneration: target.CellGeneration})
-}
-
-func (s *server) cellAppBinding(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	w.Header().Set("Cache-Control", "no-store")
-	if !globaldirectory.ValidID(s.controlPlaneCell.ID) || s.controlPlaneCell.Region == "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeGlobalAppDirectoryUnavailable, "Regional cell not configured", "This control plane does not provide a regional cell identity."))
-		return
-	}
-	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
-	if !ok {
-		return
-	}
-	personal, err := s.personalDirectoryOrg(r.Context(), acct.ID, app.OrgID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not verify personal ownership"))
-		return
-	}
-	if !personal || app.Status == state.AppDeleted || app.DeletedAt != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Regional app not found", "Only personally owned, non-deleted apps can be attached."))
-		return
-	}
-	accountID, accountErr := uuid.Parse(acct.ID)
-	appID, appErr := uuid.Parse(app.ID)
-	if accountErr != nil || appErr != nil || accountID == uuid.Nil || appID == uuid.Nil {
-		api.WriteProblem(w, api.ErrCapacity("regional identities are invalid"))
-		return
-	}
-	writeJSON(w, http.StatusOK, api.CellAppBindingResponse{CellID: s.controlPlaneCell.ID, Region: s.controlPlaneCell.Region, AccountID: accountID.String(), AppID: appID.String(), AppSlug: app.Slug})
 }

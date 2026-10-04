@@ -86,7 +86,7 @@ func TestGlobalDirectorySharedOwnerMembershipAndQuota(t *testing.T) {
 	other := seedSharedOrgWithOwner(t, e, "global-other", "Other Team", api.PlanPro)
 	got = orgEnv.do(t, http.MethodGet, "/v1/global-apps", nil, map[string]string{"X-Active-Org": other.Slug})
 	assertProblem(t, got, http.StatusForbidden, api.CodeOrgRoleForbidden)
-	for _, path := range []string{"/v1/global-apps/team-global/targets/eu-fsn", "/v1/global-apps/team-global/image-releases/00000000-0000-0000-0000-000000000001"} {
+	for _, path := range []string{"/v1/global-apps/team-global/image-releases/00000000-0000-0000-0000-000000000001"} {
 		got = orgEnv.do(t, http.MethodPut, path, map[string]string{}, nil)
 		assertProblem(t, got, http.StatusForbidden, api.CodeForbidden)
 	}

@@ -157,22 +157,29 @@ func (s *MemoryStore) AttachTarget(_ context.Context, accountID, slug string, bi
 	if s.owners[accountID].Shared() {
 		return Target{}, ErrOrgTargetsUnavailable
 	}
+	if binding.RegionalOrgID != "" {
+		return Target{}, ErrConflict
+	}
+	return s.attachTarget(app, accountID, binding)
+}
+
+func (s *MemoryStore) attachTarget(app App, accountID string, binding Binding) (Target, error) {
 	cell, ok := s.cells[binding.Region]
 	if !ok || cell.ID != binding.CellID || !cell.Enabled || cell.Generation != binding.CellGeneration {
 		return Target{}, ErrStaleCell
 	}
 	mapKey := accountID + "/" + binding.CellID
-	if old, ok := s.accountBindings[mapKey]; ok && old != binding.RegionalAccountID {
+	if old, ok := s.accountBindings[mapKey]; ok && old != binding.regionalOwner() {
 		return Target{}, ErrConflict
 	}
 	for key, regionalID := range s.accountBindings {
-		if key != mapKey && regionalID == binding.RegionalAccountID && strings.HasSuffix(key, "/"+binding.CellID) {
+		if key != mapKey && regionalID == binding.regionalOwner() && strings.HasSuffix(key, "/"+binding.CellID) {
 			return Target{}, ErrConflict
 		}
 	}
 	for globalID, targets := range s.targets {
 		for region, old := range targets {
-			if globalID == app.ID && region == binding.Region && (old.CellID != binding.CellID || old.RegionalAccountID != binding.RegionalAccountID || old.RegionalAppID != binding.RegionalAppID || old.RegionalAppSlug != binding.RegionalAppSlug) {
+			if globalID == app.ID && region == binding.Region && (old.CellID != binding.CellID || old.RegionalAccountID != binding.RegionalAccountID || old.RegionalOrgID != binding.RegionalOrgID || old.RegionalAppID != binding.RegionalAppID || old.RegionalAppSlug != binding.RegionalAppSlug) {
 				return Target{}, ErrConflict
 			}
 			if globalID != app.ID && old.CellID == binding.CellID && old.RegionalAppID == binding.RegionalAppID {
@@ -184,7 +191,7 @@ func (s *MemoryStore) AttachTarget(_ context.Context, accountID, slug string, bi
 		s.targets[app.ID] = make(map[string]Target)
 	}
 	target := Target{Binding: binding, GlobalAppID: app.ID, VerifiedAt: time.Now().UTC(), APIBase: cell.APIBase, CellEnabled: cell.Enabled, RegistryGeneration: cell.Generation}
-	s.accountBindings[mapKey] = binding.RegionalAccountID
+	s.accountBindings[mapKey] = binding.regionalOwner()
 	if old, ok := s.targets[app.ID][binding.Region]; ok && old.Binding != binding {
 		s.retireDelegations(app.ID, binding.Region)
 	}
@@ -216,6 +223,13 @@ func (s *MemoryStore) DetachTarget(_ context.Context, accountID, slug, region st
 	if err != nil {
 		return err
 	}
+	if s.owners[accountID].Shared() {
+		return ErrOrgTargetsUnavailable
+	}
+	return s.detachTarget(app, region)
+}
+
+func (s *MemoryStore) detachTarget(app App, region string) error {
 	if _, ok := s.targets[app.ID][region]; !ok {
 		return ErrNotFound
 	}

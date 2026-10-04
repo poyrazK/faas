@@ -8,7 +8,7 @@
 export type AttachGlobalAppTargetRequest = {
   regional_app_slug: string;
   /**
-   * Existing regional personal account-admin API key used only for this verification.
+   * Regional admin API key used only for verification. Shared apps require a current organization owner/admin key.
    */
   regional_api_key: string;
 };

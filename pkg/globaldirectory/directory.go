@@ -49,6 +49,7 @@ type Binding struct {
 	Region            string
 	CellGeneration    int64
 	RegionalAccountID string
+	RegionalOrgID     string `json:",omitempty"` // Preserve ADR-482 personal ciphertext spelling.
 	RegionalAppID     string
 	RegionalAppSlug   string
 }
@@ -155,10 +156,17 @@ func (c Cell) Validate() error {
 
 func (b Binding) Validate() error {
 	if !ValidID(b.CellID) || b.Region == "" || !api.ValidComputeRegion(b.Region) || b.CellGeneration < 1 ||
-		!ValidID(b.RegionalAccountID) || !ValidID(b.RegionalAppID) || !ValidSlug(b.RegionalAppSlug) {
+		!ValidID(b.RegionalAccountID) || (b.RegionalOrgID != "" && !ValidID(b.RegionalOrgID)) || !ValidID(b.RegionalAppID) || !ValidSlug(b.RegionalAppSlug) {
 		return fmt.Errorf("%w: incomplete regional binding", ErrConflict)
 	}
 	return nil
+}
+
+func (b Binding) regionalOwner() string {
+	if b.RegionalOrgID != "" {
+		return "organization/" + b.RegionalOrgID
+	}
+	return "account/" + b.RegionalAccountID
 }
 
 func Resolve(ctx context.Context, store Store, accountID, slug, region string) (Target, error) {

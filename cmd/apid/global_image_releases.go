@@ -107,7 +107,7 @@ func globalImageReleaseResponse(release globaldirectory.Release) api.GlobalImage
 			id := target.DeploymentID
 			deploymentID = &id
 		}
-		out.Targets = append(out.Targets, api.GlobalImageReleaseTargetResponse{CellID: target.CellID, Region: target.Region, CellGeneration: target.CellGeneration, RegionalAccountID: target.RegionalAccountID, RegionalAppID: target.RegionalAppID, RegionalAppSlug: target.RegionalAppSlug, Outcome: target.Outcome, Diagnostic: target.Diagnostic, DeploymentID: deploymentID, UpdatedAt: target.UpdatedAt})
+		out.Targets = append(out.Targets, api.GlobalImageReleaseTargetResponse{CellID: target.CellID, Region: target.Region, CellGeneration: target.CellGeneration, RegionalAccountID: target.RegionalAccountID, RegionalOrgID: target.RegionalOrgID, RegionalAppID: target.RegionalAppID, RegionalAppSlug: target.RegionalAppSlug, Outcome: target.Outcome, Diagnostic: target.Diagnostic, DeploymentID: deploymentID, UpdatedAt: target.UpdatedAt})
 	}
 	return out
 }

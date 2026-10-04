@@ -224,6 +224,15 @@ func TestGlobalOrganizationPersonalMigrationRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	parts := strings.Split(string(migration), "-- +goose Down")
+	// Roll back later binding triggers before their ADR-483 dependencies.
+	bindings, err := os.ReadFile("../../migrations/20261004101500003_global_regional_organization_bindings.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindingParts := strings.Split(string(bindings), "-- +goose Down")
+	if _, err = pool.Exec(t.Context(), bindingParts[1]); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = pool.Exec(t.Context(), parts[1]); err != nil {
 		t.Fatal(err)
 	}
@@ -232,6 +241,9 @@ func TestGlobalOrganizationPersonalMigrationRoundTrip(t *testing.T) {
 		t.Fatalf("legacy owner: %q %v", oldOwner, err)
 	}
 	if _, err = pool.Exec(t.Context(), parts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(t.Context(), bindingParts[0]); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.AppBySlug(t.Context(), owner, app.Slug); err != nil || got.ID != app.ID {

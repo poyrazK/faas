@@ -23,6 +23,9 @@ func (s *MemoryStore) PlanRelease(_ context.Context, owner, slug, releaseID, ima
 	if err != nil {
 		return Release{}, err
 	}
+	if s.owners[owner].Shared() {
+		return Release{}, ErrOrgTargetsUnavailable
+	}
 	if old, ok := s.releases[app.ID][releaseID]; ok {
 		if old.Image != image {
 			return Release{}, ErrConflict

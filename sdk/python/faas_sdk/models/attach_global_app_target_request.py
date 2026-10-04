@@ -15,7 +15,8 @@ class AttachGlobalAppTargetRequest:
 
     regional_app_slug: str
     regional_api_key: str = _attrs_field(repr=False)
-    """Existing regional personal account-admin API key used only for this verification."""
+    """Regional admin API key used only for verification. Shared apps require a current organization owner/admin
+    key."""
 
     def to_dict(self) -> dict[str, Any]:
         regional_app_slug = self.regional_app_slug

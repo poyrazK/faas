@@ -6413,26 +6413,27 @@ SELECT id::text AS global_app_id, owner_id::text AS owner_id, slug, routing_poli
 FROM global_apps WHERE owner_id = sqlc.arg(owner_id)::uuid AND slug = sqlc.arg(slug)::text FOR UPDATE;
 
 -- name: InsertGlobalOwnerCellBinding :exec
-INSERT INTO global_owner_cell_bindings(owner_id, cell_id, regional_account_id)
-VALUES (sqlc.arg(owner_id)::uuid, sqlc.arg(cell_id)::uuid, sqlc.arg(regional_account_id)::uuid)
+INSERT INTO global_owner_cell_bindings(owner_id, cell_id, regional_account_id, regional_org_id)
+VALUES (sqlc.arg(owner_id)::uuid, sqlc.arg(cell_id)::uuid, CASE WHEN sqlc.narg(regional_org_id)::uuid IS NULL THEN sqlc.arg(regional_account_id)::uuid END, sqlc.narg(regional_org_id)::uuid)
 ON CONFLICT (owner_id, cell_id) DO NOTHING;
 
 -- name: ReadGlobalOwnerCellBinding :one
-SELECT regional_account_id::text AS regional_account_id FROM global_owner_cell_bindings
+SELECT coalesce(regional_account_id::text,'')::text AS regional_account_id, coalesce(regional_org_id::text,'')::text AS regional_org_id FROM global_owner_cell_bindings
 WHERE owner_id = sqlc.arg(owner_id)::uuid AND cell_id = sqlc.arg(cell_id)::uuid;
 
 -- name: AttachGlobalAppTarget :one
-INSERT INTO global_app_targets(global_app_id, owner_id, cell_id, region, cell_generation, regional_account_id, regional_app_id, regional_app_slug)
+INSERT INTO global_app_targets(global_app_id, owner_id, cell_id, region, cell_generation, regional_account_id, regional_org_id, regional_app_id, regional_app_slug)
 VALUES (sqlc.arg(global_app_id)::uuid, sqlc.arg(owner_id)::uuid, sqlc.arg(cell_id)::uuid, sqlc.arg(region)::text, sqlc.arg(cell_generation)::bigint,
-        sqlc.arg(regional_account_id)::uuid, sqlc.arg(regional_app_id)::uuid, sqlc.arg(regional_app_slug)::text)
+        sqlc.arg(regional_account_id)::uuid, sqlc.narg(regional_org_id)::uuid, sqlc.arg(regional_app_id)::uuid, sqlc.arg(regional_app_slug)::text)
 ON CONFLICT (global_app_id, region) DO UPDATE SET cell_generation = EXCLUDED.cell_generation, verified_at = now()
 WHERE global_app_targets.cell_id = EXCLUDED.cell_id AND global_app_targets.regional_account_id = EXCLUDED.regional_account_id
+  AND global_app_targets.regional_org_id IS NOT DISTINCT FROM EXCLUDED.regional_org_id
   AND global_app_targets.regional_app_id = EXCLUDED.regional_app_id AND global_app_targets.regional_app_slug = EXCLUDED.regional_app_slug
 RETURNING global_app_id::text AS global_app_id;
 
 -- name: ListGlobalAppTargets :many
 SELECT t.global_app_id::text AS global_app_id, t.cell_id::text AS cell_id, t.region, t.cell_generation,
-       t.regional_account_id::text AS regional_account_id, t.regional_app_id::text AS regional_app_id, t.regional_app_slug, t.verified_at,
+       t.regional_account_id::text AS regional_account_id, coalesce(t.regional_org_id::text,'')::text AS regional_org_id, t.regional_app_id::text AS regional_app_id, t.regional_app_slug, t.verified_at,
        c.api_base, c.enabled AS cell_enabled, c.generation AS registry_generation
 FROM global_app_targets t JOIN global_apps a ON a.id = t.global_app_id
 JOIN global_directory_cells c ON c.id = t.cell_id
@@ -6503,6 +6504,7 @@ WHERE a.owner_id=sqlc.arg(owner_id)::uuid AND a.slug=sqlc.arg(slug)::text AND r.
 
 -- name: ListGlobalImageReleaseTargets :many
 SELECT region,cell_id::text AS cell_id,cell_generation,api_base,regional_account_id::text AS regional_account_id,
+    coalesce(regional_org_id::text,'')::text AS regional_org_id,
     regional_app_id::text AS regional_app_id,regional_app_slug,verified_at,outcome,diagnostic,
     COALESCE(deployment_id::text,'')::text AS deployment_id,updated_at
 FROM global_image_release_targets WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND release_id=sqlc.arg(release_id)::uuid ORDER BY region;
@@ -6515,6 +6517,7 @@ WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND release_id=sqlc.arg(releas
 
 -- name: CurrentGlobalReleaseBinding :one
 SELECT cell_id::text AS cell_id,cell_generation,regional_account_id::text AS regional_account_id,
+    coalesce(regional_org_id::text,'')::text AS regional_org_id,
     regional_app_id::text AS regional_app_id,regional_app_slug
 FROM global_app_targets WHERE global_app_id=sqlc.arg(global_app_id)::uuid AND region=sqlc.arg(region)::text;
 
@@ -6547,8 +6550,8 @@ AND regional_release_actor_allowed(app_id,account_id,org_id,sqlc.arg(actor_id)::
 
 -- ADR-482: immutable sealed authority and restart-safe recovery claims.
 -- name: InsertGlobalDelegation :one
-INSERT INTO global_release_delegations(id,global_app_id,owner_id,global_app_slug,cell_id,region,cell_generation,api_base,regional_account_id,regional_app_id,regional_app_slug,token_sha256,sealed_credential,expires_at)
-VALUES(sqlc.arg(grant_id)::uuid,sqlc.arg(global_app_id)::uuid,sqlc.arg(owner_id)::uuid,sqlc.arg(slug)::text,sqlc.arg(cell_id)::uuid,sqlc.arg(region)::text,sqlc.arg(cell_generation)::bigint,sqlc.arg(api_base)::text,sqlc.arg(regional_account_id)::uuid,sqlc.arg(regional_app_id)::uuid,sqlc.arg(regional_app_slug)::text,sqlc.arg(token_sha256)::bytea,sqlc.arg(sealed_credential)::bytea,sqlc.arg(expires_at)::timestamptz) RETURNING *;
+INSERT INTO global_release_delegations(id,global_app_id,owner_id,global_app_slug,cell_id,region,cell_generation,api_base,regional_account_id,regional_org_id,regional_app_id,regional_app_slug,token_sha256,sealed_credential,expires_at)
+VALUES(sqlc.arg(grant_id)::uuid,sqlc.arg(global_app_id)::uuid,sqlc.arg(owner_id)::uuid,sqlc.arg(slug)::text,sqlc.arg(cell_id)::uuid,sqlc.arg(region)::text,sqlc.arg(cell_generation)::bigint,sqlc.arg(api_base)::text,sqlc.arg(regional_account_id)::uuid,sqlc.narg(regional_org_id)::uuid,sqlc.arg(regional_app_id)::uuid,sqlc.arg(regional_app_slug)::text,sqlc.arg(token_sha256)::bytea,sqlc.arg(sealed_credential)::bytea,sqlc.arg(expires_at)::timestamptz) RETURNING *;
 
 -- name: ReadGlobalDelegation :one
 SELECT * FROM global_release_delegations WHERE id=sqlc.arg(grant_id)::uuid AND owner_id=sqlc.arg(owner_id)::uuid AND global_app_id=sqlc.arg(global_app_id)::uuid;
@@ -6595,3 +6598,7 @@ SELECT resolve_global_org_owner(sqlc.arg(org_id)::uuid)::text AS owner_id;
 
 -- name: CreateGlobalOrgApp :one
 SELECT create_global_org_app(sqlc.arg(owner_id)::uuid,sqlc.arg(actor_id)::uuid,sqlc.arg(slug)::text,sqlc.arg(expected_plan)::text,sqlc.arg(app_limit)::integer)::text AS global_app_id;
+
+-- ADR-485: current organization consent is held through binding commit.
+-- name: LockGlobalOrgTargetOwner :one
+SELECT lock_global_org_target_owner(sqlc.arg(owner_id)::uuid,sqlc.arg(actor_id)::uuid)::uuid AS owner_id;
