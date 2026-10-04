@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+// spec: §8 — imaged's GC evicts snapshots when lv-fc crosses the budget.
+//
 // TestDefaultFcVolumeUsedPct pins the GC pressure probe: a readable volume
 // yields a percentage, and an unusable one yields NaN so runGCTick stays out
 // of pressure eviction instead of acting on a guessed value.

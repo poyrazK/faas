@@ -130,6 +130,9 @@ func TestDashboardGaugesCacheTTSuppressesRefreshes(t *testing.T) {
 	}
 }
 
+// spec: §8 — lv-fc is the filesystem holding app layers and snapshots;
+// §12 alerts on its fullness (lv_fc_used_pct > 80 warn, > 90 page).
+//
 // TestDefaultFcVolumeUsedPct reads a real filesystem and reports no data
 // (NaN plus an error) when the volume root is unusable.
 func TestDefaultFcVolumeUsedPct(t *testing.T) {
