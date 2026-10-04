@@ -183,12 +183,17 @@ func TestMemSourceRuntimeInvalidation(t *testing.T) {
 	}
 }
 
-func TestMemSourceRuntimeNativeCaptureRefusesLegacyFallback(t *testing.T) {
+func TestMemSourceRuntimeNativeCaptureRetainsSourceIdentity(t *testing.T) {
 	s := NewMemStore()
-	f, _, _ := sourceRuntimeFixture(t, s)
+	f, _, inputs := sourceRuntimeFixture(t, s)
+	var err error
+	f.Dep, err = s.DeploymentByID(t.Context(), f.Dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if identity, err := s.runtimeArtifactIdentityLocked(f.App, f.Dep); identity != nil || !errors.Is(err, ErrApplicationStandardRuntimeStale) {
-		t.Fatal("source capture downgraded to legacy", err)
+	if identity, err := s.runtimeArtifactIdentityLocked(f.App, f.Dep); err != nil || identity == nil || !reflect.DeepEqual(*identity, inputs.deploymentRuntimeArtifactIdentity) {
+		t.Fatal("source capture lost distinct producer identity", err)
 	}
 }

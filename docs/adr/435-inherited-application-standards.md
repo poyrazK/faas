@@ -1529,9 +1529,9 @@ build-before-deployment purge order without weakening live-owner retention.
 
 Source producer history participates in the runtime-presence downgrade guard.
 Fresh scanner bootstrap uses the distinct source approval path described below.
-Native capture explicitly refuses retained source history until source consumer
-authority is implemented; it cannot treat these producers as absent or fall back
-to unsigned handling. Conversion and scanner bootstrap do not grant scan, native
+Native capture retains distinct source producer identity; its authority checks
+are described below. Missing or stale source selection cannot be treated as absent
+or fall back to unsigned handling. Conversion and scanner bootstrap do not grant scan, native
 boot/restore/promotion, logging/egress adoption, or rollout acknowledgement. The
 shared read-only base, private writable main, and independent read-only sidecars
 remain separate drives. All native Grype/ext4/KVM/leakcheck and full multiservice
@@ -1584,8 +1584,34 @@ accept these distinct source inputs. A changed intent, selected build, rootfs
 metadata, publisher or base refuses current facts and late publication. Retained
 history still prevents unsigned fallback. A published composed report does not
 create a component scan, native grant, consumed-byte acknowledgement, observed
-adoption or rollout-wave completion. Source native capture still fails closed in
-both stores. Actual native Grype/ext4/KVM/leakcheck, source boot/restore/promotion,
+adoption or rollout-wave completion. Native capture and fresh authority checks
+are described below. Actual native Grype/ext4/KVM/leakcheck, source boot/restore/promotion,
 consumer crash recovery and multiservice rollout acceptance remain pending.
 Portable scan tests inject the materializer and scanner and do not establish
 native execution. Public activation remains disabled.
+
+## Distinct source native capture and authority
+
+Native captures now retain `source-app-layer` and `function-layer` producers with
+the selected base and registry sidecars. Historical capture checks exact owner,
+original build/export lineage, selected build generation, deployment metadata,
+runtime kind and current base binding. It does not renew a signature or scan.
+Current settings remain captured separately; conversion intent is revalidated
+when fresh composed scan evidence is read for native authority.
+
+Boot grants and uncommitted runtime publication require the current composed scan
+and latest exact-claim build export approval. SQL takes nonwaiting owner, build,
+producer, publisher and base fences and bounds the authority deadline. Go
+authenticates retained ECDSA bytes and checks conversion intent in that same
+transaction before committing authority. Renewal preserves immutable producer and
+capture identity. An expired approval, changed build, command, metadata, base or
+publisher refuses pending authority. Source history never enables legacy fallback.
+
+Source native authority requires protocol 2 in both Go and SQL; a registered
+consumer offering protocol 1 cannot receive a source boot grant. Protocol 2
+binds the distinct source set to consumption receipts and preserves a
+read-only base, private writable main and independent read-only sidecars. Portable
+store tests use explicitly simulated receipts; they do not prove native byte
+consumption or advance observed policy adoption. Dedicated Linux amd64/root/KVM
+boot, snapshot restore and promotion, actual Grype/ext4 scanning, crash recovery,
+leakcheck and the full controlled multiservice rollout remain acceptance work.

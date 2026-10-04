@@ -32,8 +32,12 @@ type sourceRootfsFixture struct {
 }
 
 func sourceBuildRootfsFixture(t *testing.T, s sourceRootfsTestStore) sourceRootfsFixture {
+	return sourceBuildRootfsFixtureRuntime(t, s, "node22")
+}
+
+func sourceBuildRootfsFixtureRuntime(t *testing.T, s sourceRootfsTestStore, runtime string) sourceRootfsFixture {
 	t.Helper()
-	approval, app, dep, build, _ := buildExportFixture(t, s)
+	approval, app, dep, build, _ := buildExportFixtureRuntime(t, s, runtime)
 	parent, err := s.RecordBuildExportPublication(t.Context(), approval)
 	if err != nil {
 		t.Fatal(err)
@@ -57,6 +61,9 @@ func sourceBuildRootfsFixture(t *testing.T, s sourceRootfsTestStore) sourceRootf
 		Kind: kind, Runtime: runtime, IntentHash: hash, StorageKey: "apps/source/converted.ext4", RootfsPath: "/srv/apps/source/converted.ext4", ContentBytes: 24,
 		ArtifactDigest: imagechain.Digest([]byte("converted ext4 fixture")), ArtifactBytes: 22, BaseProducerID: base.ID, BaseInputHash: base.InputHash,
 		GuestInitDigest: base.Input.GuestInitDigest, RunnerDigest: imagechain.Digest([]byte("runner fixture")), LayoutVersion: SourceBuildRootfsLayout}
+	if kind == "source-app-layer" {
+		in.RunnerDigest = ""
+	}
 	return sourceRootfsFixture{Input: in, App: app, Dep: dep, Build: build, Parent: parent, Base: base}
 }
 

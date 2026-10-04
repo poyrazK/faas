@@ -54,6 +54,9 @@ func validateStandardBootBinding(binding runtimeadmission.Binding, capture Insta
 	if binding.ProtocolVersion > protocol || !capture.Managed || binding.InstanceID != capture.InstanceID || binding.AppID != capture.AppID || binding.AccountID != capture.AccountID || binding.DeploymentID != capture.DeploymentID || binding.NodeID != capture.NodeID || binding.Incarnation != incarnation || binding.DesiredRevision != capture.DesiredRevision || capture.PersistedRevision != capture.DesiredRevision || binding.EffectiveHash != capture.EffectiveHash || binding.CapturedInputHash != capture.NativeInputHash || binding.EgressRevision != capture.EgressRevision {
 		return ErrApplicationStandardRuntimeStale
 	}
+	if standardSourceNativeCapture(capture) && binding.ProtocolVersion != runtimeadmission.ArtifactProtocolVersion {
+		return ErrApplicationStandardRuntimeStale
+	}
 	if binding.ProtocolVersion == runtimeadmission.ArtifactProtocolVersion {
 		hash, err := standardCapturedArtifactSourceHash(capture)
 		if err != nil || hash != binding.ArtifactSourcesHash {

@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -33,13 +34,14 @@ func TestPgSourceRuntimeInvalidation(t *testing.T) {
 	}
 }
 
-func TestPgSourceRuntimeNativeCaptureRefusesLegacyFallback(t *testing.T) {
+func TestPgSourceRuntimeNativeCaptureRetainsSourceIdentity(t *testing.T) {
 	s, pool := registryVerificationPGStore(t)
-	f, _, _ := sourceRuntimeFixture(t, s)
+	f, _, inputs := sourceRuntimeFixture(t, s)
 	var raw []byte
 	err := pool.QueryRow(t.Context(), `SELECT application_standard_runtime_producers(a,d) FROM apps a JOIN deployments d ON d.app_id=a.id WHERE d.id=$1`, f.Dep.ID).Scan(&raw)
-	if !errors.Is(registryVerificationError(err), ErrApplicationStandardRuntimeStale) {
-		t.Fatal("source capture downgraded to legacy", err)
+	var identity deploymentRuntimeArtifactIdentity
+	if err != nil || json.Unmarshal(raw, &identity) != nil || !reflect.DeepEqual(identity, inputs.deploymentRuntimeArtifactIdentity) {
+		t.Fatal("source capture lost distinct producer identity", err)
 	}
 }
 

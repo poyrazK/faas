@@ -59,6 +59,33 @@ func TestMetalRuntimeDriveHandoffSharedBasePrivateMainAndSidecar(t *testing.T) {
 	}
 }
 
+// Source-kind handoff uses actual native drive handles and two live consumers.
+// The generic ext4 fixtures do not prove the source build/runner/scanner pipeline.
+func TestMetalSourceNativeDriveHandoffKinds(t *testing.T) {
+	for _, kind := range []string{"source-app-layer", "function-layer"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newMetalRuntimeDriveFixture(t)
+			f.sources[1].Kind = kind
+			ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+			defer cancel()
+			one, two := f.boot(t, ctx), f.boot(t, ctx)
+			first, err := f.vmm.runtimeDriveHandoff(one.Lease)
+			if err != nil || first == nil {
+				t.Fatal(err)
+			}
+			second, err := f.vmm.runtimeDriveHandoff(two.Lease)
+			if err != nil || second == nil || first.drives[1].observation.Source.Kind != kind || second.drives[1].observation.Source.Kind != kind ||
+				!os.SameFile(first.drives[0].info, second.drives[0].info) || os.SameFile(first.drives[1].info, second.drives[1].info) {
+				t.Fatal("native source identity, shared base or private main changed", err)
+			}
+			if err := f.manager.Destroy(ctx, one.Lease.Instance); err != nil {
+				t.Fatal(err)
+			}
+			assertMetalRuntimeDriveObservation(t, ctx, f, two)
+		})
+	}
+}
+
 func newMetalRuntimeDriveFixture(t *testing.T) metalRuntimeDriveFixture {
 	t.Helper()
 	for _, name := range []string{"FAAS_TEST_KERNEL", "FAAS_TEST_BASE_ROOTFS", "FAAS_TEST_LAYER_ROOTFS"} {

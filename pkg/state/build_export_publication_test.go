@@ -22,12 +22,16 @@ type buildExportTestStore interface {
 }
 
 func buildExportFixture(t *testing.T, s buildExportTestStore) (BuildExportPublicationInput, App, Deployment, Build, *ecdsa.PrivateKey) {
+	return buildExportFixtureRuntime(t, s, "node22")
+}
+
+func buildExportFixtureRuntime(t *testing.T, s buildExportTestStore, runtime string) (BuildExportPublicationInput, App, Deployment, Build, *ecdsa.PrivateKey) {
 	t.Helper()
 	owner, err := s.CreateAccountWithPersonalOrg(t.Context(), CreateAccountWithPersonalOrgParams{Email: uuid.NewString() + "@example.com", Plan: api.PlanPro})
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := s.CreateApp(t.Context(), App{AccountID: owner.Account.ID, OrgID: owner.PersonalOrg.ID, Slug: "export-" + uuid.NewString()[:8], Runtime: "node22", RAMMB: 128, MaxConcurrency: 2})
+	app, err := s.CreateApp(t.Context(), App{AccountID: owner.Account.ID, OrgID: owner.PersonalOrg.ID, Slug: "export-" + uuid.NewString()[:8], Runtime: runtime, RAMMB: 128, MaxConcurrency: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
