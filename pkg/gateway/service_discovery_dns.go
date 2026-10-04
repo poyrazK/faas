@@ -39,14 +39,14 @@ type ServiceDiscoveryDNSHandler struct {
 	serviceAddr   ServiceAddressLookup
 }
 
-// ServiceAddressLookup returns the private service address (ADR-530) the
+// ServiceAddressLookup returns the private service address (ADR-568) the
 // caller at remoteAddr should dial for a <service>.svc.gregale name. ok=false
 // keeps the tenant-bridge answer, which every caller can always use for HTTP;
 // implementations fail safe to it on any doubt or error.
 type ServiceAddressLookup func(ctx context.Context, remoteAddr, service string) (addr netip.Addr, ok bool)
 
 // WithServiceAddressLookup answers <service>.svc.gregale with the target's
-// service address when the lookup vouches for it (ADR-530). HTTP calls keep
+// service address when the lookup vouches for it (ADR-568). HTTP calls keep
 // working because the host forwards the service ports on that address to
 // the bridge HTTP proxy. Binding-scoped .internal aliases are unaffected.
 func (h *ServiceDiscoveryDNSHandler) WithServiceAddressLookup(lookup ServiceAddressLookup) *ServiceDiscoveryDNSHandler {

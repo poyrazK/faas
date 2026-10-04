@@ -1,6 +1,6 @@
 //go:build metal
 
-// adr: 530 — private TCP addressing between services, end to end through
+// adr: 568 — private TCP addressing between services, end to end through
 // the real stack: a caller guest resolves <service>.svc.gregale through the
 // bridge resolver, dials the service address on its natural port, the netns
 // admits it, the host DNATs it to gatewayd-internal's service TCP proxy, the

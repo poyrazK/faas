@@ -144,7 +144,7 @@ type Workload struct {
 	// Nil preserves an existing app's policy during reconciliation.
 	PlatformTenantRequired *bool
 	// InternalPorts are internal-only TCP listeners from compose expose:
-	// (ADR-530). Nil means the source declares none, so reconcile keeps the
+	// (ADR-568). Nil means the source declares none, so reconcile keeps the
 	// app's existing internal listeners; non-nil replaces them.
 	InternalPorts []api.WorkloadPort
 

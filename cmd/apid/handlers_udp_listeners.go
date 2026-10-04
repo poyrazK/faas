@@ -33,7 +33,7 @@ func udpListenerResponse(listener state.UDPListener) api.UDPListenerResponse {
 func appDeclaresUDPListener(app state.App, name string, guestPort int) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
 	for _, port := range app.Manifest.Ports {
-		// ADR-530: an internal listener never gets a public endpoint.
+		// ADR-568: an internal listener never gets a public endpoint.
 		if port.Internal || port.EffectiveProtocol() != api.WorkloadPortUDP || port.Port != guestPort {
 			continue
 		}

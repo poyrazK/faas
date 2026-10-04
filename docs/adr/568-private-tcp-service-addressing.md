@@ -1,4 +1,4 @@
-# ADR-530 · Private TCP addressing between services
+# ADR-568 · Private TCP addressing between services
 
 - **Status:** proposed
 - **Date:** 2026-10-03

@@ -1,4 +1,4 @@
--- ADR-530: account-scoped private service addresses.
+-- ADR-568: account-scoped private service addresses.
 --
 -- An app's service address is api.ServiceAddressCIDR (198.19.0.0/16) plus
 -- apps.service_address_index. Indices are unique per account, never global.

@@ -66,9 +66,9 @@ func main() {
 	dangerAccept := flag.Bool("danger-accept-rfc1918-lateral-movement", false,
 		"PR scale-out tier-1 residual (Gap #4): enable the deny-set exception path. When true, the renderer emits per-CIDR accept rules BEFORE the §11 deny block. Default: false. Operators using an RFC1918 overlay MUST set this AND list the overlay CIDR in --overlay-exception; the manifest schema enforces the same pair at the DB CHECK constraint level.")
 	serviceTCPBridgeIP := flag.String("service-tcp-bridge-ip", "",
-		"ADR-530: tenant-bridge address of the service listeners (e.g. 10.100.0.1). When set, the renderer emits the private TCP service-address NAT. Env: FAAS_SERVICE_TCP_BRIDGE_IP.")
+		"ADR-568: tenant-bridge address of the service listeners (e.g. 10.100.0.1). When set, the renderer emits the private TCP service-address NAT. Env: FAAS_SERVICE_TCP_BRIDGE_IP.")
 	serviceTCPHTTPS := flag.Bool("service-tcp-https", false,
-		"ADR-530: keep service-address :443 on the private HTTPS service listener. Set only where that listener is staged. Env: FAAS_SERVICE_TCP_HTTPS=1.")
+		"ADR-568: keep service-address :443 on the private HTTPS service listener. Set only where that listener is staged. Env: FAAS_SERVICE_TCP_HTTPS=1.")
 	flag.Parse()
 
 	policy := netns.DefaultHostPolicy

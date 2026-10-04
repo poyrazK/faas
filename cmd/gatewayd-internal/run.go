@@ -3530,7 +3530,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the same endpoint registry, account authorizer, and vmmd transport; the
 	// guest listener adds source-IP instance identity before forwarding.
 	var guestServiceProxy http.Handler
-	// guestServices is the same proxy, typed, so the ADR-530 TCP path shares
+	// guestServices is the same proxy, typed, so the ADR-568 TCP path shares
 	// its identity, authorizer, endpoint leases, wake and breaker.
 	var guestServices *gateway.ServiceProxy
 	var guestServiceCallerResolver gateway.ServiceProxyCallerResolver
@@ -3843,7 +3843,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if deps.nodeCache != nil && deps.pgStore != nil && cfg.NodeName != "" {
 				dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName)))
 			}
-			// ADR-530: answer service names with service addresses only once
+			// ADR-568: answer service names with service addresses only once
 			// the TCP proxy behind them is configured.
 			if cfg.ServiceTCPDNS {
 				if strings.TrimSpace(cfg.ServiceTCPListen) == "" || deps.pgStore == nil {

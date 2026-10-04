@@ -796,7 +796,7 @@ type Limits struct {
 	EgressExtraPortsMax int
 	// ServiceTCPSessionsPerAccount caps concurrent private TCP sessions an
 	// account's workloads may hold to its own services through the
-	// node-local service TCP proxy (ADR-530). It is enforced per compute
+	// node-local service TCP proxy (ADR-568). It is enforced per compute
 	// node, like the public raw-TCP account cap, and is independent of
 	// EgressExtraPortsMax: reaching a same-account service is not tenant
 	// egress.
@@ -8005,7 +8005,7 @@ func (p Plan) EgressExtraPortsMax() int {
 }
 
 // ServiceTCPSessionsPerAccount returns the per-node concurrent private TCP
-// session cap for an account on this plan (ADR-530). Unknown plans get 0
+// session cap for an account on this plan (ADR-568). Unknown plans get 0
 // (fail closed).
 func (p Plan) ServiceTCPSessionsPerAccount() int {
 	l, ok := LimitsFor(p)
@@ -8157,7 +8157,7 @@ const NamespaceBridgeReadinessMaxBytes = 4096
 // Listeners are a local workload contract, not an unbounded service registry.
 const WorkloadPortCapMax = 16
 
-// ADR-530: private TCP addressing between services.
+// ADR-568: private TCP addressing between services.
 const (
 	// ServiceTCPProxyPort is the reserved tenant-bridge port of the node-local
 	// service TCP proxy. No netns rule admits it: guests reach it only through
@@ -8183,14 +8183,14 @@ const (
 )
 
 // ServiceTCPReservedPorts belong to the HTTP service mesh on every service
-// address (ADR-530). The TCP proxy refuses them even when a target declares
+// address (ADR-568). The TCP proxy refuses them even when a target declares
 // one, so a raw session can never bypass HTTP-layer caller policy.
 func ServiceTCPReservedPorts() []int {
 	return []int{443, ServiceBindingLegacyPort, ServiceBindingPort}
 }
 
 // ServiceAddressCIDR is the block holding every app's service address
-// (ADR-530). It is a platform constant rather than an operator setting
+// (ADR-568). It is a platform constant rather than an operator setting
 // because an address must not move when configuration changes. It sits in
 // the RFC 2544 benchmarking range, which is never a legitimate public
 // destination; the OCI puller's egress denylist already refuses it.

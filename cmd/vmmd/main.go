@@ -515,7 +515,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Keep the :443 admission rule coupled to trust delivery. Both remain
 	// disabled unless the operator explicitly configures the private CA.
 	netns.SetDefaultServiceProxyHTTPS(len(serviceProxyCAPEM) > 0)
-	// ADR-530: seed before any netns is prepared, like the bridge IP above,
+	// ADR-568: seed before any netns is prepared, like the bridge IP above,
 	// so every namespace this process creates carries the same admission.
 	if cfg.ComputeNode.ServiceTCPEnabled {
 		netns.SetDefaultServiceAddressCIDR(api.ServiceAddressCIDR())

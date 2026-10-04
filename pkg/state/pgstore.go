@@ -24590,7 +24590,7 @@ const appsSelectColumns = `
 	-- ADR-361: extra egress ports, appended to keep positional scans stable.
 	egress_ports,
 	platform_tenant_required,
-	-- ADR-530: account-scoped private service address index; 0 = none.
+	-- ADR-568: account-scoped private service address index; 0 = none.
 	coalesce(service_address_index, 0)`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string

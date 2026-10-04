@@ -1,6 +1,6 @@
 # Private TCP service addresses rollout
 
-Private TCP service addressing ([ADR-530](../adr/530-private-tcp-service-addressing.md))
+Private TCP service addressing ([ADR-568](../adr/568-private-tcp-service-addressing.md))
 lets a workload reach a same-account service's declared TCP listener on its
 natural port, for example `redis://cache.svc.gregale:6379`. It is off by
 default. Three switches must be turned on together on every compute host.

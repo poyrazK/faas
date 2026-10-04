@@ -308,7 +308,7 @@ type ComputeNodeConfig struct {
 	// VXLAN seam. It is disabled by default until the operator has provisioned
 	// a shared encrypted overlay for every node in the region.
 	PrivateNetworkTransportEnabled bool `toml:"private_network_transport_enabled"`
-	// ServiceTCPEnabled turns on private TCP service addressing (ADR-530):
+	// ServiceTCPEnabled turns on private TCP service addressing (ADR-568):
 	// every new netns admits guest TCP to api.ServiceAddressCIDR, the runtime
 	// host policy DNATs it onto the tenant-bridge service listeners, and the
 	// node records compute_nodes.service_address_ready_at so service DNS only
@@ -859,7 +859,7 @@ func validatePublicIface(iface string) error {
 
 // runtimeHostPolicy seeds the policy vmmd re-renders after every VM cache
 // mutation. serviceHTTPS mirrors whether the private service HTTPS listener
-// is staged on this node (ADR-530 keeps service-address :443 off otherwise).
+// is staged on this node (ADR-568 keeps service-address :443 off otherwise).
 func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS bool) netns.HostPolicy {
 	policy := netns.DefaultHostPolicy
 	if iface := strings.TrimSpace(cfg.PublicIface); iface != "" {

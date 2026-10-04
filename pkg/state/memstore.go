@@ -240,7 +240,7 @@ type MemStore struct {
 	reservedIPLeases        map[string]ReservedIP
 	reservedIPInventory     map[string]ReservedIPInventory
 	appDeletionClaims       map[string]struct{}
-	// serviceAddressCursors mirrors app_service_address_cursors (ADR-530):
+	// serviceAddressCursors mirrors app_service_address_cursors (ADR-568):
 	// the last service address index handed out per account.
 	serviceAddressCursors map[string]int
 	// serviceAddressReadyAt mirrors compute_nodes.service_address_ready_at.

@@ -1,6 +1,6 @@
 -- filename: 20261004141640931_compute_node_service_address_ready.sql
 --
--- ADR-530: when this node's vmmd began creating namespaces that admit guest
+-- ADR-568: when this node's vmmd began creating namespaces that admit guest
 -- TCP to private service addresses. Service DNS hands a service address only
 -- to an instance that started at or after this instant on its node; older
 -- instances keep the tenant-bridge answer. vmmd keeps the earliest stamp

@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// testServiceAddressIndexAllocation pins the ADR-530 address contract: every
+// testServiceAddressIndexAllocation pins the ADR-568 address contract: every
 // live app holds a distinct index within its account, a lookup never crosses
 // an account or reaches a tombstone, a deleted app's index is not handed to a
 // new app, and a restore brings the original address back.
@@ -107,7 +107,7 @@ func testServiceAddressIndexAllocation(t *testing.T, fx *Fixture) {
 	}
 }
 
-// testComputeNodeServiceAddressReady pins the ADR-530 rollout gate: the stamp
+// testComputeNodeServiceAddressReady pins the ADR-568 rollout gate: the stamp
 // is set once and kept across repeated boots while the switch stays on,
 // cleared when it is turned off, and re-stamped no earlier than before when
 // it comes back. Service DNS trusts only instances started after the stamp.
@@ -145,7 +145,7 @@ func testComputeNodeServiceAddressReady(t *testing.T, fx *Fixture) {
 	}
 }
 
-// testServiceAddressCallerByHostIP pins the ADR-530 DNS gate: a caller is
+// testServiceAddressCallerByHostIP pins the ADR-568 DNS gate: a caller is
 // service-address capable only when its instance row was created at or
 // after its node's readiness stamp, both on the database clock.
 func testServiceAddressCallerByHostIP(t *testing.T, fx *Fixture) {

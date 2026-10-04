@@ -34,11 +34,11 @@ gatewayd_service_proxy_https_listen: ""
 gatewayd_service_proxy_tls_cert_path: ""
 gatewayd_service_proxy_tls_key_path: ""
 gatewayd_service_proxy_tls_ca_path: ""
-# ADR-530: private TCP service addresses. Bind the same bridge address as
+# ADR-568: private TCP service addresses. Bind the same bridge address as
 # gatewayd_service_proxy_listen on the reserved port 10082. Enable together
 # with vmmd service_tcp_enabled and the nftables role's faas_service_tcp_enabled.
 gatewayd_service_tcp_listen: ""
-# ADR-530 customer-visible switch: answer <service>.svc.gregale with service
+# ADR-568 customer-visible switch: answer <service>.svc.gregale with service
 # addresses. Requires gatewayd_service_tcp_listen.
 gatewayd_service_tcp_dns: false
 

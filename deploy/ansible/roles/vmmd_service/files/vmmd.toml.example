@@ -107,4 +107,4 @@
 # private_ingress_tcp_ports = [50051, 8080, 9091, 9092, 9100, 9102, 9104, 9105]
 # overlay_cidr = "100.64.0.0/10"       # overlay subnet the detector prefers
 # overlay_interface = "tailscale0"     # optional NIC pin (Gap #5)
-# service_tcp_enabled = false          # ADR-530 private TCP service addresses; FAAS_SERVICE_TCP_ENABLED wins. Pair with the nftables role's faas_service_tcp_enabled.
+# service_tcp_enabled = false          # ADR-568 private TCP service addresses; FAAS_SERVICE_TCP_ENABLED wins. Pair with the nftables role's faas_service_tcp_enabled.
