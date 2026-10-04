@@ -1403,6 +1403,53 @@ func TestForwardingReverseProxyWithEvents_EmitsProxyFirstByte(t *testing.T) {
 	}
 }
 
+// Production: the gateway caches an admitted target with its wake id for the
+// instance's life, so every request re-emitted wake.proxy_first_byte (1,814
+// rows for 129 wakes in 24 h, one per minute from a cron on a warm app).
+// The first byte is a once-per-wake moment.
+func TestForwardingReverseProxyWithEvents_FirstByteOncePerWake(t *testing.T) {
+	store := state.NewMemStore()
+	platform := events.NewPlatform("gatewayd-internal", store, slog.Default(), wire.NewOpsMetrics("gatewayd-test"), nil)
+	serve := func(wakeID, requestID string) {
+		stream := &fakeBidiStream{Responses: []*vmmdpb.ForwardHTTPStreamResponse{
+			{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{Init: &vmmdpb.ForwardHTTPResponseInit{Status: 200}}},
+		}}
+		proxy := gateway.ForwardingReverseProxyWithEvents(&fakeNodeLookup{cli: &fakeVmmdClient{Stream: stream}}, nil, platform)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("x-faas-request-id", requestID)
+		rec := httptest.NewRecorder()
+		proxy(gateway.Target{AppID: "app-1", NodeID: "node-1", InstanceID: "inst-1", WakeID: wakeID}).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+	}
+	countRows := func(wakeID string, want int) {
+		t.Helper()
+		var rows []state.Event
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			var err error
+			if rows, err = store.ListEventsByWakeID(context.Background(), wakeID, time.Time{}, 0); err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) >= want {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		time.Sleep(20 * time.Millisecond) // let a wrongly queued duplicate land
+		if rows, _ = store.ListEventsByWakeID(context.Background(), wakeID, time.Time{}, 0); len(rows) != want {
+			t.Fatalf("wake %s: %d first-byte rows, want %d", wakeID, len(rows), want)
+		}
+	}
+	serve("wake-a", "req-1")
+	serve("wake-a", "req-2")
+	serve("wake-a", "req-3")
+	countRows("wake-a", 1)
+	serve("wake-b", "req-4")
+	countRows("wake-b", 1)
+}
+
 // keys is a small helper for diagnostics — keeps the test failure
 // messages readable when a payload field is missing.
 func keys(m map[string]any) []string {

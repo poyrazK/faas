@@ -210,3 +210,64 @@ func TestDomainResponseCarriesDNSRecords(t *testing.T) {
 		t.Fatalf("dns_records = %+v", resp.DNSRecords)
 	}
 }
+
+// ADR-520: with on-demand certificates the customer can act only on DNS,
+// CAA and proxies, so the doctor must not send them to cert-engine logs.
+func TestDoctorTLSAdviceOnDemand(t *testing.T) {
+	t.Setenv("FAAS_CUSTOM_DOMAIN_TLS", "on_demand")
+	t.Setenv("FAAS_CUSTOM_DOMAIN_TARGET", "edge.gregale.dev")
+	verified := state.CustomDomain{Domain: "shop.example.com", VerifiedAt: time.Now()}
+	for _, tc := range []struct {
+		name       string
+		domain     state.CustomDomain
+		obs        state.DomainDoctorObservation
+		wantOK     bool
+		wantDetail string
+		wantRem    string
+	}{
+		{name: "pending", domain: verified, obs: state.DomainDoctorObservation{CertState: certStatusPending}, wantOK: true,
+			wantDetail: "certificate not issued yet", wantRem: "first HTTPS connection"},
+		{name: "failed", domain: verified, obs: state.DomainDoctorObservation{CertState: certStatusFailed, LastError: "acme: 403"}, wantOK: true,
+			wantDetail: "certificate issuance failed: acme: 403", wantRem: "CAA records allow letsencrypt.org"},
+		{name: "dial failed", domain: verified, obs: state.DomainDoctorObservation{CertState: certStatusDialFailed, LastError: "timeout"}, wantOK: true,
+			wantDetail: "HTTPS check on port 443 failed: timeout", wantRem: "DNS only, no CDN proxy"},
+		{name: "cdn", domain: verified, obs: state.DomainDoctorObservation{CertState: certStatusCDN}, wantOK: true,
+			wantDetail: "a CDN or proxy answers", wantRem: "Turn off the proxy"},
+		{name: "verified none", domain: verified, obs: state.DomainDoctorObservation{}, wantOK: true,
+			wantDetail: "certificate pending issuance", wantRem: "edge.gregale.dev"},
+		{name: "unverified none keeps default", domain: state.CustomDomain{Domain: "shop.example.com"}, obs: state.DomainDoctorObservation{}},
+		{name: "issued keeps default", domain: verified, obs: state.DomainDoctorObservation{CertState: certStatusIssued}},
+		{name: "tenant surface keeps cert-engine copy", domain: verified, obs: state.DomainDoctorObservation{CertState: certStatusFailed, SurfaceID: "s1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			detail, rem, ok := onDemandTLSAdvice(tc.domain, tc.obs)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+			}
+			if !strings.Contains(detail, tc.wantDetail) || !strings.Contains(rem, tc.wantRem) {
+				t.Fatalf("advice = %q / %q, want %q / %q", detail, rem, tc.wantDetail, tc.wantRem)
+			}
+		})
+	}
+	t.Setenv("FAAS_CUSTOM_DOMAIN_TLS", "")
+	if _, _, ok := onDemandTLSAdvice(verified, state.DomainDoctorObservation{CertState: certStatusFailed}); ok {
+		t.Fatal("advice applied with on-demand TLS off")
+	}
+}
+
+func TestDoctorReportUsesOnDemandTLSAdvice(t *testing.T) {
+	t.Setenv("FAAS_CUSTOM_DOMAIN_TLS", "on_demand")
+	t.Setenv("FAAS_CUSTOM_DOMAIN_TARGET", "edge.gregale.dev")
+	d := state.CustomDomain{Domain: "shop.example.com", VerifiedAt: time.Now()}
+	report := doctorReportFromObs(d, state.DomainDoctorObservation{Domain: d.Domain, CertState: certStatusFailed, LastError: "acme: 403"}, false)
+	for _, check := range report.Checks {
+		if check.Name != "tls_certificate" {
+			continue
+		}
+		if strings.Contains(check.Remediation, "cert engine") || !strings.Contains(check.Remediation, "letsencrypt.org") {
+			t.Fatalf("tls remediation = %q", check.Remediation)
+		}
+		return
+	}
+	t.Fatal("report has no tls_certificate check")
+}
