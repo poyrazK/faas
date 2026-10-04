@@ -973,51 +973,17 @@ func runBuildOnce(m api.BuildManifest) error {
 		// A fresh Firecracker guest may need a few seconds for its first
 		// routed TLS connection even after DNS is available. Keep this as a
 		// fail-fast guard, but leave enough room for the initial handshake.
-		httpCtx, httpCancel := context.WithTimeout(context.Background(), 15*time.Second)
-		req, reqErr := http.NewRequestWithContext(httpCtx, http.MethodGet, "https://nodejs.org/dist/index.json", nil)
-		var httpErr error
-		if reqErr == nil {
-			resp, doErr := (&http.Client{Timeout: 5 * time.Second}).Do(req)
-			if doErr != nil {
-				httpErr = doErr
-			} else {
-				_, _ = io.Copy(io.Discard, resp.Body)
-				_ = resp.Body.Close()
-				if resp.StatusCode >= http.StatusBadRequest {
-					httpErr = fmt.Errorf("status %s", resp.Status)
-				}
-			}
-		} else {
-			httpErr = reqErr
-		}
-		httpCancel()
-		if httpErr != nil {
-			return writeAndPoweroff(m, fmt.Errorf("node toolchain HTTPS preflight: %w", httpErr), "")
+		if err := builderHTTPSPreflight(context.Background(), "node toolchain", "https://nodejs.org/dist/index.json",
+			func(status int) bool { return status < http.StatusBadRequest }); err != nil {
+			return writeAndPoweroff(m, err, "")
 		}
 	}
 	// Railpack's generated plan pulls its builder/runtime layers from GHCR;
 	// a registry challenge is healthy here and proves the guest can reach the
 	// endpoint that BuildKit will subsequently authenticate against.
-	ghcrCtx, ghcrCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	ghcrReq, ghcrReqErr := http.NewRequestWithContext(ghcrCtx, http.MethodGet, "https://ghcr.io/v2/", nil)
-	var ghcrErr error
-	if ghcrReqErr == nil {
-		resp, doErr := (&http.Client{Timeout: 5 * time.Second}).Do(ghcrReq)
-		if doErr != nil {
-			ghcrErr = doErr
-		} else {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			if resp.StatusCode >= http.StatusInternalServerError {
-				ghcrErr = fmt.Errorf("status %s", resp.Status)
-			}
-		}
-	} else {
-		ghcrErr = ghcrReqErr
-	}
-	ghcrCancel()
-	if ghcrErr != nil {
-		return writeAndPoweroff(m, fmt.Errorf("GHCR HTTPS preflight: %w", ghcrErr), "")
+	if err := builderHTTPSPreflight(context.Background(), "GHCR", "https://ghcr.io/v2/",
+		func(status int) bool { return status < http.StatusInternalServerError }); err != nil {
+		return writeAndPoweroff(m, err, "")
 	}
 	guestStage("network-preflight")
 	runcCheck := exec.Command("/usr/local/bin/runc", "--version")
@@ -1937,22 +1903,6 @@ func digestBytes(data []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// classify maps an in-VM exit code to a builderd FailureClass. The vocabulary
-// here matches the canonical names parsed by builderd's ProcessOne
-// (FailureUserError / FailureInfra / FailureOOM / FailureTimeout).
-func classify(exitCode int) string {
-	switch exitCode {
-	case 137:
-		return "FailureOOM"
-	case 124:
-		return "FailureTimeout"
-	case 0:
-		return ""
-	default:
-		return "FailureUserError"
-	}
-}
-
 // tailOf returns the last n bytes of data (or all of it if shorter). Used to
 // truncate the build log so build-done.json stays small.
 func tailOf(data []byte, n int) string {
@@ -1966,18 +1916,7 @@ func tailOf(data []byte, n int) string {
 // mounts the chroot drive1 to copy it out). Warm builders call this while the
 // guest remains alive; ordinary builders call it immediately before poweroff.
 func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
-	exitCode := 0
-	if runErr != nil {
-		var ee *exec.ExitError
-		if errors.As(runErr, &ee) {
-			exitCode = ee.ExitCode()
-		} else if errors.Is(runErr, context.DeadlineExceeded) {
-			exitCode = 124
-		} else {
-			exitCode = 1
-		}
-	}
-	fc := classify(exitCode)
+	exitCode, fc := buildExitStatus(runErr)
 	if logTail == "" && runErr != nil {
 		logTail = runErr.Error()
 	}

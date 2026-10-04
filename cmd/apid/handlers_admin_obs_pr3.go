@@ -41,7 +41,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apislogs"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -256,9 +255,10 @@ func (s *server) obsNodesEventsSSE(w http.ResponseWriter, r *http.Request, acct 
 		s.ops.SSEClients().Inc()
 		defer s.ops.SSEClients().Dec()
 	}
-	apislogs.StartSSE(w)
+	w, ctx, cancelStream := startSSEStream(w, r)
+	defer cancelStream()
 	flusher, _ := w.(http.Flusher)
-	ch, cancel, err := s.notif.Subscribe(r.Context(), obsNodesEventsChannels)
+	ch, cancel, err := s.notif.Subscribe(ctx, obsNodesEventsChannels)
 	if err != nil {
 		_, _ = fmt.Fprintf(w, "event: error\ndata: {\"message\":%q}\n\n", err.Error())
 		if flusher != nil {
@@ -271,7 +271,7 @@ func (s *server) obsNodesEventsSSE(w http.ResponseWriter, r *http.Request, acct 
 	defer beat.Stop()
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case n, ok := <-ch:
 			if !ok {

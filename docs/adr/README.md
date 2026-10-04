@@ -533,3 +533,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-497: Route latency investigation](497-route-latency-investigation.md) — add dependency and execution evidence to route latency findings
 - [ADR-498: Advisory production route budgets and saved incidents](498-production-route-monitoring.md) — continuously evaluate serving-route budgets and retain bounded incidents
 - [ADR-499: Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) — attribute incidents to request-time tenant or consumer cohorts with bounded recovery tracking
+
+## Customer operation decisions
+
+- [ADR-521: customer operations above execution ledgers](521-customer-operations.md) — typed application contracts, customer ownership, separate business and delivery outcomes, and controlled recovery

@@ -73,7 +73,7 @@ func TestMetalResourceAssetsBindLifecycle(t *testing.T) {
 	if err := v.unmountBindMounts(idLive); !errors.Is(err, injected) {
 		t.Fatalf("uncertain retirement: %v", err)
 	}
-	if len(v.bindMounts[idLive]) != 1 || !v.bindMounts[idLive][0].released || v.bindSourceModes[source].refs != 1 {
+	if len(v.bindMounts[idLive]) != 1 || !v.bindMounts[idLive][0].released || v.bindSourceRefs(source) != 1 {
 		t.Fatal("uncertain retirement lost released-reference state")
 	}
 	j.directorySync = syncDir
@@ -81,7 +81,7 @@ func TestMetalResourceAssetsBindLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, _ := os.Stat(source)
-	if info.Mode().Perm() != 0o644 || v.bindSourceModes[source].refs != 1 {
+	if info.Mode().Perm() != 0o644 || v.bindSourceRefs(source) != 1 {
 		t.Fatal("retry restored permissions under the remaining owner")
 	}
 	if err := v.unmountBindMounts(idOther); err != nil {

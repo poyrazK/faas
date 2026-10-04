@@ -767,6 +767,20 @@ type CustomDomainResponse struct {
 	Verified       bool   `json:"verified"`
 	VerifiedAt     string `json:"verified_at,omitempty"`
 	TXTRecord      string `json:"txt_record,omitempty"` // convenience for the customer
+	// DNSRecords lists the records to publish (ADR-520): the TXT ownership
+	// proof, the routing CNAME, and A/AAAA alternatives for a zone apex.
+	DNSRecords []DNSRecordInstruction `json:"dns_records,omitempty"`
+}
+
+// DNSRecordInstruction is one DNS record a customer publishes for a custom
+// domain. Purpose is "verification" or "routing"; Alternative marks an A/AAAA
+// record that replaces the CNAME where a CNAME is not allowed.
+type DNSRecordInstruction struct {
+	Type        string `json:"type"`
+	Name        string `json:"name"`
+	Value       string `json:"value"`
+	Purpose     string `json:"purpose"`
+	Alternative bool   `json:"alternative,omitempty"`
 }
 
 // CreateCustomDomainRequest accepts a domain to bind.

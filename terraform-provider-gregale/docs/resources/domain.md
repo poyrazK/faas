@@ -24,6 +24,19 @@ Publish `txt_record` at the returned DNS name before expecting verification.
 The challenge fields are marked sensitive because they are short-lived control
 values, even though the TXT record itself must be public in DNS.
 
+Point the domain at Gregale with the records in `routing_records`. Use the
+`CNAME`; at a zone apex, where a CNAME is not allowed, use the `A`/`AAAA`
+records marked `alternative` instead. For example, with a DNS provider that
+takes one record per resource:
+
+```terraform
+resource "example_dns_record" "api" {
+  name  = gregale_domain.api.routing_records[0].name
+  type  = gregale_domain.api.routing_records[0].type
+  value = gregale_domain.api.routing_records[0].value
+}
+```
+
 ## Schema
 
 ### Required
@@ -44,6 +57,17 @@ values, even though the TXT record itself must be public in DNS.
 - `cert_sans` (List of String) Certificate DNS names.
 - `cert_last_error` (String) Latest certificate error.
 - `dns_last_checked_at` (String) Latest DNS observation timestamp.
+- `routing_records` (Attributes List) DNS records that route the domain to Gregale. (see [below for nested schema](#nestedatt--routing_records))
+
+<a id="nestedatt--routing_records"></a>
+### Nested Schema for `routing_records`
+
+Read-Only:
+
+- `type` (String) Record type: `CNAME`, `A` or `AAAA`.
+- `name` (String) Record name.
+- `value` (String) Record value.
+- `alternative` (Boolean) True for `A`/`AAAA` records that replace the CNAME at a zone apex.
 
 ## Import
 
