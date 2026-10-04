@@ -14,7 +14,7 @@
 //
 //  2. The scope CHECK constraint
 //     (`deployment_openapi_snapshots_scope_shape`) matches the
-//     deployments_scope_shape regex (migrations/00213). A drift
+//     current deployments_scope_shape regex (ADR-521). A drift
 //     in either CHECK would let cross-table scope values diverge
 //     and the gate would silently drop a promotion.
 //
@@ -57,6 +57,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
@@ -130,10 +131,10 @@ func TestMigrations_00358_DeploymentOpenAPISnapshots(t *testing.T) {
 	`).Scan(&deployScopeDef); err != nil {
 		t.Fatalf("query deployments_scope_shape: %v", err)
 	}
-	if !strings.Contains(scopeDef, "^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$") {
+	if !strings.Contains(scopeDef, api.EnvScopePattern) {
 		t.Errorf("deployment_openapi_snapshots scope regex drift: %q", scopeDef)
 	}
-	if !strings.Contains(deployScopeDef, "^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$") {
+	if !strings.Contains(deployScopeDef, api.EnvScopePattern) {
 		t.Errorf("deployments scope regex drift: %q", deployScopeDef)
 	}
 
