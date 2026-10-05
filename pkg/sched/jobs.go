@@ -581,6 +581,19 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 		status, errorClass = "failed", "user_error"
 		output = nil
 	}
+	retryRequested := decision.Action == "retry" && (status == "failed" || status == "timeout" || status == "oom")
+	retryMax, retryMaxKnown := 0, false
+	if retryRequested {
+		if job, err := e.store.JobGetByID(ctx, run.JobID); err == nil {
+			retryMax, retryMaxKnown = effectiveJobRetryMax(job, run), true
+		}
+		if retryMaxKnown && !jobTaskHasRetryRemaining(task.Attempt, retryMax) {
+			// The classifier still says "retry", but no attempt is left: the
+			// task dead-letters. Recording retryable/retry on that final
+			// attempt told production-us operators a retry was coming.
+			decision.Action, decision.Reason = "dead_letter", "retry_budget_exhausted"
+		}
+	}
 	var completionErr error
 	if classified, ok := e.store.(state.JobTaskCompletionStore); ok {
 		completionErr = classified.CompleteJobTaskAttempt(ctx, state.JobTaskCompletion{RunID: runID, TaskIndex: taskIndex, InstanceID: instanceID, LeaseToken: leaseTokenStr, Status: status, ExitCode: exitCode, ErrorClass: errorClass, LogContent: logContent, LogTruncated: logTruncated, FinishedAt: time.Now(), OutputManifest: output, OutcomeCode: outcomeCode, Decision: &decision})
@@ -612,13 +625,8 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 	e.cleanupJobInstance(ctx, instanceID, computeNodeID, "job_exit")
 	// Retry-on-failure: re-queue failed/timeout/oom tasks if budget
 	// remains.
-	if decision.Action == "retry" && (status == "failed" || status == "timeout" || status == "oom") {
-		job, err := e.store.JobGetByID(ctx, run.JobID)
-		retryMax := 0
-		if err == nil {
-			retryMax = effectiveJobRetryMax(job, run)
-		}
-		if err == nil && jobTaskHasRetryRemaining(task.Attempt, retryMax) {
+	if retryRequested {
+		if retryMaxKnown && jobTaskHasRetryRemaining(task.Attempt, retryMax) {
 			delay := jobRetryDelay(task.Attempt)
 			next := time.Now().Add(delay)
 			if rerr := e.store.JobTaskRetry(ctx, runID, taskIndex, next); rerr == nil {
@@ -629,7 +637,7 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 		}
 		// Exhausted retries → dead-letter. JobRunRecompute picks
 		// this up via the dead_letter_count column.
-		if err == nil && !jobTaskHasRetryRemaining(task.Attempt, retryMax) {
+		if retryMaxKnown && !jobTaskHasRetryRemaining(task.Attempt, retryMax) {
 			_ = e.store.JobRunIncrementDeadLetter(ctx, runID)
 		}
 	}
