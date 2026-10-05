@@ -65,6 +65,9 @@ artifact instead of rebuilding it. Without `--to`, rollback (and automatic
 rollback) returns to the deployment that most recently stopped serving
 traffic, not the most recently created one, so a rollback after an earlier
 rollback or a completed canary restores the release that was just replaced.
+A rollback that fails its readiness or hosting check leaves the current
+release serving. The target returns to `superseded` with the error recorded,
+so it remains available for another rollback.
 See [deployment history](deployments.md) for annotations and receipts.
 
 ## Revisions
