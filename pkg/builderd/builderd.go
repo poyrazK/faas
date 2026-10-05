@@ -817,7 +817,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// Railpack starts from railpack-runtime and imaged correctly rejects the
 	// resulting OCI chain as incompatible with the Gregale runner base.
 	runtimeName := app.Runtime
-	runtimeBaseRef, baseErr := resolveBuildRuntimeBaseRef(runtimeName, fw, os.Getenv)
+	runtimeBaseRef, baseErr := resolveDeploymentRuntimeBaseRef(ctx, b.store, app, dep, fw, os.Getenv)
 	if baseErr != nil {
 		b.markFailed(ctx, build, state.FailureInfra, "resolve runtime base: "+baseErr.Error(), buildStart)
 		return BuildResult{}, baseErr

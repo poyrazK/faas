@@ -1900,7 +1900,7 @@ func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChange
 	}
 	// Runtime bases are staged on demand so a fresh bare-metal node can
 	// become ready without building every supported runtime at startup.
-	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
+	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
 		return err
 	}
 
@@ -2966,6 +2966,13 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	} else {
 		// Keep the hermetic legacy/test seam. Production handlers always
 		// enable runtime-base staging and therefore take the artifact path.
+		target, err := h.explicitRuntimeUpgradeTarget(ctx, app, dep, runtime)
+		if err != nil {
+			return err
+		}
+		if target != nil {
+			return errors.New("runtime update requires immutable base staging")
+		}
 		buildInput.Layers = builtLayers
 		buildInput.TarballPath = dep.SourcePath
 	}
@@ -3856,7 +3863,7 @@ func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPa
 	default:
 		return fmt.Errorf("imaged: snapshot_boot: unknown deployment kind %q", dep.Kind)
 	}
-	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
+	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
 		return err
 	}
 	if err := h.transitionWithStage(ctx, dep.ID, state.StageImageBuild, state.StageSecurityScan, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {

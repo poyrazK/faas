@@ -116,6 +116,9 @@ func (m *MemStore) BindDeploymentRuntimeRelease(_ context.Context, depID, key, i
 	if _, ok := m.runtimeReleases[id]; !ok {
 		return ErrNotFound
 	}
+	if target, ok := m.runtimeUpgradeTargets[depID]; ok && (target.ReleaseID != id || !target.matches(d)) {
+		return ErrConflict
+	}
 	app, ok := m.apps[d.AppID]
 	if !ok || key == "" || len(key) > api.RuntimeReleaseArtifactKeyMaxBytes {
 		return ErrInvalidArgument

@@ -1831,6 +1831,16 @@ type DeploymentRuntimeEnvironmentOwner struct {
 	EnvironmentID pgtype.UUID
 }
 
+type DeploymentRuntimeUpgradeTarget struct {
+	DeploymentID pgtype.UUID
+	ReleaseID    string
+	SourceSha256 string
+	SourceRoot   string
+	SourceBytes  int64
+	Kind         string
+	Handler      string
+}
+
 type DeploymentScopeExclusion struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID

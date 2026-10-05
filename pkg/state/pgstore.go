@@ -10423,6 +10423,19 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	if err != nil {
 		return Deployment{}, err
 	}
+	sourceID, err := operationUUID(failedID)
+	if err != nil {
+		return Deployment{}, err
+	}
+	targetID, err := operationUUID(created.ID)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if err := sqlc.New().CopyDeploymentRuntimeUpgradeTarget(ctx, tx, sqlc.CopyDeploymentRuntimeUpgradeTargetParams{
+		SourceDeploymentID: sourceID, TargetDeploymentID: targetID,
+	}); err != nil {
+		return Deployment{}, mapErr(err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, err
 	}

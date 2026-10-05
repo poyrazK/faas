@@ -8725,4 +8725,5 @@ const (
 	RuntimeReleaseArtifactKeyMaxBytes = 1024
 	RuntimeReleaseLayoutMaxBytes      = 64
 	RuntimeReleaseSidecarMaxBytes     = 4096
+	RuntimeUpgradeSourceFieldMaxBytes = 4096 // frozen build root or function handler
 )

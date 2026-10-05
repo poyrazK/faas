@@ -139,6 +139,7 @@ type jobRegistryCredentialKey struct {
 type MemStore struct {
 	runtimeReleases             map[string]RuntimeRelease
 	runtimeArtifactBindings     map[string]string
+	runtimeUpgradeTargets       map[string]runtimeUpgradeTarget
 	operationData               *operationMemory
 	operationCodePins           map[string]time.Time
 	qualificationExecutions     map[string]EnvironmentQualificationExecutionStatus
@@ -9061,6 +9062,12 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	// builds a fresh struct and never copies Revision, so this is always
 	// a fresh assignment; mirrors the subselect in PgStore's retry INSERT.
 	newDep.Revision = m.nextDeploymentRevisionLocked(newDep.AppID)
+	if pin, ok := m.runtimeUpgradeTargets[failedID]; ok {
+		if !pin.matches(newDep) {
+			return Deployment{}, ErrConflict
+		}
+		m.runtimeUpgradeTargets[newDep.ID] = pin
+	}
 	m.putDeploymentLocked(newDep.ID, newDep)
 	return newDep, nil
 }

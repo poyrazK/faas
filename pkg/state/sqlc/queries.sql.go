@@ -1694,6 +1694,8 @@ const bindDeploymentRuntimeRelease = `-- name: BindDeploymentRuntimeRelease :one
 WITH active AS (
  SELECT a.account_id,d.rootfs_key FROM deployments d JOIN apps a ON a.id=d.app_id
  WHERE d.id=$2 AND d.rootfs_key=$3
+ AND NOT EXISTS (SELECT 1 FROM deployment_runtime_upgrade_targets t WHERE t.deployment_id=d.id
+  AND (t.release_id<>$1::text OR t.source_sha256<>COALESCE(d.source_sha256,'')))
  AND d.status IN ('pending','building','imaging') FOR UPDATE OF d
 )
 INSERT INTO runtime_artifact_bindings (account_id,rootfs_key,release_id)
@@ -4934,6 +4936,22 @@ func (q *Queries) CompleteWorkflowJoin(ctx context.Context, db DBTX, arg Complet
 		arg.RunID,
 		arg.StepName,
 	)
+	return err
+}
+
+const copyDeploymentRuntimeUpgradeTarget = `-- name: CopyDeploymentRuntimeUpgradeTarget :exec
+INSERT INTO deployment_runtime_upgrade_targets(deployment_id,release_id,source_sha256,source_root,source_bytes,kind,handler)
+SELECT $1::uuid,release_id,source_sha256,source_root,source_bytes,kind,handler
+FROM deployment_runtime_upgrade_targets WHERE deployment_id=$2::uuid
+`
+
+type CopyDeploymentRuntimeUpgradeTargetParams struct {
+	TargetDeploymentID pgtype.UUID
+	SourceDeploymentID pgtype.UUID
+}
+
+func (q *Queries) CopyDeploymentRuntimeUpgradeTarget(ctx context.Context, db DBTX, arg CopyDeploymentRuntimeUpgradeTargetParams) error {
+	_, err := db.Exec(ctx, copyDeploymentRuntimeUpgradeTarget, arg.TargetDeploymentID, arg.SourceDeploymentID)
 	return err
 }
 
@@ -13391,6 +13409,42 @@ func (q *Queries) GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UU
 		&i.LastProbedAt,
 		&i.LastSeenAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getDeploymentRuntimeUpgradeTarget = `-- name: GetDeploymentRuntimeUpgradeTarget :one
+SELECT r.id, r.runtime, r.architecture, r.source_ref, r.guest_init_sha256, r.layout_version, r.base_sha256, r.created_at, (t.source_sha256=COALESCE(d.source_sha256,'') AND t.source_root=COALESCE(d.source_root,'')
+ AND t.source_bytes=d.source_bytes AND t.kind=d.kind AND t.handler=COALESCE(d.handler,''))::boolean AS source_matches
+FROM deployment_runtime_upgrade_targets t JOIN runtime_releases r ON r.id=t.release_id JOIN deployments d ON d.id=t.deployment_id
+WHERE t.deployment_id=$1::uuid
+`
+
+type GetDeploymentRuntimeUpgradeTargetRow struct {
+	ID              string
+	Runtime         string
+	Architecture    string
+	SourceRef       string
+	GuestInitSha256 string
+	LayoutVersion   string
+	BaseSha256      string
+	CreatedAt       pgtype.Timestamptz
+	SourceMatches   bool
+}
+
+func (q *Queries) GetDeploymentRuntimeUpgradeTarget(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (GetDeploymentRuntimeUpgradeTargetRow, error) {
+	row := db.QueryRow(ctx, getDeploymentRuntimeUpgradeTarget, deploymentID)
+	var i GetDeploymentRuntimeUpgradeTargetRow
+	err := row.Scan(
+		&i.ID,
+		&i.Runtime,
+		&i.Architecture,
+		&i.SourceRef,
+		&i.GuestInitSha256,
+		&i.LayoutVersion,
+		&i.BaseSha256,
+		&i.CreatedAt,
+		&i.SourceMatches,
 	)
 	return i, err
 }
@@ -29982,6 +30036,20 @@ func (q *Queries) LockRuntimeSecretSidecarSignals(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const lockRuntimeUpgradeTargetApp = `-- name: LockRuntimeUpgradeTargetApp :one
+SELECT a.id FROM apps a JOIN deployments d ON d.app_id=a.id
+WHERE d.id=$1::uuid AND a.status='active' FOR UPDATE OF a
+`
+
+// Runtime update preparation: lock in the app -> deployment order used by
+// queue admission, so pinning cannot race a claimed or queued build (ADR-597).
+func (q *Queries) LockRuntimeUpgradeTargetApp(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeTargetApp, deploymentID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockSnapshotPublicationApp = `-- name: LockSnapshotPublicationApp :one
 SELECT id FROM apps WHERE id = $1::uuid AND account_id = $2::uuid
 FOR UPDATE
@@ -39551,6 +39619,45 @@ func (q *Queries) PinCustomerOperationReleaseMembers(ctx context.Context, db DBT
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const pinDeploymentRuntimeUpgradeTarget = `-- name: PinDeploymentRuntimeUpgradeTarget :one
+WITH candidate AS (
+ SELECT d.id, d.source_sha256, COALESCE(d.source_root,'') AS source_root, d.source_bytes, d.kind, COALESCE(d.handler,'') AS handler
+ FROM deployments d JOIN apps a ON a.id=d.app_id JOIN runtime_releases r ON r.id=$1::text
+ WHERE d.id=$2::uuid AND d.status='pending' AND a.type='function' AND a.runtime=r.runtime
+ AND COALESCE(d.rootfs_key,'')='' AND COALESCE(d.rootfs_path,'')='' AND d.image_digest=''
+ AND a.status='active' AND COALESCE(a.manifest->>'build_dockerfile','')='' AND d.environment_workload_runtime IS NULL
+ AND d.kind IN ('tarball','github','preview') AND d.source_sha256=$3::text AND d.source_bytes>0
+ AND octet_length(COALESCE(d.source_root,''))<=$4::integer
+ AND octet_length(COALESCE(d.handler,''))<=$4::integer
+ AND NOT EXISTS (SELECT 1 FROM builds b WHERE b.deployment_id=d.id)
+ FOR UPDATE OF d
+)
+INSERT INTO deployment_runtime_upgrade_targets(deployment_id,release_id,source_sha256,source_root,source_bytes,kind,handler)
+SELECT id,$1::text,source_sha256,source_root,source_bytes,kind,handler FROM candidate
+ON CONFLICT (deployment_id) DO UPDATE SET release_id=deployment_runtime_upgrade_targets.release_id
+WHERE deployment_runtime_upgrade_targets.release_id=EXCLUDED.release_id AND deployment_runtime_upgrade_targets.source_sha256=EXCLUDED.source_sha256
+RETURNING release_id
+`
+
+type PinDeploymentRuntimeUpgradeTargetParams struct {
+	ReleaseID        string
+	DeploymentID     pgtype.UUID
+	SourceSha256     string
+	SourceFieldLimit int32
+}
+
+func (q *Queries) PinDeploymentRuntimeUpgradeTarget(ctx context.Context, db DBTX, arg PinDeploymentRuntimeUpgradeTargetParams) (string, error) {
+	row := db.QueryRow(ctx, pinDeploymentRuntimeUpgradeTarget,
+		arg.ReleaseID,
+		arg.DeploymentID,
+		arg.SourceSha256,
+		arg.SourceFieldLimit,
+	)
+	var release_id string
+	err := row.Scan(&release_id)
+	return release_id, err
 }
 
 const pinManagedPostgresCutoverDatabases = `-- name: PinManagedPostgresCutoverDatabases :execrows

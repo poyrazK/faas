@@ -13896,6 +13896,8 @@ SELECT * FROM runtime_releases WHERE runtime=$1 AND architecture=$2 ORDER BY cre
 WITH active AS (
  SELECT a.account_id,d.rootfs_key FROM deployments d JOIN apps a ON a.id=d.app_id
  WHERE d.id=sqlc.arg(deployment_id) AND d.rootfs_key=sqlc.arg(rootfs_key)
+ AND NOT EXISTS (SELECT 1 FROM deployment_runtime_upgrade_targets t WHERE t.deployment_id=d.id
+  AND (t.release_id<>sqlc.arg(release_id)::text OR t.source_sha256<>COALESCE(d.source_sha256,'')))
  AND d.status IN ('pending','building','imaging') FOR UPDATE OF d
 )
 INSERT INTO runtime_artifact_bindings (account_id,rootfs_key,release_id)
@@ -13905,3 +13907,39 @@ WHERE runtime_artifact_bindings.release_id=excluded.release_id RETURNING release
 -- name: GetArtifactRuntimeRelease :one
 SELECT r.* FROM runtime_artifact_bindings b JOIN runtime_releases r ON r.id=b.release_id
 WHERE b.account_id=$1 AND b.rootfs_key=$2;
+
+-- Runtime update preparation: lock in the app -> deployment order used by
+-- queue admission, so pinning cannot race a claimed or queued build (ADR-597).
+-- name: LockRuntimeUpgradeTargetApp :one
+SELECT a.id FROM apps a JOIN deployments d ON d.app_id=a.id
+WHERE d.id=sqlc.arg(deployment_id)::uuid AND a.status='active' FOR UPDATE OF a;
+
+-- name: PinDeploymentRuntimeUpgradeTarget :one
+WITH candidate AS (
+ SELECT d.id, d.source_sha256, COALESCE(d.source_root,'') AS source_root, d.source_bytes, d.kind, COALESCE(d.handler,'') AS handler
+ FROM deployments d JOIN apps a ON a.id=d.app_id JOIN runtime_releases r ON r.id=sqlc.arg(release_id)::text
+ WHERE d.id=sqlc.arg(deployment_id)::uuid AND d.status='pending' AND a.type='function' AND a.runtime=r.runtime
+ AND COALESCE(d.rootfs_key,'')='' AND COALESCE(d.rootfs_path,'')='' AND d.image_digest=''
+ AND a.status='active' AND COALESCE(a.manifest->>'build_dockerfile','')='' AND d.environment_workload_runtime IS NULL
+ AND d.kind IN ('tarball','github','preview') AND d.source_sha256=sqlc.arg(source_sha256)::text AND d.source_bytes>0
+ AND octet_length(COALESCE(d.source_root,''))<=sqlc.arg(source_field_limit)::integer
+ AND octet_length(COALESCE(d.handler,''))<=sqlc.arg(source_field_limit)::integer
+ AND NOT EXISTS (SELECT 1 FROM builds b WHERE b.deployment_id=d.id)
+ FOR UPDATE OF d
+)
+INSERT INTO deployment_runtime_upgrade_targets(deployment_id,release_id,source_sha256,source_root,source_bytes,kind,handler)
+SELECT id,sqlc.arg(release_id)::text,source_sha256,source_root,source_bytes,kind,handler FROM candidate
+ON CONFLICT (deployment_id) DO UPDATE SET release_id=deployment_runtime_upgrade_targets.release_id
+WHERE deployment_runtime_upgrade_targets.release_id=EXCLUDED.release_id AND deployment_runtime_upgrade_targets.source_sha256=EXCLUDED.source_sha256
+RETURNING release_id;
+
+-- name: GetDeploymentRuntimeUpgradeTarget :one
+SELECT r.*, (t.source_sha256=COALESCE(d.source_sha256,'') AND t.source_root=COALESCE(d.source_root,'')
+ AND t.source_bytes=d.source_bytes AND t.kind=d.kind AND t.handler=COALESCE(d.handler,''))::boolean AS source_matches
+FROM deployment_runtime_upgrade_targets t JOIN runtime_releases r ON r.id=t.release_id JOIN deployments d ON d.id=t.deployment_id
+WHERE t.deployment_id=sqlc.arg(deployment_id)::uuid;
+
+-- name: CopyDeploymentRuntimeUpgradeTarget :exec
+INSERT INTO deployment_runtime_upgrade_targets(deployment_id,release_id,source_sha256,source_root,source_bytes,kind,handler)
+SELECT sqlc.arg(target_deployment_id)::uuid,release_id,source_sha256,source_root,source_bytes,kind,handler
+FROM deployment_runtime_upgrade_targets WHERE deployment_id=sqlc.arg(source_deployment_id)::uuid;

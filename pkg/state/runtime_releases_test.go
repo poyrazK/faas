@@ -11,14 +11,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func runtimeReleaseStores(t *testing.T, run func(*testing.T, state.Store, state.RuntimeReleaseStore)) {
 	t.Helper()
 	t.Run("memory", func(t *testing.T) { s := state.NewMemStore(); run(t, s, s) })
-	t.Run("postgres", func(t *testing.T) { s := state.NewPgStore(pgtest.OpenMigrated(t)); run(t, s, s) })
+	t.Run("postgres", func(t *testing.T) { s, _ := pgStore(t); run(t, s, s) })
 }
 func runtimeReleaseFixture(n string) state.RuntimeRelease {
 	r := state.RuntimeRelease{Runtime: "node22", Architecture: "amd64", SourceRef: "ghcr.io/test/node@sha256:" + strings.Repeat(n, 64), GuestInitSHA256: strings.Repeat("a", 64), LayoutVersion: "test-layout", BaseSHA256: strings.Repeat("b", 64)}

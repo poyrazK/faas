@@ -2,6 +2,7 @@ package imaged
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,42 +24,155 @@ func (h *Handler) prepareFunctionRuntimeRelease(ctx context.Context, app state.A
 	if !ok {
 		return nil, errors.New("runtime release store is unavailable")
 	}
+	target, err := h.explicitRuntimeUpgradeTarget(ctx, app, dep, runtime)
+	if err != nil {
+		return nil, err
+	}
 	build, err := h.store.BuildByDeployment(ctx, dep.ID)
-	if errors.Is(err, state.ErrNotFound) {
+	if errors.Is(err, state.ErrNotFound) && target == nil {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
 	ref, err := releases.BuildRuntimeBaseRef(ctx, build.ID)
-	if errors.Is(err, state.ErrNotFound) {
+	if errors.Is(err, state.ErrNotFound) && target == nil {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
 	if ref == "" {
+		if target != nil {
+			return nil, errors.New("runtime update build has no recorded runtime base")
+		}
 		return nil, nil
+	}
+	if target != nil && target.SourceRef != ref {
+		return nil, errors.New("runtime update build used a different runtime source")
+	}
+	if target != nil {
+		provenance, err := h.store.BuildProvenanceByBuildID(ctx, build.ID)
+		if err != nil {
+			return nil, fmt.Errorf("read runtime update build provenance: %w", err)
+		}
+		if provenance.SourceSHA256 != dep.SourceSHA256 {
+			return nil, errors.New("runtime update build used different source bytes")
+		}
 	}
 	// Retries retain an already bound generation, even after a daemon update.
 	bound, err := releases.RuntimeReleaseForArtifact(ctx, app.AccountID, key)
 	if err == nil {
-		if bound.SourceRef != ref || bound.Runtime != runtime || bound.Architecture != goruntime.GOARCH {
+		if bound.SourceRef != ref || bound.Runtime != runtime || bound.Architecture != goruntime.GOARCH || (target != nil && bound.ID != target.ID) {
 			return nil, state.ErrConflict
 		}
 		if err := h.verifyRuntimeRelease(ctx, bound); err != nil {
 			return nil, err
+		}
+		if target != nil {
+			if err := h.verifyRuntimeUpgradeScan(ctx, bound); err != nil {
+				return nil, err
+			}
 		}
 		return &bound, nil
 	}
 	if !errors.Is(err, state.ErrNotFound) {
 		return nil, err
 	}
+	if target != nil {
+		// Reuse the selected ext4 bytes, including its exact guest-init and
+		// layout. The currently installed guest-init cannot select a new ID.
+		if err := h.verifyRuntimeRelease(ctx, *target); err != nil {
+			return nil, err
+		}
+		if err := h.verifyRuntimeUpgradeScan(ctx, *target); err != nil {
+			return nil, err
+		}
+		return target, nil
+	}
 	release, err := h.ensureRuntimeRelease(ctx, releases, runtime, goruntime.GOARCH, ref)
 	if err != nil {
 		return nil, err
 	}
 	return &release, nil
+}
+
+func (h *Handler) explicitRuntimeUpgradeTarget(ctx context.Context, app state.App, dep state.Deployment, runtime string) (*state.RuntimeRelease, error) {
+	targets, ok := h.store.(state.RuntimeUpgradeTargetStore)
+	if !ok {
+		return nil, nil
+	}
+	target, err := targets.DeploymentRuntimeUpgradeTarget(ctx, dep.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read runtime update target: %w", err)
+	}
+	if target.Validate() != nil || app.ID != dep.AppID || app.Type != state.AppTypeFunction ||
+		target.Runtime != runtime || target.Runtime != app.Runtime || target.Architecture != goruntime.GOARCH || dep.SourceSHA256 == "" {
+		return nil, fmt.Errorf("%w: incompatible runtime update image target", state.ErrConflict)
+	}
+	return &target, nil
+}
+
+// A historical scan is not native qualification. Require complete scan
+// evidence before preparing an update; vmmd still owns its admission policy.
+func (h *Handler) verifyRuntimeUpgradeScan(ctx context.Context, target state.RuntimeRelease) error {
+	be, err := h.storageFor()
+	if err != nil {
+		return err
+	}
+	r, err := be.Get(ctx, wire.ScanKeyForBaseKey(target.BaseKey()))
+	if err != nil {
+		return fmt.Errorf("read runtime update scan evidence: %w", err)
+	}
+	defer func() { _ = r.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(r, api.RuntimeReleaseSidecarMaxBytes+1))
+	if err != nil || len(raw) > api.RuntimeReleaseSidecarMaxBytes {
+		return errors.New("runtime update scan evidence is unreadable or oversized")
+	}
+	var scan struct {
+		Image                string         `json:"image"`
+		Findings             map[string]int `json:"findings"`
+		FixAvailableFindings map[string]int `json:"fix_available_findings"`
+		ScannedAt            time.Time      `json:"scanned_at"`
+	}
+	if json.Unmarshal(raw, &scan) != nil || scan.Image != target.SourceRef || scan.Findings == nil || scan.FixAvailableFindings == nil || scan.ScannedAt.IsZero() || scan.Findings[SeverityCritical] >= 9999 {
+		return errors.New("runtime update target lacks usable scan evidence")
+	}
+	return nil
+}
+
+func (h *Handler) ensureDeploymentRuntimeBaseForDeployment(ctx context.Context, app state.App, dep state.Deployment) error {
+	target, err := h.explicitRuntimeUpgradeTarget(ctx, app, dep, app.Runtime)
+	if err != nil {
+		return err
+	}
+	if target == nil {
+		return h.ensureDeploymentRuntimeBase(ctx, app)
+	}
+	if !h.runtimeBaseStagingEnabled {
+		return errors.New("runtime update requires immutable base staging")
+	}
+	current, err := h.store.DeploymentByID(ctx, dep.ID)
+	if err != nil {
+		return err
+	}
+	releases, ok := h.store.(state.RuntimeReleaseStore)
+	if !ok {
+		return errors.New("runtime update binding store is unavailable")
+	}
+	bound, err := releases.RuntimeReleaseForArtifact(ctx, app.AccountID, current.RootfsKey)
+	if err != nil {
+		return fmt.Errorf("read runtime update artifact binding: %w", err)
+	}
+	if bound.ID != target.ID {
+		return fmt.Errorf("%w: runtime update artifact does not use its selected target", state.ErrConflict)
+	}
+	// Function assembly already verified and replicated the exact base. Do
+	// not stage a mutable daemon default as a second source of authority.
+	return nil
 }
 
 func (h *Handler) verifyRuntimeRelease(ctx context.Context, r state.RuntimeRelease) error {

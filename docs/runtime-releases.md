@@ -40,6 +40,16 @@ existing guarded rollout and rollback. Health history is useful for
 investigation but cannot itself authorize an update. Older snapshots cannot be
 reused across different backing bytes; existing snapshot checks enforce this.
 
+The backend now has the internal build preparation contract for choosing an
+exact target before queueing. The pin records the source archive checksum,
+build root, handler and selected runtime ID. Builderd uses that release's OCI
+source; imaged reuses its exact base bytes even if the installed guest-init or
+daemon defaults change. Failed-build retries retain the same target. Missing
+or mismatched source, runtime or scan evidence blocks preparation. This
+contract does not yet capture configuration/secrets or authorize activation,
+so the API, CLI and console continue to offer read-only previews. See
+[ADR-597](adr/597-runtime-upgrade-build-targets.md).
+
 REST reads: `GET /v1/deployments/{id}/runtime` and
 `GET /v1/deployments/{id}/runtime/upgrade-preview?target=RELEASE_ID`.
 Both require read authorization and deployment ownership. See
@@ -52,3 +62,7 @@ sidecar. Local split-box installations must update their artifact handoff helper
 to support `--runtime-release BASE_KEY`; the bundled helper transfers the base
 and its content/scan evidence before the deployment can use it. Multi-node
 publication requires a shared artifact backend.
+
+Internal upgrade build pins limit each captured source root and function
+handler to 4,096 bytes. Pinning is unavailable after a build is queued or an
+artifact is materialized; selecting another runtime requires a fresh attempt.
