@@ -2450,5 +2450,7 @@ Normal Linux lint across the six changed production packages reported zero
 issues. SQLC regeneration, the memory-store stub gate, formatting and diff checks
 passed. Supplemental full-package lint with the `metal` tag reported 13 existing
 issues in untouched files; those are not represented as a clean full-package
-metal lint result. Production capture/restore and the tmpfs/disk ownership
+metal lint result. Lint filtered to this checkpoint's changed lines with the
+`metal` tag reported zero issues. The task's isolated PostgreSQL cluster was
+stopped after validation. Production capture/restore and the tmpfs/disk ownership
 adapter still require separate implementation and evidence.
