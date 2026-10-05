@@ -21,7 +21,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/apps/{slug}/workflows/{name}/runs".format(
+        "url": "/v1/platform-tenant-self/apps/{slug}/workflows/{name}/runs".format(
             slug=quote(str(slug), safe=""),
             name=quote(str(name), safe=""),
         ),
@@ -53,11 +53,6 @@ def _parse_response(
         response_401 = Problem.from_dict(response.json())
 
         return response_401
-
-    if response.status_code == 402:
-        response_402 = Problem.from_dict(response.json())
-
-        return response_402
 
     if response.status_code == 403:
         response_403 = Problem.from_dict(response.json())
@@ -108,12 +103,13 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
 ) -> Response[Problem | WorkflowRunResponse]:
-    """Start a durable workflow run.
+    """Start a durable workflow run as the authenticated platform tenant.
 
-     Snapshots the named effective workflow definition from the app's live
-    default deployment and dashboard publications and creates a pending run. The optional request body
-    is
-    retained as the workflow input and may be any valid JSON value.
+     Uses the tenant ID from the authenticated platform tenant access token.
+    The tenant must be actively linked to the app. Requires the
+    platform_tenant:invocations:manage scope. Managed operation effects are
+    delivered only to an explicitly subscribed receiver owned by this
+    tenant. Event waits, callbacks, and outbound steps remain unsupported.
 
     Args:
         slug (str):
@@ -148,12 +144,13 @@ def sync(
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
 ) -> Problem | WorkflowRunResponse | None:
-    """Start a durable workflow run.
+    """Start a durable workflow run as the authenticated platform tenant.
 
-     Snapshots the named effective workflow definition from the app's live
-    default deployment and dashboard publications and creates a pending run. The optional request body
-    is
-    retained as the workflow input and may be any valid JSON value.
+     Uses the tenant ID from the authenticated platform tenant access token.
+    The tenant must be actively linked to the app. Requires the
+    platform_tenant:invocations:manage scope. Managed operation effects are
+    delivered only to an explicitly subscribed receiver owned by this
+    tenant. Event waits, callbacks, and outbound steps remain unsupported.
 
     Args:
         slug (str):
@@ -183,12 +180,13 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
 ) -> Response[Problem | WorkflowRunResponse]:
-    """Start a durable workflow run.
+    """Start a durable workflow run as the authenticated platform tenant.
 
-     Snapshots the named effective workflow definition from the app's live
-    default deployment and dashboard publications and creates a pending run. The optional request body
-    is
-    retained as the workflow input and may be any valid JSON value.
+     Uses the tenant ID from the authenticated platform tenant access token.
+    The tenant must be actively linked to the app. Requires the
+    platform_tenant:invocations:manage scope. Managed operation effects are
+    delivered only to an explicitly subscribed receiver owned by this
+    tenant. Event waits, callbacks, and outbound steps remain unsupported.
 
     Args:
         slug (str):
@@ -221,12 +219,13 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
 ) -> Problem | WorkflowRunResponse | None:
-    """Start a durable workflow run.
+    """Start a durable workflow run as the authenticated platform tenant.
 
-     Snapshots the named effective workflow definition from the app's live
-    default deployment and dashboard publications and creates a pending run. The optional request body
-    is
-    retained as the workflow input and may be any valid JSON value.
+     Uses the tenant ID from the authenticated platform tenant access token.
+    The tenant must be actively linked to the app. Requires the
+    platform_tenant:invocations:manage scope. Managed operation effects are
+    delivered only to an explicitly subscribed receiver owned by this
+    tenant. Event waits, callbacks, and outbound steps remain unsupported.
 
     Args:
         slug (str):

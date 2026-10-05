@@ -776,21 +776,22 @@ func validWorkflowMethod(value string) bool {
 
 // WorkflowRunResponse is the API wire representation of a workflow run.
 type WorkflowRunResponse struct {
-	ResumeCount  int             `json:"resume_count"`
-	CancelledAt  *string         `json:"cancelled_at,omitempty"`
-	ID           string          `json:"id"`
-	AppID        string          `json:"app_id"`
-	WorkflowName string          `json:"workflow_name"`
-	Status       string          `json:"status"`
-	CurrentStep  *string         `json:"current_step,omitempty"`
-	Input        json.RawMessage `json:"input,omitempty"`
-	Output       json.RawMessage `json:"output,omitempty"`
-	ScheduledFor string          `json:"scheduled_for"`
-	StartedAt    *string         `json:"started_at,omitempty"`
-	FinishedAt   *string         `json:"finished_at,omitempty"`
-	LastError    *string         `json:"last_error,omitempty"`
-	CreatedAt    string          `json:"created_at"`
-	UpdatedAt    string          `json:"updated_at"`
+	ResumeCount      int             `json:"resume_count"`
+	CancelledAt      *string         `json:"cancelled_at,omitempty"`
+	ID               string          `json:"id"`
+	AppID            string          `json:"app_id"`
+	PlatformTenantID string          `json:"platform_tenant_id,omitempty"`
+	WorkflowName     string          `json:"workflow_name"`
+	Status           string          `json:"status"`
+	CurrentStep      *string         `json:"current_step,omitempty"`
+	Input            json.RawMessage `json:"input,omitempty"`
+	Output           json.RawMessage `json:"output,omitempty"`
+	ScheduledFor     string          `json:"scheduled_for"`
+	StartedAt        *string         `json:"started_at,omitempty"`
+	FinishedAt       *string         `json:"finished_at,omitempty"`
+	LastError        *string         `json:"last_error,omitempty"`
+	CreatedAt        string          `json:"created_at"`
+	UpdatedAt        string          `json:"updated_at"`
 }
 
 // ListWorkflowRunsResponse is the payload returned by GET /v1/apps/{slug}/workflows/runs.

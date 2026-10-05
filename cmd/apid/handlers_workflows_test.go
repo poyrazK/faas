@@ -13,6 +13,26 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func TestTenantWorkflowDefinitionSupport(t *testing.T) {
+	outbound := &api.WorkflowOutboundSpec{IntegrationID: "integration", Method: http.MethodPost, Path: "/v1/items"}
+	for _, spec := range []api.WorkflowSpec{
+		{Name: "outbound", Steps: []api.WorkflowStepSpec{{Name: "send", Outbound: outbound}}},
+		{Name: "foreach-outbound", Steps: []api.WorkflowStepSpec{{Name: "send", ForEach: &api.WorkflowForEachSpec{Items: "input.items", Action: api.WorkflowForEachActionSpec{Outbound: outbound}}}}},
+	} {
+		if !tenantWorkflowDefinitionSupported(spec) {
+			t.Errorf("tenant-bound workflow with app-bound outbound action %q was rejected", spec.Name)
+		}
+	}
+	for _, spec := range []api.WorkflowSpec{
+		{Name: "event", Steps: []api.WorkflowStepSpec{{Name: "wait", WaitForEvent: "order.approved"}}},
+		{Name: "callback", Steps: []api.WorkflowStepSpec{{Name: "wait", WaitForCallback: true}}},
+	} {
+		if tenantWorkflowDefinitionSupported(spec) {
+			t.Errorf("tenant-bound workflow with external continuation %q was accepted", spec.Name)
+		}
+	}
+}
+
 func seedWorkflowApp(t *testing.T, e testEnv, slug string) state.App {
 	t.Helper()
 	app, err := e.store.CreateApp(context.Background(), state.App{
@@ -29,6 +49,7 @@ func seedWorkflowApp(t *testing.T, e testEnv, slug string) state.App {
 	definitions := []api.WorkflowSpec{
 		{Name: "process-order", Steps: []api.WorkflowStepSpec{{Name: "main", Path: "/process-order"}}},
 		{Name: "w1", Steps: []api.WorkflowStepSpec{{Name: "main", Path: "/w1"}}},
+		{Name: "fulfill-transaction", Steps: []api.WorkflowStepSpec{{Name: "commit", Path: "/fulfill", ManagedOperation: true}}},
 		{Name: "approval", Steps: []api.WorkflowStepSpec{{Name: "step_one", WaitForEvent: "manager.approved", Timeout: time.Hour}}},
 		{Name: "callback", Steps: []api.WorkflowStepSpec{{Name: "await", WaitForCallback: true, Timeout: time.Hour}}},
 	}
@@ -184,6 +205,143 @@ func TestCreateWorkflowRun_RuntimeDisabledRejectsBeforePersistence(t *testing.T)
 	if active != 0 {
 		t.Fatalf("active workflow runs = %d, want 0 after runtime rejection", active)
 	}
+}
+
+func TestCreateWorkflowRun_TenantRequiredAppRejectsBeforePersistence(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := seedWorkflowApp(t, e, "tenant-workflow-app")
+	required := true
+	if _, err := e.store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{
+		PlatformTenantRequired:    &required,
+		SetPlatformTenantRequired: true,
+	}); err != nil {
+		t.Fatalf("mark app as tenant-required: %v", err)
+	}
+
+	rec := e.do(t, "POST", fmt.Sprintf("/v1/apps/%s/workflows/process-order/runs", app.Slug), map[string]any{
+		"order_id": "ord_tenant",
+	}, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeWorkflowTenantIdentityUnavailable)
+
+	_, total, err := e.store.ListWorkflowRuns(context.Background(), app.ID, state.ListWorkflowRunsOpts{})
+	if err != nil {
+		t.Fatalf("ListWorkflowRuns: %v", err)
+	}
+	if total != 0 {
+		t.Fatalf("persisted workflow runs = %d, want 0 after tenant identity rejection", total)
+	}
+}
+
+func TestCreateTenantWorkflowRun_PersistsVerifiedTenantAndRejectsUnsupportedFeatures(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := seedWorkflowApp(t, e, "tenant-scoped-workflow-app")
+	required := true
+	if _, err := e.store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{
+		PlatformTenantRequired: &required, SetPlatformTenantRequired: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tenant, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID, "workflow-customer", "Workflow customer", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedPlatformTenantConsumer(t, e, app.Slug, tenant.ID)
+
+	issued := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
+		Name: "workflow starter", Scopes: []string{api.ScopePlatformTenantInvocationsManage, api.ScopePlatformTenantInvocationsRead},
+	}, nil)
+	if issued.Code != http.StatusCreated {
+		t.Fatalf("create tenant token: %d %s", issued.Code, issued.Body)
+	}
+	var token api.CreatePlatformTenantAccessTokenResponse
+	if err := json.Unmarshal(issued.Body.Bytes(), &token); err != nil {
+		t.Fatal(err)
+	}
+
+	started := e.do(t, http.MethodPost, "/v1/platform-tenant-self/apps/"+app.Slug+"/workflows/process-order/runs", map[string]any{"order_id": "ord_42"}, map[string]string{
+		"Authorization": "Bearer " + token.Token,
+	})
+	if started.Code != http.StatusCreated {
+		t.Fatalf("tenant self start: %d %s", started.Code, started.Body)
+	}
+	var response api.WorkflowRunResponse
+	if err := json.Unmarshal(started.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.PlatformTenantID != tenant.ID {
+		t.Fatalf("response tenant_id=%q, want %q", response.PlatformTenantID, tenant.ID)
+	}
+	stored, err := e.store.GetWorkflowRun(context.Background(), response.ID)
+	if err != nil || stored.PlatformTenantID != tenant.ID {
+		t.Fatalf("stored tenant run=%+v err=%v", stored, err)
+	}
+	managedStarted := e.do(t, http.MethodPost, "/v1/platform-tenant-self/apps/"+app.Slug+"/workflows/fulfill-transaction/runs", map[string]any{"order_id": "ord_44"}, map[string]string{
+		"Authorization": "Bearer " + token.Token,
+	})
+	if managedStarted.Code != http.StatusCreated {
+		t.Fatalf("tenant managed-operation workflow start: %d %s", managedStarted.Code, managedStarted.Body)
+	}
+	var managedRun api.WorkflowRunResponse
+	if err := json.Unmarshal(managedStarted.Body.Bytes(), &managedRun); err != nil || managedRun.PlatformTenantID != tenant.ID {
+		t.Fatalf("tenant managed-operation response=%+v err=%v", managedRun, err)
+	}
+	managedSnapshot, err := e.store.GetWorkflowRun(context.Background(), managedRun.ID)
+	if err != nil || !strings.Contains(string(managedSnapshot.DefinitionSnapshot), `"managed_operation":true`) {
+		t.Fatalf("tenant managed-operation snapshot=%s err=%v", managedSnapshot.DefinitionSnapshot, err)
+	}
+	selfPath := "/v1/platform-tenant-self/workflows/runs/" + response.ID
+	status := e.do(t, http.MethodGet, selfPath, nil, map[string]string{"Authorization": "Bearer " + token.Token})
+	if status.Code != http.StatusOK || status.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("tenant workflow status: %d %s", status.Code, status.Body)
+	}
+	var selfRun api.WorkflowRunResponse
+	if err := json.Unmarshal(status.Body.Bytes(), &selfRun); err != nil || selfRun.ID != response.ID || selfRun.PlatformTenantID != tenant.ID {
+		t.Fatalf("tenant workflow status response=%+v err=%v", selfRun, err)
+	}
+
+	unsupported := e.do(t, http.MethodPost, "/v1/platform-tenant-self/apps/"+app.Slug+"/workflows/approval/runs", map[string]any{}, map[string]string{
+		"Authorization": "Bearer " + token.Token,
+	})
+	if unsupported.Code != http.StatusBadRequest || !strings.Contains(unsupported.Body.String(), "event waits") {
+		t.Fatalf("tenant event wait status=%d body=%s", unsupported.Code, unsupported.Body)
+	}
+
+	accountStarted := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/apps/"+app.Slug+"/workflows/process-order/runs", map[string]any{"order_id": "ord_43"}, nil)
+	if accountStarted.Code != http.StatusCreated {
+		t.Fatalf("account tenant start: %d %s", accountStarted.Code, accountStarted.Body)
+	}
+	var accountRun api.WorkflowRunResponse
+	if err := json.Unmarshal(accountStarted.Body.Bytes(), &accountRun); err != nil || accountRun.PlatformTenantID != tenant.ID {
+		t.Fatalf("account tenant response=%+v err=%v", accountRun, err)
+	}
+	cancelled := e.do(t, http.MethodPost, "/v1/platform-tenant-self/workflows/runs/"+accountRun.ID+"/cancel", nil, map[string]string{
+		"Authorization": "Bearer " + token.Token,
+	})
+	var cancelledRun api.WorkflowRunResponse
+	if err := json.Unmarshal(cancelled.Body.Bytes(), &cancelledRun); err != nil || cancelled.Code != http.StatusOK || cancelledRun.Status != state.WorkflowRunStatusFailed {
+		t.Fatalf("tenant cancel: status=%d run=%+v err=%v body=%s", cancelled.Code, cancelledRun, err, cancelled.Body)
+	}
+
+	other, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID, "unlinked-workflow-customer", "Unlinked workflow customer", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherIssued := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+other.ID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
+		Name: "other workflow starter", Scopes: []string{api.ScopePlatformTenantInvocationsManage, api.ScopePlatformTenantInvocationsRead},
+	}, nil)
+	if otherIssued.Code != http.StatusCreated {
+		t.Fatalf("create other tenant token: %d %s", otherIssued.Code, otherIssued.Body)
+	}
+	var otherToken api.CreatePlatformTenantAccessTokenResponse
+	if err := json.Unmarshal(otherIssued.Body.Bytes(), &otherToken); err != nil {
+		t.Fatal(err)
+	}
+	foreignRead := e.do(t, http.MethodGet, "/v1/platform-tenant-self/workflows/runs/"+accountRun.ID, nil, map[string]string{
+		"Authorization": "Bearer " + otherToken.Token,
+	})
+	assertProblem(t, foreignRead, http.StatusNotFound, api.CodeWorkflowRunNotFound)
+	foreign := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+other.ID+"/apps/"+app.Slug+"/workflows/process-order/runs", map[string]any{}, nil)
+	assertProblem(t, foreign, http.StatusNotFound, api.CodeWorkflowDefinitionNotFound)
 }
 
 func TestListWorkflowRuns_And_GetWorkflowRun(t *testing.T) {

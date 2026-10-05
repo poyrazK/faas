@@ -19730,6 +19730,7 @@ CREATE TABLE public.workflow_runs (
     lease_until timestamp with time zone,
     resume_count integer DEFAULT 0 NOT NULL,
     cancelled_at timestamp with time zone,
+    platform_tenant_id uuid REFERENCES public.platform_tenants(id) ON DELETE RESTRICT,
     CONSTRAINT workflow_runs_cancelled_at_check CHECK (((cancelled_at IS NULL) OR (status = 'failed'::text))),
     CONSTRAINT workflow_runs_resume_count_check CHECK (((resume_count >= 0) AND (resume_count <= 16))),
     CONSTRAINT workflow_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text])))
@@ -30194,6 +30195,12 @@ CREATE INDEX workflow_operation_effects_attempt_idx ON public.workflow_operation
 --
 
 CREATE INDEX workflow_runs_app_id_idx ON public.workflow_runs USING btree (app_id, created_at DESC);
+
+--
+-- Name: workflow_runs_platform_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_platform_tenant_idx ON public.workflow_runs USING btree (platform_tenant_id, created_at DESC) WHERE (platform_tenant_id IS NOT NULL);
 
 
 --

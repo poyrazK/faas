@@ -1,6 +1,7 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
@@ -12,6 +13,7 @@ from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
+    tenant_id: UUID,
     slug: str,
     name: str,
     *,
@@ -21,7 +23,8 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/apps/{slug}/workflows/{name}/runs".format(
+        "url": "/v1/account/platform-tenants/{tenant_id}/apps/{slug}/workflows/{name}/runs".format(
+            tenant_id=quote(str(tenant_id), safe=""),
             slug=quote(str(slug), safe=""),
             name=quote(str(name), safe=""),
         ),
@@ -102,20 +105,24 @@ def _build_response(
 
 
 def sync_detailed(
+    tenant_id: UUID,
     slug: str,
     name: str,
     *,
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
 ) -> Response[Problem | WorkflowRunResponse]:
-    """Start a durable workflow run.
+    """Start a durable workflow run for an account-owned tenant.
 
-     Snapshots the named effective workflow definition from the app's live
-    default deployment and dashboard publications and creates a pending run. The optional request body
-    is
-    retained as the workflow input and may be any valid JSON value.
+     Account owners can start a run for a tenant linked to the app through an
+    active API consumer or active tenant surface. The tenant ID is persisted
+    and propagated through trusted internal step dispatch metadata. Managed
+    operation steps may deliver effects only to an explicitly subscribed
+    receiver owned by that same tenant. Event waits, callbacks, and outbound
+    steps remain unsupported for tenant-bound workflows.
 
     Args:
+        tenant_id (UUID):
         slug (str):
         name (str):
         body (Any | Unset):
@@ -129,6 +136,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
+        tenant_id=tenant_id,
         slug=slug,
         name=name,
         body=body,
@@ -142,20 +150,24 @@ def sync_detailed(
 
 
 def sync(
+    tenant_id: UUID,
     slug: str,
     name: str,
     *,
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
 ) -> Problem | WorkflowRunResponse | None:
-    """Start a durable workflow run.
+    """Start a durable workflow run for an account-owned tenant.
 
-     Snapshots the named effective workflow definition from the app's live
-    default deployment and dashboard publications and creates a pending run. The optional request body
-    is
-    retained as the workflow input and may be any valid JSON value.
+     Account owners can start a run for a tenant linked to the app through an
+    active API consumer or active tenant surface. The tenant ID is persisted
+    and propagated through trusted internal step dispatch metadata. Managed
+    operation steps may deliver effects only to an explicitly subscribed
+    receiver owned by that same tenant. Event waits, callbacks, and outbound
+    steps remain unsupported for tenant-bound workflows.
 
     Args:
+        tenant_id (UUID):
         slug (str):
         name (str):
         body (Any | Unset):
@@ -169,6 +181,7 @@ def sync(
     """
 
     return sync_detailed(
+        tenant_id=tenant_id,
         slug=slug,
         name=name,
         client=client,
@@ -177,20 +190,24 @@ def sync(
 
 
 async def asyncio_detailed(
+    tenant_id: UUID,
     slug: str,
     name: str,
     *,
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
 ) -> Response[Problem | WorkflowRunResponse]:
-    """Start a durable workflow run.
+    """Start a durable workflow run for an account-owned tenant.
 
-     Snapshots the named effective workflow definition from the app's live
-    default deployment and dashboard publications and creates a pending run. The optional request body
-    is
-    retained as the workflow input and may be any valid JSON value.
+     Account owners can start a run for a tenant linked to the app through an
+    active API consumer or active tenant surface. The tenant ID is persisted
+    and propagated through trusted internal step dispatch metadata. Managed
+    operation steps may deliver effects only to an explicitly subscribed
+    receiver owned by that same tenant. Event waits, callbacks, and outbound
+    steps remain unsupported for tenant-bound workflows.
 
     Args:
+        tenant_id (UUID):
         slug (str):
         name (str):
         body (Any | Unset):
@@ -204,6 +221,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
+        tenant_id=tenant_id,
         slug=slug,
         name=name,
         body=body,
@@ -215,20 +233,24 @@ async def asyncio_detailed(
 
 
 async def asyncio(
+    tenant_id: UUID,
     slug: str,
     name: str,
     *,
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
 ) -> Problem | WorkflowRunResponse | None:
-    """Start a durable workflow run.
+    """Start a durable workflow run for an account-owned tenant.
 
-     Snapshots the named effective workflow definition from the app's live
-    default deployment and dashboard publications and creates a pending run. The optional request body
-    is
-    retained as the workflow input and may be any valid JSON value.
+     Account owners can start a run for a tenant linked to the app through an
+    active API consumer or active tenant surface. The tenant ID is persisted
+    and propagated through trusted internal step dispatch metadata. Managed
+    operation steps may deliver effects only to an explicitly subscribed
+    receiver owned by that same tenant. Event waits, callbacks, and outbound
+    steps remain unsupported for tenant-bound workflows.
 
     Args:
+        tenant_id (UUID):
         slug (str):
         name (str):
         body (Any | Unset):
@@ -243,6 +265,7 @@ async def asyncio(
 
     return (
         await asyncio_detailed(
+            tenant_id=tenant_id,
             slug=slug,
             name=name,
             client=client,

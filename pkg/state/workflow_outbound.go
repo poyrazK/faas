@@ -13,9 +13,10 @@ import (
 )
 
 type WorkflowOutboundAttempt struct {
-	AccountID string
-	AppID     string
-	Token     string `json:"-"`
+	AccountID        string
+	AppID            string
+	PlatformTenantID string
+	Token            string `json:"-"`
 }
 type WorkflowOutboundStore interface {
 	GetWorkflowOutboundAttempt(context.Context, string, string, int) (WorkflowOutboundAttempt, error)
@@ -27,7 +28,7 @@ func (s *PgStore) GetWorkflowOutboundAttempt(ctx context.Context, runID, step st
 	if err != nil {
 		return WorkflowOutboundAttempt{}, err
 	}
-	return WorkflowOutboundAttempt{AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID), Token: pgUUIDString(row.OutboundAttemptToken)}, nil
+	return WorkflowOutboundAttempt{AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID), PlatformTenantID: pgUUIDString(row.PlatformTenantID), Token: pgUUIDString(row.OutboundAttemptToken)}, nil
 }
 func (m *MemStore) GetWorkflowOutboundAttempt(_ context.Context, runID, stepName string, attempt int) (WorkflowOutboundAttempt, error) {
 	m.mu.Lock()
@@ -42,10 +43,36 @@ func (m *MemStore) GetWorkflowOutboundAttempt(_ context.Context, runID, stepName
 	}
 	app := m.apps[run.AppID]
 	account := m.accounts[app.AccountID]
-	if run.Status != WorkflowRunStatusRunning || step.Status != WorkflowStepStatusRunning || step.Attempt != attempt || step.outboundAttemptToken == "" || !m.workflowRunLeases[runID].After(time.Now()) || !account.Active() || !account.Plan.WorkflowsAllowed() || app.Status == AppDeleted || app.MaintenanceMode || app.PlatformTenantRequired {
+	if run.Status != WorkflowRunStatusRunning || step.Status != WorkflowStepStatusRunning || step.Attempt != attempt || step.outboundAttemptToken == "" || !m.workflowRunLeases[runID].After(time.Now()) || !account.Active() || !account.Plan.WorkflowsAllowed() || app.Status == AppDeleted || app.MaintenanceMode || app.PlatformTenantRequired && run.PlatformTenantID == "" {
 		return WorkflowOutboundAttempt{}, ErrWorkflowNotRunning
 	}
-	return WorkflowOutboundAttempt{AccountID: app.AccountID, AppID: app.ID, Token: step.outboundAttemptToken}, nil
+	if run.PlatformTenantID != "" && !m.workflowOutboundTenantLinkActiveLocked(app.AccountID, run.PlatformTenantID, app.ID) {
+		return WorkflowOutboundAttempt{}, ErrWorkflowNotRunning
+	}
+	return WorkflowOutboundAttempt{AccountID: app.AccountID, AppID: app.ID, PlatformTenantID: run.PlatformTenantID, Token: step.outboundAttemptToken}, nil
+}
+
+// workflowOutboundTenantLinkActiveLocked mirrors ValidatePlatformTenantAppBinding
+// while GetWorkflowOutboundAttempt holds MemStore.mu. It keeps the live-link
+// check atomic with the run and outbound-attempt check without re-locking.
+func (m *MemStore) workflowOutboundTenantLinkActiveLocked(accountID, tenantID, appID string) bool {
+	tenant, ok := m.platformTenants[tenantID]
+	if !ok || tenant.AccountID != accountID || tenant.Status != PlatformTenantActive {
+		return false
+	}
+	for consumerID, linkedTenantID := range m.platformTenantByConsumer {
+		consumer, ok := m.apiConsumers[consumerID]
+		if ok && linkedTenantID == tenantID && consumer.PlatformTenantID == tenantID && consumer.AccountID == accountID && consumer.AppID == appID && consumer.Active() {
+			return true
+		}
+	}
+	for surfaceID, linkedTenantID := range m.platformTenantBySurface {
+		surface, ok := m.tenantSurfaces[surfaceID]
+		if ok && linkedTenantID == tenantID && surface.AccountID == accountID && surface.AppID == appID && surface.Active() {
+			return true
+		}
+	}
+	return false
 }
 
 func outboundBindingAllows(step api.WorkflowOutboundSpec, methods, paths, bindingMethods, bindingPaths []string) bool {

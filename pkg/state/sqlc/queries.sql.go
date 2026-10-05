@@ -1294,13 +1294,21 @@ SELECT EXISTS(
  AND s.step_name=$4 AND s.attempt=$5
  AND s.outbound_attempt_token=$6 AND r.status='running'
  AND r.lease_until>clock_timestamp() AND s.status='running' AND a.status<>'deleted'
- AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+ AND NOT a.maintenance_mode AND (NOT a.platform_tenant_required OR r.platform_tenant_id IS NOT NULL)
  AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
- AND i.id=$7 AND i.enabled AND i.owner_kind='customer'
+ AND COALESCE(r.platform_tenant_id::text, '')=$7::text
+ AND (r.platform_tenant_id IS NULL OR EXISTS (
+  SELECT 1 FROM platform_tenants t WHERE t.id=r.platform_tenant_id AND t.account_id=a.account_id AND t.status='active'
+  AND (
+   EXISTS (SELECT 1 FROM api_consumers tc WHERE tc.account_id=a.account_id AND tc.app_id=a.id AND tc.platform_tenant_id=t.id AND tc.status='active' AND tc.revoked_at IS NULL)
+   OR EXISTS (SELECT 1 FROM tenant_surfaces ts WHERE ts.account_id=a.account_id AND ts.app_id=a.id AND ts.platform_tenant_id=t.id AND ts.status='active')
+  )
+ ))
+ AND i.id=$8 AND i.enabled AND i.owner_kind='customer'
  AND i.provider_auth_mode='managed' AND i.credential_source='customer_sealed'
  AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,integration_id}'=i.id::text
- AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,method}'=$8::text
- AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,path}'=$9::text
+ AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,method}'=$9::text
+ AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,path}'=$10::text
 )
 `
 
@@ -1311,6 +1319,7 @@ type AuthorizeWorkflowOutboundParams struct {
 	StepName      string
 	Attempt       int32
 	AttemptToken  pgtype.UUID
+	TenantID      string
 	IntegrationID pgtype.UUID
 	Method        string
 	Path          string
@@ -1324,6 +1333,7 @@ func (q *Queries) AuthorizeWorkflowOutbound(ctx context.Context, db DBTX, arg Au
 		arg.StepName,
 		arg.Attempt,
 		arg.AttemptToken,
+		arg.TenantID,
 		arg.IntegrationID,
 		arg.Method,
 		arg.Path,
@@ -29729,7 +29739,7 @@ func (q *Queries) LockWorkflowRecovery(ctx context.Context, db DBTX, runID pgtyp
 
 const lockWorkflowResumeRun = `-- name: LockWorkflowResumeRun :one
 SELECT id,app_id,workflow_name,status,current_step,input,output,definition_snapshot,
- scheduled_for,started_at,finished_at,last_error,created_at,updated_at,resume_count,cancelled_at
+ scheduled_for,started_at,finished_at,last_error,created_at,updated_at,resume_count,cancelled_at,platform_tenant_id
 FROM workflow_runs WHERE id=$1 AND app_id=$2 FOR UPDATE
 `
 
@@ -29755,6 +29765,7 @@ type LockWorkflowResumeRunRow struct {
 	UpdatedAt          pgtype.Timestamptz
 	ResumeCount        int32
 	CancelledAt        pgtype.Timestamptz
+	PlatformTenantID   pgtype.UUID
 }
 
 func (q *Queries) LockWorkflowResumeRun(ctx context.Context, db DBTX, arg LockWorkflowResumeRunParams) (LockWorkflowResumeRunRow, error) {
@@ -29777,7 +29788,35 @@ func (q *Queries) LockWorkflowResumeRun(ctx context.Context, db DBTX, arg LockWo
 		&i.UpdatedAt,
 		&i.ResumeCount,
 		&i.CancelledAt,
+		&i.PlatformTenantID,
 	)
+	return i, err
+}
+
+const lockWorkflowResumeTarget = `-- name: LockWorkflowResumeTarget :one
+SELECT d.id AS deployment_id, app_workflow_definitions(a.id,d.workflows)::jsonb AS workflows, ac.plan
+FROM apps a JOIN accounts ac ON ac.id = a.account_id
+JOIN deployments d ON d.app_id = a.id
+WHERE a.id = $1 AND a.status <> 'deleted' AND NOT a.maintenance_mode
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
+  AND d.id = (
+      SELECT dep.id FROM deployments dep
+      WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
+      ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
+  )
+FOR SHARE OF a, ac, d
+`
+
+type LockWorkflowResumeTargetRow struct {
+	DeploymentID pgtype.UUID
+	Workflows    []byte
+	Plan         string
+}
+
+func (q *Queries) LockWorkflowResumeTarget(ctx context.Context, db DBTX, appID pgtype.UUID) (LockWorkflowResumeTargetRow, error) {
+	row := db.QueryRow(ctx, lockWorkflowResumeTarget, appID)
+	var i LockWorkflowResumeTargetRow
+	err := row.Scan(&i.DeploymentID, &i.Workflows, &i.Plan)
 	return i, err
 }
 
@@ -29800,7 +29839,7 @@ func (q *Queries) LockWorkflowRunAdmission(ctx context.Context, db DBTX, appKey 
 }
 
 const lockWorkflowRunForManualRetry = `-- name: LockWorkflowRunForManualRetry :one
-SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, resume_count, cancelled_at FROM workflow_runs
+SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, resume_count, cancelled_at, platform_tenant_id FROM workflow_runs
 WHERE id=$1::text::uuid
 FOR UPDATE
 `
@@ -29826,6 +29865,7 @@ func (q *Queries) LockWorkflowRunForManualRetry(ctx context.Context, db DBTX, ru
 		&i.LeaseUntil,
 		&i.ResumeCount,
 		&i.CancelledAt,
+		&i.PlatformTenantID,
 	)
 	return i, err
 }
@@ -38522,14 +38562,19 @@ WITH exclusive_effect AS (
  SELECT EXISTS(SELECT 1 FROM workflow_operation_effects e
   WHERE e.id=$1::text::uuid)::boolean AS managed,
  EXISTS (
-  SELECT 1 FROM workflow_operation_effects e
-  JOIN accounts ac ON ac.id=e.account_id AND ac.status='active'
-  JOIN apps a ON a.id=e.app_id AND a.account_id=e.account_id AND a.status<>'deleted'
-  JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id
+ SELECT 1 FROM workflow_operation_effects e
+ JOIN accounts ac ON ac.id=e.account_id AND ac.status='active'
+ JOIN apps a ON a.id=e.app_id AND a.account_id=e.account_id AND a.status<>'deleted'
+ JOIN workflow_runs r ON r.id=e.run_id AND r.app_id=e.app_id
+ JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id
    AND d.app_id=e.app_id AND d.account_id=e.account_id AND d.event='operation.effect'
   JOIN app_webhooks h ON h.id=e.webhook_id AND h.account_id=e.account_id
   WHERE e.id=$1::text::uuid AND h.enabled
-   AND 'operation.effect'=ANY(h.event_filter) AND h.scope='app' AND h.app_id=e.app_id
+   AND 'operation.effect'=ANY(h.event_filter)
+   AND ((r.platform_tenant_id IS NULL AND h.scope='app' AND h.app_id=e.app_id)
+    OR (r.platform_tenant_id=h.platform_tenant_id AND h.scope='platform_tenant'
+     AND EXISTS(SELECT 1 FROM platform_tenants t WHERE t.id=r.platform_tenant_id AND t.account_id=e.account_id AND t.status='active')
+     AND EXISTS(SELECT 1 FROM tenant_surfaces s WHERE s.app_id=e.app_id AND s.account_id=e.account_id AND s.platform_tenant_id=r.platform_tenant_id AND s.status='active')))
  )::boolean AS allowed
 )
 SELECT exclusive_effect.managed OR workflow_effect.managed AS managed,
@@ -42686,19 +42731,20 @@ func (q *Queries) ReadManagedPostgresLifecycleRestoreSource(ctx context.Context,
 }
 
 const readManagedWorkflowRunForUpdate = `-- name: ReadManagedWorkflowRunForUpdate :one
-SELECT app_id::text, status FROM workflow_runs
+SELECT app_id::text, coalesce(platform_tenant_id::text, '')::text AS platform_tenant_id, status FROM workflow_runs
 WHERE id=$1::text::uuid FOR UPDATE
 `
 
 type ReadManagedWorkflowRunForUpdateRow struct {
-	AppID  string
-	Status string
+	AppID            string
+	PlatformTenantID string
+	Status           string
 }
 
 func (q *Queries) ReadManagedWorkflowRunForUpdate(ctx context.Context, db DBTX, runID string) (ReadManagedWorkflowRunForUpdateRow, error) {
 	row := db.QueryRow(ctx, readManagedWorkflowRunForUpdate, runID)
 	var i ReadManagedWorkflowRunForUpdateRow
-	err := row.Scan(&i.AppID, &i.Status)
+	err := row.Scan(&i.AppID, &i.PlatformTenantID, &i.Status)
 	return i, err
 }
 
@@ -50119,7 +50165,7 @@ SET status='pending',current_step=$1::text,
     lease_until=NULL,updated_at=clock_timestamp()
 WHERE id=$2::text::uuid
   AND status IN ('failed','dead')
-RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, resume_count, cancelled_at
+RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, resume_count, cancelled_at, platform_tenant_id
 `
 
 type RequeueWorkflowRunForRetryParams struct {
@@ -50148,6 +50194,7 @@ func (q *Queries) RequeueWorkflowRunForRetry(ctx context.Context, db DBTX, arg R
 		&i.LeaseUntil,
 		&i.ResumeCount,
 		&i.CancelledAt,
+		&i.PlatformTenantID,
 	)
 	return i, err
 }
@@ -55841,14 +55888,21 @@ func (q *Queries) WorkflowJoinSteps(ctx context.Context, db DBTX, runID pgtype.U
 }
 
 const workflowOutboundAttempt = `-- name: WorkflowOutboundAttempt :one
-SELECT a.account_id, r.app_id, s.outbound_attempt_token
+SELECT a.account_id, r.app_id, r.platform_tenant_id, s.outbound_attempt_token
 FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
 JOIN apps a ON a.id=r.app_id JOIN accounts ac ON ac.id=a.account_id
 WHERE r.id=$1 AND s.step_name=$2 AND s.attempt=$3
 AND r.status='running' AND r.lease_until>clock_timestamp() AND s.status='running'
 AND s.outbound_attempt_token IS NOT NULL AND a.status<>'deleted'
-AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+AND NOT a.maintenance_mode AND (NOT a.platform_tenant_required OR r.platform_tenant_id IS NOT NULL)
 AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
+AND (r.platform_tenant_id IS NULL OR EXISTS (
+ SELECT 1 FROM platform_tenants t WHERE t.id=r.platform_tenant_id AND t.account_id=a.account_id AND t.status='active'
+ AND (
+  EXISTS (SELECT 1 FROM api_consumers c WHERE c.account_id=a.account_id AND c.app_id=a.id AND c.platform_tenant_id=t.id AND c.status='active' AND c.revoked_at IS NULL)
+  OR EXISTS (SELECT 1 FROM tenant_surfaces ts WHERE ts.account_id=a.account_id AND ts.app_id=a.id AND ts.platform_tenant_id=t.id AND ts.status='active')
+ )
+))
 `
 
 type WorkflowOutboundAttemptParams struct {
@@ -55860,13 +55914,19 @@ type WorkflowOutboundAttemptParams struct {
 type WorkflowOutboundAttemptRow struct {
 	AccountID            pgtype.UUID
 	AppID                pgtype.UUID
+	PlatformTenantID     pgtype.UUID
 	OutboundAttemptToken pgtype.UUID
 }
 
 func (q *Queries) WorkflowOutboundAttempt(ctx context.Context, db DBTX, arg WorkflowOutboundAttemptParams) (WorkflowOutboundAttemptRow, error) {
 	row := db.QueryRow(ctx, workflowOutboundAttempt, arg.RunID, arg.StepName, arg.Attempt)
 	var i WorkflowOutboundAttemptRow
-	err := row.Scan(&i.AccountID, &i.AppID, &i.OutboundAttemptToken)
+	err := row.Scan(
+		&i.AccountID,
+		&i.AppID,
+		&i.PlatformTenantID,
+		&i.OutboundAttemptToken,
+	)
 	return i, err
 }
 

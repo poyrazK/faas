@@ -28,6 +28,8 @@ class WorkflowRunResponse:
     resume_count: int | Unset = UNSET
     """Number of accepted resumptions; send this value when requesting continuation."""
     cancelled_at: datetime.datetime | Unset = UNSET
+    platform_tenant_id: None | Unset | UUID = UNSET
+    """Platform tenant authorized for this workflow run"""
     current_step: None | str | Unset = UNSET
     input_: Any | Unset = UNSET
     output: Any | Unset = UNSET
@@ -56,6 +58,14 @@ class WorkflowRunResponse:
         cancelled_at: str | Unset = UNSET
         if not isinstance(self.cancelled_at, Unset):
             cancelled_at = self.cancelled_at.isoformat()
+
+        platform_tenant_id: None | str | Unset
+        if isinstance(self.platform_tenant_id, Unset):
+            platform_tenant_id = UNSET
+        elif isinstance(self.platform_tenant_id, UUID):
+            platform_tenant_id = str(self.platform_tenant_id)
+        else:
+            platform_tenant_id = self.platform_tenant_id
 
         current_step: None | str | Unset
         if isinstance(self.current_step, Unset):
@@ -106,6 +116,8 @@ class WorkflowRunResponse:
             field_dict["resume_count"] = resume_count
         if cancelled_at is not UNSET:
             field_dict["cancelled_at"] = cancelled_at
+        if platform_tenant_id is not UNSET:
+            field_dict["platform_tenant_id"] = platform_tenant_id
         if current_step is not UNSET:
             field_dict["current_step"] = current_step
         if input_ is not UNSET:
@@ -146,6 +158,23 @@ class WorkflowRunResponse:
             cancelled_at = UNSET
         else:
             cancelled_at = datetime.datetime.fromisoformat(_cancelled_at)
+
+        def _parse_platform_tenant_id(data: object) -> None | Unset | UUID:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                platform_tenant_id_type_0 = UUID(data)
+
+                return platform_tenant_id_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | UUID, data)
+
+        platform_tenant_id = _parse_platform_tenant_id(d.pop("platform_tenant_id", UNSET))
 
         def _parse_current_step(data: object) -> None | str | Unset:
             if data is None:
@@ -213,6 +242,7 @@ class WorkflowRunResponse:
             updated_at=updated_at,
             resume_count=resume_count,
             cancelled_at=cancelled_at,
+            platform_tenant_id=platform_tenant_id,
             current_step=current_step,
             input_=input_,
             output=output,

@@ -3459,17 +3459,27 @@ func (h *httpGatewaySynth) Invoke(ctx context.Context, appID string, inv state.I
 // executor seam. Unlike the legacy Invoke method it returns the downstream
 // HTTP status, which is required for durable retry classification.
 func (h *httpGatewaySynth) ExecuteStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration) (int, []byte, error) {
-	return h.executeStep(ctx, appID, path, method, headers, body, timeout, "", 0)
+	return h.executeStep(ctx, appID, path, method, headers, body, timeout, "", 0, WorkflowStepIdentity{})
+}
+
+func (h *httpGatewaySynth) ExecuteWorkflowStep(ctx context.Context, appID string, identity WorkflowStepIdentity, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, error) {
+	if identity.RunID == "" || strings.TrimSpace(headers["X-Faas-Workflow-Run-Id"]) != identity.RunID {
+		return 0, nil, errors.New("sched: workflow run metadata does not match persisted identity")
+	}
+	if operationID == "" && generation != 0 || operationID != "" && generation < 1 {
+		return 0, nil, errors.New("sched: invalid managed workflow operation context")
+	}
+	return h.executeStep(ctx, appID, path, method, headers, body, timeout, operationID, generation, identity)
 }
 
 func (h *httpGatewaySynth) ExecuteManagedOperationStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, error) {
 	if operationID == "" || generation < 1 {
 		return 0, nil, errors.New("sched: invalid managed workflow operation context")
 	}
-	return h.executeStep(ctx, appID, path, method, headers, body, timeout, operationID, generation)
+	return h.executeStep(ctx, appID, path, method, headers, body, timeout, operationID, generation, WorkflowStepIdentity{})
 }
 
-func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, error) {
+func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64, identity WorkflowStepIdentity) (int, []byte, error) {
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -3482,6 +3492,7 @@ func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method 
 	inv := state.Invocation{
 		ID:                         "workflow-" + middleware.NewRequestID(),
 		AppID:                      appID,
+		PlatformTenantID:           identity.PlatformTenantID,
 		Source:                     state.InvocationSource("workflow"),
 		Method:                     method,
 		Path:                       path,

@@ -1,34 +1,33 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
+from ...models.resume_workflow_run_request import ResumeWorkflowRunRequest
 from ...models.workflow_run_response import WorkflowRunResponse
-from ...types import UNSET, Response, Unset
+from ...types import Response
 
 
 def _get_kwargs(
-    slug: str,
-    name: str,
+    id: UUID,
     *,
-    body: Any | Unset = UNSET,
+    body: ResumeWorkflowRunRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/apps/{slug}/workflows/{name}/runs".format(
-            slug=quote(str(slug), safe=""),
-            name=quote(str(name), safe=""),
+        "url": "/v1/platform-tenant-self/workflows/runs/{id}/resume".format(
+            id=quote(str(id), safe=""),
         ),
     }
 
-    if not isinstance(body, Unset):
-        _kwargs["json"] = body
+    _kwargs["json"] = body.to_dict()
 
     headers["Content-Type"] = "application/json"
 
@@ -39,10 +38,10 @@ def _get_kwargs(
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
 ) -> Problem | WorkflowRunResponse | None:
-    if response.status_code == 201:
-        response_201 = WorkflowRunResponse.from_dict(response.json())
+    if response.status_code == 200:
+        response_200 = WorkflowRunResponse.from_dict(response.json())
 
-        return response_201
+        return response_200
 
     if response.status_code == 400:
         response_400 = Problem.from_dict(response.json())
@@ -74,6 +73,11 @@ def _parse_response(
 
         return response_409
 
+    if response.status_code == 413:
+        response_413 = Problem.from_dict(response.json())
+
+        return response_413
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -102,23 +106,22 @@ def _build_response(
 
 
 def sync_detailed(
-    slug: str,
-    name: str,
+    id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: Any | Unset = UNSET,
+    body: ResumeWorkflowRunRequest,
 ) -> Response[Problem | WorkflowRunResponse]:
-    """Start a durable workflow run.
+    """Resume eligible failed actions in this tenant's workflow run.
 
-     Snapshots the named effective workflow definition from the app's live
-    default deployment and dashboard publications and creates a pending run. The optional request body
-    is
-    retained as the workflow input and may be any valid JSON value.
+     Requires a tenant-bound token with platform_tenant:invocations:manage.
+    Send the current resume_count. The platform preserves completed work and
+    only reopens actions accepted by the workflow's safe-resume rules.
+    Foreign, unbound, and missing runs return the same 404.
 
     Args:
-        slug (str):
-        name (str):
-        body (Any | Unset):
+        id (UUID):
+        body (ResumeWorkflowRunRequest): Optimistic continuation request; send the resume_count
+            from the inspected run.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -129,8 +132,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
-        slug=slug,
-        name=name,
+        id=id,
         body=body,
     )
 
@@ -142,23 +144,22 @@ def sync_detailed(
 
 
 def sync(
-    slug: str,
-    name: str,
+    id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: Any | Unset = UNSET,
+    body: ResumeWorkflowRunRequest,
 ) -> Problem | WorkflowRunResponse | None:
-    """Start a durable workflow run.
+    """Resume eligible failed actions in this tenant's workflow run.
 
-     Snapshots the named effective workflow definition from the app's live
-    default deployment and dashboard publications and creates a pending run. The optional request body
-    is
-    retained as the workflow input and may be any valid JSON value.
+     Requires a tenant-bound token with platform_tenant:invocations:manage.
+    Send the current resume_count. The platform preserves completed work and
+    only reopens actions accepted by the workflow's safe-resume rules.
+    Foreign, unbound, and missing runs return the same 404.
 
     Args:
-        slug (str):
-        name (str):
-        body (Any | Unset):
+        id (UUID):
+        body (ResumeWorkflowRunRequest): Optimistic continuation request; send the resume_count
+            from the inspected run.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -169,31 +170,29 @@ def sync(
     """
 
     return sync_detailed(
-        slug=slug,
-        name=name,
+        id=id,
         client=client,
         body=body,
     ).parsed
 
 
 async def asyncio_detailed(
-    slug: str,
-    name: str,
+    id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: Any | Unset = UNSET,
+    body: ResumeWorkflowRunRequest,
 ) -> Response[Problem | WorkflowRunResponse]:
-    """Start a durable workflow run.
+    """Resume eligible failed actions in this tenant's workflow run.
 
-     Snapshots the named effective workflow definition from the app's live
-    default deployment and dashboard publications and creates a pending run. The optional request body
-    is
-    retained as the workflow input and may be any valid JSON value.
+     Requires a tenant-bound token with platform_tenant:invocations:manage.
+    Send the current resume_count. The platform preserves completed work and
+    only reopens actions accepted by the workflow's safe-resume rules.
+    Foreign, unbound, and missing runs return the same 404.
 
     Args:
-        slug (str):
-        name (str):
-        body (Any | Unset):
+        id (UUID):
+        body (ResumeWorkflowRunRequest): Optimistic continuation request; send the resume_count
+            from the inspected run.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -204,8 +203,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
-        slug=slug,
-        name=name,
+        id=id,
         body=body,
     )
 
@@ -215,23 +213,22 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    slug: str,
-    name: str,
+    id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: Any | Unset = UNSET,
+    body: ResumeWorkflowRunRequest,
 ) -> Problem | WorkflowRunResponse | None:
-    """Start a durable workflow run.
+    """Resume eligible failed actions in this tenant's workflow run.
 
-     Snapshots the named effective workflow definition from the app's live
-    default deployment and dashboard publications and creates a pending run. The optional request body
-    is
-    retained as the workflow input and may be any valid JSON value.
+     Requires a tenant-bound token with platform_tenant:invocations:manage.
+    Send the current resume_count. The platform preserves completed work and
+    only reopens actions accepted by the workflow's safe-resume rules.
+    Foreign, unbound, and missing runs return the same 404.
 
     Args:
-        slug (str):
-        name (str):
-        body (Any | Unset):
+        id (UUID):
+        body (ResumeWorkflowRunRequest): Optimistic continuation request; send the resume_count
+            from the inspected run.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -243,8 +240,7 @@ async def asyncio(
 
     return (
         await asyncio_detailed(
-            slug=slug,
-            name=name,
+            id=id,
             client=client,
             body=body,
         )

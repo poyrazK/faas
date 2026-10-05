@@ -30,6 +30,16 @@ App workload, stateless Run, and ordinary internal-service assertions cannot
 authorize this surface. The signer, provider credential, and attempt token never
 enter customer API responses or app handlers. No VM lifecycle path changes.
 
+Tenant-bound runs may use these steps through an integration still explicitly
+bound to the app. The persisted run tenant is included in the signed identity;
+schedd rechecks that the tenant is active and still linked to the app before and
+during the provider call, and outboundd compares the signed tenant with the run
+record and repeats the active-link check before authorizing each request. The
+integration credential and route policy remain app-owned and shared across
+tenants. This does not add per-tenant credentials or provider identity mapping.
+Tenant event waits and callbacks remain unsupported because their external
+continuations do not yet carry tenant-scoped admission.
+
 `workflow_steps.outbound_attempt_token` rotates whenever a step starts. Outboundd
 reads the current cluster public key and checks the live run lease, step token,
 attempt, immutable definition target, account/app eligibility, integration,

@@ -43,7 +43,7 @@ func (a *PostgresWorkflowAuthorizer) AuthorizeWorkflow(ctx context.Context, raw,
 	if err != nil {
 		return WorkflowIdentity{}, err
 	}
-	allowed, err := q.AuthorizeWorkflowOutbound(ctx, a.pool, sqlc.AuthorizeWorkflowOutboundParams{RunID: workflowUUID(identity.RunID), AppID: workflowUUID(identity.AppID), AccountID: workflowUUID(identity.AccountID), StepName: identity.StepName, Attempt: int32(identity.Attempt), AttemptToken: workflowUUID(identity.AttemptToken), IntegrationID: workflowUUID(integrationID), Method: method, Path: path})
+	allowed, err := q.AuthorizeWorkflowOutbound(ctx, a.pool, sqlc.AuthorizeWorkflowOutboundParams{RunID: workflowUUID(identity.RunID), AppID: workflowUUID(identity.AppID), AccountID: workflowUUID(identity.AccountID), StepName: identity.StepName, Attempt: int32(identity.Attempt), AttemptToken: workflowUUID(identity.AttemptToken), TenantID: identity.PlatformTenantID, IntegrationID: workflowUUID(integrationID), Method: method, Path: path})
 	if err != nil {
 		return WorkflowIdentity{}, err
 	}

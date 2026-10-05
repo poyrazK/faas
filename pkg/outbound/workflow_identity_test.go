@@ -52,4 +52,18 @@ func TestWorkflowIdentityFencesRequestAndSubject(t *testing.T) {
 	if _, err := verifyWorkflowIdentity(internal, integration, "POST", "/contacts", body, "key-1", public, now); err == nil {
 		t.Fatal("accepted an ordinary internal service assertion")
 	}
+
+	identity.PlatformTenantID = uuid.NewString()
+	tenantToken, err := MintWorkflowIdentity(identity, integration, "POST", "/contacts", body, private, "key-1", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := verifyWorkflowIdentity(tenantToken, integration, "POST", "/contacts", body, "key-1", public, now)
+	if err != nil || got.PlatformTenantID != identity.PlatformTenantID {
+		t.Fatalf("tenant identity=%+v error=%v", got, err)
+	}
+	identity.PlatformTenantID = "not-a-uuid"
+	if _, err := MintWorkflowIdentity(identity, integration, "POST", "/contacts", body, private, "key-1", now); err == nil {
+		t.Fatal("minted workflow identity with malformed tenant id")
+	}
 }
