@@ -293,20 +293,27 @@ func (v *JailerVMM) BootColdBootVerified(ctx context.Context, lease Lease, spec 
 	return v.BootColdBoot(ctx, lease, spec)
 }
 
-func (v *JailerVMM) prepareVerifiedColdBoot(ctx context.Context, lease Lease, spec ColdBootSpec, sources []runtimeadmission.ArtifactSource) (result ColdBootSpec, err error) {
+func checkColdBootArtifactSources(spec ColdBootSpec, sources []runtimeadmission.ArtifactSource) error {
 	mainKey := spec.LayerKey
 	sidecars := map[string]string{}
 	if len(spec.Workloads) != 0 {
 		mainKey = spec.Workloads[0].StorageKey
 		for _, workload := range spec.Workloads[1:] {
 			if _, duplicate := sidecars[workload.Name]; duplicate {
-				return spec, runtimeadmission.ErrInvalid
+				return runtimeadmission.ErrInvalid
 			}
 			sidecars[workload.Name] = workload.StorageKey
 		}
 	}
 	if spec.Validate() != nil || runtimeadmission.CheckArtifactSources(sources, spec.BaseKey, mainKey, sidecars) != nil {
-		return spec, runtimeadmission.ErrInvalid
+		return runtimeadmission.ErrInvalid
+	}
+	return nil
+}
+
+func (v *JailerVMM) prepareVerifiedColdBoot(ctx context.Context, lease Lease, spec ColdBootSpec, sources []runtimeadmission.ArtifactSource) (result ColdBootSpec, err error) {
+	if err := checkColdBootArtifactSources(spec, sources); err != nil {
+		return spec, err
 	}
 	if err := v.registerRuntimeDriveHandoff(lease, spec, sources); err != nil {
 		return spec, err

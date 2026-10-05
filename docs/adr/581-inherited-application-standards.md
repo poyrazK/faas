@@ -2367,3 +2367,43 @@ paused restore is supported, capture must use the actual serving promotion recei
 and preserve its parent linkage before that lifecycle can qualify. Neither guard
 is removed by this cache-publication repair. Named production scope, remaining
 onboarding adapters, native/fleet recovery and operational release gates stay open.
+### Verified snapshot input preparation
+
+Measured restore now has a native preparation component, without enabling the
+restore capability. `SnapshotCapture.CheckRestoreInputs` requires a fresh
+protocol-2 binding with a new token and instance, exact account/application/
+deployment, desired standard revision/effective hash, egress revision and
+approved source set. It also requires the selected capture keys and requested
+memory size. A historical parent's expired grant remains historical evidence;
+only the fresh binding is validated against the current clock. A target node's
+wrapped input hash may differ from the source node's hash. The durable admission
+transaction must separately compare the catalog's stable captured inputs with
+current application intent before issuing that binding.
+
+`JailerVMM.PrepareSnapshotRestoreInputs` validates the capture and exact drive
+layout/membership before touching storage. It seals full memory, VM-state and
+captured private-drive streams, alongside the currently approved producer
+streams, in the existing native source cache. Re-reading the sealed files checks
+their measured identities. The original main producer remains a separately
+measured fact; the captured writable drive never replaces its approval. The
+drive handoff pins the captured main bytes before injection and retains the
+approved producer identity when measuring the final injected bytes. Shared
+immutable base/snapshot inputs remain shared; each staged main drive remains a
+separate writable inode. Teardown cancels and joins a blocked preparation before
+releasing its protected files. Expiry during download discards the result.
+
+Portable tests exercise complete-stream corruption, truncation/overflow,
+read/close failure at each selected input, stale policy/scope/source/layout,
+owner reuse, cancellation, expiry, sidecar membership, independent writable
+copies and producer/capture/injected distinctions. Their historical boot parent
+is explicitly simulated. Files and stream verification are real portable I/O;
+they do not certify native process consumption or restored RAM.
+
+The hashed wire carrier, atomic current-catalog restore grant issuance, native
+snapshot loading from these protected inputs, snapshot-consumption receipts,
+paused restoration, and capture after serving promotion remain implementation
+work. Existing measured restore/promotion refusals and verified cold fallback
+remain active. Kernel/base backing verification, Firecracker compatibility,
+post-restore entropy/clock hooks, unique native leases, dedicated Linux amd64
+root/KVM test-metal/leakcheck, fleet recovery and release acceptance remain
+required. Public standard activation remains disabled.

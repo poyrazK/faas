@@ -42,13 +42,16 @@ type pinnedRuntimeDrive struct {
 }
 
 type runtimeDriveHandoff struct {
-	mu          sync.Mutex
-	lease       Lease
-	sources     map[string]runtimeadmission.ArtifactSource
-	drives      []pinnedRuntimeDrive
-	observation RuntimeDriveHandoffObservation
-	closed      bool
-	snapshot    *nativeSnapshotFlight
+	mu                 sync.Mutex
+	lease              Lease
+	sources            map[string]runtimeadmission.ArtifactSource
+	drives             []pinnedRuntimeDrive
+	observation        RuntimeDriveHandoffObservation
+	closed             bool
+	snapshot           *nativeSnapshotFlight
+	restoreCapture     *runtimeadmission.SnapshotCapture
+	restoreProducers   map[string]rootfs.ArtifactIdentity
+	restorePreparation *snapshotSourceFlight
 }
 
 func (v *JailerVMM) registerRuntimeDriveHandoff(lease Lease, spec ColdBootSpec, sources []runtimeadmission.ArtifactSource) error {
@@ -116,7 +119,7 @@ func (v *JailerVMM) pinApprovedRuntimeDrives(ctx context.Context, lease Lease, r
 		if !found || seen[drive.DriveID] || !source.Valid() || drive.IsReadOnly != (source.Role() != "main") || drive.IsRootDevice != (source.Role() == "base") {
 			return runtimeadmission.ErrInvalid
 		}
-		pinned, err := pinRuntimeDrive(ctx, sandbox, drive, source)
+		pinned, err := pinSnapshotRestoreDrive(ctx, sandbox, drive, source, handoff)
 		if err != nil {
 			return err
 		}
@@ -243,12 +246,19 @@ func (v *JailerVMM) releaseRuntimeDriveHandoff(instance string) error {
 	handoff.mu.Lock()
 	handoff.closed = true
 	flight := handoff.snapshot
+	preparation := handoff.restorePreparation
 	if flight != nil {
 		flight.cancel()
+	}
+	if preparation != nil {
+		preparation.cancel()
 	}
 	handoff.mu.Unlock()
 	if flight != nil {
 		<-flight.done
+	}
+	if preparation != nil {
+		<-preparation.done
 	}
 	handoff.mu.Lock()
 	defer handoff.mu.Unlock()
@@ -258,5 +268,6 @@ func (v *JailerVMM) releaseRuntimeDriveHandoff(instance string) error {
 	}
 	handoff.drives = nil
 	handoff.observation = RuntimeDriveHandoffObservation{}
+	handoff.restoreCapture, handoff.restoreProducers = nil, nil
 	return err
 }
