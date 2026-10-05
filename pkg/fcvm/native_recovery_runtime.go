@@ -24,6 +24,7 @@ type nativeProcessRecoveryRuntime struct {
 	helperGroups nativeHostHelperGroups
 	loopMounts   nativeLoopMountBackend
 	imageSources nativeImageSourceBackend
+	publications nativeSnapshotPublicationJournal
 	tunBinds     nativeTunBindBackend
 	// Startup/test wiring only; ordinary release selection uses the staged
 	// helper belonging to this vmmd executable.
@@ -31,6 +32,7 @@ type nativeProcessRecoveryRuntime struct {
 	mu         sync.Mutex
 	owned      map[string]string // launch generation registered by this daemon
 	daemonLock *os.File          // held for this daemon's lifetime, never by a boot RPC
+	diskLock   *os.File          // persistent staging root has one process-lifetime owner
 	lockWait   time.Duration
 }
 
@@ -40,6 +42,9 @@ type nativeProcessRecoveryRuntime struct {
 func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 	loops := newNativeLoopMountBackend()
 	images := newNativeImageSourceBackend(v.chrootBase)
+	if disk, ok := images.(nativeDiskImageBackend); ok {
+		images = disk.withDiskStagingRoot(v.nativeImageStagingRoot)
+	}
 	tun := newNativeTunBindBackend(v.chrootBase)
 	v.nativeRecovery = &nativeProcessRecoveryRuntime{
 		journal:      &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images, tunBinds: tun, jailDevices: newNativeJailDeviceBackend(v.chrootBase)},
@@ -50,6 +55,7 @@ func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 		helperGroups: newNativeHostHelperGroups(),
 		loopMounts:   loops,
 		imageSources: images,
+		publications: newNativeSnapshotPublicationJournal(v.nativeSnapshotPublicationRoot, v.chrootBase, v.nativeImageStagingRoot),
 		tunBinds:     tun,
 		support: func() error {
 			handle, err := openNativeProcess(os.Getpid())
@@ -245,7 +251,7 @@ func (r *nativeProcessRecoveryRuntime) acquireDaemonOwnership(ctx context.Contex
 		return err
 	}
 	if r.daemonLock != nil {
-		return nil
+		return r.checkDaemonOwnershipLocked()
 	}
 	budget := r.lockWait
 	if budget <= 0 {
@@ -263,7 +269,50 @@ func (r *nativeProcessRecoveryRuntime) acquireDaemonOwnership(ctx context.Contex
 	if err != nil {
 		return fmt.Errorf("native recovery: daemon ownership: %w", err)
 	}
+	if disk, ok := r.imageSources.(nativeDiskImageBackend); ok {
+		r.diskLock, err = disk.LockDiskStaging(ctx)
+		if err != nil {
+			return errors.Join(err, lock.Close())
+		}
+	}
+	if r.publications != nil {
+		if err := r.publications.Acquire(ctx); err != nil {
+			var diskClose error
+			if r.diskLock != nil {
+				diskClose = r.diskLock.Close()
+				r.diskLock = nil
+			}
+			return errors.Join(err, diskClose, lock.Close())
+		}
+	}
 	r.daemonLock = lock
+	return nil
+}
+
+func (r *nativeProcessRecoveryRuntime) checkDaemonOwnership() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.checkDaemonOwnershipLocked()
+}
+
+func (r *nativeProcessRecoveryRuntime) checkDaemonOwnershipLocked() error {
+	if r.daemonLock == nil {
+		return errors.New("native recovery: original daemon ownership is unavailable")
+	}
+	if _, err := r.daemonLock.Stat(); err != nil {
+		return err
+	}
+	if disk, ok := r.imageSources.(nativeDiskImageBackend); ok && disk.DiskStagingRequired() {
+		if r.diskLock == nil {
+			return errors.New("native recovery: original disk staging ownership is unavailable")
+		}
+		if _, err := r.diskLock.Stat(); err != nil {
+			return err
+		}
+	}
+	if r.publications != nil {
+		return r.publications.Check()
+	}
 	return nil
 }
 

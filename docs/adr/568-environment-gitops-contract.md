@@ -2454,3 +2454,184 @@ metal lint result. Lint filtered to this checkpoint's changed lines with the
 `metal` tag reported zero issues. The task's isolated PostgreSQL cluster was
 stopped after validation. Production capture/restore and the tmpfs/disk ownership
 adapter still require separate implementation and evidence.
+
+### Persistent disk staging ownership checkpoint (2026-10-05)
+
+An explicit startup-only `WithNativeImageStagingRoot` adapter addresses the
+production tmpfs-jail/disk-image boundary without moving image bytes to tmpfs or
+placing disk names under volatile-only ownership. Configure a pre-existing,
+private, owned `0700` directory outside the jail before enabling the native
+recovery adapter. Its filesystem must be the original ext4/XFS/Btrfs image
+filesystem. A separate close-on-exec process-lifetime directory lock prevents
+another daemon or jail root from concurrently borrowing that ownership.
+
+After the original physical and image intent is durable, but before `linkat`,
+the adapter persists a versioned exclusive claim containing the disk directory
+identity, jail placement and complete original pre-anchor image intent. The
+claim binds the kernel boot, native generation, physical lease, source inode,
+mount namespace, reference and allowed metadata transition. It is an immutable
+cleanup record, not a recovered VM/capture capability. A connected descriptor
+for the same inode supplies the original tmpfs anchor and jail binds. Producer
+close removes the original link and then the claim, syncing each removal.
+
+Startup validates the entire disk claim directory before any cleanup. Same-boot
+claims must match their original host-lifetime image journal. Loss of that journal
+requires quarantine rather than guessed retirement. Claims from a different
+kernel boot may remove only their original temporary disk name: the prior
+process and its bind mounts cannot survive kernel reboot, and no launch generation
+is registered or permission changed from that claim. Crash before link or after
+unlink is an idempotent cleanup case. Invalid, missing, duplicate or trailing
+fields, oversized or aliased claim files, another jail/directory, substituted
+source inodes, symlinks, extra source aliases, unexpected metadata and unowned
+entries prevent cleanup. Original-owner retirement still requires revocation,
+confirmed process exit and original image-reference retirement on the same boot.
+
+The disk adapter remains explicit startup/test wiring. Production vmmd
+configuration, qualification polling and capture/publication gates are unchanged.
+The native capture producer, real qualification restore/smoke, binding delivery
+and graph activation/serving evidence remain separate implementation work.
+
+The final disk checkpoint passed all ten `TestMetalNative*` ownership fixtures
+(18.624 s) under the acceptance lock on the authorized nested KVM node, followed
+by a clean `make leakcheck`. Focused native/qualification race checks and normal
+Linux fcvm lint passed. Metal-tag lint filtered to the changed lines reported
+zero issues; the earlier full-package metal baseline remains outstanding. These
+fixtures validate kernel ownership and crash cleanup, not VM capture/restore.
+
+### Pinned native snapshot control checkpoint (2026-10-05)
+
+The Linux control primitive retains a pidfd for the original physical process
+through a single Unix API request. It checks original start time and the socket's
+kernel peer PID/UID/GID before sending any bytes, and checks process liveness
+again after the response. No cached HTTP transport, redirect, pooled connection
+or automatic replay can substitute another peer or repeat an uncertain snapshot
+effect. Context cancellation closes the connection and the original deadline
+bounds I/O. The physical lock, original incoming capture start, local generation
+and both daemon ownership locks fence the request. Creation also checks the
+original private writable drive and both original output bindings; names derive
+only from the original capture UUID and cannot contain host paths.
+
+Real Unix socket/pidfd tests cover one-shot effects, lost responses, redirects,
+changed peer/process credentials and cancellation. Journal fixtures cover missing,
+incomplete, retired, read-only and foreign-capture output bindings. These tests
+grant no Firecracker capture acceptance. The primitive is not wired into the
+native snapshot entry point and supplies no pause/freeze/resume sequence,
+publication receipt or completion authority. The native qualification support
+gate remains closed.
+
+### Exclusive storage publication checkpoint (2026-10-05)
+
+Native publication must request an explicit exclusive writer rather than borrow
+ordinary `StorageBackend.Put`, whose local/cache/compression adapters create named
+scratch files. The optional capability consumes the original reader synchronously,
+never reopens its filename, checks its exact logical size and refuses replacement.
+The caller still owns durable destination intent, source locks and original cleanup
+authority. Capability preflight is neither a reservation nor an existence receipt.
+
+GCS implements this writer with `DoesNotExist` object conditions. Zstandard encoding
+streams through one joined pipe producer, keeping the existing memory/drive
+compression and logical-size metadata without disk spooling. A failed, cancelled
+or prematurely returning consumer closes the pipe and joins the producer before
+source ownership is released. A source error at its last bytes, wrapped EOF, short
+input or extra data prevents successful publication. Prefix routing retains the
+selected backend; migration fallback writes only to its canonical primary; the
+cache wrapper deliberately skips named spools and generation files. Unsupported
+delegates refuse before effects, with no ordinary-write fallback.
+
+The Linux local writer requires a pre-existing owned backend root without shared
+write permission on ext4/XFS/Btrfs. It resolves directories through `openat2`
+without symlinks or descendant mount crossings, creates only canonical object
+directories, and copies into `O_TMPFILE`. Sparse copying applies even when a
+router strips the logical artifact prefix. After complete exact-size copying,
+permission finalization and fsync, it rechecks the original destination directory
+identity and publishes with exclusive `linkat`, then syncs that directory. It
+creates no named scratch file. Failure before the link closes the anonymous
+output; failure after the link preserves the uncertain original destination.
+
+An internal native output adapter derives all four publication keys from the
+original incoming capture and preflights the complete storage cohort before
+opening any output reader. Memory/device-state writes retain the original
+physical and output epoch locks, consume the read-only descriptor synchronously,
+then recheck incoming capture and local daemon authority before supplying success.
+The adapter grants no phase or complete-capture receipt. The frozen drive, backing
+sidecar, pause/create/freeze/resume sequence and artifact cleanup still need the
+complete native producer; the public native snapshot support gate is unchanged.
+That producer also needs publication intent that survives loss of the jail's
+host-lifetime journal. The image staging claim owns temporary disk links; it
+does not own local or remote capture objects across reboot. The internal reader
+adapter is not a substitute for that persistent publication ownership contract.
+
+An uncertain commit may leave the original immutable object present. Subsequent
+publication cannot overwrite it, and a failure supplies no deletion authority.
+The production capture adapter is still unavailable. This capability alone does
+not complete native pause/freeze/resume, artifact cleanup, capture/restore, isolated
+smoke, binding delivery or graph activation and serving evidence.
+
+### Persistent publication intent checkpoint (2026-10-05)
+
+Before any capture object write, the original producer must persist an immutable
+intent in a separate pre-existing private disk directory outside the jail and
+image staging root. It contains the original incoming execution, capture start,
+physical PID/start-time and lease, jail placement, directory and intent inode
+identities, and all four derived logical object keys. A process-lifetime directory lock, exclusive
+anonymous-file publication and directory fsync fence the write. An existing or
+uncertain intent cannot be replaced or adopted as a new producer.
+
+Only the original successful begin call creates an in-memory publication
+capability. It pins the original storage backend for the whole object cohort;
+changing the VMM's configured backend cannot redirect a later object. Each write
+checks that the original durable intent remains intact before opening its source
+and after storage IO, in addition to the existing physical/incoming/source fences.
+Startup inventories every intent without deleting, completing or replaying it.
+Intent survives journal loss and reboot but grants no recovered VM, capture,
+restore or deletion authority. Corrupt, aliased, substituted or unowned entries
+require quarantine. Backend-specific committed object identity and cleanup
+receipts remain required before any automatic artifact retirement is implemented.
+
+The persistent adapter is startup/test opt-in only, configured through
+`WithNativeSnapshotPublicationRoot` before `WithNativeProcessRecovery`.
+The full native producer must begin this intent before its first pause/create
+effect. Capture/publication
+integration, restore/smoke and graph activation gates remain closed.
+
+### Delayed native loop retirement checkpoint (2026-10-05)
+
+The final ownership regression run exposed an intermittent failure after a
+successful loop detach ioctl: the original loop token was still present at the
+immediate retirement check. The [Linux implementation](https://github.com/torvalds/linux/blob/v6.8/drivers/block/loop.c#L1161-L1179)
+can defer teardown through AUTOCLEAR while another descriptor remains open.
+Native retirement now closes its own descriptor, then makes bounded read-only
+observations of the original token before acknowledging retirement. It never
+replays detach, unmounts another resource or treats a timeout as removal proof.
+Every observation closes before waiting, allowing the last opener to release.
+The original journal and VM reservation remain retained on failed confirmation.
+
+A privileged regression fixture holds an additional original loop descriptor
+through unmount and releases it later, making the previous race deterministic.
+The same fixture still verifies mismatched source rejection and original-owner
+crash recovery. Capture/restore and publication support gates remain unchanged.
+
+The ownership regression gate passed all ten `TestMetalNative*` fixtures
+(28.810 s), including the delayed descriptor release, on the user-authorized
+nested KVM node. `make leakcheck` was clean. Native/qualification and ordinary
+snapshot race regressions passed (31.982 s). The exclusive local storage test
+also published and verified 512 MiB of dense data under `MemoryMax=256M` and
+`MemorySwapMax=0` (9.35 s); this validates bounded disk writes, not VM capture.
+
+### Final publication intent validation (2026-10-05)
+
+The final code passed native/qualification and ordinary snapshot race regressions
+(21.223 s) on the authorized nested KVM node. Normal fcvm/storage lint and metal
+lint filtered to this checkpoint's changed lines each reported zero issues;
+the previously recorded full-package metal baseline is not represented as clean.
+Portable exclusive publication tests also passed on macOS (15.777 s).
+
+Under the shared acceptance lock, `make test-metal` passed all ten native ownership
+fixtures and all seven publication intent fixtures (19.141 s), including every
+corruption/alias/unsafe-root case, process exit, volatile-journal loss, startup
+lock rollback and intent loss during storage IO. `make leakcheck` was clean.
+SHA-256 checks confirmed that all 33 changed Go files on the node matched the
+local checkpoint. These are ownership/publication primitive results, not complete
+Firecracker capture/restore or graph activation evidence. The production support
+gates remain closed and the combined PR is deferred until the requested scope is
+ready.

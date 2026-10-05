@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type linuxNativeImageSources struct{ base string }
+type linuxNativeImageSources struct{ base, diskStagingRoot string }
 
 func newNativeImageSourceBackend(base string) nativeImageSourceBackend {
 	return linuxNativeImageSources{base: base}
@@ -27,6 +27,8 @@ type linuxNativeImagePreparation struct {
 	link      bool
 	owner     nativeLaunchRecord
 	staging   string // original epoch owns this temporary link before creation
+	diskRoot  string
+	diskClaim *nativeDiskImageClaim
 }
 
 func (p *linuxNativeImagePreparation) Identity() nativeLoopIdentity { return p.identity }
@@ -41,7 +43,9 @@ func (p *linuxNativeImagePreparation) Namespace() nativeLoopIdentity { return p.
 func (p *linuxNativeImagePreparation) PreferLink() bool              { return p.link }
 func (p *linuxNativeImagePreparation) Close() error {
 	var err error
-	if p.staging != "" {
+	if p.diskClaim != nil {
+		err = retireNativeDiskImageClaim(p.diskRoot, *p.diskClaim)
+	} else if p.staging != "" {
 		err = removeNativeImageStagingSource(p.staging, p.identity)
 	}
 	return errors.Join(err, p.source.Close(), p.root.Close())
@@ -402,11 +406,15 @@ func removeNativeImagePlaceholder(point string, identity nativeLoopIdentity) err
 	return syncNativeImageParent(point)
 }
 
-func (linuxNativeImageSources) RetireAnchor(record nativeImageSourceRecord, point string) error {
+func (b linuxNativeImageSources) RetireAnchor(record nativeImageSourceRecord, point string) error {
 	if err := checkNativeImageNamespace(record); err != nil {
 		return err
 	}
 	if err := inspectNativeImageStagingSource(record, point); err != nil {
+		return err
+	}
+	claim, err := b.diskStagingClaim(record, point)
+	if err != nil {
 		return err
 	}
 	id, err := nativeImageMountID(point)
@@ -435,10 +443,28 @@ func (linuxNativeImageSources) RetireAnchor(record nativeImageSourceRecord, poin
 	if err := removeNativeImagePlaceholder(point, record.Placeholder); err != nil {
 		return err
 	}
-	return removeNativeImageStagingSource(point+nativeImageStagingSuffix, record.Identity)
+	if err := removeNativeImageStagingSource(point+nativeImageStagingSuffix, record.Identity); err != nil {
+		return err
+	}
+	if claim != nil {
+		return retireNativeDiskImageClaim(b.diskStagingRoot, *claim)
+	}
+	return nil
 }
 
-func (linuxNativeImageSources) CheckAnchor(record nativeImageSourceRecord, point string) (err error) {
+func (b linuxNativeImageSources) CheckAnchor(record nativeImageSourceRecord, point string) (err error) {
+	claim, err := b.diskStagingClaim(record, point)
+	if err != nil {
+		return err
+	}
+	if claim != nil {
+		if _, err := os.Lstat(nativeDiskImageSourcePath(b.diskStagingRoot, record.Epoch)); !errors.Is(err, os.ErrNotExist) {
+			return errors.Join(err, errors.New("native image source: disk staging producer has not retired its temporary link"))
+		}
+		if record.Removed {
+			return errors.New("native image source: retired anchor retains a disk claim")
+		}
+	}
 	if _, err := os.Lstat(point + nativeImageStagingSuffix); !errors.Is(err, os.ErrNotExist) {
 		return errors.Join(err, errors.New("native image source: staging producer has not retired its temporary link"))
 	}
@@ -594,6 +620,9 @@ func (linuxNativeImageSources) CheckReference(record nativeImageSourceRecord, re
 }
 
 func (b linuxNativeImageSources) Inventory(root string, records []nativeImageSourceRecord) error {
+	if err := b.inventoryDiskStaging(records); err != nil {
+		return err
+	}
 	known := make(map[string]bool)
 	for _, record := range records {
 		point := filepath.Join(root, "points", record.Epoch)

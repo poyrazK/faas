@@ -51,10 +51,12 @@ import (
 // kernel/base rootfs in (cheap) and link the per-app layer / snapshot files, then
 // reference them by their in-chroot basenames.
 type JailerVMM struct {
-	nativeRecovery *nativeProcessRecoveryRuntime // opt-in, configured before admission
-	chrootBase     string                        // /srv/fc/jail
-	fcName         string                        // chroot dir name jailer derives from the exec-file basename
-	readyTimeout   time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
+	nativeRecovery                *nativeProcessRecoveryRuntime // opt-in, configured before admission
+	nativeImageStagingRoot        string                        // opt-in persistent disk claims; configure before native recovery
+	nativeSnapshotPublicationRoot string                        // opt-in immutable capture intent; configure before native recovery
+	chrootBase                    string                        // /srv/fc/jail
+	fcName                        string                        // chroot dir name jailer derives from the exec-file basename
+	readyTimeout                  time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
 	// tcpReadinessDial substitutes a deterministic probe in pure-Go tests.
 	// nil uses net.DialTimeout; configure only before the VMM is used.
 	tcpReadinessDial func(string, string, time.Duration) (net.Conn, error)

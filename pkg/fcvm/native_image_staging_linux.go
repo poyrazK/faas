@@ -23,6 +23,13 @@ func (b linuxNativeImageSources) requireAnonymousStagingFilesystem(directory str
 	if disk.Mode&unix.S_IFMT != unix.S_IFDIR {
 		return errors.New("native image source: original disk directory is unavailable")
 	}
+	if b.diskStagingRoot != "" {
+		identity, err := nativeDiskImageRootIdentity(b.diskStagingRoot)
+		if err != nil || identity.Device != uint64(disk.Dev) {
+			return errors.Join(err, errors.New("native image source: persistent staging root must share the original disk filesystem"))
+		}
+		return nil
+	}
 	path := filepath.Join(b.base, ".native-processes", "image-sources", "points")
 	for {
 		err := unix.Lstat(path, &journal)
@@ -54,6 +61,19 @@ func (p *linuxNativeImagePreparation) linkAnonymousSource(point string) (err err
 		return err
 	}
 	path := point + nativeImageStagingSuffix
+	if p.diskRoot != "" {
+		if p.diskClaim == nil || p.diskClaim.Anchor != point {
+			return errors.New("native image source: anonymous disk link has no persistent original claim")
+		}
+		if err := validateNativeDiskImageClaimRoot(p.diskRoot, *p.diskClaim); err != nil {
+			return err
+		}
+		claim, err := readNativeDiskImageClaim(p.diskRoot, p.diskClaim.Source.Epoch)
+		if err != nil || !sameNativeDiskImageSource(claim, p.diskClaim.Source) {
+			return errors.Join(err, errors.New("native image source: persistent claim changed before disk link"))
+		}
+		path = nativeDiskImageSourcePath(p.diskRoot, p.diskClaim.Source.Epoch)
+	}
 	if err := unix.Linkat(unix.AT_FDCWD, nativeImageFDPath(p.source), unix.AT_FDCWD, path, unix.AT_SYMLINK_FOLLOW); err != nil {
 		return err
 	}

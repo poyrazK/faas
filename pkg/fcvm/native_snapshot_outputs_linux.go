@@ -51,7 +51,7 @@ func (b linuxNativeImageSources) PrepareSnapshotOutput(ctx context.Context, owne
 	if statErr != nil {
 		return nil, errors.Join(statErr, output.Close())
 	}
-	return &linuxNativeImagePreparation{source: output, root: rootFile, identity: identity, namespace: namespace, owner: owner}, nil
+	return &linuxNativeImagePreparation{source: output, root: rootFile, identity: identity, namespace: namespace, owner: owner, diskRoot: b.diskStagingRoot}, nil
 }
 
 func createNativeSnapshotOutput(ctx context.Context, directory string) (output *os.File, err error) {

@@ -28,7 +28,7 @@ func (v *JailerVMM) withNativeSnapshotOutput(ctx context.Context, lease Lease, k
 	if generation == "" || generation != permit.Incoming.NativeGeneration || daemonLock == nil {
 		return errors.New("native snapshot output input: original daemon producer is required")
 	}
-	if _, err := daemonLock.Stat(); err != nil {
+	if err := r.checkDaemonOwnership(); err != nil {
 		return err
 	}
 	j := nativeImageSourceJournal{owner: r.journal, backend: r.imageSources}

@@ -28,7 +28,7 @@ func (v *JailerVMM) withNativeSnapshotDriveInput(ctx context.Context, lease Leas
 	if generation == "" || daemonLock == nil {
 		return errors.New("native snapshot input: original local producer authority is required")
 	}
-	if _, err := daemonLock.Stat(); err != nil {
+	if err := r.checkDaemonOwnership(); err != nil {
 		return err
 	}
 	owner, err := r.journal.read(lease.Instance)

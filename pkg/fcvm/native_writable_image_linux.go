@@ -33,6 +33,7 @@ func (b linuxNativeImageSources) PrepareWritable(ctx context.Context, owner nati
 		return nil, err
 	}
 	p := input.(*linuxNativeImagePreparation)
+	p.diskRoot = b.diskStagingRoot
 	defer func() {
 		if prepared == nil {
 			err = errors.Join(err, p.Close())

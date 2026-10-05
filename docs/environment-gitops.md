@@ -11,7 +11,7 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery | Production report-mode acceptance for the complete API/worker/queue graph |
 | Workload preparation | Held image, pinned source and function candidates; atomic private workload reservations; private HTTP graph execution primitive | Qualified binding delivery and inherited non-image provenance |
 | Qualification evidence | Immutable attempt-bound capture receipts and a graph evidence assessment that reports missing proof | Isolated smoke, restored readiness and native capture publication |
-| Native execution | Fenced journals, private snapshot input/output readers and owned staging on a common disk filesystem | Production tmpfs/disk ownership adapter, native publication integration and capture/restore acceptance |
+| Native execution | Fenced journals, private snapshot input/output readers, persistent disk staging and publication intent, pinned one-shot API control and exclusive writers | Production adapter wiring, full native capture publication and capture/restore acceptance |
 | Enforcement | Transactional ownership, override and execution fences | Production reconciliation worker, graph activation and serving convergence |
 
 Approved Git content, observed intent, qualification and serving state are separate facts. A reviewed or adopted definition does not mean that a deployment is ready or that the environment is serving that revision. Unqualified owned source/runtime fields prevent the applied revision from advancing.
@@ -143,11 +143,51 @@ Production qualification polling, graph activation and continuous enforcement ar
 
 The native primitives have portable tests and Linux compile checks, but those do not establish Firecracker capture/restore acceptance. The user authorized the internal nested KVM node for this hardening work; its privileged test results are recorded separately from bare-metal evidence. Keep these gates closed until native publication, complete graph qualification, recovery and serving evidence pass.
 
-Private writable drives and capture outputs currently require their data and
-native journal on the same filesystem. Production's tmpfs jail journal and disk
-images require a separate durable disk ownership adapter. The current adapter
-rejects that layout before producing files or jail markers. Passing disk staging
+Private writable drives and capture outputs default to requiring their data and
+native journal on the same filesystem. An explicit startup-only disk adapter,
+`WithNativeImageStagingRoot` configured before `WithNativeProcessRecovery`, can
+instead own their temporary names in a pre-existing private `0700` disk directory
+on the original ext4/XFS/Btrfs filesystem, outside the jail. It persists an
+exclusive original inode/epoch claim before creating a link and holds a separate
+daemon ownership lock. Ordinary preparation removes the link and claim before
+returning; producer death retains them for original-owner retirement.
+
+Same-boot recovery requires the original image journal. A missing journal,
+substitution, symlink, additional alias, changed directory or unknown entry
+blocks cleanup. After a different kernel boot, the disk claim permits only
+removal of its original temporary name; it supplies no VM, capture or permission
+authority. Recovery validates the complete disk directory before changing it.
+Without that opt-in, the tmpfs/disk mismatch is still refused before preparation.
+This adapter is not wired into production vmmd configuration. Passing ownership
 and output-read fixtures does not enable production native capture.
+
+The Linux snapshot control primitive pins the original process with a pidfd,
+checks the API socket's kernel PID/UID/GID credentials before sending bytes,
+and sends each pause, create or resume request once. Snapshot creation requires
+the original private drive and both original writable output bindings. A lost
+response supplies no success or retry authority. This primitive does not yet
+implement the complete pause/freeze/resume/publication producer.
+
+Optional exclusive storage writers stream GCS capture data and compression
+without named scratch files, or copy into an anonymous local disk inode and
+publish only the completed file. Both refuse replacement. Routing retains the
+selected canonical backend; the cache wrapper skips its named spool path.
+Unsupported delegates refuse the capability without falling back to ordinary
+writes. An internal adapter connects original memory/device-state readers to
+these writers and retains their ownership locks through publication. The native
+capture entry point still lacks the complete producer and remains gated; existing
+storage writes keep their current behavior. Publication errors may follow an
+uncertain commit, so they supply no overwrite or deletion authority.
+
+`WithNativeSnapshotPublicationRoot`, configured before native recovery, adds a
+separate pre-existing private disk directory for immutable capture intent. The
+original successful begin pins the storage backend and persists the complete
+attempt, physical process, lease and four logical object keys before output
+writes. Writes require that original capability and unchanged intent inode.
+Startup validates old intents without replaying or deleting them. Losing the
+jail journal or rebooting cannot create publication or cleanup authority from
+an intent. Backend-specific object receipts and artifact retirement remain
+outstanding, along with the full capture producer and restore/smoke evidence.
 
 ## Ownership and source maintenance
 
