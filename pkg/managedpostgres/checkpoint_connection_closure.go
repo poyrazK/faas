@@ -14,20 +14,24 @@ import (
 type CheckpointConnectionRequest = checkpoint.CheckpointConnectionRequest
 
 type CheckpointConnectionDatabase struct {
-	OID, OwnerOID            uint32
-	Name                     string
-	OriginalAllowConnections bool
-	Sessions                 int64
+	OID, OwnerOID                  uint32
+	Name                           string
+	OriginalAllowConnections       bool
+	Sessions, PreparedTransactions int64
 }
 
-// This is an authenticated observation of admission and current sessions only.
+// This is an authenticated observation of admission, sessions, unresolved
+// prepared transactions and current catalogue omissions. A selected subset can
+// be drained while UnselectedDatabases remains nonzero. A zero count does not
+// establish future catalogue stability or exclude background writers.
 // ClosedAt is the admission ledger timestamp, not a common data capture point.
 type CheckpointConnectionClosure struct {
 	CheckpointConnectionIdentity
-	State     string
-	ClosedAt  time.Time
-	Databases []CheckpointConnectionDatabase
-	Drained   bool
+	State               string
+	ClosedAt            time.Time
+	Databases           []CheckpointConnectionDatabase
+	Drained             bool
+	UnselectedDatabases int64
 }
 
 func (CheckpointConnectionClosure) String() string {
@@ -41,7 +45,7 @@ func (CheckpointConnectionClosure) MarshalJSON() ([]byte, error) {
 func (o CheckpointConnectionClosure) Validate(r CheckpointConnectionRequest) error {
 	if r.Validate() != nil || o.CheckpointConnectionIdentity != r.CheckpointConnectionIdentity || o.State != "closed" ||
 		o.ClosedAt.IsZero() || o.ClosedAt.Year() < 1 || o.ClosedAt.Year() > 9999 || o.ClosedAt.Nanosecond()%1000 != 0 ||
-		o.ClosedAt.After(time.Now()) || len(o.Databases) != len(r.DatabaseNames) {
+		o.ClosedAt.After(time.Now()) || len(o.Databases) != len(r.DatabaseNames) || o.UnselectedDatabases < 0 {
 		return ErrConflict
 	}
 	names := slices.Clone(r.DatabaseNames)
@@ -49,11 +53,11 @@ func (o CheckpointConnectionClosure) Validate(r CheckpointConnectionRequest) err
 	oids := make(map[uint32]bool, len(names))
 	drained := true
 	for i, db := range o.Databases {
-		if db.Name != names[i] || db.OID == 0 || db.OwnerOID == 0 || oids[db.OID] || db.Sessions < 0 {
+		if db.Name != names[i] || db.OID == 0 || db.OwnerOID == 0 || oids[db.OID] || db.Sessions < 0 || db.PreparedTransactions < 0 {
 			return ErrConflict
 		}
 		oids[db.OID] = true
-		drained = drained && db.Sessions == 0
+		drained = drained && db.Sessions == 0 && db.PreparedTransactions == 0
 	}
 	if o.Drained != drained {
 		return ErrConflict
@@ -62,7 +66,10 @@ func (o CheckpointConnectionClosure) Validate(r CheckpointConnectionRequest) err
 }
 
 // Optional private capability. Observe is read-only and must not install a
-// ledger or redispatch close. No successful capture release is provided here.
+// ledger or redispatch close. Both observations must count all unresolved
+// prepared transactions in the selected databases and all native database OIDs
+// outside that set, excluding only the authenticated private maintenance DB.
+// No successful capture release is provided here.
 type CheckpointConnectionClosureProvider interface {
 	CloseCheckpointConnections(context.Context, RestoreSourceDefinition, CheckpointMaintenance, CheckpointConnectionRequest) (CheckpointConnectionClosure, error)
 	ObserveCheckpointConnectionClosure(context.Context, RestoreSourceDefinition, CheckpointMaintenance, CheckpointConnectionRequest) (CheckpointConnectionClosure, error)

@@ -196,7 +196,7 @@ func TestCheckpointConnectionClosureNativePipelineRecoversAndObservesDrain(t *te
 		t.Fatal(err)
 	}
 	closed, err := f.p.checkpointConnectionClosure(ctx, f.definition, f.maintenance, f.request, true, f.connectPool(t))
-	if err != nil || closed.Validate(f.request) != nil || closed.Drained || len(closed.Databases) != 2 {
+	if err != nil || closed.Validate(f.request) != nil || closed.Drained || len(closed.Databases) != 2 || closed.UnselectedDatabases < 3 {
 		t.Fatalf("admitted writer was reported drained: %+v %v", closed, err)
 	}
 	f.selectedFlags(t, false)

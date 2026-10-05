@@ -6715,3 +6715,55 @@ paid-provider and native Linux full-clone qualification remain outstanding.
 Read-only rollback retains the caller's deadline. A real SQL rollback message
 blackhole qualifies bounded failure and recovery of the pool's only connection
 slot; restoring the earlier unbounded cleanup fails that regression contract.
+
+### PostgreSQL transaction drainage and catalogue rechecks (2026-10-05)
+
+The native closure observation now counts unresolved prepared transactions in
+each selected database as well as admitted sessions. `Drained` requires both
+counts to be zero. PostgreSQL explicitly permits prepared transactions to
+survive their originating session, so disconnected clients are insufficient
+evidence ([PostgreSQL 16 PREPARE TRANSACTION](https://www.postgresql.org/docs/16/sql-prepare-transaction.html)).
+The barrier never commits or rolls back a customer's prepared transaction;
+abandonment restores original connection admission while retaining that state.
+
+Each observation also counts every native database OID outside the original
+selection, excluding only the authenticated private maintenance database.
+Templates, system databases and other owners remain visible. Native ledger,
+selected identities and catalogue observations use one read-only repeatable
+read transaction with caller-bounded cleanup and a fresh maintenance/schema
+authentication after commit. This prevents mixing catalogue snapshots; it does
+not establish stability after the observation.
+
+The service validates nonnegative transaction/catalogue counts and rejects a
+provider's false drainage assertion. Neon propagates these native counts through
+its existing placement and maintenance authentication. The private clone worker
+rejects a nonzero omitted-database count in either the close reply or independent
+observation. It retains the original encrypted selection and source hold, creates
+no target data and advances no capture resource when this check fails. Unresolved
+prepared transactions return busy evidence under the original hold.
+
+Complete source coverage remains unfinished. Extension background workers can
+even bypass `ALLOW_CONNECTIONS`
+([PostgreSQL 16 background workers](https://www.postgresql.org/docs/16/bgworker.html)).
+The common configuration/database/object point, immutable source retention and
+authenticated successful barrier release must qualify before data-bearing
+capture and public full-clone admission can open.
+
+Qualification includes actual isolated PostgreSQL 16 with
+`max_prepared_transactions=32`: a real prepared insert survives client disconnect,
+blocks drainage, remains visible after worker replacement, and survives barrier
+abandonment. Restoring the old session-only predicate through a test-only Go
+overlay fails this regression. Passing qualification uses the normal production
+sources; the counterexample does not alter the checkout. The contract explicitly
+skips on a test cluster with prepared transactions disabled, so its dedicated
+enabled-cluster run remains necessary.
+
+The focused native/service/Neon contracts passed 24 top-level tests (48 including
+subtests). The normal APID production/test package compiled, and its 9 focused
+recovery tests passed (18 including subtests), with no skipped cases. APID uses
+actual migrated PostgreSQL persistence
+and synthetic provider replies; this does not qualify a live paid-provider common
+point. Targeted managed PostgreSQL lint passed with zero issues. Local build
+storage pressure required task-owned RAM build/cache storage; the passing APID
+run used unmodified production/test source files. No new PR is opened for this
+increment; PR #4251 is closed and the branch retains the work.
