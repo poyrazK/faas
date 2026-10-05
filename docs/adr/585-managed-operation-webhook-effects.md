@@ -1,8 +1,8 @@
-# ADR-584: Managed operation results with durable webhook effects
+# ADR-585: Managed operation results with durable webhook effects
 
 - Status: Accepted for implementation; promotion requires runtime qualification
 - Date: 2026-10-03
-- Related: ADR-387 (managed exclusive operations), ADR-588 (Commit customer routing), ADR-076 (outbound webhooks)
+- Related: ADR-387 (managed exclusive operations), ADR-589 (Commit customer routing), ADR-076 (outbound webhooks)
 
 ## Context
 
@@ -22,7 +22,7 @@ versions, duplicate effect names, invalid IDs/types, and oversized responses.
 Opaque internal effects retain their existing behavior. Ordinary workflow
 steps, jobs, and deployment task output do not interpret this HTTP response
 contract; `managed_operation: true` workflow HTTP steps use the same result
-envelope as managed app requests under ADR-586.
+envelope as managed app requests under ADR-587.
 
 Advertise `X-Gregale-Operation-Result-Version: 1` to the guest only when both
 schedd and gatewayd-internal support this protocol. Schedd negotiates over the

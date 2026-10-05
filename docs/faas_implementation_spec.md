@@ -2138,7 +2138,7 @@ Standing rules: (1) no number graduates from "assumption" to "fact" without a ro
 *End of spec. Deviations require an ADR. Keep the three fragile numbers on the dashboard.*
 
 
-## Versioned Commit operation routing (ADR-588)
+## Versioned Commit operation routing (ADR-589)
 
 Commit version 2 admits a trusted producer's typed business key and optional
 owner-authorized platform-tenant selector into the existing Operations engine.
@@ -2150,7 +2150,7 @@ and version checks; external effects remain at least once. Customer-owned routin
 schema upgrades are explicit. See `docs/gregale-commit.md` for the wire contract
 and the existing operator/native qualification gates.
 
-## Managed operation webhook effects (ADR-584)
+## Managed operation webhook effects (ADR-585)
 
 Managed HTTP operation handlers may return a negotiated version 1 result envelope
 with up to 32 named webhook effects. The full handler response is bounded to
@@ -2165,7 +2165,7 @@ and current status. Negotiation requires upgraded schedd and internal gateway;
 Commit's existing internal gate and native promotion evidence remain required.
 See `docs/managed-operation-effects.md` for the handler and receiver contracts.
 
-## Transactional operation handler SDK (ADR-585)
+## Transactional operation handler SDK (ADR-586)
 
 Node, Go, and Python SDKs own a customer PostgreSQL READ COMMITTED transaction
 that commits business writes and the complete managed-operation response together.
@@ -2178,10 +2178,10 @@ writes. Callback errors roll back both; uncertain commit acknowledgements requir
 retrying the same identity. Customer and platform transactions remain separate,
 and callbacks retain responsibility for business constraints and authorization.
 The portable acceptance gate covers PostgreSQL recovery, HTTP process death, and
-all nine cross-language writer/reader pairs. ADR-584 native runtime promotion
+all nine cross-language writer/reader pairs. ADR-585 native runtime promotion
 remains required. See `docs/operation-transactions.md` for usage and retention.
 
-## Transactional managed HTTP workflow steps (ADR-586)
+## Transactional managed HTTP workflow steps (ADR-587)
 
 Executable workflow steps may opt into the managed operation result protocol
 with `managed_operation: true`. The scheduler derives a stable operation ID
@@ -2197,11 +2197,11 @@ rechecks the active app/account and receiver subscription. Workflow effects do
 not target tenant receivers. The customer's transaction remains separate, so a
 receiver rejected at result acceptance can leave business writes committed
 while the workflow step fails. See
-`docs/adr/586-transactional-workflow-http-steps.md`,
+`docs/adr/587-transactional-workflow-http-steps.md`,
 `docs/managed-operation-effects.md`, and `docs/event-driven.md` for the
 contracts and delivery inspection surface.
 
-## In-place retry of failed workflow steps (ADR-587)
+## In-place retry of failed workflow steps (ADR-588)
 
 `POST /v1/workflows/runs/{id}/steps/{step}/retry` and
 `gregale workflows retry` resume one terminal failed or dead HTTP step in the same
@@ -2211,6 +2211,6 @@ next attempt number and reopens skipped `depends_on` descendants. The
 transaction rejects cancellation, active or additional failed steps, completed
 downstream work, wait/handler targets, and exhausted per-app active-run quota.
 Managed-operation retries therefore retain the run/step receipt identity from
-ADR-586; ordinary HTTP delivery remains at least once. See
-`docs/adr/587-in-place-workflow-step-retry.md` and `docs/event-driven.md` for
+ADR-587; ordinary HTTP delivery remains at least once. See
+`docs/adr/588-in-place-workflow-step-retry.md` and `docs/event-driven.md` for
 the API and CLI contract.

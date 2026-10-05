@@ -10,7 +10,7 @@ Operations target on the GCP internal test node. The remaining
 production qualification work below still prevents customer promotion.
 
 
-## Version 2 business keys and customer routing (ADR-588)
+## Version 2 business keys and customer routing (ADR-589)
 
 Version 1 sources continue to use an account-scoped source-wide queue. Opt in
 when creating a new source to use a business key:
@@ -367,7 +367,7 @@ admissions with other managed work. Enabled sources prevent policy retirement
 and incompatible changes. Pause the source and finish outstanding work before
 retiring its policy. A retired or incompatible policy cannot be resumed.
 Worker/job destinations remain unsupported. Version 2 customer sources permit
-tenant-required request applications under ADR-588.
+tenant-required request applications under ADR-589.
 
 ## Consumer transaction recipe
 

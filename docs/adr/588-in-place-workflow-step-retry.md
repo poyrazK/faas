@@ -1,8 +1,8 @@
-# ADR-587: In-place retry of a failed workflow step
+# ADR-588: In-place retry of a failed workflow step
 
 - Status: Accepted for implementation
 - Date: 2026-10-03
-- Related: ADR-081 (durable execution workflows), ADR-586 (transactional managed HTTP workflow steps)
+- Related: ADR-081 (durable execution workflows), ADR-587 (transactional managed HTTP workflow steps)
 
 ## Context
 
@@ -21,7 +21,7 @@ existing run and keeps its run ID, definition snapshot, original workflow
 input, failed step's resolved input, and append-only attempt history. A later
 dispatch appends the next attempt number; it does not erase prior execution
 evidence. Reopening the same run and step also preserves the managed operation
-ID defined by ADR-586, allowing the customer SDK to replay a committed receipt.
+ID defined by ADR-587, allowing the customer SDK to replay a committed receipt.
 
 Only a terminal failed or dead HTTP step may be selected. The store locks the
 run before its steps, then validates and updates them in one transaction. A

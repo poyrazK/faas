@@ -1,4 +1,4 @@
--- ADR-585. Customer-owned schema; install explicitly as the database owner.
+-- ADR-586. Customer-owned schema; install explicitly as the database owner.
 -- Receipts and business writes share one transaction. No processing lease or
 -- incomplete receipt is committed. Retain receipts while operations can replay.
 CREATE TABLE IF NOT EXISTS public.gregale_operation_inbox (

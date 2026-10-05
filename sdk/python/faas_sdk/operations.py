@@ -1,4 +1,4 @@
-"""ADR-585: customer PostgreSQL transactions with replayable operation responses."""
+"""ADR-586: customer PostgreSQL transactions with replayable operation responses."""
 
 from __future__ import annotations
 
