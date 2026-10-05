@@ -594,11 +594,19 @@ jobs:
           restore-keys: |
             go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-pg-1-${{ runner.os }}-
-      - name: unit tests (pg shard 1)
+      - name: install PostgreSQL 16 recovery runtime
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-16
+      - name: unit tests (pg shard 1)
+        # Ledger recovery requires the local Unix-socket/UTC authority boundary.
+        # All tests and coverage still run; the private cluster supplies it.
+        run: |
+          scripts/ci/with-pg16-unix.sh bash -euo pipefail <<'PG_TESTS'
           mkdir -p coverage
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '(cmd/apid|pkg/meter|pkg/db|pkg/alerts|pkg/e2etest)')
           go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          PG_TESTS
 
       - name: sdk-check
         run: make sdk-check
