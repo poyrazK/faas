@@ -15,12 +15,17 @@ Hobby+ metrics entitlement.
 | Status | Meaning |
 | --- | --- |
 | `healthy` | Available, current evidence shows no health issues. |
-| `degraded` | A warning needs attention, such as a partial replica deficit, recent 5xx or a failed latest release while an older release serves. |
+| `degraded` | A warning needs attention, such as a partial replica deficit, an elevated 5xx rate or a failed latest release while an older release serves. |
 | `unhealthy` | Known evidence shows a serving failure, such as no ready required replicas or all observed serving replicas unready. |
 | `unknown` | Missing, stale, unavailable or truncated evidence prevents confirmation. |
 
-Each response includes `checks` with a stable `code`, status, explanation and
-an optional inspection action. Lifecycle phases such as `idle`, `deploying`
+Each response includes `checks` with a stable `code`, status, explanation,
+optional diagnostic `reason` and an inspection action. Readiness checks include
+independent `findings`, identifying the required source, affected deployment and
+replica. Recorded readiness transitions and last node heartbeats are labelled
+separately. Missing evidence has no invented observation time. Up to 64 findings
+are returned with known failures first and stable target order within severity; `findings_truncated` reports omitted details
+without reducing the capacity counts. Lifecycle phases such as `idle`, `deploying`
 and `stopped` are separate from confidence in health. The customer app overview
 links checks to existing release, log, error, metrics and configuration views.
 
@@ -31,11 +36,35 @@ framework-ready timestamp is not used as a serving health signal. A service's
 zero replica target is intentional; a request workload with no warm target and
 cold-boot artifacts can be normally idle. The read never tests a cold wake.
 
-Request evidence covers the last **5 minutes**, including **all app scopes**.
-Only 5xx responses count as failures. Any observed 5xx produces a warning;
-4xx alone does not. No request traffic means success has not been exercised.
-An actual telemetry timestamp is required and must be within **2 minutes**.
-A successful fetch with missing/stale timestamps cannot confirm request health.
+Request evidence covers the last **5 minutes** for the **current traffic-bearing
+default-scope releases**. Previous releases and other environments are excluded.
+Only 5xx responses count as failures; 4xx responses remain in the denominator.
+The `requests` object identifies assessed deployment IDs, coverage, counts, rate
+and the diagnostic policy. Counts are confirmed only when `requests.known` is
+true; zero placeholders in an unconfirmed response are not measured successes.
+
+| Observed request evidence | Request check |
+| --- | --- |
+| No observed requests | Informational: request success has not been exercised. |
+| Successful samples with no 5xx | Pass for the available sample. |
+| Errors with fewer than 50 requests | Unknown severity; counts remain visible. |
+| At least 50 requests and 5 errors, with at least 5% 5xx | Warning. |
+| At least 50 requests and 5 errors, with at least 25% 5xx | Failure. |
+| Errors below the warning thresholds | Pass; error counts and investigation remain visible. |
+
+These are diagnostic defaults, independent of your SLO. One 5xx among 10,000
+requests remains visible but does not degrade overall health. Ten errors among
+ten requests are unconfirmed severity, not a healthy zero.
+
+An actual telemetry timestamp is required for every selected release; the
+oldest release's latest sample must be within **2 minutes**. Each release needs
+samples sufficient to calculate a counter increase. Every observed status-class
+counter needs at least two samples; a newly introduced 5xx counter is incomplete
+evidence rather than a healthy zero. Missing or stale samples,
+failed reads, invalid values and incomplete deployment coverage are unknown.
+Requests recorded without a deployment, including routing failures or telemetry
+label overflow, cannot be assigned to an environment and prevent confirmation.
+App-wide metrics are never substituted for incomplete scoped evidence.
 
 Assessment timestamps expire after **120 seconds**. Clients should refresh
 rather than continue displaying a healthy cached result. The console refreshes
@@ -56,4 +85,4 @@ not exposed.
 This assessment does not prove public reachability, verify artifact existence,
 probe dependencies, or provide an uptime guarantee. It describes evidence that
 Gregale already has. Health history, automatic alerts, active public probes,
-environment-specific request metrics and worker/job checks are future slices.
+arbitrary environment selection and worker/job checks are future slices.

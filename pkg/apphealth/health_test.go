@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -20,8 +19,8 @@ func healthEvidence() Evidence {
 		Instances:      []state.Instance{{ID: "vm", DeploymentID: live.ID, NodeID: "node", State: string(state.StateRunning)}},
 		Nodes:          map[string]state.ComputeNode{"node": {ID: "node", Active: true, LastHeartbeatAt: now}},
 		Readiness:      map[string]map[string]state.InstanceReadiness{},
-		MetricsAllowed: true, MetricsSource: appmetrics.SourcePrometheus,
-		Metrics: api.AppMetricsResponse{AsOf: now.Format(time.RFC3339Nano), RequestCount: 100},
+		MetricsAllowed: true,
+		Metrics:        appmetrics.RequestHealth{Source: appmetrics.SourcePrometheus, AsOf: now.Format(time.RFC3339Nano), RequestCount: 100},
 	}
 }
 
@@ -35,12 +34,12 @@ func TestAppHealth_EvidenceMatrix(t *testing.T) {
 		{"expected idle", func(e *Evidence) { e.Instances = nil }, Healthy, "idle"},
 		{"idle without artifact", func(e *Evidence) { e.Instances = nil; e.Live[0].RootfsPath = "" }, Unknown, "idle"},
 		{"no traffic", func(e *Evidence) { e.Metrics.RequestCount = 0 }, Healthy, "serving"},
-		{"metrics disabled", func(e *Evidence) { e.MetricsSource = "degraded: secret endpoint" }, Unknown, "serving"},
+		{"metrics disabled", func(e *Evidence) { e.Metrics.Source = "degraded: secret endpoint" }, Unknown, "serving"},
 		{"metrics missing timestamp", func(e *Evidence) { e.Metrics.AsOf = "" }, Unknown, "serving"},
 		{"metrics stale", func(e *Evidence) { e.Metrics.AsOf = e.Now.Add(-3 * time.Minute).Format(time.RFC3339) }, Unknown, "serving"},
 		{"metrics future", func(e *Evidence) { e.Metrics.AsOf = e.Now.Add(3 * time.Minute).Format(time.RFC3339) }, Unknown, "serving"},
 		{"restricted telemetry", func(e *Evidence) { e.MetricsAllowed = false }, Unknown, "serving"},
-		{"recent server errors", func(e *Evidence) { e.Metrics.ErrorRatePct = 2 }, Degraded, "serving"},
+		{"recent server errors", func(e *Evidence) { e.Metrics.ErrorRatePct = 5; e.Metrics.ServerErrors = 5 }, Degraded, "serving"},
 		{"failed latest older serving", func(e *Evidence) { e.Latest = &state.Deployment{ID: "failed", Status: state.DeployFailed} }, Degraded, "serving"},
 		{"failed first release", func(e *Evidence) {
 			e.Live = nil
@@ -71,7 +70,7 @@ func TestAppHealth_EvidenceMatrix(t *testing.T) {
 		}, Healthy, "serving"},
 		{"bounded scan exceeded", func(e *Evidence) { e.InstancesKnown = false }, Unknown, "serving"},
 		{"failed readiness survives missing telemetry", func(e *Evidence) {
-			e.MetricsSource = "degraded"
+			e.Metrics.Source = "degraded"
 			e.Nodes["node"] = state.ComputeNode{Lifecycle: state.NodeLifecycleUnavailable, LastHeartbeatAt: e.Now}
 		}, Unhealthy, "serving"},
 		{"probe failure survives missing node", func(e *Evidence) {

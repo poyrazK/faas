@@ -4,7 +4,8 @@ package apphealth
 import (
 	"encoding/json"
 	"fmt"
-	"math"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -36,8 +37,7 @@ type Evidence struct {
 	InstancesKnown   bool
 	Readiness        map[string]map[string]state.InstanceReadiness
 	Nodes            map[string]state.ComputeNode
-	Metrics          api.AppMetricsResponse
-	MetricsSource    string
+	Metrics          appmetrics.RequestHealth
 	MetricsAllowed   bool
 	Now              time.Time
 }
@@ -136,14 +136,24 @@ func assessCapacity(out *api.AppHealthResponse, e Evidence, live []state.Deploym
 	for _, d := range live {
 		deployments[d.ID] = d
 	}
-	for _, i := range e.Instances {
+	var findings []api.AppHealthFinding
+	instances := slices.Clone(e.Instances)
+	slices.SortFunc(instances, func(a, b state.Instance) int {
+		if a.DeploymentID != b.DeploymentID {
+			return strings.Compare(a.DeploymentID, b.DeploymentID)
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	for _, i := range instances {
 		d, ok := deployments[i.DeploymentID]
 		if !ok || i.Kind != "" || (i.Mode != "" && i.Mode != "normal" && i.Mode != "service") {
 			continue
 		}
 		switch state.State(i.State) {
 		case state.StateRunning:
-			switch instanceReady(e, i, d) {
+			status, issues := instanceReadiness(e, i, d)
+			findings = append(findings, issues...)
+			switch status {
 			case Pass:
 				out.Capacity.Ready++
 				readyByDeployment[d.ID]++
@@ -205,39 +215,25 @@ func assessCapacity(out *api.AppHealthResponse, e Evidence, live []state.Deploym
 	default:
 		add(out, "readiness", Pass, fmt.Sprintf("%d replicas passed the configured readiness gates and have current node evidence.", c.Ready), "", "")
 	}
-}
-
-func instanceReady(e Evidence, i state.Instance, d state.Deployment) string {
-	unknown := false
-	node, ok := e.Nodes[i.NodeID]
-	if !ok || node.LastHeartbeatAt.IsZero() {
-		unknown = true
-	} else {
-		if node.Lifecycle == state.NodeLifecycleUnavailable || (node.Lifecycle == "" && !node.Active) || e.Now.Sub(node.LastHeartbeatAt) > state.DefaultHeartbeatStaleness {
-			return Fail
-		}
-		if node.Lifecycle == state.NodeLifecycleRecovering || node.LastHeartbeatAt.After(e.Now.Add(api.AppHealthEvidenceMaxAge)) {
-			unknown = true
-		}
-	}
-	sources, err := requiredSources(d)
-	if err != nil {
-		return Unknown
-	}
-	for _, source := range sources {
-		signal, ok := e.Readiness[i.ID][source]
-		if !ok {
-			unknown = true
-			continue
-		}
-		if !signal.Ready {
-			return Fail
+	check := &out.Checks[len(out.Checks)-1]
+	if !service || required != 0 {
+		slices.SortStableFunc(findings, func(a, b api.AppHealthFinding) int {
+			return strings.Compare(a.Status, b.Status) // fail before unknown; preserve target order within severity.
+		})
+		check.FindingsTruncated = len(findings) > api.AppHealthFindingLimit
+		check.Findings = findings[:min(len(findings), api.AppHealthFindingLimit)]
+		// Put a known failure ahead of missing evidence in the headline, even
+		// when the bounded detail list starts with an unavailable source.
+		for _, f := range findings {
+			if f.Status == Fail {
+				check.Detail = fmt.Sprintf("%d ready, %d unready replicas. %s: %s", c.Ready, c.Unready, f.Source, f.Detail)
+				break
+			}
 		}
 	}
-	if unknown {
-		return Unknown
+	if c.Ready < required && c.Unready == 0 {
+		check.Reason = "capacity_below_target"
 	}
-	return Pass
 }
 
 // Match the gateway's independent primary-app and primary-ingress gates.
@@ -270,33 +266,6 @@ func requiredSources(d state.Deployment) ([]string, error) {
 		}
 	}
 	return sources, nil
-}
-
-func assessRequests(out *api.AppHealthResponse, e Evidence) {
-	if !e.MetricsAllowed {
-		add(out, "requests", Unknown, "Request telemetry is unavailable on this plan; structural checks remain available.", "", "")
-		return
-	}
-	if e.MetricsSource != appmetrics.SourcePrometheus {
-		add(out, "requests", Unknown, "Request telemetry could not be read. Zero values are not treated as successful requests.", "metrics", "")
-		return
-	}
-	at, err := time.Parse(time.RFC3339Nano, e.Metrics.AsOf)
-	if err != nil || e.Now.Sub(at) > api.AppHealthEvidenceMaxAge || at.After(e.Now.Add(api.AppHealthEvidenceMaxAge)) {
-		add(out, "requests", Unknown, "Request telemetry has no current sample timestamp.", "metrics", "")
-		return
-	}
-	out.MetricsAsOf = at.UTC().Format(time.RFC3339Nano)
-	rate := e.Metrics.ErrorRatePct
-	if math.IsNaN(rate) || math.IsInf(rate, 0) || rate < 0 || rate > 100 || e.Metrics.RequestCount < 0 {
-		add(out, "requests", Unknown, "Request telemetry contains invalid values.", "metrics", "")
-	} else if e.Metrics.RequestCount == 0 {
-		add(out, "requests", NotApplicable, "No requests were observed in the last 5 minutes; request success has not been exercised.", "", "")
-	} else if rate > 0 {
-		add(out, "requests", Warning, fmt.Sprintf("%.2f%% of %d requests returned 5xx in the last 5 minutes. Request metrics cover all app scopes.", rate, e.Metrics.RequestCount), "errors", "")
-	} else {
-		add(out, "requests", Pass, fmt.Sprintf("No 5xx observed across %d requests in the last 5 minutes. Request metrics cover all app scopes.", e.Metrics.RequestCount), "", "")
-	}
 }
 
 func add(out *api.AppHealthResponse, code, status, detail, action, deploymentID string) {

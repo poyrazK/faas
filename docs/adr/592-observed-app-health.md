@@ -65,3 +65,7 @@ No migration or VM lifecycle acceptance is needed because the change only reads
 existing evidence. Scenario, authorization, client contract and UI freshness
 checks cover this slice; public probes, health history, alert transitions and
 workload-specific assessments remain subsequent work.
+
+The follow-up in [ADR-593](593-scoped-health-diagnostics.md) replaces app-wide
+request evidence and the any-5xx policy with scoped diagnostics and explicit
+severity defaults.

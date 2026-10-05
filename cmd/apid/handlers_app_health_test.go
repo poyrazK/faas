@@ -60,6 +60,9 @@ func TestAppHealth_FreshMetricsAndOwnership(t *testing.T) {
 	}
 	installPromFixture(t, &e, func(q string) string {
 		v := "0"
+		if strings.Contains(q, "count(count by") {
+			v = "1"
+		}
 		if strings.Contains(q, "timestamp(") {
 			v = fmt.Sprint(time.Now().Unix())
 		}
@@ -89,6 +92,49 @@ func TestAppHealth_ReadScopeRequired(t *testing.T) {
 	mustSeedApp(t, e, "health-app")
 	rec := e.do(t, http.MethodGet, "/v1/apps/health-app/health", nil, nil)
 	if rec.Code != http.StatusForbidden {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestAppHealth_DefaultRequestEvidenceExcludesPreviewAndDarkReleases(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "scoped-health", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serving, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "default", Status: state.DeployLive, TrafficPercent: 100, TrafficPercentExplicit: true, RootfsPath: "/artifact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "pr-42", Status: state.DeployLive, TrafficPercent: 100, TrafficPercentExplicit: true, RootfsPath: "/artifact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dark, err := e.store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "default", Status: state.DeployLive, TrafficPercent: 0, TrafficPercentExplicit: true, RootfsPath: "/artifact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installPromFixture(t, &e, func(q string) string {
+		v := "100"
+		switch {
+		case strings.Contains(q, "timestamp("):
+			v = fmt.Sprint(time.Now().Unix())
+		case strings.Contains(q, "count(count by"):
+			v = "1"
+		case strings.Contains(q, "|__other__"):
+			v = "0"
+		case strings.Contains(q, `class="5xx"`):
+			// Preview failures would dominate an app-wide read.
+			v = "100"
+			if strings.Contains(q, serving.ID) && !strings.Contains(q, preview.ID) && !strings.Contains(q, dark.ID) {
+				v = "0"
+			}
+		}
+		return `{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"` + v + `"]}]}}`
+	})
+	rec := e.do(t, http.MethodGet, "/v1/apps/scoped-health/health", nil, nil)
+	var got api.AppHealthResponse
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || got.Status != "healthy" || got.Requests == nil || !got.Requests.Known || got.Requests.ServerErrors != 0 || len(got.Requests.DeploymentIDs) != 1 || got.Requests.DeploymentIDs[0] != serving.ID {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 }

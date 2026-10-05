@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppHealthFinding } from './AppHealthFinding.js';
 /**
  * Safe evidence explanation and an optional inspection destination.
  */
@@ -12,7 +13,19 @@ export type AppHealthCheck = {
    * Safe explanation without raw backend errors or probe output.
    */
   detail: string;
+  /**
+   * Stable diagnostic reason, when available.
+   */
+  reason?: 'capacity_below_target' | 'request_plan_restricted' | 'request_scope_unavailable' | 'request_evidence_unavailable' | 'request_coverage_incomplete' | 'request_evidence_stale' | 'request_evidence_invalid' | 'requests_unexercised' | 'request_volume_insufficient' | 'request_error_rate_severe' | 'request_error_rate_elevated' | 'request_errors_below_threshold' | 'requests_observed';
   action?: 'deployments' | 'configuration' | 'logs' | 'metrics' | 'errors';
   deployment_id?: string;
+  /**
+   * Independent replica readiness failures and missing evidence, with failures first and stable target order within severity.
+   */
+  findings?: Array<AppHealthFinding>;
+  /**
+   * Additional findings were omitted; capacity counts still cover the complete bounded instance scan.
+   */
+  findings_truncated?: boolean;
 };
 

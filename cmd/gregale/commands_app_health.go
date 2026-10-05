@@ -31,9 +31,26 @@ func cmdAppHealth(slug string, args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Evaluated: %s; scope: %s; valid for %ds\n", out.EvaluatedAt, out.Scope, out.ValidForSeconds)
 	for _, check := range out.Checks {
 		_, _ = fmt.Fprintf(osStdout, "  [%s] %s: %s\n", check.Status, check.Code, check.Detail)
+		if check.Reason != "" {
+			_, _ = fmt.Fprintf(osStdout, "    Reason: %s\n", check.Reason)
+		}
+		for _, finding := range check.Findings {
+			_, _ = fmt.Fprintf(osStdout, "    [%s] %s: %s (%s)\n", finding.Status, finding.Source, finding.Detail, finding.Reason)
+			_, _ = fmt.Fprintf(osStdout, "      Deployment: %s; replica: %s\n", finding.DeploymentID, finding.InstanceID)
+			if finding.ObservedAt != "" {
+				_, _ = fmt.Fprintf(osStdout, "      Recorded evidence: %s\n", finding.ObservedAt)
+			}
+		}
+		if check.FindingsTruncated {
+			_, _ = fmt.Fprintln(osStdout, "    Additional replica findings omitted; capacity counts include the complete scan.")
+		}
 		if check.Action != "" {
 			_, _ = fmt.Fprintf(osStdout, "    Inspect: %s\n", check.Action)
 		}
+	}
+	if out.Requests != nil {
+		p := out.Requests.Policy
+		_, _ = fmt.Fprintf(osStdout, "Request severity policy: at least %d requests and %d server errors; warning %.2f%%, unhealthy %.2f%%.\n", p.MinimumRequests, p.MinimumServerErrors, p.WarningErrorRatePct, p.UnhealthyErrorRatePct)
 	}
 	return 0
 }

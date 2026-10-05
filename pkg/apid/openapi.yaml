@@ -46986,6 +46986,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AppHealthCheck'
+        requests:
+          $ref: '#/components/schemas/AppHealthRequests'
     AppHealthCapacity:
       description: Measured serving replica counts, with explicit evidence availability.
       type: object
@@ -47025,11 +47027,104 @@ components:
         detail:
           type: string
           description: Safe explanation without raw backend errors or probe output.
+        reason:
+          type: string
+          enum: [capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed]
+          description: Stable diagnostic reason, when available.
         action:
           type: string
           enum: [deployments, configuration, logs, metrics, errors]
         deployment_id:
           type: string
+        findings:
+          type: array
+          maxItems: 64
+          description: Independent replica readiness failures and missing evidence, with failures first and stable target order within severity.
+          items:
+            $ref: '#/components/schemas/AppHealthFinding'
+        findings_truncated:
+          type: boolean
+          description: Additional findings were omitted; capacity counts still cover the complete bounded instance scan.
+    AppHealthFinding:
+      description: A safe, independent readiness finding for a serving replica.
+      type: object
+      additionalProperties: false
+      required: [reason, status, detail, deployment_id, instance_id, source]
+      properties:
+        reason:
+          type: string
+          enum: [readiness_configuration_unavailable, readiness_missing, readiness_timestamp_invalid, required_probe_unready, node_evidence_missing, node_unavailable, node_timestamp_invalid, node_heartbeat_stale, node_recovering]
+        status:
+          type: string
+          enum: [fail, unknown]
+        detail:
+          type: string
+          description: Safe explanation without probe output or infrastructure addresses.
+        deployment_id:
+          type: string
+        instance_id:
+          type: string
+        source:
+          type: string
+          description: node, configuration, primary_app, or sidecar followed by a colon and the declared companion name.
+        observed_at:
+          type: string
+          format: date-time
+          description: Recorded readiness transition or last node heartbeat; absent for missing evidence. A transition time is not a probe heartbeat.
+    AppHealthRequests:
+      description: Scoped request evidence; counts are confirmed only when known is true. Covers current serving releases, excluding previous releases and other scopes.
+      type: object
+      additionalProperties: false
+      required: [known, coverage, window_seconds, deployment_ids, request_count, server_errors, error_rate_pct, policy]
+      properties:
+        known:
+          type: boolean
+        coverage:
+          type: string
+          enum: [serving_deployments]
+        window_seconds:
+          type: integer
+          minimum: 1
+        deployment_ids:
+          type: array
+          items:
+            type: string
+        request_count:
+          type: integer
+          format: int64
+          minimum: 0
+        server_errors:
+          type: integer
+          format: int64
+          minimum: 0
+        error_rate_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+        policy:
+          $ref: '#/components/schemas/AppHealthRequestPolicy'
+    AppHealthRequestPolicy:
+      description: Diagnostic severity defaults, independent of customer SLO configuration. Error thresholds require both minimum request and server-error counts.
+      type: object
+      additionalProperties: false
+      required: [minimum_requests, minimum_server_errors, warning_error_rate_pct, unhealthy_error_rate_pct]
+      properties:
+        minimum_requests:
+          type: integer
+          format: int64
+          minimum: 1
+        minimum_server_errors:
+          type: integer
+          format: int64
+          minimum: 1
+        warning_error_rate_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+        unhealthy_error_rate_pct:
+          type: number
+          minimum: 0
+          maximum: 100
     AppMetricsResponse:
       description: |
         Per-app metrics snapshot (issue #273 / ADR-041). Latencies are

@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.app_health_capacity import AppHealthCapacity
     from ..models.app_health_check import AppHealthCheck
+    from ..models.app_health_requests import AppHealthRequests
 
 
 T = TypeVar("T", bound="AppHealthResponse")
@@ -38,6 +39,9 @@ class AppHealthResponse:
     metrics_as_of: datetime.datetime | Unset = UNSET
     """Actual telemetry sample time; absent when unconfirmed."""
     latest_deployment_id: str | Unset = UNSET
+    requests: AppHealthRequests | Unset = UNSET
+    """Scoped request evidence; counts are confirmed only when known is true. Covers current serving releases,
+    excluding previous releases and other scopes."""
 
     def to_dict(self) -> dict[str, Any]:
         app_id = self.app_id
@@ -69,6 +73,10 @@ class AppHealthResponse:
 
         latest_deployment_id = self.latest_deployment_id
 
+        requests: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.requests, Unset):
+            requests = self.requests.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -89,6 +97,8 @@ class AppHealthResponse:
             field_dict["metrics_as_of"] = metrics_as_of
         if latest_deployment_id is not UNSET:
             field_dict["latest_deployment_id"] = latest_deployment_id
+        if requests is not UNSET:
+            field_dict["requests"] = requests
 
         return field_dict
 
@@ -96,6 +106,7 @@ class AppHealthResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_health_capacity import AppHealthCapacity
         from ..models.app_health_check import AppHealthCheck
+        from ..models.app_health_requests import AppHealthRequests
 
         d = dict(src_dict)
         app_id = d.pop("app_id")
@@ -132,6 +143,13 @@ class AppHealthResponse:
 
         latest_deployment_id = d.pop("latest_deployment_id", UNSET)
 
+        _requests = d.pop("requests", UNSET)
+        requests: AppHealthRequests | Unset
+        if isinstance(_requests, Unset):
+            requests = UNSET
+        else:
+            requests = AppHealthRequests.from_dict(_requests)
+
         app_health_response = cls(
             app_id=app_id,
             status=status,
@@ -145,6 +163,7 @@ class AppHealthResponse:
             checks=checks,
             metrics_as_of=metrics_as_of,
             latest_deployment_id=latest_deployment_id,
+            requests=requests,
         )
 
         return app_health_response

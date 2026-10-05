@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AppHealthCapacity } from './AppHealthCapacity.js';
 import type { AppHealthCheck } from './AppHealthCheck.js';
+import type { AppHealthRequests } from './AppHealthRequests.js';
 /**
  * Read-only observed health of default-scope HTTP serving workloads.
  */
@@ -26,5 +27,6 @@ export type AppHealthResponse = {
   latest_deployment_id?: string;
   capacity: AppHealthCapacity;
   checks: Array<AppHealthCheck>;
+  requests?: AppHealthRequests;
 };
 

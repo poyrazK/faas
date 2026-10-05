@@ -125,7 +125,14 @@ from .app_health_capacity import AppHealthCapacity
 from .app_health_check import AppHealthCheck
 from .app_health_check_action import AppHealthCheckAction
 from .app_health_check_code import AppHealthCheckCode
+from .app_health_check_reason import AppHealthCheckReason
 from .app_health_check_status import AppHealthCheckStatus
+from .app_health_finding import AppHealthFinding
+from .app_health_finding_reason import AppHealthFindingReason
+from .app_health_finding_status import AppHealthFindingStatus
+from .app_health_request_policy import AppHealthRequestPolicy
+from .app_health_requests import AppHealthRequests
+from .app_health_requests_coverage import AppHealthRequestsCoverage
 from .app_health_response import AppHealthResponse
 from .app_health_response_phase import AppHealthResponsePhase
 from .app_health_response_scope import AppHealthResponseScope
@@ -2687,7 +2694,14 @@ __all__ = (
     "AppHealthCheck",
     "AppHealthCheckAction",
     "AppHealthCheckCode",
+    "AppHealthCheckReason",
     "AppHealthCheckStatus",
+    "AppHealthFinding",
+    "AppHealthFindingReason",
+    "AppHealthFindingStatus",
+    "AppHealthRequestPolicy",
+    "AppHealthRequests",
+    "AppHealthRequestsCoverage",
     "AppHealthResponse",
     "AppHealthResponsePhase",
     "AppHealthResponseScope",

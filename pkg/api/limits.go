@@ -8693,6 +8693,14 @@ const (
 	AppHealthInstanceLimit          = 256
 	AppHealthDeploymentHistoryLimit = 50
 	AppHealthMetricsRange           = "5m"
+	AppHealthMetricsWindow          = 5 * time.Minute
 	AppHealthEvidenceMaxAge         = 2 * time.Minute
 	AppHealthCollectionTimeout      = 10 * time.Second
+	AppHealthFindingLimit           = 64
+	AppHealthMetricsDeploymentLimit = 256
+	AppHealthCounterMinSamples      = 2
+	AppHealthMinRequests            = 50
+	AppHealthMinServerErrors        = 5
+	AppHealthWarningErrorRatePct    = 5.0
+	AppHealthUnhealthyErrorRatePct  = 25.0
 )

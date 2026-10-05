@@ -23,8 +23,14 @@ func (s *server) getAppHealth(w http.ResponseWriter, r *http.Request, acct state
 	evidence := apphealth.Evidence{App: app, MetricsAllowed: acct.Plan.PerAppMetricsAllowed()}
 	s.collectHealthDeployments(ctx, &evidence)
 	s.collectHealthInstances(ctx, &evidence)
-	if evidence.MetricsAllowed {
-		evidence.Metrics, evidence.MetricsSource = appmetrics.FetchRequestHealth(ctx, s.promqlClient, app.ID)
+	if evidence.MetricsAllowed && evidence.DeploymentsKnown {
+		var ids []string
+		for _, d := range evidence.Live {
+			if (d.Scope == "" || d.Scope == "default") && d.Status == state.DeployLive && d.TrafficPercent > 0 {
+				ids = append(ids, d.ID)
+			}
+		}
+		evidence.Metrics = appmetrics.FetchRequestHealth(ctx, s.promqlClient, app.ID, ids)
 	}
 	evidence.Now = time.Now()
 	w.Header().Set("Cache-Control", "no-store")
