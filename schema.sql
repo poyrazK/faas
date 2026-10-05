@@ -9854,6 +9854,44 @@ $$;
 
 
 --
+-- Name: project_release_member_policy_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_release_member_policy_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- The parent is inserted before its immutable members. Inactive retained
+    -- graphs and stage graph publication cannot change ordinary ingress.
+    IF EXISTS (SELECT 1 FROM project_release_sets
+               WHERE id = NEW.release_id AND active AND environment_slug = 'production') THEN
+        PERFORM record_project_release_policy_change(NEW.release_id, NEW.app_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: project_release_set_policy_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_release_set_policy_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE member_app uuid;
+BEGIN
+    IF OLD.environment_slug = 'production' THEN
+        FOR member_app IN SELECT app_id FROM project_release_members WHERE release_id = OLD.id LOOP
+            PERFORM record_project_release_policy_change(OLD.id, member_app);
+        END LOOP;
+    END IF;
+    RETURN OLD;
+END;
+$$;
+
+
+--
 -- Name: protect_financial_budget_revision(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10842,6 +10880,22 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+
+
+--
+-- Name: record_project_release_policy_change(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_project_release_policy_change(release_uuid uuid, app_uuid uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(711901248671::bigint);
+    INSERT INTO control_plane_change_log (resource_type, resource_id, app_id, operation)
+    VALUES ('project_release', release_uuid, app_uuid, 'updated');
+    PERFORM pg_notify('app_changed', app_uuid::text);
+END;
+$$;
 
 
 --
@@ -37749,6 +37803,27 @@ CREATE TRIGGER private_network_set_updated_at_trg BEFORE UPDATE ON public.privat
 --
 
 CREATE TRIGGER project_environment_workload_head_changed AFTER INSERT OR UPDATE ON public.project_environment_workload_heads FOR EACH ROW EXECUTE FUNCTION public.notify_project_environment_workload_head();
+
+
+--
+-- Name: project_release_members project_release_member_policy_changed_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_release_member_policy_changed_trg AFTER INSERT ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.project_release_member_policy_changed();
+
+
+--
+-- Name: project_release_sets project_release_set_policy_changed_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_release_set_policy_changed_trg AFTER UPDATE OF active ON public.project_release_sets FOR EACH ROW WHEN ((old.active IS DISTINCT FROM new.active)) EXECUTE FUNCTION public.project_release_set_policy_changed();
+
+
+--
+-- Name: project_release_sets project_release_set_policy_deleted_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_release_set_policy_deleted_trg BEFORE DELETE ON public.project_release_sets FOR EACH ROW WHEN (old.active) EXECUTE FUNCTION public.project_release_set_policy_changed();
 
 
 --

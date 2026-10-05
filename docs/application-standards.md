@@ -804,5 +804,44 @@ selected producers, publisher approval and composed scan. Historical consumption
 can remain valid while current qualification becomes pending, for example after
 a scanner failure or a standard revision change. A scoped instance result is a
 diagnostic, not whole-application observation or permission to release a wave.
-Production observation still needs all required instances, logging consumers,
-provider health and retained artifacts to pass in one fenced decision.
+Production observation revalidates all required instances, logging consumers,
+provider health and retained artifacts in one fenced decision, as described below.
+
+## Consumer adoption and controlled updates
+
+The apid worker now reconciles observation for both reviewed operations and
+automatically installed enrollments. It checks current fleet membership, gateway
+startup sessions, exact loaded drain inventory, fresh successful delivery events,
+measured native drive receipts, current outbound-policy acknowledgments, publisher
+approval, composed scans and usable snapshot capture history. Missing or expired
+evidence leaves a persisted enrollment with a bounded pending reason. Saving
+controls, accepting a deployment or completing a scheduler handoff alone cannot
+advance `observed_revision`.
+
+Installing a standard also invalidates the old snapshot cache and queues a
+durable revision/hash-bound runtime replacement through the notification outbox.
+Schedd obtains replacement capacity before withdrawing stale serving instances.
+Idle applications stay cold and use current inputs on their next wake. Pause
+defers further replacement; resume reacquires worker authority. Abort preserves
+already installed settings, so reverting them requires a new reviewed rollback.
+
+Before each later wave, storage rechecks every previously observed target under
+the same authoritative fences used by observation. A gateway restart, failed
+rescan or changed native process can hold the next wave even after an earlier
+checkpoint succeeded. Automatic observation likewise returns to persisted when
+current evidence stops qualifying.
+
+PostgreSQL and MemStore acceptance covers three inherited services, one-service
+update waves, interruptions caused by logging restart and scan failure, a
+separately reviewed rollback, stale cache publication refusal and cache rebuilding.
+Provider delivery, scanner facts and native consumption in these tests are
+explicit simulations. Protected private snapshot loading is implemented, but
+measured restore receipts, Manager/RPC integration, paused promotion and capture
+after promotion remain incomplete. The native restore capability stays disabled
+and governed wakes retain verified cold fallback.
+
+Dedicated Linux amd64 root/KVM enforcement, `test-metal`, `leakcheck`, fleet
+crash/recovery, remaining onboarding adapters, named production scope and complete
+operational release acceptance remain required. Public standard activation stays
+disabled until the [ADR-593 acceptance checklist](adr/593-inherited-application-standards.md#acceptance-checklist)
+is satisfied.

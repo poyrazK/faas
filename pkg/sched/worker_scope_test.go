@@ -545,3 +545,74 @@ func TestWorkerScopedDemandUnknownLagPreservesFleet(t *testing.T) {
 		t.Fatal("missing lag removed neighboring worker")
 	}
 }
+
+// adr: 590 — each deployed environment owns its worker runtime policy.
+func TestWorkerReconcileHonorsPinnedStageReplicas(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "regression-worker-pin@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "regression-worker-pin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "regression-worker-pin-app", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 5, WorkloadClass: state.WorkloadClassWorker, Status: state.AppActive, Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeWorker, WorkerReplicas: &state.WorkerScaling{Min: 0, Max: 5}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := state.WorkloadSettingsFromApp(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.Manifest.WorkerReplicas = &state.WorkerScaling{Min: 2, Max: 2}
+	spec, err := store.PutProjectEnvironmentWorkloadSpec(ctx, account.ID, project.ID, "staging", app.ID, 0, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Status: state.DeployPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	production, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedScopedWorker(t, store, app, production)
+	seedScopedWorker(t, store, app, dep)
+	seedScopedWorker(t, store, app, dep)
+	settings.Manifest.WorkerReplicas = &state.WorkerScaling{Min: 0, Max: 1}
+	if _, err := store.PutProjectEnvironmentWorkloadSpec(ctx, account.ID, project.ID, "staging", app.ID, spec.Revision, settings); err != nil {
+		t.Fatal(err)
+	}
+	vmm := &recordingStopVMM{fakeVMM: &fakeVMM{}}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	if err := engine.SeedLedger(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	counts := scopedWorkerCounts(t, store, app.ID)
+	if counts["staging"] != 2 || counts["default"] != 0 || vmm.stopInstanceOnNodeN != 1 {
+		t.Fatalf("deployed pool settings: counts=%v stops=%d", counts, vmm.stopInstanceOnNodeN)
+	}
+	// A later production mode change cannot drain the pinned worker stage.
+	mode, class := api.ExecutionModeService, state.WorkloadClassHTTP
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &state.AppManifest{ExecutionMode: mode}, WorkloadClass: &class}); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	if counts := scopedWorkerCounts(t, store, app.ID); counts["staging"] != 2 || vmm.stopInstanceOnNodeN != 1 {
+		t.Fatalf("production mode changed stage pool: counts=%v stops=%d", counts, vmm.stopInstanceOnNodeN)
+	}
+}
