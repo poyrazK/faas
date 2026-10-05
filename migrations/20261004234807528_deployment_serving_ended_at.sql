@@ -9,7 +9,7 @@
 -- this migration keep a NULL stamp and fall back to created_at.
 
 -- +goose Up
-ALTER TABLE deployments ADD COLUMN serving_ended_at timestamptz;
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS serving_ended_at timestamptz;
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION stamp_deployment_serving_ended_at() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -22,10 +22,11 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS deployment_serving_ended_at ON deployments;
 CREATE TRIGGER deployment_serving_ended_at BEFORE UPDATE OF status, traffic_percent ON deployments
  FOR EACH ROW EXECUTE FUNCTION stamp_deployment_serving_ended_at();
 
 -- +goose Down
-DROP TRIGGER deployment_serving_ended_at ON deployments;
-DROP FUNCTION stamp_deployment_serving_ended_at();
-ALTER TABLE deployments DROP COLUMN serving_ended_at;
+DROP TRIGGER IF EXISTS deployment_serving_ended_at ON deployments;
+DROP FUNCTION IF EXISTS stamp_deployment_serving_ended_at();
+ALTER TABLE deployments DROP COLUMN IF EXISTS serving_ended_at;
