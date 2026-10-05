@@ -153,7 +153,9 @@ type EnqueueParams struct {
 	// DeliveryID is the authenticated GitHub webhook delivery ID. When set,
 	// Enqueue derives stable deployment/build UUIDs from (delivery, app) and
 	// recovers existing rows after retries or ambiguous commit responses.
-	DeliveryID string
+	OperationDefinitions      []api.OperationDefinitionSpec
+	OperationAdmissionEnabled bool
+	DeliveryID                string
 	// RetryOf preserves the original deployment and copies its input settings.
 	// RetryFrom records the requested stage; retained source is rebuilt when
 	// intermediate stage checkpoints are unavailable.
@@ -342,6 +344,9 @@ func hashSourceFile(path string) (string, error) {
 // <FAAS_SPOOL_ROOT>/projects/<acct>/<project>/<appID>.tar.gz (see
 // cmd/apid/scan_service.go + apply helper).
 func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) (EnqueueResult, error) {
+	if len(p.OperationDefinitions) > 0 && !p.OperationAdmissionEnabled {
+		return EnqueueResult{}, api.ErrCapacity("new operation admission is disabled")
+	}
 	if p.Log == nil {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: log is required")
 	}
@@ -556,6 +561,11 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		// The original create already performed any supersede transition.
 		// Do not emit a false supersede notification for the recovered row.
 		prev = state.Deployment{}
+	}
+
+	if err := installSourceOperations(ctx, store, d, p.OperationDefinitions); err != nil {
+		_ = store.FailSourceDeployment(context.WithoutCancel(ctx), d.ID, "operation contract installation failed")
+		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: operation definitions: %w", err)
 	}
 
 	if p.DeliveryID != "" {

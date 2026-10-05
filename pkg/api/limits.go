@@ -153,12 +153,22 @@ const (
 	OperationReportIDMaxBytes                  = 128
 	OperationRecoveryEvidenceMaxBytes          = 4096
 	OperationEventsPageMax                     = 100
+	OperationDeliveryRetryMaxBytes             = 4096
+	OperationDeliveryReceiptMaxBytes           = 8192
+	OperationDeliveryRetriesMax                = 32
+	OperationHistoryPageDefault                = 20
+	OperationHistoryPageMax                    = 100
+	OperationHistoryCursorMaxBytes             = 512
 	OperationRetentionPageMax                  = 500
 	OperationDefinitionBodyMaxBytes            = 140000
 	OperationReportBodyMaxBytes                = 16384
 	OperationRecoveryBodyOverheadBytes         = 8192
 	OperationSubmissionMaxBytes                = 1 << 20
 	OperationStartBodyOverheadBytes            = 1024
+	OperationDoctorChecksMax                   = 1024
+	OperationDoctorMaxDuration                 = 10 * time.Second
+	OperationSubmissionReceiptMaxBytes         = OperationSubmissionMaxBytes + OperationStartBodyOverheadBytes + 2*OperationPathMaxBytes
+	SourceManifestMaxBytes                     = 1 << 20
 	OperationArtifactNameMaxBytes              = 128
 	OperationArtifactKeyMaxBytes               = 1024
 	OperationArtifactURIMaxBytes               = 2048
@@ -169,6 +179,12 @@ const (
 	OperationArtifactStagingLifetime           = 2 * time.Minute
 	OperationArtifactCleanupLease              = time.Minute
 	OperationArtifactCleanupRetry              = 5 * time.Minute
+	OperationArtifactCleanupInterval           = time.Minute
+	OperationArtifactCleanupBatch              = 20
+	OperationPreviewPolicyMaxBytes             = 64 << 10
+	OperationPreviewCohortsMax                 = 10
+	OperationPreviewTenantsPerCohortMax        = 10
+	OperationPreviewWindowMax                  = time.Hour
 )
 
 // OperationPlanLimits bounds durable control-plane state independently from

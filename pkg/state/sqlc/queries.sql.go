@@ -4990,6 +4990,17 @@ func (q *Queries) CountCustomerOperationDefinitionNames(ctx context.Context, db 
 	return column_1, err
 }
 
+const countCustomerOperationDeliveryRetries = `-- name: CountCustomerOperationDeliveryRetries :one
+SELECT count(*) FROM customer_operation_delivery_retries WHERE operation_id=$1::uuid
+`
+
+func (q *Queries) CountCustomerOperationDeliveryRetries(ctx context.Context, db DBTX, operationID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, countCustomerOperationDeliveryRetries, operationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countCustomerOperationStreams = `-- name: CountCustomerOperationStreams :one
 SELECT count(*)::bigint FROM customer_operation_stream_leases WHERE account_id=$1::uuid
 `
@@ -13034,6 +13045,96 @@ func (q *Queries) GetCustomerOperationDefinitionForRoute(ctx context.Context, db
 	return i, err
 }
 
+const getCustomerOperationDeliveryPlan = `-- name: GetCustomerOperationDeliveryPlan :one
+SELECT plan FROM accounts WHERE id=$1::uuid
+`
+
+func (q *Queries) GetCustomerOperationDeliveryPlan(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, getCustomerOperationDeliveryPlan, accountID)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
+}
+
+const getCustomerOperationDeliveryRetry = `-- name: GetCustomerOperationDeliveryRetry :one
+SELECT delivery_id::text, expected_replay_generation, replay_generation, queued_at, expires_at
+FROM customer_operation_delivery_retries WHERE operation_id=$1::uuid AND retry_id=$2::text
+`
+
+type GetCustomerOperationDeliveryRetryParams struct {
+	OperationID pgtype.UUID
+	RetryID     string
+}
+
+type GetCustomerOperationDeliveryRetryRow struct {
+	DeliveryID               string
+	ExpectedReplayGeneration int32
+	ReplayGeneration         int32
+	QueuedAt                 pgtype.Timestamptz
+	ExpiresAt                pgtype.Timestamptz
+}
+
+func (q *Queries) GetCustomerOperationDeliveryRetry(ctx context.Context, db DBTX, arg GetCustomerOperationDeliveryRetryParams) (GetCustomerOperationDeliveryRetryRow, error) {
+	row := db.QueryRow(ctx, getCustomerOperationDeliveryRetry, arg.OperationID, arg.RetryID)
+	var i GetCustomerOperationDeliveryRetryRow
+	err := row.Scan(
+		&i.DeliveryID,
+		&i.ExpectedReplayGeneration,
+		&i.ReplayGeneration,
+		&i.QueuedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const getCustomerOperationDeliveryRow = `-- name: GetCustomerOperationDeliveryRow :one
+SELECT id::text, webhook_id::text, app_id::text, account_id::text, event, payload,
+ attempt,status,last_error,last_response_code,next_attempt_at,delivered_at,replay_generation
+FROM app_webhook_deliveries WHERE id=$1::uuid AND account_id=$2::uuid
+`
+
+type GetCustomerOperationDeliveryRowParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type GetCustomerOperationDeliveryRowRow struct {
+	ID               string
+	WebhookID        string
+	AppID            string
+	AccountID        string
+	Event            string
+	Payload          []byte
+	Attempt          int32
+	Status           string
+	LastError        pgtype.Text
+	LastResponseCode pgtype.Int4
+	NextAttemptAt    pgtype.Timestamptz
+	DeliveredAt      pgtype.Timestamptz
+	ReplayGeneration int32
+}
+
+func (q *Queries) GetCustomerOperationDeliveryRow(ctx context.Context, db DBTX, arg GetCustomerOperationDeliveryRowParams) (GetCustomerOperationDeliveryRowRow, error) {
+	row := db.QueryRow(ctx, getCustomerOperationDeliveryRow, arg.ID, arg.AccountID)
+	var i GetCustomerOperationDeliveryRowRow
+	err := row.Scan(
+		&i.ID,
+		&i.WebhookID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Event,
+		&i.Payload,
+		&i.Attempt,
+		&i.Status,
+		&i.LastError,
+		&i.LastResponseCode,
+		&i.NextAttemptAt,
+		&i.DeliveredAt,
+		&i.ReplayGeneration,
+	)
+	return i, err
+}
+
 const getCustomerOperationIdempotency = `-- name: GetCustomerOperationIdempotency :one
 SELECT operation_id::text,fingerprint,expires_at,
  EXISTS(SELECT 1 FROM customer_operations o WHERE o.id=customer_operation_idempotency.operation_id AND o.state IN ('accepted','running')) AS active
@@ -14927,6 +15028,34 @@ func (q *Queries) InsertCustomerOperationDefinition(ctx context.Context, db DBTX
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const insertCustomerOperationDeliveryRetry = `-- name: InsertCustomerOperationDeliveryRetry :exec
+INSERT INTO customer_operation_delivery_retries(operation_id,retry_id,delivery_id,expected_replay_generation,replay_generation,queued_at,expires_at)
+VALUES($1::uuid,$2::text,$3::uuid,$4::integer,$5::integer,$6::timestamptz,$7::timestamptz)
+`
+
+type InsertCustomerOperationDeliveryRetryParams struct {
+	OperationID              pgtype.UUID
+	RetryID                  string
+	DeliveryID               pgtype.UUID
+	ExpectedReplayGeneration int32
+	ReplayGeneration         int32
+	QueuedAt                 pgtype.Timestamptz
+	ExpiresAt                pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCustomerOperationDeliveryRetry(ctx context.Context, db DBTX, arg InsertCustomerOperationDeliveryRetryParams) error {
+	_, err := db.Exec(ctx, insertCustomerOperationDeliveryRetry,
+		arg.OperationID,
+		arg.RetryID,
+		arg.DeliveryID,
+		arg.ExpectedReplayGeneration,
+		arg.ReplayGeneration,
+		arg.QueuedAt,
+		arg.ExpiresAt,
+	)
+	return err
 }
 
 const insertCustomerOperationEvent = `-- name: InsertCustomerOperationEvent :exec
@@ -20423,6 +20552,144 @@ func (q *Queries) ListAPIKeys(ctx context.Context, db DBTX, accountID pgtype.UUI
 	return items, nil
 }
 
+const listAccountCustomerOperationExecutions = `-- name: ListAccountCustomerOperationExecutions :many
+SELECT e.generation,i.id::text AS invocation_id,i.state,i.attempts,i.created_at,i.completed_at
+FROM customer_operation_executions e
+JOIN customer_operations o ON o.id=e.operation_id
+JOIN invocations i ON i.id=e.invocation_id AND i.account_id=o.account_id AND i.app_id=o.app_id
+WHERE o.id=$1::uuid AND o.account_id=$2::uuid
+ AND e.generation>$3::integer
+ORDER BY e.generation LIMIT $4::integer
+`
+
+type ListAccountCustomerOperationExecutionsParams struct {
+	OperationID     pgtype.UUID
+	AccountID       pgtype.UUID
+	AfterGeneration int32
+	PageLimit       int32
+}
+
+type ListAccountCustomerOperationExecutionsRow struct {
+	Generation   int32
+	InvocationID string
+	State        string
+	Attempts     int32
+	CreatedAt    pgtype.Timestamptz
+	CompletedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ListAccountCustomerOperationExecutions(ctx context.Context, db DBTX, arg ListAccountCustomerOperationExecutionsParams) ([]ListAccountCustomerOperationExecutionsRow, error) {
+	rows, err := db.Query(ctx, listAccountCustomerOperationExecutions,
+		arg.OperationID,
+		arg.AccountID,
+		arg.AfterGeneration,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAccountCustomerOperationExecutionsRow{}
+	for rows.Next() {
+		var i ListAccountCustomerOperationExecutionsRow
+		if err := rows.Scan(
+			&i.Generation,
+			&i.InvocationID,
+			&i.State,
+			&i.Attempts,
+			&i.CreatedAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAccountCustomerOperations = `-- name: ListAccountCustomerOperations :many
+SELECT jsonb_build_object(
+ 'platform_tenant_id', o.platform_tenant_id,
+ 'id', o.record->'id',
+ 'name', o.record->'name',
+ 'generation', o.record->'generation',
+ 'state', o.record->'state',
+ 'progress', o.record->'progress',
+ 'cancellation_requested', o.record->'cancellation_requested',
+ 'latest_sequence', o.record->'latest_sequence',
+ 'updated_at', o.record->'updated_at',
+ 'expires_at', o.record->'expires_at',
+ 'created_at', o.created_at,
+ 'completion_delivery', jsonb_strip_nulls(jsonb_build_object(
+   'state', CASE WHEN coalesce(o.record->'completion_delivery'->>'delivery_id','') = ''
+     THEN o.record->'completion_delivery'->>'state'
+     WHEN delivery.id IS NULL THEN 'delivery_expired' ELSE delivery.status END,
+   'attempts', coalesce(delivery.attempt,(o.record->'completion_delivery'->>'attempts')::integer,0),
+   'next_attempt_at', CASE WHEN delivery.status IN ('pending','failed') THEN delivery.next_attempt_at END
+ ))) AS summary
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+LEFT JOIN app_webhook_deliveries delivery ON delivery.id=nullif(o.record->'completion_delivery'->>'delivery_id','')::uuid
+ AND delivery.account_id=o.account_id AND delivery.app_id=o.app_id
+WHERE o.account_id=$1::uuid AND ($2::text='' OR o.platform_tenant_id::text=$2::text)
+ AND o.app_id=$3::uuid AND d.scope=$4::text
+ AND ($5::text='' OR d.name=$5::text)
+ AND ($6::text='' OR o.state=$6::text)
+ AND (o.state IN ('accepted','running') OR o.expires_at>$7::timestamptz)
+ AND ($8::timestamptz IS NULL OR
+      (o.created_at,o.id)<($8::timestamptz,$9::uuid))
+ORDER BY o.created_at DESC,o.id DESC LIMIT $10::integer
+`
+
+type ListAccountCustomerOperationsParams struct {
+	AccountID       pgtype.UUID
+	TenantID        string
+	AppID           pgtype.UUID
+	Scope           string
+	OperationName   string
+	OperationState  string
+	Now             pgtype.Timestamptz
+	BeforeCreatedAt pgtype.Timestamptz
+	BeforeID        pgtype.UUID
+	PageLimit       int32
+}
+
+// The account/app creation index supports descending keyset paging across
+// tenants. Only explicit public summary fields cross this operator boundary.
+func (q *Queries) ListAccountCustomerOperations(ctx context.Context, db DBTX, arg ListAccountCustomerOperationsParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listAccountCustomerOperations,
+		arg.AccountID,
+		arg.TenantID,
+		arg.AppID,
+		arg.Scope,
+		arg.OperationName,
+		arg.OperationState,
+		arg.Now,
+		arg.BeforeCreatedAt,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var summary []byte
+		if err := rows.Scan(&summary); err != nil {
+			return nil, err
+		}
+		items = append(items, summary)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listActiveRegressionsByApp = `-- name: ListActiveRegressionsByApp :many
 SELECT deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
@@ -24917,6 +25184,85 @@ func (q *Queries) ListOutboundBindingProbeSnapshots(ctx context.Context, db DBTX
 	return items, nil
 }
 
+const listPlatformTenantCustomerOperations = `-- name: ListPlatformTenantCustomerOperations :many
+SELECT jsonb_build_object(
+ 'id', o.record->'id',
+ 'name', o.record->'name',
+ 'generation', o.record->'generation',
+ 'state', o.record->'state',
+ 'progress', o.record->'progress',
+ 'cancellation_requested', o.record->'cancellation_requested',
+ 'latest_sequence', o.record->'latest_sequence',
+ 'updated_at', o.record->'updated_at',
+ 'expires_at', o.record->'expires_at',
+ 'created_at', o.created_at,
+ 'completion_delivery', jsonb_strip_nulls(jsonb_build_object(
+   'state', CASE WHEN coalesce(o.record->'completion_delivery'->>'delivery_id','') = ''
+     THEN o.record->'completion_delivery'->>'state'
+     WHEN delivery.id IS NULL THEN 'delivery_expired' ELSE delivery.status END,
+   'attempts', coalesce(delivery.attempt,(o.record->'completion_delivery'->>'attempts')::integer,0),
+   'next_attempt_at', CASE WHEN delivery.status IN ('pending','failed') THEN delivery.next_attempt_at END
+ ))) AS summary
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+LEFT JOIN app_webhook_deliveries delivery ON delivery.id=nullif(o.record->'completion_delivery'->>'delivery_id','')::uuid
+ AND delivery.account_id=o.account_id AND delivery.app_id=o.app_id
+WHERE o.account_id=$1::uuid AND o.platform_tenant_id=$2::uuid
+ AND o.app_id=$3::uuid AND d.scope=$4::text
+ AND ($5::text='' OR d.name=$5::text)
+ AND ($6::text='' OR o.state=$6::text)
+ AND (o.state IN ('accepted','running') OR o.expires_at>$7::timestamptz)
+ AND ($8::timestamptz IS NULL OR
+      (o.created_at,o.id)<($8::timestamptz,$9::uuid))
+ORDER BY o.created_at DESC,o.id DESC LIMIT $10::integer
+`
+
+type ListPlatformTenantCustomerOperationsParams struct {
+	AccountID       pgtype.UUID
+	TenantID        pgtype.UUID
+	AppID           pgtype.UUID
+	Scope           string
+	OperationName   string
+	OperationState  string
+	Now             pgtype.Timestamptz
+	BeforeCreatedAt pgtype.Timestamptz
+	BeforeID        pgtype.UUID
+	PageLimit       int32
+}
+
+// The tenant creation index supports descending keyset paging. Only public
+// summary fields cross this boundary; source input/results/capabilities do not.
+func (q *Queries) ListPlatformTenantCustomerOperations(ctx context.Context, db DBTX, arg ListPlatformTenantCustomerOperationsParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listPlatformTenantCustomerOperations,
+		arg.AccountID,
+		arg.TenantID,
+		arg.AppID,
+		arg.Scope,
+		arg.OperationName,
+		arg.OperationState,
+		arg.Now,
+		arg.BeforeCreatedAt,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var summary []byte
+		if err := rows.Scan(&summary); err != nil {
+			return nil, err
+		}
+		items = append(items, summary)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProductionDeadLetterEvents = `-- name: ListProductionDeadLetterEvents :many
 WITH anchor AS (SELECT last_failed_at,id FROM production_dead_letter_events
     WHERE id=$3::uuid AND ($1::uuid IS NULL OR account_id=$1::uuid)
@@ -26687,6 +27033,70 @@ func (q *Queries) LockCustomerOperationCodeApp(ctx context.Context, db DBTX, arg
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockCustomerOperationDeliveryOwner = `-- name: LockCustomerOperationDeliveryOwner :one
+SELECT record FROM customer_operations WHERE id=$1::uuid AND account_id=$2::uuid FOR UPDATE
+`
+
+type LockCustomerOperationDeliveryOwnerParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockCustomerOperationDeliveryOwner(ctx context.Context, db DBTX, arg LockCustomerOperationDeliveryOwnerParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationDeliveryOwner, arg.ID, arg.AccountID)
+	var record []byte
+	err := row.Scan(&record)
+	return record, err
+}
+
+const lockCustomerOperationDeliveryRow = `-- name: LockCustomerOperationDeliveryRow :one
+SELECT id::text, webhook_id::text, app_id::text, account_id::text, event, payload,
+ attempt,status,last_error,last_response_code,next_attempt_at,delivered_at,replay_generation
+FROM app_webhook_deliveries WHERE id=$1::uuid AND account_id=$2::uuid FOR UPDATE
+`
+
+type LockCustomerOperationDeliveryRowParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type LockCustomerOperationDeliveryRowRow struct {
+	ID               string
+	WebhookID        string
+	AppID            string
+	AccountID        string
+	Event            string
+	Payload          []byte
+	Attempt          int32
+	Status           string
+	LastError        pgtype.Text
+	LastResponseCode pgtype.Int4
+	NextAttemptAt    pgtype.Timestamptz
+	DeliveredAt      pgtype.Timestamptz
+	ReplayGeneration int32
+}
+
+func (q *Queries) LockCustomerOperationDeliveryRow(ctx context.Context, db DBTX, arg LockCustomerOperationDeliveryRowParams) (LockCustomerOperationDeliveryRowRow, error) {
+	row := db.QueryRow(ctx, lockCustomerOperationDeliveryRow, arg.ID, arg.AccountID)
+	var i LockCustomerOperationDeliveryRowRow
+	err := row.Scan(
+		&i.ID,
+		&i.WebhookID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Event,
+		&i.Payload,
+		&i.Attempt,
+		&i.Status,
+		&i.LastError,
+		&i.LastResponseCode,
+		&i.NextAttemptAt,
+		&i.DeliveredAt,
+		&i.ReplayGeneration,
+	)
+	return i, err
 }
 
 const lockCustomerOperationDeployment = `-- name: LockCustomerOperationDeployment :one
@@ -50373,6 +50783,33 @@ func (q *Queries) ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accoun
 	var current_inflight int32
 	err := row.Scan(&current_inflight)
 	return current_inflight, err
+}
+
+const resetCustomerOperationDelivery = `-- name: ResetCustomerOperationDelivery :execrows
+UPDATE app_webhook_deliveries SET status='pending',attempt=0,replay_generation=replay_generation+1,
+ last_error='',last_response_code=0,next_attempt_at=$1::timestamptz,updated_at=$1::timestamptz
+WHERE id=$2::uuid AND account_id=$3::uuid AND status='dead'
+ AND replay_generation=$4::integer
+`
+
+type ResetCustomerOperationDeliveryParams struct {
+	Now                      pgtype.Timestamptz
+	ID                       pgtype.UUID
+	AccountID                pgtype.UUID
+	ExpectedReplayGeneration int32
+}
+
+func (q *Queries) ResetCustomerOperationDelivery(ctx context.Context, db DBTX, arg ResetCustomerOperationDeliveryParams) (int64, error) {
+	result, err := db.Exec(ctx, resetCustomerOperationDelivery,
+		arg.Now,
+		arg.ID,
+		arg.AccountID,
+		arg.ExpectedReplayGeneration,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const resetManagedPostgresCutoverVerification = `-- name: ResetManagedPostgresCutoverVerification :exec

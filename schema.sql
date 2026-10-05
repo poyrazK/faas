@@ -6464,6 +6464,44 @@ $$;
 
 
 --
+-- Name: project_release_member_policy_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_release_member_policy_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- The parent is inserted before its immutable members. Inactive retained
+    -- graphs and stage graph publication cannot change ordinary ingress.
+    IF EXISTS (SELECT 1 FROM project_release_sets
+               WHERE id = NEW.release_id AND active AND environment_slug = 'production') THEN
+        PERFORM record_project_release_policy_change(NEW.release_id, NEW.app_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: project_release_set_policy_changed(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_release_set_policy_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE member_app uuid;
+BEGIN
+    IF OLD.environment_slug = 'production' THEN
+        FOR member_app IN SELECT app_id FROM project_release_members WHERE release_id = OLD.id LOOP
+            PERFORM record_project_release_policy_change(OLD.id, member_app);
+        END LOOP;
+    END IF;
+    RETURN OLD;
+END;
+$$;
+
+
+--
 -- Name: protect_financial_budget_revision(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7529,6 +7567,22 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+
+
+--
+-- Name: record_project_release_policy_change(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_project_release_policy_change(release_uuid uuid, app_uuid uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(711901248671::bigint);
+    INSERT INTO control_plane_change_log (resource_type, resource_id, app_id, operation)
+    VALUES ('project_release', release_uuid, app_uuid, 'updated');
+    PERFORM pg_notify('app_changed', app_uuid::text);
+END;
+$$;
 
 
 --
@@ -11332,6 +11386,25 @@ CREATE TABLE public.customer_operation_definitions (
     CONSTRAINT customer_operation_definitions_revision_check CHECK ((revision ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT customer_operation_definitions_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 64))),
     CONSTRAINT customer_operation_definitions_spec_check CHECK ((jsonb_typeof(spec) = 'object'::text))
+);
+
+
+--
+-- Name: customer_operation_delivery_retries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_delivery_retries (
+    operation_id uuid NOT NULL,
+    retry_id text NOT NULL,
+    delivery_id uuid NOT NULL,
+    expected_replay_generation integer NOT NULL,
+    replay_generation integer NOT NULL,
+    queued_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_delivery_re_expected_replay_generation_check CHECK (((expected_replay_generation >= 0) AND (expected_replay_generation < 2147483647))),
+    CONSTRAINT customer_operation_delivery_retries_check CHECK ((replay_generation = (expected_replay_generation + 1))),
+    CONSTRAINT customer_operation_delivery_retries_check1 CHECK ((expires_at > queued_at)),
+    CONSTRAINT customer_operation_delivery_retries_retry_id_check CHECK (((octet_length(retry_id) >= 1) AND (octet_length(retry_id) <= 128)))
 );
 
 
@@ -20053,7 +20126,7 @@ CREATE TABLE public.workflow_runs (
     lease_until timestamp with time zone,
     resume_count integer DEFAULT 0 NOT NULL,
     cancelled_at timestamp with time zone,
-    platform_tenant_id uuid REFERENCES public.platform_tenants(id) ON DELETE RESTRICT,
+    platform_tenant_id uuid,
     CONSTRAINT workflow_runs_cancelled_at_check CHECK (((cancelled_at IS NULL) OR (status = 'failed'::text))),
     CONSTRAINT workflow_runs_resume_count_check CHECK (((resume_count >= 0) AND (resume_count <= 16))),
     CONSTRAINT workflow_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text])))
@@ -21254,6 +21327,14 @@ ALTER TABLE ONLY public.customer_operation_definitions
 
 ALTER TABLE ONLY public.customer_operation_definitions
     ADD CONSTRAINT customer_operation_definitions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_operation_delivery_retries customer_operation_delivery_retries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_delivery_retries
+    ADD CONSTRAINT customer_operation_delivery_retries_pkey PRIMARY KEY (operation_id, retry_id);
 
 
 --
@@ -26580,6 +26661,13 @@ CREATE INDEX customer_operation_stream_leases_retention_idx ON public.customer_o
 
 
 --
+-- Name: customer_operations_account_app_creation_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_account_app_creation_idx ON public.customer_operations USING btree (account_id, app_id, created_at DESC, id DESC);
+
+
+--
 -- Name: customer_operations_definition_retention_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -30519,18 +30607,19 @@ CREATE INDEX workflow_operation_effects_attempt_idx ON public.workflow_operation
 
 CREATE INDEX workflow_runs_app_id_idx ON public.workflow_runs USING btree (app_id, created_at DESC);
 
---
--- Name: workflow_runs_platform_tenant_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX workflow_runs_platform_tenant_idx ON public.workflow_runs USING btree (platform_tenant_id, created_at DESC) WHERE (platform_tenant_id IS NOT NULL);
-
 
 --
 -- Name: workflow_runs_dispatch_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX workflow_runs_dispatch_idx ON public.workflow_runs USING btree (scheduled_for) WHERE (status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text]));
+
+
+--
+-- Name: workflow_runs_platform_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_platform_tenant_idx ON public.workflow_runs USING btree (platform_tenant_id, created_at DESC) WHERE (platform_tenant_id IS NOT NULL);
 
 
 --
@@ -32851,6 +32940,27 @@ CREATE TRIGGER project_environment_workload_head_changed AFTER INSERT OR UPDATE 
 
 
 --
+-- Name: project_release_members project_release_member_policy_changed_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_release_member_policy_changed_trg AFTER INSERT ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.project_release_member_policy_changed();
+
+
+--
+-- Name: project_release_sets project_release_set_policy_changed_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_release_set_policy_changed_trg AFTER UPDATE OF active ON public.project_release_sets FOR EACH ROW WHEN ((old.active IS DISTINCT FROM new.active)) EXECUTE FUNCTION public.project_release_set_policy_changed();
+
+
+--
+-- Name: project_release_sets project_release_set_policy_deleted_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_release_set_policy_deleted_trg BEFORE DELETE ON public.project_release_sets FOR EACH ROW WHEN (old.active) EXECUTE FUNCTION public.project_release_set_policy_changed();
+
+
+--
 -- Name: apps prune_pr_preview_set_on_root_delete; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -34735,6 +34845,14 @@ ALTER TABLE ONLY public.customer_operation_definitions
 
 ALTER TABLE ONLY public.customer_operation_definitions
     ADD CONSTRAINT customer_operation_definitions_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_delivery_retries customer_operation_delivery_retries_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_delivery_retries
+    ADD CONSTRAINT customer_operation_delivery_retries_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
 
 
 --
@@ -39551,6 +39669,14 @@ ALTER TABLE ONLY public.workflow_run_resumes
 
 ALTER TABLE ONLY public.workflow_runs
     ADD CONSTRAINT workflow_runs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_runs workflow_runs_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_runs
+    ADD CONSTRAINT workflow_runs_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE RESTRICT;
 
 
 --
