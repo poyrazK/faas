@@ -152,7 +152,7 @@ gregale mcp deploy --path ./my-mcp --name my-mcp --profile small
 
 Check discovery, Origin rejection, compatibility and optional streaming
 
-`gregale mcp doctor [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp doctor [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -162,9 +162,11 @@ Check discovery, Origin rejection, compatibility and optional streaming
 | `--token-env <ENV>` | environment variable containing an MCP client token |  |
 | `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
 | `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
 | `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
-| `--arguments <JSON>` | tool arguments as a JSON object |  |
-| `--arguments-file <PATH>` | JSON file containing tool arguments |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
 | `--name <NAME>` | connection name (config) |  |
 | `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
 
@@ -178,7 +180,7 @@ gregale mcp doctor --app my-mcp --legacy --stream-tool stream_demo
 
 Discover tool schemas without invoking tools
 
-`gregale mcp tools [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp tools [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -188,9 +190,11 @@ Discover tool schemas without invoking tools
 | `--token-env <ENV>` | environment variable containing an MCP client token |  |
 | `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
 | `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
 | `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
-| `--arguments <JSON>` | tool arguments as a JSON object |  |
-| `--arguments-file <PATH>` | JSON file containing tool arguments |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
 | `--name <NAME>` | connection name (config) |  |
 | `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
 
@@ -200,11 +204,11 @@ Examples:
 gregale mcp tools --app my-mcp
 ```
 
-### mcp call
+### mcp resources
 
-Execute one discovered tool; resume input requests only when explicitly enabled
+Discover resource and template definitions without reading contents
 
-`gregale mcp call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--interactive] [--input-responses-file <PATH>]`
+`gregale mcp resources [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -214,9 +218,123 @@ Execute one discovered tool; resume input requests only when explicitly enabled
 | `--token-env <ENV>` | environment variable containing an MCP client token |  |
 | `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
 | `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
 | `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
-| `--arguments <JSON>` | tool arguments as a JSON object |  |
-| `--arguments-file <PATH>` | JSON file containing tool arguments |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp resources --app my-mcp
+```
+
+### mcp resource-read
+
+Read one explicitly selected resource URI
+
+`gregale mcp resource-read [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp resource-read --app my-mcp --uri 'file:///reports/current'
+```
+
+### mcp prompts
+
+Discover prompt definitions without rendering them
+
+`gregale mcp prompts [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp prompts --app my-mcp
+```
+
+### mcp prompt-get
+
+Render one explicitly selected prompt
+
+`gregale mcp prompt-get [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp prompt-get --app my-mcp --prompt summarize --arguments '{"period":"week"}'
+```
+
+### mcp call
+
+Execute one discovered tool; resume input requests only when explicitly enabled
+
+`gregale mcp call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--interactive] [--input-responses-file <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
 | `--name <NAME>` | connection name (config) |  |
 | `--timeout <DURATION>` | total request timeout (default 30s; interactive 5m) |  |
 | `--interactive` | answer modern MCP input forms in the terminal |  |
@@ -233,7 +351,7 @@ gregale mcp call --app my-mcp --tool report_preview --interactive
 
 Emit remote MCP connection JSON without credentials
 
-`gregale mcp config [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp config [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -243,9 +361,11 @@ Emit remote MCP connection JSON without credentials
 | `--token-env <ENV>` | environment variable containing an MCP client token |  |
 | `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
 | `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
 | `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
-| `--arguments <JSON>` | tool arguments as a JSON object |  |
-| `--arguments-file <PATH>` | JSON file containing tool arguments |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
 | `--name <NAME>` | connection name (config) |  |
 | `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
 
@@ -257,7 +377,7 @@ gregale mcp config --app my-mcp --name my-mcp
 
 ### mcp lock
 
-Capture a complete tool contract without invoking tools
+Capture MCP catalog definitions without reading resources, rendering prompts or invoking tools
 
 `gregale mcp lock [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--out <PATH>] [--force] [--timeout <DURATION>]`
 
@@ -280,7 +400,7 @@ gregale mcp lock --app my-mcp --out baseline.json
 
 ### mcp diff
 
-Compare local tool contracts and report changes needing review
+Compare local MCP catalogs and report changes needing review
 
 `gregale mcp diff --before <PATH> --after <PATH> [--check] [--strict-catalog]`
 
@@ -289,7 +409,7 @@ Compare local tool contracts and report changes needing review
 | `--before <PATH>` | baseline MCP contract snapshot | required |
 | `--after <PATH>` | candidate MCP contract snapshot | required |
 | `--check` | fail on breaking changes or changes needing review |  |
-| `--strict-catalog` | require review when a caller gains visibility of a tool |  |
+| `--strict-catalog` | require review when a caller gains visibility of any catalog definition |  |
 
 Examples:
 

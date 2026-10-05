@@ -10,26 +10,77 @@ import (
 
 const ContractFile = "gregale-mcp.lock.json"
 
-// Contract records the caller-visible tool interface, not endpoint identity,
-// credentials, timestamps or runtime behavior. Compare with the same permissions.
+// Contract records caller-visible catalog definitions, not endpoint identity,
+// credentials, timestamps, resource contents or rendered prompt messages.
 type Contract struct {
-	Version         int    `json:"version"`
-	ProtocolVersion string `json:"protocol_version"`
-	Tools           []Tool `json:"tools"`
+	Version           int                `json:"version"`
+	ProtocolVersion   string             `json:"protocol_version"`
+	Capabilities      []string           `json:"capabilities,omitempty"`
+	Tools             []Tool             `json:"tools"`
+	Resources         []Resource         `json:"resources,omitempty"`
+	ResourceTemplates []ResourceTemplate `json:"resource_templates,omitempty"`
+	Prompts           []Prompt           `json:"prompts,omitempty"`
 }
 
 func NewContract(version string, tools []Tool) (Contract, error) {
-	c := Contract{Version: 1, ProtocolVersion: version, Tools: append([]Tool{}, tools...)}
+	return newContract(1, version, Catalog{Tools: tools})
+}
+
+func NewCatalogContract(version string, catalog Catalog) (Contract, error) {
+	return newContract(2, version, catalog)
+}
+
+func newContract(formatVersion int, version string, catalog Catalog) (Contract, error) {
+	capabilities := append([]string{}, catalog.Capabilities...)
+	if formatVersion == 2 && catalog.Capabilities == nil {
+		if len(catalog.Tools) != 0 || (len(catalog.Resources) == 0 && len(catalog.ResourceTemplates) == 0 && len(catalog.Prompts) == 0) {
+			capabilities = append(capabilities, "tools")
+		}
+		if len(catalog.Resources) != 0 || len(catalog.ResourceTemplates) != 0 {
+			capabilities = append(capabilities, "resources")
+		}
+		if len(catalog.Prompts) != 0 {
+			capabilities = append(capabilities, "prompts")
+		}
+	}
+	c := Contract{
+		Version: formatVersion, ProtocolVersion: version, Capabilities: capabilities, Tools: append([]Tool{}, catalog.Tools...),
+		Resources:         append([]Resource{}, catalog.Resources...),
+		ResourceTemplates: append([]ResourceTemplate{}, catalog.ResourceTemplates...),
+		Prompts:           append([]Prompt{}, catalog.Prompts...),
+	}
 	if err := c.Validate(); err != nil {
 		return Contract{}, err
 	}
 	slices.SortFunc(c.Tools, func(a, b Tool) int { return bytes.Compare([]byte(a.Name), []byte(b.Name)) })
+	slices.Sort(c.Capabilities)
+	slices.SortFunc(c.Resources, func(a, b Resource) int { return bytes.Compare([]byte(a.URI), []byte(b.URI)) })
+	slices.SortFunc(c.ResourceTemplates, func(a, b ResourceTemplate) int { return bytes.Compare([]byte(a.URITemplate), []byte(b.URITemplate)) })
+	slices.SortFunc(c.Prompts, func(a, b Prompt) int { return bytes.Compare([]byte(a.Name), []byte(b.Name)) })
 	return c, nil
 }
 
 func (c Contract) Validate() error {
-	if c.Version != 1 || (c.ProtocolVersion != ProtocolVersion && c.ProtocolVersion != LegacyProtocolVersion) {
+	if (c.Version != 1 && c.Version != 2) || (c.ProtocolVersion != ProtocolVersion && c.ProtocolVersion != LegacyProtocolVersion) {
 		return fmt.Errorf("unsupported MCP contract format or protocol version")
+	}
+	if c.Version == 1 && (len(c.Capabilities) != 0 || len(c.Resources) != 0 || len(c.ResourceTemplates) != 0 || len(c.Prompts) != 0) {
+		return fmt.Errorf("MCP contract format 1 cannot contain capabilities, resources, templates or prompts")
+	}
+	if c.Version == 2 {
+		if c.Capabilities == nil || len(c.Capabilities) == 0 {
+			return fmt.Errorf("MCP contract format 2 must include advertised capabilities")
+		}
+		seenCapabilities := make(map[string]bool, len(c.Capabilities))
+		for _, capability := range c.Capabilities {
+			if !slices.Contains([]string{"tools", "resources", "prompts"}, capability) || seenCapabilities[capability] {
+				return fmt.Errorf("MCP contract contains an invalid or duplicate capability")
+			}
+			seenCapabilities[capability] = true
+		}
+		if (len(c.Tools) != 0 && !seenCapabilities["tools"]) || ((len(c.Resources) != 0 || len(c.ResourceTemplates) != 0) && !seenCapabilities["resources"]) || (len(c.Prompts) != 0 && !seenCapabilities["prompts"]) {
+			return fmt.Errorf("MCP contract contains definitions for an unadvertised capability")
+		}
 	}
 	if c.Tools == nil {
 		return fmt.Errorf("MCP contract must include a tools array")
@@ -62,6 +113,78 @@ func (c Contract) Validate() error {
 			}
 		}
 	}
+	for _, resource := range c.Resources {
+		if resource.URI == "" || seen["resource:"+resource.URI] {
+			return fmt.Errorf("MCP contract contains an empty or duplicate resource URI")
+		}
+		seen["resource:"+resource.URI] = true
+		if resource.Name == "" || (resource.Size != nil && *resource.Size < 0) {
+			return fmt.Errorf("resource %q has invalid metadata", resource.URI)
+		}
+		if err := validateIcons("resource "+resource.URI, resource.Icons); err != nil {
+			return err
+		}
+		if err := validateAnnotations("resource "+resource.URI, resource.Annotations); err != nil {
+			return err
+		}
+	}
+	for _, template := range c.ResourceTemplates {
+		if template.URITemplate == "" || seen["template:"+template.URITemplate] {
+			return fmt.Errorf("MCP contract contains an empty or duplicate resource template")
+		}
+		seen["template:"+template.URITemplate] = true
+		if template.Name == "" {
+			return fmt.Errorf("resource template %q has no name", template.URITemplate)
+		}
+		if err := validateIcons("resource template "+template.URITemplate, template.Icons); err != nil {
+			return err
+		}
+		if err := validateAnnotations("resource template "+template.URITemplate, template.Annotations); err != nil {
+			return err
+		}
+	}
+	for _, prompt := range c.Prompts {
+		if prompt.Name == "" || seen["prompt:"+prompt.Name] {
+			return fmt.Errorf("MCP contract contains an empty or duplicate prompt name")
+		}
+		seen["prompt:"+prompt.Name] = true
+		if err := validateAnnotations("prompt "+prompt.Name, prompt.Annotations); err != nil {
+			return err
+		}
+		if err := validateIcons("prompt "+prompt.Name, prompt.Icons); err != nil {
+			return err
+		}
+		arguments := map[string]bool{}
+		for _, argument := range prompt.Arguments {
+			if argument.Name == "" || arguments[argument.Name] {
+				return fmt.Errorf("prompt %q contains an empty or duplicate argument", prompt.Name)
+			}
+			arguments[argument.Name] = true
+		}
+	}
+	return nil
+}
+
+func validateAnnotations(item string, raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	value, err := contractJSON(raw)
+	if err != nil {
+		return fmt.Errorf("%s annotations: %w", item, err)
+	}
+	if _, ok := value.(map[string]any); !ok {
+		return fmt.Errorf("%s annotations must be an object", item)
+	}
+	return nil
+}
+
+func validateIcons(item string, icons []Icon) error {
+	for _, icon := range icons {
+		if icon.Src == "" {
+			return fmt.Errorf("%s contains an icon without a source", item)
+		}
+	}
 	return nil
 }
 
@@ -71,10 +194,17 @@ func MarshalContract(c Contract) ([]byte, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	c, err := NewContract(c.ProtocolVersion, c.Tools)
+	var normalized Contract
+	var err error
+	if c.Version == 1 {
+		normalized, err = NewContract(c.ProtocolVersion, c.Tools)
+	} else {
+		normalized, err = NewCatalogContract(c.ProtocolVersion, Catalog{Capabilities: c.Capabilities, Tools: c.Tools, Resources: c.Resources, ResourceTemplates: c.ResourceTemplates, Prompts: c.Prompts})
+	}
 	if err != nil {
 		return nil, err
 	}
+	c = normalized
 	data, err := json.Marshal(c)
 	if err != nil {
 		return nil, fmt.Errorf("encode MCP contract: %w", err)
@@ -130,10 +260,14 @@ func contractJSON(data []byte) (any, error) {
 }
 
 type ContractChange struct {
-	Tool     string `json:"tool,omitempty"`
-	Path     string `json:"path"`
-	Kind     string `json:"kind"`
-	Severity string `json:"severity"` // informational, breaking, needs_review
+	Tool             string `json:"tool,omitempty"`
+	Resource         string `json:"resource,omitempty"`
+	ResourceTemplate string `json:"resource_template,omitempty"`
+	Prompt           string `json:"prompt,omitempty"`
+	Capability       string `json:"capability,omitempty"`
+	Path             string `json:"path"`
+	Kind             string `json:"kind"`
+	Severity         string `json:"severity"` // informational, breaking, needs_review
 }
 
 type ContractDiff struct {
@@ -173,8 +307,45 @@ func CompareContractsWithOptions(before, after Contract, options ContractDiffOpt
 		d.NeedsReview = d.NeedsReview || severity == "needs_review"
 		d.Compatible = !d.Breaking && !d.NeedsReview
 	}
+	addCatalog := func(kind, id, path, change, severity string) {
+		entry := ContractChange{Path: path, Kind: change, Severity: severity}
+		switch kind {
+		case "resource":
+			entry.Resource = id
+		case "resource_template":
+			entry.ResourceTemplate = id
+		case "prompt":
+			entry.Prompt = id
+		case "capability":
+			entry.Capability = id
+		}
+		d.Changes = append(d.Changes, entry)
+		d.Breaking = d.Breaking || severity == "breaking"
+		d.NeedsReview = d.NeedsReview || severity == "needs_review"
+		d.Compatible = !d.Breaking && !d.NeedsReview
+	}
 	if before.ProtocolVersion != after.ProtocolVersion {
 		add("", "/protocol_version", "protocol_changed", "needs_review")
+	}
+	baseCapabilities := contractCapabilities(before)
+	nextCapabilities := contractCapabilities(after)
+	baseCapabilitySet, nextCapabilitySet := map[string]bool{}, map[string]bool{}
+	for _, capability := range baseCapabilities {
+		baseCapabilitySet[capability] = true
+	}
+	for _, capability := range nextCapabilities {
+		nextCapabilitySet[capability] = true
+	}
+	for _, capability := range contractKeys(baseCapabilitySet, nextCapabilitySet) {
+		if !baseCapabilitySet[capability] {
+			severity := "informational"
+			if options.StrictCatalog {
+				severity = "needs_review"
+			}
+			addCatalog("capability", capability, "", "capability_added", severity)
+		} else if !nextCapabilitySet[capability] {
+			addCatalog("capability", capability, "", "capability_removed", "breaking")
+		}
 	}
 	base, next := map[string]Tool{}, map[string]Tool{}
 	for _, t := range before.Tools {
@@ -215,7 +386,160 @@ func CompareContractsWithOptions(before, after Contract, options ContractDiffOpt
 			compareContractSchema(bv, av, "/outputSchema", true, func(path, kind, severity string) { add(name, path, kind, severity) })
 		}
 	}
+	compareResources := func(kind string, before, after map[string]any, strict bool) {
+		for _, id := range contractKeys(before, after) {
+			b, bok := before[id]
+			a, aok := after[id]
+			if !bok {
+				severity := "informational"
+				if strict {
+					severity = "needs_review"
+				}
+				addCatalog(kind, id, "", kind+"_added", severity)
+				continue
+			}
+			if !aok {
+				addCatalog(kind, id, "", kind+"_removed", "breaking")
+				continue
+			}
+			compareCatalogMetadata(kind, id, b, a, addCatalog)
+		}
+	}
+	resourceMap := make(map[string]any, len(before.Resources))
+	nextResourceMap := make(map[string]any, len(after.Resources))
+	for _, v := range before.Resources {
+		resourceMap[v.URI] = v
+	}
+	for _, v := range after.Resources {
+		nextResourceMap[v.URI] = v
+	}
+	compareResources("resource", resourceMap, nextResourceMap, options.StrictCatalog)
+	templateMap := make(map[string]any, len(before.ResourceTemplates))
+	nextTemplateMap := make(map[string]any, len(after.ResourceTemplates))
+	for _, v := range before.ResourceTemplates {
+		templateMap[v.URITemplate] = v
+	}
+	for _, v := range after.ResourceTemplates {
+		nextTemplateMap[v.URITemplate] = v
+	}
+	compareResources("resource_template", templateMap, nextTemplateMap, options.StrictCatalog)
+	promptMap := make(map[string]any, len(before.Prompts))
+	nextPromptMap := make(map[string]any, len(after.Prompts))
+	for _, v := range before.Prompts {
+		promptMap[v.Name] = v
+	}
+	for _, v := range after.Prompts {
+		nextPromptMap[v.Name] = v
+	}
+	for _, name := range contractKeys(promptMap, nextPromptMap) {
+		b, bok := promptMap[name].(Prompt)
+		a, aok := nextPromptMap[name].(Prompt)
+		if !bok {
+			severity := "informational"
+			if options.StrictCatalog {
+				severity = "needs_review"
+			}
+			addCatalog("prompt", name, "", "prompt_added", severity)
+			continue
+		}
+		if !aok {
+			addCatalog("prompt", name, "", "prompt_removed", "breaking")
+			continue
+		}
+		comparePrompt(name, b, a, addCatalog)
+	}
 	return d, nil
+}
+
+func compareCatalogMetadata(kind, id string, before, after any, add func(string, string, string, string, string)) {
+	var metadata map[string]any
+	b, _ := json.Marshal(before)
+	a, _ := json.Marshal(after)
+	decodedBefore, _ := contractJSON(b)
+	metadata, _ = decodedBefore.(map[string]any)
+	var next map[string]any
+	decodedAfter, _ := contractJSON(a)
+	next, _ = decodedAfter.(map[string]any)
+	for _, field := range contractKeys(metadata, next) {
+		if contractEqual(metadata[field], next[field]) {
+			continue
+		}
+		severity := "needs_review"
+		change := "metadata_changed"
+		switch field {
+		case "title", "description", "size":
+			severity = "informational"
+		case "name", "mimeType", "annotations", "icons":
+			severity = "needs_review"
+		}
+		add(kind, id, "/"+contractPointer(field), kind+"_"+change, severity)
+	}
+}
+
+func contractCapabilities(contract Contract) []string {
+	if contract.Version == 1 {
+		return []string{"tools"}
+	}
+	return contract.Capabilities
+}
+
+func comparePrompt(name string, before, after Prompt, add func(string, string, string, string, string)) {
+	beforeIcons, afterIcons := before.Icons, after.Icons
+	if len(beforeIcons) == 0 {
+		beforeIcons = nil
+	}
+	if len(afterIcons) == 0 {
+		afterIcons = nil
+	}
+	for _, field := range []struct {
+		name          string
+		before, after any
+		severity      string
+	}{
+		{"title", before.Title, after.Title, "informational"},
+		{"description", before.Description, after.Description, "informational"},
+		{"icons", beforeIcons, afterIcons, "needs_review"},
+		{"annotations", before.Annotations, after.Annotations, "needs_review"},
+	} {
+		if !contractEqual(field.before, field.after) {
+			add("prompt", name, "/"+field.name, "prompt_metadata_changed", field.severity)
+		}
+	}
+	base, next := map[string]PromptArgument{}, map[string]PromptArgument{}
+	for _, arg := range before.Arguments {
+		base[arg.Name] = arg
+	}
+	for _, arg := range after.Arguments {
+		next[arg.Name] = arg
+	}
+	for _, argName := range contractKeys(base, next) {
+		b, bok := base[argName]
+		a, aok := next[argName]
+		path := "/arguments/" + contractPointer(argName)
+		if !bok {
+			severity := "informational"
+			if a.Required {
+				severity = "breaking"
+			}
+			add("prompt", name, path, "prompt_argument_added", severity)
+			continue
+		}
+		if !aok {
+			add("prompt", name, path, "prompt_argument_removed", "breaking")
+			continue
+		}
+		if !b.Required && a.Required {
+			add("prompt", name, path+"/required", "prompt_argument_required", "breaking")
+		} else if b.Required && !a.Required {
+			add("prompt", name, path+"/required", "prompt_argument_optional", "informational")
+		}
+		if b.Title != a.Title {
+			add("prompt", name, path+"/title", "prompt_argument_metadata_changed", "informational")
+		}
+		if b.Description != a.Description {
+			add("prompt", name, path+"/description", "prompt_argument_metadata_changed", "informational")
+		}
+	}
 }
 
 func compareContractSchema(before, after any, path string, output bool, add func(string, string, string)) {
