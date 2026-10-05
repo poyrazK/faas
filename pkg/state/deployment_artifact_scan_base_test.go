@@ -17,11 +17,11 @@ type artifactScanBaseTestStore interface {
 	BaseImageProducerStore
 }
 
-func artifactScanBaseFixture(t *testing.T, s artifactScanBaseTestStore) (DeploymentArtifactScanInput, BaseImageProducer, App, Deployment) {
-	return artifactScanBaseFixtureWithSidecar(t, s, false)
+func artifactScanBaseFixture(t *testing.T, s artifactScanBaseTestStore, hooks ...registryFixtureCreateHooks) (DeploymentArtifactScanInput, BaseImageProducer, App, Deployment) {
+	return artifactScanBaseFixtureWithSidecar(t, s, false, hooks...)
 }
 
-func artifactScanBaseFixtureWithSidecar(t *testing.T, s artifactScanBaseTestStore, sidecar bool) (DeploymentArtifactScanInput, BaseImageProducer, App, Deployment) {
+func artifactScanBaseFixtureWithSidecar(t *testing.T, s artifactScanBaseTestStore, sidecar bool, hooks ...registryFixtureCreateHooks) (DeploymentArtifactScanInput, BaseImageProducer, App, Deployment) {
 	t.Helper()
 	baseInput := baseProducerFixture(t, "base/scan-parent.ext4", "parent")
 	base, err := s.PublishBaseImageProducer(t.Context(), baseInput)
@@ -29,7 +29,7 @@ func artifactScanBaseFixtureWithSidecar(t *testing.T, s artifactScanBaseTestStor
 		t.Fatal(err)
 	}
 	full := baseProducerFixture(t, "base/unpublished-scan.ext4", "parent", "app")
-	verification, app, dep := registryVerificationFixtureWithChain(t, s, sidecar, full.ImageChain)
+	verification, app, dep := registryVerificationFixtureWithChain(t, s, sidecar, full.ImageChain, hooks...)
 	if sidecar {
 		proof, err := s.RecordDeploymentRegistryVerification(t.Context(), verification)
 		if err != nil {

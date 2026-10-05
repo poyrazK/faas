@@ -11584,3 +11584,60 @@ WHERE id=sqlc.arg(run_id) AND (sqlc.narg(generation)::integer IS NULL OR resume_
 UPDATE workflow_runs SET lease_until=now()+(sqlc.arg(timeout_ms)::bigint*interval '1 millisecond')+interval '5 minutes'
 WHERE id=sqlc.arg(run_id) AND status='running'
  AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer);
+
+-- Automatic observation uses the materializer's generation-fenced lease. A
+-- claimed attempt receives a cooldown even if evidence reads fail, so a broken
+-- application cannot starve the rest of the fleet. A new revision bypasses it.
+-- name: ClaimApplicationStandardObservation :one
+WITH candidate AS (
+ SELECT e.app_id FROM app_application_standards e JOIN apps a ON a.id=e.app_id
+ WHERE a.status <> 'deleted' AND e.state IN ('persisted','observed') AND e.persisted_revision=e.desired_revision
+  AND (e.lease_until IS NULL OR e.lease_until <= clock_timestamp())
+  AND (e.observation_revision<>e.desired_revision OR e.observation_checked_at IS NULL
+    OR e.observation_checked_at<=clock_timestamp()-make_interval(secs=>sqlc.arg(check_seconds)::double precision))
+  AND NOT EXISTS (SELECT 1 FROM application_standard_operation_targets t JOIN application_standard_operations o ON o.id=t.operation_id
+    WHERE t.app_id=e.app_id AND t.state<>'skipped' AND o.state IN ('queued','running','waiting','paused'))
+ ORDER BY e.observation_checked_at NULLS FIRST,e.app_id FOR UPDATE OF e SKIP LOCKED LIMIT 1
+)
+UPDATE app_application_standards e SET lease_owner=sqlc.arg(owner)::text,lease_generation=e.lease_generation+1,
+ lease_until=clock_timestamp()+make_interval(secs=>sqlc.arg(lease_seconds)::double precision),
+ observation_checked_at=clock_timestamp(),observation_revision=e.desired_revision
+FROM candidate c WHERE e.app_id=c.app_id
+RETURNING e.app_id,e.org_id,e.lease_owner,e.lease_generation,e.lease_until,e.desired_revision;
+
+-- name: LockApplicationStandardObservationWorker :one
+SELECT lease_until FROM app_application_standards
+WHERE app_id=sqlc.arg(app_id)::uuid AND org_id=sqlc.arg(org_id)::uuid
+ AND lease_owner=sqlc.arg(owner)::text AND lease_generation=sqlc.arg(generation)::bigint
+ AND desired_revision=sqlc.arg(desired_revision)::bigint AND persisted_revision=desired_revision
+ AND lease_until>clock_timestamp() AND state IN ('persisted','observed')
+FOR UPDATE NOWAIT;
+
+-- A final storage-clock check rejects a transaction that outlives its claim or
+-- evidence. Healthy refreshes leave the intent's updated_at fingerprint alone.
+-- name: CheckpointAutomaticApplicationStandardObservation :execrows
+UPDATE app_application_standards e SET observed_revision=CASE WHEN sqlc.arg(qualified)::boolean THEN e.desired_revision ELSE 0 END,
+ state=CASE WHEN sqlc.arg(qualified)::boolean THEN 'observed' ELSE 'persisted' END,
+ updated_at=CASE WHEN e.observed_revision<>CASE WHEN sqlc.arg(qualified)::boolean THEN e.desired_revision ELSE 0 END
+   OR e.state<>CASE WHEN sqlc.arg(qualified)::boolean THEN 'observed' ELSE 'persisted' END
+   OR e.error_code<>sqlc.arg(error_code)::text THEN clock_timestamp() ELSE e.updated_at END,
+ error_code=sqlc.arg(error_code)::text,lease_owner='',lease_until=NULL
+ WHERE e.app_id=sqlc.arg(app_id)::uuid AND e.org_id=sqlc.arg(org_id)::uuid
+ AND e.desired_revision=sqlc.arg(desired_revision)::bigint AND e.persisted_revision=e.desired_revision
+ AND e.state IN ('persisted','observed') AND e.lease_owner=sqlc.arg(owner)::text
+ AND e.lease_generation=sqlc.arg(generation)::bigint AND e.lease_until>clock_timestamp()
+ AND (NOT sqlc.arg(qualified)::boolean OR sqlc.narg(evidence_until)::timestamptz>clock_timestamp())
+ AND NOT EXISTS (SELECT 1 FROM application_standard_operation_targets t JOIN application_standard_operations o ON o.id=t.operation_id
+  WHERE t.app_id=e.app_id AND t.state<>'skipped' AND o.state IN ('queued','running','waiting','paused'));
+
+-- Checks after all triggers and writes, so a slow statement cannot commit a
+-- checkpoint after its authoritative lease or positive evidence has expired.
+-- name: VerifyAutomaticApplicationStandardObservation :one
+SELECT EXISTS (SELECT 1 FROM app_application_standards e
+ WHERE e.app_id=sqlc.arg(app_id)::uuid AND e.org_id=sqlc.arg(org_id)::uuid
+ AND e.desired_revision=sqlc.arg(desired_revision)::bigint AND e.persisted_revision=e.desired_revision
+ AND e.lease_generation=sqlc.arg(generation)::bigint AND e.lease_owner='' AND e.lease_until IS NULL
+ AND e.state=CASE WHEN sqlc.arg(qualified)::boolean THEN 'observed' ELSE 'persisted' END
+ AND e.observed_revision=CASE WHEN sqlc.arg(qualified)::boolean THEN e.desired_revision ELSE 0 END
+ AND clock_timestamp()<sqlc.arg(claim_until)::timestamptz
+ AND (NOT sqlc.arg(qualified)::boolean OR sqlc.narg(evidence_until)::timestamptz>clock_timestamp()))::boolean;

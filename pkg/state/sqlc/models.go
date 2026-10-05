@@ -431,6 +431,8 @@ type AppApplicationStandard struct {
 	LeaseUntil                pgtype.Timestamptz
 	MaterializedFields        []string
 	ExceptionExpiresAt        pgtype.Timestamptz
+	ObservationCheckedAt      pgtype.Timestamptz
+	ObservationRevision       int64
 }
 
 type AppBindingPromotionRevision struct {

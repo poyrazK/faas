@@ -12141,10 +12141,13 @@ CREATE TABLE public.app_application_standards (
     lease_until timestamp with time zone,
     materialized_fields text[] DEFAULT '{}'::text[] NOT NULL,
     exception_expires_at timestamp with time zone,
+    observation_checked_at timestamp with time zone,
+    observation_revision bigint DEFAULT 0 NOT NULL,
     CONSTRAINT app_application_standards_adoptions_check CHECK ((jsonb_typeof(adoptions) = 'array'::text)),
     CONSTRAINT app_application_standards_base_settings_check CHECK ((jsonb_typeof(base_settings) = 'object'::text)),
     CONSTRAINT app_application_standards_check CHECK (((persisted_revision >= 0) AND (persisted_revision <= desired_revision))),
     CONSTRAINT app_application_standards_check1 CHECK (((observed_revision >= 0) AND (observed_revision <= persisted_revision))),
+    CONSTRAINT app_application_standards_check2 CHECK (((observation_revision >= 0) AND (observation_revision <= desired_revision))),
     CONSTRAINT app_application_standards_desired_revision_check CHECK ((desired_revision > 0)),
     CONSTRAINT app_application_standards_effective_check CHECK ((jsonb_typeof(effective) = 'object'::text)),
     CONSTRAINT app_application_standards_effective_hash_check CHECK (((effective_hash = ''::text) OR (effective_hash ~ '^[a-f0-9]{64}$'::text))),
@@ -26820,6 +26823,13 @@ CREATE INDEX api_keys_org_id_idx ON public.api_keys USING btree (org_id) WHERE (
 --
 
 CREATE INDEX api_keys_rotated_from_idx ON public.api_keys USING btree (rotated_from_id) WHERE (rotated_from_id IS NOT NULL);
+
+
+--
+-- Name: app_application_standards_observation_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_application_standards_observation_due ON public.app_application_standards USING btree (observation_checked_at NULLS FIRST, app_id) WHERE ((state = ANY (ARRAY['persisted'::text, 'observed'::text])) AND (persisted_revision = desired_revision));
 
 
 --

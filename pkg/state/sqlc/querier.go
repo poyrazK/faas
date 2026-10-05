@@ -137,10 +137,17 @@ type Querier interface {
 	CheckpointApplicationStandardObservation(ctx context.Context, db DBTX, arg CheckpointApplicationStandardObservationParams) (int64, error)
 	CheckpointApplicationStandardTarget(ctx context.Context, db DBTX, arg CheckpointApplicationStandardTargetParams) error
 	CheckpointApplicationStandardWorkerOperation(ctx context.Context, db DBTX, arg CheckpointApplicationStandardWorkerOperationParams) (int64, error)
+	// A final storage-clock check rejects a transaction that outlives its claim or
+	// evidence. Healthy refreshes leave the intent's updated_at fingerprint alone.
+	CheckpointAutomaticApplicationStandardObservation(ctx context.Context, db DBTX, arg CheckpointAutomaticApplicationStandardObservationParams) (int64, error)
 	ClaimApplicationStandardEnrollment(ctx context.Context, db DBTX, arg ClaimApplicationStandardEnrollmentParams) (ClaimApplicationStandardEnrollmentRow, error)
 	// Interactive creation uses the same lease, without scanning or claiming a
 	// different application's intent. A reviewed queued target takes precedence.
 	ClaimApplicationStandardEnrollmentForApp(ctx context.Context, db DBTX, arg ClaimApplicationStandardEnrollmentForAppParams) (ClaimApplicationStandardEnrollmentForAppRow, error)
+	// Automatic observation uses the materializer's generation-fenced lease. A
+	// claimed attempt receives a cooldown even if evidence reads fail, so a broken
+	// application cannot starve the rest of the fleet. A new revision bypasses it.
+	ClaimApplicationStandardObservation(ctx context.Context, db DBTX, arg ClaimApplicationStandardObservationParams) (ClaimApplicationStandardObservationRow, error)
 	ClaimApplicationStandardOperation(ctx context.Context, db DBTX, arg ClaimApplicationStandardOperationParams) (ClaimApplicationStandardOperationRow, error)
 	ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg ClaimAutomaticRouteCheckParams) ([]byte, error)
 	ClaimCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg ClaimCustomerOperationBlobCleanupParams) (CustomerOperationResultBlob, error)
@@ -1322,6 +1329,7 @@ type Querier interface {
 	// All subsequent reads and observation writes use this same transaction.
 	LockApplicationStandardObservation(ctx context.Context, db DBTX, arg LockApplicationStandardObservationParams) (pgtype.UUID, error)
 	LockApplicationStandardObservationEvidence(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
+	LockApplicationStandardObservationWorker(ctx context.Context, db DBTX, arg LockApplicationStandardObservationWorkerParams) (pgtype.Timestamptz, error)
 	LockApplicationStandardOperationControl(ctx context.Context, db DBTX, arg LockApplicationStandardOperationControlParams) (pgtype.UUID, error)
 	LockApplicationStandardOrg(ctx context.Context, db DBTX, arg LockApplicationStandardOrgParams) (pgtype.UUID, error)
 	LockApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg LockApplicationStandardReviewPlanParams) (ApplicationStandardReviewPlan, error)
@@ -2426,6 +2434,9 @@ type Querier interface {
 	UsageByMonth(ctx context.Context, db DBTX, arg UsageByMonthParams) ([]UsageByMonthRow, error)
 	ValidateApplicationStandardResourceRefs(ctx context.Context, db DBTX, arg ValidateApplicationStandardResourceRefsParams) (pgtype.Bool, error)
 	VerifyAutomaticApplicationStandardInstallation(ctx context.Context, db DBTX, arg VerifyAutomaticApplicationStandardInstallationParams) (bool, error)
+	// Checks after all triggers and writes, so a slow statement cannot commit a
+	// checkpoint after its authoritative lease or positive evidence has expired.
+	VerifyAutomaticApplicationStandardObservation(ctx context.Context, db DBTX, arg VerifyAutomaticApplicationStandardObservationParams) (bool, error)
 	WebhookAutomationLegacyReceiptExists(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	WorkerAdmissionCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	WorkerAdmissionLockAccount(ctx context.Context, db DBTX, arg WorkerAdmissionLockAccountParams) (WorkerAdmissionLockAccountRow, error)

@@ -1822,6 +1822,52 @@ func (q *Queries) CheckpointApplicationStandardWorkerOperation(ctx context.Conte
 	return result.RowsAffected(), nil
 }
 
+const checkpointAutomaticApplicationStandardObservation = `-- name: CheckpointAutomaticApplicationStandardObservation :execrows
+UPDATE app_application_standards e SET observed_revision=CASE WHEN $1::boolean THEN e.desired_revision ELSE 0 END,
+ state=CASE WHEN $1::boolean THEN 'observed' ELSE 'persisted' END,
+ updated_at=CASE WHEN e.observed_revision<>CASE WHEN $1::boolean THEN e.desired_revision ELSE 0 END
+   OR e.state<>CASE WHEN $1::boolean THEN 'observed' ELSE 'persisted' END
+   OR e.error_code<>$2::text THEN clock_timestamp() ELSE e.updated_at END,
+ error_code=$2::text,lease_owner='',lease_until=NULL
+ WHERE e.app_id=$3::uuid AND e.org_id=$4::uuid
+ AND e.desired_revision=$5::bigint AND e.persisted_revision=e.desired_revision
+ AND e.state IN ('persisted','observed') AND e.lease_owner=$6::text
+ AND e.lease_generation=$7::bigint AND e.lease_until>clock_timestamp()
+ AND (NOT $1::boolean OR $8::timestamptz>clock_timestamp())
+ AND NOT EXISTS (SELECT 1 FROM application_standard_operation_targets t JOIN application_standard_operations o ON o.id=t.operation_id
+  WHERE t.app_id=e.app_id AND t.state<>'skipped' AND o.state IN ('queued','running','waiting','paused'))
+`
+
+type CheckpointAutomaticApplicationStandardObservationParams struct {
+	Qualified       bool
+	ErrorCode       string
+	AppID           pgtype.UUID
+	OrgID           pgtype.UUID
+	DesiredRevision int64
+	Owner           string
+	Generation      int64
+	EvidenceUntil   pgtype.Timestamptz
+}
+
+// A final storage-clock check rejects a transaction that outlives its claim or
+// evidence. Healthy refreshes leave the intent's updated_at fingerprint alone.
+func (q *Queries) CheckpointAutomaticApplicationStandardObservation(ctx context.Context, db DBTX, arg CheckpointAutomaticApplicationStandardObservationParams) (int64, error) {
+	result, err := db.Exec(ctx, checkpointAutomaticApplicationStandardObservation,
+		arg.Qualified,
+		arg.ErrorCode,
+		arg.AppID,
+		arg.OrgID,
+		arg.DesiredRevision,
+		arg.Owner,
+		arg.Generation,
+		arg.EvidenceUntil,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const claimApplicationStandardEnrollment = `-- name: ClaimApplicationStandardEnrollment :one
 WITH candidate AS (
  SELECT e.app_id FROM app_application_standards e JOIN apps a ON a.id=e.app_id
@@ -1910,6 +1956,56 @@ func (q *Queries) ClaimApplicationStandardEnrollmentForApp(ctx context.Context, 
 		arg.DesiredRevision,
 	)
 	var i ClaimApplicationStandardEnrollmentForAppRow
+	err := row.Scan(
+		&i.AppID,
+		&i.OrgID,
+		&i.LeaseOwner,
+		&i.LeaseGeneration,
+		&i.LeaseUntil,
+		&i.DesiredRevision,
+	)
+	return i, err
+}
+
+const claimApplicationStandardObservation = `-- name: ClaimApplicationStandardObservation :one
+WITH candidate AS (
+ SELECT e.app_id FROM app_application_standards e JOIN apps a ON a.id=e.app_id
+ WHERE a.status <> 'deleted' AND e.state IN ('persisted','observed') AND e.persisted_revision=e.desired_revision
+  AND (e.lease_until IS NULL OR e.lease_until <= clock_timestamp())
+  AND (e.observation_revision<>e.desired_revision OR e.observation_checked_at IS NULL
+    OR e.observation_checked_at<=clock_timestamp()-make_interval(secs=>$3::double precision))
+  AND NOT EXISTS (SELECT 1 FROM application_standard_operation_targets t JOIN application_standard_operations o ON o.id=t.operation_id
+    WHERE t.app_id=e.app_id AND t.state<>'skipped' AND o.state IN ('queued','running','waiting','paused'))
+ ORDER BY e.observation_checked_at NULLS FIRST,e.app_id FOR UPDATE OF e SKIP LOCKED LIMIT 1
+)
+UPDATE app_application_standards e SET lease_owner=$1::text,lease_generation=e.lease_generation+1,
+ lease_until=clock_timestamp()+make_interval(secs=>$2::double precision),
+ observation_checked_at=clock_timestamp(),observation_revision=e.desired_revision
+FROM candidate c WHERE e.app_id=c.app_id
+RETURNING e.app_id,e.org_id,e.lease_owner,e.lease_generation,e.lease_until,e.desired_revision
+`
+
+type ClaimApplicationStandardObservationParams struct {
+	Owner        string
+	LeaseSeconds float64
+	CheckSeconds float64
+}
+
+type ClaimApplicationStandardObservationRow struct {
+	AppID           pgtype.UUID
+	OrgID           pgtype.UUID
+	LeaseOwner      string
+	LeaseGeneration int64
+	LeaseUntil      pgtype.Timestamptz
+	DesiredRevision int64
+}
+
+// Automatic observation uses the materializer's generation-fenced lease. A
+// claimed attempt receives a cooldown even if evidence reads fail, so a broken
+// application cannot starve the rest of the fleet. A new revision bypasses it.
+func (q *Queries) ClaimApplicationStandardObservation(ctx context.Context, db DBTX, arg ClaimApplicationStandardObservationParams) (ClaimApplicationStandardObservationRow, error) {
+	row := db.QueryRow(ctx, claimApplicationStandardObservation, arg.Owner, arg.LeaseSeconds, arg.CheckSeconds)
+	var i ClaimApplicationStandardObservationRow
 	err := row.Scan(
 		&i.AppID,
 		&i.OrgID,
@@ -23457,6 +23553,36 @@ func (q *Queries) LockApplicationStandardObservationEvidence(ctx context.Context
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const lockApplicationStandardObservationWorker = `-- name: LockApplicationStandardObservationWorker :one
+SELECT lease_until FROM app_application_standards
+WHERE app_id=$1::uuid AND org_id=$2::uuid
+ AND lease_owner=$3::text AND lease_generation=$4::bigint
+ AND desired_revision=$5::bigint AND persisted_revision=desired_revision
+ AND lease_until>clock_timestamp() AND state IN ('persisted','observed')
+FOR UPDATE NOWAIT
+`
+
+type LockApplicationStandardObservationWorkerParams struct {
+	AppID           pgtype.UUID
+	OrgID           pgtype.UUID
+	Owner           string
+	Generation      int64
+	DesiredRevision int64
+}
+
+func (q *Queries) LockApplicationStandardObservationWorker(ctx context.Context, db DBTX, arg LockApplicationStandardObservationWorkerParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, lockApplicationStandardObservationWorker,
+		arg.AppID,
+		arg.OrgID,
+		arg.Owner,
+		arg.Generation,
+		arg.DesiredRevision,
+	)
+	var lease_until pgtype.Timestamptz
+	err := row.Scan(&lease_until)
+	return lease_until, err
 }
 
 const lockApplicationStandardOperationControl = `-- name: LockApplicationStandardOperationControl :one
@@ -45265,6 +45391,44 @@ func (q *Queries) VerifyAutomaticApplicationStandardInstallation(ctx context.Con
 		arg.DesiredRevision,
 		arg.Generation,
 		arg.ClaimUntil,
+	)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const verifyAutomaticApplicationStandardObservation = `-- name: VerifyAutomaticApplicationStandardObservation :one
+SELECT EXISTS (SELECT 1 FROM app_application_standards e
+ WHERE e.app_id=$1::uuid AND e.org_id=$2::uuid
+ AND e.desired_revision=$3::bigint AND e.persisted_revision=e.desired_revision
+ AND e.lease_generation=$4::bigint AND e.lease_owner='' AND e.lease_until IS NULL
+ AND e.state=CASE WHEN $5::boolean THEN 'observed' ELSE 'persisted' END
+ AND e.observed_revision=CASE WHEN $5::boolean THEN e.desired_revision ELSE 0 END
+ AND clock_timestamp()<$6::timestamptz
+ AND (NOT $5::boolean OR $7::timestamptz>clock_timestamp()))::boolean
+`
+
+type VerifyAutomaticApplicationStandardObservationParams struct {
+	AppID           pgtype.UUID
+	OrgID           pgtype.UUID
+	DesiredRevision int64
+	Generation      int64
+	Qualified       bool
+	ClaimUntil      pgtype.Timestamptz
+	EvidenceUntil   pgtype.Timestamptz
+}
+
+// Checks after all triggers and writes, so a slow statement cannot commit a
+// checkpoint after its authoritative lease or positive evidence has expired.
+func (q *Queries) VerifyAutomaticApplicationStandardObservation(ctx context.Context, db DBTX, arg VerifyAutomaticApplicationStandardObservationParams) (bool, error) {
+	row := db.QueryRow(ctx, verifyAutomaticApplicationStandardObservation,
+		arg.AppID,
+		arg.OrgID,
+		arg.DesiredRevision,
+		arg.Generation,
+		arg.Qualified,
+		arg.ClaimUntil,
+		arg.EvidenceUntil,
 	)
 	var column_1 bool
 	err := row.Scan(&column_1)

@@ -181,6 +181,7 @@ type MemStore struct {
 	applicationStandardOperations              map[string]ApplicationStandardOperation
 	applicationStandardWorkerClaims            map[string]ApplicationStandardWorkerClaim
 	applicationStandardEnrollmentClaims        map[string]ApplicationStandardEnrollmentClaim
+	standardObservationChecks                  map[string]standardAutomaticObservationCheck
 	applicationStandardControlBindings         map[string]standardControlBinding
 	applicationStandardControlBackups          map[string]standardControlBackup
 	devBridgeSessions                          map[string]devbridge.Session

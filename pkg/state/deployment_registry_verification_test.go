@@ -40,15 +40,31 @@ func (p registryEvidencePuller) FetchSignatureAttachments(context.Context, strin
 func registryVerificationFixture(t *testing.T, s registryVerificationTestStore, sidecar bool) (DeploymentRegistryVerificationInput, App, Deployment) {
 	return registryVerificationFixtureWithChain(t, s, sidecar, nil)
 }
-func registryVerificationFixtureWithChain(t *testing.T, s registryVerificationTestStore, sidecar bool, chain *imagechain.Evidence) (DeploymentRegistryVerificationInput, App, Deployment) {
+
+type registryFixtureCreateHooks struct {
+	before func(CreateAccountWithPersonalOrgResult)
+	after  func(App)
+}
+
+func registryVerificationFixtureWithChain(t *testing.T, s registryVerificationTestStore, sidecar bool, chain *imagechain.Evidence, hooks ...registryFixtureCreateHooks) (DeploymentRegistryVerificationInput, App, Deployment) {
 	t.Helper()
 	owner, err := s.CreateAccountWithPersonalOrg(t.Context(), CreateAccountWithPersonalOrgParams{Email: uuid.NewString() + "@example.com", Plan: api.PlanPro})
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, hook := range hooks {
+		if hook.before != nil {
+			hook.before(owner)
+		}
+	}
 	app, err := s.CreateApp(t.Context(), App{AccountID: owner.Account.ID, OrgID: owner.PersonalOrg.ID, Slug: "proof-" + uuid.NewString()[:8], RAMMB: 128, MaxConcurrency: 2})
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, hook := range hooks {
+		if hook.after != nil {
+			hook.after(app)
+		}
 	}
 	image := "registry.example/team/service:latest"
 	workload := ""

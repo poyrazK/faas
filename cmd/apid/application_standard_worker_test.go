@@ -47,4 +47,7 @@ func TestApplicationStandardWorkerRepairsOnboarding(t *testing.T) {
 	if err != nil || e.State != "persisted" || e.PersistedRevision != 1 || e.ObservedRevision != 0 {
 		t.Fatalf("background pass fabricated observation: %+v %v", e, err)
 	}
+	if e.ErrorCode != "logging_consumer_unavailable" {
+		t.Fatal("restarted worker did not reconcile automatic observation", e.ErrorCode)
+	}
 }

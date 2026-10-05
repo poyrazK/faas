@@ -14,6 +14,7 @@ type applicationStandardWorkerStore interface {
 	state.ApplicationStandardMaterializationStore
 	state.ApplicationStandardAutomaticMaterializationStore
 	state.ApplicationStandardObservationStore
+	state.ApplicationStandardAutomaticObservationStore
 }
 
 // apid owns intent and aggregate adoption. Runtime owners supply evidence through
@@ -63,6 +64,11 @@ func (s *server) runApplicationStandardPass(parent context.Context, worker appli
 	} else {
 		s.applicationStandardWorkerError(ctx, "operation_claim", "", err)
 	}
+	s.materializeApplicationStandardEnrollments(ctx, worker, owner)
+	s.observeApplicationStandardEnrollments(ctx, worker, owner)
+}
+
+func (s *server) materializeApplicationStandardEnrollments(ctx context.Context, worker applicationStandardWorkerStore, owner string) {
 	for range api.ApplicationStandardWorkerPassLimit {
 		if ctx.Err() != nil {
 			return
@@ -79,6 +85,27 @@ func (s *server) runApplicationStandardPass(parent context.Context, worker appli
 		if err != nil {
 			s.applicationStandardWorkerError(ctx, "enrollment", enrollment.AppID, err)
 		}
+	}
+}
+
+func (s *server) observeApplicationStandardEnrollments(ctx context.Context, worker applicationStandardWorkerStore, owner string) {
+	for range api.ApplicationStandardWorkerPassLimit {
+		if ctx.Err() != nil {
+			return
+		}
+		claim, err := worker.ClaimApplicationStandardObservation(ctx, owner)
+		if errors.Is(err, state.ErrNotFound) {
+			return
+		}
+		if err != nil {
+			s.applicationStandardWorkerError(ctx, "observation_claim", "", err)
+			return
+		}
+		_, err = worker.ObserveApplicationStandardEnrollment(ctx, claim)
+		s.applicationStandardWorkerError(ctx, "observation", claim.AppID, err)
+		release, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ApplicationStandardWorkerReleaseTimeout)
+		_ = worker.ReleaseApplicationStandardEnrollmentWorker(release, claim)
+		cancel()
 	}
 }
 

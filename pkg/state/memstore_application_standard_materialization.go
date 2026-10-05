@@ -172,6 +172,7 @@ func (m *MemStore) deleteStandardMaterializationControlsLocked(appID string) {
 	m.eraseStandardLogInventoriesLocked(appID)
 	m.eraseStandardEgressLocked(appID, "")
 	delete(m.applicationStandardEnrollmentClaims, canonicalStandardUUID(appID))
+	delete(m.standardObservationChecks, canonicalStandardUUID(appID))
 	for key, b := range m.applicationStandardControlBindings {
 		if sameStandardUUID(b.AppID, appID) {
 			delete(m.applicationStandardControlBindings, key)

@@ -2227,3 +2227,27 @@ child guard's application-row lock with a dedicated shared advisory fence. Only 
 observer acquires its exclusive counterpart; ordinary parent-row transactions
 retain their prior cleanup behavior. The earlier applied migration files are
 preserved. The existing artifact writer regression gate covers compatibility.
+
+### Automatic observation reconciliation
+
+Apid also checks installed enrollments after reviewed work and automatic
+materialization. It reuses the generation-fenced enrollment lease, qualifies the
+same current roster, logging, native and retained artifact evidence, and commits
+only observation state and a bounded pending reason. It never changes standards,
+adoptions, controls or desired revisions. Healthy refreshes retain the enrollment
+update fingerprint. Private scheduling metadata rotates oldest checks first and
+gives failed reads a cooldown; newly installed revisions bypass the cooldown.
+Active reviewed targets, including persisted targets in paused operations, remain
+owned by that operation. The observer locks the organization approval fence and
+rechecks ownership before checkpointing, preventing approvals from racing it.
+
+Current positive evidence advances automatic onboarding to observed. Gateway
+restarts, added nodes, expired reports or native and artifact changes return it
+to persisted with the current reason; new valid evidence restores observation.
+This is periodic reconciliation rather than synchronous invalidation at every
+evidence expiry. PostgreSQL checks the storage lease and positive evidence again
+after all checkpoint triggers, so a slow write cannot renew authority. Apid
+restart discovers durable enrollments and scheduling metadata without re-enrollment.
+The migration adds reversible private scheduling columns; older applied migration
+bytes remain frozen. Portable receipts do not replace native KVM acceptance,
+service replacement, snapshot re-prime, named production scope or release gates.
