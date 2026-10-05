@@ -478,8 +478,11 @@ func TestAppMetrics_Fetch_SourceHasNoCRLF(t *testing.T) {
 	if strings.Contains(src, "\r") || strings.Contains(src, "\n") {
 		t.Errorf("Source contains CR/LF: %q", src)
 	}
-	if !strings.Contains(src, "evil prom error") {
-		t.Errorf("Source missing underlying message: %q", src)
+	// production-us hunt #4: `gregale metrics` printed the failing PromQL
+	// (app UUIDs included). The response now carries only the generic
+	// reason; the sanitised error stays in the server log.
+	if src != "degraded: telemetry unavailable" || strings.Contains(src, "evil prom error") {
+		t.Errorf("Source = %q, want only the generic degraded reason", src)
 	}
 }
 

@@ -17,6 +17,7 @@ package appmetrics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -38,6 +39,18 @@ const SourcePrometheus = "prometheus"
 // The dashboard and the public /status/slo.json both render the
 // "degraded:" branch off this prefix.
 const SourceDegradedPrefix = "degraded: "
+
+// TelemetryDegradedReason is the response-safe reason for a failed telemetry
+// query. The underlying error carries the internal Prometheus URL and the
+// full PromQL expression, app UUIDs included; that detail belongs in the
+// sanitised server log, never in a Source field. production-us hunt #4:
+// `gregale metrics` printed "degraded: no data for query \"(((sum(rate(...".
+func TelemetryDegradedReason(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "telemetry timeout"
+	}
+	return "telemetry unavailable"
+}
 
 // SourceDegraded is the bare "degraded:" prefix WITHOUT the trailing
 // space, exported so alert evaluators and other callers that gate on
@@ -172,7 +185,7 @@ func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 		msg := strings.ReplaceAll(err.Error(), "\r", "")
 		msg = strings.ReplaceAll(msg, "\n", "")
 		log.Warn("appmetrics: alert metric query failed", "metric", metric, "app_id", appID, "err", msg)
-		return 0, SourceDegradedPrefix + msg
+		return 0, SourceDegradedPrefix + TelemetryDegradedReason(err)
 	}
 	if metric == "pre_auth_target_signal_gap_pct" && value < 0 {
 		return 0, SourceInsufficientPrefix + "fewer than 20 selected failures on every observed route"
@@ -437,7 +450,7 @@ func degradedFromErr(resp api.AppMetricsResponse, err error, log *slog.Logger, l
 	// Fall back to zeroed fields rather than partially-populated
 	// numbers — the dashboard's empty-state message depends on
 	// RequestCount being 0 when degraded.
-	return api.AppMetricsResponse{}, SourceDegradedPrefix + msg
+	return api.AppMetricsResponse{}, SourceDegradedPrefix + TelemetryDegradedReason(err)
 }
 
 // Ranges returns a copy of the closed-set vocabulary for the range
