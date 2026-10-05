@@ -39,6 +39,7 @@ type composedWaveStore interface {
 	state.ComputeNodeRuntimeIdentityStore
 	state.InstanceApplicationStandardAdmissionStore
 	state.InstanceApplicationStandardRuntimeReceiptStore
+	state.ApplicationStandardSnapshotCaptureStore
 	state.BaseImageProducerStore
 	state.BaseImageScanStore
 	state.DeploymentRegistryVerificationStore

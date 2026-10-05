@@ -15103,6 +15103,9 @@ func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapsho
 			return Snapshot{}, ErrSnapshotRuntimeStale
 		}
 	}
+	if err := m.checkStandardSnapshotRuntimeFreshLocked(snap, sourceInstanceID, sourceStartedAt); err != nil {
+		return Snapshot{}, err
+	}
 	stored, err := m.createSnapshotLocked(snap)
 	if err == nil && haveReceipt {
 		if m.snapshotRuntimeConfigReceipts == nil {

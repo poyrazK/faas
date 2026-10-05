@@ -212,6 +212,8 @@ func standardSnapshotRenewedApproval(t *testing.T, s standardSnapshotTestStore) 
 		t.Fatal(err)
 	}
 	candidate.ProtocolVersion = runtimeadmission.ArtifactProtocolVersion
+	// A registered native incarnation cannot change protocols in place.
+	candidate.Incarnation = uuid.NewString()
 	candidate.ArtifactSourcesHash, err = standardCapturedArtifactSourceHash(capture)
 	if err != nil {
 		t.Fatal(err)

@@ -1859,6 +1859,9 @@ type Querier interface {
 	ReadApplicationStandardOperation(ctx context.Context, db DBTX, arg ReadApplicationStandardOperationParams) ([]byte, error)
 	ReadApplicationStandardOperationAuthority(ctx context.Context, db DBTX, arg ReadApplicationStandardOperationAuthorityParams) (ReadApplicationStandardOperationAuthorityRow, error)
 	ReadApplicationStandardReviewSnapshot(ctx context.Context, db DBTX, arg ReadApplicationStandardReviewSnapshotParams) ([]byte, error)
+	// Called after locking the publication app and source. Historical catalog
+	// identity never makes old standard inputs eligible for a new cache row.
+	ReadApplicationStandardSnapshotRuntimeFresh(ctx context.Context, db DBTX, arg ReadApplicationStandardSnapshotRuntimeFreshParams) (ReadApplicationStandardSnapshotRuntimeFreshRow, error)
 	ReadAutomaticRouteCheck(ctx context.Context, db DBTX, arg ReadAutomaticRouteCheckParams) ([]byte, error)
 	// One statement reads current managed versions, the complete authorized
 	// resident workload roster and independently versioned application receipts.

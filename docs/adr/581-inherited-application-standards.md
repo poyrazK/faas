@@ -2334,3 +2334,36 @@ observed revision of every service after the update and rollback. This closes th
 positive composed portable wave scenario while preserving the independent snapshot
 re-prime, physical native/fleet recovery, named production scope, onboarding coverage,
 migration recovery and public release gates.
+
+### Composed portable cache rebuilding and delayed publication
+
+The portable snapshot scenario joins the actual scheduler park path, durable
+capture grant and acknowledgment catalog, reference-only notification, imaged
+publication owner, and current-input publication fence in both stores. PostgreSQL
+also settles snapshot publication and runtime handoff through the real durable
+notification queue; fixture SQL advances only queue replay eligibility.
+
+Three inherited services first park and publish measured cache references. A
+reviewed one-service wave invalidates only its service's old cache. Replaying the
+old publication must not make it eligible again: publication compares the
+catalog's immutable inputs with current standard inputs under the same app/source
+locks used by the runtime-config fence. Historical catalog records remain intact.
+An idle runtime handoff starts no VM. The next ordinary wake boots with the current
+standard, and its next park captures a new token that imaged publishes. A restarted
+scheduler can select this current cache, and current consumer facts qualify the
+first wave while later services remain queued.
+
+This scenario also pins an outstanding capability gap. The protocol-2 native
+source consumer currently forces verified cold boot when a snapshot request
+includes approved artifact sources, and rejects paused restore. The composed fake
+matches that behavior: it does not claim that snapshot RAM ran or that warm
+promotion succeeded. Portable capture, cache publication, selection and cold
+fallback are verified; verified snapshot restore and promotion still require a
+complete native implementation and physical acceptance. Native receipt facts,
+capture bytes, scanner results and provider delivery remain explicit simulations.
+
+The current capture store also excludes promoted warm parents. Once measured
+paused restore is supported, capture must use the actual serving promotion receipt
+and preserve its parent linkage before that lifecycle can qualify. Neither guard
+is removed by this cache-publication repair. Named production scope, remaining
+onboarding adapters, native/fleet recovery and operational release gates stay open.

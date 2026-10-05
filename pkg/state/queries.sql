@@ -7212,6 +7212,19 @@ VALUES(sqlc.arg(token)::uuid,sqlc.arg(instance_id)::uuid,sqlc.arg(app_id)::uuid,
  sqlc.arg(account_id)::uuid,sqlc.arg(node_id)::uuid,sqlc.arg(parent_token)::uuid,sqlc.arg(memory_key)::text,
  sqlc.arg(expected_state)::text,sqlc.arg(grant_data)::jsonb,sqlc.arg(input_snapshot)::jsonb);
 
+-- Called after locking the publication app and source. Historical catalog
+-- identity never makes old standard inputs eligible for a new cache row.
+-- name: ReadApplicationStandardSnapshotRuntimeFresh :one
+SELECT c.instance_id::text AS source_instance_id,
+ (c.grant_data->>'source_started_at_unix_nano')::bigint AS source_started_at_unix_nano,
+ application_standard_native_inputs_match(c.input_snapshot,
+  application_standard_native_runtime_snapshot(c.app_id,c.deployment_id) ||
+  jsonb_build_object('instance_ram_mb',c.input_snapshot->'instance_ram_mb',
+   'instance_mode',c.input_snapshot->'instance_mode'))::boolean AS fresh
+FROM application_standard_snapshot_captures c
+WHERE c.token=sqlc.arg(token)::uuid AND c.deployment_id=sqlc.arg(deployment_id)::uuid
+ AND c.acknowledgment IS NOT NULL;
+
 -- name: RecordApplicationStandardSnapshotCapture :execrows
 UPDATE application_standard_snapshot_captures SET acknowledgment=sqlc.arg(acknowledgment)::jsonb,received_at=clock_timestamp()
 WHERE token=sqlc.arg(token)::uuid AND acknowledgment IS NULL;

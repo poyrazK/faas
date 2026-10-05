@@ -36818,6 +36818,38 @@ func (q *Queries) ReadApplicationStandardReviewSnapshot(ctx context.Context, db 
 	return snapshot, err
 }
 
+const readApplicationStandardSnapshotRuntimeFresh = `-- name: ReadApplicationStandardSnapshotRuntimeFresh :one
+SELECT c.instance_id::text AS source_instance_id,
+ (c.grant_data->>'source_started_at_unix_nano')::bigint AS source_started_at_unix_nano,
+ application_standard_native_inputs_match(c.input_snapshot,
+  application_standard_native_runtime_snapshot(c.app_id,c.deployment_id) ||
+  jsonb_build_object('instance_ram_mb',c.input_snapshot->'instance_ram_mb',
+   'instance_mode',c.input_snapshot->'instance_mode'))::boolean AS fresh
+FROM application_standard_snapshot_captures c
+WHERE c.token=$1::uuid AND c.deployment_id=$2::uuid
+ AND c.acknowledgment IS NOT NULL
+`
+
+type ReadApplicationStandardSnapshotRuntimeFreshParams struct {
+	Token        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type ReadApplicationStandardSnapshotRuntimeFreshRow struct {
+	SourceInstanceID        string
+	SourceStartedAtUnixNano int64
+	Fresh                   bool
+}
+
+// Called after locking the publication app and source. Historical catalog
+// identity never makes old standard inputs eligible for a new cache row.
+func (q *Queries) ReadApplicationStandardSnapshotRuntimeFresh(ctx context.Context, db DBTX, arg ReadApplicationStandardSnapshotRuntimeFreshParams) (ReadApplicationStandardSnapshotRuntimeFreshRow, error) {
+	row := db.QueryRow(ctx, readApplicationStandardSnapshotRuntimeFresh, arg.Token, arg.DeploymentID)
+	var i ReadApplicationStandardSnapshotRuntimeFreshRow
+	err := row.Scan(&i.SourceInstanceID, &i.SourceStartedAtUnixNano, &i.Fresh)
+	return i, err
+}
+
 const readAutomaticRouteCheck = `-- name: ReadAutomaticRouteCheck :one
 SELECT jsonb_build_object('version', 1, 'app', a.slug, 'app_id', j.app_id, 'deployment_id', j.deployment_id,
     'state', CASE WHEN j.completed_request_id = j.request_id THEN 'complete' WHEN j.lease_until > now() THEN 'running' WHEN j.last_error_code <> '' THEN 'retrying' ELSE 'pending' END,

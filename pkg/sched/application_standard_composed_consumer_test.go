@@ -17,10 +17,11 @@ import (
 
 type composedWaveNativeVMM struct {
 	*standardNativeTestVMM
-	store    state.InstanceApplicationStandardAdmissionStore
+	store    composedWaveStore
 	policies map[string]runtimeadmission.EgressPolicy
 	receipts map[string]runtimeadmission.Receipt
 	serial   uint32
+	captures int
 }
 
 func newComposedWaveNativeVMM(t *testing.T, s composedWaveStore) *composedWaveNativeVMM {
@@ -44,7 +45,7 @@ func (v *composedWaveNativeVMM) UpdateAppEgressPolicy(ctx context.Context, nodeI
 }
 
 func (v *composedWaveNativeVMM) CreateAdmittedRuntime(ctx context.Context, nodeID string, request *vmmdpb.CreateAdmittedRuntimeRequest) (*WakeOutcome, error) {
-	out, err := v.standardNativeTestVMM.CreateAdmittedRuntime(ctx, nodeID, request)
+	out, err := v.createComposedRuntime(ctx, nodeID, request)
 	if err != nil {
 		return nil, err
 	}
