@@ -51,3 +51,24 @@ func TestGetEventReceiptReplaysSerializesIdentityAndPage(t *testing.T) {
 		t.Fatalf("query=%v history=%+v", query, history)
 	}
 }
+
+func TestGetEventReceiptAttemptsSerializesIdentityAndPage(t *testing.T) {
+	var query url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/v1/events/receipt/attempts" {
+			t.Errorf("request: %s %s", r.Method, r.URL)
+		}
+		query = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"coverage":"recorded_attempts_only","attempts":[{"id":12,"invocation_id":"original","replay_generation":2,"attempt":1,"outcome":"unknown"}],"next_after":"next"}`))
+	}))
+	defer server.Close()
+	history, err := NewClient(server.URL, "").GetEventReceiptAttempts(context.Background(), "https://orders.example/a?b=1&c=2", "evt/?+", "sub/?+", "era1.a+/?", 17)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := url.Values{"source": {"https://orders.example/a?b=1&c=2"}, "id": {"evt/?+"}, "subscription_id": {"sub/?+"}, "after": {"era1.a+/?"}, "limit": {"17"}}
+	if !reflect.DeepEqual(query, want) || len(history.Attempts) != 1 || history.Attempts[0].ReplayGeneration != 2 || history.Attempts[0].Outcome != "unknown" || history.NextAfter != "next" {
+		t.Fatalf("query=%v history=%+v", query, history)
+	}
+}

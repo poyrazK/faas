@@ -130,7 +130,7 @@ func (m *MemStore) ExpirePendingKeyedInvocations(_ context.Context, now time.Tim
 		outcome := OutcomeExpired
 		inv.Outcome = &outcome
 		inv.CompletedAt = &now
-		m.invocations[id] = inv
+		m.setInvocationLocked(id, inv)
 		expired++
 		if expired >= limit {
 			break
@@ -411,14 +411,14 @@ func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, pol
 			old.Outcome = &outcome
 			old.CompletedAt = &now
 			old.LastError = "superseded by newer work"
-			m.invocations[id] = old
+			m.setInvocationLocked(id, old)
 		}
 	}
 	if inv.WorkSequence == 0 {
 		inv.WorkSequence = 1
 	}
 	inv.ReplayGeneration = 0
-	m.invocations[inv.ID] = inv
+	m.setInvocationLocked(inv.ID, inv)
 	return inv, nil
 }
 
@@ -434,7 +434,7 @@ func (m *MemStore) keyedClaimAllowedLocked(inv Invocation, now time.Time) error 
 			outcome := OutcomeExpired
 			old.Outcome = &outcome
 			old.CompletedAt = &now
-			m.invocations[id] = old
+			m.setInvocationLocked(id, old)
 			if id == inv.ID {
 				return ErrNotFound
 			}

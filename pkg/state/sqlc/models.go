@@ -2711,6 +2711,23 @@ type Invocation struct {
 	ReplayRootCreatedAt      pgtype.Timestamptz
 }
 
+type InvocationAttemptHistory struct {
+	ID               int64
+	InvocationID     pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	RootInvocationID pgtype.UUID
+	RootCreatedAt    pgtype.Timestamptz
+	ReplayGeneration int64
+	Attempt          int32
+	StartedAt        pgtype.Timestamptz
+	FinishedAt       pgtype.Timestamptz
+	Outcome          string
+	ErrorDetail      string
+	NextAttemptAt    pgtype.Timestamptz
+	RetainUntil      pgtype.Timestamptz
+}
+
 type InvocationKeyedReplay struct {
 	ParentInvocationID pgtype.UUID
 	ReplayInvocationID pgtype.UUID

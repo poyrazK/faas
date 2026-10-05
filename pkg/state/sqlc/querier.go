@@ -385,6 +385,7 @@ type Querier interface {
 	EnvironmentWorkloadQualificationSourceForUpdate(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentGitSource, error)
 	EnvironmentWorkloadQualificationsByGraph(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentWorkloadQualificationRequest, error)
 	EventReceiptAcceptedAt(ctx context.Context, db DBTX, arg EventReceiptAcceptedAtParams) (pgtype.Timestamptz, error)
+	EventReceiptAttemptHistory(ctx context.Context, db DBTX, arg EventReceiptAttemptHistoryParams) ([]InvocationAttemptHistory, error)
 	EventReceiptCancellations(ctx context.Context, db DBTX, arg EventReceiptCancellationsParams) ([]EventReceiptCancellationsRow, error)
 	EventReceiptInvocations(ctx context.Context, db DBTX, arg EventReceiptInvocationsParams) ([]EventReceiptInvocationsRow, error)
 	EventReceiptMetadata(ctx context.Context, db DBTX, arg EventReceiptMetadataParams) (EventReceiptMetadataRow, error)
@@ -1211,6 +1212,8 @@ type Querier interface {
 	LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg LockFeatureFlagEnvironmentParams) (pgtype.UUID, error)
 	LockImagePreparationDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockImagePreparationDeploymentRow, error)
 	LockInstanceMigrationCommit(ctx context.Context, db DBTX, instanceID pgtype.UUID) (LockInstanceMigrationCommitRow, error)
+	// Check the live lease after acquiring the row lock, including lock waits.
+	LockInvocationAttemptClaim(ctx context.Context, db DBTX, arg LockInvocationAttemptClaimParams) (pgtype.UUID, error)
 	LockInvocationReplayLane(ctx context.Context, db DBTX, arg LockInvocationReplayLaneParams) error
 	LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.UUID) (LockInvoiceForRefundRow, error)
 	LockKeyedDeadLetterInvocationRows(ctx context.Context, db DBTX, eventIds []pgtype.UUID) error
@@ -1594,6 +1597,7 @@ type Querier interface {
 	// the current month that are older than cutoff).
 	PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error
 	PruneDevBridgeSessions(ctx context.Context, db DBTX, arg PruneDevBridgeSessionsParams) error
+	PruneInvocationAttemptHistory(ctx context.Context, db DBTX, arg PruneInvocationAttemptHistoryParams) (int64, error)
 	PruneRouteCheckHistory(ctx context.Context, db DBTX, arg PruneRouteCheckHistoryParams) error
 	PruneRouteHealthHistory(ctx context.Context, db DBTX, arg PruneRouteHealthHistoryParams) error
 	PruneRouteMonitorIncidents(ctx context.Context, db DBTX, arg PruneRouteMonitorIncidentsParams) error

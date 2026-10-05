@@ -570,6 +570,13 @@ var cliCommands = []cliCommand{
 				{Name: "after", Short: "opaque next_after cursor for recipients or replays", Value: "CURSOR"},
 				{Name: "limit", Short: "max recipients or replays (1..200, default 100)", Value: "N"},
 			}},
+			{Name: "attempts", Short: "Inspect retained handler attempts, including retries and replay", Flags: []cliFlag{
+				{Name: "source", Short: "published event source", Req: true, Value: "SOURCE"},
+				{Name: "id", Short: "published event id", Req: true, Value: "ID"},
+				{Name: "subscription", Short: "captured recipient identifier", Req: true, Value: "SUB"},
+				{Name: "after", Short: "opaque next_after attempt cursor", Value: "CURSOR"},
+				{Name: "limit", Short: "max attempts (1..200, default 100)", Value: "N"},
+			}},
 			{Name: "subscriptions", Short: "List subscriptions reconciled from the app manifest", Positionals: []string{"<app>"}},
 			{Name: "deliveries", Short: "Inspect event deliveries, replays, and pre-invocation fanout failures", Positionals: []string{"<app>"}, Flags: []cliFlag{
 				{Name: "event-source", Short: "narrow event filter to one published source; requires --event-id", Value: "SOURCE"},

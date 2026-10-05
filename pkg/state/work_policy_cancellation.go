@@ -176,7 +176,7 @@ func (m *MemStore) CancelPendingKeyedInvocations(_ context.Context, appID, polic
 		}
 		inv.State = InvocationCancelled
 		inv.CompletedAt = &now
-		m.invocations[id] = inv
+		m.setInvocationLocked(id, inv)
 		receipt.CancelledCount++
 	}
 	m.workCancellations[receipt.ID] = receipt

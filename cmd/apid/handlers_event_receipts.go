@@ -123,6 +123,7 @@ func eventReceiptResponse(accountID string, receipt state.EventReceipt) api.Even
 			recipient.Cancellation = &cancellation
 		}
 		if entry.AppSlug != "" {
+			recipient.AttemptHistoryURL = eventReceiptAttemptURL(receipt.EventSource, receipt.EventID, entry.SubscriptionID)
 			query := url.Values{"event_source": {receipt.EventSource}, "event_id": {receipt.EventID}, "subscription_id": {entry.SubscriptionID}}
 			recipient.FanoutHistoryURL = "/v1/apps/" + url.PathEscape(entry.AppSlug) + "/event-deliveries/attempts?" + query.Encode()
 		}

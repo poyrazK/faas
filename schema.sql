@@ -6698,6 +6698,51 @@ $$;
 
 
 --
+-- Name: record_invocation_attempt_history(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_invocation_attempt_history() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  recorded_at timestamptz := clock_timestamp();
+  attempt_outcome text;
+BEGIN
+  IF NEW.source NOT IN ('async_invoke','replay') THEN RETURN NEW; END IF;
+  -- Both writes share the execution transaction. No backfill or pre-claim attempts.
+  IF OLD.state='dispatching' AND (NEW.state<>'dispatching'
+      OR NEW.attempts<>OLD.attempts OR NEW.replay_generation<>OLD.replay_generation) THEN
+    attempt_outcome := CASE
+      WHEN NEW.replay_generation<>OLD.replay_generation THEN 'unknown'
+      WHEN NEW.state='completed' THEN 'succeeded'
+      WHEN NEW.outcome='uncertain' THEN 'unknown'
+      WHEN NEW.state='pending' AND NEW.last_error='dispatch lease expired; requeued' THEN 'unknown'
+      WHEN NEW.state='pending' THEN 'retry'
+      WHEN NEW.state='failed' THEN 'failed'
+      WHEN NEW.state='dead_letter' THEN 'dead_letter'
+      WHEN NEW.state='cancelled' THEN 'cancelled'
+      ELSE 'unknown' END;
+    UPDATE invocation_attempt_history SET
+      finished_at=greatest(recorded_at,started_at), outcome=attempt_outcome,
+      error_detail=left(coalesce(NEW.last_error,''),1024),
+      next_attempt_at=CASE WHEN NEW.state='pending' THEN NEW.due_at END,
+      retain_until=least(coalesce(NEW.result_retention_until,recorded_at+interval '30 days'),recorded_at+interval '30 days')
+    WHERE invocation_id=OLD.id AND replay_generation=OLD.replay_generation
+      AND attempt=OLD.attempts AND outcome='running';
+  END IF;
+  IF NEW.state='dispatching' AND NEW.attempts>0 AND (OLD.state<>'dispatching'
+      OR NEW.attempts<>OLD.attempts OR NEW.replay_generation<>OLD.replay_generation) THEN
+    INSERT INTO invocation_attempt_history(invocation_id,account_id,app_id,
+      root_invocation_id,root_created_at,replay_generation,attempt,started_at,outcome,retain_until)
+    VALUES(NEW.id,NEW.account_id,NEW.app_id,coalesce(NEW.replay_root_invocation_id,NEW.id),
+      coalesce(NEW.replay_root_created_at,NEW.created_at),NEW.replay_generation,NEW.attempts,
+      recorded_at,'running',recorded_at+interval '30 days');
+  END IF;
+  RETURN NEW;
+END $$;
+
+
+--
 -- Name: record_job_task_attempt(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12465,6 +12510,47 @@ CREATE SEQUENCE public.instance_billing_intervals_id_seq
 --
 
 ALTER SEQUENCE public.instance_billing_intervals_id_seq OWNED BY public.instance_billing_intervals.id;
+
+
+--
+-- Name: invocation_attempt_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_attempt_history (
+    id bigint NOT NULL,
+    invocation_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    root_invocation_id uuid NOT NULL,
+    root_created_at timestamp with time zone NOT NULL,
+    replay_generation bigint NOT NULL,
+    attempt integer NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    finished_at timestamp with time zone,
+    outcome text NOT NULL,
+    error_detail text DEFAULT ''::text NOT NULL,
+    next_attempt_at timestamp with time zone,
+    retain_until timestamp with time zone NOT NULL,
+    CONSTRAINT invocation_attempt_history_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT invocation_attempt_history_check CHECK (((outcome = 'running'::text) = (finished_at IS NULL))),
+    CONSTRAINT invocation_attempt_history_check1 CHECK (((finished_at IS NULL) OR (finished_at >= started_at))),
+    CONSTRAINT invocation_attempt_history_outcome_check CHECK ((outcome = ANY (ARRAY['running'::text, 'succeeded'::text, 'retry'::text, 'failed'::text, 'dead_letter'::text, 'cancelled'::text, 'unknown'::text]))),
+    CONSTRAINT invocation_attempt_history_replay_generation_check CHECK ((replay_generation >= 0))
+);
+
+
+--
+-- Name: invocation_attempt_history_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.invocation_attempt_history ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.invocation_attempt_history_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
 
 
 --
@@ -19465,6 +19551,22 @@ ALTER TABLE ONLY public.instances
 
 
 --
+-- Name: invocation_attempt_history invocation_attempt_history_invocation_id_replay_generation__key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_attempt_history
+    ADD CONSTRAINT invocation_attempt_history_invocation_id_replay_generation__key UNIQUE (invocation_id, replay_generation, attempt);
+
+
+--
+-- Name: invocation_attempt_history invocation_attempt_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_attempt_history
+    ADD CONSTRAINT invocation_attempt_history_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: invocation_keyed_replays invocation_keyed_replays_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24049,6 +24151,20 @@ CREATE INDEX instances_watchdog_state_idx ON public.instances USING btree (state
 
 
 --
+-- Name: invocation_attempt_history_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocation_attempt_history_retention_idx ON public.invocation_attempt_history USING btree (retain_until, id) WHERE (outcome <> 'running'::text);
+
+
+--
+-- Name: invocation_attempt_history_root_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocation_attempt_history_root_idx ON public.invocation_attempt_history USING btree (account_id, app_id, root_invocation_id, id DESC);
+
+
+--
 -- Name: invocation_work_cancellations_app_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -27941,6 +28057,13 @@ CREATE TRIGGER instances_worker_admission_identity BEFORE UPDATE OF state, mode 
 
 
 --
+-- Name: invocations invocation_attempt_history_transition; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocation_attempt_history_transition AFTER UPDATE OF state, attempts, replay_generation ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.record_invocation_attempt_history();
+
+
+--
 -- Name: invocations invocation_deployment_scope_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -31638,6 +31761,14 @@ ALTER TABLE ONLY public.instances
 
 ALTER TABLE ONLY public.instances
     ADD CONSTRAINT instances_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: invocation_attempt_history invocation_attempt_history_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_attempt_history
+    ADD CONSTRAINT invocation_attempt_history_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
 
 
 --

@@ -800,7 +800,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			err := errors.New("sched: debug replay gateway is not configured")
 			retryAfter := d.invocationRetryDelay(inv)
 			budget := d.invocationAttemptBudget(ctx, inv)
-			if failErr := d.store.FailInvocation(ctx, inv.ID, err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts)); failErr != nil {
+			if failErr := d.store.FailInvocation(ctx, inv.ID, err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv)); failErr != nil {
 				d.log.Warn("drain: fail debug replay without gateway", "inv", inv.ID, "err", failErr)
 			}
 			return
@@ -812,7 +812,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 				retryAfter = 0
 			}
 			budget := d.invocationAttemptBudget(ctx, inv)
-			failErr := d.store.FailInvocation(ctx, inv.ID, "debug replay: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts))
+			failErr := d.store.FailInvocation(ctx, inv.ID, "debug replay: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
 			if failErr == nil && retryAfter == 0 {
 				d.emitDone(ctx, inv, state.InvocationFailed)
 			}
@@ -843,7 +843,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
-		if failErr := d.store.FailInvocation(ctx, inv.ID, "version pin: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts)); failErr == nil && retryAfter == 0 {
+		if failErr := d.store.FailInvocation(ctx, inv.ID, "version pin: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv)); failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
 		}
 		return
@@ -883,7 +883,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
-		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts))
+		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
 		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
 			d.emitDeadLetter(ctx, inv, "dead_letter")
@@ -936,7 +936,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
-		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts))
+		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
 		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
@@ -997,7 +997,7 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 		budget = d.invocationAttemptBudget(ctx, inv)
 	}
 	options := []state.FailOption{
-		state.WithClaimAttempt(inv.Attempts),
+		state.WithInvocationClaim(inv),
 		state.WithWorkClassification(decision, response.OutcomeCode),
 	}
 	if err := d.store.FailInvocation(ctx, inv.ID, message, retryAfter, budget, options...); err != nil {
@@ -1019,7 +1019,7 @@ func (d *Drain) settleCronWorkPolicyUncertain(ctx context.Context, inv state.Inv
 		budget = d.invocationAttemptBudget(ctx, inv)
 	}
 	options := []state.FailOption{
-		state.WithClaimAttempt(inv.Attempts),
+		state.WithInvocationClaim(inv),
 		state.WithWorkClassification(decision, ""),
 	}
 	if decision.Action == "hold" {
@@ -1037,6 +1037,11 @@ func (d *Drain) settleCronWorkPolicyUncertain(ctx context.Context, inv state.Inv
 }
 
 func completeClaimedInvocation(ctx context.Context, store state.Store, inv state.Invocation, result json.RawMessage) error {
+	if inv.Source == state.InvocationAsyncInvoke || inv.Source == state.InvocationReplay {
+		if claimed, ok := store.(state.InvocationClaimCompletionStore); ok {
+			return claimed.CompleteInvocationClaim(ctx, inv.ID, state.InvocationClaim{Attempt: inv.Attempts, ReplayGeneration: inv.ReplayGeneration}, result)
+		}
+	}
 	if inv.WorkPolicyName != "" {
 		return store.CompleteKeyedInvocation(ctx, inv.ID, inv.Attempts, result)
 	}

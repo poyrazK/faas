@@ -744,6 +744,26 @@ proceed. Once that ownership is resolved, pending work follows sequence order;
 other keys remain eligible. Replay preserves the original pending expiry.
 See [ADR-585](adr/585-keyed-dead-letter-replay-claim-exclusion.md).
 
+Inspect the original handler's delivery attempts and its trusted replay children:
+
+```bash
+gregale events attempts --source billing.stripe --id evt-123 \
+  --subscription SUBSCRIPTION_ID --limit 100
+```
+
+This reads `GET /v1/events/receipt/attempts`; receipt recipients expose its
+`attempt_history_url`. Each entry contains invocation ID, replay generation,
+attempt number, start and finish times, outcome, error and next retry time.
+An expired dispatch lease settles as `unknown`: the history does not prove
+whether the handler ran or applied side effects. Use application idempotency.
+Pagination uses the returned `next_after` with `--after`, newest attempt first.
+
+Only recorded, retained attempts are shown. History starts with claims made
+after the attempt-ledger upgrade and is not backfilled. Closed attempts expire
+after at most 30 days, earlier for shorter result retention or invocation
+deletion; running attempts are not pruned. An empty history does not establish
+that no delivery occurred. See [ADR-586](adr/586-invocation-backed-event-attempt-history.md).
+
 List a consumer's retained replay executions, newest first:
 
 ```bash

@@ -4280,6 +4280,7 @@ const (
 // sites across pkg/sched and the test suites; only the two deadline
 // paths in the drain need to say anything beyond the default.
 type FailOptions struct {
+	Claim *InvocationClaim
 	// Outcome overrides the terminal classification on the permanent
 	// branch (retryAfter == 0). Ignored on the transient-requeue
 	// branch, which leaves the row non-terminal and therefore
@@ -4308,6 +4309,16 @@ func WithOutcome(o InvocationOutcome) FailOption {
 
 func WithClaimAttempt(attempt int) FailOption {
 	return func(f *FailOptions) { f.ClaimAttempt = attempt }
+}
+
+// WithInvocationClaim fences dispatch results across retries and in-place replay.
+func WithInvocationClaim(inv Invocation) FailOption {
+	return func(f *FailOptions) {
+		f.ClaimAttempt = inv.Attempts
+		if inv.Source == InvocationAsyncInvoke || inv.Source == InvocationReplay {
+			f.Claim = &InvocationClaim{Attempt: inv.Attempts, ReplayGeneration: inv.ReplayGeneration}
+		}
+	}
 }
 
 // WithWorkClassification persists the application result and policy decision

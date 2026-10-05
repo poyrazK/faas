@@ -1050,6 +1050,20 @@ Inspect event routing, execution and replay recovery
 | `--after <CURSOR>` | opaque next_after cursor for recipients or replays |  |
 | `--limit <N>` | max recipients or replays (1..200, default 100) |  |
 
+### events attempts
+
+Inspect retained handler attempts, including retries and replay
+
+`gregale events attempts --source <SOURCE> --id <ID> --subscription <SUB> [--after <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--source <SOURCE>` | published event source | required |
+| `--id <ID>` | published event id | required |
+| `--subscription <SUB>` | captured recipient identifier | required |
+| `--after <CURSOR>` | opaque next_after attempt cursor |  |
+| `--limit <N>` | max attempts (1..200, default 100) |  |
+
 ### events subscriptions
 
 List subscriptions reconciled from the app manifest

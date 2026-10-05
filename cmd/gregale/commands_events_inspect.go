@@ -89,6 +89,9 @@ func writeEventReceiptRecipient(entry api.EventReceiptRecipientResponse) {
 		app = entry.AppID
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%d\t%s\t%d\t%s\t%s\t%s\n", oneLine(app), oneLine(entry.SubscriptionID), oneLine(entry.Routing.State), entry.Routing.Attempts, oneLine(handler), attempts, nextRetry, oneLine(strings.Join(recovery, ",")), oneLine(lastError))
+	if entry.AttemptHistoryURL != "" {
+		_, _ = fmt.Fprintf(osStdout, "  Attempt history: gregale events attempts --subscription %s (with this event's --source and --id)\n", oneLine(entry.SubscriptionID))
+	}
 	if entry.Recovery != nil && entry.Recovery.LatestReplay != nil {
 		latest := entry.Recovery.LatestReplay
 		status := latest.State

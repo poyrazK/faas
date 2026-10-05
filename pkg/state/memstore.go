@@ -138,6 +138,8 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	invocationAttemptHistory    map[int64]retainedInvocationAttempt
+	nextInvocationAttemptID     int64
 	qualificationExecutions     map[string]EnvironmentQualificationExecutionStatus
 	environmentGitOps           map[string]*environmentGitOpsMemory
 	financialEvidence           []FinancialUsageRecord
@@ -6511,6 +6513,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, v := range m.invocations {
 		if v.AppID == id {
 			delete(m.invocations, key)
+			m.deleteInvocationAttemptsLocked(key)
 			delete(m.keyedReplayChildren, key)
 		}
 	}
@@ -12689,7 +12692,7 @@ func (m *MemStore) EnqueueInvocation(_ context.Context, inv Invocation) (Invocat
 			return Invocation{}, ErrInvalidArgument
 		}
 	}
-	m.invocations[inv.ID] = inv
+	m.setInvocationLocked(inv.ID, inv)
 	inv.ReplayRootCreatedAt = cloneEventReceiptTime(inv.ReplayRootCreatedAt)
 	return inv, nil
 }
@@ -12852,7 +12855,7 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	inv.InstanceID = instanceID
 	inv.ReceivedAt = &now
 	inv.Attempts++
-	m.invocations[id] = inv
+	m.setInvocationLocked(id, inv)
 	m.syncInvocationOccurrenceLocked(inv, now)
 	return inv, nil
 }
@@ -12884,7 +12887,7 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 		inv.LeaseExpiresAt = nil
 		inv.InstanceID = ""
 		inv.LastError = "dispatch lease expired; requeued"
-		m.invocations[id] = inv
+		m.setInvocationLocked(id, inv)
 		if quotaReserved {
 			m.decrementAccountAsyncInflightLocked(inv.AccountID)
 		}
@@ -12897,36 +12900,36 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 // ErrNotFound so the drain doesn't double-complete a row that PG
 // already flipped.
 func (m *MemStore) CompleteInvocation(_ context.Context, id string, result json.RawMessage) error {
-	return m.completeInvocation(id, 0, result)
+	return m.completeInvocation(id, 0, nil, result)
 }
 
 func (m *MemStore) CompleteInvocationWithWorkClassification(_ context.Context, id string, result json.RawMessage, decision workpolicy.Decision, outcomeCode string) error {
-	return m.completeInvocation(id, 0, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
+	return m.completeInvocation(id, 0, nil, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
 }
 
 func (m *MemStore) CompleteKeyedInvocation(_ context.Context, id string, attempt int, result json.RawMessage) error {
 	if attempt <= 0 {
 		return ErrNotFound
 	}
-	return m.completeInvocation(id, attempt, result)
+	return m.completeInvocation(id, attempt, nil, result)
 }
 
 func (m *MemStore) CompleteKeyedInvocationWithWorkClassification(_ context.Context, id string, attempt int, result json.RawMessage, decision workpolicy.Decision, outcomeCode string) error {
 	if attempt <= 0 {
 		return ErrNotFound
 	}
-	return m.completeInvocation(id, attempt, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
+	return m.completeInvocation(id, attempt, nil, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
 }
 
-func (m *MemStore) completeInvocation(id string, attempt int, result json.RawMessage, classification ...InvocationWorkClassification) error {
+func (m *MemStore) completeInvocation(id string, attempt int, claim *InvocationClaim, result json.RawMessage, classification ...InvocationWorkClassification) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	inv, ok := m.invocations[id]
 	if !ok || inv.State != InvocationDispatching {
 		return ErrNotFound
 	}
-	if (inv.WorkPolicyName == "" && attempt != 0) ||
-		(inv.WorkPolicyName != "" && inv.Attempts != attempt) {
+	if claim != nil && !validInvocationAttemptClaim(inv, *claim) || claim == nil && ((inv.WorkPolicyName == "" && attempt != 0) ||
+		(inv.WorkPolicyName != "" && inv.Attempts != attempt)) {
 		return ErrNotFound
 	}
 	quotaReserved := inv.QuotaReserved
@@ -12947,7 +12950,7 @@ func (m *MemStore) completeInvocation(id string, attempt int, result json.RawMes
 	if err := m.enqueueInvocationDestinationLocked(inv); err != nil {
 		return err
 	}
-	m.invocations[id] = inv
+	m.setInvocationLocked(id, inv)
 	m.syncInvocationOccurrenceLocked(inv, now)
 	// PR-B fixup (code-review #1185 finding #6): MemStore parity
 	// with PgStore. Without the decrement, ClaimInvocationWithCap
@@ -13016,6 +13019,9 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 		return ErrNotFound
 	}
 	failOpts := ApplyFailOptions(opts)
+	if failOpts.Claim != nil && !validInvocationAttemptClaim(inv, *failOpts.Claim) {
+		return ErrNotFound
+	}
 	if failOpts.HasWorkClassification {
 		inv.WorkDecision = workpolicy.Clone(failOpts.WorkDecision)
 		inv.OutcomeCode = failOpts.OutcomeCode
@@ -13086,7 +13092,7 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 			return err
 		}
 	}
-	m.invocations[id] = inv
+	m.setInvocationLocked(id, inv)
 	m.syncInvocationOccurrenceLocked(inv, time.Now())
 	// A slot belongs to the dispatching lease. Release it on every
 	// transition away from a cap-aware dispatch, including retries.
@@ -13139,7 +13145,7 @@ func (m *MemStore) CancelInvocation(_ context.Context, id string) error {
 	inv.QuotaReserved = false
 	now := time.Now()
 	inv.CompletedAt = &now
-	m.invocations[id] = inv
+	m.setInvocationLocked(id, inv)
 	m.syncInvocationOccurrenceLocked(inv, now)
 	// PR-B fixup (code-review #1185 finding #6): MemStore parity.
 	// Cancel is always terminal; the row leaves the in-flight set.
@@ -13163,7 +13169,7 @@ func (m *MemStore) CancelPendingInvocation(_ context.Context, id string) (Invoca
 	inv.QuotaReserved = false
 	now := time.Now()
 	inv.CompletedAt = &now
-	m.invocations[id] = inv
+	m.setInvocationLocked(id, inv)
 	m.syncInvocationOccurrenceLocked(inv, now)
 	return inv.State, nil
 }
@@ -13675,7 +13681,7 @@ func (m *MemStore) StampInstanceInvocation(_ context.Context, id, instanceID str
 		return ErrNotFound
 	}
 	inv.InstanceID = instanceID
-	m.invocations[id] = inv
+	m.setInvocationLocked(id, inv)
 	return nil
 }
 
@@ -25406,7 +25412,7 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	}
 	inv.ReceivedAt = &now
 	inv.Attempts++
-	m.invocations[id] = inv
+	m.setInvocationLocked(id, inv)
 	m.syncInvocationOccurrenceLocked(inv, now)
 	row.CurrentInflight++
 	m.accountAsyncQuota[inv.AccountID] = row
@@ -25462,6 +25468,7 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 	for _, id := range ids {
 		if _, ok := m.invocations[id]; ok {
 			delete(m.invocations, id)
+			m.deleteInvocationAttemptsLocked(id)
 			delete(m.keyedReplayChildren, id)
 			n++
 		}
@@ -25535,7 +25542,7 @@ func (m *MemStore) forceDeadlineBreachedInvocations(ids []string) ([]Invocation,
 		if err := m.enqueueInvocationDestinationLocked(inv); err != nil {
 			return nil, err
 		}
-		m.invocations[id] = inv
+		m.setInvocationLocked(id, inv)
 		if quotaReserved {
 			m.decrementAccountAsyncInflightLocked(inv.AccountID)
 		}

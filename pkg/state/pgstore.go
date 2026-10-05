@@ -15501,21 +15501,21 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 }
 
 func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error {
-	return s.completeInvocation(ctx, id, 0, result)
+	return s.completeInvocation(ctx, id, 0, nil, result)
 }
 
 func (s *PgStore) CompleteInvocationWithWorkClassification(ctx context.Context, id string, result json.RawMessage, decision workpolicy.Decision, outcomeCode string) error {
-	return s.completeInvocation(ctx, id, 0, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
+	return s.completeInvocation(ctx, id, 0, nil, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
 }
 
 func (s *PgStore) CompleteKeyedInvocation(ctx context.Context, id string, attempt int, result json.RawMessage) error {
 	if attempt <= 0 {
 		return ErrNotFound
 	}
-	return s.completeInvocation(ctx, id, attempt, result)
+	return s.completeInvocation(ctx, id, attempt, nil, result)
 }
 
-func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int, result json.RawMessage, classification ...InvocationWorkClassification) error {
+func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int, claim *InvocationClaim, result json.RawMessage, classification ...InvocationWorkClassification) error {
 	// outcome (issue #791) is stamped alongside state so the cron
 	// run-history read never has to infer success from state.
 	//
@@ -15527,6 +15527,11 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 		return fmt.Errorf("state: invocations complete begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if claim != nil {
+		if err := lockInvocationAttemptClaim(ctx, tx, id, *claim); err != nil {
+			return err
+		}
+	}
 	var accountID string
 	var quotaReserved bool
 	var decisionJSON any
@@ -15541,8 +15546,8 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 			select id, account_id, quota_reserved
 			  from invocations
 			 where id = $1 and state = 'dispatching'
-			   and ((work_policy_name is null and $3 = 0)
-			        or (work_policy_name is not null and attempts = $3 and $3 > 0))
+			   and ($7::boolean or ((work_policy_name is null and $3 = 0)
+			        or (work_policy_name is not null and attempts = $3 and $3 > 0)))
 			 for update
 		)
 		update invocations as invocation
@@ -15557,7 +15562,7 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 		       quota_reserved = false
 		  from target
 		 where invocation.id = target.id
-			 returning target.account_id, target.quota_reserved`, id, nullableJSON(result), attempt, decisionJSON, outcomeCode, hasWorkClassification).Scan(&accountID, &quotaReserved); err != nil {
+			 returning target.account_id, target.quota_reserved`, id, nullableJSON(result), attempt, decisionJSON, outcomeCode, hasWorkClassification, claim != nil).Scan(&accountID, &quotaReserved); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -15762,6 +15767,11 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 		return fmt.Errorf("state: invocations fail begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if failOpts.Claim != nil {
+		if err := lockInvocationAttemptClaim(ctx, tx, id, *failOpts.Claim); err != nil {
+			return err
+		}
+	}
 	var accountID string
 	var newState string
 	var quotaReserved bool

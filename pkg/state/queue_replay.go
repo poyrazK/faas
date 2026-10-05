@@ -110,7 +110,7 @@ func (m *MemStore) retryQueueDeadLetterLocked(accountID, invocationID string, no
 	inv.LastError, inv.InstanceID = "", ""
 	inv.Outcome, inv.Result, inv.LeaseExpiresAt, inv.CompletedAt = nil, nil, nil, nil
 	inv.DueAt, inv.LastReplayedAt = now, &now
-	m.invocations[invocationID] = inv
+	m.setInvocationLocked(invocationID, inv)
 	if inv.Source != InvocationQueue && inv.Source != InvocationDelayedTask {
 		return inv, nil
 	}

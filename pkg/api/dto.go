@@ -11765,6 +11765,7 @@ type EventReceiptRecipientResponse struct {
 	ExecutionUnavailable string                            `json:"execution_unavailable,omitempty"`
 	RecoveryActions      []EventReceiptRecoveryAction      `json:"recovery_actions"`
 	FanoutHistoryURL     string                            `json:"fanout_history_url,omitempty"`
+	AttemptHistoryURL    string                            `json:"attempt_history_url,omitempty"`
 }
 
 type EventReceiptRoutingResponse struct {
@@ -11809,6 +11810,29 @@ type EventReceiptReplayHistoryResponse struct {
 	OriginalInvocationID string                          `json:"original_invocation_id"`
 	Replays              []EventReceiptExecutionResponse `json:"replays"`
 	NextAfter            string                          `json:"next_after,omitempty"`
+}
+
+type InvocationAttemptResponse struct {
+	ID               int64      `json:"id"`
+	InvocationID     string     `json:"invocation_id"`
+	ReplayGeneration int64      `json:"replay_generation"`
+	Attempt          int        `json:"attempt"`
+	StartedAt        time.Time  `json:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at,omitempty"`
+	Outcome          string     `json:"outcome"`
+	ErrorDetail      string     `json:"error_detail,omitempty"`
+	NextAttemptAt    *time.Time `json:"next_attempt_at,omitempty"`
+	RetainUntil      time.Time  `json:"retain_until"`
+}
+
+type EventReceiptAttemptHistoryResponse struct {
+	EventSource          string                      `json:"event_source"`
+	EventID              string                      `json:"event_id"`
+	SubscriptionID       string                      `json:"subscription_id"`
+	OriginalInvocationID string                      `json:"original_invocation_id"`
+	Coverage             string                      `json:"coverage"`
+	Attempts             []InvocationAttemptResponse `json:"attempts"`
+	NextAfter            string                      `json:"next_after,omitempty"`
 }
 
 type EventReceiptCancellationResponse struct {

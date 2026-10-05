@@ -249,7 +249,7 @@ func (m *MemStore) ReplayKeyedInvocation(_ context.Context, accountID, parentID 
 		m.keyedReplayChildren = make(map[string]string)
 	}
 	m.keyedReplayChildren[parentID] = inv.ID
-	m.invocations[inv.ID] = inv
+	m.setInvocationLocked(inv.ID, inv)
 	return cloneKeyedReplay(inv), nil
 }
 
