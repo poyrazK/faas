@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -36,18 +37,24 @@ func TestRegionalRuntimeSchedulerInitialIssuance(t *testing.T) {
 			// The mandatory Store interface carries issuance through decorators.
 			engine := &Engine{store: struct{ state.Store }{store}, vmm: vmm}
 			spec := AppSpec{MemSizeMiB: int32(app.RAMMB), VCPUCount: 1, CPUMillicores: api.DefaultAppCPUMillicores, AppID: app.ID, AccountID: account.ID, DeploymentID: dep.ID, Plan: account.Plan, PrimeOnly: purpose == runtimequota.CapacityPrime}
+			spec.Sidecars = []fcvm.WorkloadSpec{{Name: "cache", RamMB: 64}, {Name: "metrics", RamMB: 32}}
 			instance, run := strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()
 			issued, err := engine.issueRegionalRuntimeLaunch(t.Context(), node.ID, instance, run, purpose, spec, head.Grant)
 			if err != nil || issued.RegionalRuntime == nil {
 				t.Fatal("initial bookkeeping was not issued", err)
 			}
 			source, err := store.RegionalRuntimeLaunchSource(t.Context(), app.ID, issued.RegionalRuntime.Permit.ID)
-			if err != nil || source.Source.InstanceKey != instance || source.Source.Permit != issued.RegionalRuntime.Permit || source.Resources != (state.RegionalRuntimeResources{RAMMB: app.RAMMB, VCPU: 1, CPUMillicores: api.DefaultAppCPUMillicores}) {
+			if err != nil || source.Source.InstanceKey != instance || source.Source.Permit != issued.RegionalRuntime.Permit || source.Resources != (state.RegionalRuntimeResources{RAMMB: app.RAMMB + 96, VCPU: 1, CPUMillicores: api.DefaultAppCPUMillicores}) {
 				t.Fatal("scheduler lost actual compact runtime key", source, err)
 			}
 			again, err := engine.issueRegionalRuntimeLaunch(t.Context(), node.ID, instance, run, purpose, issued, head.Grant)
 			if err != nil || again.RegionalRuntime.Permit != issued.RegionalRuntime.Permit || !sameInitialServingSeat(again.RegionalRuntime.Seat, issued.RegionalRuntime.Seat) {
 				t.Fatal("retry minted another attempt", err)
+			}
+			changedSidecars := issued
+			changedSidecars.Sidecars = []fcvm.WorkloadSpec{{Name: "cache", RamMB: 65}, {Name: "metrics", RamMB: 32}}
+			if refused, err := engine.issueRegionalRuntimeLaunch(t.Context(), node.ID, instance, run, purpose, changedSidecars, head.Grant); !errors.Is(err, state.ErrConflict) || refused.RegionalRuntime == nil || refused.RegionalRuntime.Permit != issued.RegionalRuntime.Permit {
+				t.Fatal("retry changed original sidecar footprint or lost cleanup provenance", err)
 			}
 			missingResources := issued
 			missingResources.MemSizeMiB = 0

@@ -1,6 +1,6 @@
 package fcvm
 
-// adr: 629
+// adr: 629, 637
 import (
 	"context"
 	"errors"
@@ -12,12 +12,66 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func newNativeLaunchRecord(lease Lease, generation, bootID string, p *runtimequota.Placement) nativeLaunchRecord {
+func newNativeLaunchRecord(lease Lease, generation, bootID string, p *runtimequota.Placement, resources *state.RegionalRuntimeResources) nativeLaunchRecord {
 	r := nativeLaunchRecord{Version: 1, Generation: generation, KernelBootID: bootID, Lease: lease}
 	if p != nil {
 		r.Version, r.RegionalRuntime = 2, cloneRuntimePlacement(p)
 	}
+	if resources != nil {
+		r.Version, r.RegionalResources = 3, cloneNativeRegionalResources(resources)
+	}
 	return r
+}
+
+func cloneNativeRegionalResources(resources *state.RegionalRuntimeResources) *state.RegionalRuntimeResources {
+	if resources == nil {
+		return nil
+	}
+	copy := *resources
+	return &copy
+}
+
+func sameNativeRegionalResources(a, b *state.RegionalRuntimeResources) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
+}
+
+func nativeRegionalResources(lease Lease, vcpus int) (state.RegionalRuntimeResources, error) {
+	profile, err := resolveStartupCPUProfile(lease.Plan, lease.CPUMillicores)
+	if err != nil {
+		return state.RegionalRuntimeResources{}, err
+	}
+	cpu := profile.ConfiguredMillicores
+	if !lease.DisableStartupCPUBoost {
+		cpu = max(cpu, profile.StartupMillicores)
+	}
+	resources := state.RegionalRuntimeResources{RAMMB: lease.MemoryMaxMiB, VCPU: vcpus, CPUMillicores: cpu}
+	if !resources.Valid() {
+		return state.RegionalRuntimeResources{}, runtimequotahost.ErrBinding
+	}
+	return resources, nil
+}
+
+func validateNativeRegionalResources(lease Lease, placement *runtimequota.Placement, resources *state.RegionalRuntimeResources) error {
+	if resources == nil {
+		return nil // Historical records have no original guest-vCPU provenance.
+	}
+	expected, err := nativeRegionalResources(lease, resources.VCPU)
+	if placement == nil || err != nil || expected != *resources {
+		return runtimequotahost.ErrBinding
+	}
+	return nil
+}
+
+// Read retained provenance without recomputing the original CPU policy from
+// today's plan limits. The producer separately checks the effective profile.
+func validateNativeRegionalResourceBinding(lease Lease, placement *runtimequota.Placement, resources *state.RegionalRuntimeResources) error {
+	if resources == nil {
+		return nil
+	}
+	if placement == nil || !resources.Valid() || resources.RAMMB != lease.MemoryMaxMiB || lease.CPUMillicores < 0 || resources.CPUMillicores < lease.CPUMillicores || lease.DisableStartupCPUBoost && lease.CPUMillicores != 0 && resources.CPUMillicores != lease.CPUMillicores {
+		return runtimequotahost.ErrBinding
+	}
+	return nil
 }
 
 func sameOptionalRuntimePlacement(a, b *runtimequota.Placement) bool {
@@ -28,7 +82,7 @@ func sameOptionalRuntimePlacement(a, b *runtimequota.Placement) bool {
 }
 
 func sameNativeRegionalBinding(a, b nativeLaunchRecord) bool {
-	return a.Version == b.Version && sameOptionalRuntimePlacement(a.RegionalRuntime, b.RegionalRuntime) && (a.RegionalRuntime == nil || sameNativePhysicalLease(a.Lease, b.Lease))
+	return a.Version == b.Version && sameOptionalRuntimePlacement(a.RegionalRuntime, b.RegionalRuntime) && sameNativeRegionalResources(a.RegionalResources, b.RegionalResources) && (a.RegionalRuntime == nil || sameNativePhysicalLease(a.Lease, b.Lease))
 }
 
 func validateNativeRegionalPlacement(lease Lease, p *runtimequota.Placement) error {
@@ -45,7 +99,7 @@ func validateNativeRegionalPlacement(lease Lease, p *runtimequota.Placement) err
 }
 
 type nativeRegionalLeaseVMM interface {
-	prepareNativeRegionalLease(context.Context, Lease, runtimequota.Placement) error
+	prepareNativeRegionalResources(context.Context, Lease, runtimequota.Placement, state.RegionalRuntimeResources) error
 }
 
 type nativeRegionalLaunchPreflighter interface {
@@ -86,16 +140,27 @@ func (v *JailerVMM) preflightNativeRegionalLaunch(ctx context.Context) error {
 
 // Production regional launches require native ownership even when the old
 // lifecycle is configured. Portable VMMs retain their separate test surface.
-func (m *Manager) prepareNativeRuntime(ctx context.Context, lease Lease, p *runtimequota.Placement) error {
+func (m *Manager) prepareNativeRuntime(ctx context.Context, lease Lease, p *runtimequota.Placement, vcpus int) error {
 	if p != nil {
 		if v, ok := m.vmm.(nativeRegionalLeaseVMM); ok {
-			return v.prepareNativeRegionalLease(ctx, lease, p.Clone())
+			resources, err := nativeRegionalResources(lease, vcpus)
+			if err != nil {
+				return err
+			}
+			return v.prepareNativeRegionalResources(ctx, lease, p.Clone(), resources)
 		}
 		if m.nativeVMM() != nil {
 			return runtimequotahost.ErrStorage
 		}
 	}
 	return m.prepareNativeLease(ctx, lease)
+}
+
+func (v *JailerVMM) prepareNativeRegionalResources(ctx context.Context, lease Lease, p runtimequota.Placement, resources state.RegionalRuntimeResources) error {
+	if v.nativeRecovery == nil {
+		return runtimequotahost.ErrStorage
+	}
+	return v.prepareNativeLeaseWithRegionalResources(ctx, lease, &p, &resources)
 }
 
 func (v *JailerVMM) prepareNativeRegionalLease(ctx context.Context, lease Lease, p runtimequota.Placement) error {

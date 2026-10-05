@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/runtimequota"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // The journal is outside the tenant chroot, on the same host-lifetime tmpfs.
@@ -36,6 +37,9 @@ type nativeLaunchRecord struct {
 	// Version 2 binds the original regional placement before any native producer.
 	// Later serving seats do not replace this immutable physical provenance.
 	RegionalRuntime *runtimequota.Placement `json:"regional_runtime,omitempty"`
+	// Version 3 also retains the original actual guest footprint. Version 1/2
+	// records stay unknown; recovery never derives guest vCPU from today's plan.
+	RegionalResources *state.RegionalRuntimeResources `json:"regional_resources,omitempty"`
 }
 
 type nativeLaunchJournal struct {
@@ -59,12 +63,15 @@ func (r *nativeLaunchRecord) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &header); err != nil {
 		return err
 	}
-	if header.Version != 1 && header.Version != 2 {
+	if header.Version != 1 && header.Version != 2 && header.Version != 3 {
 		return errors.New("native journal: unsupported record version")
 	}
 	required := []string{"version", "generation", "kernel_boot_id", "lease", "authorized", "pid", "start_time", "revoked", "exit_confirmed", "resources_removed"}
-	if header.Version == 2 {
+	if header.Version >= 2 {
 		required = append(required, "regional_runtime")
+	}
+	if header.Version == 3 {
+		required = append(required, "regional_resources")
 	}
 	fields, err := nativeJournalObjectFields(data, required)
 	if err != nil {
@@ -73,9 +80,14 @@ func (r *nativeLaunchRecord) UnmarshalJSON(data []byte) error {
 	if _, err := nativeJournalObjectFields(fields["lease"], nativeJournalLeaseFields()); err != nil {
 		return fmt.Errorf("native journal: lease fields: %w", err)
 	}
-	if header.Version == 2 {
+	if header.Version >= 2 {
 		if _, err := runtimequota.DecodePlacement(fields["regional_runtime"]); err != nil {
 			return fmt.Errorf("native journal: regional placement: %w", err)
+		}
+	}
+	if header.Version == 3 {
+		if _, err := nativeJournalObjectFields(fields["regional_resources"], []string{"RAMMB", "VCPU", "CPUMillicores"}); err != nil {
+			return fmt.Errorf("native journal: regional resources: %w", err)
 		}
 	}
 	type plain nativeLaunchRecord
@@ -166,7 +178,15 @@ func (j *nativeLaunchJournal) prepare(ctx context.Context, lease Lease) (err err
 }
 
 func (j *nativeLaunchJournal) prepareWithPlacement(ctx context.Context, lease Lease, placement *runtimequota.Placement) (err error) {
+	return j.prepareWithRegionalResources(ctx, lease, placement, nil)
+}
+
+func (j *nativeLaunchJournal) prepareWithRegionalResources(ctx context.Context, lease Lease, placement *runtimequota.Placement, resources *state.RegionalRuntimeResources) (err error) {
 	placement = cloneRuntimePlacement(placement)
+	resources = cloneNativeRegionalResources(resources)
+	if err := validateNativeRegionalResources(lease, placement, resources); err != nil {
+		return err
+	}
 	lock, incoming, err := j.lockQualificationProducer(ctx, lease.Instance)
 	if err != nil {
 		return err
@@ -185,12 +205,12 @@ func (j *nativeLaunchJournal) prepareWithPlacement(ctx context.Context, lease Le
 		}
 		generation = bound.NativeGeneration
 	}
-	return j.prepareGeneration(ctx, lease, generation, placement)
+	return j.prepareGeneration(ctx, lease, generation, placement, resources)
 }
 
 // The incoming binding is durable before this physical record can authorize
 // any native producer. Both writes share the outer incoming-request lock.
-func (j *nativeLaunchJournal) prepareGeneration(ctx context.Context, lease Lease, generation string, placement *runtimequota.Placement) (err error) {
+func (j *nativeLaunchJournal) prepareGeneration(ctx context.Context, lease Lease, generation string, placement *runtimequota.Placement, resources *state.RegionalRuntimeResources) (err error) {
 	if err := validateNativeJournalLease(lease); err != nil {
 		return err
 	}
@@ -209,7 +229,7 @@ func (j *nativeLaunchJournal) prepareGeneration(ctx context.Context, lease Lease
 		}
 		return fmt.Errorf("native journal: instance %s already has a launch record", lease.Instance)
 	}
-	return j.write(newNativeLaunchRecord(lease, generation, bootID, placement))
+	return j.write(newNativeLaunchRecord(lease, generation, bootID, placement, resources))
 }
 
 func (j *nativeLaunchJournal) currentBootID() (string, error) {
@@ -267,6 +287,9 @@ func (j *nativeLaunchJournal) beginPhysicalLaunch(ctx context.Context, lease Lea
 			return nil, err
 		}
 		return nil, errors.New("native journal: launch record is not available to this lease")
+	}
+	if err := validateNativeRegionalResources(lease, record.RegionalRuntime, record.RegionalResources); err != nil {
+		return nil, errors.Join(err, lock.Close())
 	}
 	loops := nativeLoopMountJournal{owner: j, backend: j.loopMounts}
 	if err := loops.requireRetired(record); err != nil {
@@ -548,10 +571,13 @@ func (r nativeLaunchRecord) validate(instance string) error {
 	if err := validateNativeJournalLease(r.Lease); err != nil {
 		return err
 	}
-	if r.Version != 1 && r.Version != 2 || r.Lease.Instance != instance || (r.Version == 2) != (r.RegionalRuntime != nil) {
+	if r.Version != 1 && r.Version != 2 && r.Version != 3 || r.Lease.Instance != instance || (r.Version >= 2) != (r.RegionalRuntime != nil) || (r.Version == 3) != (r.RegionalResources != nil) {
 		return errors.New("native journal: record version or instance is invalid")
 	}
 	if err := validateNativeRegionalPlacement(r.Lease, r.RegionalRuntime); err != nil {
+		return err
+	}
+	if err := validateNativeRegionalResourceBinding(r.Lease, r.RegionalRuntime, r.RegionalResources); err != nil {
 		return err
 	}
 	if generation, err := uuid.Parse(r.Generation); err != nil || generation == uuid.Nil {

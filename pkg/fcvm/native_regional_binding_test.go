@@ -85,7 +85,7 @@ func TestNativeRegionalRecordRejectsAmbiguousOrUnboundPlacement(t *testing.T) {
 			case "unbound-version":
 				r.Version = 1
 			case "future-version":
-				r.Version = 3
+				r.Version = 4
 			case "legacy":
 				r.Version, r.RegionalRuntime = 1, nil
 			}
@@ -359,6 +359,8 @@ func TestNativeRegionalManagerPersistsSourceBeforeNetworkForEveryPurpose(t *test
 	for _, purpose := range []string{runtimequota.CapacityServing, runtimequota.CapacityWarm, runtimequota.CapacityPrime, runtimequota.CapacityAppTask} {
 		t.Run(purpose, func(t *testing.T) {
 			m, v, host, req := nativeRegionalManagerFixture(t)
+			req.CPUMillicores = 250
+			req.Sidecars = []WorkloadSpec{{Name: "metrics", RamMB: 64}, {Name: "cache", RamMB: 32}}
 			req.RegionalRuntime.Permit.Kind = purpose
 			switch purpose {
 			case runtimequota.CapacityWarm:
@@ -373,7 +375,7 @@ func TestNativeRegionalManagerPersistsSourceBeforeNetworkForEveryPurpose(t *test
 			if _, err := m.Wake(t.Context(), req); !errors.Is(err, runner.cause) {
 				t.Fatal("network fixture did not observe owned preparation", err)
 			}
-			if !runner.checked || runner.record.Authorized || runner.record.Version != 2 || !sameOptionalRuntimePlacement(runner.record.RegionalRuntime, req.RegionalRuntime) {
+			if !runner.checked || runner.record.Authorized || runner.record.Version != 3 || !sameOptionalRuntimePlacement(runner.record.RegionalRuntime, req.RegionalRuntime) || runner.record.RegionalResources == nil || *runner.record.RegionalResources != (state.RegionalRuntimeResources{RAMMB: req.MemSizeMiB + 96, VCPU: req.VcpuCount, CPUMillicores: api.DefaultAppCPUMillicores}) {
 				t.Fatal("network effects lacked original regional binding")
 			}
 			rows, err := host.PermitInventory()
@@ -391,7 +393,7 @@ func TestNativeRegionalWriteFailureRetainsUnattestedOwnership(t *testing.T) {
 	m, v, host, req := nativeRegionalManagerFixture(t)
 	cause := errors.New("regional prepared frame fsync uncertain")
 	v.nativeRecovery.journal.writeRecord = func(_ string, r nativeLaunchRecord) error {
-		if r.Version != 2 || !sameOptionalRuntimePlacement(r.RegionalRuntime, req.RegionalRuntime) {
+		if r.Version != 3 || !sameOptionalRuntimePlacement(r.RegionalRuntime, req.RegionalRuntime) || r.RegionalResources == nil {
 			t.Fatal("prepared write omitted original placement")
 		}
 		return cause

@@ -4082,7 +4082,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			err = errors.Join(err, m.cleanup(context.WithoutCancel(ctx), lease, cleanupNet, nil))
 		}
 	}()
-	if err := m.prepareNativeRuntime(ctx, lease, req.RegionalRuntime); err != nil {
+	if err := m.prepareNativeRuntime(ctx, lease, req.RegionalRuntime, req.VcpuCount); err != nil {
 		return nil, fmt.Errorf("manager: prepare native wake ownership: %w", err)
 	}
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)

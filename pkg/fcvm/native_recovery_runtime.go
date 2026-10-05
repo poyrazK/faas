@@ -11,6 +11,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/runtimequota"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type nativeProcessRecoveryRuntime struct {
@@ -204,8 +205,16 @@ func (v *JailerVMM) prepareNativeLease(ctx context.Context, lease Lease) error {
 }
 
 func (v *JailerVMM) prepareNativeLeaseWithPlacement(ctx context.Context, lease Lease, placement *runtimequota.Placement) error {
+	return v.prepareNativeLeaseWithRegionalResources(ctx, lease, placement, nil)
+}
+
+func (v *JailerVMM) prepareNativeLeaseWithRegionalResources(ctx context.Context, lease Lease, placement *runtimequota.Placement, resources *state.RegionalRuntimeResources) error {
 	placement = cloneRuntimePlacement(placement)
+	resources = cloneNativeRegionalResources(resources)
 	if err := validateNativeRegionalPlacement(lease, placement); err != nil {
+		return err
+	}
+	if err := validateNativeRegionalResources(lease, placement, resources); err != nil {
 		return err
 	}
 	r := v.nativeRecovery
@@ -229,12 +238,12 @@ func (v *JailerVMM) prepareNativeLeaseWithPlacement(ctx context.Context, lease L
 	}
 	record, err := r.journal.read(lease.Instance)
 	if errors.Is(err, os.ErrNotExist) {
-		if err := r.journal.prepareWithPlacement(ctx, lease, placement); err != nil {
+		if err := r.journal.prepareWithRegionalResources(ctx, lease, placement, resources); err != nil {
 			return err
 		}
 		record, err = r.journal.read(lease.Instance)
 	} else if err == nil {
-		record, err = r.journal.replaceWithPlacement(ctx, lease, record.Generation, true, placement)
+		record, err = r.journal.replaceWithRegionalResources(ctx, lease, record.Generation, true, placement, resources)
 	}
 	if err != nil {
 		return err

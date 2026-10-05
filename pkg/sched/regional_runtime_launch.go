@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -88,11 +89,8 @@ func (e *Engine) issueRegionalRuntimeLaunch(ctx context.Context, node, instance,
 	if source.Validate() != nil {
 		return AppSpec{}, runtimequota.ErrBinding
 	}
-	resources := state.RegionalRuntimeResources{RAMMB: int(spec.MemSizeMiB), VCPU: int(spec.VCPUCount), CPUMillicores: int(spec.CPUMillicores)}
-	if !spec.DisableStartupCPUBoost {
-		resources.CPUMillicores = startupCPUBoostQuota(spec.Plan, resources.CPUMillicores)
-	}
-	if !resources.Valid() {
+	resources, valid := regionalRuntimeLaunchResources(spec)
+	if !valid {
 		return spec, runtimequota.ErrBinding // A retry must retain any already escaped original placement.
 	}
 	spec.RegionalRuntime = &placement
@@ -106,6 +104,35 @@ func (e *Engine) issueRegionalRuntimeLaunch(ctx context.Context, node, instance,
 		return spec, fmt.Errorf("sched: check issued regional launch: %w", err)
 	}
 	return spec, nil
+}
+
+// adr: 637
+// Match the guest RAM and conservative CPU peak vmmd will actually launch.
+// VM overhead is charged separately by the ledger, once per physical runtime.
+func regionalRuntimeLaunchResources(spec AppSpec) (state.RegionalRuntimeResources, bool) {
+	sidecarRAM := make([]int, len(spec.Sidecars))
+	for i, sidecar := range spec.Sidecars {
+		sidecarRAM[i] = sidecar.RamMB
+	}
+	resources := state.RegionalRuntimeResources{RAMMB: api.BillableRAMMBWithSidecars(int(spec.MemSizeMiB), sidecarRAM) - api.PerVMOverheadMB, VCPU: int(spec.VCPUCount), CPUMillicores: int(spec.CPUMillicores)}
+	period, quota := spec.Plan.CPUPeriodUS(), spec.Plan.CPUQuotaUS()
+	if spec.MemSizeMiB <= 0 || period <= 0 || quota <= 0 {
+		return resources, false
+	}
+	ceiling := int(int64(quota) * 1000 / int64(period))
+	if resources.CPUMillicores != 0 && !api.ValidAppCPUMillicores(resources.CPUMillicores) {
+		return resources, false
+	}
+	if resources.CPUMillicores == 0 {
+		resources.CPUMillicores = ceiling
+	}
+	if resources.CPUMillicores > ceiling {
+		return resources, false
+	}
+	if !spec.DisableStartupCPUBoost {
+		resources.CPUMillicores = startupCPUBoostQuota(spec.Plan, resources.CPUMillicores)
+	}
+	return resources, resources.Valid()
 }
 
 func regionalLaunchID(id string) (string, error) {

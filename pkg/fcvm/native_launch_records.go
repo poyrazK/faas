@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/runtimequota"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord, error) {
@@ -125,7 +126,19 @@ func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expected
 }
 
 func (j *nativeLaunchJournal) replaceWithPlacement(ctx context.Context, lease Lease, expectedGeneration string, requireResourcesRemoved bool, placement *runtimequota.Placement) (record nativeLaunchRecord, err error) {
+	return j.replaceWithRegionalResources(ctx, lease, expectedGeneration, requireResourcesRemoved, placement, nil)
+}
+
+func (j *nativeLaunchJournal) replaceWithRegionalResources(ctx context.Context, lease Lease, expectedGeneration string, requireResourcesRemoved bool, placement *runtimequota.Placement, resources *state.RegionalRuntimeResources) (record nativeLaunchRecord, err error) {
 	placement = cloneRuntimePlacement(placement)
+	resources = cloneNativeRegionalResources(resources)
+	if requireResourcesRemoved {
+		if err := validateNativeRegionalResources(lease, placement, resources); err != nil {
+			return record, err
+		}
+	} else if err := validateNativeRegionalResourceBinding(lease, placement, resources); err != nil {
+		return record, err
+	}
 	qualificationLock, incoming, err := j.lockQualificationProducer(ctx, lease.Instance)
 	if err != nil {
 		return record, err
@@ -156,10 +169,21 @@ func (j *nativeLaunchJournal) replaceWithPlacement(ctx context.Context, lease Le
 			return record, errors.New("native journal: fallback cannot replace its regional binding or full lease")
 		}
 		placement = cloneRuntimePlacement(old.RegionalRuntime)
+		if resources != nil && !sameNativeRegionalResources(resources, old.RegionalResources) {
+			return record, errors.New("native journal: fallback cannot replace its original resources")
+		}
+		resources = cloneNativeRegionalResources(old.RegionalResources)
 	} else if old.RegionalRuntime != nil && placement == nil {
 		return record, errors.New("native journal: regional ownership cannot be downgraded to an unbound launch")
+	} else if old.RegionalResources != nil && resources == nil {
+		return record, errors.New("native journal: original resources cannot be downgraded to unknown")
 	}
 	if err := validateNativeRegionalPlacement(lease, placement); err != nil {
+		return record, err
+	}
+	// Replacement authorizes a new physical producer. Refuse a changed CPU
+	// policy rather than launching above the immutable original footprint.
+	if err := validateNativeRegionalResources(lease, placement, resources); err != nil {
 		return record, err
 	}
 	helpers := nativeHostHelperJournal{owner: j}
@@ -206,6 +230,6 @@ func (j *nativeLaunchJournal) replaceWithPlacement(ctx context.Context, lease Le
 			return record, errors.New("native journal: prior generation archive differs from retired ownership")
 		}
 	}
-	record = newNativeLaunchRecord(lease, uuid.NewString(), old.KernelBootID, placement)
+	record = newNativeLaunchRecord(lease, uuid.NewString(), old.KernelBootID, placement, resources)
 	return record, j.write(record)
 }
