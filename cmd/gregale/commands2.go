@@ -6040,6 +6040,11 @@ func cmdLogs(args []string) int {
 			return printErr("Could not resolve deployment", resolveErr)
 		}
 		deploymentRef = resolved
+		if logSource != logsSourceHTTP && !archiveRequested {
+			if code, handled := buildLogsForUnrunDeployment(context.Background(), logsClient, deploymentRef, *follow); handled {
+				return code
+			}
+		}
 	}
 	if logSource == logsSourceHTTP {
 		return runHTTPLogsQuery(context.Background(), slug, deploymentRef, strings.TrimSpace(*requestID), strings.TrimSpace(*traceID), *route, normalizedSince, *status, *limit, *all, now)
