@@ -8,23 +8,26 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var ErrCommitQueueFull = errors.New("state: commit queue full")
 
 type CommitSource struct {
-	ID              string     `json:"id"`
-	AccountID       string     `json:"-"`
-	AppID           string     `json:"app_id"`
-	Name            string     `json:"name"`
-	Enabled         bool       `json:"enabled"`
-	OperationPolicy string     `json:"operation_policy,omitempty"`
-	RelayStatus     string     `json:"relay_status,omitempty"`
-	LastCheckedAt   *time.Time `json:"last_checked_at,omitempty"`
-	PendingEvents   *int64     `json:"pending_events,omitempty"`
-	BlockedEvents   *int64     `json:"blocked_events,omitempty"`
-	OldestPendingAt *time.Time `json:"oldest_pending_at,omitempty"`
+	ID                   string     `json:"id"`
+	AccountID            string     `json:"-"`
+	AppID                string     `json:"app_id"`
+	Name                 string     `json:"name"`
+	Enabled              bool       `json:"enabled"`
+	OperationPolicy      string     `json:"operation_policy,omitempty"`
+	ContractVersion      int        `json:"contract_version"`
+	AllowTenantSelection bool       `json:"allow_tenant_selection"`
+	RelayStatus          string     `json:"relay_status,omitempty"`
+	LastCheckedAt        *time.Time `json:"last_checked_at,omitempty"`
+	PendingEvents        *int64     `json:"pending_events,omitempty"`
+	BlockedEvents        *int64     `json:"blocked_events,omitempty"`
+	OldestPendingAt      *time.Time `json:"oldest_pending_at,omitempty"`
 }
 type CommitReceipt struct {
 	ID           string    `json:"receipt_id"`
@@ -158,7 +161,7 @@ func (s *PgStore) ListCommitRelaySources(ctx context.Context, after string, limi
 	if limit < 1 || limit > 64 {
 		return nil, ErrInvalidArgument
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id::text,account_id::text,app_id::text,name,enabled,COALESCE(operation_policy,''),sealed_connection,credential_revision
+	rows, err := s.pool.Query(ctx, `SELECT id::text,account_id::text,app_id::text,name,enabled,COALESCE(operation_policy,''),contract_version,allow_tenant_selection,sealed_connection,credential_revision
  FROM commit_sources WHERE enabled AND sealed_connection IS NOT NULL
  AND ($1::text='' OR id>NULLIF($1,'')::uuid) ORDER BY id LIMIT $2`, after, limit)
 	if err != nil {
@@ -168,7 +171,7 @@ func (s *PgStore) ListCommitRelaySources(ctx context.Context, after string, limi
 	var sources []CommitRelaySource
 	for rows.Next() {
 		var src CommitRelaySource
-		if err := rows.Scan(&src.ID, &src.AccountID, &src.AppID, &src.Name, &src.Enabled, &src.OperationPolicy, &src.SealedConnection, &src.CredentialRevision); err != nil {
+		if err := rows.Scan(&src.ID, &src.AccountID, &src.AppID, &src.Name, &src.Enabled, &src.OperationPolicy, &src.ContractVersion, &src.AllowTenantSelection, &src.SealedConnection, &src.CredentialRevision); err != nil {
 			return nil, err
 		}
 		sources = append(sources, src)
@@ -181,8 +184,8 @@ type CommitStore interface {
 	CommitSourceByID(context.Context, string, string) (CommitSource, error)
 	SetCommitSourceEnabled(context.Context, string, string, bool) (CommitSource, error)
 	SetCommitSourceConnection(context.Context, string, string, []byte) error
-	AcceptCommitEvent(context.Context, string, string, string, string, json.RawMessage, Invocation, int) (CommitReceipt, error)
-	AcceptCommitOperation(context.Context, string, string, string, string, json.RawMessage, Invocation) (CommitReceipt, error)
+	AcceptCommitEvent(context.Context, string, string, string, string, json.RawMessage, Invocation, int, ...*api.CommitRouting) (CommitReceipt, error)
+	AcceptCommitOperation(context.Context, string, string, string, string, json.RawMessage, Invocation, ...*api.CommitRouting) (CommitReceipt, error)
 	CommitReceiptByEvent(context.Context, string, string, string) (CommitReceipt, error)
 	ListCommitBlockedEvents(context.Context, string, string) ([]CommitBlockedEvent, error)
 	RequestCommitReplay(context.Context, string, string, string) error
@@ -210,6 +213,12 @@ func (s *PgStore) SetCommitSourceEnabled(ctx context.Context, account, id string
 }
 
 func (s *PgStore) CreateCommitSource(ctx context.Context, src CommitSource) (CommitSource, error) {
+	if src.ContractVersion == 0 {
+		src.ContractVersion = 1
+	}
+	if (src.ContractVersion != 1 && src.ContractVersion != 2) || (src.AllowTenantSelection && src.ContractVersion != 2) || (src.ContractVersion == 2 && src.OperationPolicy == "") {
+		return src, ErrInvalidArgument
+	}
 	if src.OperationPolicy != "" {
 		return s.CreateManagedCommitSource(ctx, src)
 	}
@@ -233,7 +242,7 @@ func (s *PgStore) CreateCommitSource(ctx context.Context, src CommitSource) (Com
 func (s *PgStore) CommitSourceByID(ctx context.Context, account, id string) (CommitSource, error) {
 	row, err := sqlc.New().CommitSourceIdentity(ctx, s.pool, sqlc.CommitSourceIdentityParams{AccountID: account, SourceID: id})
 	src := CommitSource{ID: row.ID, AccountID: account, AppID: row.AppID, Name: row.Name,
-		Enabled: row.Enabled, OperationPolicy: row.OperationPolicy, RelayStatus: row.RelayStatus,
+		Enabled: row.Enabled, OperationPolicy: row.OperationPolicy, ContractVersion: int(row.ContractVersion), AllowTenantSelection: row.AllowTenantSelection, RelayStatus: row.RelayStatus,
 		LastCheckedAt: exclusiveTime(row.LastCheckedAt), OldestPendingAt: exclusiveTime(row.OldestPendingAt)}
 	if row.PendingEvents.Valid {
 		src.PendingEvents = &row.PendingEvents.Int64
@@ -261,13 +270,16 @@ func (s *PgStore) CommitReceiptByEvent(ctx context.Context, account, source, eve
 // AcceptCommitEvent serializes source acceptance and checks replay before
 // capacity. Receipt and invocation commit together; receipt retention is
 // independent of invocation retention. The source fixes the destination.
-func (s *PgStore) AcceptCommitEvent(ctx context.Context, account, source, event, kind string, data json.RawMessage, inv Invocation, maxPending int) (CommitReceipt, error) {
+func (s *PgStore) AcceptCommitEvent(ctx context.Context, account, source, event, kind string, data json.RawMessage, inv Invocation, maxPending int, routing ...*api.CommitRouting) (CommitReceipt, error) {
 	src, err := s.CommitSourceByID(ctx, account, source)
 	if err != nil {
 		return CommitReceipt{}, err
 	}
 	if src.OperationPolicy != "" {
-		return s.AcceptCommitOperation(ctx, account, source, event, kind, data, inv)
+		return s.AcceptCommitOperation(ctx, account, source, event, kind, data, inv, routing...)
+	}
+	if len(routing) > 1 || (len(routing) == 1 && routing[0] != nil) {
+		return CommitReceipt{}, ErrInvalidArgument
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

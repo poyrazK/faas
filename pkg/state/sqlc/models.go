@@ -1183,6 +1183,7 @@ type CommitReceipt struct {
 	CompletedAt    pgtype.Timestamptz
 	AcceptedAt     pgtype.Timestamptz
 	OperationID    pgtype.UUID
+	Routing        []byte
 }
 
 type CommitReplayRequest struct {
@@ -1195,20 +1196,22 @@ type CommitReplayRequest struct {
 }
 
 type CommitSource struct {
-	ID                 pgtype.UUID
-	AccountID          pgtype.UUID
-	AppID              pgtype.UUID
-	Name               string
-	Enabled            bool
-	SealedConnection   []byte
-	CredentialRevision int64
-	RelayStatus        string
-	LastCheckedAt      pgtype.Timestamptz
-	PendingEvents      pgtype.Int8
-	BlockedEvents      pgtype.Int8
-	OldestPendingAt    pgtype.Timestamptz
-	CreatedAt          pgtype.Timestamptz
-	OperationPolicy    pgtype.Text
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Name                 string
+	Enabled              bool
+	SealedConnection     []byte
+	CredentialRevision   int64
+	RelayStatus          string
+	LastCheckedAt        pgtype.Timestamptz
+	PendingEvents        pgtype.Int8
+	BlockedEvents        pgtype.Int8
+	OldestPendingAt      pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	OperationPolicy      pgtype.Text
+	ContractVersion      int32
+	AllowTenantSelection bool
 }
 
 type ComputeNode struct {
@@ -2253,6 +2256,8 @@ type ExclusiveWorkEffect struct {
 	Name        string
 	Payload     []byte
 	CreatedAt   pgtype.Timestamptz
+	WebhookID   pgtype.UUID
+	EventType   pgtype.Text
 }
 
 type ExclusiveWorkKey struct {
@@ -5612,6 +5617,21 @@ type WorkflowEventReceipt struct {
 	RecipientID pgtype.UUID
 	RunID       pgtype.UUID
 	AdmittedAt  pgtype.Timestamptz
+}
+
+type WorkflowOperationEffect struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	RunID       pgtype.UUID
+	StepName    string
+	OperationID pgtype.UUID
+	Generation  int64
+	Name        string
+	Payload     []byte
+	WebhookID   pgtype.UUID
+	EventType   string
+	CreatedAt   pgtype.Timestamptz
 }
 
 type WorkflowRun struct {

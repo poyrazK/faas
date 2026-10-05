@@ -10,10 +10,68 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestSynthAdapterManagedOperationResultSupportIsHostNegotiated(t *testing.T) {
+	ctx := t.Context()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "operation-result@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "operation-result", Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:result", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 256, "result-node", uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertExclusiveWorkPolicy(ctx, account.ID, exclusivework.Policy{Name: "orders", Scope: "account", MemberAppIDs: []string{app.ID}, Contention: "queue", LeaseSeconds: 30, MaxAttemptSeconds: 300}); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := json.Marshal(api.InvokeRequest{Method: "POST", Path: "/orders", Headers: json.RawMessage(`{"X-Gregale-Operation-Result-Version":"forged"}`)})
+	op, _, err := store.AdmitExclusiveOperation(ctx, state.ExclusiveAdmission{AccountID: account.ID, AppID: app.ID, PolicyName: "orders", Key: json.RawMessage(`"order-1"`), Request: request})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimExclusiveOperation(ctx, account.ID, op.ID, state.ExclusiveIncarnation(instance))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []int{0, 1, 2} {
+		t.Run(string(rune('0'+version)), func(t *testing.T) {
+			adapter := &synthAdapter{store: store, forward: func(gateway.Target) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					want := ""
+					if version == 1 {
+						want = "1"
+					}
+					if got := r.Header.Get(api.ManagedOperationResultVersionHeader); got != want {
+						t.Errorf("support header=%q want=%q", got, want)
+					}
+					if got := r.Header.Get(api.ExclusiveOperationIDHeader); got != op.ID {
+						t.Errorf("operation ID=%q", got)
+					}
+					_, _ = w.Write([]byte(`{"ok":true}`))
+				})
+			}}
+			inv := state.Invocation{ID: op.ID, AppID: app.ID, AccountID: account.ID, InstanceID: instance.ID, Source: state.InvocationExclusiveOperation, ExclusiveClaim: &claim, OperationResultVersion: version}
+			_, status, err := adapter.InvokeWithTargetStatus(ctx, app.ID, inv, gateway.Target{InstanceID: instance.ID, NodeID: instance.NodeID, DeploymentID: dep.ID, WakeID: instance.WakeID})
+			if err != nil || status != 200 {
+				t.Fatalf("invoke=%d %v", status, err)
+			}
+		})
+	}
+}
 
 func TestSynthAdapterPlatformTenantDurableAdmission(t *testing.T) {
 	ctx := context.Background()

@@ -610,15 +610,18 @@ func (d *Drain) dispatchExclusiveOperation(ctx context.Context, owners state.Exc
 		}
 		return
 	}
-	result := dispatched.Result
-	if !json.Valid(result) {
-		result, _ = json.Marshal(string(result))
-	}
-	if len(result) > api.MaxExclusiveResultBytes {
-		_ = owners.FailExclusiveOperation(ctx, claim, "operation result exceeded platform limit")
+	result, effects, decodeErr := decodeOperationResult(dispatched.Result)
+	if decodeErr != nil {
+		_ = owners.FailExclusiveOperation(ctx, claim, "invalid operation result or result exceeded platform limit")
 		return
 	}
-	if err := owners.CommitExclusiveOperation(ctx, claim, result, nil); err != nil && !errors.Is(err, exclusivework.ErrStaleOwner) {
+	if err := owners.CommitExclusiveOperation(ctx, claim, result, effects); err != nil && !errors.Is(err, exclusivework.ErrStaleOwner) {
+		if errors.Is(err, state.ErrInvalidArgument) {
+			_ = owners.FailExclusiveOperation(ctx, claim, "invalid operation effects or destination unavailable")
+		} else {
+			_ = owners.RetryExclusiveOperation(ctx, claim, "operation commit temporarily unavailable")
+			dispatchOutcome = "retry"
+		}
 		d.log.WarnContext(ctx, "exclusive operation commit failed", "operation_id", op.ID, "err", err)
 	} else if errors.Is(err, exclusivework.ErrStaleOwner) {
 		dispatchOutcome = "lost_owner"

@@ -144,6 +144,19 @@ For long-lived consumers, call `c.WatchExecution` directly and repeatedly
 call `Next`. `Cursor` exposes the latest replay position for checkpointing;
 `Close` is idempotent and releases the active stream.
 
+## Transactional operation handlers
+
+For managed HTTP operations, use `OperationRequestFromHTTP(r, originalBody)` and
+`WithOperationTransaction(ctx, db, operation, callback)`. The callback receives an
+`OperationSQLTransaction` and returns an `OperationOutcome`. The wrapper commits
+business writes and the result/webhook intent together; retries return the saved
+body without repeating committed writes.
+
+Install `OperationReceiptSchema` explicitly as the database owner and send
+`response.Body` unchanged as `application/json`. `response.Replayed` reports
+recovery. See the [transactional handler guide](../../docs/operation-transactions.md)
+for scope checks, receipt retention, and `ErrOperationCommitUnknown` handling.
+
 ## Idempotency
 
 Every mutating call (POST/PATCH/DELETE) carries an `Idempotency-Key`

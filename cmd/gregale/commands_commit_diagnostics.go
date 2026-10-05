@@ -61,7 +61,7 @@ func cmdCommitDoctor(args []string) int {
 	}
 	report := diagnoseCommitSource(source, time.Now().UTC())
 	if *file != "" {
-		report.Checks = append(report.Checks, commitwork.CheckDatabase(ctx, raw, source.ID)...)
+		report.Checks = append(report.Checks, commitwork.CheckDatabaseVersion(ctx, raw, source.ID, source.ContractVersion)...)
 	}
 	report.Healthy = true
 	for _, check := range report.Checks {

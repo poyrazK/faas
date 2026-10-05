@@ -11,6 +11,17 @@ import (
 // writes delivery metadata. Views and tables without stable unique event IDs
 // cannot provide the recovery boundary. This never installs or repairs DDL.
 func QualifySchema(ctx context.Context, pool *pgxpool.Pool) error {
+	return QualifySchemaVersion(ctx, pool, 1)
+}
+
+// QualifySchemaVersion requires the explicit routing upgrade for version 2 sources.
+func QualifySchemaVersion(ctx context.Context, pool *pgxpool.Pool, version int) error {
+	if version == 0 {
+		version = 1
+	}
+	if version != 1 && version != 2 {
+		return errors.New("commit: unsupported source contract")
+	}
 	if pool == nil {
 		return errors.New("commit: outbox schema unavailable")
 	}
@@ -19,6 +30,9 @@ func QualifySchema(ctx context.Context, pool *pgxpool.Pool) error {
 		"accepted_at": "timestamptz", "receipt_id": "uuid", "invocation_id": "uuid", "operation_id": "uuid",
 		"lease_token": "uuid", "lease_until": "timestamptz", "next_attempt_at": "timestamptz",
 		"attempts": "int4", "blocked_code": "text",
+	}
+	if version == 2 {
+		required["routing"] = "jsonb"
 	}
 	rows, err := pool.Query(ctx, `SELECT a.attname,t.typname FROM pg_attribute a
  JOIN pg_class c ON c.oid=a.attrelid JOIN pg_type t ON t.oid=a.atttypid

@@ -396,6 +396,75 @@ func (m *MemStore) CancelWorkflowRun(_ context.Context, id, reason string) (*Wor
 	return &cp, nil
 }
 
+// RetryWorkflowStep requeues a failed HTTP step in the existing run. The
+// store lock makes eligibility checks, descendant reopening, quota admission,
+// and the terminal-to-pending transition atomic.
+func (m *MemStore) RetryWorkflowStep(_ context.Context, runID, stepName string, maxActive int) (*WorkflowRun, int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if maxActive < 1 {
+		return nil, 0, ErrWorkflowRunQuotaExceeded
+	}
+	run, ok := m.workflowRuns[runID]
+	if !ok {
+		return nil, 0, ErrWorkflowRunNotFound
+	}
+	steps := m.workflowSteps[runID]
+	stepList := make([]*WorkflowStep, 0, len(steps))
+	for _, step := range steps {
+		copy := step
+		stepList = append(stepList, &copy)
+	}
+	reopen, err := workflowRetryPlan(&run, stepName, stepList)
+	if err != nil {
+		return nil, 0, err
+	}
+	active := 0
+	for _, existing := range m.workflowRuns {
+		if existing.AppID == run.AppID && (existing.Status == WorkflowRunStatusPending || existing.Status == WorkflowRunStatusRunning || existing.Status == WorkflowRunStatusAwaitingEvent) {
+			active++
+		}
+	}
+	if active >= maxActive {
+		return nil, active, ErrWorkflowRunQuotaExceeded
+	}
+	failed := steps[stepName]
+	failed.Status = WorkflowStepStatusPending
+	failed.Output = nil
+	failed.NextCheckAt = nil
+	failed.NextRetryAt = nil
+	failed.FinishedAt = nil
+	failed.Error = nil
+	steps[stepName] = failed
+	for _, descendant := range reopen {
+		step := steps[descendant]
+		step.Status = WorkflowStepStatusPending
+		step.Input = nil
+		step.Output = nil
+		step.NextCheckAt = nil
+		step.NextRetryAt = nil
+		step.FinishedAt = nil
+		step.Error = nil
+		steps[descendant] = step
+	}
+	now := time.Now().UTC()
+	run.Status = WorkflowRunStatusPending
+	run.CurrentStep = &stepName
+	run.ScheduledFor = now
+	run.Output = nil
+	run.FinishedAt = nil
+	run.LastError = nil
+	run.UpdatedAt = now
+	m.workflowRuns[runID] = run
+	delete(m.workflowRunLeases, runID)
+	m.workflowSteps[runID] = steps
+	cp := run
+	cp.Input = cloneWorkflowJSON(run.Input)
+	cp.Output = cloneWorkflowJSON(run.Output)
+	cp.DefinitionSnapshot = cloneWorkflowJSON(run.DefinitionSnapshot)
+	return &cp, active + 1, nil
+}
+
 func firstWorkflowTime(current *time.Time, fallback time.Time) *time.Time {
 	if current != nil {
 		return current
@@ -800,6 +869,17 @@ func (m *MemStore) GetWorkflowStepAttempts(_ context.Context, runID, stepName st
 		cp.FinishedAt = cloneWorkflowTime(value.FinishedAt)
 		cp.NextAttemptAt = cloneWorkflowTime(value.NextAttemptAt)
 		cp.Error = cloneWorkflowString(value.Error)
+		for _, effect := range m.workflowOperationEffects[key] {
+			delivery, deliveryExists := m.appWebhookDeliveries[effect.Record.DeliveryID]
+			receiverExists := false
+			for id := range m.appWebhooks {
+				if canonicalMemUUID(id) == canonicalMemUUID(effect.Record.WebhookID) {
+					receiverExists = true
+					break
+				}
+			}
+			cp.Effects = append(cp.Effects, workflowEffectStatusRecord(effect, delivery, deliveryExists, receiverExists))
+		}
 		attempts = append(attempts, &cp)
 	}
 	sort.Slice(attempts, func(i, j int) bool { return attempts[i].Attempt < attempts[j].Attempt })

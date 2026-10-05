@@ -14,10 +14,34 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/httpjson"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 )
+
+func TestHTTPGatewaySynthNegotiatesManagedOperationResults(t *testing.T) {
+	result := `"` + strings.Repeat("x", api.MaxExclusiveResultBytes-2) + `"`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got struct {
+			Version int                  `json:"operation_result_version"`
+			Claim   *exclusivework.Claim `json:"exclusive_claim"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil || got.Version != api.ManagedOperationResultVersion || got.Claim == nil {
+			t.Errorf("negotiation=%+v err=%v", got, err)
+			w.WriteHeader(400)
+			return
+		}
+		_, _ = w.Write([]byte(`{"state":"dispatching","status_code":200,"result":` + result + `}`))
+	}))
+	defer srv.Close()
+	h := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL, mintInternalSvcToken: func(string) (string, error) { return "test-token", nil }}
+	out, err := h.InvokeWithWake(t.Context(), "app-1", state.Invocation{ID: "op-1", AppID: "app-1", Source: state.InvocationExclusiveOperation, Method: http.MethodPost, Path: "/orders", ExclusiveClaim: &exclusivework.Claim{OperationID: "op-1"}}, WakeResult{InstanceID: "instance-1", NodeID: "node-1"})
+	if err != nil || string(out.Result) != result {
+		t.Fatalf("bounded managed result: bytes=%d err=%v", len(out.Result), err)
+	}
+}
 
 func TestHTTPGatewaySynthInvokeCarriesEnvelopeAndResult(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

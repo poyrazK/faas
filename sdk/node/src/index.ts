@@ -160,4 +160,19 @@ export {
 } from './dev-bridge.js';
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
-export { insertCommitEvent, type CommitEvent, type CommitTransaction } from "./commit.js";
+export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
+
+export { operationReceiptSchema } from "./operation-contract.js";
+export {
+  operationRequestFromHeaders,
+  operationRequestDigest,
+  withOperationTransaction,
+  OperationConflictError,
+  OperationCommitUnknownError,
+  type OperationRequest,
+  type OperationOutcome,
+  type OperationTransaction,
+  type OperationConnection,
+  type OperationPool,
+  type OperationTransactionResult,
+} from "./operations.js";
