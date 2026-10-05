@@ -815,9 +815,10 @@ func lifecycleClassifyNoObservation(route routeLifecycleContractRoute, ambiguous
 func lifecycleRouteReasons(status string, selectable, ambiguous bool, observation routeLifecycleObservation, inventory routeLifecycleInventory, requirements routeLifecycleRequirements, source routeLifecycleSource, sourceReference string, requirementRefs []string) []string {
 	if status == "active" {
 		reasons := []string{"observed_in_window"}
-		if sourceReference == "removed" {
+		switch sourceReference {
+		case "removed":
 			reasons = append(reasons, "observed_route_removed_from_bound_source_snapshot")
-		} else if sourceReference == "not_found" {
+		case "not_found":
 			reasons = append(reasons, "observed_route_not_found_in_bound_source_snapshot")
 		}
 		if ambiguous {

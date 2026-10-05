@@ -1034,9 +1034,6 @@ func indexGoGinRoutes(index *sourceIndex, files []*goRouteFile, packageFuncs map
 							DependencySymbols: append([]string{}, context.middleware...), FallbackFiles: []string{}})
 					}
 				}
-				if context.middlewareUnresolved {
-					// The issue is already emitted above; route evidence remains useful but incomplete.
-				}
 			}
 			return true
 		})

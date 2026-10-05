@@ -218,21 +218,20 @@ func compare(base, candidate sourceSnapshot, before, after sourceIndex, root, ap
 	}
 	base.meta.Entrypoint, candidate.meta.Entrypoint = before.Entrypoint, after.Entrypoint
 	scopeDescription := fastAPIScopeDescription
-	sourceExtension := ".py"
-	sourcePath := func(path string) bool { return strings.HasSuffix(path, sourceExtension) }
-	if framework == "go-nethttp" {
+	sourcePath := func(path string) bool { return strings.HasSuffix(path, ".py") }
+	switch framework {
+	case "go-nethttp":
 		scopeDescription = goNetHTTPScopeDescription
-		sourceExtension = ".go"
 		sourcePath = func(path string) bool { return strings.HasSuffix(path, ".go") }
-	}
-	if framework == "node-http" {
+	case "node-http":
 		scopeDescription = nodeHTTPScopeDescription
 		sourcePath = nodeSourcePath
 	}
 	version := 2
-	if framework == "go-nethttp" {
+	switch framework {
+	case "go-nethttp":
 		version = 3
-	} else if framework == "node-http" {
+	case "node-http":
 		version = 4
 	}
 	report := Report{Version: version, Framework: framework, App: app, SourceRoot: root, Status: "complete",
@@ -253,9 +252,10 @@ func compare(base, candidate sourceSnapshot, before, after sourceIndex, root, ap
 	for _, change := range report.ChangedFiles {
 		if !sourcePath(change.File) {
 			code, language := "non_python_change", "Python"
-			if framework == "go-nethttp" {
+			switch framework {
+			case "go-nethttp":
 				code, language = "non_go_change", "Go"
-			} else if framework == "node-http" {
+			case "node-http":
 				code, language = "non_node_change", "JavaScript or TypeScript"
 			}
 			report.Issues = append(report.Issues, Issue{Code: code, File: change.File,
