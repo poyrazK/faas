@@ -18,16 +18,15 @@ import (
 // returns while the park is still capturing, a second tick coalesces into the
 // running one, and the park still completes.
 func TestReaperTickDoesNotBlockSchedulerLoop(t *testing.T) {
-	ctx := context.Background()
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
 	vmm := &fakeVMM{}
 	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
-	res, err := engine.Wake(ctx, app.ID, "", "", "")
+	res, err := engine.Wake(context.Background(), app.ID, "", "", "")
 	if err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
-	if _, err := store.TouchInstancesLastSeen(ctx, []state.InstanceTouch{
+	if _, err := store.TouchInstancesLastSeen(context.Background(), []state.InstanceTouch{
 		{InstanceID: res.InstanceID, LastRequest: time.Now().Add(-time.Hour)},
 	}); err != nil {
 		t.Fatalf("touch: %v", err)
@@ -38,13 +37,13 @@ func TestReaperTickDoesNotBlockSchedulerLoop(t *testing.T) {
 
 	loop := NewLoop(nil, engine, testLog())
 	started := time.Now()
-	loop.dispatchReaper(ctx)
+	loop.dispatchReaper(context.Background())
 	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
 		t.Fatalf("dispatchReaper blocked the loop for %s behind a slow park", elapsed)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		ins, _ := store.InstanceByID(ctx, res.InstanceID)
+		ins, _ := store.InstanceByID(context.Background(), res.InstanceID)
 		if ins.State == string(state.StateSnapshotting) {
 			break
 		}
@@ -57,7 +56,7 @@ func TestReaperTickDoesNotBlockSchedulerLoop(t *testing.T) {
 		t.Fatalf("second tick outcome = %q, want coalesced", got)
 	}
 	loop.workPool().drain()
-	ins, _ := store.InstanceByID(ctx, res.InstanceID)
+	ins, _ := store.InstanceByID(context.Background(), res.InstanceID)
 	if ins.State != string(state.StateParked) {
 		t.Fatalf("state after the reaper task = %q, want parked", ins.State)
 	}
