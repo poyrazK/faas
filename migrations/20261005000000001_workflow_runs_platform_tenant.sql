@@ -1,8 +1,27 @@
 -- +goose Up
 ALTER TABLE workflow_runs
-    ADD COLUMN platform_tenant_id uuid REFERENCES platform_tenants(id) ON DELETE RESTRICT;
+    ADD COLUMN IF NOT EXISTS platform_tenant_id uuid;
 
-CREATE INDEX workflow_runs_platform_tenant_idx
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint
+         WHERE conrelid = 'workflow_runs'::regclass
+           AND conname = 'workflow_runs_platform_tenant_id_fkey'
+    ) THEN
+        ALTER TABLE workflow_runs
+            ADD CONSTRAINT workflow_runs_platform_tenant_id_fkey
+            FOREIGN KEY (platform_tenant_id)
+            REFERENCES platform_tenants(id)
+            ON DELETE RESTRICT;
+    END IF;
+END
+$$;
+-- +goose StatementEnd
+
+CREATE INDEX IF NOT EXISTS workflow_runs_platform_tenant_idx
     ON workflow_runs (platform_tenant_id, created_at DESC)
     WHERE platform_tenant_id IS NOT NULL;
 

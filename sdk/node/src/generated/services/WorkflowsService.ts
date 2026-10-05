@@ -499,8 +499,12 @@ export class WorkflowsService {
    * active API consumer or active tenant surface. The tenant ID is persisted
    * and propagated through trusted internal step dispatch metadata. Managed
    * operation steps may deliver effects only to an explicitly subscribed
-   * receiver owned by that same tenant. Event waits, callbacks, and outbound
-   * steps remain unsupported for tenant-bound workflows.
+   * receiver owned by that same tenant. Outbound steps can use an existing
+   * app-bound customer-managed integration; the signed run identity and
+   * active tenant-to-app link are checked at dispatch and outbound
+   * authorization. Integration credentials and route policies remain
+   * app-scoped and shared across tenants. Event waits and callbacks remain
+   * unsupported for tenant-bound workflows.
    *
    * @returns WorkflowRunResponse The new pending tenant-scoped workflow run.
    * @throws ApiError
@@ -541,7 +545,7 @@ export class WorkflowsService {
         402: `The account plan does not include tenant-scoped durable workflow runs.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `The tenant is inactive or unlinked, or the app cannot run tenant-scoped workflows.`,
+        409: `The app is not configured to accept tenant-scoped workflow runs.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -556,7 +560,11 @@ export class WorkflowsService {
    * The tenant must be actively linked to the app. Requires the
    * platform_tenant:invocations:manage scope. Managed operation effects are
    * delivered only to an explicitly subscribed receiver owned by this
-   * tenant. Event waits, callbacks, and outbound steps remain unsupported.
+   * tenant. Outbound steps can use an existing app-bound customer-managed
+   * integration; the signed run identity and active tenant-to-app link are
+   * checked at dispatch and outbound authorization. Integration credentials
+   * and route policies remain app-scoped and shared across tenants. Event
+   * waits and callbacks remain unsupported.
    *
    * @returns WorkflowRunResponse A pending workflow run created with the authenticated tenant identity.
    * @throws ApiError
@@ -590,7 +598,7 @@ export class WorkflowsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `The token's tenant is inactive or unlinked, or the app cannot run tenant-scoped workflows.`,
+        409: `The app does not accept workflow runs for this authenticated tenant identity.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
