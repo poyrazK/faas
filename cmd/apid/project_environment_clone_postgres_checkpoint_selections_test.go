@@ -42,6 +42,9 @@ type cloneCheckpointClosureProvider struct {
 	drained                       bool
 	changedPin                    string
 	onObserve                     func(context.Context) error
+	discoveries                   int
+	inventory                     []string
+	onDiscover                    func(context.Context) error
 }
 
 func (p *cloneCheckpointClosureProvider) CloseCheckpointConnections(ctx context.Context, d managedpostgres.RestoreSourceDefinition, m managedpostgres.CheckpointMaintenance, r managedpostgres.CheckpointConnectionRequest) (managedpostgres.CheckpointConnectionClosure, error) {

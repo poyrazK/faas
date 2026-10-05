@@ -14,6 +14,14 @@ FROM pg_database d WHERE d.datname=current_database();
 -- name: FenceSchemaExists :one
 SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='gregale_checkpoint') AS present;
 
+-- Inventory the entire source, including templates, databases which refuse
+-- connections, and databases owned by another role. Filtering those out would
+-- silently omit writers. Only the authenticated private maintenance DB is exempt.
+-- name: CheckpointDatabaseNames :many
+SELECT d.datname::text AS database_name FROM pg_catalog.pg_database d
+WHERE d.datname<>sqlc.arg(maintenance_database)::text
+ORDER BY d.datname COLLATE "C" LIMIT sqlc.arg(max_databases)::integer;
+
 -- name: FenceSchemaPrivate :one
 SELECT n.nspowner=(SELECT oid FROM pg_roles WHERE rolname=current_user)
  AND NOT EXISTS (SELECT 1 FROM aclexplode(COALESCE(n.nspacl,acldefault('n',n.nspowner))) a WHERE a.grantee<>n.nspowner)

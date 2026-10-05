@@ -6679,3 +6679,36 @@ checks. This did not alter another process or database. Exact owned test
 databases, PostgreSQL process, RAM fixture and generated binary are retired
 after qualification. Full repository, deployed provider and native Linux
 acceptance are still outstanding.
+
+### Native source catalogue discovery for original selection (2026-10-05)
+
+The private PostgreSQL selection producer now reads the native `pg_database`
+catalogue through the authenticated maintenance connection. It includes
+templates, databases closed to connections, and databases owned by other roles;
+only the authenticated maintenance database is excluded. A read-only repeatable
+read transaction obtains the selection, bounded by the existing database quota
+with one extra row to detect overflow. Discovery installs no checkpoint ledger
+and changes no source connection flags.
+
+The optional managed PostgreSQL capability validates the frozen backend and
+source identity, requires the original ready maintenance owner and OID pins,
+bounds provider IO and returns no selection on failed checks. The Neon adapter
+independently authenticates native maintenance and provider placement before and
+after the read. Private APID wiring retains the result through the existing
+encrypted, write-once selection protocol under the original source hold and
+clone lease. Lost acknowledgement, worker handoff and key rotation recover the
+committed original without rediscovering today's catalogue. Incorrect frozen
+plans, cancellation, lease handoff during IO or changed source placement cannot
+commit new intent.
+
+This is source discovery, not complete writer coverage or a common capture
+point. Catalogue changes and PostgreSQL/background writers still need coverage
+checks and barriers; configuration and object-storage data must share the
+qualified capture point, with retained source data and authenticated barrier
+release. The coordinator's data-bearing gate and public full-clone admission
+remain closed until those contracts qualify.
+
+Verification uses actual isolated PostgreSQL 16 for the native catalogue and
+connection flags, plus encrypted receipt and lease persistence in the full APID
+test package. Provider placement responses are synthetic HTTP fixtures; live
+paid-provider and native Linux full-clone qualification remain outstanding.

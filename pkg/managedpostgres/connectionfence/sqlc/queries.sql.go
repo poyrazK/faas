@@ -27,6 +27,40 @@ func (q *Queries) AbandonConnections(ctx context.Context, db DBTX, arg AbandonCo
 	return abandoned, err
 }
 
+const checkpointDatabaseNames = `-- name: CheckpointDatabaseNames :many
+SELECT d.datname::text AS database_name FROM pg_catalog.pg_database d
+WHERE d.datname<>$1::text
+ORDER BY d.datname COLLATE "C" LIMIT $2::integer
+`
+
+type CheckpointDatabaseNamesParams struct {
+	MaintenanceDatabase string
+	MaxDatabases        int32
+}
+
+// Inventory the entire source, including templates, databases which refuse
+// connections, and databases owned by another role. Filtering those out would
+// silently omit writers. Only the authenticated private maintenance DB is exempt.
+func (q *Queries) CheckpointDatabaseNames(ctx context.Context, db DBTX, arg CheckpointDatabaseNamesParams) ([]string, error) {
+	rows, err := db.Query(ctx, checkpointDatabaseNames, arg.MaintenanceDatabase, arg.MaxDatabases)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var database_name string
+		if err := rows.Scan(&database_name); err != nil {
+			return nil, err
+		}
+		items = append(items, database_name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const closeConnections = `-- name: CloseConnections :one
 SELECT gregale_checkpoint.close_connections($1::uuid,$2::text,$3::text[])::boolean AS closed
 `
