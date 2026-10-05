@@ -928,8 +928,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	// Rebuild admission accounting from any instances still live from a prior
 	// run before we start admitting new wakes.
-	if err := engine.SeedLedger(ctx); err != nil {
-		log.Warn("seed ledger", "err", err)
+	if err := seedSchedulerLedger(ctx, engine, log); err != nil {
+		return err
 	}
 
 	// gRPC surface for gatewayd-internal (ADR-018): unix socket by default;

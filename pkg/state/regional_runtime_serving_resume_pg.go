@@ -33,6 +33,24 @@ func (s *PgStore) RegionalRuntimeServingResume(ctx context.Context, app, id stri
 	return regionalServingResumeRow(row)
 }
 
+func (s *PgStore) HeldRegionalRuntimeServingResumeForInstance(ctx context.Context, app, instance, node, run string) (RegionalRuntimeServingResumeReceipt, error) {
+	if !validResumeInstanceIDs(app, instance, node, run) {
+		return RegionalRuntimeServingResumeReceipt{}, ErrInvalidArgument
+	}
+	rows, err := (&sqlc.Queries{}).HeldRegionalRuntimeServingResumesForInstance(ctx, s.pool, sqlc.HeldRegionalRuntimeServingResumesForInstanceParams{AppID: uuidToPgtype(app), InstanceID: uuidToPgtype(instance), NodeID: uuidToPgtype(node), RunID: uuidToPgtype(run)})
+	if err != nil {
+		return RegionalRuntimeServingResumeReceipt{}, regionalCapacityError(err)
+	}
+	switch len(rows) {
+	case 0:
+		return RegionalRuntimeServingResumeReceipt{}, ErrNotFound
+	case 1:
+		return regionalServingResumeRow(rows[0])
+	default:
+		return RegionalRuntimeServingResumeReceipt{}, ErrConflict
+	}
+}
+
 func (s *PgStore) IssueRegionalRuntimeServingResume(ctx context.Context, i runtimequota.ServingResumeIntent) (RegionalRuntimeServingResumeReceipt, error) {
 	if i.Validate() != nil {
 		return RegionalRuntimeServingResumeReceipt{}, ErrInvalidArgument

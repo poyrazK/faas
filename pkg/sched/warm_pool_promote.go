@@ -23,7 +23,16 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 	if err := checkRegionalRuntimeQuota(ctx, e.store, app.ID); err != nil {
 		return WakeResult{}, true, err
 	}
-	if e.ledger.Concurrency(app.ID) >= effectiveMaxConcurrency(app, limits) {
+	appID, err := regionalLaunchID(app.ID)
+	if err != nil {
+		return WakeResult{}, true, err
+	}
+	head, headErr := e.store.RegionalRuntimeQuotaHead(ctx, appID)
+	regional := headErr == nil
+	if headErr != nil && !errors.Is(headErr, state.ErrNotFound) {
+		return WakeResult{}, true, regionalWarmUnavailable(headErr)
+	}
+	if !regional && e.ledger.Concurrency(app.ID) >= effectiveMaxConcurrency(app, limits) {
 		// The existing admission gate owns the at-capacity result; do not
 		// consume a warm row or emit a misleading "missing" outcome.
 		return WakeResult{}, false, nil
@@ -46,6 +55,12 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 	}
 	defer func() { e.setWarmPoolSizeGauge(acct.Plan, warmCount) }()
 	sort.SliceStable(candidates, func(i, j int) bool {
+		if regional {
+			a, b := e.ledger.regionalWarmResumePending(candidates[i].ID), e.ledger.regionalWarmResumePending(candidates[j].ID)
+			if a != b {
+				return a
+			}
+		}
 		if candidates[i].StartedAt.Equal(candidates[j].StartedAt) {
 			return candidates[i].ID < candidates[j].ID
 		}
@@ -54,6 +69,13 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 	if len(candidates) == 0 {
 		e.observeWarmResume("missing")
 		return WakeResult{}, false, nil
+	}
+	if regional {
+		result, err := e.promoteRegionalWarmInstance(ctx, app, acct, dep, candidates[0], head.Grant)
+		if err == nil {
+			warmCount--
+		}
+		return result, true, err
 	}
 
 	resumer, ok := e.vmm.(WarmResumeVMM)
@@ -97,9 +119,15 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 		}
 
 		resumeStartedAt := time.Now()
+		if err := checkRegionalRuntimeQuota(ctx, e.store, app.ID); err != nil {
+			return WakeResult{}, true, err
+		}
 		resumeCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput{haveSnap: true, snapKey: "warm_pool"}))
 		resumeErr := resumer.ResumeWarmInstance(resumeCtx, e.nodeForRoute(warm.NodeID), warm.ID)
 		cancel()
+		if err := checkRegionalRuntimeQuota(ctx, e.store, app.ID); err != nil {
+			return WakeResult{}, true, err
+		}
 		if resumeErr != nil {
 			if e.discardWarmPromotion(ctx, warm, "resume_failed") {
 				warmCount--
@@ -165,6 +193,10 @@ func (e *Engine) observeWarmResume(outcome string) {
 // row that another scheduler transition has already claimed.
 func (e *Engine) discardWarmPromotion(ctx context.Context, warm state.Instance, reason string) bool {
 	cleanupCtx := context.WithoutCancel(ctx)
+	if err := checkRegionalRuntimeQuota(cleanupCtx, e.store, warm.AppID); err != nil {
+		e.log.Warn("sched: warm pool: retain quota-controlled promotion candidate", "instance", warm.ID, "reason", reason, "err", err)
+		return false
+	}
 	if err := e.timedDestroy(cleanupCtx, warm.NodeID, warm.ID, DestroyTimeout); err != nil {
 		e.log.Warn("sched: warm pool: destroy stale promotion candidate", "instance", warm.ID, "reason", reason, "err", err)
 	}

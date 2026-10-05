@@ -1,7 +1,7 @@
 # ADR-626: Durable regional serving resume intents
 
 Date: 2026-10-05
-Status: Journal implemented and portable validation passed; scheduler integration and activation pending.
+Status: Journal and warm scheduler integration implemented; regional activation pending.
 
 ## Context
 
@@ -37,7 +37,7 @@ instance and node collection. SQL rejects record changes, deletion, truncation,
 fixed-snapshot issuance and nonempty downgrade.
 
 The Store interface requires resume persistence through decorators. The journal
-is bookkeeping only. All accepted quota heads remain frozen. Warm promotion,
+is bookkeeping only. All accepted quota heads remain frozen. Warm-promotion acceptance,
 migration rollback, signed compute admission, native pause/stop verification,
 request forwarding, task attempts, billing, provisioning and ingress remain
 necessary before activation. Mock stop assertions do not establish native proof.

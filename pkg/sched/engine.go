@@ -7104,6 +7104,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 		cpuBudgets[nodeID] = budget
 		return budget
 	}
+	var recoveryErr error
 	for _, app := range apps {
 		if !e.ownsApp(app) {
 			continue
@@ -7129,12 +7130,18 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				nodeID = e.defaultLocalNodeID
 			}
 			kind := KindWake
+			var warmPermit runtimequota.CapacityPermit
+			warmHeld := false
 			if state.State(ins.State) == state.StateWarm {
-				// Warm rows are resident capacity but not serving
-				// concurrency. Rebuild the same reservation shape used by
-				// the warm-pool reconciler so a schedd restart cannot lose
-				// their RAM accounting or count them toward max_concurrency.
+				// Rebuild RAM first, then charge any escaped serving intent.
+				// Recovery bypasses the new-admission concurrency cap: even
+				// fenced/retired holds must remain counted above a lowered cap.
 				kind = KindWarmPool
+				var heldErr error
+				warmPermit, warmHeld, heldErr = e.regionalWarmRecovery(ctx, app, acct, ins)
+				if heldErr != nil {
+					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("sched: seed regional warm resume %s: %w", ins.ID, heldErr))
+				}
 			}
 			request := Request{
 				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, Plan: acct.Plan,
@@ -7164,13 +7171,29 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			}
 			if err := e.ledger.Admit(request); err != nil {
 				e.log.Warn("seed ledger: admit", "instance", ins.ID, "err", err)
+				if warmHeld {
+					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("sched: seed held regional warm resident %s: %w", ins.ID, err))
+				}
 				continue
+			}
+			if warmHeld {
+				if warmPermit.ID == "" {
+					// Unknown/ambiguous identity blocks startup and charges the
+					// resident conservatively until inventory reconciliation.
+					e.ledger.PromoteWarm(ins.ID)
+				} else if err := e.ledger.reserveRegionalWarmResume(ins.ID, warmPermit, 0, true); err != nil {
+					e.ledger.PromoteWarm(ins.ID)
+					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("sched: seed regional warm concurrency %s: %w", ins.ID, err))
+				}
 			}
 			// SNAPSHOTTING is resident but no longer counts toward concurrency.
 			if state.State(ins.State) == state.StateSnapshotting {
 				e.ledger.BeginSnapshot(ins.ID)
 			}
 		}
+	}
+	if recoveryErr != nil {
+		return errors.Join(ErrRegionalRuntimeRecoveryUnresolved, recoveryErr)
 	}
 	return nil
 }

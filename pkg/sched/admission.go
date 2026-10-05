@@ -65,9 +65,10 @@ type reservation struct {
 	cpuMillicores   int
 	// cpuBoostMillicores is the temporary delta above the sustained quota.
 	// It remains reserved until cpuBoostUntil (readiness + bounded tail).
-	cpuBoostMillicores int
-	cpuBoostUntil      time.Time
-	countsConc         bool // still in {WAKING,COLD_BOOTING,RUNNING}
+	cpuBoostMillicores     int
+	cpuBoostUntil          time.Time
+	countsConc             bool   // still in {WAKING,COLD_BOOTING,RUNNING}
+	regionalResumePermitID string // retained while a regional warm resume may be serving
 }
 
 // NewNodeLedger returns an empty per-node ledger. Backwards-compat
@@ -543,7 +544,7 @@ func (l *NodeLedger) BeginSnapshot(instance string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := l.entries[instance]
-	if e != nil && e.countsConc {
+	if e != nil && e.countsConc && e.regionalResumePermitID == "" {
 		e.countsConc = false
 		l.perApp[e.appID]--
 		l.cleanupApp(e.appID)

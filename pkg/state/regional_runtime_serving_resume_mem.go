@@ -26,6 +26,33 @@ func (s *MemStore) RegionalRuntimeServingResume(ctx context.Context, app, id str
 	return r, nil
 }
 
+func (s *MemStore) HeldRegionalRuntimeServingResumeForInstance(ctx context.Context, app, instance, node, run string) (RegionalRuntimeServingResumeReceipt, error) {
+	if !validResumeInstanceIDs(app, instance, node, run) {
+		return RegionalRuntimeServingResumeReceipt{}, ErrInvalidArgument
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return RegionalRuntimeServingResumeReceipt{}, err
+	}
+	var found RegionalRuntimeServingResumeReceipt
+	for _, r := range s.regionalRuntimeServingResumes {
+		p := r.Intent.Seat.Permit
+		seat := s.regionalRuntimeServingSeats[capacityKey(app, r.Intent.Seat.ID)]
+		if p.Grant.Binding.RegionalAppID != app || p.InstanceID != instance || p.NodeID != node || p.RunID != run || seat.IssuedAt == nil || seat.ReleasedAt != nil {
+			continue
+		}
+		if found.Intent.ID != "" {
+			return RegionalRuntimeServingResumeReceipt{}, ErrConflict
+		}
+		found = r
+	}
+	if found.Intent.ID == "" {
+		return RegionalRuntimeServingResumeReceipt{}, ErrNotFound
+	}
+	return found, nil
+}
+
 func (s *MemStore) IssueRegionalRuntimeServingResume(ctx context.Context, i runtimequota.ServingResumeIntent) (RegionalRuntimeServingResumeReceipt, error) {
 	if i.Validate() != nil {
 		return RegionalRuntimeServingResumeReceipt{}, ErrInvalidArgument

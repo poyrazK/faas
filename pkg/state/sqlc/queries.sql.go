@@ -12089,6 +12089,55 @@ func (q *Queries) HeldRegionalRuntimeServingResume(ctx context.Context, db DBTX,
 	return i, err
 }
 
+const heldRegionalRuntimeServingResumesForInstance = `-- name: HeldRegionalRuntimeServingResumesForInstance :many
+SELECT r.app_id, r.resume_id, r.permit_id, r.seat_id, r.intent_claims, r.created_at FROM regional_runtime_serving_resumes r
+JOIN regional_runtime_capacity_receipts p ON p.app_id=r.app_id AND p.permit_id=r.permit_id
+JOIN regional_runtime_serving_seats s ON s.app_id=r.app_id AND s.seat_id=r.seat_id
+WHERE r.app_id=$1 AND p.instance_id=$2
+ AND p.node_id=$3 AND p.run_id=$4
+ AND s.issued_at IS NOT NULL AND s.released_at IS NULL
+ORDER BY r.resume_id LIMIT 2
+`
+
+type HeldRegionalRuntimeServingResumesForInstanceParams struct {
+	AppID      pgtype.UUID
+	InstanceID pgtype.UUID
+	NodeID     pgtype.UUID
+	RunID      pgtype.UUID
+}
+
+func (q *Queries) HeldRegionalRuntimeServingResumesForInstance(ctx context.Context, db DBTX, arg HeldRegionalRuntimeServingResumesForInstanceParams) ([]RegionalRuntimeServingResume, error) {
+	rows, err := db.Query(ctx, heldRegionalRuntimeServingResumesForInstance,
+		arg.AppID,
+		arg.InstanceID,
+		arg.NodeID,
+		arg.RunID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RegionalRuntimeServingResume{}
+	for rows.Next() {
+		var i RegionalRuntimeServingResume
+		if err := rows.Scan(
+			&i.AppID,
+			&i.ResumeID,
+			&i.PermitID,
+			&i.SeatID,
+			&i.IntentClaims,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const incrementAppError = `-- name: IncrementAppError :one
 
 INSERT INTO app_errors (

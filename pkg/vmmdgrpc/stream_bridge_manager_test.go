@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -289,6 +290,8 @@ func TestStreamBridgeManagerReapsIdleEntry(t *testing.T) {
 func newTestStreamBridgeManager(t *testing.T, onStart func()) *streamBridgeManager {
 	t.Helper()
 	manager := newStreamBridgeManager(nil)
+	socketDir := t.TempDir()
+	manager.socketPath = func(instance string) string { return filepath.Join(socketDir, instance+".sock") }
 	manager.reapInterval = time.Hour
 	manager.spawn = func(_ context.Context, _, _, _, _ string, _ uint32, _ string, _ []string) (*exec.Cmd, *bytes.Buffer, error) {
 		onStart()
@@ -319,6 +322,8 @@ func BenchmarkStreamBridgeManagerAcquireReuse(b *testing.B) {
 	}
 	b.Setenv(streamBridgePathEnv, bridgePath)
 	manager := newStreamBridgeManager(nil)
+	socketDir := b.TempDir()
+	manager.socketPath = func(instance string) string { return filepath.Join(socketDir, instance+".sock") }
 	manager.reapInterval = time.Hour
 	manager.spawn = func(_ context.Context, _, _, _, _ string, _ uint32, _ string, _ []string) (*exec.Cmd, *bytes.Buffer, error) {
 		cmd := exec.Command("sleep", "60")

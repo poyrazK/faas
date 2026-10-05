@@ -16,7 +16,7 @@ type RegionalWarmResumeVMM interface {
 }
 
 func regionalResumeWire(instance string, p runtimequota.Placement) ([]byte, error) {
-	if p.Validate() != nil || p.Seat == nil || p.Permit.InstanceID != instance {
+	if p.Validate() != nil || p.Seat == nil || !runtimequota.MatchesID(p.Permit.InstanceID, instance) {
 		return nil, runtimequota.ErrBinding
 	}
 	return regionalRuntimeToProto(&p)
@@ -41,7 +41,7 @@ func (r *VMMRouter) ResumeRegionalWarmInstance(ctx context.Context, node, instan
 	if _, err := regionalResumeWire(instance, p); err != nil {
 		return err
 	}
-	if p.Permit.NodeID != node {
+	if !runtimequota.MatchesID(p.Permit.NodeID, node) {
 		return runtimequota.ErrBinding
 	}
 	cli, err := r.resolveFor(ctx, node)

@@ -76,6 +76,7 @@ type streamBridgeManager struct {
 	now          func() time.Time
 	spawn        streamBridgeSpawnFunc
 	waitSocket   func(string, time.Duration) error
+	socketPath   func(string) string
 	newTransport func(string) *http2.Transport
 	stop         func(context.Context, *exec.Cmd, *bytes.Buffer) error
 
@@ -98,6 +99,7 @@ func newStreamBridgeManager(log *slog.Logger) *streamBridgeManager {
 		now:          time.Now,
 		spawn:        streamBridgeSpawn,
 		waitSocket:   waitForUnixSock,
+		socketPath:   streamBridgeSockPath,
 		newTransport: newStreamBridgeH2CTransport,
 		stop:         stopStreamBridge,
 	}
@@ -136,7 +138,7 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 				netns:    netnsName,
 				port:     port,
 				protocol: streamBridgeProtocol(req),
-				socket:   streamBridgeSockPath(req.GetInstance()),
+				socket:   m.socketPath(req.GetInstance()),
 				ready:    make(chan struct{}),
 				starting: true,
 				lastUsed: m.now(),
@@ -225,7 +227,7 @@ func (m *streamBridgeManager) prewarm(req *vmmdpb.ForwardHTTPRequestInit, netnsN
 		netns:    netnsName,
 		port:     port,
 		protocol: protocol,
-		socket:   streamBridgeSockPath(req.GetInstance()),
+		socket:   m.socketPath(req.GetInstance()),
 		ready:    make(chan struct{}),
 		starting: true,
 		lastUsed: m.now(),

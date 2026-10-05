@@ -84,6 +84,8 @@ func testForwardV2BridgeLifecycle(t *testing.T, cancelConcurrent bool) {
 	t.Cleanup(func() { streamBridgeSpawn = savedSpawn })
 
 	server := New(forwardV2IntegrationVMM{}, nil, "test", nil)
+	socketDir := t.TempDir()
+	server.streamBridges.socketPath = func(instance string) string { return socketDir + "/" + instance + ".sock" }
 	server.streamBridges.waitSocket = func(string, time.Duration) error { return nil }
 	server.streamBridges.reapInterval = time.Hour
 

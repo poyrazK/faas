@@ -646,6 +646,7 @@ type Querier interface {
 	HasPendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
 	HasPendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
 	HeldRegionalRuntimeServingResume(ctx context.Context, db DBTX, arg HeldRegionalRuntimeServingResumeParams) (RegionalRuntimeServingResume, error)
+	HeldRegionalRuntimeServingResumesForInstance(ctx context.Context, db DBTX, arg HeldRegionalRuntimeServingResumesForInstanceParams) ([]RegionalRuntimeServingResume, error)
 	// ---------------------------------------------------------------------------
 	// ADR-096 customer-facing automatic error grouping.
 	// Tables live in migrations/00222_app_errors.sql. gatewayd-internal

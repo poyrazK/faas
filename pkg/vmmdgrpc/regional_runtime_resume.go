@@ -11,7 +11,7 @@ import (
 
 func (s *Server) resumeWarmRequest(ctx context.Context, instance string, p *runtimequota.Placement) error {
 	if p != nil {
-		if p.Seat == nil || p.Permit.InstanceID != instance {
+		if p.Seat == nil || !runtimequota.MatchesID(p.Permit.InstanceID, instance) {
 			return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 				"Invalid regional resume", "the issued serving placement must match the instance")
 		}

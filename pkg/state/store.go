@@ -996,6 +996,7 @@ type Store interface {
 	RegionalRuntimeIssuedPlacementReader
 	RegionalRuntimePlacementWriter
 	RegionalRuntimeServingResumeStore
+	RegionalRuntimeCapacityReader
 
 	// ADR-420: fenced durable retries for continuously managed services.
 	// Discovery leaves saturated candidates due. Claims honor failure cooldown

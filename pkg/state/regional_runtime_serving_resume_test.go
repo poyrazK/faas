@@ -22,6 +22,7 @@ func resumeIntent(t *testing.T, p runtimequota.CapacityPermit) runtimequota.Serv
 
 func runRegionalServingResumeContract(t *testing.T, fixture func(*testing.T) regionalCapacityFixture) {
 	t.Helper()
+	runHeldRegionalServingResumeContract(t, fixture)
 	t.Run("competing-proposals-and-lost-response", func(t *testing.T) {
 		f := fixture(t)
 		s := f.ledger.(RegionalRuntimeServingResumeStore)
@@ -212,6 +213,72 @@ func runRegionalServingResumeContract(t *testing.T, fixture func(*testing.T) reg
 			t.Fatal(err)
 		}
 		f.usage(t, 1, 1, 0)
+	})
+}
+
+func runHeldRegionalServingResumeContract(t *testing.T, fixture func(*testing.T) regionalCapacityFixture) {
+	t.Helper()
+	for _, fence := range []string{"seat", "physical", "retirement"} {
+		t.Run("held-recovery-"+fence, func(t *testing.T) {
+			f := fixture(t)
+			s := f.ledger.(RegionalRuntimeServingResumeStore)
+			p := f.permit(runtimequota.CapacityWarm)
+			f.reserve(t, p)
+			f.issue(t, p)
+			original, err := s.IssueRegionalRuntimeServingResume(t.Context(), resumeIntent(t, p))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, ids := range [][4]string{{uuid.NewString(), p.InstanceID, p.NodeID, p.RunID}, {f.app(), uuid.NewString(), p.NodeID, p.RunID}, {f.app(), p.InstanceID, uuid.NewString(), p.RunID}, {f.app(), p.InstanceID, p.NodeID, uuid.NewString()}} {
+				if _, err := s.HeldRegionalRuntimeServingResumeForInstance(t.Context(), ids[0], ids[1], ids[2], ids[3]); !errors.Is(err, ErrNotFound) {
+					t.Fatal("lookup crossed runtime identity", ids, err)
+				}
+			}
+			fenceID := uuid.NewString()
+			switch fence {
+			case "seat":
+				_, err = f.ledger.FenceRegionalRuntimeServingSeat(t.Context(), f.app(), original.Intent.Seat.ID, fenceID)
+			case "physical":
+				_, err = f.ledger.FenceRegionalRuntimeCapacity(t.Context(), f.app(), p.ID, fenceID)
+			case "retirement":
+				_, envelope := f.quota.retirement(t, f.quota.grant)
+				_, err = f.quota.authority.AcceptRetirement(t.Context(), envelope)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, err := s.HeldRegionalRuntimeServingResumeForInstance(t.Context(), f.app(), p.InstanceID, p.NodeID, p.RunID)
+			if err != nil || r.Intent != original.Intent || !r.CreatedAt.Equal(original.CreatedAt) {
+				t.Fatal("frozen authorization vanished from accounting", r, err)
+			}
+			if fence == "seat" {
+				f.stopSeat(t, original.Intent.Seat, fenceID)
+				if _, err := s.HeldRegionalRuntimeServingResumeForInstance(t.Context(), f.app(), p.InstanceID, p.NodeID, p.RunID); !errors.Is(err, ErrNotFound) {
+					t.Fatal("released seat still counted", err)
+				}
+			}
+		})
+	}
+	t.Run("held-recovery-ambiguous-host-epochs", func(t *testing.T) {
+		f := fixture(t)
+		s := f.ledger.(RegionalRuntimeServingResumeStore)
+		p := f.permit(runtimequota.CapacityWarm)
+		for range 2 {
+			p.ID, p.HostEpochID = uuid.NewString(), uuid.NewString()
+			f.reserve(t, p)
+			f.issue(t, p)
+			if _, err := s.IssueRegionalRuntimeServingResume(t.Context(), resumeIntent(t, p)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := s.HeldRegionalRuntimeServingResumeForInstance(t.Context(), f.app(), p.InstanceID, p.NodeID, p.RunID); !errors.Is(err, ErrConflict) {
+			t.Fatal("ambiguity picked an arbitrary host incarnation", err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if _, err := s.HeldRegionalRuntimeServingResumeForInstance(ctx, f.app(), p.InstanceID, p.NodeID, p.RunID); !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
 	})
 }
 

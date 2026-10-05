@@ -11144,3 +11144,12 @@ WHERE r.app_id=sqlc.arg(app_id) AND r.permit_id=sqlc.arg(permit_id) AND s.releas
 INSERT INTO regional_runtime_serving_resumes(app_id,resume_id,permit_id,seat_id,intent_claims)
 VALUES(sqlc.arg(app_id),sqlc.arg(resume_id),sqlc.arg(permit_id),sqlc.arg(seat_id),sqlc.arg(intent_claims))
 RETURNING *;
+
+-- name: HeldRegionalRuntimeServingResumesForInstance :many
+SELECT r.* FROM regional_runtime_serving_resumes r
+JOIN regional_runtime_capacity_receipts p ON p.app_id=r.app_id AND p.permit_id=r.permit_id
+JOIN regional_runtime_serving_seats s ON s.app_id=r.app_id AND s.seat_id=r.seat_id
+WHERE r.app_id=sqlc.arg(app_id) AND p.instance_id=sqlc.arg(instance_id)
+ AND p.node_id=sqlc.arg(node_id) AND p.run_id=sqlc.arg(run_id)
+ AND s.issued_at IS NOT NULL AND s.released_at IS NULL
+ORDER BY r.resume_id LIMIT 2;

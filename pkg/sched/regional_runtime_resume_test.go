@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -41,11 +42,17 @@ func TestRegionalResumeRequiresExactTransportAcknowledgement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, response := range []string{"exact", "old-server", "wrong-instance", "wrong-seat", "transport-error"} {
+	for _, response := range []string{"exact", "compact-key", "wrong-key-encoding", "old-server", "wrong-instance", "wrong-seat", "transport-error"} {
 		t.Run(response, func(t *testing.T) {
 			rpc := &regionalResumeRPC{response: &vmmdpb.ResumeWarmInstanceResponse{Instance: p.InstanceID, RegionalRuntime: raw}}
 			unavailable := errors.New("resume RPC failed after dispatch")
+			instance := p.InstanceID
 			switch response {
+			case "compact-key":
+				instance = strings.ReplaceAll(instance, "-", "")
+				rpc.response.Instance = instance
+			case "wrong-key-encoding":
+				instance = strings.ReplaceAll(instance, "-", "")
 			case "old-server":
 				rpc.response.RegionalRuntime = nil
 			case "wrong-instance":
@@ -58,18 +65,19 @@ func TestRegionalResumeRequiresExactTransportAcknowledgement(t *testing.T) {
 				rpc.err = unavailable
 			}
 			client := &VMMClient{cli: rpc}
-			err := client.ResumeRegionalWarmInstance(t.Context(), p.InstanceID, placement)
-			if response == "exact" && err != nil {
+			err := client.ResumeRegionalWarmInstance(t.Context(), instance, placement)
+			exact := response == "exact" || response == "compact-key"
+			if exact && err != nil {
 				t.Fatal(err)
 			}
-			if response != "exact" && err == nil {
+			if !exact && err == nil {
 				t.Fatal("ambiguous resume acknowledgement accepted")
 			}
 			if response == "transport-error" && !errors.Is(err, unavailable) {
 				t.Fatal("uncertain RPC error hidden", err)
 			}
 			decoded, err := runtimequota.DecodePlacement(rpc.request.GetRegionalRuntime())
-			if err != nil || decoded.Permit != placement.Permit || *decoded.Seat != *placement.Seat {
+			if err != nil || decoded.Permit != placement.Permit || *decoded.Seat != *placement.Seat || rpc.request.Instance != instance {
 				t.Fatal("resume request lost immutable pins", err)
 			}
 		})

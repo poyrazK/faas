@@ -23,13 +23,18 @@ type RegionalRuntimeCapacityReceipt struct {
 	StopEnvelope         *runtimequota.Envelope
 }
 
+// Read receipts without granting admission or requiring current authority.
+type RegionalRuntimeCapacityReader interface {
+	RegionalRuntimeCapacity(context.Context, string, string) (RegionalRuntimeCapacityReceipt, error)
+}
+
 // Reservation and issuance track capacity without activating quota authority.
 // Only the verified cell-stop receiver can close an issued physical attempt.
 type RegionalRuntimeCapacityStore interface {
+	RegionalRuntimeCapacityReader
 	ReserveRegionalRuntimeCapacity(context.Context, runtimequota.CapacityPermit) (RegionalRuntimeCapacityReceipt, error)
 	IssueRegionalRuntimeCapacity(context.Context, string, string) (RegionalRuntimeCapacityReceipt, error)
 	FenceRegionalRuntimeCapacity(context.Context, string, string, string) (RegionalRuntimeCapacityReceipt, error)
-	RegionalRuntimeCapacity(context.Context, string, string) (RegionalRuntimeCapacityReceipt, error)
 	ListRegionalRuntimeCapacity(context.Context, string, string, string, int) ([]RegionalRuntimeCapacityReceipt, error)
 	RegionalRuntimeCapacityUsage(context.Context, string, string) (RegionalRuntimeCapacityUsage, error)
 	applyRegionalRuntimeCapacityStop(context.Context, runtimequota.CapacityStop, runtimequota.Envelope) (RegionalRuntimeCapacityReceipt, error)

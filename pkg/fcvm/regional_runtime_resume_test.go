@@ -4,6 +4,7 @@ package fcvm
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +13,36 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/runtimequotahost"
 )
+
+// Compact DB keys remain the actual runtime keys. Canonical protocol UUIDs
+// identify the same physical attempt, never a second native launch.
+func TestRegionalCompactResidentIdentityKeepsOnePhysicalAttempt(t *testing.T) {
+	v := &fakeVMM{}
+	m, _, req := regionalHostFixture(t, v)
+	req.KeepPaused, req.Snapshot = true, usableSnapshot()
+	req.RegionalRuntime.Permit.Kind = runtimequota.CapacityWarm
+	req.RegionalRuntime.Seat = nil
+	canonical := req.Instance
+	for _, id := range []*string{&req.Instance, &req.AppID, &req.AccountID, &req.DeploymentID} {
+		*id = strings.ReplaceAll(*id, "-", "")
+	}
+	if _, err := m.Wake(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	p := req.RegionalRuntime.Clone()
+	p.Seat = &runtimequota.ServingSeat{Permit: p.Permit, ID: uuid.NewString()}
+	if err := m.ResumeRegionalRuntime(t.Context(), req.Instance, p); err != nil {
+		t.Fatal("compact resident key did not resume", err)
+	}
+	alias := req
+	alias.Instance = canonical
+	if _, err := m.Wake(t.Context(), alias); !errors.Is(err, runtimequotahost.ErrBinding) {
+		t.Fatal("UUID encoding minted a second physical attempt", err)
+	}
+	if err := m.Destroy(t.Context(), req.Instance); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestRegionalResidentResumeInstallsFreshSeat(t *testing.T) {
 	v := &fakeVMM{}

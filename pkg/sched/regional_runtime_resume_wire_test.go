@@ -4,6 +4,7 @@ package sched_test
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -16,10 +17,12 @@ type explicitRegionalResumeVMM struct {
 	placement   runtimequota.Placement
 	regional    int
 	independent int
+	instance    string
 }
 
 func (v *explicitRegionalResumeVMM) ResumeRegionalRuntime(_ context.Context, instance string, p runtimequota.Placement) error {
 	v.regional++
+	v.instance = instance
 	v.placement = p.Clone()
 	return nil
 }
@@ -52,6 +55,10 @@ func TestRegionalResumeWireNeverFallsBackToIndependentResume(t *testing.T) {
 	}
 	if vmm.regional != 1 || vmm.independent != 0 || !reflect.DeepEqual(vmm.placement, placement) {
 		t.Fatal("wire changed pins or used independent fallback")
+	}
+	compact := strings.ReplaceAll(p.InstanceID, "-", "")
+	if err := client.ResumeRegionalWarmInstance(t.Context(), compact, placement); err != nil || vmm.regional != 2 || vmm.instance != compact || !reflect.DeepEqual(vmm.placement, placement) {
+		t.Fatal("wire rewrote actual resident key or canonical claims", err)
 	}
 	if err := client.ResumeWarmInstance(t.Context(), "independent"); err != nil || vmm.independent != 1 {
 		t.Fatal("independent resume changed", err)
