@@ -190,7 +190,7 @@ func TestPostgresResizeRejectsChangedBackendSnapshot(t *testing.T) {
 
 func TestPostgresResizeMigrationReplayAndRollbackFence(t *testing.T) {
 	store, pool, ctx, account := postgresStoreFixture(t)
-	raw, err := migrations.FS.ReadFile("20261005155108000_managed_postgres_resize.sql")
+	raw, err := migrations.FS.ReadFile("20261005174532362_managed_postgres_resize.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
