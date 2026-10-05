@@ -2684,3 +2684,46 @@ Named production environment scopes, remaining onboarding adapters, real native
 multi-service update/rollback, physical entropy/clock and resource isolation,
 fleet/migration recovery, dedicated Linux amd64 root/KVM test-metal/leakcheck and
 the full release checklist remain open. Public standard activation stays disabled.
+
+## Capture from the actual serving parent (2026-10-06)
+
+A fresh capture may now retain a complete measured serving restore receipt as
+its historical parent. Parent validation uses the saved completion clock, so an
+expired boot grant does not itself invalidate healthy residency. This does not
+renew that grant or authorize a new load. The fresh capture grant still reviews
+current ownership, application inputs, producer approval, source start time and
+expiry; native capture still owns the live process and pinned drives while
+freezing and measuring the new output.
+
+Both stores select the current serving receipt, including an acknowledged
+promotion when the instance names one, rather than falling back to its original
+boot receipt. Missing or mismatched serving history refuses capture. PostgreSQL
+retains nonwaiting instance, boot and promotion locks and applies the existing
+native receipt/source proof checks to that selected parent. The new migration
+is additive; historical grants, acknowledgments and issued migration bytes are
+unchanged.
+
+Every new output uses a fresh coupled namespace. The restored input's capture
+token cannot identify the new memory, VM-state or private-drive output, including
+warm and compact deployment-key aliases. New acknowledgments retain the exact
+serving parent's complete proof. Collection of an input cache does not erase
+resident identity or its immutable lineage; every subsequent capture still needs
+fresh policy and producer approval. A substituted parent or a changed current
+policy refuses acknowledgment without partially publishing a capture.
+
+Portable protocol and Manager tests cover restored serving history, owned wire
+copies, warm/park capture and refusal to reuse the input namespace. The same
+ordinary scheduler wake and park now retain the serving restored receipt in the
+new catalog and a second wake consumes that catalog with its complete parent
+proof, including deterministic SQL/protobuf evidence hashes. Both durable stores
+exercise these paths with explicit native and cache-publication simulations.
+They do not certify a Firecracker snapshot.
+
+Protocol 2 paused restore and measured promotion remain unavailable. A future
+promotion must retain the actual paused load command and independently prove
+resume and its guest hook; changing a boolean or replacing its command hash with
+a command that was never delivered cannot establish serving lineage. Production
+restore advertisement and public activation stay disabled. Dedicated KVM
+test-metal/leakcheck, physical entropy/clock/resource isolation, native/fleet
+recovery, remaining onboarding/environment scope and the full release checklist
+remain open.

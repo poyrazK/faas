@@ -154,8 +154,8 @@ func (r Receipt) checkArtifactProtocol() error {
 		}
 		return nil
 	}
-	// Paused restore and subsequent capture/promotion remain unavailable until
-	// the native and durable promotion path carries the complete lineage.
+	// Paused restore remains unavailable until the native and durable
+	// promotion path carries complete load and resume lineage.
 	if r.Paused {
 		return ErrUnavailable
 	}

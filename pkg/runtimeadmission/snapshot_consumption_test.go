@@ -73,12 +73,11 @@ func TestSnapshotConsumptionReceiptRequiresCompleteLoadAndCatalog(t *testing.T) 
 	if err := cold.Check(cold.Binding, time.Now()); err != nil {
 		t.Fatal("verified cold fallback changed", err)
 	}
-	// Enabling a serving restore receipt does not silently enable a restored
-	// parent as capture authority. That lineage needs its own implementation.
+	// The consumed input capture cannot be relabeled as a new output capture.
 	parent := e.Capture.Clone()
 	parent.Parent = r.Clone()
 	if parent.Check(time.Now()) == nil {
-		t.Fatal("recursive restore parent gained capture authority")
+		t.Fatal("input capture was reused as new capture lineage")
 	}
 }
 

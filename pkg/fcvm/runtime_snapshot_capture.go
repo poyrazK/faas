@@ -129,7 +129,7 @@ func (v *JailerVMM) beginNativeSnapshot(ctx context.Context, lease Lease, spec S
 		return nil, nil
 	}
 	driveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: spec.StorageKey})
-	if parent.Binding.ProtocolVersion != runtimeadmission.ArtifactProtocolVersion || parent.Check(parent.Binding, time.Unix(0, parent.CompletedAtUnixNano)) != nil || parent.Binding.InstanceID != lease.Instance || parent.LeaseUID != int32(lease.UID) || v.storage == nil {
+	if runtimeadmission.CheckSnapshotParent(parent) != nil || parent.Binding.InstanceID != lease.Instance || parent.LeaseUID != int32(lease.UID) || v.storage == nil {
 		return nil, runtimeadmission.ErrInvalid
 	}
 	if err := runtimeadmission.CheckSnapshotCaptureKeys(parent.Binding.DeploymentID, spec.StorageKey, spec.VMStateStorageKey, driveKey); err != nil {

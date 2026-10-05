@@ -36,7 +36,7 @@ func (g SnapshotGrant) Equal(other SnapshotGrant) bool {
 }
 
 func (g SnapshotGrant) Validate(now time.Time) error {
-	if g.Version != SnapshotGrantVersion || !canonicalUUID(g.Token) || g.Parent.Binding.ProtocolVersion != ArtifactProtocolVersion || !g.Parent.SnapshotConsumption.IsZero() || g.Parent.CompletedAtUnixNano <= 0 || g.Parent.Check(g.Parent.Binding, time.Unix(0, g.Parent.CompletedAtUnixNano)) != nil || g.SourceStartedAtUnixNano <= 0 {
+	if g.Version != SnapshotGrantVersion || !canonicalUUID(g.Token) || CheckSnapshotParent(g.Parent) != nil || !freshSnapshotParentNamespace(g.Parent, g.MemoryKey) || g.Parent.CompletedAtUnixNano > now.Add(api.ApplicationStandardRuntimeAdmissionClockSkew).UnixNano() || g.SourceStartedAtUnixNano <= 0 {
 		return ErrInvalid
 	}
 	if CheckSnapshotCaptureKeys(g.Parent.Binding.DeploymentID, g.MemoryKey, g.VMStateKey, g.PrivateDriveKey) != nil || !strings.HasSuffix(g.MemoryKey, "/captures/"+g.Token+"/v2/mem") || !validSnapshotGrantMode(g) {

@@ -14,15 +14,15 @@ func (m *MemStore) lockStandardSnapshotCaptureLocked(ctx context.Context, id, ex
 	if err != nil {
 		return ins, runtimeadmission.Receipt{}, time.Time{}, err
 	}
-	boot, ok := m.instanceApplicationStandardBoots[m.instanceApplicationStandardBootTokens[id]]
-	if !ok || boot.Receipt == nil || m.instanceApplicationStandardPromotionTokens[id] != "" || ins.StartedAt.IsZero() || boot.Binding.ProtocolVersion != runtimeadmission.ArtifactProtocolVersion || m.guardNativeRuntimeReceiptLocked(ins, capture) != nil {
+	parent, err := m.standardRuntimeReceiptLocked(id)
+	if err != nil || ins.StartedAt.IsZero() || runtimeadmission.CheckSnapshotParent(parent) != nil {
 		return ins, runtimeadmission.Receipt{}, time.Time{}, ErrApplicationStandardRuntimeStale
 	}
-	if validateStandardBootBinding(boot.Binding, capture, m.computeNodeRuntimeIncarnations[ins.NodeID], m.computeNodeRuntimeProtocols[ins.NodeID], time.Unix(0, boot.Receipt.CompletedAtUnixNano)) != nil {
+	if validateStandardBootBinding(parent.Binding, capture, m.computeNodeRuntimeIncarnations[ins.NodeID], m.computeNodeRuntimeProtocols[ins.NodeID], time.Unix(0, parent.CompletedAtUnixNano)) != nil {
 		return ins, runtimeadmission.Receipt{}, time.Time{}, ErrApplicationStandardRuntimeStale
 	}
 	deadline, err := m.standardNativeArtifactDeadlineLocked(ctx, capture)
-	return ins, boot.Receipt.Clone(), deadline, err
+	return ins, parent, deadline, err
 }
 
 func (m *MemStore) IssueApplicationStandardSnapshotCapture(ctx context.Context, expectedState string, req ApplicationStandardSnapshotCaptureRequest) (runtimeadmission.SnapshotGrant, error) {

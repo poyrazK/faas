@@ -116,6 +116,41 @@ func exerciseStandardServingRestore(t *testing.T, s composedWaveStore, variant s
 	if receipt.Binding.InstanceID != actual.ID || receipt.Netns != actual.Netns || receipt.HostIP != actual.HostIP {
 		t.Fatal("serving publication lost target identity")
 	}
+	// Follow the same ordinary scheduler into a new park. Its grant must name
+	// the serving restored process, rather than the original cold ancestor.
+	inputToken := notice.Token
+	event = f.parkComposedSnapshot(t, n, actual)
+	if err := json.Unmarshal([]byte(event.Payload), &notice); err != nil {
+		t.Fatal(err)
+	}
+	next, err := s.GetApplicationStandardSnapshotCapture(t.Context(), b.AccountID, b.AppID, b.DeploymentID, notice.Token)
+	if err != nil || next.Acknowledgment == nil || !next.Grant.Parent.Equal(receipt) || !next.Acknowledgment.Capture.Parent.Equal(receipt) || notice.Token == inputToken {
+		t.Fatal("ordinary restored park lost its actual serving parent or fresh namespace", err)
+	}
+	// Simulate the cache owner's publication, then consume this new catalog
+	// through another ordinary wake. SQL/protobuf hashes include the complete
+	// restored-parent proof rather than silently returning to cold ancestry.
+	if count, err := s.DeleteSnapshotsByID(t.Context(), []string{snapshot.ID}); err != nil || count != 1 {
+		t.Fatal("retire previous simulated cache slot", count, err)
+	}
+	nextCapture := next.Acknowledgment.Capture
+	if _, err := s.CreateSnapshot(t.Context(), state.Snapshot{DeploymentID: f.deps[id].ID, ApplicationStandardCaptureToken: notice.Token,
+		StorageKey: notice.MemoryKey, FCVersion: next.Grant.FCVersion, MemBytes: nextCapture.Memory.Bytes, DiskBytes: nextCapture.VMState.Bytes,
+		StoredBytes: 4096, Tier: state.SnapshotTierInit, BaseImageVersion: "portable-simulated"}); err != nil {
+		t.Fatal("publish new simulated cache", err)
+	}
+	if _, err := f.engine.Wake(t.Context(), f.apps[id].ID, f.deps[id].ID, "", TriggerGateway); err != nil {
+		t.Fatal("wake from serving-parent capture", err)
+	}
+	final := f.assertRuntime(t, id, 1)
+	finalReceipt, err := s.(state.InstanceApplicationStandardRuntimeReceiptStore).GetInstanceApplicationStandardRuntimeReceipt(t.Context(), final.ID)
+	if err != nil || finalReceipt.Method != vmmdpb.WakeMethod_WAKE_RESTORE || finalReceipt.Binding.SnapshotCaptureToken != notice.Token || final.ID == actual.ID {
+		t.Fatal("second serving restore lost its new catalog or target identity", err)
+	}
+	finalEvidence, err := runtimeadmission.SnapshotRestoreEvidenceFromProto(f.vmm.lastRequest.SnapshotRestore)
+	if err != nil || !finalEvidence.Capture.Parent.Equal(receipt) || finalReceipt.SnapshotConsumption.CheckEvidence(finalReceipt.Binding, finalReceipt.ArtifactConsumption, false, finalEvidence, time.Now()) != nil {
+		t.Fatal("second restore omitted its actual serving-parent proof", err)
+	}
 }
 
 func TestMemApplicationStandardServingRestore(t *testing.T) {

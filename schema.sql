@@ -1218,7 +1218,7 @@ CREATE FUNCTION public.application_standard_lock_snapshot_capture(instance_id uu
     LANGUAGE plpgsql
     AS $$
 DECLARE locked jsonb; i instances%ROWTYPE; g instance_application_standard_boots%ROWTYPE;
- r jsonb; b jsonb; deadline timestamptz; now_utc timestamptz;
+ p instance_application_standard_promotions%ROWTYPE; r jsonb; b jsonb; deadline timestamptz; now_utc timestamptz;
 BEGIN
  IF expected_state NOT IN ('running','snapshotting','migrating') THEN
   RAISE EXCEPTION 'snapshot source state is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_conflict';
@@ -1226,8 +1226,19 @@ BEGIN
  locked:=application_standard_lock_native_boot(instance_id,expected_state);
  SELECT * INTO i FROM instances WHERE id=instance_id;
  SELECT * INTO g FROM instance_application_standard_boots WHERE token=i.application_standard_boot_token FOR SHARE NOWAIT;
- r:=g.receipt; b:=r->'binding';
- IF g.instance_id IS DISTINCT FROM i.id OR r IS NULL OR i.application_standard_promotion_token IS NOT NULL
+ r:=g.receipt;
+ IF i.application_standard_promotion_token IS NOT NULL THEN
+  SELECT * INTO p FROM instance_application_standard_promotions WHERE token=i.application_standard_promotion_token FOR SHARE NOWAIT;
+  IF NOT FOUND OR p.instance_id IS DISTINCT FROM i.id OR p.parent_token IS DISTINCT FROM g.token
+   OR p.receipt IS NULL OR p.received_at IS NULL OR p.receipt->'binding' IS DISTINCT FROM p.binding THEN
+   RAISE EXCEPTION 'serving promotion ownership changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+  r:=p.receipt;
+ ELSIF r->'binding' IS DISTINCT FROM g.binding THEN
+  RAISE EXCEPTION 'serving boot ownership changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ b:=r->'binding';
+ IF g.instance_id IS DISTINCT FROM i.id OR r IS NULL
   OR b->>'protocol_version' IS DISTINCT FROM '2' OR (locked->>'protocol_version')::integer<2
   OR b->>'node_id' IS DISTINCT FROM i.node_id::text OR b->>'incarnation' IS DISTINCT FROM locked->>'incarnation'
   OR b->>'captured_input_hash' IS DISTINCT FROM locked->>'captured_input_hash'
@@ -3587,7 +3598,8 @@ BEGIN
   'before_checkpoint','source_started_at_unix_nano','issued_at_unix_nano','expires_at_unix_nano']='{}'::jsonb
   AND jsonb_typeof(g->'version')='number' AND g->>'version'='1'
   AND jsonb_typeof(g->'token')='string' AND g->>'token'=token::text
-  AND token<>'00000000-0000-0000-0000-000000000000'::uuid AND (g->'parent')::text=parent::text
+  AND token<>'00000000-0000-0000-0000-000000000000'::uuid
+  AND g->>'token' IS DISTINCT FROM parent->'snapshot_consumption'->>'capture_token' AND (g->'parent')::text=parent::text
   AND jsonb_typeof(g->'memory_key')='string' AND octet_length(g->>'memory_key')<=512
   AND jsonb_typeof(g->'vmstate_key')='string' AND jsonb_typeof(g->'private_drive_key')='string'
   AND jsonb_typeof(g->'fc_version')='string' AND octet_length(g->>'fc_version') BETWEEN 1 AND 128
