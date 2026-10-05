@@ -9852,6 +9852,39 @@ func (q *Queries) FailNotificationClaim(ctx context.Context, db DBTX, arg FailNo
 	return result.RowsAffected(), nil
 }
 
+const failOriginalRegionalRuntimeAttempt = `-- name: FailOriginalRegionalRuntimeAttempt :execrows
+UPDATE instances SET state=$1::text, terminal_at=coalesce(terminal_at,clock_timestamp())
+WHERE id=$2::uuid AND app_id=$3::uuid
+  AND deployment_id=$4::uuid AND node_id=$5::uuid
+  AND wake_id=$6::uuid AND state=$7::text
+`
+
+type FailOriginalRegionalRuntimeAttemptParams struct {
+	NextState     string
+	InstanceID    pgtype.UUID
+	AppID         pgtype.UUID
+	DeploymentID  pgtype.UUID
+	NodeID        pgtype.UUID
+	RunID         pgtype.UUID
+	ExpectedState string
+}
+
+func (q *Queries) FailOriginalRegionalRuntimeAttempt(ctx context.Context, db DBTX, arg FailOriginalRegionalRuntimeAttemptParams) (int64, error) {
+	result, err := db.Exec(ctx, failOriginalRegionalRuntimeAttempt,
+		arg.NextState,
+		arg.InstanceID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.NodeID,
+		arg.RunID,
+		arg.ExpectedState,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const featureFlagCustomerOwned = `-- name: FeatureFlagCustomerOwned :one
 SELECT EXISTS(SELECT 1 FROM platform_tenants
  WHERE account_id = $1::uuid AND id = $2::uuid) AS owned
@@ -13706,7 +13739,6 @@ type InsertRegionalRuntimeLaunchSourceParams struct {
 	PermitClaims []byte
 }
 
-// ADR-633: immutable original launch identity, independent of current rows.
 func (q *Queries) InsertRegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg InsertRegionalRuntimeLaunchSourceParams) (RegionalRuntimeLaunchSource, error) {
 	row := db.QueryRow(ctx, insertRegionalRuntimeLaunchSource,
 		arg.AppID,
@@ -20985,7 +21017,11 @@ const listRegionalRuntimeRetirements = `-- name: ListRegionalRuntimeRetirements 
 SELECT s.instance_key, s.permit_claims, c.fence_id
 FROM regional_runtime_launch_sources s
 JOIN regional_runtime_capacity_receipts c USING (app_id,permit_id)
-WHERE c.issued_at IS NOT NULL AND c.fence_id IS NOT NULL AND c.released_at IS NULL
+WHERE c.issued_at IS NOT NULL AND c.fence_id IS NOT NULL
+  AND (c.released_at IS NULL OR (c.stop_claims IS NOT NULL AND c.stop_envelope IS NOT NULL AND EXISTS (
+    SELECT 1 FROM instances i WHERE i.id=c.instance_id AND i.app_id=c.app_id
+      AND i.deployment_id=c.deployment_id AND i.node_id=c.node_id AND i.wake_id=c.run_id
+      AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm'))))
   AND c.permit_claims->'Grant'->'Binding'->>'CellID'=$1::text
   AND ($2::boolean OR (s.app_id,s.permit_id)>($3::uuid,$4::uuid))
 ORDER BY s.app_id,s.permit_id LIMIT $5::int
@@ -24089,6 +24125,35 @@ func (q *Queries) LockRegionalReleaseGrantApp(ctx context.Context, db DBTX, arg 
 	var org_id pgtype.UUID
 	err := row.Scan(&org_id)
 	return org_id, err
+}
+
+const lockRegionalRuntimeAttempt = `-- name: LockRegionalRuntimeAttempt :one
+SELECT coalesce(app_id=$1::uuid AND deployment_id=$2::uuid
+  AND node_id=$3::uuid AND wake_id=$4::uuid,false)::boolean AS matches
+FROM instances WHERE id=$5::uuid FOR UPDATE
+`
+
+type LockRegionalRuntimeAttemptParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	NodeID       pgtype.UUID
+	RunID        pgtype.UUID
+	InstanceID   pgtype.UUID
+}
+
+// ADR-633: immutable original launch identity, independent of current rows.
+// ADR-634: a terminal row does not release physical capacity or host ports.
+func (q *Queries) LockRegionalRuntimeAttempt(ctx context.Context, db DBTX, arg LockRegionalRuntimeAttemptParams) (bool, error) {
+	row := db.QueryRow(ctx, lockRegionalRuntimeAttempt,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.NodeID,
+		arg.RunID,
+		arg.InstanceID,
+	)
+	var matches bool
+	err := row.Scan(&matches)
+	return matches, err
 }
 
 const lockRegionalRuntimeQuotaApp = `-- name: LockRegionalRuntimeQuotaApp :one
@@ -37239,6 +37304,23 @@ func (q *Queries) RegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg 
 	return i, err
 }
 
+const regionalRuntimeLaunchWasResumed = `-- name: RegionalRuntimeLaunchWasResumed :one
+SELECT EXISTS (SELECT 1 FROM regional_runtime_serving_resumes
+  WHERE app_id=$1::uuid AND permit_id=$2::uuid)::boolean
+`
+
+type RegionalRuntimeLaunchWasResumedParams struct {
+	AppID    pgtype.UUID
+	PermitID pgtype.UUID
+}
+
+func (q *Queries) RegionalRuntimeLaunchWasResumed(ctx context.Context, db DBTX, arg RegionalRuntimeLaunchWasResumedParams) (bool, error) {
+	row := db.QueryRow(ctx, regionalRuntimeLaunchWasResumed, arg.AppID, arg.PermitID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const regionalRuntimeQuotaHead = `-- name: RegionalRuntimeQuotaHead :one
 SELECT r.grant_claims, h.admission_enabled FROM regional_runtime_quota_heads h
 JOIN regional_runtime_quota_receipts r ON r.app_id = h.app_id AND r.allocation_id = h.allocation_id
@@ -37532,6 +37614,21 @@ type ReleaseMirrorSlotLeaseParams struct {
 
 func (q *Queries) ReleaseMirrorSlotLease(ctx context.Context, db DBTX, arg ReleaseMirrorSlotLeaseParams) error {
 	_, err := db.Exec(ctx, releaseMirrorSlotLease, arg.RuleID, arg.LeaseID)
+	return err
+}
+
+const releaseOriginalRegionalRuntimeHostPorts = `-- name: ReleaseOriginalRegionalRuntimeHostPorts :exec
+DELETE FROM container_host_port_leases WHERE instance_id=$1::uuid
+  AND node_id=$2::uuid
+`
+
+type ReleaseOriginalRegionalRuntimeHostPortsParams struct {
+	InstanceID pgtype.UUID
+	NodeID     pgtype.UUID
+}
+
+func (q *Queries) ReleaseOriginalRegionalRuntimeHostPorts(ctx context.Context, db DBTX, arg ReleaseOriginalRegionalRuntimeHostPortsParams) error {
+	_, err := db.Exec(ctx, releaseOriginalRegionalRuntimeHostPorts, arg.InstanceID, arg.NodeID)
 	return err
 }
 

@@ -492,6 +492,7 @@ type Querier interface {
 	ExtendWorkflowRunLeaseFenced(ctx context.Context, db DBTX, arg ExtendWorkflowRunLeaseFencedParams) (int64, error)
 	FailAutomaticRouteCheck(ctx context.Context, db DBTX, arg FailAutomaticRouteCheckParams) (int64, error)
 	FailNotificationClaim(ctx context.Context, db DBTX, arg FailNotificationClaimParams) (int64, error)
+	FailOriginalRegionalRuntimeAttempt(ctx context.Context, db DBTX, arg FailOriginalRegionalRuntimeAttemptParams) (int64, error)
 	FeatureFlagCustomerOwned(ctx context.Context, db DBTX, arg FeatureFlagCustomerOwnedParams) (bool, error)
 	// Keep a sentinel row so the API can report when a busy flag has more than
 	// the bounded response can display. Most flags have at most 16 live variants.
@@ -763,7 +764,6 @@ type Querier interface {
 	InsertRegionalReleaseGrant(ctx context.Context, db DBTX, arg InsertRegionalReleaseGrantParams) (RegionalReleaseGrant, error)
 	// ADR-618: issuance is retained bookkeeping; no quota activation is implied.
 	InsertRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg InsertRegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)
-	// ADR-633: immutable original launch identity, independent of current rows.
 	InsertRegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg InsertRegionalRuntimeLaunchSourceParams) (RegionalRuntimeLaunchSource, error)
 	InsertRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg InsertRegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error)
 	InsertRegionalRuntimeServingResume(ctx context.Context, db DBTX, arg InsertRegionalRuntimeServingResumeParams) (RegionalRuntimeServingResume, error)
@@ -1332,6 +1332,9 @@ type Querier interface {
 	LockRegionalImageReleaseApp(ctx context.Context, db DBTX, arg LockRegionalImageReleaseAppParams) (pgtype.UUID, error)
 	// ADR-610: consent actor is separate from the pinned regional owner.
 	LockRegionalReleaseGrantApp(ctx context.Context, db DBTX, arg LockRegionalReleaseGrantAppParams) (pgtype.UUID, error)
+	// ADR-633: immutable original launch identity, independent of current rows.
+	// ADR-634: a terminal row does not release physical capacity or host ports.
+	LockRegionalRuntimeAttempt(ctx context.Context, db DBTX, arg LockRegionalRuntimeAttemptParams) (bool, error)
 	LockRegionalRuntimeQuotaApp(ctx context.Context, db DBTX, arg LockRegionalRuntimeQuotaAppParams) (pgtype.UUID, error)
 	// ADR-614: operator-authenticated regional quota receipt journal.
 	LockRegionalRuntimeQuotaJournal(ctx context.Context, db DBTX, appID pgtype.UUID) error
@@ -1919,6 +1922,7 @@ type Querier interface {
 	RegionalRuntimeCapacity(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)
 	RegionalRuntimeCapacityUsage(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityUsageParams) (RegionalRuntimeCapacityUsageRow, error)
 	RegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg RegionalRuntimeLaunchSourceParams) (RegionalRuntimeLaunchSource, error)
+	RegionalRuntimeLaunchWasResumed(ctx context.Context, db DBTX, arg RegionalRuntimeLaunchWasResumedParams) (bool, error)
 	RegionalRuntimeQuotaHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalRuntimeQuotaHeadRow, error)
 	RegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg RegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error)
 	// ADR-626: immutable serving resume identities; mutations hold the quota journal lock.
@@ -1935,6 +1939,7 @@ type Querier interface {
 	ReleaseEnvironmentGitSourceOwners(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	ReleaseManagedPostgresCutover(ctx context.Context, db DBTX, arg ReleaseManagedPostgresCutoverParams) (int64, error)
 	ReleaseMirrorSlotLease(ctx context.Context, db DBTX, arg ReleaseMirrorSlotLeaseParams) error
+	ReleaseOriginalRegionalRuntimeHostPorts(ctx context.Context, db DBTX, arg ReleaseOriginalRegionalRuntimeHostPortsParams) error
 	ReleaseUnissuedGlobalRuntimeQuotaTargets(ctx context.Context, db DBTX, arg ReleaseUnissuedGlobalRuntimeQuotaTargetsParams) error
 	ReleaseUnownedNotification(ctx context.Context, db DBTX, arg ReleaseUnownedNotificationParams) (int64, error)
 	RenewCustomerOperationExecution(ctx context.Context, db DBTX, arg RenewCustomerOperationExecutionParams) (int64, error)

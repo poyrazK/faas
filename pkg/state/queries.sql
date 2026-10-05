@@ -9608,6 +9608,26 @@ SET phase = 'layer_published', updated_at = now()
 FROM publication WHERE p.deployment_id = publication.id;
 
 -- ADR-633: immutable original launch identity, independent of current rows.
+-- ADR-634: a terminal row does not release physical capacity or host ports.
+-- name: LockRegionalRuntimeAttempt :one
+SELECT coalesce(app_id=sqlc.arg(app_id)::uuid AND deployment_id=sqlc.arg(deployment_id)::uuid
+  AND node_id=sqlc.arg(node_id)::uuid AND wake_id=sqlc.arg(run_id)::uuid,false)::boolean AS matches
+FROM instances WHERE id=sqlc.arg(instance_id)::uuid FOR UPDATE;
+
+-- name: RegionalRuntimeLaunchWasResumed :one
+SELECT EXISTS (SELECT 1 FROM regional_runtime_serving_resumes
+  WHERE app_id=sqlc.arg(app_id)::uuid AND permit_id=sqlc.arg(permit_id)::uuid)::boolean;
+
+-- name: ReleaseOriginalRegionalRuntimeHostPorts :exec
+DELETE FROM container_host_port_leases WHERE instance_id=sqlc.arg(instance_id)::uuid
+  AND node_id=sqlc.arg(node_id)::uuid;
+
+-- name: FailOriginalRegionalRuntimeAttempt :execrows
+UPDATE instances SET state=sqlc.arg(next_state)::text, terminal_at=coalesce(terminal_at,clock_timestamp())
+WHERE id=sqlc.arg(instance_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+  AND deployment_id=sqlc.arg(deployment_id)::uuid AND node_id=sqlc.arg(node_id)::uuid
+  AND wake_id=sqlc.arg(run_id)::uuid AND state=sqlc.arg(expected_state)::text;
+
 -- name: InsertRegionalRuntimeLaunchSource :one
 INSERT INTO regional_runtime_launch_sources(app_id,permit_id,instance_key,permit_claims)
 VALUES ($1,$2,$3,$4) RETURNING *;
@@ -9619,7 +9639,11 @@ SELECT * FROM regional_runtime_launch_sources WHERE app_id=$1 AND permit_id=$2;
 SELECT s.instance_key, s.permit_claims, c.fence_id
 FROM regional_runtime_launch_sources s
 JOIN regional_runtime_capacity_receipts c USING (app_id,permit_id)
-WHERE c.issued_at IS NOT NULL AND c.fence_id IS NOT NULL AND c.released_at IS NULL
+WHERE c.issued_at IS NOT NULL AND c.fence_id IS NOT NULL
+  AND (c.released_at IS NULL OR (c.stop_claims IS NOT NULL AND c.stop_envelope IS NOT NULL AND EXISTS (
+    SELECT 1 FROM instances i WHERE i.id=c.instance_id AND i.app_id=c.app_id
+      AND i.deployment_id=c.deployment_id AND i.node_id=c.node_id AND i.wake_id=c.run_id
+      AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm'))))
   AND c.permit_claims->'Grant'->'Binding'->>'CellID'=sqlc.arg(cell_id)::text
   AND (sqlc.arg(first_page)::boolean OR (s.app_id,s.permit_id)>(sqlc.arg(after_app)::uuid,sqlc.arg(after_permit)::uuid))
 ORDER BY s.app_id,s.permit_id LIMIT sqlc.arg(batch_limit)::int;

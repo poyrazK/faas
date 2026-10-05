@@ -31,6 +31,7 @@ const (
 	RegionalRuntimeRetirementBatch             = 64 // ADR-633: bounded cell recovery, not execution admission.
 	RegionalRuntimeRetirementInterval          = 30 * time.Second
 	RegionalRuntimeRetirementTimeout           = 30 * time.Second
+	RegionalRuntimeFailureCleanupTimeout       = 2 * RegionalRuntimeRetirementTimeout // ADR-634: native proof plus bounded row completion.
 	RegionalRuntimeHostRecordMaxBytes          = 16384
 	RegionalRuntimeSigningKeyMaxBytes          = 4096 // ADR-632: one PKCS#8 Ed25519 key.
 	RegionalRuntimeTrustBundleMaxBytes         = 65536

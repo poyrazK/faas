@@ -22,10 +22,13 @@ type regionalCapacityFixture struct {
 	cell      runtimequota.Signer
 }
 
-func newRegionalCapacityFixture(t *testing.T, s Store, ledger RegionalRuntimeCapacityLedger, account Account, cellID string) regionalCapacityFixture {
+func newRegionalCapacityFixture(t *testing.T, s Store, ledger RegionalRuntimeCapacityLedger, account Account, cellID string, beforeAccept ...func(regionalQuotaFixture)) regionalCapacityFixture {
 	t.Helper()
 	quota := s.(RegionalRuntimeQuotaStore)
 	f := regionalCapacityFixture{quota: newRegionalQuotaFixture(t, s, quota, account, cellID), ledger: ledger}
+	for _, prepare := range beforeAccept {
+		prepare(f.quota)
+	}
 	if _, err := f.quota.authority.AcceptGrant(t.Context(), f.quota.grantEnvelope(t, f.quota.grant)); err != nil {
 		t.Fatal(err)
 	}

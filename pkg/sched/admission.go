@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
 )
 
 // NodeLedger is schedd's per-node live RAM/vCPU/concurrency accounting.
@@ -60,6 +61,7 @@ type reservation struct {
 	deploymentID    string // empty = legacy pre-#557 reservations (test seams); populated post-#557 via Admit's DeploymentID field
 	deploymentScope string
 	nodeID          string // empty = legacy box-wide accounting (test seams)
+	runtimeRunID    string // ADR-634: physical origin; unchanged across warm serving seats.
 	admissionMB     int    // ram_mb + PerVMOverheadMB
 	vcpu            int
 	cpuMillicores   int
@@ -153,6 +155,9 @@ func kindCountsConcurrency(kind Kind) bool {
 type Request struct {
 	Instance string
 	AppID    string
+	// RuntimeRunID pins the physical attempt for conditional retirement release.
+	// Empty legacy reservations cannot be released by a regional stop.
+	RuntimeRunID string
 	// DeploymentID is the target deployment for the wake (ADR-072 /
 	// issue #557 closure). The Engine resolves it from the wake
 	// target before calling Admit — the gateway passes the latest
@@ -443,6 +448,7 @@ func (l *NodeLedger) Admit(r Request) error {
 
 	l.entries[r.Instance] = &reservation{
 		appID: r.AppID, deploymentID: r.DeploymentID, nodeID: r.NodeID,
+		runtimeRunID:    r.RuntimeRunID,
 		deploymentScope: normalizedDeploymentScope(r.DeploymentScope),
 		admissionMB:     r.admissionMB(), vcpu: r.VCPU, cpuMillicores: r.CPUMillicores,
 		cpuBoostMillicores: boostCPU, cpuBoostUntil: r.CPUStartupBoostUntil,
@@ -612,6 +618,29 @@ func (l *NodeLedger) Release(instance string) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.releaseLocked(instance)
+}
+
+// releaseOriginalRegionalRuntime never drops a replacement reservation sharing
+// an instance key, or an unbound legacy reservation. Native proof is required at
+// the caller; these identity comparisons alone do not establish physical stop.
+func (l *NodeLedger) releaseOriginalRegionalRuntime(source runtimequota.LaunchSource) bool {
+	if l == nil || source.Validate() != nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	r := l.entries[source.InstanceKey]
+	p := source.Permit
+	if r == nil || !runtimequota.MatchesID(p.RunID, r.runtimeRunID) || !runtimequota.MatchesID(p.Grant.Binding.RegionalAppID, r.appID) ||
+		!runtimequota.MatchesID(p.DeploymentID, r.deploymentID) || !runtimequota.MatchesID(p.NodeID, r.nodeID) {
+		return false
+	}
+	l.releaseLocked(source.InstanceKey)
+	return true
+}
+
+func (l *NodeLedger) releaseLocked(instance string) {
 	e := l.entries[instance]
 	if e == nil {
 		return

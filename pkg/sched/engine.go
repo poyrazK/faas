@@ -3234,7 +3234,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	e.emitInstanceChanged(ctx, ins.ID, appID, initState, wakeID)
 
 	if err := e.ledger.Admit(Request{
-		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
+		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan, RuntimeRunID: wakeID,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		// ADR-199 widens this from the deployment verifier to any rollout
 		// overlap: a traffic split or canary stage bringing up a second
@@ -3785,25 +3785,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		releaseRestorePressure = nil
 	}
 	if err != nil {
-		// Boot error path. Release the reservation, transition to
-		// FAILED. The transition's own re-read will write the row
-		// even though we no longer hold the lock — transition is
-		// lock-free by design (it only re-reads + writes one row).
-		// Audit-log it under kind="wake_boot_error" so a query for
-		// `kind='wake_boot_error'` finds both this and the
-		// SetInstanceRuntime-failure case below.
-		transitionCtx := ctx
-		if mode == string(state.InstanceModeMirror) {
-			// The gateway's mirror deadline can cancel this RPC after
-			// schedd has inserted and admitted the shadow row. The VMMD
-			// request may also have created resources before observing
-			// cancellation, so schedd owns a bounded, detached destroy and
-			// terminal-state write for every failed mirror boot.
-			cleanupCtx, cleanupCancel := e.cleanupFailedMirrorAdmission(ctx, bootInput)
-			defer cleanupCancel()
-			transitionCtx = cleanupCtx
-		}
-		e.ledger.Release(bootInput.insID)
+		e.cleanupFailedWake(ctx, bootInput, mode, "vmm_boot_failed", false)
 		// issue #517 / PR-C / ADR-064 — emit wake.boot_failed with
 		// the structured reason. The customer-facing timeline pairs
 		// this with wake.boot_started under the same wake_id so the
@@ -3838,7 +3820,6 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		if e.ops != nil {
 			e.ops.WakeFailure("", bootInput.appID, "vmm_boot_failed").Inc()
 		}
-		e.transitionWithKind(transitionCtx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "vmm_boot_failed")
 		return WakeResult{}, err
 	}
 	configuredBootCPU := int(bootInput.spec.CPUMillicores)
@@ -3853,16 +3834,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// temporary peak in their fleet-wide CPU aggregate.
 		boostUntil := time.Now().Add(fcvm.StartupCPUBoostTailDuration)
 		if err := e.store.SetInstanceStartupCPUBoostUntil(ctx, bootInput.insID, &boostUntil); err != nil {
-			cleanupCtx := ctx
-			if mode == string(state.InstanceModeMirror) {
-				var cleanupCancel context.CancelFunc
-				cleanupCtx, cleanupCancel = e.cleanupFailedMirrorAdmission(ctx, bootInput)
-				defer cleanupCancel()
-			} else {
-				e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
-			}
-			e.ledger.Release(bootInput.insID)
-			e.transitionWithKind(cleanupCtx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "startup_cpu_reservation_failed")
+			e.cleanupFailedWake(ctx, bootInput, mode, "startup_cpu_reservation_failed", true)
 			return WakeResult{}, fmt.Errorf("sched: wake: persist startup CPU boost tail deadline: %w", err)
 		}
 		e.ledger.SetCPUStartupBoostUntil(bootInput.insID, boostUntil)
@@ -3896,13 +3868,15 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 	fresh, publishErr := e.publishRuntimeConfigReceipt(ctx, bootInput.insID, string(bootInput.initState), out.Netns, out.HostIP, int(out.LeaseUID), bootInput.wakeID, confirmedInputs, bootInput.appID)
 	if errors.Is(publishErr, state.ErrConflict) {
-		if mode == string(state.InstanceModeMirror) {
-			_, cleanupCancel := e.cleanupFailedMirrorAdmission(ctx, bootInput)
-			defer cleanupCancel()
-		} else {
-			e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
+		if !e.cleanupFailedRegionalLaunch(ctx, bootInput.insID, bootInput.spec, "runtime_publication_conflict") {
+			if mode == string(state.InstanceModeMirror) {
+				_, cleanupCancel := e.cleanupFailedMirrorAdmission(ctx, bootInput)
+				defer cleanupCancel()
+			} else {
+				e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
+			}
+			e.ledger.Release(bootInput.insID)
 		}
-		e.ledger.Release(bootInput.insID)
 		actual := "changed or deleted"
 		if current, err := e.store.InstanceByID(ctx, bootInput.insID); err == nil {
 			actual = current.State
@@ -3913,18 +3887,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		return WakeResult{}, fmt.Errorf("sched: wake: state stolen by another transition: was %s, now %s", bootInput.initState, actual)
 	}
 	if publishErr != nil {
-		// Booted but unrecordable — destroy to avoid a resource leak,
-		// then fail. Best-effort with a hard ceiling: a hung
-		// Firecracker can't pin the Wake goroutine forever.
-		cleanupCtx := ctx
-		if mode == string(state.InstanceModeMirror) {
-			var cleanupCancel context.CancelFunc
-			cleanupCtx, cleanupCancel = e.cleanupFailedMirrorAdmission(ctx, bootInput)
-			defer cleanupCancel()
-		} else {
-			e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
-		}
-		e.ledger.Release(bootInput.insID)
+		e.cleanupFailedWake(ctx, bootInput, mode, "record_runtime_failed", true)
 		// issue #517 / PR-C / ADR-064 — emit wake.boot_failed with
 		// the structured reason. Pairs with wake.boot_started under
 		// the same wake_id (the prior emit at the Phase 3 entry).
@@ -3951,7 +3914,6 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		if e.ops != nil {
 			e.ops.WakeFailure("", bootInput.appID, "record_runtime_failed").Inc()
 		}
-		e.transitionWithKind(cleanupCtx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "record_runtime_failed")
 		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", publishErr)
 	}
 
@@ -4107,11 +4069,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// after runtime publication, the ordinary boot-error branches above
 		// no longer own cleanup; destroy the now-unreachable VM and close
 		// its row before returning the cancellation to the RPC caller.
-		cleanupCtx, cleanupCancel := e.cleanupFailedMirrorAdmission(ctx, bootInput)
-		defer cleanupCancel()
-		e.ledger.Release(bootInput.insID)
-		e.transitionWithKind(cleanupCtx, bootInput.insID, bootInput.appID,
-			state.StateFailed, "wake_boot_error", "mirror_admission_canceled")
+		e.cleanupFailedWake(ctx, bootInput, mode, "mirror_admission_canceled", true)
 		return WakeResult{}, ctx.Err()
 	}
 
@@ -5963,9 +5921,14 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		return fmt.Errorf("sched: prime: create instance: %w", err)
 	}
 	primeCompleted := false
+	var capturedPrimeSpec AppSpec
 	defer func() {
 		if !primeCompleted && ctx.Err() != nil {
-			e.cleanupInterruptedPrime(ctx, appID, ins)
+			if capturedPrimeSpec.RegionalRuntime != nil {
+				e.cleanupFailedPrime(ctx, ins, capturedPrimeSpec, "prime_interrupted_by_scheduler_shutdown", true)
+			} else {
+				e.cleanupInterruptedPrime(ctx, appID, ins)
+			}
 		}
 	}()
 	var provisionalPrimeCPUBoostUntil time.Time
@@ -5983,7 +5946,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	e.emitInstanceChanged(ctx, ins.ID, appID, state.StateColdBooting, primeWakeID)
 
 	if err := e.ledger.Admit(Request{
-		Instance: ins.ID, AppID: appID, DeploymentID: deploymentID, DeploymentScope: dep.Scope, Plan: acct.Plan,
+		Instance: ins.ID, AppID: appID, DeploymentID: deploymentID, DeploymentScope: dep.Scope, Plan: acct.Plan, RuntimeRunID: primeWakeID,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: primeConfiguredCPU, CPUStartupBoostMillicores: primeStartupCPU, CPUStartupBoostUntil: provisionalPrimeCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		Kind:                KindSnapshotPrime,
 		NodeID:              placement.NodeID,
@@ -6052,20 +6015,18 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		purpose = runtimequota.CapacityPrime
 	}
 	spec, err = e.prepareRegionalRuntimeLaunch(bootCtx, placement.NodeID, ins.ID, primeWakeID, purpose, spec)
+	capturedPrimeSpec = spec
 	if err == nil {
 		out, err = e.vmm.CreateColdBoot(bootCtx, placement.NodeID, ins.ID, spec)
 	}
 	if err != nil {
-		e.ledger.Release(ins.ID)
-		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cold_boot_failed")
+		e.cleanupFailedPrime(ctx, ins, spec, "prime_cold_boot_failed", false)
 		return fmt.Errorf("sched: prime: cold boot: %w", err)
 	}
 	if primeStartupCPU > primeConfiguredCPU {
 		boostUntil := time.Now().Add(fcvm.StartupCPUBoostTailDuration)
 		if err := e.store.SetInstanceStartupCPUBoostUntil(ctx, ins.ID, &boostUntil); err != nil {
-			e.ledger.Release(ins.ID)
-			e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
-			e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cpu_reservation_failed")
+			e.cleanupFailedPrime(ctx, ins, spec, "prime_cpu_reservation_failed", true)
 			return fmt.Errorf("sched: prime: persist startup CPU boost tail deadline: %w", err)
 		}
 		e.ledger.SetCPUStartupBoostUntil(ins.ID, boostUntil)
@@ -6076,9 +6037,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// detached context so a cancelled caller ctx doesn't make the
 		// destroy fire-and-forget (it would still need its own
 		// timeout).
-		e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
-		e.ledger.Release(ins.ID)
-		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_record_runtime_failed")
+		e.cleanupFailedPrime(ctx, ins, spec, "prime_record_runtime_failed", true)
 		return fmt.Errorf("sched: prime: record runtime: %w", err)
 	}
 	e.recordCommittedInstanceTransition(ctx, acknowledged, state.State(ins.State), state.StateRunning, appID, "state_transition", "")
@@ -6088,9 +6047,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	ins = acknowledged
 	if executionModeForApp(app) == api.ExecutionModeWorker {
 		if err := e.emitDeploymentReady(ctx, deploymentID, api.ExecutionModeWorker, ins.ID, ""); err != nil {
-			e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
-			e.ledger.Release(ins.ID)
-			e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_ready_notify_failed")
+			e.cleanupFailedPrime(ctx, ins, spec, "prime_ready_notify_failed", true)
 			return err
 		}
 		primeCompleted = true
@@ -7145,7 +7102,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				}
 			}
 			request := Request{
-				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, Plan: acct.Plan,
+				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, Plan: acct.Plan, RuntimeRunID: ins.WakeID,
 				RAMMB: ins.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 				// Recovery must account for the one candidate/stable overlap
 				// that deployment smoke may have admitted before a restart.
@@ -7159,6 +7116,10 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				AllowCPUOvercommitRecovery: true,
 				Kind:                       kind,
 			}
+			if warmHeld {
+				request.RuntimeRunID = warmPermit.RunID
+			}
+
 			// Preserve resident accounting even if scope recovery fails. Unknown
 			// scope cannot authorize an automatic rollout allowance.
 			request.DeploymentScope = "__unknown__"

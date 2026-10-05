@@ -15,6 +15,10 @@ import (
 // A failed item advances the cursor so an unreachable host cannot starve other
 // attempts. An empty page resets the scan; failures are retried next traversal.
 func (r RegionalRuntimeRetirement) RecoverPage(ctx context.Context, after state.RegionalRuntimeRetirementCursor) (state.RegionalRuntimeRetirementCursor, int, error) {
+	return r.recoverPage(ctx, after, nil)
+}
+
+func (r RegionalRuntimeRetirement) recoverPage(ctx context.Context, after state.RegionalRuntimeRetirementCursor, complete func(context.Context, runtimequota.LaunchSource, state.RegionalRuntimeCapacityReceipt) error) (state.RegionalRuntimeRetirementCursor, int, error) {
 	if r.Authority.Store == nil || r.Router == nil || r.Router.regionalRuntimePeers == nil || r.Authority.Cells.CheckSigner(r.Signer, runtimequota.Cell) != nil {
 		return after, 0, runtimequota.ErrTrust
 	}
@@ -33,7 +37,10 @@ func (r RegionalRuntimeRetirement) RecoverPage(ctx context.Context, after state.
 		}
 		p := row.Source.Permit
 		attemptCtx, cancel := context.WithTimeout(ctx, api.RegionalRuntimeRetirementTimeout)
-		_, err := r.Retire(attemptCtx, row.Source.InstanceKey, p, row.FenceID)
+		receipt, err := r.Retire(attemptCtx, row.Source.InstanceKey, p, row.FenceID)
+		if err == nil && complete != nil {
+			err = complete(attemptCtx, row.Source, receipt)
+		}
 		cancel()
 		if err != nil {
 			lastErr = err
@@ -48,6 +55,10 @@ func (r RegionalRuntimeRetirement) RecoverPage(ctx context.Context, after state.
 // RunRecovery owns no mutable scheduler rows and performs no RPC in a database
 // transaction. Shutdown cancels the active bounded attempt before returning.
 func (r RegionalRuntimeRetirement) RunRecovery(ctx context.Context, log *slog.Logger) error {
+	return r.runRecovery(ctx, log, r.RecoverPage)
+}
+
+func (r RegionalRuntimeRetirement) runRecovery(ctx context.Context, log *slog.Logger, recoverPage func(context.Context, state.RegionalRuntimeRetirementCursor) (state.RegionalRuntimeRetirementCursor, int, error)) error {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -55,7 +66,7 @@ func (r RegionalRuntimeRetirement) RunRecovery(ctx context.Context, log *slog.Lo
 	ticker := time.NewTicker(api.RegionalRuntimeRetirementInterval)
 	defer ticker.Stop()
 	for {
-		next, completed, err := r.RecoverPage(ctx, after)
+		next, completed, err := recoverPage(ctx, after)
 		after = next
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -72,4 +83,29 @@ func (r RegionalRuntimeRetirement) RunRecovery(ctx context.Context, log *slog.Lo
 		case <-ticker.C:
 		}
 	}
+}
+
+// RecoverRegionalRuntimeFailures completes scheduler effects only after an
+// accepted original stop. Released receipts still awaiting a matching active
+// row are retried without another native RPC.
+func (e *Engine) RecoverRegionalRuntimeFailures(ctx context.Context, after state.RegionalRuntimeRetirementCursor) (state.RegionalRuntimeRetirementCursor, int, error) {
+	e.mu.Lock()
+	owner := e.regionalRetirement
+	e.mu.Unlock()
+	if owner == nil {
+		return after, 0, runtimequota.ErrTrust
+	}
+	return owner.recoverPage(ctx, after, func(ctx context.Context, source runtimequota.LaunchSource, receipt state.RegionalRuntimeCapacityReceipt) error {
+		return e.completeOriginalRegionalFailure(ctx, source, receipt, "regional_retirement_recovered")
+	})
+}
+
+func (e *Engine) RunRegionalRuntimeFailureRecovery(ctx context.Context, log *slog.Logger) error {
+	e.mu.Lock()
+	owner := e.regionalRetirement
+	e.mu.Unlock()
+	if owner == nil {
+		return runtimequota.ErrTrust
+	}
+	return owner.runRecovery(ctx, log, e.RecoverRegionalRuntimeFailures)
 }

@@ -73,7 +73,7 @@ type retirementCellFixture struct {
 	signer    runtimequota.Signer
 }
 
-func newRetirementCell(t *testing.T, issued bool) retirementCellFixture {
+func newRetirementCell(t *testing.T, issued bool, beforeGrant ...func(*state.MemStore, state.App) state.Instance) retirementCellFixture {
 	t.Helper()
 	store := state.NewMemStore()
 	acct, err := store.CreateAccount(t.Context(), "retirement-wire@example.com", api.PlanPro)
@@ -83,6 +83,10 @@ func newRetirementCell(t *testing.T, issued bool) retirementCellFixture {
 	app, err := store.CreateApp(t.Context(), state.App{ID: uuid.NewString(), AccountID: acct.ID, Slug: "retirement-wire", Type: state.AppTypeApp, Status: state.AppActive, Runtime: "node22", RAMMB: 128, MaxConcurrency: 1})
 	if err != nil {
 		t.Fatal(err)
+	}
+	var original state.Instance
+	for _, prepare := range beforeGrant {
+		original = prepare(store, app)
 	}
 	pub, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -107,6 +111,9 @@ func newRetirementCell(t *testing.T, issued bool) retirementCellFixture {
 		t.Fatal(err)
 	}
 	p := runtimequota.CapacityPermit{Grant: g, ID: uuid.NewString(), InstanceID: uuid.NewString(), RunID: uuid.NewString(), DeploymentID: uuid.NewString(), NodeID: uuid.NewString(), HostEpochID: uuid.NewString(), Kind: runtimequota.CapacityWarm}
+	if original.ID != "" {
+		p.InstanceID, p.RunID, p.DeploymentID, p.NodeID = uuid.MustParse(original.ID).String(), uuid.MustParse(original.WakeID).String(), uuid.MustParse(original.DeploymentID).String(), uuid.MustParse(original.NodeID).String()
+	}
 	if _, err = store.ReserveRegionalRuntimeCapacity(t.Context(), p); err != nil {
 		t.Fatal(err)
 	}

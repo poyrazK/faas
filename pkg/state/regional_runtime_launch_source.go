@@ -26,7 +26,11 @@ type RegionalRuntimeLaunchStore interface {
 	// Persist the exact source before issuance in the same app journal transaction.
 	IssueRegionalRuntimeLaunch(context.Context, runtimequota.Placement, runtimequota.LaunchSource) error
 	RegionalRuntimeLaunchSource(context.Context, string, string) (RegionalRuntimeLaunchSource, error)
-	// Read original issued, fenced, unreleased sources, independent of current rows.
+	// Fence a failed initial launch only before any durable serving resume.
+	BeginRegionalRuntimeLaunchFailure(context.Context, runtimequota.LaunchSource, string) (RegionalRuntimeCapacityReceipt, error)
+	// Fail only the original issued, fenced, source-bound instance attempt.
+	FailRegionalRuntimeAttempt(context.Context, runtimequota.LaunchSource, string) error
+	// Read original fenced sources, including accepted stops awaiting row cleanup.
 	ListRegionalRuntimeRetirements(context.Context, string, RegionalRuntimeRetirementCursor, int) ([]RegionalRuntimeRetirementCandidate, error)
 }
 

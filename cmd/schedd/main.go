@@ -2182,7 +2182,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		regionalRecoveryDone := make(chan struct{})
 		go func() {
 			defer close(regionalRecoveryDone)
-			if err := regionalRetirement.RunRecovery(ctx, log); err != nil && !errors.Is(err, context.Canceled) {
+			if err := engine.RunRegionalRuntimeFailureRecovery(ctx, log); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("schedd: regional retirement recovery exited", "err", err)
 			}
 		}()

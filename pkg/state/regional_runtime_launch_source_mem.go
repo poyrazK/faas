@@ -35,8 +35,14 @@ func (s *MemStore) ListRegionalRuntimeRetirements(ctx context.Context, cell stri
 	for key, source := range s.regionalRuntimeLaunchSources {
 		p := source.Source.Permit
 		r := s.regionalRuntimeCapacity[key]
-		if p.Grant.Binding.CellID != cell || r.Permit != p || r.IssuedAt == nil || r.FenceID == "" || r.ReleasedAt != nil {
+		if p.Grant.Binding.CellID != cell || r.Permit != p || r.IssuedAt == nil || r.FenceID == "" {
 			continue
+		}
+		if r.ReleasedAt != nil {
+			ins, ok := s.instances[source.Source.InstanceKey]
+			if !ok || !RegionalRuntimeAttemptMatches(source.Source, ins) || !State(ins.State).CountsForRAM() || checkRegionalAttemptFailure(source.Source, source, r) != nil {
+				continue
+			}
 		}
 		app := p.Grant.Binding.RegionalAppID
 		if after.AppID != "" && (app < after.AppID || (app == after.AppID && p.ID <= after.PermitID)) {
