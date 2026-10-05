@@ -22,6 +22,10 @@ func NormalizePublicSignRequest(r SignRequest, maxBytes int64) (SignRequest, err
 	if err := r.Validate(maxBytes); err != nil {
 		return r, err
 	}
+	if r.Protection != nil {
+		p := r.Protection.ForWrite()
+		r.Protection = &p
+	}
 	if r.ExpiresIn == 0 {
 		r.ExpiresIn = int64(api.DefaultObjectSignedURLTTL / time.Second)
 	}
@@ -83,6 +87,15 @@ func PublicSignedObjectHeaders(r SignRequest) (http.Header, error) {
 		}
 		if e.BucketKeyEnabled != nil {
 			h.Set("X-Amz-Server-Side-Encryption-Bucket-Key-Enabled", strconv.FormatBool(*e.BucketKeyEnabled))
+		}
+	}
+	if p := r.Protection; p != nil {
+		if r := p.Retention; r != nil {
+			h.Set("X-Amz-Object-Lock-Mode", r.Mode)
+			h.Set("X-Amz-Object-Lock-Retain-Until-Date", r.RetainUntilDate.UTC().Format(time.RFC3339Nano))
+		}
+		if hold := p.LegalHold; hold != nil {
+			h.Set("X-Amz-Object-Lock-Legal-Hold", hold.Status)
 		}
 	}
 	return h, nil

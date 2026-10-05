@@ -164,9 +164,10 @@ type TrackedObjectWriter interface {
 }
 
 type UploadResult struct {
-	Encryption        api.ObjectEncryption `json:"encryption,omitzero"`
-	ETag              string
-	ProviderVersionID string `json:"-"`
+	VerifiedProtection string               `json:"-"`
+	Encryption         api.ObjectEncryption `json:"encryption,omitzero"`
+	ETag               string
+	ProviderVersionID  string `json:"-"`
 }
 
 type Object struct {
@@ -321,10 +322,11 @@ type CopyObjectRequest struct {
 }
 
 type CopyObjectResult struct {
-	Encryption        api.ObjectEncryption `json:"encryption,omitzero"`
-	ProviderVersionID string               `json:"-"`
-	ETag              string
-	LastModified      time.Time
+	VerifiedProtection string               `json:"-"`
+	Encryption         api.ObjectEncryption `json:"encryption,omitzero"`
+	ProviderVersionID  string               `json:"-"`
+	ETag               string
+	LastModified       time.Time
 }
 
 // ObjectCopier is an optional provider capability for the branded S3
@@ -445,7 +447,7 @@ type ObjectTaggingResult struct {
 type SignRequest api.ObjectSignRequest
 
 func (r SignRequest) Validate(maxBytes int64) error {
-	if !ValidKey(r.Key) || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodPut) || r.ExpiresIn < 0 || r.ExpiresIn > int64(api.MaxObjectSignedURLTTL/time.Second) || r.Encryption != nil && (!r.Encryption.Valid() || r.Encryption.Empty() || r.Method != http.MethodPut) {
+	if r.Protection != nil && (r.Method != http.MethodPut || !r.Protection.Valid() || r.Protection.Empty()) || !ValidKey(r.Key) || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodPut) || r.ExpiresIn < 0 || r.ExpiresIn > int64(api.MaxObjectSignedURLTTL/time.Second) || r.Encryption != nil && (!r.Encryption.Valid() || r.Encryption.Empty() || r.Method != http.MethodPut) {
 		return ErrInvalid
 	}
 	if r.Method == http.MethodPut && (r.SizeBytes == nil || *r.SizeBytes < 0 || *r.SizeBytes > maxBytes) {
@@ -565,6 +567,7 @@ const (
 	// marker written when Gregale initiates a multipart upload.
 	ReservedMultipartSessionMetadataKey = "gregale-upload-id"
 	ReservedUploadReceiptMetadataKey    = "gregale-upload-receipt"
+	ReservedObjectProtectionMetadataKey = "gregale-protection-proof"
 	ReservedObjectEncryptionMetadataKey = "gregale-encryption-proof"
 )
 
@@ -581,7 +584,7 @@ func ValidateObjectMetadata(metadata ObjectMetadata) error {
 		return ErrInvalid
 	}
 	for key, value := range metadata.Metadata {
-		if key == "" || len(key) > maxObjectMetadataKey || len(value) > maxObjectMetadataValue || !utf8.ValidString(key) || !utf8.ValidString(value) || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") || strings.EqualFold(key, ReservedObjectTagsMetadataKey) || strings.EqualFold(key, ReservedMultipartSessionMetadataKey) || strings.EqualFold(key, ReservedUploadReceiptMetadataKey) || strings.EqualFold(key, ReservedObjectEncryptionMetadataKey) {
+		if key == "" || len(key) > maxObjectMetadataKey || len(value) > maxObjectMetadataValue || !utf8.ValidString(key) || !utf8.ValidString(value) || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") || strings.EqualFold(key, ReservedObjectTagsMetadataKey) || strings.EqualFold(key, ReservedMultipartSessionMetadataKey) || strings.EqualFold(key, ReservedUploadReceiptMetadataKey) || strings.EqualFold(key, ReservedObjectProtectionMetadataKey) || strings.EqualFold(key, ReservedObjectEncryptionMetadataKey) {
 			return ErrInvalid
 		}
 	}

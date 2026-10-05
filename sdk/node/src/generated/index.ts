@@ -759,6 +759,7 @@ export type { ObjectVersionProtection } from './models/ObjectVersionProtection.j
 export type { ObjectVersionRetention } from './models/ObjectVersionRetention.js';
 export type { ObjectVersionRetentionRequest } from './models/ObjectVersionRetentionRequest.js';
 export type { ObjectVersionRetentionResult } from './models/ObjectVersionRetentionResult.js';
+export type { ObjectWriteProtection } from './models/ObjectWriteProtection.js';
 export type { ObjectWriteReceipt } from './models/ObjectWriteReceipt.js';
 export type { ObjectWriteReceiptList } from './models/ObjectWriteReceiptList.js';
 export type { ObsHealthResponse } from './models/ObsHealthResponse.js';

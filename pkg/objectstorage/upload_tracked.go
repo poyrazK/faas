@@ -26,6 +26,7 @@ func (h *uploadHandler) performTrackedUpload(w http.ResponseWriter, r *http.Requ
 	}
 	c.Status = "completed"
 	c.ETag = result.ETag
+	c.VerifiedProtection = result.VerifiedProtection
 	c.VerifiedEncryption = result.Encryption
 	c.ProviderVersionID = result.ProviderVersionID
 	c.RecoveryVersionsObserved = result.ProviderVersionID != "" && result.ProviderVersionID != "null"
@@ -33,6 +34,7 @@ func (h *uploadHandler) performTrackedUpload(w http.ResponseWriter, r *http.Requ
 		c.Status = "failed"
 		c.ETag = ""
 		c.ProviderVersionID = ""
+		c.VerifiedProtection = ""
 		c.VerifiedEncryption = api.ObjectEncryption{}
 		c.ErrorCode = "provider_write_rejected"
 	}

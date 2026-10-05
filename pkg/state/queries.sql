@@ -4361,8 +4361,8 @@ WHERE bucket_id=$1 AND state IN ('initiating','active','completing','completing_
 
 -- name: ObjectMultipartInsert :one
 INSERT INTO object_storage_multipart_uploads
-(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,fixed_admission,encryption_default_revision)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,sqlc.arg(encryption_snapshot)::jsonb,sqlc.arg(fixed_admission)::boolean,sqlc.arg(encryption_default_revision)::bigint) RETURNING *;
+(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,protection_snapshot,fixed_admission,encryption_default_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,sqlc.arg(encryption_snapshot)::jsonb,sqlc.arg(protection_snapshot)::jsonb,sqlc.arg(fixed_admission)::boolean,sqlc.arg(encryption_default_revision)::bigint) RETURNING *;
 
 -- name: ObjectMultipartGet :one
 SELECT * FROM object_storage_multipart_uploads
@@ -4377,6 +4377,7 @@ ORDER BY id LIMIT sqlc.arg(page_limit)::int;
 UPDATE object_storage_multipart_uploads SET
 state=sqlc.arg(operation), lease_token=sqlc.arg(token),
 encryption_lease_token=CASE WHEN encryption_snapshot='{}' THEN '' ELSE sqlc.arg(token)::text END,
+protection_lease_token=CASE WHEN protection_snapshot='{}' THEN '' ELSE sqlc.arg(token)::text END,
 lease_until=now()+(sqlc.arg(lease_seconds)::int * interval '1 second'),
 completion_if_match=CASE WHEN state='active' THEN sqlc.arg(completion_if_match)::text ELSE completion_if_match END,
 completion_if_none_match=CASE WHEN state='active' THEN sqlc.arg(completion_if_none_match)::text ELSE completion_if_none_match END,
@@ -4451,7 +4452,7 @@ UPDATE object_storage_multipart_uploads SET completion_dispatched=true,updated_a
 WHERE id=$1 AND lease_token=$2 AND state IN ('completing','completing_conditional');
 
 -- name: ObjectMultipartFinishResult :one
-UPDATE object_storage_multipart_uploads SET state='completed',encryption_verified=sqlc.arg(encryption_verified)::boolean,completion_etag=sqlc.arg(etag),completion_version_id=sqlc.arg(version_id),
+UPDATE object_storage_multipart_uploads SET state='completed',encryption_verified=sqlc.arg(encryption_verified)::boolean,protection_verified=sqlc.arg(protection_verified)::boolean,completion_etag=sqlc.arg(etag),completion_version_id=sqlc.arg(version_id),
  completion_recovery_cursor='',completion_versions_observed=completion_versions_observed OR sqlc.arg(versions_observed)::boolean,
  lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
 WHERE id=sqlc.arg(id) AND lease_token=sqlc.arg(token) AND completion_dispatched AND state IN ('completing','completing_conditional') RETURNING *;
@@ -7052,8 +7053,8 @@ SELECT * FROM object_upload_routes WHERE id=$1 AND account_id=$2 AND app_id=$3 A
 
 -- name: ObjectTrackedUploadInsert :one
 INSERT INTO object_upload_completions
- (id,route_id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,idempotency_key,request_fingerprint,status,write_phase,encryption_snapshot,recovery_retry_at,encryption_default_revision)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending','prepared',sqlc.arg(encryption_snapshot)::jsonb,now()+make_interval(secs=>sqlc.arg(retry_seconds)::int),sqlc.arg(encryption_default_revision)::bigint) RETURNING *;
+ (id,route_id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,idempotency_key,request_fingerprint,status,write_phase,encryption_snapshot,protection_snapshot,recovery_retry_at,encryption_default_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending','prepared',sqlc.arg(encryption_snapshot)::jsonb,sqlc.arg(protection_snapshot)::jsonb,now()+make_interval(secs=>sqlc.arg(retry_seconds)::int),sqlc.arg(encryption_default_revision)::bigint) RETURNING *;
 
 -- name: ObjectTrackedUploadGet :one
 SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE;
@@ -7062,11 +7063,11 @@ SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND bucket
 SELECT * FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3 AND account_id=$4 AND app_id=$5;
 
 -- name: ObjectTrackedUploadDispatch :one
-UPDATE object_upload_completions SET write_phase='dispatched', encryption_dispatched=(encryption_snapshot<>'{}'), recovery_retry_at=now()+make_interval(secs=>sqlc.arg(retry_seconds)::int)
+UPDATE object_upload_completions SET write_phase='dispatched', encryption_dispatched=(encryption_snapshot<>'{}'), protection_dispatched=(protection_snapshot<>'{}'), recovery_retry_at=now()+make_interval(secs=>sqlc.arg(retry_seconds)::int)
  WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND write_phase='prepared' RETURNING *;
 
 -- name: ObjectTrackedUploadFinish :one
-UPDATE object_upload_completions SET status=$2,etag=$3,error_code=$4,encryption_verified=sqlc.arg(encryption_verified)::boolean,write_phase='settled',recovery_token='',recovery_lease_until=NULL,recovery_cursor='',
+UPDATE object_upload_completions SET status=$2,etag=$3,error_code=$4,encryption_verified=sqlc.arg(encryption_verified)::boolean,protection_verified=sqlc.arg(protection_verified)::boolean,write_phase='settled',recovery_token='',recovery_lease_until=NULL,recovery_cursor='',
 	version_id=sqlc.arg(version_id)::text,
  recovery_versions_observed=recovery_versions_observed OR sqlc.arg(recovery_versions_observed)::boolean
  WHERE id=$1 RETURNING *;
@@ -7134,8 +7135,8 @@ SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id
 
 -- name: ObjectGatewayUploadInsert :one
 INSERT INTO object_upload_completions
- (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,source_key,source_etag,source_bucket_id,source_copy_grant_id,encryption_snapshot,recovery_retry_at,encryption_default_revision)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared',sqlc.arg(origin)::text,sqlc.arg(source_key)::text,sqlc.arg(source_etag)::text,sqlc.narg(source_bucket_id)::uuid,sqlc.narg(source_copy_grant_id)::uuid,sqlc.arg(encryption_snapshot)::jsonb,now()+make_interval(secs=>sqlc.arg(retry_seconds)::int),sqlc.arg(encryption_default_revision)::bigint) RETURNING *;
+ (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,source_key,source_etag,source_bucket_id,source_copy_grant_id,encryption_snapshot,protection_snapshot,recovery_retry_at,encryption_default_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared',sqlc.arg(origin)::text,sqlc.arg(source_key)::text,sqlc.arg(source_etag)::text,sqlc.narg(source_bucket_id)::uuid,sqlc.narg(source_copy_grant_id)::uuid,sqlc.arg(encryption_snapshot)::jsonb,sqlc.arg(protection_snapshot)::jsonb,now()+make_interval(secs=>sqlc.arg(retry_seconds)::int),sqlc.arg(encryption_default_revision)::bigint) RETURNING *;
 
 -- name: ObjectWriteReceiptGet :one
 SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND write_phase <> 'untracked';
@@ -10499,3 +10500,9 @@ VALUES ($1,$2,$3,$4,$5)
 ON CONFLICT (database_id, window_seconds) DO UPDATE SET
  collected_from = EXCLUDED.collected_from, collected_until = EXCLUDED.collected_until,
  observed_at = EXCLUDED.observed_at, updated_at = now();
+
+-- name: ObjectWriteProtectionClock :one
+SELECT clock_timestamp()::timestamptz;
+
+-- name: ObjectWriteProtectionBucketLock :exec
+SELECT id FROM object_buckets WHERE id=$1 FOR NO KEY UPDATE;

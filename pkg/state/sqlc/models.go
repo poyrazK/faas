@@ -1691,7 +1691,6 @@ type Deployment struct {
 	CanaryStages               []byte
 	SnapshotMissCount          int32
 	SnapshotMissLastAt         pgtype.Timestamptz
-	ServingEndedAt             pgtype.Timestamptz
 	SnapshotMissBackoffUntil   pgtype.Timestamptz
 	Workflows                  []byte
 	SourceRoot                 pgtype.Text
@@ -1712,6 +1711,7 @@ type Deployment struct {
 	GithubSourceRef            pgtype.Text
 	GithubInstallationID       pgtype.Int8
 	EnvironmentWorkloadRuntime []byte
+	ServingEndedAt             pgtype.Timestamptz
 }
 
 type DeploymentAlias struct {
@@ -3868,6 +3868,9 @@ type ObjectStorageMultipartUpload struct {
 	EncryptionVerified         bool
 	FixedAdmission             bool
 	EncryptionDefaultRevision  int64
+	ProtectionSnapshot         []byte
+	ProtectionLeaseToken       string
+	ProtectionVerified         bool
 }
 
 type ObjectStorageRequestMetric struct {
@@ -3980,6 +3983,9 @@ type ObjectUploadCompletion struct {
 	EncryptionDefaultRevision int64
 	SourceBucketID            pgtype.UUID
 	SourceCopyGrantID         pgtype.UUID
+	ProtectionSnapshot        []byte
+	ProtectionDispatched      bool
+	ProtectionVerified        bool
 }
 
 type ObjectUploadRoute struct {

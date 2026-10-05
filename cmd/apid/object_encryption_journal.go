@@ -9,6 +9,17 @@ import (
 )
 
 func (s *server) ensureAdmittedObjectMultipart(ctx context.Context, provider objectstorage.Provider, bucket state.ObjectBucket, upload state.ObjectMultipartUpload, request objectstorage.MultipartCreateRequest) (string, error) {
+	var err error
+	ctx, err = objectstorage.WithObjectWriteProtection(ctx, provider, upload.Protection, func(ctx context.Context) error {
+		metrics, ok := s.store.(state.ObjectStorageProviderUsageStore)
+		if !ok {
+			return objectstorage.ErrConfiguration
+		}
+		return metrics.RecordObjectStorageProviderRequest(ctx, bucket.ID, time.Now().UTC())
+	})
+	if err != nil {
+		return "", err
+	}
 	if upload.Encryption.Empty() {
 		return provider.EnsureMultipartUpload(ctx, bucket.PhysicalName, request)
 	}

@@ -8525,6 +8525,9 @@ const (
 	MaxObjectEncryptionJSONDepth             = 32
 )
 
+// MaxObjectWriteProtectionSnapshotBytes bounds private admitted Object Lock policy.
+const MaxObjectWriteProtectionSnapshotBytes = 16 << 10
+
 // MaxObjectEncryptionSnapshotBytes bounds private immutable write journal data.
 const MaxObjectEncryptionSnapshotBytes = 16 << 10
 

@@ -1924,9 +1924,10 @@ gregale bucket object-lock clear-default <app> <bucket-id>
 ```
 
 [ADR-584](adr/584-durable-object-version-protection.md) adds the per-version
-management described below. Per-write protection snapshots, event-hold changes,
-governance bypass and protected lifecycle deletion remain separate work. The
-gateway rejects unsupported per-object write protection/bypass headers. New
+management described below. [ADR-590](adr/590-durable-object-write-protection.md) adds the write snapshots
+described below. Event-hold changes, governance bypass and protected lifecycle
+deletion remain separate work. The gateway rejects unsupported event-hold and
+governance-bypass headers. New
 Object Lock enrollment remains disabled for release. Local tests qualify the
 implementation; production provider activation remains deployment work.
 
@@ -2032,3 +2033,40 @@ writers or provider lifecycle rules. Missing proof stays pending with its
 reservation. These cases, and uncertain ordinary mutable deletions, still need
 stronger retained evidence or operator resolution. Do not recreate a physical
 bucket name while its cleanup journal is active.
+
+
+### Protection on newly created S3 versions (ADR-590)
+
+Owned Object Lock buckets capture the verified fixed retention default and any
+explicit write protection when admitting each upload or copy. Standard signed
+`x-amz-object-lock-mode`, `x-amz-object-lock-retain-until-date` and
+`x-amz-object-lock-legal-hold` headers are supported on PUT, CopyObject and
+CreateMultipartUpload. Mode and date must appear together; holds use `ON` or
+`OFF`. Dates must be in the future. Event holds and governance bypass are
+unsupported, and parts/completion cannot replace initiation protection.
+
+Signed object-upload and multipart-creation APIs accept an optional selection:
+
+```json
+{
+  "protection": {
+    "retention": {
+      "mode": "COMPLIANCE",
+      "retain_until_date": "2027-01-01T00:00:00Z"
+    },
+    "legal_hold": {"status": "ON"}
+  }
+}
+```
+
+Omitting `retention` inherits the admitted bucket default. Application upload
+routes inherit those defaults as well. Multipart sessions retain their accepted
+policy through completion. Gregale waits for exact native version readback to
+verify protection before settling a protected write. Unknown outcomes keep the
+receipt and capacity reservation; recovery reads the original private proof and
+never repeats a PUT or copy. Accepted recovery continues after enrollment is
+disabled. Private policy snapshots are bounded to 16 KiB and remain internal.
+
+New Object Lock enrollment remains disabled pending protection-aware lifecycle
+expiration. Local S3 protocol tests qualify this implementation without requiring
+a real provider environment.

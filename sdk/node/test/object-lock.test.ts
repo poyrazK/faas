@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { OpenAPI, StorageService } from '../src/generated/index.js';
+import { OpenAPI, StorageService, type ObjectWriteProtection } from '../src/generated/index.js';
 
 test('Object Lock preserves nested defaults and durable observation separately', async () => {
   const oldFetch = globalThis.fetch;
@@ -35,4 +35,19 @@ test('Object Lock preserves nested defaults and durable observation separately',
     OpenAPI.BASE = oldBase;
     OpenAPI.TOKEN = oldToken;
   }
+});
+
+test('signed upload and multipart preserve a fixed write protection selection', async () => {
+  const oldFetch = globalThis.fetch;
+  const protection: ObjectWriteProtection = {retention:{mode:'COMPLIANCE',retain_until_date:'2027-01-02T03:04:05.123Z'},legal_hold:{status:'ON'}};
+  const bodies: unknown[] = [];
+  globalThis.fetch = async (_input, init) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    return Response.json({id:'upload',state:'active',method:'PUT',url:'https://s3.example.test/assets/key',headers:{'X-Amz-Object-Lock-Legal-Hold':'ON'}});
+  };
+  try {
+    await StorageService.signBucketObject({slug:'demo',bucket:'bucket',requestBody:{method:'PUT',key:'key',size_bytes:3,protection}});
+    await StorageService.createObjectMultipartUpload({slug:'demo',bucket:'bucket',requestBody:{key:'key',size_bytes:3,protection}});
+    assert.deepEqual(bodies.map(body => (body as {protection:ObjectWriteProtection}).protection), [protection,protection]);
+  } finally { globalThis.fetch = oldFetch; }
 });

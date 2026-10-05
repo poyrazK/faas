@@ -134,5 +134,6 @@ func (m *MemStore) captureObjectBucketDefaultLocked(bucket string, e ObjectEncry
 
 func (m *MemStore) objectBucketDefaultRequiresTrackingLocked(bucket string) bool {
 	j := m.objectBucketEncryption[bucket]
-	return j.State != "" && j.State != "ready" || !j.Encryption.Empty()
+	lock := m.objectBucketObjectLock[bucket]
+	return lock.EnabledRequired || lock.NativeEnabledObserved || objectLockActive(lock) || j.State != "" && j.State != "ready" || !j.Encryption.Empty()
 }

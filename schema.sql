@@ -2659,7 +2659,6 @@ CREATE TABLE public.deployments (
     canary_stages jsonb,
     snapshot_miss_count integer DEFAULT 0 NOT NULL,
     snapshot_miss_last_at timestamp with time zone,
-    serving_ended_at timestamp with time zone,
     snapshot_miss_backoff_until timestamp with time zone,
     workflows jsonb DEFAULT '[]'::jsonb NOT NULL,
     source_root text,
@@ -2680,6 +2679,7 @@ CREATE TABLE public.deployments (
     github_source_ref text,
     github_installation_id bigint,
     environment_workload_runtime jsonb,
+    serving_ended_at timestamp with time zone,
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -3505,6 +3505,28 @@ BEGIN
   AND (w.multipart_upload_id IS NULL OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads m
    WHERE m.id=w.multipart_upload_id AND m.state IN ('initiating','active','completing','completing_conditional','aborting')))) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_write_key_fenced',MESSAGE='Settle the pending write before replacing its proof';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: fence_untracked_object_lock_write(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_untracked_object_lock_write() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_TABLE_NAME='object_storage_key_grants' THEN
+  IF NEW.last_write_id IS NOT NULL THEN RETURN NEW; END IF;
+ ELSE
+  IF NEW.kind<>'proxy' OR NEW.route_receipt THEN RETURN NEW; END IF;
+ END IF;
+ PERFORM 1 FROM accounts a JOIN object_buckets b ON b.account_id=a.id WHERE b.id=NEW.bucket_id FOR UPDATE OF a;
+ PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR NO KEY UPDATE;
+ IF EXISTS(SELECT 1 FROM object_bucket_object_lock WHERE bucket_id=NEW.bucket_id AND (enabled_required OR native_enabled_observed OR state<>'ready')) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_lock_admission_fenced',MESSAGE='Object Lock requires a tracked protection-aware write';
  END IF;
  RETURN NEW;
 END $$;
@@ -5457,6 +5479,21 @@ $$;
 
 
 --
+-- Name: keep_failed_rollback_target(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.keep_failed_rollback_target() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status = 'failed' AND OLD.status = 'snapshotting' AND OLD.serving_ended_at IS NOT NULL THEN
+  NEW.status := 'superseded';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: managed_realtime_channel_route_targets_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5840,7 +5877,7 @@ CREATE FUNCTION public.valid_object_url_request(r jsonb) RETURNS boolean
 DECLARE method text;
 BEGIN
  IF jsonb_typeof(r)<>'object' OR octet_length(r::text)>32768 OR
-  r - ARRAY['method','key','expires_in','size_bytes','content_type','cache_control','content_disposition','content_encoding','content_language','metadata','tags','encryption','multipart'] <> '{}'::jsonb OR
+  r - ARRAY['method','key','expires_in','size_bytes','content_type','cache_control','content_disposition','content_encoding','content_language','metadata','tags','encryption','multipart','protection'] <> '{}'::jsonb OR
   jsonb_typeof(r->'method') IS DISTINCT FROM 'string' OR jsonb_typeof(r->'key') IS DISTINCT FROM 'string' OR
   octet_length(r->>'key') NOT BETWEEN 1 AND 1024 OR (r->>'key') ~ '[\x01-\x1f\x7f]' OR
   jsonb_typeof(r->'expires_in') IS DISTINCT FROM 'number' OR (r->>'expires_in')::bigint NOT BETWEEN 1 AND 900 THEN RETURN false; END IF;
@@ -5858,7 +5895,37 @@ BEGIN
   RETURN r - ARRAY['method','key','expires_in','size_bytes','content_type','multipart'] = '{}'::jsonb;
  END IF;
  IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('content_type','cache_control','content_disposition','content_encoding','content_language') AND (jsonb_typeof(value)<>'string' OR value::text ~ '\\r|\\n|\\u0000')) THEN RETURN false; END IF;
- IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('metadata','tags','encryption') AND jsonb_typeof(value)<>'object') THEN RETURN false; END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('metadata','tags','encryption','protection') AND jsonb_typeof(value)<>'object') THEN RETURN false; END IF;
+ IF r ? 'protection' AND (r->'protection'='{}' OR NOT valid_object_write_protection(jsonb_build_object('enabled',true,'captured_at','2026-01-01T00:00:00Z','requested',r->'protection'))) THEN RETURN false; END IF;
+ RETURN true;
+EXCEPTION WHEN OTHERS THEN RETURN false;
+END $$;
+
+
+--
+-- Name: valid_object_write_protection(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_object_write_protection(p jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+DECLARE r jsonb; d jsonb; t timestamptz;
+BEGIN
+ IF p='{}' THEN RETURN true; END IF;
+ IF jsonb_typeof(p)<>'object' OR octet_length(p::text)>16384 OR p-ARRAY['enabled','revision','captured_at','default_retention','requested']<>'{}' OR p->'enabled' IS DISTINCT FROM 'true'::jsonb OR
+  jsonb_typeof(p->'revision') IS DISTINCT FROM 'number' AND p ? 'revision' OR coalesce((p->>'revision')::bigint,0) NOT BETWEEN 0 AND 9007199254740991 OR jsonb_typeof(p->'captured_at') IS DISTINCT FROM 'string' THEN RETURN false; END IF;
+ t := (p->>'captured_at')::timestamptz;
+ IF NOT isfinite(t) OR extract(year from t) NOT BETWEEN 1 AND 9999 THEN RETURN false; END IF;
+ IF p ? 'default_retention' AND (NOT valid_object_lock_configuration(jsonb_build_object('enabled',true,'default_retention',p->'default_retention')) OR p->'default_retention' ? 'default_event_hold') THEN RETURN false; END IF;
+ r := coalesce(p->'requested','{}'::jsonb);
+ IF jsonb_typeof(r)<>'object' OR r-ARRAY['retention','legal_hold']<>'{}' THEN RETURN false; END IF;
+ IF r ? 'retention' THEN
+  d := r->'retention';
+  IF jsonb_typeof(d)<>'object' OR d-ARRAY['mode','retain_until_date']<>'{}' OR coalesce(d->>'mode','') NOT IN ('GOVERNANCE','COMPLIANCE') OR jsonb_typeof(d->'retain_until_date') IS DISTINCT FROM 'string' THEN RETURN false; END IF;
+  t := (d->>'retain_until_date')::timestamptz;
+  IF NOT isfinite(t) OR extract(year from t) NOT BETWEEN 1 AND 9999 OR date_trunc('milliseconds',t)<>t THEN RETURN false; END IF;
+ END IF;
+ IF r ? 'legal_hold' AND (jsonb_typeof(r->'legal_hold')<>'object' OR (r->'legal_hold')-ARRAY['status']<>'{}' OR coalesce(r->'legal_hold'->>'status','') NOT IN ('ON','OFF')) THEN RETURN false; END IF;
  RETURN true;
 EXCEPTION WHEN OTHERS THEN RETURN false;
 END $$;
@@ -5907,11 +5974,15 @@ CREATE TABLE public.object_storage_multipart_uploads (
     encryption_verified boolean DEFAULT false NOT NULL,
     fixed_admission boolean DEFAULT false NOT NULL,
     encryption_default_revision bigint DEFAULT 0 NOT NULL,
+    protection_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    protection_lease_token text DEFAULT ''::text NOT NULL,
+    protection_verified boolean DEFAULT false NOT NULL,
     CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[[:cntrl:]]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_completion_error CHECK (((completion_error_code = ANY (ARRAY[''::text, 'precondition_failed'::text, 'conditional_conflict'::text, 'conditional_not_found'::text])) AND ((completion_error_code = ''::text) OR ((state = ANY (ARRAY['aborting'::text, 'aborted'::text])) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_encryption_phase CHECK ((((encryption_lease_token = ''::text) OR ((encryption_snapshot <> '{}'::jsonb) AND (lease_token IS NOT NULL) AND (encryption_lease_token = lease_token))) AND ((NOT encryption_verified) OR ((encryption_snapshot <> '{}'::jsonb) AND (state = 'completed'::text) AND completion_dispatched)) AND ((encryption_snapshot = '{}'::jsonb) OR (state <> 'completed'::text) OR encryption_verified))),
     CONSTRAINT object_multipart_lifecycle_binding CHECK ((((lifecycle_scan_id IS NULL) AND (lifecycle_binding = '{}'::jsonb)) OR ((lifecycle_scan_id IS NOT NULL) AND (jsonb_typeof(lifecycle_binding) = 'object'::text) AND (lifecycle_binding ?& ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'expected_provider_upload_id'::text, 'expected_created_at'::text]) AND ((lifecycle_binding - ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'expected_provider_upload_id'::text, 'expected_created_at'::text]) = '{}'::jsonb) AND (jsonb_typeof((lifecycle_binding -> 'scan_id'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'scan_id'::text) = (lifecycle_scan_id)::text) AND (jsonb_typeof((lifecycle_binding -> 'scan_token'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'scan_token'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'scan_token'::text)) <= 128)) AND (jsonb_typeof((lifecycle_binding -> 'rule_id'::text)) = 'string'::text) AND ((char_length((lifecycle_binding ->> 'rule_id'::text)) >= 1) AND (char_length((lifecycle_binding ->> 'rule_id'::text)) <= 255)) AND (jsonb_typeof((lifecycle_binding -> 'expected_provider_upload_id'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_provider_upload_id'::text) = provider_upload_id) AND (provider_upload_id <> ''::text) AND (jsonb_typeof((lifecycle_binding -> 'expected_created_at'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_created_at'::text) <> ''::text) AND (octet_length((lifecycle_binding)::text) <= 8192) AND (state = ANY (ARRAY['aborting'::text, 'aborted'::text]))))),
     CONSTRAINT object_multipart_part_url_deadline_shape CHECK (((part_url_unsafe_until IS NULL) OR ((part_count > 0) AND (part_url_unsafe_until >= created_at)))),
+    CONSTRAINT object_multipart_protection_phase CHECK ((((protection_lease_token = ''::text) OR ((protection_snapshot <> '{}'::jsonb) AND (lease_token IS NOT NULL) AND (protection_lease_token = lease_token))) AND ((NOT protection_verified) OR ((protection_snapshot <> '{}'::jsonb) AND (state = 'completed'::text) AND completion_dispatched AND (completion_version_id <> ''::text) AND (completion_version_id <> 'null'::text))) AND ((protection_snapshot = '{}'::jsonb) OR (state <> 'completed'::text) OR protection_verified))),
     CONSTRAINT object_multipart_result_shape CHECK ((((state = 'completed'::text) OR ((completion_etag = ''::text) AND (completion_version_id = ''::text))) AND ((completion_version_id = ''::text) OR (completion_etag <> ''::text)) AND ((state <> 'completed'::text) OR (completion_recovery_cursor = ''::text)) AND ((state <> 'completed'::text) OR (NOT completion_dispatched) OR (completion_etag <> ''::text)))),
     CONSTRAINT object_storage_multipart_uploa_completion_recovery_cursor_check CHECK (((octet_length(completion_recovery_cursor) <= 8192) AND (completion_recovery_cursor ~ '^[A-Za-z0-9_-]*$'::text))),
     CONSTRAINT object_storage_multipart_uploads_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -5933,6 +6004,8 @@ CREATE TABLE public.object_storage_multipart_uploads (
     CONSTRAINT object_storage_multipart_uploads_part_count_check CHECK (((part_count >= 0) AND (part_count <= 10000))),
     CONSTRAINT object_storage_multipart_uploads_part_revision_check CHECK ((part_revision >= 0)),
     CONSTRAINT object_storage_multipart_uploads_part_size_bytes_check CHECK (((part_size_bytes >= 0) AND (part_size_bytes <= '5368709120'::bigint))),
+    CONSTRAINT object_storage_multipart_uploads_protection_lease_token_check CHECK ((octet_length(protection_lease_token) <= 128)),
+    CONSTRAINT object_storage_multipart_uploads_protection_snapshot_check CHECK (public.valid_object_write_protection(protection_snapshot)),
     CONSTRAINT object_storage_multipart_uploads_provider_upload_id_check CHECK ((length(provider_upload_id) <= 4096)),
     CONSTRAINT object_storage_multipart_uploads_size_bytes_check CHECK (((size_bytes >= 0) AND (size_bytes <= '5497558138880'::bigint))),
     CONSTRAINT object_storage_multipart_uploads_state_check CHECK ((state = ANY (ARRAY['initiating'::text, 'active'::text, 'completing'::text, 'completing_conditional'::text, 'aborting'::text, 'completed'::text, 'aborted'::text])))
@@ -6940,6 +7013,63 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Version reference identity is immutable';
  END IF;
  NEW.versions_observed:=OLD.versions_observed OR NEW.versions_observed;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_write_protection(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_write_protection() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE j object_bucket_object_lock; protected boolean; url_request jsonb;
+BEGIN
+ IF TG_OP='INSERT' THEN
+  PERFORM 1 FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+  PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR NO KEY UPDATE;
+  SELECT * INTO j FROM object_bucket_object_lock WHERE bucket_id=NEW.bucket_id;
+  protected := FOUND AND (j.enabled_required OR j.native_enabled_observed OR j.observed_snapshot->>'enabled'='true');
+  IF TG_TABLE_NAME='object_upload_completions' THEN
+   IF NEW.status='rejected' AND NEW.protection_snapshot='{}' THEN RETURN NEW; END IF;
+   SELECT c.url_request INTO url_request FROM object_storage_s3_credentials c WHERE c.id::text=NEW.subject_id AND c.url_request IS NOT NULL;
+   IF FOUND AND coalesce(url_request->'protection','{}'::jsonb) IS DISTINCT FROM coalesce(NEW.protection_snapshot->'requested','{}'::jsonb) THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Signed URL protection requires its bound receipt'; END IF;
+  END IF;
+  IF protected OR NEW.protection_snapshot<>'{}' THEN
+   IF NOT protected OR j.state<>'ready' OR NOT j.observed_known OR j.observed_snapshot->>'enabled' IS DISTINCT FROM 'true' OR
+    NOT object_lock_versioning_ready(NEW.bucket_id) OR NEW.protection_snapshot='{}' OR
+    coalesce((NEW.protection_snapshot->>'revision')::bigint,0)<>j.revision OR
+    coalesce(NEW.protection_snapshot->'default_retention','null'::jsonb) IS DISTINCT FROM coalesce(j.observed_snapshot->'default_retention','null'::jsonb) THEN
+    RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='New writes require the admitted Object Lock policy';
+   END IF;
+   IF TG_TABLE_NAME='object_upload_completions' THEN
+    IF NEW.status<>'pending' OR NEW.write_phase<>'prepared' OR NEW.protection_dispatched OR NEW.protection_verified THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protected write requires a prepared intent'; END IF;
+   ELSE
+    IF NEW.state<>'initiating' OR NEW.lease_token IS NOT NULL OR NEW.protection_lease_token<>'' OR NEW.protection_verified THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protected multipart requires an initiating intent'; END IF;
+   END IF;
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF NEW.protection_snapshot IS DISTINCT FROM OLD.protection_snapshot OR (OLD.protection_snapshot<>'{}' AND
+  (NEW.id,NEW.account_id,NEW.app_id,NEW.bucket_id,NEW.object_key,NEW.created_at) IS DISTINCT FROM (OLD.id,OLD.account_id,OLD.app_id,OLD.bucket_id,OLD.object_key,OLD.created_at)) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Write protection snapshot and ownership are immutable';
+ END IF;
+ IF TG_TABLE_NAME='object_upload_completions' THEN
+  IF OLD.protection_snapshot<>'{}' AND ((NEW.bytes,NEW.origin,NEW.source_key,NEW.source_etag) IS DISTINCT FROM (OLD.bytes,OLD.origin,OLD.source_key,OLD.source_etag) OR
+   OLD.protection_dispatched AND NOT NEW.protection_dispatched OR NEW.write_phase='dispatched' AND NOT NEW.protection_dispatched OR
+   NOT OLD.protection_dispatched AND NEW.protection_dispatched AND NOT (OLD.write_phase='prepared' AND NEW.write_phase='dispatched') OR
+   NEW.protection_verified IS DISTINCT FROM OLD.protection_verified AND NOT (OLD.write_phase='dispatched' AND NEW.write_phase='settled' AND NEW.status='completed' AND NEW.protection_verified) OR
+   OLD.write_phase='settled' AND (NEW.status,NEW.etag,NEW.error_code,NEW.version_id) IS DISTINCT FROM (OLD.status,OLD.etag,OLD.error_code,OLD.version_id)) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protected write requires aware dispatch and verified settlement';
+  END IF;
+ ELSE
+  IF OLD.protection_snapshot<>'{}' AND (NEW.lease_token IS NOT NULL AND NEW.protection_lease_token IS DISTINCT FROM NEW.lease_token OR
+   NEW.protection_verified IS DISTINCT FROM OLD.protection_verified AND NOT (OLD.state IN ('completing','completing_conditional') AND NEW.state='completed' AND OLD.completion_dispatched AND NEW.protection_verified)) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protected multipart requires aware claims and verified completion';
+  END IF;
+  IF NEW.lease_token IS NULL THEN NEW.protection_lease_token:=''; END IF;
+ END IF;
  RETURN NEW;
 END $$;
 
@@ -7953,6 +8083,23 @@ BEGIN
     RETURN COALESCE(flipped, FALSE);
 END;
 $$;
+
+
+--
+-- Name: stamp_deployment_serving_ended_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_deployment_serving_ended_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status = 'live' AND NEW.traffic_percent > 0 THEN
+  NEW.serving_ended_at := NULL;
+ ELSIF OLD.status = 'live' AND OLD.traffic_percent > 0 AND NEW.status <> 'snapshotting' THEN
+  NEW.serving_ended_at := now();
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -15101,6 +15248,9 @@ CREATE TABLE public.object_upload_completions (
     encryption_default_revision bigint DEFAULT 0 NOT NULL,
     source_bucket_id uuid,
     source_copy_grant_id uuid,
+    protection_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    protection_dispatched boolean DEFAULT false NOT NULL,
+    protection_verified boolean DEFAULT false NOT NULL,
     CONSTRAINT object_copy_source_provenance CHECK ((((source_bucket_id IS NULL) AND (source_copy_grant_id IS NULL)) OR ((source_bucket_id IS NOT NULL) AND (source_copy_grant_id IS NOT NULL) AND (origin = 'gateway_copy'::text) AND (source_bucket_id <> bucket_id) AND (source_bucket_id <> '00000000-0000-0000-0000-000000000000'::uuid) AND (source_copy_grant_id <> '00000000-0000-0000-0000-000000000000'::uuid)))),
     CONSTRAINT object_upload_completion_version_outcome CHECK (((version_id = ''::text) OR ((write_phase = 'settled'::text) AND (status = 'completed'::text)))),
     CONSTRAINT object_upload_completion_version_shape CHECK (((version_id = ''::text) OR (version_id = 'null'::text) OR (version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
@@ -15110,6 +15260,7 @@ CREATE TABLE public.object_upload_completions (
     CONSTRAINT object_upload_completions_idempotency_key_check CHECK ((length(idempotency_key) <= 128)),
     CONSTRAINT object_upload_completions_object_key_check CHECK (((length(object_key) >= 1) AND (length(object_key) <= 1024))),
     CONSTRAINT object_upload_completions_origin_check CHECK ((origin = ANY (ARRAY['route'::text, 'gateway'::text, 'gateway_copy'::text]))),
+    CONSTRAINT object_upload_completions_protection_snapshot_check CHECK (public.valid_object_write_protection(protection_snapshot)),
     CONSTRAINT object_upload_completions_recovery_cursor_check CHECK ((octet_length(recovery_cursor) <= 8192)),
     CONSTRAINT object_upload_completions_request_fingerprint_check CHECK ((length(request_fingerprint) <= 64)),
     CONSTRAINT object_upload_completions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'completed'::text, 'rejected'::text, 'failed'::text]))),
@@ -15118,6 +15269,7 @@ CREATE TABLE public.object_upload_completions (
     CONSTRAINT object_upload_copy_source CHECK ((((origin = 'gateway_copy'::text) AND ((length(source_key) >= 1) AND (length(source_key) <= 1024)) AND ((length(source_etag) >= 1) AND (length(source_etag) <= 256)) AND (btrim(source_etag) <> ''::text) AND (POSITION((chr(10)) IN (source_etag)) = 0) AND (POSITION((chr(13)) IN (source_etag)) = 0)) OR ((origin <> 'gateway_copy'::text) AND (source_key = ''::text) AND (source_etag = ''::text)))),
     CONSTRAINT object_upload_encryption_phase CHECK ((((encryption_snapshot = '{}'::jsonb) OR (write_phase = ANY (ARRAY['prepared'::text, 'dispatched'::text, 'settled'::text]))) AND ((NOT encryption_dispatched) OR ((encryption_snapshot <> '{}'::jsonb) AND (write_phase = ANY (ARRAY['dispatched'::text, 'settled'::text])))) AND ((NOT encryption_verified) OR (encryption_dispatched AND (status = 'completed'::text) AND (write_phase = 'settled'::text))) AND ((encryption_snapshot = '{}'::jsonb) OR (status <> 'completed'::text) OR encryption_verified))),
     CONSTRAINT object_upload_gateway_receipt CHECK (((origin <> ALL (ARRAY['gateway'::text, 'gateway_copy'::text])) OR ((route_id IS NULL) AND (idempotency_key = ''::text) AND (request_fingerprint = ''::text) AND (write_phase <> 'untracked'::text)))),
+    CONSTRAINT object_upload_protection_phase CHECK ((((protection_snapshot = '{}'::jsonb) OR (write_phase = ANY (ARRAY['prepared'::text, 'dispatched'::text, 'settled'::text]))) AND ((NOT protection_dispatched) OR ((protection_snapshot <> '{}'::jsonb) AND (write_phase = ANY (ARRAY['dispatched'::text, 'settled'::text])))) AND ((NOT protection_verified) OR (protection_dispatched AND (status = 'completed'::text) AND (write_phase = 'settled'::text) AND (version_id <> ''::text) AND (version_id <> 'null'::text))) AND ((protection_snapshot = '{}'::jsonb) OR (status <> 'completed'::text) OR protection_verified))),
     CONSTRAINT object_upload_recovery_lease CHECK (((recovery_token = ''::text) = (recovery_lease_until IS NULL))),
     CONSTRAINT object_upload_recovery_pending CHECK (((recovery_lease_until IS NULL) OR (write_phase = 'dispatched'::text))),
     CONSTRAINT object_upload_tracked_status CHECK (((write_phase = 'untracked'::text) OR (((write_phase = 'settled'::text) = (status = ANY (ARRAY['completed'::text, 'failed'::text]))) AND (status <> 'rejected'::text))))
@@ -28434,6 +28586,13 @@ CREATE TRIGGER deployment_aliases_app_changed AFTER INSERT OR DELETE OR UPDATE O
 
 
 --
+-- Name: deployments deployment_failed_rollback_keeps_target; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_failed_rollback_keeps_target BEFORE UPDATE OF status ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.keep_failed_rollback_target();
+
+
+--
 -- Name: deployment_openapi_docs deployment_openapi_docs_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28445,6 +28604,13 @@ CREATE TRIGGER deployment_openapi_docs_set_updated_at_trg BEFORE UPDATE ON publi
 --
 
 CREATE TRIGGER deployment_scope_exclusions_set_updated_at_trg BEFORE UPDATE ON public.deployment_scope_exclusions FOR EACH ROW EXECUTE FUNCTION public.deployment_scope_exclusions_set_updated_at();
+
+
+--
+-- Name: deployments deployment_serving_ended_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_serving_ended_at BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.stamp_deployment_serving_ended_at();
 
 
 --
@@ -29393,6 +29559,20 @@ CREATE TRIGGER object_lock_key_grant_fence BEFORE INSERT OR UPDATE ON public.obj
 
 
 --
+-- Name: object_storage_key_grants object_lock_legacy_key_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_lock_legacy_key_fence BEFORE INSERT ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.fence_untracked_object_lock_write();
+
+
+--
+-- Name: object_storage_write_admissions object_lock_legacy_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_lock_legacy_write_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_untracked_object_lock_write();
+
+
+--
 -- Name: object_storage_multipart_uploads object_lock_multipart_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -29456,6 +29636,13 @@ CREATE TRIGGER object_multipart_part_url_deadline_protected BEFORE UPDATE ON pub
 
 
 --
+-- Name: object_storage_multipart_uploads object_multipart_protection_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_protection_guard BEFORE INSERT OR UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.protect_object_write_protection();
+
+
+--
 -- Name: object_storage_multipart_uploads object_multipart_result_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -29516,6 +29703,13 @@ CREATE TRIGGER object_upload_default_bound BEFORE INSERT OR UPDATE ON public.obj
 --
 
 CREATE TRIGGER object_upload_encryption_immutable BEFORE INSERT OR UPDATE ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.protect_object_upload_encryption();
+
+
+--
+-- Name: object_upload_completions object_upload_protection_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_upload_protection_guard BEFORE INSERT OR UPDATE ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.protect_object_write_protection();
 
 
 --

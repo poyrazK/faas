@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -277,6 +278,12 @@ func (p *S3) writeObject(ctx context.Context, bucket, key string, body io.Reader
 }
 
 func (p *S3) writeObjectEncrypted(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata, receipt string, encryption *ResolvedObjectEncryption) (UploadResult, error) {
+	if !capturedWriteProtection(ctx).Empty() && strings.HasPrefix(aws.ToString(p.client.Options().BaseEndpoint), "http://") {
+		if checksum, _ := ctx.Value(writeChecksumKey{}).(string); checksum == "" {
+			return UploadResult{}, errors.Join(ErrWriteRejected, ErrUnsupported)
+		}
+	}
+
 	if !ValidKey(key) || size < 0 || size > api.MaxObjectSinglePutBytes {
 		return UploadResult{}, invalidS3Write(receipt)
 	}
@@ -311,6 +318,7 @@ func (p *S3) writeObjectEncrypted(ctx context.Context, bucket, key string, body 
 		in.Tagging = aws.String(tagging)
 	}
 	applyPutEncryption(in, encryption)
+	applyPutProtection(ctx, in)
 	if encryption != nil {
 		if err := beforeEncryptionWrite(ctx); err != nil {
 			return UploadResult{}, errors.Join(ErrWriteRejected, err)
@@ -335,7 +343,14 @@ func (p *S3) writeObjectEncrypted(ctx context.Context, bucket, key string, body 
 	if out == nil || !validUploadETag(aws.ToString(out.ETag)) || !validTrackedProofHeaders(out.ResultMetadata, ReservedUploadReceiptMetadataKey) || !validCopySnapshotVersion(out.ResultMetadata, aws.ToString(out.VersionId), "") || multipartResultIsMarker(out.ResultMetadata) || !validEncryptionResponse(out.ResultMetadata, encryption) {
 		return UploadResult{}, ErrUnavailable
 	}
-	return UploadResult{Encryption: publicObjectEncryption(encryption), ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}, nil
+	result := UploadResult{Encryption: publicObjectEncryption(encryption), ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}
+	if !capturedWriteProtection(ctx).Empty() {
+		result.VerifiedProtection, err = p.ConfirmObjectWriteProtection(ctx, bucket, key, result.ProviderVersionID, receipt, size, false, result.ETag)
+		if err != nil {
+			return UploadResult{}, err
+		}
+	}
+	return result, nil
 }
 
 func (p *S3) ObjectSize(ctx context.Context, bucket, key string) (int64, error) {
@@ -368,7 +383,7 @@ func (p *S3) presign(ctx context.Context, bucket string, r SignRequest, conditio
 }
 
 func (p *S3) presignEncrypted(ctx context.Context, bucket string, r SignRequest, conditions ObjectWriteConditions, receipt string, encryption *ResolvedObjectEncryption) (SignedRequest, error) {
-	if r.Encryption != nil {
+	if r.Encryption != nil || r.Protection != nil {
 		return SignedRequest{}, ErrUnsupported // Owned selections are consumed by the branded broker.
 	}
 	if err := r.Validate(api.MaxObjectSinglePutBytes); err != nil {
@@ -380,7 +395,7 @@ func (p *S3) presignEncrypted(ctx context.Context, bucket string, r SignRequest,
 	}
 	options := func(o *s3.PresignOptions) {
 		o.Expires = ttl
-		if encryption != nil {
+		if encryption != nil || !capturedWriteProtection(ctx).Empty() {
 			// Keep every captured cipher field in signed headers. The SDK's
 			// hoisting allowlist otherwise moves bucket-key-enabled to the URL.
 			o.Presigner = v4.NewSigner(func(s *v4.SignerOptions) {
@@ -416,6 +431,7 @@ func (p *S3) presignEncrypted(ctx context.Context, bucket string, r SignRequest,
 			IfMatch:  stringPtrOrNil(conditions.IfMatch), IfNoneMatch: stringPtrOrNil(conditions.IfNoneMatch),
 		}
 		applyPutEncryption(in, encryption)
+		applyPutProtection(ctx, in)
 		if tagging != "" {
 			in.Tagging = aws.String(tagging)
 		}
@@ -430,6 +446,10 @@ func (p *S3) presignEncrypted(ctx context.Context, bucket string, r SignRequest,
 		}
 		// Refuse to issue a URL if the SDK drops the upload length binding.
 		if (*r.SizeBytes > 0 && out.SignedHeader.Get("Content-Length") == "") || (*r.SizeBytes == 0 && out.SignedHeader.Get("Content-Md5") != "1B2M2Y8AsgTpgAmY7PhCfg==") {
+			return SignedRequest{}, ErrUnavailable
+		}
+		signedURL, parseErr := url.Parse(out.URL)
+		if parseErr != nil || signedURL == nil || !validProtectedSignedPut(ctx, out.SignedHeader, signedURL.Query().Get("X-Amz-SignedHeaders")) {
 			return SignedRequest{}, ErrUnavailable
 		}
 		result.URL = out.URL
@@ -596,6 +616,7 @@ func (p *S3) ensureMultipartEncrypted(ctx context.Context, bucket string, r Mult
 		Metadata: metadata,
 	}
 	applyMultipartEncryption(in, encryption)
+	applyMultipartProtection(ctx, in)
 	if tagging != "" {
 		in.Tagging = aws.String(tagging)
 	}
@@ -628,12 +649,27 @@ func (p *S3) PresignMultipartPart(ctx context.Context, bucket string, r Multipar
 	if ttl == 0 {
 		ttl = time.Duration(api.ObjectMultipartPartURLDefaultTTLSeconds) * time.Second
 	}
-	out, err := p.signer.PresignUploadPart(ctx, &s3.UploadPartInput{
+	in := &s3.UploadPartInput{
 		Bucket: aws.String(bucket), Key: aws.String(r.Key), UploadId: aws.String(r.ProviderUploadID),
 		PartNumber: aws.Int32(r.PartNumber), ContentLength: aws.Int64(r.SizeBytes),
-	}, func(o *s3.PresignOptions) { o.Expires = ttl })
+	}
+	checksum, _ := ctx.Value(writeChecksumKey{}).(string)
+	protected := !capturedWriteProtection(ctx).Empty()
+	if protected {
+		if checksum == "" {
+			return SignedRequest{}, ErrConfiguration
+		}
+		in.ContentMD5 = aws.String(checksum)
+	}
+	out, err := p.signer.PresignUploadPart(ctx, in, func(o *s3.PresignOptions) { o.Expires = ttl })
 	if err != nil || out.SignedHeader.Get("Content-Length") == "" {
 		return SignedRequest{}, ErrUnavailable
+	}
+	if protected {
+		u, err := url.Parse(out.URL)
+		if err != nil || u == nil || !oneEncryptionHeader(out.SignedHeader, "Content-Md5", checksum) || !strings.Contains(";"+u.Query().Get("X-Amz-SignedHeaders")+";", ";content-md5;") {
+			return SignedRequest{}, ErrUnavailable
+		}
 	}
 	result := SignedRequest{URL: out.URL, Method: http.MethodPut, Headers: map[string]string{}, ExpiresAt: time.Now().UTC().Add(ttl)}
 	for name, values := range out.SignedHeader {

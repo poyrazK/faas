@@ -1423,6 +1423,7 @@ from .object_version_retention_event_hold import ObjectVersionRetentionEventHold
 from .object_version_retention_mode import ObjectVersionRetentionMode
 from .object_version_retention_request import ObjectVersionRetentionRequest
 from .object_version_retention_result import ObjectVersionRetentionResult
+from .object_write_protection import ObjectWriteProtection
 from .object_write_receipt import ObjectWriteReceipt
 from .object_write_receipt_error_code import ObjectWriteReceiptErrorCode
 from .object_write_receipt_list import ObjectWriteReceiptList
@@ -3927,6 +3928,7 @@ __all__ = (
     "ObjectVersionRetentionMode",
     "ObjectVersionRetentionRequest",
     "ObjectVersionRetentionResult",
+    "ObjectWriteProtection",
     "ObjectWriteReceipt",
     "ObjectWriteReceiptErrorCode",
     "ObjectWriteReceiptList",
