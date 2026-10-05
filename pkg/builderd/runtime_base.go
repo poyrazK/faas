@@ -13,6 +13,9 @@ import (
 // An explicit update target wins over daemon defaults. Errors are never
 // interpreted as an unpinned build, including failures reading the pin.
 func resolveDeploymentRuntimeBaseRef(ctx context.Context, store any, app state.App, dep state.Deployment, fw Framework, envLookup func(string) string) (string, error) {
+	if err := state.CheckDeploymentRuntimeUpgradeBaseline(ctx, store, dep.ID); err != nil {
+		return "", err
+	}
 	if targets, ok := store.(state.RuntimeUpgradeTargetStore); ok {
 		target, err := targets.DeploymentRuntimeUpgradeTarget(ctx, dep.ID)
 		if err != nil && !errors.Is(err, state.ErrNotFound) {

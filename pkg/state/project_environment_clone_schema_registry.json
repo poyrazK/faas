@@ -471,6 +471,35 @@
     "kind": "operational"
   },
   {
+    "table": "app_health_collection_state",
+    "columns": [
+      "account_id",
+      "app_id",
+      "assessment",
+      "assessment_key",
+      "checked_at",
+      "lease_started_at",
+      "lease_token",
+      "lease_until",
+      "next_check_at",
+      "notification_state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_health_history",
+    "columns": [
+      "account_id",
+      "app_id",
+      "encoded_bytes",
+      "entry",
+      "id",
+      "kind",
+      "observed_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_issue_impact_alert_policies",
     "columns": [
       "app_id",
@@ -1189,6 +1218,7 @@
       "plan",
       "railpack_version",
       "runner_digest",
+      "runtime_base_ref",
       "sbom_storage_key",
       "source_sha256",
       "source_url",
@@ -1920,6 +1950,35 @@
     "columns": [
       "deployment_id",
       "environment_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_runtime_upgrade_baselines",
+    "columns": [
+      "captured_at",
+      "configuration_fingerprint",
+      "deployment_id",
+      "input_fingerprint",
+      "input_secret_fingerprint",
+      "secret_fingerprint",
+      "serving_deployment_id",
+      "serving_rootfs_key",
+      "serving_runtime_release_id",
+      "target_release_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_runtime_upgrade_targets",
+    "columns": [
+      "deployment_id",
+      "handler",
+      "kind",
+      "release_id",
+      "source_bytes",
+      "source_root",
+      "source_sha256"
     ],
     "kind": "operational"
   },
@@ -6508,6 +6567,15 @@
     "kind": "operational"
   },
   {
+    "table": "runtime_artifact_bindings",
+    "columns": [
+      "account_id",
+      "release_id",
+      "rootfs_key"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "runtime_config_entries",
     "columns": [
       "actor_id",
@@ -6594,6 +6662,20 @@
       "wake_id"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "runtime_releases",
+    "columns": [
+      "architecture",
+      "base_sha256",
+      "created_at",
+      "guest_init_sha256",
+      "id",
+      "layout_version",
+      "runtime",
+      "source_ref"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "runtime_snapshots",

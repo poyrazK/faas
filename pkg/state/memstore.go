@@ -140,6 +140,7 @@ type MemStore struct {
 	runtimeReleases             map[string]RuntimeRelease
 	runtimeArtifactBindings     map[string]string
 	runtimeUpgradeTargets       map[string]runtimeUpgradeTarget
+	runtimeUpgradeBaselines     map[string]RuntimeUpgradeBaseline
 	operationData               *operationMemory
 	operationCodePins           map[string]time.Time
 	qualificationExecutions     map[string]EnvironmentQualificationExecutionStatus
@@ -9067,6 +9068,10 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 			return Deployment{}, ErrConflict
 		}
 		m.runtimeUpgradeTargets[newDep.ID] = pin
+	}
+	if baseline, ok := m.runtimeUpgradeBaselines[failedID]; ok {
+		baseline.DeploymentID = newDep.ID
+		m.runtimeUpgradeBaselines[newDep.ID] = baseline
 	}
 	m.putDeploymentLocked(newDep.ID, newDep)
 	return newDep, nil

@@ -4939,6 +4939,24 @@ func (q *Queries) CompleteWorkflowJoin(ctx context.Context, db DBTX, arg Complet
 	return err
 }
 
+const copyDeploymentRuntimeUpgradeBaseline = `-- name: CopyDeploymentRuntimeUpgradeBaseline :exec
+INSERT INTO deployment_runtime_upgrade_baselines(deployment_id,serving_deployment_id,serving_rootfs_key,serving_runtime_release_id,
+ target_release_id,configuration_fingerprint,secret_fingerprint,input_fingerprint,input_secret_fingerprint,captured_at)
+SELECT $1::uuid,serving_deployment_id,serving_rootfs_key,serving_runtime_release_id,
+ target_release_id,configuration_fingerprint,secret_fingerprint,input_fingerprint,input_secret_fingerprint,captured_at
+FROM deployment_runtime_upgrade_baselines WHERE deployment_id=$2::uuid
+`
+
+type CopyDeploymentRuntimeUpgradeBaselineParams struct {
+	TargetDeploymentID pgtype.UUID
+	SourceDeploymentID pgtype.UUID
+}
+
+func (q *Queries) CopyDeploymentRuntimeUpgradeBaseline(ctx context.Context, db DBTX, arg CopyDeploymentRuntimeUpgradeBaselineParams) error {
+	_, err := db.Exec(ctx, copyDeploymentRuntimeUpgradeBaseline, arg.TargetDeploymentID, arg.SourceDeploymentID)
+	return err
+}
+
 const copyDeploymentRuntimeUpgradeTarget = `-- name: CopyDeploymentRuntimeUpgradeTarget :exec
 INSERT INTO deployment_runtime_upgrade_targets(deployment_id,release_id,source_sha256,source_root,source_bytes,kind,handler)
 SELECT $1::uuid,release_id,source_sha256,source_root,source_bytes,kind,handler
@@ -13413,6 +13431,28 @@ func (q *Queries) GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UU
 	return i, err
 }
 
+const getDeploymentRuntimeUpgradeBaseline = `-- name: GetDeploymentRuntimeUpgradeBaseline :one
+SELECT deployment_id, serving_deployment_id, serving_rootfs_key, serving_runtime_release_id, target_release_id, configuration_fingerprint, secret_fingerprint, input_fingerprint, input_secret_fingerprint, captured_at FROM deployment_runtime_upgrade_baselines WHERE deployment_id=$1
+`
+
+func (q *Queries) GetDeploymentRuntimeUpgradeBaseline(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DeploymentRuntimeUpgradeBaseline, error) {
+	row := db.QueryRow(ctx, getDeploymentRuntimeUpgradeBaseline, deploymentID)
+	var i DeploymentRuntimeUpgradeBaseline
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.ServingRootfsKey,
+		&i.ServingRuntimeReleaseID,
+		&i.TargetReleaseID,
+		&i.ConfigurationFingerprint,
+		&i.SecretFingerprint,
+		&i.InputFingerprint,
+		&i.InputSecretFingerprint,
+		&i.CapturedAt,
+	)
+	return i, err
+}
+
 const getDeploymentRuntimeUpgradeTarget = `-- name: GetDeploymentRuntimeUpgradeTarget :one
 SELECT r.id, r.runtime, r.architecture, r.source_ref, r.guest_init_sha256, r.layout_version, r.base_sha256, r.created_at, (t.source_sha256=COALESCE(d.source_sha256,'') AND t.source_root=COALESCE(d.source_root,'')
  AND t.source_bytes=d.source_bytes AND t.kind=d.kind AND t.handler=COALESCE(d.handler,''))::boolean AS source_matches
@@ -15514,6 +15554,62 @@ func (q *Queries) InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg Inse
 		arg.ProbeNode,
 	)
 	return err
+}
+
+const insertDeploymentRuntimeUpgradeBaseline = `-- name: InsertDeploymentRuntimeUpgradeBaseline :one
+INSERT INTO deployment_runtime_upgrade_baselines(deployment_id,serving_deployment_id,serving_rootfs_key,serving_runtime_release_id,
+ target_release_id,configuration_fingerprint,secret_fingerprint,input_fingerprint,input_secret_fingerprint)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+ON CONFLICT(deployment_id) DO UPDATE SET deployment_id=deployment_runtime_upgrade_baselines.deployment_id
+WHERE deployment_runtime_upgrade_baselines.serving_deployment_id=EXCLUDED.serving_deployment_id
+ AND deployment_runtime_upgrade_baselines.serving_rootfs_key=EXCLUDED.serving_rootfs_key
+ AND deployment_runtime_upgrade_baselines.serving_runtime_release_id=EXCLUDED.serving_runtime_release_id
+ AND deployment_runtime_upgrade_baselines.target_release_id=EXCLUDED.target_release_id
+ AND deployment_runtime_upgrade_baselines.configuration_fingerprint=EXCLUDED.configuration_fingerprint
+ AND deployment_runtime_upgrade_baselines.secret_fingerprint=EXCLUDED.secret_fingerprint
+ AND deployment_runtime_upgrade_baselines.input_fingerprint=EXCLUDED.input_fingerprint
+ AND deployment_runtime_upgrade_baselines.input_secret_fingerprint=EXCLUDED.input_secret_fingerprint
+RETURNING deployment_id, serving_deployment_id, serving_rootfs_key, serving_runtime_release_id, target_release_id, configuration_fingerprint, secret_fingerprint, input_fingerprint, input_secret_fingerprint, captured_at
+`
+
+type InsertDeploymentRuntimeUpgradeBaselineParams struct {
+	DeploymentID             pgtype.UUID
+	ServingDeploymentID      pgtype.UUID
+	ServingRootfsKey         string
+	ServingRuntimeReleaseID  string
+	TargetReleaseID          string
+	ConfigurationFingerprint string
+	SecretFingerprint        string
+	InputFingerprint         string
+	InputSecretFingerprint   string
+}
+
+func (q *Queries) InsertDeploymentRuntimeUpgradeBaseline(ctx context.Context, db DBTX, arg InsertDeploymentRuntimeUpgradeBaselineParams) (DeploymentRuntimeUpgradeBaseline, error) {
+	row := db.QueryRow(ctx, insertDeploymentRuntimeUpgradeBaseline,
+		arg.DeploymentID,
+		arg.ServingDeploymentID,
+		arg.ServingRootfsKey,
+		arg.ServingRuntimeReleaseID,
+		arg.TargetReleaseID,
+		arg.ConfigurationFingerprint,
+		arg.SecretFingerprint,
+		arg.InputFingerprint,
+		arg.InputSecretFingerprint,
+	)
+	var i DeploymentRuntimeUpgradeBaseline
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.ServingDeploymentID,
+		&i.ServingRootfsKey,
+		&i.ServingRuntimeReleaseID,
+		&i.TargetReleaseID,
+		&i.ConfigurationFingerprint,
+		&i.SecretFingerprint,
+		&i.InputFingerprint,
+		&i.InputSecretFingerprint,
+		&i.CapturedAt,
+	)
+	return i, err
 }
 
 const insertEnvironmentDesiredRevision = `-- name: InsertEnvironmentDesiredRevision :one
@@ -30034,6 +30130,23 @@ func (q *Queries) LockRuntimeSecretSidecarSignals(ctx context.Context, db DBTX, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockRuntimeUpgradeBaselineCandidate = `-- name: LockRuntimeUpgradeBaselineCandidate :one
+SELECT d.id FROM deployments d
+WHERE d.id=$1::uuid AND d.status='pending'
+ AND d.traffic_percent=0 AND d.traffic_percent_explicit
+ AND COALESCE(d.rootfs_key,'')='' AND COALESCE(d.rootfs_path,'')='' AND d.image_digest=''
+ AND EXISTS (SELECT 1 FROM deployment_runtime_upgrade_targets t WHERE t.deployment_id=d.id)
+ AND NOT EXISTS (SELECT 1 FROM builds b WHERE b.deployment_id=d.id)
+FOR UPDATE OF d
+`
+
+func (q *Queries) LockRuntimeUpgradeBaselineCandidate(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRuntimeUpgradeBaselineCandidate, deploymentID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockRuntimeUpgradeTargetApp = `-- name: LockRuntimeUpgradeTargetApp :one
@@ -46340,6 +46453,78 @@ func (q *Queries) ReadRuntimeSecretDeliveryVersions(ctx context.Context, db DBTX
 	for rows.Next() {
 		var i ReadRuntimeSecretDeliveryVersionsRow
 		if err := rows.Scan(&i.Key, &i.DeliveryVersion); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRuntimeUpgradeBaselineDeployments = `-- name: ReadRuntimeUpgradeBaselineDeployments :many
+SELECT d.id::text AS id, d.app_id::text AS app_id, COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
+ d.status,d.source_bytes,COALESCE(d.source_root,'')::text AS source_root,d.traffic_percent,d.traffic_percent_explicit,
+ d.min_instances,d.canary_total_steps,d.canary_preset,d.canary_stages,d.rollout_state,d.deleted_at,d.environment_workload_runtime,
+ (to_jsonb(d)||jsonb_build_object('secret_reload_signal_known',d.secret_reload_signal IS NOT NULL))::jsonb AS artifact
+FROM deployments d JOIN deployments candidate ON candidate.app_id=d.app_id
+WHERE candidate.id=$1::uuid
+ AND (d.id=candidate.id OR d.id=$2::uuid OR d.status='live')
+ORDER BY d.id
+`
+
+type ReadRuntimeUpgradeBaselineDeploymentsParams struct {
+	DeploymentID        pgtype.UUID
+	ServingDeploymentID pgtype.UUID
+}
+
+type ReadRuntimeUpgradeBaselineDeploymentsRow struct {
+	ID                         string
+	AppID                      string
+	Scope                      string
+	Status                     string
+	SourceBytes                pgtype.Int8
+	SourceRoot                 string
+	TrafficPercent             int32
+	TrafficPercentExplicit     bool
+	MinInstances               int32
+	CanaryTotalSteps           int32
+	CanaryPreset               string
+	CanaryStages               []byte
+	RolloutState               string
+	DeletedAt                  pgtype.Timestamptz
+	EnvironmentWorkloadRuntime []byte
+	Artifact                   []byte
+}
+
+func (q *Queries) ReadRuntimeUpgradeBaselineDeployments(ctx context.Context, db DBTX, arg ReadRuntimeUpgradeBaselineDeploymentsParams) ([]ReadRuntimeUpgradeBaselineDeploymentsRow, error) {
+	rows, err := db.Query(ctx, readRuntimeUpgradeBaselineDeployments, arg.DeploymentID, arg.ServingDeploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadRuntimeUpgradeBaselineDeploymentsRow{}
+	for rows.Next() {
+		var i ReadRuntimeUpgradeBaselineDeploymentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Scope,
+			&i.Status,
+			&i.SourceBytes,
+			&i.SourceRoot,
+			&i.TrafficPercent,
+			&i.TrafficPercentExplicit,
+			&i.MinInstances,
+			&i.CanaryTotalSteps,
+			&i.CanaryPreset,
+			&i.CanaryStages,
+			&i.RolloutState,
+			&i.DeletedAt,
+			&i.EnvironmentWorkloadRuntime,
+			&i.Artifact,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

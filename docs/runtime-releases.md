@@ -46,9 +46,18 @@ build root, handler and selected runtime ID. Builderd uses that release's OCI
 source; imaged reuses its exact base bytes even if the installed guest-init or
 daemon defaults change. Failed-build retries retain the same target. Missing
 or mismatched source, runtime or scan evidence blocks preparation. This
-contract does not yet capture configuration/secrets or authorize activation,
-so the API, CLI and console continue to offer read-only previews. See
+contract does not authorize activation, so the API, CLI and console continue
+to offer read-only previews. See
 [ADR-597](adr/597-runtime-upgrade-build-targets.md).
+
+Internal preparation can now capture the serving artifact and configuration
+and secret-version fingerprints before queueing an explicit zero-traffic
+candidate. Build and image preparation refuse a changed serving deployment,
+configuration or secret input. Retries retain the original review; they cannot
+silently adopt new values. Secret values are not copied or restored by this
+record. Activation still needs target qualification, fresh cold boot/readiness
+and baseline checks inside guarded cutover. See
+[ADR-598](adr/598-runtime-upgrade-baselines.md).
 
 REST reads: `GET /v1/deployments/{id}/runtime` and
 `GET /v1/deployments/{id}/runtime/upgrade-preview?target=RELEASE_ID`.

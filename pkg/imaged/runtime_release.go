@@ -98,6 +98,9 @@ func (h *Handler) prepareFunctionRuntimeRelease(ctx context.Context, app state.A
 }
 
 func (h *Handler) explicitRuntimeUpgradeTarget(ctx context.Context, app state.App, dep state.Deployment, runtime string) (*state.RuntimeRelease, error) {
+	if err := state.CheckDeploymentRuntimeUpgradeBaseline(ctx, h.store, dep.ID); err != nil {
+		return nil, err
+	}
 	targets, ok := h.store.(state.RuntimeUpgradeTargetStore)
 	if !ok {
 		return nil, nil

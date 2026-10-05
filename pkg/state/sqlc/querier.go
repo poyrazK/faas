@@ -209,6 +209,7 @@ type Querier interface {
 	CompleteServiceRecovery(ctx context.Context, db DBTX, arg CompleteServiceRecoveryParams) (int64, error)
 	CompleteWorkflowForEach(ctx context.Context, db DBTX, arg CompleteWorkflowForEachParams) error
 	CompleteWorkflowJoin(ctx context.Context, db DBTX, arg CompleteWorkflowJoinParams) error
+	CopyDeploymentRuntimeUpgradeBaseline(ctx context.Context, db DBTX, arg CopyDeploymentRuntimeUpgradeBaselineParams) error
 	CopyDeploymentRuntimeUpgradeTarget(ctx context.Context, db DBTX, arg CopyDeploymentRuntimeUpgradeTargetParams) error
 	// Values and source versions stay in app_secrets; references receive a new
 	// catalog identity. Ownership and runtime evidence are deliberately absent.
@@ -623,6 +624,7 @@ type Querier interface {
 	// column (issue #954) so the typed DataUpstream.DeploymentScope
 	// in pkg/state/types.go round-trips through sqlc.
 	GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UUID) (GetDataUpstreamByIDRow, error)
+	GetDeploymentRuntimeUpgradeBaseline(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DeploymentRuntimeUpgradeBaseline, error)
 	GetDeploymentRuntimeUpgradeTarget(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (GetDeploymentRuntimeUpgradeTargetRow, error)
 	GetEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg GetEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error)
 	GetEnvironmentGitOpsScope(ctx context.Context, db DBTX, sourceID pgtype.UUID) (GetEnvironmentGitOpsScopeRow, error)
@@ -807,6 +809,7 @@ type Querier interface {
 	// path; the partition creator (PR-C) drops old
 	// partitions wholesale.
 	InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg InsertDataUpstreamProbeParams) error
+	InsertDeploymentRuntimeUpgradeBaseline(ctx context.Context, db DBTX, arg InsertDeploymentRuntimeUpgradeBaselineParams) (DeploymentRuntimeUpgradeBaseline, error)
 	InsertEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg InsertEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error)
 	InsertEnvironmentGitOpsConfig(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsConfigParams) error
 	InsertEnvironmentGitOpsEffect(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsEffectParams) error
@@ -1493,6 +1496,7 @@ type Querier interface {
 	LockRuntimeSecretOwner(ctx context.Context, db DBTX, arg LockRuntimeSecretOwnerParams) (LockRuntimeSecretOwnerRow, error)
 	LockRuntimeSecretRows(ctx context.Context, db DBTX, arg LockRuntimeSecretRowsParams) ([]string, error)
 	LockRuntimeSecretSidecarSignals(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
+	LockRuntimeUpgradeBaselineCandidate(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
 	// Runtime update preparation: lock in the app -> deployment order used by
 	// queue admission, so pinning cannot race a claimed or queued build (ADR-597).
 	LockRuntimeUpgradeTargetApp(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
@@ -2090,6 +2094,7 @@ type Querier interface {
 	ReadRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg ReadRuntimeInstanceConfigProofParams) (ReadRuntimeInstanceConfigProofRow, error)
 	ReadRuntimeScalingStateForDeployment(ctx context.Context, db DBTX, arg ReadRuntimeScalingStateForDeploymentParams) (ReadRuntimeScalingStateForDeploymentRow, error)
 	ReadRuntimeSecretDeliveryVersions(ctx context.Context, db DBTX, arg ReadRuntimeSecretDeliveryVersionsParams) ([]ReadRuntimeSecretDeliveryVersionsRow, error)
+	ReadRuntimeUpgradeBaselineDeployments(ctx context.Context, db DBTX, arg ReadRuntimeUpgradeBaselineDeploymentsParams) ([]ReadRuntimeUpgradeBaselineDeploymentsRow, error)
 	// Saved route intent is read with the same app ownership filters (ADR-448).
 	ReadSavedRouteRequirements(ctx context.Context, db DBTX, arg ReadSavedRouteRequirementsParams) ([]byte, error)
 	ReadSnapshotGarbageCollection(ctx context.Context, db DBTX, arg ReadSnapshotGarbageCollectionParams) ([]ReadSnapshotGarbageCollectionRow, error)

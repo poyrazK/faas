@@ -13943,3 +13943,47 @@ WHERE t.deployment_id=sqlc.arg(deployment_id)::uuid;
 INSERT INTO deployment_runtime_upgrade_targets(deployment_id,release_id,source_sha256,source_root,source_bytes,kind,handler)
 SELECT sqlc.arg(target_deployment_id)::uuid,release_id,source_sha256,source_root,source_bytes,kind,handler
 FROM deployment_runtime_upgrade_targets WHERE deployment_id=sqlc.arg(source_deployment_id)::uuid;
+
+-- name: LockRuntimeUpgradeBaselineCandidate :one
+SELECT d.id FROM deployments d
+WHERE d.id=sqlc.arg(deployment_id)::uuid AND d.status='pending'
+ AND d.traffic_percent=0 AND d.traffic_percent_explicit
+ AND COALESCE(d.rootfs_key,'')='' AND COALESCE(d.rootfs_path,'')='' AND d.image_digest=''
+ AND EXISTS (SELECT 1 FROM deployment_runtime_upgrade_targets t WHERE t.deployment_id=d.id)
+ AND NOT EXISTS (SELECT 1 FROM builds b WHERE b.deployment_id=d.id)
+FOR UPDATE OF d;
+
+-- name: ReadRuntimeUpgradeBaselineDeployments :many
+SELECT d.id::text AS id, d.app_id::text AS app_id, COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
+ d.status,d.source_bytes,COALESCE(d.source_root,'')::text AS source_root,d.traffic_percent,d.traffic_percent_explicit,
+ d.min_instances,d.canary_total_steps,d.canary_preset,d.canary_stages,d.rollout_state,d.deleted_at,d.environment_workload_runtime,
+ (to_jsonb(d)||jsonb_build_object('secret_reload_signal_known',d.secret_reload_signal IS NOT NULL))::jsonb AS artifact
+FROM deployments d JOIN deployments candidate ON candidate.app_id=d.app_id
+WHERE candidate.id=sqlc.arg(deployment_id)::uuid
+ AND (d.id=candidate.id OR d.id=sqlc.arg(serving_deployment_id)::uuid OR d.status='live')
+ORDER BY d.id;
+
+-- name: InsertDeploymentRuntimeUpgradeBaseline :one
+INSERT INTO deployment_runtime_upgrade_baselines(deployment_id,serving_deployment_id,serving_rootfs_key,serving_runtime_release_id,
+ target_release_id,configuration_fingerprint,secret_fingerprint,input_fingerprint,input_secret_fingerprint)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+ON CONFLICT(deployment_id) DO UPDATE SET deployment_id=deployment_runtime_upgrade_baselines.deployment_id
+WHERE deployment_runtime_upgrade_baselines.serving_deployment_id=EXCLUDED.serving_deployment_id
+ AND deployment_runtime_upgrade_baselines.serving_rootfs_key=EXCLUDED.serving_rootfs_key
+ AND deployment_runtime_upgrade_baselines.serving_runtime_release_id=EXCLUDED.serving_runtime_release_id
+ AND deployment_runtime_upgrade_baselines.target_release_id=EXCLUDED.target_release_id
+ AND deployment_runtime_upgrade_baselines.configuration_fingerprint=EXCLUDED.configuration_fingerprint
+ AND deployment_runtime_upgrade_baselines.secret_fingerprint=EXCLUDED.secret_fingerprint
+ AND deployment_runtime_upgrade_baselines.input_fingerprint=EXCLUDED.input_fingerprint
+ AND deployment_runtime_upgrade_baselines.input_secret_fingerprint=EXCLUDED.input_secret_fingerprint
+RETURNING *;
+
+-- name: GetDeploymentRuntimeUpgradeBaseline :one
+SELECT * FROM deployment_runtime_upgrade_baselines WHERE deployment_id=$1;
+
+-- name: CopyDeploymentRuntimeUpgradeBaseline :exec
+INSERT INTO deployment_runtime_upgrade_baselines(deployment_id,serving_deployment_id,serving_rootfs_key,serving_runtime_release_id,
+ target_release_id,configuration_fingerprint,secret_fingerprint,input_fingerprint,input_secret_fingerprint,captured_at)
+SELECT sqlc.arg(target_deployment_id)::uuid,serving_deployment_id,serving_rootfs_key,serving_runtime_release_id,
+ target_release_id,configuration_fingerprint,secret_fingerprint,input_fingerprint,input_secret_fingerprint,captured_at
+FROM deployment_runtime_upgrade_baselines WHERE deployment_id=sqlc.arg(source_deployment_id)::uuid;

@@ -1,4 +1,5 @@
 // adr: 590
+// adr: 598
 package state
 
 import (
@@ -79,6 +80,12 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"invocation_environment_queue_admissions": CloneSchemaOperational,
 		"invocation_environment_queue_receipts":   CloneSchemaOperational,
 		"deployment_runtime_environment_owners":   CloneSchemaOperational,
+		"app_health_collection_state":             CloneSchemaOperational,
+		"app_health_history":                      CloneSchemaOperational,
+		"runtime_releases":                        CloneSchemaPlatform,
+		"runtime_artifact_bindings":               CloneSchemaOperational,
+		"deployment_runtime_upgrade_targets":      CloneSchemaOperational,
+		"deployment_runtime_upgrade_baselines":    CloneSchemaOperational,
 		"invocation_work_environment_domains":     CloneSchemaOperational, "invocation_work_environment_admissions": CloneSchemaOperational,
 		"project_environment_queue_runtime_sets": CloneSchemaOperational, "project_environment_queue_consumers": CloneSchemaOperational,
 		"feature_flag_versions":           CloneSchemaConfiguration,
