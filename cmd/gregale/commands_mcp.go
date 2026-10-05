@@ -239,15 +239,18 @@ func mcpSafeTerminalText(value string) string {
 				state = plain
 			}
 		case stringSequence:
-			if r == '\a' {
+			switch r {
+			case '\a':
 				state = plain
-			} else if r == '\x1b' {
+			case '\x1b':
 				state = stringEscape
 			}
 		case stringEscape:
-			if r == '\\' || r == '\a' {
+			switch r {
+			case '\\', '\a':
 				state = plain
-			} else if r != '\x1b' {
+			case '\x1b':
+			default:
 				state = stringSequence
 			}
 		}
@@ -370,10 +373,6 @@ func cmdMCPRemote(command string, args []string) int {
 		}
 	}
 	return runMCPRemoteWithResponder(ctx, command, c, *legacy, *tool, *streamTool, *name, arguments, responder)
-}
-
-func runMCPRemote(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name string, args map[string]any) int {
-	return runMCPRemoteWithResponder(ctx, command, c, legacy, tool, streamTool, name, args, nil)
 }
 
 func runMCPRemoteWithResponder(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name string, args map[string]any, respond mcphosting.InputResponder) int {
