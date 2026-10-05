@@ -67,6 +67,14 @@ func (h HTTPHooks) ReplayCallbackDeadLetter(id string) error {
 	return h.DurableQueue.ReplayDeadLetter(id)
 }
 
+// DiscardCallbackDeadLetter deletes one retained event after operator review.
+func (h HTTPHooks) DiscardCallbackDeadLetter(id string) error {
+	if h.DurableQueue == nil {
+		return ErrCallbackOutboxUnavailable
+	}
+	return h.DurableQueue.DiscardDeadLetter(id)
+}
+
 func (h HTTPHooks) enqueueAndClaim(ctx context.Context, event Event) (bool, error) {
 	for {
 		claimed, err := h.DurableQueue.EnqueueAndClaim(event)
@@ -594,6 +602,7 @@ func (m *Manager) internalHandler() http.Handler {
 type callbackDeadLetterManagement interface {
 	ListCallbackDeadLetters(after string, limit int) (CallbackDeadLetterPage, error)
 	ReplayCallbackDeadLetter(id string) error
+	DiscardCallbackDeadLetter(id string) error
 }
 
 func (m *Manager) handleCallbackDeadLetters(w http.ResponseWriter, r *http.Request) {
@@ -629,11 +638,11 @@ func (m *Manager) handleCallbackDeadLetterRoute(w http.ResponseWriter, r *http.R
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !strings.HasSuffix(path, ":replay") {
+	id, action, found := strings.Cut(path, ":")
+	if !found || (action != "replay" && action != "discard") {
 		http.NotFound(w, r)
 		return
 	}
-	id := strings.TrimSuffix(path, ":replay")
 	if !validCallbackOutboxID(id) {
 		http.Error(w, "invalid callback dead-letter id", http.StatusBadRequest)
 		return
@@ -641,6 +650,14 @@ func (m *Manager) handleCallbackDeadLetterRoute(w http.ResponseWriter, r *http.R
 	hooks, ok := m.hooks.(callbackDeadLetterManagement)
 	if !ok {
 		writeCallbackDeadLetterError(w, ErrCallbackOutboxUnavailable)
+		return
+	}
+	if action == "discard" {
+		if err := hooks.DiscardCallbackDeadLetter(id); err != nil {
+			writeCallbackDeadLetterError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "discarded"})
 		return
 	}
 	if err := hooks.ReplayCallbackDeadLetter(id); err != nil {
