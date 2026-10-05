@@ -406,6 +406,15 @@ type Querier interface {
 	EventRecipientReplayReceipt(ctx context.Context, db DBTX, arg EventRecipientReplayReceiptParams) (EventRecipientReplayReceiptRow, error)
 	EventRecipientSettleReceipt(ctx context.Context, db DBTX, id int64) error
 	EventRecipientUpdateProgress(ctx context.Context, db DBTX, arg EventRecipientUpdateProgressParams) error
+	// Evaluate the wall clock only after all admission locks have been acquired.
+	EventRoutingClaimValid(ctx context.Context, db DBTX, arg EventRoutingClaimValidParams) (bool, error)
+	EventRoutingLockApp(ctx context.Context, db DBTX, arg EventRoutingLockAppParams) (pgtype.UUID, error)
+	EventRoutingLockReceipt(ctx context.Context, db DBTX, id int64) (EventFanoutOutbox, error)
+	EventRoutingLockRecipient(ctx context.Context, db DBTX, arg EventRoutingLockRecipientParams) (EventFanoutRecipient, error)
+	EventRoutingReceipt(ctx context.Context, db DBTX, id int64) (EventFanoutOutbox, error)
+	// An uncertain commit response must not overwrite its durable admission proof.
+	EventRoutingRecordProgress(ctx context.Context, db DBTX, arg EventRoutingRecordProgressParams) (string, error)
+	EventRoutingSettleSnapshot(ctx context.Context, db DBTX, id int64) (int64, error)
 	ExclusiveWorkAppScope(ctx context.Context, db DBTX, arg ExclusiveWorkAppScopeParams) (ExclusiveWorkAppScopeRow, error)
 	ExclusiveWorkClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	ExclusiveWorkEnvironmentScope(ctx context.Context, db DBTX, arg ExclusiveWorkEnvironmentScopeParams) (string, error)
@@ -2186,6 +2195,15 @@ type Querier interface {
 	// refreshed on every pass and backs the dashboard's since filter.
 	UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error
 	UsageByMonth(ctx context.Context, db DBTX, arg UsageByMonthParams) ([]UsageByMonthRow, error)
+	WorkAdmissionCancel(ctx context.Context, db DBTX, arg WorkAdmissionCancelParams) (int64, error)
+	WorkAdmissionCancelBroker(ctx context.Context, db DBTX, arg WorkAdmissionCancelBrokerParams) (int64, error)
+	WorkAdmissionCancellation(ctx context.Context, db DBTX, id pgtype.UUID) (InvocationWorkCancellation, error)
+	WorkAdmissionEnsureLane(ctx context.Context, db DBTX, arg WorkAdmissionEnsureLaneParams) error
+	WorkAdmissionFinishCancellation(ctx context.Context, db DBTX, arg WorkAdmissionFinishCancellationParams) (InvocationWorkCancellation, error)
+	WorkAdmissionInsertCancellation(ctx context.Context, db DBTX, arg WorkAdmissionInsertCancellationParams) (pgtype.UUID, error)
+	WorkAdmissionInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error)
+	WorkAdmissionSupersede(ctx context.Context, db DBTX, arg WorkAdmissionSupersedeParams) error
+	WorkAdmissionSupersedeBroker(ctx context.Context, db DBTX, arg WorkAdmissionSupersedeBrokerParams) error
 	WorkerAdmissionCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	WorkerAdmissionLockAccount(ctx context.Context, db DBTX, arg WorkerAdmissionLockAccountParams) (WorkerAdmissionLockAccountRow, error)
 	WorkerPoolHistory(ctx context.Context, db DBTX, arg WorkerPoolHistoryParams) (WorkerPoolHistoryRow, error)

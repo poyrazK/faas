@@ -1020,7 +1020,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  trap 'rm -rf "$$tmp"' EXIT; \
 	  mkdir -p "$$tmp/pkg/state"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
-	  cp pkg/state/queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/plain_replay_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/state/queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/plain_replay_queries.sql pkg/state/work_admission_queries.sql "$$tmp/pkg/state/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
 	  diff -r pkg/state/sqlc "$$tmp/pkg/state/sqlc" || \
 	    { echo "sqlc-check: generated pkg/state/sqlc/*.go is out of sync with queries.sql or schema.sql; run 'make sqlc-generate' and commit the diff"; exit 1; }

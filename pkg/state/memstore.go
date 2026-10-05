@@ -12644,6 +12644,10 @@ func (m *MemStore) EnqueueInvocation(_ context.Context, inv Invocation) (Invocat
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.enqueueInvocationLocked(inv)
+}
+
+func (m *MemStore) enqueueInvocationLocked(inv Invocation) (Invocation, error) {
 	if _, ok := m.apps[inv.AppID]; !ok {
 		return Invocation{}, fmt.Errorf("state: invocation for unknown app %q", inv.AppID)
 	}

@@ -592,6 +592,17 @@ that candidate. Retries are capped at 12; terminal routing failures remain on
 the outbox receipt and are logged by the scheduler. Once an invocation is
 enqueued, its handler retry and dead-letter lifecycle applies independently.
 
+Snapshot-backed application routing admits the invocation or work-policy
+cancellation and records success in one transaction. An expired routing worker
+cannot enqueue, supersede or cancel work. Recovery after an uncertain commit
+uses the stored checkpoint, including after delivery rows are pruned; it cannot
+admit another delivery or cancel work created later while the receipt is retained.
+This applies to both whole-event and independent-recipient routing once every
+scheduler is upgraded. Older receipts without snapshots and specialized object
+notification destinations keep their existing routing paths. See
+[ADR-588](adr/588-atomic-event-routing-handoff.md) for the transaction and upgrade
+boundary. Handler side effects still require application deduplication.
+
 When operators enable independent recipient routing (ADR-581), each captured
 candidate has its own five-minute lease and backoff from five seconds to five
 minutes. A terminal recipient can be replayed while its siblings are routing

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -286,30 +287,17 @@ func (s *PgStore) RecordPublishedEventRecipientProgress(ctx context.Context, id 
 		return fmt.Errorf("begin published event recipient progress: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
-	var appID string
-	err = tx.QueryRow(ctx, `UPDATE event_fanout_outbox AS o
-		SET recipient_progress = jsonb_set(o.recipient_progress, ARRAY[$3::text], $4::jsonb, true),
-		    last_error = CASE WHEN $4::jsonb->>'state' = 'failed'
-		        THEN left('subscription ' || $3 || ': ' || coalesce($4::jsonb->>'last_error', 'recipient failed'), 1024)
-		        ELSE o.last_error END
-		WHERE o.id = $1 AND o.claim_token = $2::uuid AND o.state = 'processing'
-		  AND EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) AS recipients(recipient)
-		              WHERE recipient->>'id' = $3)
-		RETURNING (SELECT recipient->>'app_id'
-		          FROM jsonb_array_elements(o.recipient_snapshot) AS recipients(recipient)
-		          WHERE recipient->>'id' = $3 LIMIT 1)`, id, token, recipientID, encoded).Scan(&appID)
+	q := sqlc.New()
+	appID, err := q.EventRoutingRecordProgress(ctx, tx, sqlc.EventRoutingRecordProgressParams{
+		ID: id, ClaimToken: mustPgUUID(token), SubscriptionID: recipientID, Progress: encoded,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConflict
 	}
 	if err != nil {
 		return fmt.Errorf("record published event recipient progress: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO event_fanout_attempt_history
-		(outbox_id, app_id, subscription_id, action, state, attempts,
-		 failure_code, retryable, last_error, occurred_at)
-		VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		id, appID, recipientID, EventFanoutAttemptActionAttempt, progress.State,
-		progress.Attempts, progress.FailureCode, progress.Retryable, progress.LastError, progress.UpdatedAt); err != nil {
+	if err := appendEventRecipientHistory(ctx, q, tx, id, appID, recipientID, EventFanoutAttemptActionAttempt, progress); err != nil {
 		return fmt.Errorf("append published event recipient attempt: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -737,7 +725,7 @@ func (m *MemStore) RecordPublishedEventRecipientProgress(_ context.Context, id i
 		if work.ID != id {
 			continue
 		}
-		if work.ClaimToken != token || token == "" || work.Delivered {
+		if work.ClaimToken != token || token == "" || work.Delivered || work.RecipientClaims || !work.LeaseUntil.After(time.Now().UTC()) || routingAdmissionRecorded(work.RecipientProgress[recipientID]) {
 			return ErrConflict
 		}
 		found := false

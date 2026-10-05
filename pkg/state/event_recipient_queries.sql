@@ -5,6 +5,51 @@ WHERE id = sqlc.arg(id)::bigint AND NOT recipient_claims
   AND state = 'processing' AND claim_token = sqlc.arg(claim_token)::uuid
   AND lease_until > clock_timestamp() AND recipient_snapshot IS NOT NULL;
 
+-- name: EventRoutingReceipt :one
+SELECT * FROM event_fanout_outbox WHERE id=sqlc.arg(id)::bigint;
+
+-- name: EventRoutingLockReceipt :one
+SELECT * FROM event_fanout_outbox WHERE id=sqlc.arg(id)::bigint FOR UPDATE;
+
+-- name: EventRoutingLockRecipient :one
+SELECT * FROM event_fanout_recipients
+WHERE outbox_id=sqlc.arg(outbox_id)::bigint AND subscription_id=sqlc.arg(subscription_id)::text FOR UPDATE;
+
+-- name: EventRoutingLockApp :one
+SELECT id FROM apps WHERE id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid
+    AND status <> 'deleted' FOR SHARE;
+
+-- name: EventRoutingClaimValid :one
+-- Evaluate the wall clock only after all admission locks have been acquired.
+SELECT CASE WHEN o.recipient_claims THEN EXISTS (
+    SELECT 1 FROM event_fanout_recipients r WHERE r.outbox_id=o.id
+      AND r.subscription_id=sqlc.arg(subscription_id)::text AND r.state='processing'
+      AND r.generation=sqlc.arg(generation)::bigint AND r.claim_token=sqlc.arg(claim_token)::uuid
+      AND r.lease_until>clock_timestamp())
+    ELSE sqlc.arg(generation)::bigint=0 AND o.state='processing'
+      AND o.claim_token=sqlc.arg(claim_token)::uuid AND o.lease_until>clock_timestamp() END::boolean AS valid
+FROM event_fanout_outbox o WHERE o.id=sqlc.arg(id)::bigint;
+
+-- name: EventRoutingSettleSnapshot :one
+UPDATE event_fanout_outbox o SET state='delivered',delivered_at=clock_timestamp(),claim_token=NULL,lease_until=NULL
+WHERE o.id=sqlc.arg(id)::bigint AND NOT o.recipient_claims
+  AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) r
+    WHERE coalesce(o.recipient_progress -> (r->>'id')->>'state','pending') NOT IN ('enqueued','filtered','failed'))
+RETURNING id;
+
+-- name: EventRoutingRecordProgress :one
+-- An uncertain commit response must not overwrite its durable admission proof.
+UPDATE event_fanout_outbox o
+SET recipient_progress=jsonb_set(o.recipient_progress,ARRAY[sqlc.arg(subscription_id)::text],sqlc.arg(progress)::jsonb,true),
+    last_error=CASE WHEN sqlc.arg(progress)::jsonb->>'state'='failed'
+      THEN left('subscription ' || sqlc.arg(subscription_id)::text || ': ' || coalesce(sqlc.arg(progress)::jsonb->>'last_error','recipient failed'),1024)
+      ELSE o.last_error END
+WHERE o.id=sqlc.arg(id)::bigint AND o.claim_token=sqlc.arg(claim_token)::uuid
+    AND o.state='processing' AND NOT o.recipient_claims AND o.lease_until>clock_timestamp()
+    AND coalesce(o.recipient_progress->sqlc.arg(subscription_id)::text->>'state','pending') NOT IN ('enqueued','filtered')
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) r WHERE r->>'id'=sqlc.arg(subscription_id)::text)
+RETURNING (SELECT r->>'app_id' FROM jsonb_array_elements(o.recipient_snapshot) r WHERE r->>'id'=sqlc.arg(subscription_id)::text LIMIT 1)::text AS app_id;
+
 -- name: EventRecipientInsert :exec
 INSERT INTO event_fanout_recipients
     (outbox_id, subscription_id, app_id, recipient, state, attempts, total_attempts, available_at)

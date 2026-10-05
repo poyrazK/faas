@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -143,100 +141,21 @@ func (m *MemStore) ExpirePendingKeyedInvocations(_ context.Context, now time.Tim
 // repeated producer ID returns its original row without replacing later work.
 // The selector is resolved by the producer; only its digest reaches storage.
 func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error) {
-	if inv.DeploymentScope != "" && api.ValidateScope(inv.DeploymentScope) != nil {
-		return Invocation{}, ErrInvalidArgument
-	}
-	if err := policy.Validate(); err != nil {
-		return Invocation{}, err
-	}
-	digest, err := workpolicy.DigestKey(canonicalKey)
+	inv, err := prepareKeyedInvocation(inv, policy, canonicalKey, fairnessKeys)
 	if err != nil {
 		return Invocation{}, err
 	}
-	fairnessDigest, err := workFairnessDigest(policy, canonicalKey, fairnessKeys)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Invocation{}, err
-	}
-	if inv.ID == "" {
-		inv.ID = uuid.NewString()
-	} else if _, err := uuid.Parse(inv.ID); err != nil {
-		return Invocation{}, fmt.Errorf("state: invocation id: %w", err)
-	}
-	if inv.AppID == "" || inv.AccountID == "" {
-		return Invocation{}, fmt.Errorf("state: keyed invocation requires app and account")
-	}
-	if inv.State != "" && inv.State != InvocationPending {
-		return Invocation{}, fmt.Errorf("state: keyed invocation must start pending")
-	}
-	inv.WorkPolicyName = policy.Name
-	inv.WorkKeyDigest = digest[:]
-	inv.WorkFairnessDigest = fairnessDigest
-	inv.WorkFairnessLimit = policy.MaxRunningPerFairnessKey
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return Invocation{}, fmt.Errorf("state: keyed enqueue begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	// The lane row is both a durable sequence and the serialization lock
-	// shared with every keyed claim. Its lock order is lane then account cap.
-	if _, err := tx.Exec(ctx, `
-		insert into invocation_work_lanes (app_id, policy_name, key_digest)
-		values ($1, $2, $3) on conflict do nothing`, inv.AppID, policy.Name, digest[:]); err != nil {
-		return Invocation{}, fmt.Errorf("state: keyed enqueue lane: %w", err)
-	}
-	var sequence int64
-	if err := tx.QueryRow(ctx, `
-		select next_sequence from invocation_work_lanes
-		where app_id = $1 and policy_name = $2 and key_digest = $3
-		for update`, inv.AppID, policy.Name, digest[:]).Scan(&sequence); err != nil {
-		return Invocation{}, fmt.Errorf("state: keyed enqueue lock: %w", err)
-	}
-	existing, err := scanInvocation(tx.QueryRow(ctx, `select `+invocationSelectCols+` from invocations where id = $1`, inv.ID))
-	if err == nil {
-		if existing.AppID != inv.AppID || existing.PlatformTenantID != inv.PlatformTenantID || existing.WorkPolicyName != policy.Name ||
-			!bytes.Equal(existing.WorkKeyDigest, digest[:]) || inv.DeploymentScope != "" && existing.DeploymentScope != inv.DeploymentScope ||
-			inv.QueueBindingID != "" && canonicalMemUUID(existing.QueueBindingID) != canonicalMemUUID(inv.QueueBindingID) {
-			return Invocation{}, ErrConflict
-		}
-		return existing, nil
-	}
-	if !errors.Is(err, ErrNotFound) {
-		return Invocation{}, fmt.Errorf("state: keyed enqueue idempotency: %w", err)
-	}
-	now := time.Now().UTC()
-	inv.CreatedAt = now
-	inv.DueAt = policy.AvailableAt(now, inv.DueAt)
-	inv.WorkExpiresAt = policy.ExpiresAt(now)
-	inv.WorkSequence = sequence
-	if policy.PendingUpdates == workpolicy.PendingKeepLatest {
-		if _, err := tx.Exec(ctx, `
-			update invocations set state = 'superseded', outcome = 'superseded', completed_at = now(),
-			       last_error = 'superseded by newer work'
-			where app_id = $1 and work_policy_name = $2 and work_key_digest = $3
-			  and state = 'pending'`, inv.AppID, policy.Name, digest[:]); err != nil {
-			return Invocation{}, fmt.Errorf("state: keyed enqueue supersede: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `update trigger_records tr
-			set state='superseded', last_error='superseded by newer work',
-			claim_expires_at=null
-			from triggers t where t.id=tr.trigger_id and t.app_id=$1
-			  and tr.work_policy_name=$2 and tr.work_key_digest=$3
-			  and tr.state in ('pending','retry')`, inv.AppID, policy.Name, digest[:]); err != nil {
-			return Invocation{}, fmt.Errorf("state: keyed enqueue supersede broker records: %w", err)
-		}
-	}
-	if _, err := tx.Exec(ctx, `
-		update invocation_work_lanes set next_sequence = next_sequence + 1
-		where app_id = $1 and policy_name = $2 and key_digest = $3`,
-		inv.AppID, policy.Name, digest[:]); err != nil {
-		return Invocation{}, fmt.Errorf("state: keyed enqueue sequence: %w", err)
-	}
-	out, err := enqueueInvocationRow(ctx, tx, inv)
+	out, _, err := enqueueKeyedInvocationTx(ctx, tx, inv, policy)
 	if err != nil {
 		return Invocation{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Invocation{}, fmt.Errorf("state: keyed enqueue commit: %w", err)
+		return Invocation{}, err
 	}
 	return out, nil
 }
@@ -345,6 +264,12 @@ func lockFairnessClaimTx(ctx context.Context, tx pgx.Tx, appID, policyName strin
 }
 
 func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.enqueueKeyedInvocationLocked(inv, policy, canonicalKey, fairnessKeys...)
+}
+
+func (m *MemStore) enqueueKeyedInvocationLocked(inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error) {
 	requestedScope := inv.DeploymentScope
 	if err := policy.Validate(); err != nil {
 		return Invocation{}, err
@@ -357,8 +282,6 @@ func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, pol
 	if err != nil {
 		return Invocation{}, err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	if _, ok := m.apps[inv.AppID]; !ok {
 		return Invocation{}, fmt.Errorf("state: invocation for unknown app %q", inv.AppID)
 	}

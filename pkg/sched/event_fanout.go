@@ -31,11 +31,20 @@ func (e *eventFanoutRouteError) Error() string { return e.err.Error() }
 func (e *eventFanoutRouteError) Unwrap() error { return e.err }
 
 func eventFanoutFailureDetails(err error) (string, bool) {
+	var admissionErr *state.EventRecipientAdmissionError
+	if errors.As(err, &admissionErr) {
+		return admissionErr.FailureCode, admissionErr.Retryable
+	}
 	var routeErr *eventFanoutRouteError
 	if errors.As(err, &routeErr) {
 		return routeErr.code, routeErr.retryable
 	}
 	return state.EventFanoutFailureCodeInternal, false
+}
+
+func eventFanoutRetryable(err error) bool {
+	_, retryable := eventFanoutFailureDetails(err)
+	return retryable
 }
 
 // routePublishedEvent is the schedd-side fanout seam for the internal event
@@ -128,14 +137,28 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 			previous.State == state.PublishedEventRecipientFailed {
 			continue
 		}
-		matched, routeErr := l.routeSubscription(ctx, envelope, eventPayload, recipient, now, true)
+		var matched bool
+		var routeErr error
+		if admission, ok := l.engine.store.(state.PublishedEventRecipientAdmissionStore); ok && recipient.ObjectNotification == nil {
+			result, err := l.admitEventRecipient(ctx, admission, state.PublishedEventRoutingClaim{
+				OutboxID: work.ID, SubscriptionID: recipient.ID, ClaimToken: work.ClaimToken,
+			})
+			if err == nil {
+				work.RecipientProgress[recipient.ID] = result.Progress
+				work.Delivered = result.ReceiptSettled
+				continue
+			}
+			matched, routeErr = result.Matched, err
+		} else {
+			matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, recipient, now, true)
+		}
 		outcome := state.PublishedEventRecipientProgress{Attempts: previous.Attempts + 1, UpdatedAt: now}
 		switch {
 		case routeErr == nil && matched:
 			outcome.State = state.PublishedEventRecipientEnqueued
 		case routeErr == nil:
 			outcome.State = state.PublishedEventRecipientFiltered
-		case !matched || errors.Is(routeErr, state.ErrNotFound):
+		case !matched && !eventFanoutRetryable(routeErr) || errors.Is(routeErr, state.ErrNotFound):
 			outcome.State = state.PublishedEventRecipientFailed
 			outcome.FailureCode, outcome.Retryable = eventFanoutFailureDetails(routeErr)
 			outcome.LastError = routeErr.Error()
@@ -422,6 +445,9 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		if routeErr != nil && l.log != nil {
 			l.log.Warn("sched: event fanout failed", "outbox_id", work.ID, "err", routeErr)
 		}
+		if work.Delivered {
+			continue
+		}
 		if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, routeErr); err != nil && l.log != nil {
 			l.log.Warn("sched: finish event fanout failed", "outbox_id", work.ID, "err", err)
 		}
@@ -466,7 +492,18 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 		}
 		matched := false
 		if routeErr == nil {
-			matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, work.Recipient, now, true)
+			if admission, ok := l.engine.store.(state.PublishedEventRecipientAdmissionStore); ok && work.Recipient.ObjectNotification == nil {
+				result, err := l.admitEventRecipient(ctx, admission, state.PublishedEventRoutingClaim{
+					OutboxID: work.OutboxID, SubscriptionID: work.Recipient.ID,
+					ClaimToken: work.ClaimToken, Generation: work.Generation,
+				})
+				if err == nil {
+					continue
+				}
+				matched, routeErr = result.Matched, err
+			} else {
+				matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, work.Recipient, now, true)
+			}
 		}
 		finishedAt := time.Now().UTC()
 		if l.now != nil {
@@ -478,7 +515,7 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 			progress.State = state.PublishedEventRecipientEnqueued
 		case routeErr == nil:
 			progress.State = state.PublishedEventRecipientFiltered
-		case !matched || errors.Is(routeErr, state.ErrNotFound) || work.Attempts >= eventFanoutRecipientMaxAttempts:
+		case !matched && !eventFanoutRetryable(routeErr) || errors.Is(routeErr, state.ErrNotFound) || work.Attempts >= eventFanoutRecipientMaxAttempts:
 			progress.State = state.PublishedEventRecipientFailed
 			progress.FailureCode, progress.Retryable = eventFanoutFailureDetails(routeErr)
 			progress.LastError = routeErr.Error()
@@ -500,4 +537,15 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 				"retryable", progress.Retryable, "err", progress.LastError)
 		}
 	}
+}
+
+// Advisory wakes follow the commit. The invocation drain also polls, so a
+// lost notification or an unknown commit response cannot lose admitted work.
+func (l *Loop) admitEventRecipient(ctx context.Context, store state.PublishedEventRecipientAdmissionStore, claim state.PublishedEventRoutingClaim) (state.PublishedEventRoutingResult, error) {
+	result, err := store.AdmitPublishedEventRecipient(ctx, claim)
+	if err == nil && result.InvocationCreated && l.pool != nil {
+		_ = db.Notify(ctx, l.pool, db.NotifyInvocationDue,
+			fmt.Sprintf(`{"invocation_id":"%s","app_id":"%s","source":"%s"}`, result.DeliveryID, result.AppID, state.InvocationAsyncInvoke))
+	}
+	return result, err
 }

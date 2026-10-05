@@ -406,3 +406,190 @@ func (q *Queries) EventRecipientUpdateProgress(ctx context.Context, db DBTX, arg
 	_, err := db.Exec(ctx, eventRecipientUpdateProgress, arg.SubscriptionID, arg.Progress, arg.ID)
 	return err
 }
+
+const eventRoutingClaimValid = `-- name: EventRoutingClaimValid :one
+SELECT CASE WHEN o.recipient_claims THEN EXISTS (
+    SELECT 1 FROM event_fanout_recipients r WHERE r.outbox_id=o.id
+      AND r.subscription_id=$1::text AND r.state='processing'
+      AND r.generation=$2::bigint AND r.claim_token=$3::uuid
+      AND r.lease_until>clock_timestamp())
+    ELSE $2::bigint=0 AND o.state='processing'
+      AND o.claim_token=$3::uuid AND o.lease_until>clock_timestamp() END::boolean AS valid
+FROM event_fanout_outbox o WHERE o.id=$4::bigint
+`
+
+type EventRoutingClaimValidParams struct {
+	SubscriptionID string
+	Generation     int64
+	ClaimToken     pgtype.UUID
+	ID             int64
+}
+
+// Evaluate the wall clock only after all admission locks have been acquired.
+func (q *Queries) EventRoutingClaimValid(ctx context.Context, db DBTX, arg EventRoutingClaimValidParams) (bool, error) {
+	row := db.QueryRow(ctx, eventRoutingClaimValid,
+		arg.SubscriptionID,
+		arg.Generation,
+		arg.ClaimToken,
+		arg.ID,
+	)
+	var valid bool
+	err := row.Scan(&valid)
+	return valid, err
+}
+
+const eventRoutingLockApp = `-- name: EventRoutingLockApp :one
+SELECT id FROM apps WHERE id=$1::uuid AND account_id=$2::uuid
+    AND status <> 'deleted' FOR SHARE
+`
+
+type EventRoutingLockAppParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) EventRoutingLockApp(ctx context.Context, db DBTX, arg EventRoutingLockAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, eventRoutingLockApp, arg.AppID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const eventRoutingLockReceipt = `-- name: EventRoutingLockReceipt :one
+SELECT id, account_id, source, event_id, event_type, schema_version, event_data, payload, state, attempts, available_at, lease_until, claim_token, last_error, created_at, delivered_at, recipient_snapshot, recipient_progress, recipient_claims FROM event_fanout_outbox WHERE id=$1::bigint FOR UPDATE
+`
+
+func (q *Queries) EventRoutingLockReceipt(ctx context.Context, db DBTX, id int64) (EventFanoutOutbox, error) {
+	row := db.QueryRow(ctx, eventRoutingLockReceipt, id)
+	var i EventFanoutOutbox
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Source,
+		&i.EventID,
+		&i.EventType,
+		&i.SchemaVersion,
+		&i.EventData,
+		&i.Payload,
+		&i.State,
+		&i.Attempts,
+		&i.AvailableAt,
+		&i.LeaseUntil,
+		&i.ClaimToken,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.DeliveredAt,
+		&i.RecipientSnapshot,
+		&i.RecipientProgress,
+		&i.RecipientClaims,
+	)
+	return i, err
+}
+
+const eventRoutingLockRecipient = `-- name: EventRoutingLockRecipient :one
+SELECT outbox_id, subscription_id, app_id, recipient, state, generation, attempts, total_attempts, available_at, claim_token, lease_until FROM event_fanout_recipients
+WHERE outbox_id=$1::bigint AND subscription_id=$2::text FOR UPDATE
+`
+
+type EventRoutingLockRecipientParams struct {
+	OutboxID       int64
+	SubscriptionID string
+}
+
+func (q *Queries) EventRoutingLockRecipient(ctx context.Context, db DBTX, arg EventRoutingLockRecipientParams) (EventFanoutRecipient, error) {
+	row := db.QueryRow(ctx, eventRoutingLockRecipient, arg.OutboxID, arg.SubscriptionID)
+	var i EventFanoutRecipient
+	err := row.Scan(
+		&i.OutboxID,
+		&i.SubscriptionID,
+		&i.AppID,
+		&i.Recipient,
+		&i.State,
+		&i.Generation,
+		&i.Attempts,
+		&i.TotalAttempts,
+		&i.AvailableAt,
+		&i.ClaimToken,
+		&i.LeaseUntil,
+	)
+	return i, err
+}
+
+const eventRoutingReceipt = `-- name: EventRoutingReceipt :one
+SELECT id, account_id, source, event_id, event_type, schema_version, event_data, payload, state, attempts, available_at, lease_until, claim_token, last_error, created_at, delivered_at, recipient_snapshot, recipient_progress, recipient_claims FROM event_fanout_outbox WHERE id=$1::bigint
+`
+
+func (q *Queries) EventRoutingReceipt(ctx context.Context, db DBTX, id int64) (EventFanoutOutbox, error) {
+	row := db.QueryRow(ctx, eventRoutingReceipt, id)
+	var i EventFanoutOutbox
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Source,
+		&i.EventID,
+		&i.EventType,
+		&i.SchemaVersion,
+		&i.EventData,
+		&i.Payload,
+		&i.State,
+		&i.Attempts,
+		&i.AvailableAt,
+		&i.LeaseUntil,
+		&i.ClaimToken,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.DeliveredAt,
+		&i.RecipientSnapshot,
+		&i.RecipientProgress,
+		&i.RecipientClaims,
+	)
+	return i, err
+}
+
+const eventRoutingRecordProgress = `-- name: EventRoutingRecordProgress :one
+UPDATE event_fanout_outbox o
+SET recipient_progress=jsonb_set(o.recipient_progress,ARRAY[$1::text],$2::jsonb,true),
+    last_error=CASE WHEN $2::jsonb->>'state'='failed'
+      THEN left('subscription ' || $1::text || ': ' || coalesce($2::jsonb->>'last_error','recipient failed'),1024)
+      ELSE o.last_error END
+WHERE o.id=$3::bigint AND o.claim_token=$4::uuid
+    AND o.state='processing' AND NOT o.recipient_claims AND o.lease_until>clock_timestamp()
+    AND coalesce(o.recipient_progress->$1::text->>'state','pending') NOT IN ('enqueued','filtered')
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) r WHERE r->>'id'=$1::text)
+RETURNING (SELECT r->>'app_id' FROM jsonb_array_elements(o.recipient_snapshot) r WHERE r->>'id'=$1::text LIMIT 1)::text AS app_id
+`
+
+type EventRoutingRecordProgressParams struct {
+	SubscriptionID string
+	Progress       []byte
+	ID             int64
+	ClaimToken     pgtype.UUID
+}
+
+// An uncertain commit response must not overwrite its durable admission proof.
+func (q *Queries) EventRoutingRecordProgress(ctx context.Context, db DBTX, arg EventRoutingRecordProgressParams) (string, error) {
+	row := db.QueryRow(ctx, eventRoutingRecordProgress,
+		arg.SubscriptionID,
+		arg.Progress,
+		arg.ID,
+		arg.ClaimToken,
+	)
+	var app_id string
+	err := row.Scan(&app_id)
+	return app_id, err
+}
+
+const eventRoutingSettleSnapshot = `-- name: EventRoutingSettleSnapshot :one
+UPDATE event_fanout_outbox o SET state='delivered',delivered_at=clock_timestamp(),claim_token=NULL,lease_until=NULL
+WHERE o.id=$1::bigint AND NOT o.recipient_claims
+  AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) r
+    WHERE coalesce(o.recipient_progress -> (r->>'id')->>'state','pending') NOT IN ('enqueued','filtered','failed'))
+RETURNING id
+`
+
+func (q *Queries) EventRoutingSettleSnapshot(ctx context.Context, db DBTX, id int64) (int64, error) {
+	row := db.QueryRow(ctx, eventRoutingSettleSnapshot, id)
+	var id_2 int64
+	err := row.Scan(&id_2)
+	return id_2, err
+}

@@ -17,6 +17,30 @@ type recipientRouteFaultStore struct {
 	*state.MemStore
 	failures       map[string]error
 	loseCompletion bool
+	claimApps      map[string]string
+}
+
+func (s *recipientRouteFaultStore) ClaimDuePublishedEventRecipient(ctx context.Context, now time.Time) (*state.PublishedEventRecipientWork, error) {
+	work, err := s.MemStore.ClaimDuePublishedEventRecipient(ctx, now)
+	if err == nil {
+		if s.claimApps == nil {
+			s.claimApps = map[string]string{}
+		}
+		s.claimApps[work.Recipient.ID] = work.Recipient.AppID
+	}
+	return work, err
+}
+
+func (s *recipientRouteFaultStore) AdmitPublishedEventRecipient(ctx context.Context, claim state.PublishedEventRoutingClaim) (state.PublishedEventRoutingResult, error) {
+	if err := s.failures[s.claimApps[claim.SubscriptionID]]; err != nil {
+		return state.PublishedEventRoutingResult{}, &state.EventRecipientAdmissionError{FailureCode: state.EventFanoutFailureCodeInvocationEnqueueFailed, Retryable: true, Err: err}
+	}
+	result, err := s.MemStore.AdmitPublishedEventRecipient(ctx, claim)
+	if err == nil && s.loseCompletion && result.Progress.State == state.PublishedEventRecipientEnqueued {
+		s.loseCompletion = false
+		return result, errors.New("lost routing acknowledgement after commit")
+	}
+	return result, err
 }
 
 func (s *recipientRouteFaultStore) EnqueueInvocation(ctx context.Context, invocation state.Invocation) (state.Invocation, error) {
