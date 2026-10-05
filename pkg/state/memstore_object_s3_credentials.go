@@ -15,11 +15,15 @@ var _ ObjectS3CredentialBindingStore = (*MemStore)(nil)
 func (m *MemStore) CreateObjectS3Credential(_ context.Context, c ObjectS3Credential, maxPerBucket int) (ObjectS3Credential, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createObjectS3CredentialLocked(c, maxPerBucket, false)
+}
+
+func (m *MemStore) createObjectS3CredentialLocked(c ObjectS3Credential, maxPerBucket int, cloneAuthorized bool) (ObjectS3Credential, error) {
 	if !validObjectS3Credential(c) || maxPerBucket < 1 {
 		return ObjectS3Credential{}, ErrConflict
 	}
 	bucket, ok := m.objectBuckets[c.BucketID]
-	if !ok || bucket.AccountID != c.AccountID || bucket.State != "ready" {
+	if !ok || bucket.AccountID != c.AccountID || bucket.State != "ready" || !cloneAuthorized && !m.cloneBucketAccessibleLocked(bucket) {
 		return ObjectS3Credential{}, ErrNotFound
 	}
 	if m.objectS3Credentials == nil {
@@ -50,9 +54,13 @@ func (m *MemStore) CreateObjectS3ComputeBinding(_ context.Context, req ObjectS3C
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createObjectS3ComputeBindingLocked(req, false)
+}
+
+func (m *MemStore) createObjectS3ComputeBindingLocked(req ObjectS3ComputeBindingCreateRequest, cloneAuthorized bool) (ObjectS3Credential, error) {
 	c := req.Credential
 	bucket, ok := m.objectBuckets[c.BucketID]
-	if !ok || bucket.AccountID != c.AccountID || bucket.AppID != c.ManagedAppID || bucket.State != "ready" {
+	if !ok || bucket.AccountID != c.AccountID || bucket.AppID != c.ManagedAppID || bucket.State != "ready" || !cloneAuthorized && !m.cloneBucketAccessibleLocked(bucket) {
 		return ObjectS3Credential{}, ErrNotFound
 	}
 	app, ok := m.apps[c.ManagedAppID]
@@ -99,6 +107,11 @@ func (m *MemStore) CreateObjectS3ComputeBinding(_ context.Context, req ObjectS3C
 		secret.CreatedAt, secret.UpdatedAt = now, now
 		secret.DeliveryVersion, secret.DeliveryStatus = 1, SecretDeliveryPending
 		m.secrets[secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}] = secret
+	}
+	// A private clone has no running target yet. Publishing its release is the
+	// visibility boundary; preparation must not invalidate production snapshots.
+	if cloneAuthorized {
+		return cloneObjectS3Credential(c), nil
 	}
 	if m.runtimeConfigChangedAt == nil {
 		m.runtimeConfigChangedAt = map[string]time.Time{}
@@ -179,7 +192,7 @@ func (m *MemStore) RevokeObjectS3ComputeBinding(_ context.Context, accountID, bu
 	}
 	for key, secret := range m.secrets {
 		if secret.ManagedObjectStorageCredentialID == bindingID {
-			delete(m.secrets, key)
+			m.deleteRuntimeAppSecretLocked(key)
 			changed = true
 		}
 	}
@@ -328,7 +341,7 @@ func (m *MemStore) ResolveObjectS3Credential(_ context.Context, accessKeyID stri
 			continue
 		}
 		bucket, ok := m.objectBuckets[c.BucketID]
-		if !ok || bucket.AccountID != c.AccountID || bucket.State != "ready" {
+		if !ok || bucket.AccountID != c.AccountID || bucket.State != "ready" || !m.cloneBucketAccessibleLocked(bucket) {
 			return ObjectS3Credential{}, ObjectBucket{}, ErrNotFound
 		}
 		return cloneObjectS3Credential(c), bucket, nil

@@ -418,6 +418,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/queue-bindings/{id}/status": "GetQueueBindingStatus",
 	"PATCH /v1/apps/{slug}/queue-bindings/{id}":      "UpdateQueueBinding",
 	"DELETE /v1/apps/{slug}/queue-bindings/{id}":     "DeleteQueueBinding",
+	// Stage queue collections follow their OpenAPI operation IDs too.
+	"GET /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings": "GetProjectEnvironmentQueueBindings",
+	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings": "ReplaceProjectEnvironmentQueueBindings",
 
 	"DELETE /v1/orgs/{slug}/invitations/{invitation_id}":                        "RevokeInvitation",
 	"GET /v1/github/repos":                                                      "ListGitHubRepositories",
@@ -478,6 +481,8 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/projects/{slug}":                                                 "UpdateProject",
 	"GET /v1/projects/{slug}/environments":                                      "ListProjectEnvironments",
 	"POST /v1/projects/{slug}/environments":                                     "CreateProjectEnvironment",
+	"POST /v1/projects/{slug}/environment-clones":                               "CreateFullProjectEnvironmentClone",
+	"GET /v1/projects/{slug}/environment-clones/{clone}":                        "GetProjectEnvironmentCloneOperation",
 	"GET /v1/projects/{slug}/environments/{environment}":                        "GetProjectEnvironment",
 	"PATCH /v1/projects/{slug}/environments/{environment}":                      "UpdateProjectEnvironment",
 	"POST /v1/projects/{slug}/environments/{environment}/qualifications":        "CreateProjectEnvironmentQualification",

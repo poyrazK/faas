@@ -79,7 +79,7 @@ func (s *PostgresStore) ReconcileAccounting(ctx context.Context, command Account
 		return AccountingReconciliationResult{}, mapPostgresError(err)
 	}
 	ledger := reconciliationLedger{bounds.Records, bounds.FirstWindow.Time.UTC(), bounds.LastWindow.Time.UTC(), bounds.LastObservation.Time.UTC(), bounds.Invalid}
-	plan, err := planAccountingReconciliation(command, databaseFromRow(row), coverage, ledger, claimed.Bool)
+	plan, err := planAccountingReconciliation(command, usageDatabaseFromRow(row), coverage, ledger, claimed.Bool)
 	if err != nil {
 		return AccountingReconciliationResult{}, err
 	}

@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 590
+// adr: 592
 func TestProtectedUploadRouteNativeReadback(t *testing.T) {
 	f, _ := newTrackedUploadFixture(t)
 	b, err := f.store.GetObjectBucket(t.Context(), f.account.ID, f.app.ID, f.route.BucketID)

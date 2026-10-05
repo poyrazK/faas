@@ -315,10 +315,16 @@ type ObjectMetadata struct {
 type CopyObjectRequest struct {
 	SourceKey               string
 	SourceProviderVersionID string `json:"-"`
-	DestinationKey          string
-	MetadataDirective       string
-	TaggingDirective        string
-	Metadata                ObjectMetadata
+	// SourceVersion pins immutable source bytes for an environment snapshot.
+	// Empty preserves the existing live-key CopyObject behavior.
+	SourceVersion string
+	// SourceMetadataVersion fences mutable GCS metadata on a pinned
+	// generation. S3 metadata is immutable per object version.
+	SourceMetadataVersion string
+	DestinationKey        string
+	MetadataDirective     string
+	TaggingDirective      string
+	Metadata              ObjectMetadata
 }
 
 type CopyObjectResult struct {

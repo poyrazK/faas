@@ -29,6 +29,11 @@ type WorkCancellationStore interface {
 	WorkCancellationByID(context.Context, string) (WorkCancellation, error)
 }
 
+func cloneWorkCancellation(receipt WorkCancellation) WorkCancellation {
+	receipt.KeyDigest = append([]byte(nil), receipt.KeyDigest...)
+	return receipt
+}
+
 func (s *PgStore) WorkCancellationByID(ctx context.Context, id string) (WorkCancellation, error) {
 	var receipt WorkCancellation
 	err := s.pool.QueryRow(ctx, `select id, app_id, policy_name, key_digest, cancelled_count, created_at
@@ -47,7 +52,7 @@ func (m *MemStore) WorkCancellationByID(_ context.Context, id string) (WorkCance
 	if !ok {
 		return WorkCancellation{}, ErrNotFound
 	}
-	return receipt, nil
+	return cloneWorkCancellation(receipt), nil
 }
 
 func validateWorkCancellation(appID, policyName, canonicalKey, cancellationID string) (uuid.UUID, [32]byte, error) {
@@ -76,11 +81,20 @@ func (s *PgStore) CancelPendingKeyedInvocations(ctx context.Context, appID, poli
 	if err != nil {
 		return WorkCancellation{}, err
 	}
+	return s.cancelPendingWorkDigest(ctx, appID, policyName, id, digest, invocationWorkEnvironment{})
+}
+
+func (s *PgStore) cancelPendingWorkDigest(ctx context.Context, appID, policyName string, id uuid.UUID, digest [32]byte, info invocationWorkEnvironment) (WorkCancellation, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return WorkCancellation{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if info.environment.ID != "" {
+		if err := lockInvocationEnvironmentDB(ctx, tx, info.app.ID, info.app.AccountID, info.environment.ID); err != nil {
+			return WorkCancellation{}, err
+		}
+	}
 	// Use the same lane lock order as enqueue and claim. Creating a lane for a
 	// key with no current work makes cancellation of an empty lane durable too.
 	if _, err := tx.Exec(ctx, `insert into invocation_work_lanes (app_id, policy_name, key_digest)
@@ -92,6 +106,11 @@ func (s *PgStore) CancelPendingKeyedInvocations(ctx context.Context, appID, poli
 		where app_id = $1 and policy_name = $2 and key_digest = $3 for update`,
 		appID, policyName, digest[:]).Scan(&locked); err != nil {
 		return WorkCancellation{}, fmt.Errorf("state: cancellation lane lock: %w", err)
+	}
+	if info.environment.ID != "" {
+		if err := registerWorkEnvironmentDomainDB(ctx, tx, info.app, info.environment.ID, policyName, "key", digest[:]); err != nil {
+			return WorkCancellation{}, err
+		}
 	}
 	receipt := WorkCancellation{ID: id.String(), AppID: appID, PolicyName: policyName, KeyDigest: digest[:]}
 	var inserted string
@@ -146,11 +165,15 @@ func (s *PgStore) CancelPendingKeyedInvocations(ctx context.Context, appID, poli
 	return receipt, nil
 }
 
-func (m *MemStore) CancelPendingKeyedInvocations(_ context.Context, appID, policyName, canonicalKey, cancellationID string) (WorkCancellation, error) {
+func (m *MemStore) CancelPendingKeyedInvocations(ctx context.Context, appID, policyName, canonicalKey, cancellationID string) (WorkCancellation, error) {
 	id, digest, err := validateWorkCancellation(appID, policyName, canonicalKey, cancellationID)
 	if err != nil {
 		return WorkCancellation{}, err
 	}
+	return m.cancelPendingWorkDigest(ctx, appID, policyName, id, digest, invocationWorkEnvironment{})
+}
+
+func (m *MemStore) cancelPendingWorkDigest(_ context.Context, appID, policyName string, id uuid.UUID, digest [32]byte, info invocationWorkEnvironment) (WorkCancellation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	_, ok := m.apps[appID]
@@ -160,11 +183,21 @@ func (m *MemStore) CancelPendingKeyedInvocations(_ context.Context, appID, polic
 	if !ok {
 		return WorkCancellation{}, ErrNotFound
 	}
+	if info.environment.ID != "" {
+		env, exists := m.projectEnvironments[info.environment.ID]
+		app := m.apps[info.app.ID]
+		if !exists || env.AccountID != info.app.AccountID || env.ProjectID != app.ProjectID || app.Status == AppDeleted {
+			return WorkCancellation{}, ErrInvocationEnvironmentWorkIsolation
+		}
+	}
 	if previous, ok := m.workCancellations[id.String()]; ok {
 		if !sameMemUUID(previous.AppID, appID) || previous.PolicyName != policyName || !bytes.Equal(previous.KeyDigest, digest[:]) {
 			return WorkCancellation{}, ErrConflict
 		}
-		return previous, nil
+		return cloneWorkCancellation(previous), nil
+	}
+	if err := m.registerWorkEnvironmentLocked(info, Invocation{AppID: appID, WorkPolicyName: policyName, WorkKeyDigest: digest[:]}); err != nil {
+		return WorkCancellation{}, err
 	}
 	now := time.Now().UTC()
 	receipt := WorkCancellation{ID: id.String(), AppID: canonicalMemUUID(appID),
@@ -180,5 +213,5 @@ func (m *MemStore) CancelPendingKeyedInvocations(_ context.Context, appID, polic
 		receipt.CancelledCount++
 	}
 	m.workCancellations[receipt.ID] = receipt
-	return receipt, nil
+	return cloneWorkCancellation(receipt), nil
 }

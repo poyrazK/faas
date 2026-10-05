@@ -75,6 +75,9 @@ func queueWorkloadProfilePolicyEqual(app state.App, desired *api.ScalingPolicy) 
 // binding change is rolled back best-effort so callers do not observe a
 // half-created profile.
 func (s *server) configureQueueWorkload(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return

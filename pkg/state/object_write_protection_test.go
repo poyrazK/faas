@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 590
+// adr: 592
 func TestObjectWriteProtectionMem(t *testing.T) {
 	m := state.NewMemStore()
 	// Propagation advances twice; keep the staged inventory in the past.
@@ -212,7 +212,7 @@ func writeProtectionMigration(t *testing.T) (string, string) {
 	return parts[0], parts[1]
 }
 
-// adr: 590
+// adr: 592
 func TestObjectWriteProtectionMigrationRoundTrip(t *testing.T) {
 	_, pool, ctx := pgStoreWithPool(t)
 	up, down := writeProtectionMigration(t)

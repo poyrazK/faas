@@ -602,8 +602,8 @@ func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Conte
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
-	if promotion.PreviousTargetReleaseSetID == "" {
-		return ProjectReleaseSet{}, ErrConflict
+	if err := lockPromotionWorkloadEnvironmentsTx(ctx, tx, promotion.ID); err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	if promotion.TargetReleaseSetID != "" {
 		if err := lockProjectForReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID); err != nil {
@@ -623,13 +623,33 @@ func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Conte
 		if err := verifyProjectEnvironmentPromotionConfigTx(ctx, tx, promotion, false); err != nil {
 			return ProjectReleaseSet{}, err
 		}
+		if err := promotionWorkloadActivationsTx(ctx, tx, promotion, release.Members, false, true); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if err := promotionFeatureFlagsActivationTx(ctx, tx, promotion, false, true); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return ProjectReleaseSet{}, err
 		}
 		return release, nil
 	}
+	if err := verifyProjectEnvironmentPromotionQualificationTx(ctx, tx, promotion); err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if promotion.PreviousTargetReleaseSetID == "" {
+		if err := validatePromotionFallbackTx(ctx, tx, promotion); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	}
+	if err := promotionFeatureFlagsActivationTx(ctx, tx, promotion, false, false); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	targetConfigVersion, err := applyProjectEnvironmentPromotionConfigTx(ctx, tx, promotion)
 	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if err := promotionWorkloadActivationsTx(ctx, tx, promotion, members, false, false); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	release, err := s.publishProjectReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.ToEnvironment,
@@ -644,6 +664,35 @@ func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Conte
 		return ProjectReleaseSet{}, err
 	}
 	return release, nil
+}
+
+func validatePromotionFallbackTx(ctx context.Context, tx pgx.Tx, promotion ProjectEnvironmentPromotion) error {
+	rows, err := tx.Query(ctx, `select a.id::text, coalesce(w.previous_target_deployment_id, '')
+		from apps a left join project_environment_promotion_workloads w
+		on w.promotion_id = $1 and w.workload_slug = a.slug
+		where a.project_id = $2 and a.account_id = $3 and a.status <> 'deleted'
+		and coalesce(a.preview_of_slug, '') = '' order by a.id for update of a`, promotion.ID, promotion.ProjectID, promotion.AccountID)
+	if err != nil {
+		return mapErr(err)
+	}
+	var appIDs []string
+	var expected []ProjectReleaseMember
+	for rows.Next() {
+		var appID, deploymentID string
+		if err := rows.Scan(&appID, &deploymentID); err != nil {
+			rows.Close()
+			return mapErr(err)
+		}
+		appIDs = append(appIDs, appID)
+		if deploymentID != "" {
+			expected = append(expected, ProjectReleaseMember{AppID: appID, DeploymentID: deploymentID})
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return mapErr(err)
+	}
+	return validateProjectReleaseFallbackTx(ctx, tx, appIDs, promotion.ToEnvironment, expected)
 }
 
 func (s *PgStore) RollbackProjectEnvironmentPromotionReleaseSet(ctx context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
@@ -670,6 +719,9 @@ func (s *PgStore) RollbackProjectEnvironmentPromotionReleaseSet(ctx context.Cont
 	if promotion.PreviousTargetReleaseSetID == "" || promotion.TargetReleaseSetID == "" {
 		return ProjectReleaseSet{}, ErrConflict
 	}
+	if err := lockPromotionWorkloadEnvironmentsTx(ctx, tx, promotion.ID); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	if promotion.RestoredTargetReleaseSetID != "" {
 		if err := lockProjectForReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID); err != nil {
 			return ProjectReleaseSet{}, err
@@ -688,13 +740,25 @@ func (s *PgStore) RollbackProjectEnvironmentPromotionReleaseSet(ctx context.Cont
 		if err := verifyProjectEnvironmentPromotionConfigTx(ctx, tx, promotion, true); err != nil {
 			return ProjectReleaseSet{}, err
 		}
+		if err := promotionWorkloadActivationsTx(ctx, tx, promotion, release.Members, true, true); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+		if err := promotionFeatureFlagsActivationTx(ctx, tx, promotion, true, true); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return ProjectReleaseSet{}, err
 		}
 		return release, nil
 	}
+	if err := promotionFeatureFlagsActivationTx(ctx, tx, promotion, true, false); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	rollbackConfigVersion, err := rollbackProjectEnvironmentPromotionConfigTx(ctx, tx, promotion)
 	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if err := promotionWorkloadActivationsTx(ctx, tx, promotion, members, true, false); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	release, err := s.publishProjectReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID, promotion.ToEnvironment,

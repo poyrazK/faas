@@ -1924,7 +1924,7 @@ gregale bucket object-lock clear-default <app> <bucket-id>
 ```
 
 [ADR-584](adr/584-durable-object-version-protection.md) adds the per-version
-management described below. [ADR-590](adr/590-durable-object-write-protection.md) adds the write snapshots
+management described below. [ADR-592](adr/592-durable-object-write-protection.md) adds the write snapshots
 described below. Event-hold changes, governance bypass and protected lifecycle
 deletion remain separate work. The gateway rejects unsupported event-hold and
 governance-bypass headers. New
@@ -2035,7 +2035,7 @@ stronger retained evidence or operator resolution. Do not recreate a physical
 bucket name while its cleanup journal is active.
 
 
-### Protection on newly created S3 versions (ADR-590)
+### Protection on newly created S3 versions (ADR-592)
 
 Protected multipart parts share the configured aggregate upload spool and
 free-space floor with PUTs. Gregale verifies the incoming part, computes MD5

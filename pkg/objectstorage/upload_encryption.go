@@ -8,6 +8,22 @@ import (
 )
 
 func (h *uploadHandler) writeCapturedRouteUpload(ctx context.Context, st state.ObjectTrackedUploadStore, writer TrackedObjectWriter, bucket state.ObjectBucket, c *state.ObjectUploadCompletion, body io.Reader) (UploadResult, error) {
+	guard, err := h.admitTrackedObjectWrite(ctx, bucket)
+	if err != nil {
+		return UploadResult{}, err
+	}
+	guard.dispatched = true
+	result, err := h.writeUnfencedCapturedRouteUpload(ctx, st, writer, bucket, c, body)
+	if err != nil {
+		return result, err
+	}
+	if err := guard.finish(ctx); err != nil {
+		return UploadResult{}, err
+	}
+	return result, nil
+}
+
+func (h *uploadHandler) writeUnfencedCapturedRouteUpload(ctx context.Context, st state.ObjectTrackedUploadStore, writer TrackedObjectWriter, bucket state.ObjectBucket, c *state.ObjectUploadCompletion, body io.Reader) (UploadResult, error) {
 	var err error
 	ctx, err = WithObjectWriteProtection(ctx, writer, c.Protection, func(ctx context.Context) error {
 		if h.requestMetrics == nil {

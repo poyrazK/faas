@@ -243,6 +243,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.handleCORS(w, r, requestID) {
 		return
 	}
+	if r.URL.Query().Has(UploadGrantQueryParameter) {
+		h.serveUploadGrant(w, r, requestID)
+		return
+	}
 	var parsed sigV4Request
 	var presigned bool
 	var err error
@@ -963,6 +967,10 @@ func copyObjectHeaders(dst, src http.Header) {
 
 func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requestContext, err error, key string) {
 	resource := r.URL.Path
+	if errors.Is(err, state.ErrObjectBucketWriteFenced) {
+		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Bucket writes are temporarily paused for checkpoint capture.", resource, req.requestID)
+		return
+	}
 	if errors.Is(err, state.ErrObjectVersionProtectionPending) {
 		w.Header().Set("Retry-After", "30")
 		writeS3Error(w, http.StatusConflict, "OperationAborted", "Object version protection is pending.", resource, req.requestID)

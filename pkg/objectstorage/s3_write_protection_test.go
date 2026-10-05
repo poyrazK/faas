@@ -39,7 +39,7 @@ func protectedHeadHeaders(w http.ResponseWriter, p state.ObjectWriteProtectionSn
 	}
 }
 
-// adr: 590
+// adr: 592
 func TestS3ProtectedWriteExactReadback(t *testing.T) {
 	for _, bad := range []string{"", "missing hold", "short retention", "duplicate date", "missing proof", "null version", "wrong version"} {
 		t.Run(bad, func(t *testing.T) {

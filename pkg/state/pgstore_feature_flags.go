@@ -140,6 +140,13 @@ func (s *PgStore) UpdateFeatureFlags(ctx context.Context, u FeatureFlagUpdate) (
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	// The version insert takes a project FK lock. Take it before the
+	// environment lock to match clone capture and project deletion order.
+	if _, err = q.LockFeatureFlagProject(ctx, tx, sqlc.LockFeatureFlagProjectParams{AccountID: p.AccountID, ProjectID: p.ProjectID}); errors.Is(err, pgx.ErrNoRows) {
+		return FeatureFlagVersion{}, ErrNotFound
+	} else if err != nil {
+		return FeatureFlagVersion{}, err
+	}
 	if _, err = q.LockFeatureFlagEnvironment(ctx, tx, p); errors.Is(err, pgx.ErrNoRows) {
 		return FeatureFlagVersion{}, ErrNotFound
 	} else if err != nil {

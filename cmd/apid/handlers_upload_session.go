@@ -46,6 +46,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -57,6 +58,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -295,8 +297,8 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 	uploadSessionCreatedTotal().WithLabelValues(string(acct.Plan)).Inc()
 
 	s.log.Info("upload session opened",
-		"upload_id", uploadID, "app_slug", req.AppSlug,
-		"total_size", req.TotalSize, "chunk_size", chunkSize,
+		"upload_id", uploadID, "app_slug", logsanitize.Field(req.AppSlug),
+		slog.Int64("total_size", req.TotalSize), "chunk_size", chunkSize,
 		"plan", acct.Plan, "account", acct.ID)
 
 	writeJSON(w, http.StatusCreated, startUploadResponse{

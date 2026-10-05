@@ -64,6 +64,15 @@ func (s *PgStore) IssueObjectURLCredential(ctx context.Context, c ObjectS3Creden
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
 	}
 	if c.URL.Request.Method == http.MethodPut {
+		_, fenceErr := q.ObjectBucketWriteFenceRead(ctx, tx, mustPgUUID(c.BucketID))
+		if fenceErr == nil {
+			return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrObjectBucketWriteFenced
+		}
+		if !errors.Is(fenceErr, pgx.ErrNoRows) {
+			return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(fenceErr)
+		}
+	}
+	if c.URL.Request.Method == http.MethodPut {
 		receipt.Encryption, receipt.EncryptionDefaultRevision, err = captureObjectBucketDefaultSQL(ctx, tx, receipt.BucketID, receipt.Encryption)
 		if err != nil {
 			return ObjectS3Credential{}, ObjectUploadCompletion{}, err

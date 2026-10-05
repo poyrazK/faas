@@ -917,6 +917,8 @@ export type { ProjectEnvironmentApprovalResponse } from './ProjectEnvironmentApp
 export type { ProjectEnvironmentApprovalStatusResponse } from './ProjectEnvironmentApprovalStatusResponse.js';
 export type { ProjectEnvironmentBindingChangeResponse } from './ProjectEnvironmentBindingChangeResponse.js';
 export type { ProjectEnvironmentBindingResponse } from './ProjectEnvironmentBindingResponse.js';
+export type { ProjectEnvironmentCloneOperationResponse } from './ProjectEnvironmentCloneOperationResponse.js';
+export type { ProjectEnvironmentCloneResourceResponse } from './ProjectEnvironmentCloneResourceResponse.js';
 export type { ProjectEnvironmentCloneResponse } from './ProjectEnvironmentCloneResponse.js';
 export type { ProjectEnvironmentConfigChange } from './ProjectEnvironmentConfigChange.js';
 export type { ProjectEnvironmentConfigDiffResponse } from './ProjectEnvironmentConfigDiffResponse.js';
@@ -939,6 +941,8 @@ export type { ProjectEnvironmentPromotionWorkloadResponse } from './ProjectEnvir
 export type { ProjectEnvironmentQualificationCheck } from './ProjectEnvironmentQualificationCheck.js';
 export type { ProjectEnvironmentQualificationResponse } from './ProjectEnvironmentQualificationResponse.js';
 export type { ProjectEnvironmentQualificationResult } from './ProjectEnvironmentQualificationResult.js';
+export type { ProjectEnvironmentQueueBinding } from './ProjectEnvironmentQueueBinding.js';
+export type { ProjectEnvironmentQueueBindingsResponse } from './ProjectEnvironmentQueueBindingsResponse.js';
 export type { ProjectEnvironmentReleaseDiffResponse } from './ProjectEnvironmentReleaseDiffResponse.js';
 export type { ProjectEnvironmentReleaseListResponse } from './ProjectEnvironmentReleaseListResponse.js';
 export type { ProjectEnvironmentReleaseWorkloadResponse } from './ProjectEnvironmentReleaseWorkloadResponse.js';
@@ -1013,6 +1017,7 @@ export type { RegisterScenarioTestRequest } from './RegisterScenarioTestRequest.
 export type { RekeyProgress } from './RekeyProgress.js';
 export type { RemoveEnvironmentGitOpsOverrideRequest } from './RemoveEnvironmentGitOpsOverrideRequest.js';
 export type { RenameAppRequest } from './RenameAppRequest.js';
+export type { ReplaceProjectEnvironmentQueueBindingsRequest } from './ReplaceProjectEnvironmentQueueBindingsRequest.js';
 export type { ReplayDevBridgeWebhookRequest } from './ReplayDevBridgeWebhookRequest.js';
 export type { ReplayEventFanoutFailureRequest } from './ReplayEventFanoutFailureRequest.js';
 export type { ReplayEventFanoutFailureResponse } from './ReplayEventFanoutFailureResponse.js';

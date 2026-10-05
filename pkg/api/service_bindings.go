@@ -431,7 +431,7 @@ func ServiceBindingEnv(base map[string]string, bindings []AppServiceBinding) map
 // other app environment values. The HTTPS alias is injected in either mode;
 // the selected transport controls the canonical _URL binding.
 func ServiceBindingEnvForTransport(base map[string]string, bindings []AppServiceBinding, transport ServiceBindingTransport) map[string]string {
-	env := make(map[string]string, len(base)+len(bindings))
+	env := make(map[string]string, len(base))
 	for key, value := range base {
 		if strings.HasPrefix(key, ServiceBindingEnvPrefix) &&
 			(strings.HasSuffix(key, ServiceBindingEnvSuffix) || strings.HasSuffix(key, ServiceBindingHostEnvSuffix)) {

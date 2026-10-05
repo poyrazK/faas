@@ -189,6 +189,12 @@ func (p *S3) CopyObjectBetweenBuckets(ctx context.Context, sourceBucket, destina
 }
 
 func copyObjectInput(sourceBucket, destinationBucket string, r CopyObjectRequest) (*s3.CopyObjectInput, error) {
+	if r.SourceMetadataVersion != "" || len(r.SourceVersion) > 1024 || r.SourceVersion != "" && r.SourceProviderVersionID != "" {
+		return nil, ErrInvalid
+	}
+	if r.SourceVersion != "" {
+		r.SourceProviderVersionID = r.SourceVersion
+	}
 	if sourceBucket == "" || destinationBucket == "" {
 		return nil, ErrInvalid
 	}

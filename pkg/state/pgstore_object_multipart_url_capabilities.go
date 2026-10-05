@@ -29,6 +29,15 @@ func (s *PgStore) IssueObjectMultipartURLCredential(ctx context.Context, c Objec
 	if _, err = q.ObjectS3CredentialLockBucket(ctx, tx, sqlc.ObjectS3CredentialLockBucketParams{ID: mustPgUUID(c.BucketID), AccountID: mustPgUUID(c.AccountID)}); err != nil {
 		return ObjectS3Credential{}, mapErr(err)
 	}
+	{
+		_, fenceErr := q.ObjectBucketWriteFenceRead(ctx, tx, mustPgUUID(c.BucketID))
+		if fenceErr == nil {
+			return ObjectS3Credential{}, ErrObjectBucketWriteFenced
+		}
+		if !errors.Is(fenceErr, pgx.ErrNoRows) {
+			return ObjectS3Credential{}, mapErr(fenceErr)
+		}
+	}
 	row, err := q.ObjectMultipartCapacityLock(ctx, tx, sqlc.ObjectMultipartCapacityLockParams{ID: mustPgUUID(expected.ID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID)})
 	if err != nil {
 		return ObjectS3Credential{}, mapErr(err)

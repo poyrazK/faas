@@ -722,6 +722,36 @@ $$;
 
 
 --
+-- Name: bind_deployment_runtime_environment(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bind_deployment_runtime_environment() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    selected_environment uuid;
+    original_environment uuid;
+BEGIN
+    SELECT s.environment_id INTO STRICT selected_environment
+    FROM project_environment_workload_specs s
+    JOIN project_environments e ON e.id=s.environment_id
+    JOIN apps a ON a.id=s.app_id AND a.account_id=e.account_id AND a.project_id=e.project_id
+    JOIN deployments d ON d.app_id=a.id AND d.id=NEW.deployment_id
+    WHERE s.id=NEW.spec_id AND e.slug=CASE WHEN d.scope='default' THEN 'production' ELSE d.scope END;
+    INSERT INTO deployment_runtime_environment_owners (deployment_id, environment_id)
+    VALUES (NEW.deployment_id, selected_environment)
+    ON CONFLICT (deployment_id) DO NOTHING;
+    SELECT environment_id INTO STRICT original_environment
+    FROM deployment_runtime_environment_owners WHERE deployment_id=NEW.deployment_id;
+    IF original_environment <> selected_environment THEN
+        RAISE EXCEPTION 'deployment runtime environment is immutable' USING ERRCODE='23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: bind_job_run_image_snapshot(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3069,6 +3099,43 @@ $$;
 
 
 --
+-- Name: faas_invocation_headers_own_stage(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_invocation_headers_own_stage(owner_app uuid, pin_headers jsonb) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+SELECT
+    EXISTS(SELECT 1 FROM deployments stage
+        WHERE stage.app_id=owner_app AND stage.scope NOT IN ('production','default')
+            AND EXISTS(SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(pin_headers)='object' THEN pin_headers ELSE '{}'::jsonb END) pin
+                WHERE lower(pin.key)='x-gregale-revision' AND translate(regexp_replace(regexp_replace(lower(pin.value), '[[:space:]{}]', '', 'g'), '^urn:uuid:', ''), '-', '')=replace(stage.id::text,'-','')))
+    OR EXISTS(SELECT 1 FROM project_release_sets stage JOIN apps owner
+        ON owner.project_id=stage.project_id AND owner.account_id=stage.account_id
+        WHERE owner.id=owner_app AND stage.environment_slug NOT IN ('production','default')
+            AND EXISTS(SELECT 1 FROM jsonb_each_text(CASE WHEN jsonb_typeof(pin_headers)='object' THEN pin_headers ELSE '{}'::jsonb END) pin
+                WHERE lower(pin.key)='x-gregale-release' AND translate(regexp_replace(regexp_replace(lower(pin.value), '[[:space:]{}]', '', 'g'), '^urn:uuid:', ''), '-', '')=replace(stage.id::text,'-','')));
+$$;
+
+
+--
+-- Name: faas_retain_dead_letter_environment_ownership(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.faas_retain_dead_letter_environment_ownership() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP='UPDATE' THEN NEW.environment_owned := NEW.environment_owned OR OLD.environment_owned; END IF;
+    NEW.environment_owned := NEW.environment_owned OR (NEW.source='invocation' AND (faas_invocation_headers_own_stage(NEW.app_id,NEW.headers)
+        OR EXISTS(SELECT 1 FROM invocations i WHERE i.id=NEW.source_id
+            AND NOT EXISTS(SELECT 1 FROM production_invocation_work p WHERE p.id=i.id))));
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: faas_stamp_app_deletion_deadline(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3597,6 +3664,29 @@ CREATE FUNCTION public.guard_app_object_buckets() RETURNS trigger
 BEGIN
     IF NEW.status = 'deleted' AND EXISTS (SELECT 1 FROM object_buckets WHERE app_id = NEW.id AND state <> 'deleted') THEN
         RAISE EXCEPTION 'app has object buckets' USING ERRCODE = '23514', CONSTRAINT = 'app_has_object_buckets';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_deployment_layer_artifacts(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_deployment_layer_artifacts() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE key text;
+BEGIN
+    IF TG_OP = 'INSERT' OR NEW.rootfs_key IS DISTINCT FROM OLD.rootfs_key OR
+       (NEW.status IS DISTINCT FROM OLD.status AND NEW.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live')) THEN
+        FOR key IN SELECT keys.key FROM (
+            SELECT NEW.rootfs_key AS key
+            UNION SELECT storage_key FROM deployment_sidecar_layers WHERE deployment_id = NEW.id
+        ) keys WHERE coalesce(keys.key, '') <> '' ORDER BY keys.key LOOP
+            PERFORM require_retained_layer_artifact(key);
+        END LOOP;
     END IF;
     RETURN NEW;
 END;
@@ -4585,6 +4675,22 @@ $$;
 
 
 --
+-- Name: guard_instance_layer_artifacts(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_instance_layer_artifacts() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.deployment_id IS NOT NULL AND NEW.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining') THEN
+        PERFORM require_deployment_layer_artifacts(NEW.deployment_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_invocation_deployment_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4665,6 +4771,13 @@ BEGIN
   IF NEW.queue_binding_id IS NOT NULL AND NEW.source<>'queue' THEN
     RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='invocation_queue_binding_source',
       MESSAGE='binding identity requires a queue invocation';
+  END IF;
+  IF NEW.environment_id IS NOT NULL AND NEW.source='queue' THEN
+    IF NEW.queue_binding_id IS NOT NULL THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='invocation_private_queue_binding',
+        MESSAGE='private queue work cannot capture a public binding';
+    END IF;
+    RETURN NEW;
   END IF;
   IF NEW.source='queue' THEN
     IF NEW.queue_binding_id IS NULL AND NEW.queue_name<>'' THEN
@@ -5195,6 +5308,9 @@ CREATE FUNCTION public.guard_retired_queue_invocation() RETURNS trigger
     AS $$
 DECLARE binding_retired_at timestamptz; binding_scope text; binding_environment uuid;
 BEGIN
+  IF NEW.environment_id IS NOT NULL THEN
+    RETURN NEW;
+  END IF;
   IF NEW.source='queue' AND (TG_OP='INSERT' OR
     (NEW.state='dispatching' AND OLD.state IS DISTINCT FROM 'dispatching')) THEN
     SELECT b.retired_at,b.deployment_scope,b.environment_id INTO binding_retired_at,binding_scope,binding_environment FROM queue_bindings b
@@ -5272,6 +5388,36 @@ BEGIN
     IF NOT FOUND THEN RETURN NULL; END IF;
   END IF;
   RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_sidecar_layer_artifact(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_sidecar_layer_artifact() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM require_retained_layer_artifact(NEW.storage_key);
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_snapshot_layer_artifacts(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_snapshot_layer_artifacts() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NOT NEW.stale THEN
+        PERFORM require_deployment_layer_artifacts(NEW.deployment_id);
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -5697,6 +5843,20 @@ BEGIN
     )::text);
   END IF;
   RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: notify_project_environment_workload_head(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.notify_project_environment_workload_head() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify('app_changed', NEW.app_id::text);
+    RETURN NEW;
 END;
 $$;
 
@@ -7322,6 +7482,25 @@ $$;
 
 
 --
+-- Name: require_deployment_layer_artifacts(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.require_deployment_layer_artifacts(deployment uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE key text;
+BEGIN
+    FOR key IN SELECT keys.key FROM (
+        SELECT rootfs_key AS key FROM deployments WHERE id = deployment
+        UNION SELECT storage_key FROM deployment_sidecar_layers WHERE deployment_id = deployment
+    ) keys WHERE coalesce(keys.key, '') <> '' ORDER BY keys.key LOOP
+        PERFORM require_retained_layer_artifact(key);
+    END LOOP;
+END;
+$$;
+
+
+--
 -- Name: require_fixed_multipart_admission(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7356,6 +7535,24 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_default_fenced',MESSAGE='New writes require the verified captured bucket default';
  END IF;
 END $$;
+
+
+--
+-- Name: require_retained_layer_artifact(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.require_retained_layer_artifact(key text) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF key IS NULL OR key = '' THEN RETURN; END IF;
+    INSERT INTO layer_artifact_retention(storage_key) VALUES (key) ON CONFLICT DO NOTHING;
+    PERFORM 1 FROM layer_artifact_retention WHERE storage_key = key AND state = 'retained' FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'layer artifact is retired' USING ERRCODE = '55000', CONSTRAINT = 'layer_artifact_retention_reference_fence';
+    END IF;
+END;
+$$;
 
 
 --
@@ -7688,6 +7885,48 @@ BEGIN
     INSERT INTO app_webhook_event_outbox(account_id, app_id, event, source_id, payload, recipient_webhook_ids)
         VALUES (NEW.account_id, NEW.app_id, event_name, NEW.completed_request_id, event_payload, recipients)
         ON CONFLICT (event, source_id) DO NOTHING;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: serialize_clone_value_publication(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.serialize_clone_value_publication() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app_ids uuid[];
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        app_ids := ARRAY[NEW.app_id];
+    ELSIF TG_OP = 'DELETE' THEN
+        app_ids := ARRAY[OLD.app_id];
+    ELSE
+        app_ids := ARRAY[OLD.app_id, NEW.app_id];
+    END IF;
+    PERFORM id FROM apps WHERE id = ANY(app_ids) ORDER BY id FOR NO KEY UPDATE;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: serialize_runtime_deployment_configuration(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.serialize_runtime_deployment_configuration() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE deployment_ids uuid[];
+BEGIN
+    IF TG_OP='INSERT' THEN deployment_ids:=ARRAY[NEW.deployment_id];
+    ELSIF TG_OP='DELETE' THEN deployment_ids:=ARRAY[OLD.deployment_id];
+    ELSE deployment_ids:=ARRAY[OLD.deployment_id,NEW.deployment_id]; END IF;
+    PERFORM id FROM deployments WHERE id=ANY(deployment_ids) ORDER BY id FOR NO KEY UPDATE;
+    IF TG_OP='DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;
 END;
 $$;
@@ -11252,6 +11491,7 @@ CREATE TABLE public.dead_letter_events (
     last_failed_at timestamp with time zone DEFAULT now() NOT NULL,
     replayed_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    environment_owned boolean DEFAULT false NOT NULL,
     CONSTRAINT dead_letter_events_retry_count_check CHECK ((retry_count >= 0)),
     CONSTRAINT dead_letter_events_source_check CHECK ((source = ANY (ARRAY['invocation'::text, 'trigger_record'::text, 'webhook_delivery'::text, 'job_run'::text, 'workflow_run'::text])))
 );
@@ -11504,6 +11744,17 @@ CREATE TABLE public.deployment_route_policy_snapshots (
     CONSTRAINT deployment_route_policy_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
     CONSTRAINT deployment_route_policy_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT deployment_route_policy_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: deployment_runtime_environment_owners; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_runtime_environment_owners (
+    deployment_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    CONSTRAINT deployment_runtime_environment_owners_environment_id_check CHECK ((environment_id <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
 
 
@@ -13236,6 +13487,49 @@ ALTER SEQUENCE public.instance_billing_intervals_id_seq OWNED BY public.instance
 
 
 --
+-- Name: invocation_environment_queue_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_environment_queue_admissions (
+    invocation_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    runtime_set_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    workload_spec_id uuid NOT NULL,
+    pin_hash text NOT NULL,
+    settings_hash text NOT NULL,
+    definition_hash text NOT NULL,
+    queue_name text NOT NULL,
+    admitted_at timestamp with time zone NOT NULL,
+    CONSTRAINT invocation_environment_queue_admissions_definition_hash_check CHECK ((definition_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT invocation_environment_queue_admissions_pin_hash_check CHECK ((pin_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT invocation_environment_queue_admissions_queue_name_check CHECK ((queue_name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT invocation_environment_queue_admissions_settings_hash_check CHECK ((settings_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: invocation_environment_queue_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_environment_queue_receipts (
+    invocation_id uuid NOT NULL,
+    attempt integer NOT NULL,
+    token_hash text NOT NULL,
+    owner_hash text NOT NULL,
+    issued_at timestamp with time zone NOT NULL,
+    lease_expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT invocation_environment_queue_receipts_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT invocation_environment_queue_receipts_check CHECK ((lease_expires_at > issued_at)),
+    CONSTRAINT invocation_environment_queue_receipts_owner_hash_check CHECK ((owner_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT invocation_environment_queue_receipts_token_hash_check CHECK ((token_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
 -- Name: invocation_work_cancellations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13249,6 +13543,48 @@ CREATE TABLE public.invocation_work_cancellations (
     CONSTRAINT invocation_work_cancellations_cancelled_count_check CHECK ((cancelled_count >= 0)),
     CONSTRAINT invocation_work_cancellations_key_digest_check CHECK ((length(key_digest) = 32)),
     CONSTRAINT invocation_work_cancellations_policy_name_check CHECK ((policy_name ~ '^[a-z][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: invocation_work_environment_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_work_environment_admissions (
+    invocation_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    workload_spec_id uuid NOT NULL,
+    settings_hash text NOT NULL,
+    app_id uuid NOT NULL,
+    policy_name text NOT NULL,
+    policy_revision bigint NOT NULL,
+    key_digest bytea NOT NULL,
+    fairness_digest bytea,
+    fairness_limit integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT invocation_work_environment_admissions_check CHECK ((((fairness_limit = 0) AND (fairness_digest IS NULL)) OR ((fairness_limit > 0) AND (fairness_digest IS NOT NULL) AND (length(fairness_digest) = 32)))),
+    CONSTRAINT invocation_work_environment_admissions_fairness_limit_check CHECK (((fairness_limit >= 0) AND (fairness_limit <= 1000))),
+    CONSTRAINT invocation_work_environment_admissions_key_digest_check CHECK ((length(key_digest) = 32)),
+    CONSTRAINT invocation_work_environment_admissions_policy_name_check CHECK ((policy_name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT invocation_work_environment_admissions_policy_revision_check CHECK ((policy_revision >= 1)),
+    CONSTRAINT invocation_work_environment_admissions_settings_hash_check CHECK ((settings_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: invocation_work_environment_domains; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_work_environment_domains (
+    app_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    policy_name text NOT NULL,
+    kind text NOT NULL,
+    digest bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT invocation_work_environment_domains_digest_check CHECK ((length(digest) = 32)),
+    CONSTRAINT invocation_work_environment_domains_kind_check CHECK ((kind = ANY (ARRAY['key'::text, 'fairness'::text]))),
+    CONSTRAINT invocation_work_environment_domains_policy_name_check CHECK ((policy_name ~ '^[a-z][a-z0-9-]{0,62}$'::text))
 );
 
 
@@ -13334,6 +13670,7 @@ CREATE TABLE public.invocations (
     queue_binding_id uuid,
     replay_generation bigint DEFAULT 0 NOT NULL,
     outcome_code text DEFAULT ''::text NOT NULL,
+    environment_id uuid,
     CONSTRAINT invocation_deployment_scope_check CHECK ((deployment_scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT invocation_platform_tenant_source CHECK (((platform_tenant_id IS NULL) OR (source = ANY (ARRAY['async_invoke'::text, 'replay'::text, 'queue'::text])))),
     CONSTRAINT invocation_queue_binding_source CHECK (((queue_binding_id IS NULL) OR (source = 'queue'::text))),
@@ -13350,6 +13687,71 @@ CREATE TABLE public.invocations (
 
 
 --
+-- Name: production_invocation_work; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.production_invocation_work AS
+ SELECT id,
+    app_id,
+    account_id,
+    source,
+    state,
+    payload,
+    headers,
+    due_at,
+    method,
+    path,
+    cron_id,
+    scheduled_at,
+    ack_url,
+    result,
+    lease_expires_at,
+    received_at,
+    completed_at,
+    instance_id,
+    attempts,
+    last_error,
+    created_at,
+    org_id,
+    outcome,
+    deadline_at,
+    retry_policy,
+    result_retention_until,
+    replayed_from_invocation_id,
+    last_replayed_at,
+    on_success_destination_id,
+    on_failure_destination_id,
+    queue_name,
+    quota_reserved,
+    work_policy_name,
+    work_key_digest,
+    work_expires_at,
+    work_sequence,
+    work_policy_revision,
+    work_fairness_digest,
+    work_fairness_limit,
+    platform_tenant_id,
+    failure_rules,
+    occurrence_id,
+    start_deadline_at,
+    work_decision,
+    operation_id,
+    deployment_scope,
+    queue_binding_id,
+    replay_generation,
+    outcome_code,
+    environment_id
+   FROM public.invocations i
+  WHERE ((environment_id IS NULL) AND (NOT (EXISTS ( SELECT 1
+           FROM public.invocation_environment_queue_admissions p
+          WHERE (p.invocation_id = i.id)))) AND (NOT (EXISTS ( SELECT 1
+           FROM public.invocation_work_environment_admissions p
+          WHERE (p.invocation_id = i.id)))) AND (NOT public.faas_invocation_headers_own_stage(app_id, headers)) AND (NOT (EXISTS ( SELECT 1
+           FROM public.invocation_environment_queue_receipts r
+          WHERE (r.invocation_id = i.id)))));
+
+
+--
 -- Name: invocations_pending_per_app; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -13357,7 +13759,7 @@ CREATE VIEW public.invocations_pending_per_app AS
  SELECT app_id,
     source,
     count(*) AS pending
-   FROM public.invocations
+   FROM public.production_invocation_work
   WHERE (state = ANY (ARRAY['pending'::text, 'dispatching'::text]))
   GROUP BY app_id, source;
 
@@ -13723,6 +14125,23 @@ CREATE TABLE public.jobs (
 
 
 --
+-- Name: layer_artifact_retention; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.layer_artifact_retention (
+    storage_key text NOT NULL,
+    state text DEFAULT 'retained'::text NOT NULL,
+    deletion_id uuid,
+    deleted_at timestamp with time zone,
+    delete_requested_at timestamp with time zone,
+    CONSTRAINT layer_artifact_retention_check CHECK (((state = 'retained'::text) OR (delete_requested_at IS NOT NULL))),
+    CONSTRAINT layer_artifact_retention_check1 CHECK ((((state = 'retained'::text) AND (deletion_id IS NULL) AND (deleted_at IS NULL)) OR ((state = 'deleting'::text) AND (deletion_id IS NOT NULL) AND (deleted_at IS NULL)) OR ((state = 'deleted'::text) AND (deletion_id IS NOT NULL) AND (deleted_at IS NOT NULL)))),
+    CONSTRAINT layer_artifact_retention_state_check CHECK ((state = ANY (ARRAY['retained'::text, 'deleting'::text, 'deleted'::text]))),
+    CONSTRAINT layer_artifact_retention_storage_key_check CHECK (((storage_key <> ''::text) AND (length(storage_key) <= 4096)))
+);
+
+
+--
 -- Name: log_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13997,6 +14416,38 @@ CREATE TABLE public.managed_postgres_bindings (
 
 
 --
+-- Name: managed_postgres_checkpoint_maintenance; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_checkpoint_maintenance (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_database_id uuid NOT NULL,
+    reserved_by_operation_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    source_provider_resource_id text NOT NULL,
+    source_data_resource_id text NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    owner_oid bigint,
+    database_oid bigint,
+    role_requested_at timestamp with time zone,
+    database_requested_at timestamp with time zone,
+    activation_requested_at timestamp with time zone,
+    ready_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_postgres_checkpoint_m_source_provider_resource_id_check CHECK (((source_provider_resource_id <> ''::text) AND (length(source_provider_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_checkpoint_maint_source_data_resource_id_check CHECK (((source_data_resource_id <> ''::text) AND (length(source_data_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_checkpoint_maintenan_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_checkpoint_maintenance_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT managed_postgres_checkpoint_maintenance_check CHECK ((((state = 'reserved'::text) AND (role_requested_at IS NULL) AND (owner_oid IS NULL) AND (database_requested_at IS NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'role_requested'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NULL) AND (database_requested_at IS NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'role_reserved'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'database_requested'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'database_created'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NOT NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'activation_requested'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NOT NULL) AND (activation_requested_at IS NOT NULL) AND (ready_at IS NULL)) OR ((state = 'ready'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NOT NULL) AND (activation_requested_at IS NOT NULL) AND (ready_at IS NOT NULL)))),
+    CONSTRAINT managed_postgres_checkpoint_maintenance_database_oid_check CHECK (((database_oid > 0) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT managed_postgres_checkpoint_maintenance_owner_oid_check CHECK (((owner_oid > 0) AND (owner_oid <= '4294967295'::bigint))),
+    CONSTRAINT managed_postgres_checkpoint_maintenance_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'role_requested'::text, 'role_reserved'::text, 'database_requested'::text, 'database_created'::text, 'activation_requested'::text, 'ready'::text])))
+);
+
+
+--
 -- Name: managed_postgres_cutover_credentials; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14101,6 +14552,11 @@ CREATE TABLE public.managed_postgres_databases (
     restore_point_in_time timestamp with time zone,
     cutover_id uuid,
     accounting_required boolean DEFAULT true NOT NULL,
+    environment_clone_operation_id uuid,
+    data_resource_id text,
+    clone_resource_role text DEFAULT 'target'::text NOT NULL,
+    CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
+    CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_databases_availability_check CHECK ((availability = ANY (ARRAY['single_zone'::text, 'high_availability'::text]))),
     CONSTRAINT managed_postgres_databases_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
@@ -14109,6 +14565,9 @@ CREATE TABLE public.managed_postgres_databases (
     CONSTRAINT managed_postgres_databases_check1 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
     CONSTRAINT managed_postgres_databases_check2 CHECK (((state <> 'ready'::text) OR ((provider_resource_id IS NOT NULL) AND (observed_generation = desired_generation)))),
     CONSTRAINT managed_postgres_databases_check3 CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
+    CONSTRAINT managed_postgres_databases_check4 CHECK (((data_resource_id IS NULL) OR ((data_resource_id <> ''::text) AND (length(data_resource_id) <= 255) AND (provider_resource_id IS NOT NULL)))),
+    CONSTRAINT managed_postgres_databases_check5 CHECK (((clone_resource_role = 'target'::text) OR (environment_clone_operation_id IS NOT NULL))),
+    CONSTRAINT managed_postgres_databases_clone_resource_role_check CHECK ((clone_resource_role = ANY (ARRAY['target'::text, 'checkpoint'::text]))),
     CONSTRAINT managed_postgres_databases_desired_generation_check CHECK ((desired_generation >= 1)),
     CONSTRAINT managed_postgres_databases_last_error_code_check CHECK ((last_error_code ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
     CONSTRAINT managed_postgres_databases_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
@@ -14151,6 +14610,40 @@ CREATE TABLE public.managed_postgres_health (
     CONSTRAINT managed_postgres_health_last_error_code_check CHECK ((last_error_code = ANY (ARRAY['resource_missing'::text, 'observer_unsupported'::text, 'provider_unavailable'::text, 'backend_unavailable'::text, 'observation_invalid'::text, 'spec_mismatch'::text, 'provider_failed'::text]))),
     CONSTRAINT managed_postgres_health_provider_resource_id_check CHECK ((length(provider_resource_id) > 0)),
     CONSTRAINT managed_postgres_health_provider_status_check CHECK ((provider_status = ANY (ARRAY['unknown'::text, 'missing'::text, 'pending'::text, 'ready'::text, 'deleting'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: managed_postgres_restore_proofs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_restore_proofs (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    provider_resource_id text NOT NULL,
+    source_database_id uuid NOT NULL,
+    source_resource_id text NOT NULL,
+    point_in_time timestamp with time zone NOT NULL,
+    spec jsonb NOT NULL,
+    generation bigint NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    data_resource_id text,
+    CONSTRAINT managed_postgres_restore_proofs_account_id_check CHECK ((account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT managed_postgres_restore_proofs_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_restore_proofs_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT managed_postgres_restore_proofs_check CHECK (((database_id <> source_database_id) AND (provider_resource_id <> source_resource_id))),
+    CONSTRAINT managed_postgres_restore_proofs_check1 CHECK (((data_resource_id IS NULL) OR ((data_resource_id <> ''::text) AND (length(data_resource_id) <= 255) AND (data_resource_id <> source_resource_id)))),
+    CONSTRAINT managed_postgres_restore_proofs_generation_check CHECK ((generation > 0)),
+    CONSTRAINT managed_postgres_restore_proofs_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT managed_postgres_restore_proofs_operation_id_check CHECK ((operation_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT managed_postgres_restore_proofs_point_in_time_check CHECK (isfinite(point_in_time)),
+    CONSTRAINT managed_postgres_restore_proofs_provider_resource_id_check CHECK (((provider_resource_id <> ''::text) AND (length(provider_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_restore_proofs_source_database_id_check CHECK ((source_database_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT managed_postgres_restore_proofs_source_resource_id_check CHECK (((source_resource_id <> ''::text) AND (length(source_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_restore_proofs_spec_check CHECK (((jsonb_typeof(spec) = 'object'::text) AND (spec <> '{}'::jsonb)))
 );
 
 
@@ -14695,6 +15188,25 @@ CREATE TABLE public.object_bucket_lifecycle (
 
 
 --
+-- Name: object_bucket_mutations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_mutations (
+    id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    kind text NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    physical_name text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT object_bucket_mutations_backend_fingerprint_check CHECK ((backend_fingerprint <> ''::text)),
+    CONSTRAINT object_bucket_mutations_backend_id_check CHECK ((backend_id <> ''::text)),
+    CONSTRAINT object_bucket_mutations_kind_check CHECK ((kind = ANY (ARRAY['request'::text, 'native_grant'::text]))),
+    CONSTRAINT object_bucket_mutations_physical_name_check CHECK ((physical_name <> ''::text))
+);
+
+
+--
 -- Name: object_bucket_notifications; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14782,6 +15294,25 @@ CREATE TABLE public.object_bucket_versioning (
 
 
 --
+-- Name: object_bucket_write_fences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_write_fences (
+    bucket_id uuid NOT NULL,
+    token uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    physical_name text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    clone_operation_id uuid,
+    CONSTRAINT object_bucket_write_fences_backend_fingerprint_check CHECK ((backend_fingerprint <> ''::text)),
+    CONSTRAINT object_bucket_write_fences_backend_id_check CHECK ((backend_id <> ''::text)),
+    CONSTRAINT object_bucket_write_fences_clone_token_check CHECK (((clone_operation_id IS NULL) OR (token = clone_operation_id))),
+    CONSTRAINT object_bucket_write_fences_physical_name_check CHECK ((physical_name <> ''::text))
+);
+
+
+--
 -- Name: object_buckets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14806,10 +15337,12 @@ CREATE TABLE public.object_buckets (
     public_read boolean DEFAULT false NOT NULL,
     serve_at text,
     environment_clone_source_bucket_id uuid,
+    environment_clone_operation_id uuid,
     CONSTRAINT object_buckets_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT object_buckets_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT object_buckets_backend_id_check CHECK (((length(backend_id) >= 1) AND (length(backend_id) <= 63))),
     CONSTRAINT object_buckets_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT object_buckets_clone_operation_origin_check CHECK (((environment_clone_operation_id IS NULL) OR (environment_clone_source_bucket_id IS NOT NULL))),
     CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text, 'protected'::text, 'cleanup_pending'::text]))),
     CONSTRAINT object_buckets_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT object_buckets_region_check CHECK (((length(region) >= 1) AND (length(region) <= 63))),
@@ -15206,6 +15739,41 @@ CREATE TABLE public.object_storage_request_metrics (
     CONSTRAINT object_storage_request_metrics_egress_bytes_check CHECK (((egress_bytes >= 0) AND (egress_bytes <= '1152921504606846976'::bigint))),
     CONSTRAINT object_storage_request_metrics_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
     CONSTRAINT object_storage_request_metrics_request_count_check CHECK (((request_count >= 0) AND (request_count <= '1152921504606846976'::bigint)))
+);
+
+
+--
+-- Name: object_storage_upload_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_upload_grants (
+    id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    token_hash text NOT NULL,
+    kind text NOT NULL,
+    object_key text NOT NULL,
+    size_bytes bigint NOT NULL,
+    headers jsonb NOT NULL,
+    upload_id uuid,
+    provider_upload_id text,
+    part_number integer DEFAULT 0 NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    physical_name text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT object_storage_upload_grants_backend_fingerprint_check CHECK ((backend_fingerprint <> ''::text)),
+    CONSTRAINT object_storage_upload_grants_backend_id_check CHECK ((backend_id <> ''::text)),
+    CONSTRAINT object_storage_upload_grants_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '00:15:00'::interval)))),
+    CONSTRAINT object_storage_upload_grants_check1 CHECK ((((kind = 'put'::text) AND (upload_id IS NULL) AND (provider_upload_id IS NULL) AND (part_number = 0)) OR ((kind = 'multipart_part'::text) AND (upload_id IS NOT NULL) AND (provider_upload_id IS NOT NULL) AND (provider_upload_id <> ''::text) AND ((part_number >= 1) AND (part_number <= 10000)) AND (size_bytes > 0)))),
+    CONSTRAINT object_storage_upload_grants_headers_check CHECK ((jsonb_typeof(headers) = 'object'::text)),
+    CONSTRAINT object_storage_upload_grants_kind_check CHECK ((kind = ANY (ARRAY['put'::text, 'multipart_part'::text]))),
+    CONSTRAINT object_storage_upload_grants_object_key_check CHECK (((octet_length(object_key) >= 1) AND (octet_length(object_key) <= 1024))),
+    CONSTRAINT object_storage_upload_grants_physical_name_check CHECK ((physical_name <> ''::text)),
+    CONSTRAINT object_storage_upload_grants_size_bytes_check CHECK (((size_bytes >= 0) AND (size_bytes <= '5368709120'::bigint))),
+    CONSTRAINT object_storage_upload_grants_token_hash_check CHECK ((token_hash ~ '^[0-9a-f]{64}$'::text))
 );
 
 
@@ -16272,6 +16840,36 @@ CREATE TABLE public.private_networks (
 
 
 --
+-- Name: production_dead_letter_events; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.production_dead_letter_events AS
+ SELECT id,
+    account_id,
+    app_id,
+    source,
+    source_id,
+    origin,
+    trigger_id,
+    event_payload,
+    headers,
+    error_kind,
+    error_detail,
+    retry_count,
+    first_failed_at,
+    last_failed_at,
+    replayed_at,
+    created_at,
+    environment_owned
+   FROM public.dead_letter_events e
+  WHERE ((NOT environment_owned) AND ((source <> 'invocation'::text) OR ((NOT public.faas_invocation_headers_own_stage(app_id, headers)) AND (NOT (EXISTS ( SELECT 1
+           FROM public.invocations i
+          WHERE ((i.id = e.source_id) AND (NOT (EXISTS ( SELECT 1
+                   FROM public.production_invocation_work p
+                  WHERE (p.id = i.id)))))))))));
+
+
+--
 -- Name: project_environment_approvals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16315,6 +16913,910 @@ CREATE TABLE public.project_environment_cleanup_jobs (
 
 
 --
+-- Name: project_environment_clone_configuration_captures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_configuration_captures (
+    operation_id uuid NOT NULL,
+    version integer NOT NULL,
+    configuration_hash text NOT NULL,
+    configuration json NOT NULL,
+    CONSTRAINT project_environment_clone_configuratio_configuration_hash_check CHECK ((configuration_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_configuration_cap_configuration_check CHECK ((json_typeof(configuration) = 'object'::text)),
+    CONSTRAINT project_environment_clone_configuration_captures_version_check CHECK ((version = 1))
+);
+
+
+--
+-- Name: project_environment_clone_layer_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_layer_pins (
+    operation_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    storage_key text NOT NULL,
+    bytes bigint NOT NULL,
+    CONSTRAINT project_environment_clone_layer_pins_bytes_check CHECK ((bytes > 0))
+);
+
+
+--
+-- Name: project_environment_clone_materializations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_materializations (
+    operation_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    workload_settings jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_materializati_workload_settings_check CHECK (((jsonb_typeof(workload_settings) = 'object'::text) AND (workload_settings <> '{}'::jsonb))),
+    CONSTRAINT project_environment_clone_materializations_environment_id_check CHECK ((environment_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: project_environment_clone_object_credentials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_object_credentials (
+    operation_id uuid NOT NULL,
+    source_credential_id uuid NOT NULL,
+    target_credential_id uuid NOT NULL,
+    preparation_hash text NOT NULL,
+    preparation jsonb NOT NULL,
+    CONSTRAINT project_environment_clone_object_credent_preparation_hash_check CHECK ((preparation_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_object_credentials_check CHECK ((source_credential_id <> target_credential_id)),
+    CONSTRAINT project_environment_clone_object_credentials_preparation_check CHECK ((jsonb_typeof(preparation) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_clone_object_entries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_object_entries (
+    operation_id uuid NOT NULL,
+    source_bucket_id uuid NOT NULL,
+    object_key text NOT NULL,
+    source_version text NOT NULL,
+    source_object jsonb NOT NULL,
+    copied_at timestamp with time zone,
+    target_etag text DEFAULT ''::text NOT NULL,
+    verified_sha256 text DEFAULT ''::text NOT NULL,
+    CONSTRAINT project_environment_clone_object_entries_check CHECK (((source_object ->> 'key'::text) = object_key)),
+    CONSTRAINT project_environment_clone_object_entries_check1 CHECK (((source_object ->> 'version_id'::text) = source_version)),
+    CONSTRAINT project_environment_clone_object_entries_check2 CHECK ((((copied_at IS NULL) AND (target_etag = ''::text) AND (verified_sha256 = ''::text)) OR ((copied_at IS NOT NULL) AND (verified_sha256 <> ''::text)))),
+    CONSTRAINT project_environment_clone_object_entries_object_key_check CHECK (((length(object_key) >= 1) AND (length(object_key) <= 1024))),
+    CONSTRAINT project_environment_clone_object_entries_source_object_check CHECK ((jsonb_typeof(source_object) = 'object'::text)),
+    CONSTRAINT project_environment_clone_object_entries_source_version_check CHECK ((source_version <> ''::text)),
+    CONSTRAINT project_environment_clone_object_entries_verified_sha256_check CHECK (((verified_sha256 = ''::text) OR (verified_sha256 ~ '^[a-f0-9]{64}$'::text)))
+);
+
+
+--
+-- Name: project_environment_clone_object_manifests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_object_manifests (
+    operation_id uuid NOT NULL,
+    source_bucket_id uuid NOT NULL,
+    target_bucket_id uuid NOT NULL,
+    captured_at timestamp with time zone NOT NULL,
+    captured_at_exact text NOT NULL,
+    manifest_hash text NOT NULL,
+    object_count integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_clone_object_manifests_check CHECK ((source_bucket_id <> target_bucket_id)),
+    CONSTRAINT project_environment_clone_object_manifests_manifest_hash_check CHECK ((manifest_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_object_manifests_object_count_check CHECK ((object_count >= 0))
+);
+
+
+--
+-- Name: project_environment_clone_operations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_operations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    source_environment text NOT NULL,
+    target_environment text NOT NULL,
+    idempotency_key text NOT NULL,
+    source_revision_hash text NOT NULL,
+    source_release_set_id uuid,
+    status text DEFAULT 'pending'::text NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    resources jsonb DEFAULT '[]'::jsonb NOT NULL,
+    error_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    target_release_set_id uuid,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    configuration_capture_version integer DEFAULT 0 NOT NULL,
+    CONSTRAINT project_environment_clone_lease_pair CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT project_environment_clone_op_configuration_capture_versio_check CHECK ((configuration_capture_version = ANY (ARRAY[0, 1]))),
+    CONSTRAINT project_environment_clone_operations_attempt_count_check CHECK ((attempt_count >= 0)),
+    CONSTRAINT project_environment_clone_operations_idempotency_key_check CHECK (((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 255))),
+    CONSTRAINT project_environment_clone_operations_resources_check CHECK ((jsonb_typeof(resources) = 'array'::text)),
+    CONSTRAINT project_environment_clone_operations_revision_check CHECK ((revision > 0)),
+    CONSTRAINT project_environment_clone_operations_source_revision_hash_check CHECK ((source_revision_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_operations_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'capturing'::text, 'copying'::text, 'publishing'::text, 'ready'::text, 'failed'::text, 'compensating'::text, 'compensated'::text]))),
+    CONSTRAINT project_environment_clone_source_target_distinct CHECK ((source_environment <> target_environment))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_archives; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_archives (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    storage_id text NOT NULL,
+    storage_fingerprint text NOT NULL,
+    storage_key text NOT NULL,
+    reserved_bytes bigint NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    upload_started_at timestamp with time zone,
+    plaintext_bytes bigint,
+    ciphertext_bytes bigint,
+    ciphertext_sha256 text,
+    retained_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres__inventory_fingerprint_check CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_ar_storage_fingerprint_check CHECK ((storage_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_arch_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_arch_upload_started_at_check CHECK (isfinite(upload_started_at)),
+    CONSTRAINT project_environment_clone_postgres_archiv_plaintext_bytes_check CHECK ((plaintext_bytes >= 5)),
+    CONSTRAINT project_environment_clone_postgres_archive_reserved_bytes_check CHECK ((reserved_bytes > 0)),
+    CONSTRAINT project_environment_clone_postgres_archives_check CHECK (((ciphertext_bytes > 0) AND (ciphertext_bytes <= reserved_bytes))),
+    CONSTRAINT project_environment_clone_postgres_archives_check1 CHECK (((owner_id <> operation_id) AND (owner_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_archives_check2 CHECK ((storage_key = (((('postgres-copies/'::text || (operation_id)::text) || '/'::text) || (owner_id)::text) || '.age'::text))),
+    CONSTRAINT project_environment_clone_postgres_archives_check3 CHECK (((upload_started_at IS NULL) OR (upload_started_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_archives_check4 CHECK (((retained_at IS NULL) OR (retained_at >= upload_started_at))),
+    CONSTRAINT project_environment_clone_postgres_archives_check5 CHECK ((((state = 'reserved'::text) AND (upload_started_at IS NULL) AND (retained_at IS NULL) AND (plaintext_bytes IS NULL) AND (ciphertext_bytes IS NULL) AND (ciphertext_sha256 IS NULL)) OR ((state = 'uploading'::text) AND (upload_started_at IS NOT NULL) AND (retained_at IS NULL) AND (plaintext_bytes IS NULL) AND (ciphertext_bytes IS NULL) AND (ciphertext_sha256 IS NULL)) OR ((state = 'retained'::text) AND (upload_started_at IS NOT NULL) AND (retained_at IS NOT NULL) AND (plaintext_bytes IS NOT NULL) AND (ciphertext_bytes IS NOT NULL) AND (ciphertext_sha256 IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_archives_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_archives_database_oid_check CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_archives_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_archives_retained_at_check CHECK (isfinite(retained_at)),
+    CONSTRAINT project_environment_clone_postgres_archives_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_archives_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'uploading'::text, 'retained'::text]))),
+    CONSTRAINT project_environment_clone_postgres_archives_storage_id_check CHECK (((length(storage_id) >= 1) AND (length(storage_id) <= 255)))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_bindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_bindings (
+    operation_id uuid NOT NULL,
+    source_binding_id uuid NOT NULL,
+    target_binding_id uuid NOT NULL,
+    reservation_hash text NOT NULL,
+    preparation_hash text,
+    preparation jsonb,
+    CONSTRAINT project_environment_clone_postgres_bindi_preparation_hash_check CHECK ((preparation_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_bindi_reservation_hash_check CHECK ((reservation_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_bindings_check CHECK ((source_binding_id <> target_binding_id)),
+    CONSTRAINT project_environment_clone_postgres_bindings_check1 CHECK (((preparation_hash IS NULL) = (preparation IS NULL))),
+    CONSTRAINT project_environment_clone_postgres_bindings_preparation_check CHECK ((jsonb_typeof(preparation) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_checkpoint_selections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_checkpoint_selections (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    maintenance_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    ciphertext bytea NOT NULL,
+    retained_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres_chec_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_checkpoint__ciphertext_check CHECK (((octet_length(ciphertext) > 0) AND (octet_length(ciphertext) <= 4276224))),
+    CONSTRAINT project_environment_clone_postgres_checkpoint_fingerprint_check CHECK ((fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_checkpoint_sele_key_id_check CHECK (((key_id <> ''::text) AND (length(key_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres_checkpoint_selec_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_contents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_contents (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    inventory_ciphertext_sha256 text NOT NULL,
+    archive_owner_id uuid NOT NULL,
+    archive_reservation_sha256 text NOT NULL,
+    reader_owner_id uuid NOT NULL,
+    reader_identity_sha256 text NOT NULL,
+    key_id text NOT NULL,
+    reserved_bytes bigint NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    fingerprint text,
+    ciphertext bytea,
+    ciphertext_sha256 text,
+    captured_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_inventory_ciphertext_sha256_check3 CHECK ((inventory_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_pos_archive_reservation_sha256_check2 CHECK ((archive_reservation_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_cont_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_content_reserved_bytes_check CHECK ((reserved_bytes > 0)),
+    CONSTRAINT project_environment_clone_postgres_contents_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_contents_check CHECK (((octet_length(ciphertext) > 0) AND (octet_length(ciphertext) <= reserved_bytes))),
+    CONSTRAINT project_environment_clone_postgres_contents_check1 CHECK (((owner_id <> operation_id) AND (owner_id <> source_database_id) AND (owner_id <> archive_owner_id) AND (owner_id <> reader_owner_id))),
+    CONSTRAINT project_environment_clone_postgres_contents_check2 CHECK (((captured_at IS NULL) OR (captured_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_contents_check3 CHECK ((((state = 'reserved'::text) AND (fingerprint IS NULL) AND (ciphertext IS NULL) AND (ciphertext_sha256 IS NULL) AND (captured_at IS NULL)) OR ((state = 'captured'::text) AND (fingerprint IS NOT NULL) AND (ciphertext IS NOT NULL) AND (ciphertext_sha256 IS NOT NULL) AND (captured_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_contents_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_contents_database_oid_check CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_contents_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_contents_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_contents_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_contents_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'captured'::text]))),
+    CONSTRAINT project_environment_clone_postgres_inventory_fingerprint_check6 CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_reader_identity_sha256_check CHECK ((reader_identity_sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_copy_readers (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    capture_database_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    owner_id uuid NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    request_started_at timestamp with time zone,
+    endpoint_id text,
+    endpoint_created_at timestamp with time zone,
+    available boolean DEFAULT false NOT NULL,
+    observed_at timestamp with time zone,
+    cleanup_requested_at timestamp with time zone,
+    cleanup_dispatched_at timestamp with time zone,
+    delete_operation_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    capture_operation_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    retired_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres__capture_operation_ids_check CHECK ((jsonb_typeof(capture_operation_ids) = 'array'::text)),
+    CONSTRAINT project_environment_clone_postgres__cleanup_dispatched_at_check CHECK (isfinite(cleanup_dispatched_at)),
+    CONSTRAINT project_environment_clone_postgres_c_cleanup_requested_at_check CHECK (isfinite(cleanup_requested_at)),
+    CONSTRAINT project_environment_clone_postgres_c_delete_operation_ids_check CHECK ((jsonb_typeof(delete_operation_ids) = 'array'::text)),
+    CONSTRAINT project_environment_clone_postgres_co_endpoint_created_at_check CHECK (isfinite(endpoint_created_at)),
+    CONSTRAINT project_environment_clone_postgres_cop_request_started_at_check CHECK (isfinite(request_started_at)),
+    CONSTRAINT project_environment_clone_postgres_copy_reade_endpoint_id_check CHECK (((endpoint_id IS NULL) OR ((length(endpoint_id) >= 1) AND (length(endpoint_id) <= 255)))),
+    CONSTRAINT project_environment_clone_postgres_copy_reade_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT project_environment_clone_postgres_copy_reader_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_copy_reader_retired_at_check CHECK (isfinite(retired_at)),
+    CONSTRAINT project_environment_clone_postgres_copy_reader_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check CHECK (((capture_database_id <> source_database_id) AND (owner_id <> capture_database_id) AND (owner_id <> source_database_id) AND (owner_id <> operation_id))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check1 CHECK ((((endpoint_id IS NULL) = (endpoint_created_at IS NULL)) AND ((endpoint_id IS NULL) = (observed_at IS NULL)))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check2 CHECK (((request_started_at IS NULL) OR (request_started_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check3 CHECK (((endpoint_created_at IS NULL) OR ((request_started_at IS NOT NULL) AND (endpoint_created_at >= request_started_at) AND (observed_at >= endpoint_created_at)))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check4 CHECK (((cleanup_requested_at IS NULL) OR (cleanup_requested_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check5 CHECK (((cleanup_dispatched_at IS NULL) OR ((cleanup_requested_at IS NOT NULL) AND (cleanup_dispatched_at >= cleanup_requested_at) AND (endpoint_id IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check6 CHECK (((retired_at IS NULL) OR (retired_at >= cleanup_requested_at))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check7 CHECK (((NOT available) OR (state = 'observed'::text))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check8 CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (endpoint_id IS NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (endpoint_id IS NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'observed'::text) AND (request_started_at IS NOT NULL) AND (endpoint_id IS NOT NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'deleting'::text) AND (cleanup_requested_at IS NOT NULL) AND (retired_at IS NULL)) OR ((state = 'retired'::text) AND (cleanup_requested_at IS NOT NULL) AND (retired_at IS NOT NULL) AND (((request_started_at IS NULL) AND (endpoint_id IS NULL) AND (cleanup_dispatched_at IS NULL) AND (delete_operation_ids = '[]'::jsonb) AND (capture_operation_ids = '[]'::jsonb)) OR ((request_started_at IS NOT NULL) AND (endpoint_id IS NOT NULL) AND ((delete_operation_ids <> '[]'::jsonb) OR (capture_operation_ids <> '[]'::jsonb))))))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_check9 CHECK (((state = ANY (ARRAY['deleting'::text, 'retired'::text])) OR ((cleanup_dispatched_at IS NULL) AND (delete_operation_ids = '[]'::jsonb) AND (capture_operation_ids = '[]'::jsonb)))),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_copy_readers_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'requested'::text, 'observed'::text, 'deleting'::text, 'retired'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_copy_targets (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    capture_database_id uuid NOT NULL,
+    target_database_id uuid NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    request_started_at timestamp with time zone,
+    provider_resource_id text,
+    provider_created_at timestamp with time zone,
+    observed_at timestamp with time zone,
+    prepared_at timestamp with time zone,
+    retired_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    deletion_started_at timestamp with time zone,
+    deletion_observed_at timestamp with time zone,
+    CONSTRAINT clone_copy_target_deletion_order CHECK (((deletion_observed_at IS NULL) OR ((deletion_observed_at >= deletion_started_at) AND (deletion_observed_at >= provider_created_at) AND (retired_at >= deletion_observed_at)))),
+    CONSTRAINT clone_copy_target_lifecycle_shape CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'preparing'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'prepared'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (prepared_at IS NOT NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'deleting'::text) AND (request_started_at IS NOT NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NOT NULL) AND (deletion_observed_at IS NULL) AND (((provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL)) OR ((provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL)))) OR ((state = 'retired'::text) AND (retired_at IS NOT NULL) AND (((request_started_at IS NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (deletion_started_at IS NOT NULL) AND (deletion_observed_at IS NOT NULL)))))),
+    CONSTRAINT project_environment_clone_postgres_c_provider_resource_id_check CHECK (((provider_resource_id IS NULL) OR ((length(provider_resource_id) >= 1) AND (length(provider_resource_id) <= 255)))),
+    CONSTRAINT project_environment_clone_postgres_copy_targets_check CHECK (((target_database_id <> capture_database_id) AND (target_database_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_copy_targets_check2 CHECK (((prepared_at IS NULL) OR (prepared_at >= provider_created_at))),
+    CONSTRAINT project_environment_clone_postgres_copy_targets_check3 CHECK (((observed_at IS NULL) OR (observed_at >= provider_created_at))),
+    CONSTRAINT project_environment_clone_postgres_copy_targets_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'requested'::text, 'preparing'::text, 'prepared'::text, 'deleting'::text, 'retired'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_database_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_database_plans (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    target_database_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    inventory_ciphertext_sha256 text NOT NULL,
+    target_fingerprint text NOT NULL,
+    target_pins_ciphertext_sha256 text NOT NULL,
+    role_plan_ciphertext_sha256 text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext bytea NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_inventory_ciphertext_sha256_check2 CHECK ((inventory_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_role_plan_ciphertext_sha256_check1 CHECK ((role_plan_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_target_pins_ciphertext_sha2_check2 CHECK ((target_pins_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_dat_target_fingerprint_check CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_data_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_database_p_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_database_pl_ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT project_environment_clone_postgres_database_plans_check CHECK (((target_database_id <> operation_id) AND (target_database_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_database_plans_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_database_plans_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_inventory_fingerprint_check4 CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_database_sql_pins (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    target_database_id uuid NOT NULL,
+    archive_owner_id uuid NOT NULL,
+    archive_reservation_sha256 text NOT NULL,
+    database_plan_ciphertext_sha256 text NOT NULL,
+    target_provider_resource_id text NOT NULL,
+    target_provider_created_at timestamp with time zone NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    target_fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext bytea NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_database_plan_ciphertext_sha_check CHECK ((database_plan_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_target_provider_resource_id_check3 CHECK (((length(target_provider_resource_id) >= 1) AND (length(target_provider_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_pos_target_provider_created_at_check2 CHECK (isfinite(target_provider_created_at)),
+    CONSTRAINT project_environment_clone_post_archive_reservation_sha256_check CHECK ((archive_reservation_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_da_target_fingerprint_check1 CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_dat_ciphertext_sha256_check1 CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_database__database_oid_check CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_database_s_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_database_sq_ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT project_environment_clone_postgres_database_sql_pi_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_database_sql_pin_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_database_sql_pins_check CHECK (((target_database_id <> operation_id) AND (target_database_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_database_sql_pins_check1 CHECK ((captured_at >= target_provider_created_at)),
+    CONSTRAINT project_environment_clone_postgres_inventory_fingerprint_check5 CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_imports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_imports (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    import_id uuid NOT NULL,
+    archive_owner_id uuid NOT NULL,
+    archive_ciphertext_sha256 text NOT NULL,
+    target_database_id uuid NOT NULL,
+    target_provider_resource_id text NOT NULL,
+    target_provider_created_at timestamp with time zone NOT NULL,
+    target_fingerprint text NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    import_started_at timestamp with time zone,
+    executed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    database_sql_pins_ciphertext_sha256 text,
+    database_plan_ciphertext_sha256 text,
+    archive_reservation_sha256 text,
+    CONSTRAINT postgres_imports_preparation_tuple CHECK ((((database_sql_pins_ciphertext_sha256 IS NULL) AND (database_plan_ciphertext_sha256 IS NULL) AND (archive_reservation_sha256 IS NULL)) OR ((database_sql_pins_ciphertext_sha256 IS NOT NULL) AND (database_plan_ciphertext_sha256 IS NOT NULL) AND (archive_reservation_sha256 IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_po_database_plan_ciphertext_sh_check1 CHECK ((database_plan_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_database_sql_pins_ciphertext_check CHECK ((database_sql_pins_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_target_provider_resource_id_check1 CHECK (((length(target_provider_resource_id) >= 1) AND (length(target_provider_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_pos_archive_reservation_sha256_check1 CHECK ((archive_reservation_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_post_target_provider_created_at_check CHECK (isfinite(target_provider_created_at)),
+    CONSTRAINT project_environment_clone_postg_archive_ciphertext_sha256_check CHECK ((archive_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_imp_target_fingerprint_check CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_impo_import_started_at_check CHECK (isfinite(import_started_at)),
+    CONSTRAINT project_environment_clone_postgres_imports_check CHECK (((import_id <> operation_id) AND (import_id <> source_database_id) AND (import_id <> archive_owner_id) AND (import_id <> target_database_id))),
+    CONSTRAINT project_environment_clone_postgres_imports_check1 CHECK ((target_database_id <> source_database_id)),
+    CONSTRAINT project_environment_clone_postgres_imports_check2 CHECK ((created_at >= target_provider_created_at)),
+    CONSTRAINT project_environment_clone_postgres_imports_check3 CHECK (((import_started_at IS NULL) OR (import_started_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_imports_check4 CHECK (((executed_at IS NULL) OR (executed_at >= import_started_at))),
+    CONSTRAINT project_environment_clone_postgres_imports_check5 CHECK ((((state = 'reserved'::text) AND (import_started_at IS NULL) AND (executed_at IS NULL)) OR ((state = 'importing'::text) AND (import_started_at IS NOT NULL) AND (executed_at IS NULL)) OR ((state = 'executed'::text) AND (import_started_at IS NOT NULL) AND (executed_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_imports_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_imports_database_oid_check CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_imports_executed_at_check CHECK (isfinite(executed_at)),
+    CONSTRAINT project_environment_clone_postgres_imports_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'importing'::text, 'executed'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_inventories (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    capture_database_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext bytea NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres_inve_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_inventorie_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_inventorie_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_inventories_check CHECK ((capture_database_id <> source_database_id)),
+    CONSTRAINT project_environment_clone_postgres_inventories_ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT project_environment_clone_postgres_inventories_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_inventories_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_membership_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_membership_plans (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    target_database_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    inventory_ciphertext_sha256 text NOT NULL,
+    target_fingerprint text NOT NULL,
+    target_pins_ciphertext_sha256 text NOT NULL,
+    role_plan_ciphertext_sha256 text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext bytea NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_inventory_ciphertext_sha256_check1 CHECK ((inventory_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_target_pins_ciphertext_sha2_check1 CHECK ((target_pins_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_pos_role_plan_ciphertext_sha256_check CHECK ((role_plan_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_inventory_fingerprint_check3 CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_mem_target_fingerprint_check CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_memb_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_membership__ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT project_environment_clone_postgres_membership_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_membership_plan_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_membership_plans_check CHECK (((target_database_id <> operation_id) AND (target_database_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_membership_plans_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_role_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_role_plans (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    target_database_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    inventory_ciphertext_sha256 text NOT NULL,
+    target_fingerprint text NOT NULL,
+    target_pins_ciphertext_sha256 text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext bytea NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_target_pins_ciphertext_sha25_check CHECK ((target_pins_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_pos_inventory_ciphertext_sha256_check CHECK ((inventory_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_inventory_fingerprint_check2 CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_rol_target_fingerprint_check CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_role_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_role_plans_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_role_plans_check CHECK (((target_database_id <> operation_id) AND (target_database_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_role_plans_ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT project_environment_clone_postgres_role_plans_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_role_plans_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_snapshot_restores (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    target_owner_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    target_provider_resource_id text,
+    target_created_at timestamp with time zone,
+    request_started_at timestamp with time zone,
+    observed_at timestamp with time zone,
+    restored_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    deletion_started_at timestamp with time zone,
+    deleted_at timestamp with time zone,
+    delete_operation_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    adopted_database_id uuid,
+    adopted_at timestamp with time zone,
+    CONSTRAINT clone_postgres_snapshot_fork_adoption_shape CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = 'restoring'::text) AND (request_started_at IS NOT NULL) AND (target_provider_resource_id IS NOT NULL) AND (target_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = ANY (ARRAY['restored'::text, 'adopted'::text])) AND (request_started_at IS NOT NULL) AND (target_provider_resource_id IS NOT NULL) AND (target_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (restored_at IS NOT NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((state = ANY (ARRAY['deleting'::text, 'deleted'::text])) AND (((request_started_at IS NULL) AND (target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((request_started_at IS NOT NULL) AND (((target_provider_resource_id IS NULL) AND (target_created_at IS NULL) AND (observed_at IS NULL) AND (restored_at IS NULL) AND (delete_operation_ids = '[]'::jsonb)) OR ((target_provider_resource_id IS NOT NULL) AND (target_created_at IS NOT NULL) AND (observed_at IS NOT NULL)))))))),
+    CONSTRAINT project_environment_clone_pos_target_provider_resource_id_check CHECK (((target_provider_resource_id IS NULL) OR ((target_provider_resource_id <> ''::text) AND (length(target_provider_resource_id) <= 255)))),
+    CONSTRAINT project_environment_clone_postgres_s_backend_fingerprint_check1 CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_s_delete_operation_ids_check CHECK ((jsonb_typeof(delete_operation_ids) = 'array'::text)),
+    CONSTRAINT project_environment_clone_postgres_snapshot_re_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restore_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'requested'::text, 'restoring'::text, 'restored'::text, 'adopted'::text, 'deleting'::text, 'deleted'::text]))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check CHECK ((target_owner_id <> source_database_id)),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check1 CHECK (((state = ANY (ARRAY['deleting'::text, 'deleted'::text])) = (deletion_started_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check10 CHECK (((adopted_at IS NULL) OR (deletion_started_at IS NULL) OR (deletion_started_at >= adopted_at))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check2 CHECK (((target_created_at IS NULL) OR (target_created_at <= observed_at))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check3 CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check4 CHECK (((deleted_at IS NULL) OR (deleted_at >= deletion_started_at))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check5 CHECK (((adopted_database_id IS NULL) = (adopted_at IS NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check6 CHECK (((state <> 'deleted'::text) OR (request_started_at IS NULL) OR ((target_provider_resource_id IS NOT NULL) AND (jsonb_array_length(delete_operation_ids) > 0)))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check7 CHECK (((adopted_database_id IS NULL) OR (adopted_database_id = target_owner_id))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check8 CHECK ((((adopted_at IS NULL) AND (state <> 'adopted'::text)) OR ((adopted_at IS NOT NULL) AND (state = ANY (ARRAY['adopted'::text, 'deleting'::text, 'deleted'::text]))))),
+    CONSTRAINT project_environment_clone_postgres_snapshot_restores_check9 CHECK (((adopted_at IS NULL) OR ((restored_at IS NOT NULL) AND (adopted_at >= restored_at))))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_snapshots (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    source_version text NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    source_provider_resource_id text NOT NULL,
+    source_data_resource_id text NOT NULL,
+    capture_point timestamp with time zone NOT NULL,
+    provider_snapshot_id text,
+    state text DEFAULT 'capturing'::text NOT NULL,
+    snapshot_created_at timestamp with time zone,
+    observed_at timestamp with time zone,
+    cleanup_observed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    request_started_at timestamp with time zone,
+    CONSTRAINT project_environment_clone_pos_source_provider_resource_id_check CHECK (((source_provider_resource_id <> ''::text) AND (length(source_provider_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgre_source_data_resource_id_check CHECK (((source_data_resource_id <> ''::text) AND (length(source_data_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres_s_provider_snapshot_id_check CHECK (((provider_snapshot_id IS NULL) OR ((provider_snapshot_id <> ''::text) AND (length(provider_snapshot_id) <= 255)))),
+    CONSTRAINT project_environment_clone_postgres_sn_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_snapsho_source_version_check CHECK ((source_version ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_snapshots_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres_snapshots_check CHECK ((capture_point <= created_at)),
+    CONSTRAINT project_environment_clone_postgres_snapshots_check1 CHECK ((((provider_snapshot_id IS NULL) AND (snapshot_created_at IS NULL) AND (observed_at IS NULL)) OR ((provider_snapshot_id IS NOT NULL) AND (snapshot_created_at IS NOT NULL) AND (snapshot_created_at >= capture_point) AND (observed_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_snapshots_check2 CHECK (((state <> 'retained'::text) OR (provider_snapshot_id IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshots_check3 CHECK (((state = 'deleted'::text) = (cleanup_observed_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshots_check4 CHECK (((state <> ALL (ARRAY['requested'::text, 'retained'::text])) OR (request_started_at IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_snapshots_state_check CHECK ((state = ANY (ARRAY['capturing'::text, 'requested'::text, 'retained'::text, 'deleting'::text, 'deleted'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_target_sql_pins (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    target_database_id uuid NOT NULL,
+    target_provider_resource_id text NOT NULL,
+    target_provider_created_at timestamp with time zone NOT NULL,
+    scope jsonb NOT NULL,
+    inventory_fingerprint text NOT NULL,
+    target_fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    ciphertext bytea NOT NULL,
+    ciphertext_sha256 text NOT NULL,
+    captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_target_provider_resource_id_check2 CHECK (((length(target_provider_resource_id) >= 1) AND (length(target_provider_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_pos_target_provider_created_at_check1 CHECK (isfinite(target_provider_created_at)),
+    CONSTRAINT project_environment_clone_postgres_inventory_fingerprint_check1 CHECK ((inventory_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_tar_target_fingerprint_check CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_targ_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_target_sql__ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT project_environment_clone_postgres_target_sql_captured_at_check CHECK (isfinite(captured_at)),
+    CONSTRAINT project_environment_clone_postgres_target_sql_pins_check CHECK (((target_database_id <> operation_id) AND (target_database_id <> source_database_id))),
+    CONSTRAINT project_environment_clone_postgres_target_sql_pins_check1 CHECK ((captured_at >= target_provider_created_at)),
+    CONSTRAINT project_environment_clone_postgres_target_sql_pins_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_target_sql_pins_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_attempts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_verification_attempts (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    original_verification_id uuid NOT NULL,
+    attempt smallint NOT NULL,
+    verification_id uuid NOT NULL,
+    previous_attempt smallint,
+    previous_verification_id uuid,
+    previous_opened_at timestamp with time zone,
+    previous_closed_at timestamp with time zone,
+    key_id text NOT NULL,
+    reserved_bytes bigint NOT NULL,
+    state text NOT NULL,
+    request_started_at timestamp with time zone,
+    window_opened_at timestamp with time zone,
+    target_database_oid bigint,
+    fingerprint text,
+    ciphertext bytea,
+    ciphertext_sha256 text,
+    compared_at timestamp with time zone,
+    native_closed_at timestamp with time zone,
+    verified_at timestamp with time zone,
+    failed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres_v_target_database_oid_check1 CHECK (((target_database_oid >= 1) AND (target_database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_ve_request_started_at_check1 CHECK (isfinite(request_started_at)),
+    CONSTRAINT project_environment_clone_postgres_ver_ciphertext_sha256_check1 CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_ver_previous_closed_at_check CHECK (isfinite(previous_closed_at)),
+    CONSTRAINT project_environment_clone_postgres_ver_previous_opened_at_check CHECK (isfinite(previous_opened_at)),
+    CONSTRAINT project_environment_clone_postgres_veri_native_closed_at_check1 CHECK (isfinite(native_closed_at)),
+    CONSTRAINT project_environment_clone_postgres_veri_window_opened_at_check1 CHECK (isfinite(window_opened_at)),
+    CONSTRAINT project_environment_clone_postgres_verifi_reserved_bytes_check1 CHECK (((reserved_bytes >= 1) AND (reserved_bytes <= 16384))),
+    CONSTRAINT project_environment_clone_postgres_verifica_database_oid_check1 CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verificat_compared_at_check1 CHECK (isfinite(compared_at)),
+    CONSTRAINT project_environment_clone_postgres_verificat_fingerprint_check1 CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_verificat_verified_at_check1 CHECK (isfinite(verified_at)),
+    CONSTRAINT project_environment_clone_postgres_verificati_created_at_check1 CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_verification_a_attempt_check CHECK (((attempt >= 1) AND (attempt <= 3))),
+    CONSTRAINT project_environment_clone_postgres_verification_at_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_verification_att_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'verifying'::text, 'compared'::text, 'verified'::text, 'failed'::text]))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempt_check10 CHECK ((((state = 'failed'::text) AND (failed_at IS NOT NULL) AND (native_closed_at IS NOT NULL) AND (verified_at IS NULL)) OR ((state = 'verified'::text) AND (failed_at IS NULL) AND (native_closed_at IS NOT NULL) AND (verified_at IS NOT NULL)) OR ((state = ANY (ARRAY['reserved'::text, 'verifying'::text, 'compared'::text])) AND (failed_at IS NULL) AND (native_closed_at IS NULL) AND (verified_at IS NULL)))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check CHECK (((octet_length(ciphertext) > 0) AND (octet_length(ciphertext) <= reserved_bytes))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check1 CHECK ((((attempt = 1) AND (verification_id = original_verification_id) AND (state = 'failed'::text) AND (previous_attempt IS NULL) AND (previous_verification_id IS NULL) AND (previous_opened_at IS NULL) AND (previous_closed_at IS NULL)) OR ((attempt > 1) AND (verification_id <> original_verification_id) AND (previous_attempt IS NOT NULL) AND (previous_attempt = (attempt - 1)) AND (previous_verification_id IS NOT NULL) AND (previous_verification_id <> verification_id) AND (previous_opened_at IS NOT NULL) AND (previous_closed_at IS NOT NULL) AND (previous_closed_at >= previous_opened_at)))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check2 CHECK (((request_started_at IS NULL) OR (request_started_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check3 CHECK (((compared_at IS NULL) OR (compared_at >= request_started_at))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check4 CHECK (((failed_at IS NULL) OR (failed_at >= request_started_at))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check5 CHECK (((verified_at IS NULL) OR (verified_at >= compared_at))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check6 CHECK (((window_opened_at IS NULL) OR (previous_closed_at IS NULL) OR (window_opened_at >= previous_closed_at))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check7 CHECK (((native_closed_at IS NULL) OR (native_closed_at >= window_opened_at))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check8 CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (window_opened_at IS NULL) AND (target_database_oid IS NULL)) OR ((state = 'verifying'::text) AND (request_started_at IS NOT NULL) AND (window_opened_at IS NULL) AND (target_database_oid IS NULL)) OR ((state = ANY (ARRAY['compared'::text, 'verified'::text, 'failed'::text])) AND (request_started_at IS NOT NULL) AND (window_opened_at IS NOT NULL) AND (target_database_oid IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_verification_attempts_check9 CHECK ((((state = ANY (ARRAY['reserved'::text, 'verifying'::text, 'failed'::text])) AND (ciphertext IS NULL) AND (fingerprint IS NULL) AND (ciphertext_sha256 IS NULL) AND (compared_at IS NULL)) OR ((state = ANY (ARRAY['compared'::text, 'verified'::text])) AND (ciphertext IS NOT NULL) AND (fingerprint IS NOT NULL) AND (ciphertext_sha256 IS NOT NULL) AND (compared_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_verification_failed_at_check CHECK (isfinite(failed_at))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_verification_read_budgets (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    original_verification_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    read_bytes bigint NOT NULL,
+    sort_memory_bytes bigint NOT NULL,
+    sort_disk_bytes bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres_veri_sort_memory_bytes_check CHECK (((sort_memory_bytes >= 32) AND (sort_memory_bytes <= 8388608))),
+    CONSTRAINT project_environment_clone_postgres_verifi_sort_disk_bytes_check CHECK (((sort_disk_bytes >= 32) AND (sort_disk_bytes <= '68719476736'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verifica_database_oid_check2 CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verificati_created_at_check2 CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_verificatio_read_bytes_check CHECK (((read_bytes >= 1) AND (read_bytes <= '3298534883328'::bigint)))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_debits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_verification_read_debits (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    original_verification_id uuid NOT NULL,
+    attempt smallint NOT NULL,
+    verification_id uuid NOT NULL,
+    retry_attempt smallint,
+    retry_verification_id uuid,
+    read_bytes bigint NOT NULL,
+    sort_memory_bytes bigint NOT NULL,
+    sort_disk_bytes bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_postgres_ver_sort_memory_bytes_check1 CHECK (((sort_memory_bytes >= 32) AND (sort_memory_bytes <= 8388608))),
+    CONSTRAINT project_environment_clone_postgres_verif_sort_disk_bytes_check1 CHECK (((sort_disk_bytes >= 32) AND (sort_disk_bytes <= '68719476736'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verifica_database_oid_check3 CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verificati_created_at_check3 CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_verificati_read_bytes_check1 CHECK (((read_bytes >= 1) AND (read_bytes <= '1099511627776'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verification_r_attempt_check CHECK (((attempt >= 1) AND (attempt <= 3))),
+    CONSTRAINT project_environment_clone_postgres_verification_read_debi_check CHECK ((((attempt = 1) AND (verification_id = original_verification_id) AND (retry_attempt IS NULL) AND (retry_verification_id IS NULL)) OR ((attempt > 1) AND (verification_id <> original_verification_id) AND (retry_attempt IS NOT NULL) AND (retry_attempt = attempt) AND (retry_verification_id IS NOT NULL) AND (retry_verification_id = verification_id))))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_verifications (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    database_oid bigint NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    verification_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    contents_owner_id uuid NOT NULL,
+    contents_ciphertext_sha256 text NOT NULL,
+    manifest_fingerprint text NOT NULL,
+    import_id uuid NOT NULL,
+    import_started_at timestamp with time zone NOT NULL,
+    database_sql_pins_ciphertext_sha256 text NOT NULL,
+    database_plan_ciphertext_sha256 text NOT NULL,
+    archive_reservation_sha256 text NOT NULL,
+    target_fingerprint text NOT NULL,
+    key_id text NOT NULL,
+    reserved_bytes bigint NOT NULL,
+    state text DEFAULT 'reserved'::text NOT NULL,
+    request_started_at timestamp with time zone,
+    window_opened_at timestamp with time zone,
+    target_database_oid bigint,
+    fingerprint text,
+    ciphertext bytea,
+    ciphertext_sha256 text,
+    compared_at timestamp with time zone,
+    native_closed_at timestamp with time zone,
+    verified_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_database_plan_ciphertext_sh_check2 CHECK ((database_plan_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_po_database_sql_pins_ciphertex_check1 CHECK ((database_sql_pins_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_pos_archive_reservation_sha256_check3 CHECK ((archive_reservation_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_post_contents_ciphertext_sha256_check CHECK ((contents_ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_v_manifest_fingerprint_check CHECK ((manifest_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_ve_target_database_oid_check CHECK (((target_database_oid >= 1) AND (target_database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_ver_request_started_at_check CHECK (isfinite(request_started_at)),
+    CONSTRAINT project_environment_clone_postgres_ver_target_fingerprint_check CHECK ((target_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_veri_ciphertext_sha256_check CHECK ((ciphertext_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_veri_import_started_at_check CHECK (isfinite(import_started_at)),
+    CONSTRAINT project_environment_clone_postgres_verif_native_closed_at_check CHECK (isfinite(native_closed_at)),
+    CONSTRAINT project_environment_clone_postgres_verif_window_opened_at_check CHECK (isfinite(window_opened_at)),
+    CONSTRAINT project_environment_clone_postgres_verific_reserved_bytes_check CHECK (((reserved_bytes >= 1) AND (reserved_bytes <= 16384))),
+    CONSTRAINT project_environment_clone_postgres_verificat_database_oid_check CHECK (((database_oid >= 1) AND (database_oid <= '4294967295'::bigint))),
+    CONSTRAINT project_environment_clone_postgres_verificati_compared_at_check CHECK (isfinite(compared_at)),
+    CONSTRAINT project_environment_clone_postgres_verificati_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_verificati_verified_at_check CHECK (isfinite(verified_at)),
+    CONSTRAINT project_environment_clone_postgres_verificatio_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_environment_clone_postgres_verifications_check CHECK (((octet_length(ciphertext) > 0) AND (octet_length(ciphertext) <= reserved_bytes))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check1 CHECK (((verification_id <> operation_id) AND (verification_id <> source_database_id) AND (verification_id <> contents_owner_id) AND (verification_id <> import_id))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check2 CHECK (((request_started_at IS NULL) OR (request_started_at >= created_at))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check3 CHECK (((compared_at IS NULL) OR (compared_at >= request_started_at))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check4 CHECK (((verified_at IS NULL) OR (verified_at >= compared_at))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check5 CHECK (((native_closed_at IS NULL) OR (native_closed_at >= window_opened_at))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check6 CHECK ((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (ciphertext IS NULL)) OR ((state = 'verifying'::text) AND (request_started_at IS NOT NULL) AND (ciphertext IS NULL)) OR ((state = ANY (ARRAY['compared'::text, 'verified'::text])) AND (request_started_at IS NOT NULL) AND (window_opened_at IS NOT NULL) AND (target_database_oid IS NOT NULL) AND (fingerprint IS NOT NULL) AND (ciphertext IS NOT NULL) AND (ciphertext_sha256 IS NOT NULL) AND (compared_at IS NOT NULL)))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check7 CHECK ((((ciphertext IS NULL) AND (fingerprint IS NULL) AND (ciphertext_sha256 IS NULL) AND (window_opened_at IS NULL) AND (target_database_oid IS NULL) AND (compared_at IS NULL)) OR (ciphertext IS NOT NULL))),
+    CONSTRAINT project_environment_clone_postgres_verifications_check8 CHECK ((((state = 'verified'::text) AND (native_closed_at IS NOT NULL) AND (verified_at IS NOT NULL)) OR ((state <> 'verified'::text) AND (native_closed_at IS NULL) AND (verified_at IS NULL)))),
+    CONSTRAINT project_environment_clone_postgres_verifications_key_id_check CHECK ((key_id ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_verifications_scope_check CHECK ((jsonb_typeof(scope) = 'object'::text)),
+    CONSTRAINT project_environment_clone_postgres_verifications_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'verifying'::text, 'compared'::text, 'verified'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_postgres_write_fences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_postgres_write_fences (
+    operation_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    source_version text NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    source_provider_resource_id text NOT NULL,
+    source_data_resource_id text NOT NULL,
+    state text DEFAULT 'held'::text NOT NULL,
+    remote_terminal_state text,
+    remote_released_at timestamp with time zone,
+    released_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_environment_clone_po_source_provider_resource_id_check1 CHECK (((source_provider_resource_id <> ''::text) AND (length(source_provider_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgr_source_data_resource_id_check1 CHECK (((source_data_resource_id <> ''::text) AND (length(source_data_resource_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres__remote_terminal_state_check CHECK (((remote_terminal_state IS NULL) OR (remote_terminal_state = ANY (ARRAY['released'::text, 'abandoned'::text])))),
+    CONSTRAINT project_environment_clone_postgres_wr_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_write_f_source_version_check CHECK ((source_version ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_postgres_write_fence_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT project_environment_clone_postgres_write_fences_check CHECK ((((state = 'released'::text) AND (remote_terminal_state IS NOT NULL) AND (remote_released_at IS NOT NULL) AND (released_at IS NOT NULL)) OR ((state <> 'released'::text) AND (remote_terminal_state IS NULL) AND (remote_released_at IS NULL) AND (released_at IS NULL)))),
+    CONSTRAINT project_environment_clone_postgres_write_fences_state_check CHECK ((state = ANY (ARRAY['held'::text, 'abandoning'::text, 'released'::text])))
+);
+
+
+--
+-- Name: project_environment_clone_workloads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_clone_workloads (
+    operation_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source_deployment_id uuid NOT NULL,
+    source_hash text NOT NULL,
+    snapshot json NOT NULL,
+    target_deployment_id uuid,
+    target_settings_hash text DEFAULT ''::text NOT NULL,
+    CONSTRAINT project_environment_clone_workloads_check CHECK ((source_deployment_id <> target_deployment_id)),
+    CONSTRAINT project_environment_clone_workloads_check1 CHECK ((((target_deployment_id IS NULL) AND (target_settings_hash = ''::text)) OR ((target_deployment_id IS NOT NULL) AND (target_settings_hash <> ''::text)))),
+    CONSTRAINT project_environment_clone_workloads_snapshot_check CHECK ((json_typeof(snapshot) = 'object'::text)),
+    CONSTRAINT project_environment_clone_workloads_source_hash_check CHECK ((source_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_clone_workloads_target_settings_hash_check CHECK (((target_settings_hash = ''::text) OR (target_settings_hash ~ '^[a-f0-9]{64}$'::text)))
+);
+
+
+--
 -- Name: project_environment_config_versions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16346,6 +17848,47 @@ CREATE TABLE public.project_environment_edge_policies (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT project_environment_edge_policies_rules_chk CHECK (((jsonb_typeof(rules) = 'array'::text) AND (jsonb_array_length(rules) <= 20)))
+);
+
+
+--
+-- Name: project_environment_promotion_feature_flags; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_promotion_feature_flags (
+    promotion_id uuid NOT NULL,
+    source_snapshot jsonb NOT NULL,
+    previous_target_snapshot jsonb NOT NULL,
+    source_hash text NOT NULL,
+    previous_target_hash text NOT NULL,
+    target_version bigint DEFAULT 0 NOT NULL,
+    rollback_version bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT project_environment_promotion_fe_previous_target_snapshot_check CHECK ((jsonb_typeof(previous_target_snapshot) = 'object'::text)),
+    CONSTRAINT project_environment_promotion_featur_previous_target_hash_check CHECK ((previous_target_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_promotion_feature_fl_rollback_version_check CHECK (((rollback_version >= 0) AND (rollback_version <= '9007199254740991'::bigint))),
+    CONSTRAINT project_environment_promotion_feature_fla_source_snapshot_check CHECK ((jsonb_typeof(source_snapshot) = 'object'::text)),
+    CONSTRAINT project_environment_promotion_feature_flag_target_version_check CHECK (((target_version >= 0) AND (target_version <= '9007199254740991'::bigint))),
+    CONSTRAINT project_environment_promotion_feature_flags_check CHECK (((rollback_version = 0) OR ((target_version > 0) AND (rollback_version > target_version)))),
+    CONSTRAINT project_environment_promotion_feature_flags_source_hash_check CHECK ((source_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: project_environment_promotion_workload_specs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_promotion_workload_specs (
+    promotion_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    prepared_spec_id uuid NOT NULL,
+    previous_spec_id uuid,
+    source_hash text NOT NULL,
+    previous_hash text NOT NULL,
+    previous_settings json NOT NULL,
+    CONSTRAINT project_environment_promotion_workload__previous_settings_check CHECK ((json_typeof(previous_settings) = 'object'::text)),
+    CONSTRAINT project_environment_promotion_workload_spec_previous_hash_check CHECK ((previous_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_promotion_workload_specs_source_hash_check CHECK ((source_hash ~ '^[a-f0-9]{64}$'::text))
 );
 
 
@@ -16451,6 +17994,7 @@ CREATE TABLE public.project_environment_qualifications (
     configuration_version bigint DEFAULT '-1'::integer NOT NULL,
     configuration_hash text DEFAULT ''::text NOT NULL,
     secret_revision_hashes jsonb DEFAULT '{}'::jsonb NOT NULL,
+    workload_config_hashes jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT project_environment_qualifications_checks_shape CHECK (((jsonb_typeof(checks) = 'array'::text) AND (jsonb_array_length(checks) = 2) AND ((checks @> '[{"name": "health", "status": "passed"}]'::jsonb) OR (checks @> '[{"name": "health", "status": "failed"}]'::jsonb)) AND ((checks @> '[{"name": "smoke", "status": "passed"}]'::jsonb) OR (checks @> '[{"name": "smoke", "status": "failed"}]'::jsonb)) AND (status =
 CASE
     WHEN ((checks @> '[{"name": "health", "status": "failed"}]'::jsonb) OR (checks @> '[{"name": "smoke", "status": "failed"}]'::jsonb)) THEN 'failed'::text
@@ -16460,7 +18004,53 @@ END))),
     CONSTRAINT project_environment_qualifications_expiry_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '24:00:00'::interval)))),
     CONSTRAINT project_environment_qualifications_results_shape CHECK (((checks @> '[{"name": "health", "results": [{}]}]'::jsonb) AND (checks @> '[{"name": "smoke", "results": [{}]}]'::jsonb))),
     CONSTRAINT project_environment_qualifications_secret_revisions_object_chec CHECK ((jsonb_typeof(secret_revision_hashes) = 'object'::text)),
-    CONSTRAINT project_environment_qualifications_status_check CHECK ((status = ANY (ARRAY['passed'::text, 'failed'::text])))
+    CONSTRAINT project_environment_qualifications_status_check CHECK ((status = ANY (ARRAY['passed'::text, 'failed'::text]))),
+    CONSTRAINT project_environment_qualifications_workload_config_hashes_check CHECK ((jsonb_typeof(workload_config_hashes) = 'object'::text))
+);
+
+
+--
+-- Name: project_environment_queue_consumers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_queue_consumers (
+    id uuid NOT NULL,
+    runtime_set_id uuid NOT NULL,
+    name text NOT NULL,
+    queue_name text NOT NULL,
+    definition json NOT NULL,
+    definition_hash text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_queue_consumers_check CHECK (((json_typeof(definition) = 'object'::text) AND ((definition ->> 'name'::text) IS NOT NULL) AND ((definition ->> 'name'::text) = name) AND ((definition ->> 'queue_name'::text) IS NOT NULL) AND ((definition ->> 'queue_name'::text) = queue_name))),
+    CONSTRAINT project_environment_queue_consumers_definition_hash_check CHECK ((definition_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_queue_consumers_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT project_environment_queue_consumers_queue_name_check CHECK ((queue_name ~ '^[a-z][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: project_environment_queue_runtime_sets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_queue_runtime_sets (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    workload_spec_id uuid NOT NULL,
+    settings_hash text NOT NULL,
+    queue_revision bigint NOT NULL,
+    binding_count integer NOT NULL,
+    book_hash text NOT NULL,
+    state text DEFAULT 'prepared'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_queue_runtime_sets_binding_count_check CHECK ((binding_count >= 0)),
+    CONSTRAINT project_environment_queue_runtime_sets_book_hash_check CHECK ((book_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_queue_runtime_sets_queue_revision_check CHECK ((queue_revision > 0)),
+    CONSTRAINT project_environment_queue_runtime_sets_settings_hash_check CHECK ((settings_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_queue_runtime_sets_state_check CHECK ((state = 'prepared'::text))
 );
 
 
@@ -16479,6 +18069,45 @@ CREATE TABLE public.project_environment_route_policies (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT project_environment_route_policies_explicit_chk CHECK (((NOT only_allow_declared_routes) OR (jsonb_array_length(declared_routes) > 0))),
     CONSTRAINT project_environment_route_policies_routes_array_chk CHECK (((jsonb_typeof(declared_routes) = 'array'::text) AND (jsonb_array_length(declared_routes) <= 50)))
+);
+
+
+--
+-- Name: project_environment_workload_deployment_specs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_workload_deployment_specs (
+    deployment_id uuid NOT NULL,
+    spec_id uuid NOT NULL
+);
+
+
+--
+-- Name: project_environment_workload_heads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_workload_heads (
+    environment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    spec_id uuid NOT NULL
+);
+
+
+--
+-- Name: project_environment_workload_specs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_workload_specs (
+    id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    config_hash text NOT NULL,
+    settings json NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_workload_specs_config_hash_check CHECK ((config_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_workload_specs_revision_check CHECK ((revision > 0)),
+    CONSTRAINT project_environment_workload_specs_settings_check CHECK ((json_typeof(settings) = 'object'::text))
 );
 
 
@@ -17228,6 +18857,48 @@ CREATE SEQUENCE public.runtime_config_revisions_id_seq
 --
 
 ALTER SEQUENCE public.runtime_config_revisions_id_seq OWNED BY public.runtime_config_revisions.id;
+
+
+--
+-- Name: runtime_environment_scaling_states; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_environment_scaling_states (
+    app_id uuid NOT NULL,
+    environment_key text NOT NULL,
+    environment_id uuid,
+    scope text NOT NULL,
+    last_scale_in_at timestamp with time zone,
+    last_scale_out_at timestamp with time zone,
+    CONSTRAINT runtime_environment_scaling_states_check CHECK ((environment_key =
+CASE
+    WHEN (environment_id IS NULL) THEN ('scope:'::text || scope)
+    ELSE ('environment:'::text || (environment_id)::text)
+END)),
+    CONSTRAINT runtime_environment_scaling_states_scope_check CHECK (((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text) AND (scope <> 'default'::text)))
+);
+
+
+--
+-- Name: runtime_instance_config_proofs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_instance_config_proofs (
+    instance_id uuid NOT NULL,
+    wake_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    environment_id uuid,
+    scope text NOT NULL,
+    secret_fingerprint text NOT NULL,
+    config_fingerprint text NOT NULL,
+    CONSTRAINT runtime_instance_config_proofs_config_fingerprint_check CHECK ((config_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_instance_config_proofs_environment_id_check CHECK ((environment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_instance_config_proofs_node_id_check CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT runtime_instance_config_proofs_scope_check CHECK (((scope = 'default'::text) OR (scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))),
+    CONSTRAINT runtime_instance_config_proofs_secret_fingerprint_check CHECK ((secret_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT runtime_instance_config_proofs_wake_id_check CHECK ((wake_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
 
 
 --
@@ -19624,6 +21295,14 @@ ALTER TABLE ONLY public.deployment_route_policy_snapshots
 
 
 --
+-- Name: deployment_runtime_environment_owners deployment_runtime_environment_owners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_environment_owners
+    ADD CONSTRAINT deployment_runtime_environment_owners_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: deployment_scope_exclusions deployment_scope_exclusions_account_id_project_id_slug_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20472,11 +22151,43 @@ ALTER TABLE ONLY public.instances
 
 
 --
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_pkey PRIMARY KEY (invocation_id);
+
+
+--
+-- Name: invocation_environment_queue_receipts invocation_environment_queue_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_receipts
+    ADD CONSTRAINT invocation_environment_queue_receipts_pkey PRIMARY KEY (invocation_id);
+
+
+--
 -- Name: invocation_work_cancellations invocation_work_cancellations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.invocation_work_cancellations
     ADD CONSTRAINT invocation_work_cancellations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: invocation_work_environment_admissions invocation_work_environment_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_admissions
+    ADD CONSTRAINT invocation_work_environment_admissions_pkey PRIMARY KEY (invocation_id);
+
+
+--
+-- Name: invocation_work_environment_domains invocation_work_environment_domains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_domains
+    ADD CONSTRAINT invocation_work_environment_domains_pkey PRIMARY KEY (app_id, policy_name, kind, digest);
 
 
 --
@@ -20648,6 +22359,14 @@ ALTER TABLE ONLY public.jobs
 
 
 --
+-- Name: layer_artifact_retention layer_artifact_retention_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.layer_artifact_retention
+    ADD CONSTRAINT layer_artifact_retention_pkey PRIMARY KEY (storage_key);
+
+
+--
 -- Name: log_events log_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20728,6 +22447,30 @@ ALTER TABLE ONLY public.managed_postgres_bindings
 
 
 --
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_m_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_m_backend_id_backend_fingerprin_key UNIQUE (backend_id, backend_fingerprint, source_data_resource_id);
+
+
+--
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_maintenance_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_maintenance_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_maintenance_source_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_maintenance_source_database_id_key UNIQUE (source_database_id);
+
+
+--
 -- Name: managed_postgres_cutover_credentials managed_postgres_cutover_crede_cutover_id_source_binding_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20773,6 +22516,14 @@ ALTER TABLE ONLY public.managed_postgres_databases
 
 ALTER TABLE ONLY public.managed_postgres_health
     ADD CONSTRAINT managed_postgres_health_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: managed_postgres_restore_proofs managed_postgres_restore_proofs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_restore_proofs
+    ADD CONSTRAINT managed_postgres_restore_proofs_pkey PRIMARY KEY (database_id);
 
 
 --
@@ -21008,6 +22759,14 @@ ALTER TABLE ONLY public.object_bucket_lifecycle
 
 
 --
+-- Name: object_bucket_mutations object_bucket_mutations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_mutations
+    ADD CONSTRAINT object_bucket_mutations_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: object_bucket_notifications object_bucket_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21029,6 +22788,14 @@ ALTER TABLE ONLY public.object_bucket_object_lock
 
 ALTER TABLE ONLY public.object_bucket_versioning
     ADD CONSTRAINT object_bucket_versioning_pkey PRIMARY KEY (bucket_id);
+
+
+--
+-- Name: object_bucket_write_fences object_bucket_write_fences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_write_fences
+    ADD CONSTRAINT object_bucket_write_fences_pkey PRIMARY KEY (bucket_id);
 
 
 --
@@ -21221,6 +22988,22 @@ ALTER TABLE ONLY public.object_storage_s3_credentials
 
 ALTER TABLE ONLY public.object_storage_s3_credentials
     ADD CONSTRAINT object_storage_s3_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_storage_upload_grants object_storage_upload_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_storage_upload_grants object_storage_upload_grants_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_token_hash_key UNIQUE (token_hash);
 
 
 --
@@ -21680,6 +23463,62 @@ ALTER TABLE ONLY public.platform_tenants
 
 
 --
+-- Name: project_environment_clone_postgres_archives postgres_archive_contents_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT postgres_archive_contents_identity UNIQUE (operation_id, source_database_id, database_oid, owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_contents postgres_contents_verification_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT postgres_contents_verification_identity UNIQUE (operation_id, source_database_id, database_oid, owner_id, ciphertext_sha256);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins postgres_database_sql_pins_import_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT postgres_database_sql_pins_import_identity UNIQUE (operation_id, source_database_id, database_oid, ciphertext_sha256);
+
+
+--
+-- Name: project_environment_clone_postgres_imports postgres_import_verification_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT postgres_import_verification_identity UNIQUE (operation_id, source_database_id, database_oid, import_id);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories postgres_inventory_contents_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT postgres_inventory_contents_identity UNIQUE (operation_id, source_database_id, ciphertext_sha256);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers postgres_reader_contents_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT postgres_reader_contents_identity UNIQUE (operation_id, source_database_id, owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications postgres_verification_attempt_identity; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT postgres_verification_attempt_identity UNIQUE (operation_id, source_database_id, database_oid, verification_id);
+
+
+--
 -- Name: pr_preview_sets pr_preview_sets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21776,6 +23615,438 @@ ALTER TABLE ONLY public.project_environment_cleanup_jobs
 
 
 --
+-- Name: project_environment_clone_configuration_captures project_environment_clone_configuration_captures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_captures
+    ADD CONSTRAINT project_environment_clone_configuration_captures_pkey PRIMARY KEY (operation_id);
+
+
+--
+-- Name: project_environment_clone_operations project_environment_clone_idempotency_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_operations
+    ADD CONSTRAINT project_environment_clone_idempotency_unique UNIQUE (account_id, project_id, idempotency_key);
+
+
+--
+-- Name: project_environment_clone_layer_pins project_environment_clone_layer_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_layer_pins
+    ADD CONSTRAINT project_environment_clone_layer_pins_pkey PRIMARY KEY (operation_id, app_id, storage_key);
+
+
+--
+-- Name: project_environment_clone_materializations project_environment_clone_materializations_environment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_materializations
+    ADD CONSTRAINT project_environment_clone_materializations_environment_id_key UNIQUE (environment_id);
+
+
+--
+-- Name: project_environment_clone_materializations project_environment_clone_materializations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_materializations
+    ADD CONSTRAINT project_environment_clone_materializations_pkey PRIMARY KEY (operation_id);
+
+
+--
+-- Name: project_environment_clone_object_credentials project_environment_clone_object_crede_target_credential_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_credentials
+    ADD CONSTRAINT project_environment_clone_object_crede_target_credential_id_key UNIQUE (target_credential_id);
+
+
+--
+-- Name: project_environment_clone_object_credentials project_environment_clone_object_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_credentials
+    ADD CONSTRAINT project_environment_clone_object_credentials_pkey PRIMARY KEY (operation_id, source_credential_id);
+
+
+--
+-- Name: project_environment_clone_object_entries project_environment_clone_object_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_entries
+    ADD CONSTRAINT project_environment_clone_object_entries_pkey PRIMARY KEY (operation_id, source_bucket_id, object_key);
+
+
+--
+-- Name: project_environment_clone_object_manifests project_environment_clone_object_manifests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_manifests
+    ADD CONSTRAINT project_environment_clone_object_manifests_pkey PRIMARY KEY (operation_id, source_bucket_id);
+
+
+--
+-- Name: project_environment_clone_operations project_environment_clone_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_operations
+    ADD CONSTRAINT project_environment_clone_operations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_pos_backend_id_backend_fingerpri_key1; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_pos_backend_id_backend_fingerpri_key1 UNIQUE (backend_id, backend_fingerprint, target_provider_resource_id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshots project_environment_clone_pos_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
+    ADD CONSTRAINT project_environment_clone_pos_backend_id_backend_fingerprin_key UNIQUE (backend_id, backend_fingerprint, provider_snapshot_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_pos_operation_id_source_database__key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_pos_operation_id_source_database__key UNIQUE (operation_id, source_database_id, target_fingerprint);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_attempts project_environment_clone_pos_operation_id_source_database_key1; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_attempts
+    ADD CONSTRAINT project_environment_clone_pos_operation_id_source_database_key1 UNIQUE (operation_id, source_database_id, database_oid, attempt, verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_pos_operation_id_source_database_key2; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_pos_operation_id_source_database_key2 UNIQUE (operation_id, source_database_id, database_oid, original_verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_owner_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_postgres_archives_owner_id_key UNIQUE (owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_postgres_archives_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_storage_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_postgres_archives_storage_key_key UNIQUE (storage_key);
+
+
+--
+-- Name: project_environment_clone_postgres_bindings project_environment_clone_postgres_bindin_target_binding_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
+    ADD CONSTRAINT project_environment_clone_postgres_bindin_target_binding_id_key UNIQUE (target_binding_id);
+
+
+--
+-- Name: project_environment_clone_postgres_bindings project_environment_clone_postgres_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
+    ADD CONSTRAINT project_environment_clone_postgres_bindings_pkey PRIMARY KEY (operation_id, source_binding_id);
+
+
+--
+-- Name: project_environment_clone_postgres_checkpoint_selections project_environment_clone_postgres_checkpoint_selections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_checkpoint_selections
+    ADD CONSTRAINT project_environment_clone_postgres_checkpoint_selections_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_contents project_environment_clone_postgres_contents_owner_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT project_environment_clone_postgres_contents_owner_id_key UNIQUE (owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_contents project_environment_clone_postgres_contents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT project_environment_clone_postgres_contents_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_copy__target_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_postgres_copy__target_database_id_key UNIQUE (target_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_copy_capture_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_copy_capture_database_id_key UNIQUE (capture_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_copy_readers_owner_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_copy_readers_owner_id_key UNIQUE (owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_copy_readers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_copy_readers_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_copy_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_postgres_copy_targets_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_plans project_environment_clone_postgres_datab_target_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
+    ADD CONSTRAINT project_environment_clone_postgres_datab_target_database_id_key UNIQUE (target_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_plans project_environment_clone_postgres_database_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
+    ADD CONSTRAINT project_environment_clone_postgres_database_plans_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_postgres_database_sql_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_database_sql_pins_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_imports_import_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_imports_import_id_key UNIQUE (import_id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_imports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_imports_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories project_environment_clone_postgres_inventories_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT project_environment_clone_postgres_inventories_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_membership_plans project_environment_clone_postgres_membe_target_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_membership_plans
+    ADD CONSTRAINT project_environment_clone_postgres_membe_target_database_id_key UNIQUE (target_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_membership_plans project_environment_clone_postgres_membership_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_membership_plans
+    ADD CONSTRAINT project_environment_clone_postgres_membership_plans_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_postgres_original_verification_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_postgres_original_verification_id_key UNIQUE (original_verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_role_plans project_environment_clone_postgres_role__target_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_role_plans
+    ADD CONSTRAINT project_environment_clone_postgres_role__target_database_id_key UNIQUE (target_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_role_plans project_environment_clone_postgres_role_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_role_plans
+    ADD CONSTRAINT project_environment_clone_postgres_role_plans_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_snap_adopted_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_postgres_snap_adopted_database_id_key UNIQUE (adopted_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_snapshot_restores_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_postgres_snapshot_restores_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_snapshot_target_owner_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_postgres_snapshot_target_owner_id_key UNIQUE (target_owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshots project_environment_clone_postgres_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
+    ADD CONSTRAINT project_environment_clone_postgres_snapshots_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins project_environment_clone_postgres_targe_target_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_targe_target_database_id_key UNIQUE (target_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins project_environment_clone_postgres_target_sql_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_target_sql_pins_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_attempts project_environment_clone_postgres_verific_verification_id_key1; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_attempts
+    ADD CONSTRAINT project_environment_clone_postgres_verific_verification_id_key1 UNIQUE (verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_debits project_environment_clone_postgres_verific_verification_id_key2; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_debits
+    ADD CONSTRAINT project_environment_clone_postgres_verific_verification_id_key2 UNIQUE (verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_postgres_verifica_verification_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_postgres_verifica_verification_id_key UNIQUE (verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_attempts project_environment_clone_postgres_verification_attempts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_attempts
+    ADD CONSTRAINT project_environment_clone_postgres_verification_attempts_pkey PRIMARY KEY (operation_id, source_database_id, database_oid, attempt);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_postgres_verification_read_budge_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_postgres_verification_read_budge_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_debits project_environment_clone_postgres_verification_read_debit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_debits
+    ADD CONSTRAINT project_environment_clone_postgres_verification_read_debit_pkey PRIMARY KEY (operation_id, source_database_id, database_oid, attempt);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_postgres_verifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_postgres_verifications_pkey PRIMARY KEY (operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_write_fences project_environment_clone_postgres_write_fences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_write_fences
+    ADD CONSTRAINT project_environment_clone_postgres_write_fences_pkey PRIMARY KEY (operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_workloads project_environment_clone_workloads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_workloads
+    ADD CONSTRAINT project_environment_clone_workloads_pkey PRIMARY KEY (operation_id, app_id);
+
+
+--
 -- Name: project_environment_config_versions project_environment_config_version_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21797,6 +24068,30 @@ ALTER TABLE ONLY public.project_environment_config_versions
 
 ALTER TABLE ONLY public.project_environment_edge_policies
     ADD CONSTRAINT project_environment_edge_policies_pkey PRIMARY KEY (app_id, environment_slug);
+
+
+--
+-- Name: project_environment_promotion_feature_flags project_environment_promotion_feature_flags_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_feature_flags
+    ADD CONSTRAINT project_environment_promotion_feature_flags_pkey PRIMARY KEY (promotion_id);
+
+
+--
+-- Name: project_environment_promotion_workload_specs project_environment_promotion_workload_specs_deployment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_workload_specs
+    ADD CONSTRAINT project_environment_promotion_workload_specs_deployment_id_key UNIQUE (deployment_id);
+
+
+--
+-- Name: project_environment_promotion_workload_specs project_environment_promotion_workload_specs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_workload_specs
+    ADD CONSTRAINT project_environment_promotion_workload_specs_pkey PRIMARY KEY (promotion_id, app_id);
 
 
 --
@@ -21840,11 +24135,91 @@ ALTER TABLE ONLY public.project_environment_qualifications
 
 
 --
+-- Name: project_environment_queue_consumers project_environment_queue_consume_runtime_set_id_queue_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_consumers
+    ADD CONSTRAINT project_environment_queue_consume_runtime_set_id_queue_name_key UNIQUE (runtime_set_id, queue_name);
+
+
+--
+-- Name: project_environment_queue_consumers project_environment_queue_consumers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_consumers
+    ADD CONSTRAINT project_environment_queue_consumers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_environment_queue_consumers project_environment_queue_consumers_runtime_set_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_consumers
+    ADD CONSTRAINT project_environment_queue_consumers_runtime_set_id_name_key UNIQUE (runtime_set_id, name);
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_deployment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_deployment_id_key UNIQUE (deployment_id);
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: project_environment_route_policies project_environment_route_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_environment_route_policies
     ADD CONSTRAINT project_environment_route_policies_pkey PRIMARY KEY (app_id, environment_slug);
+
+
+--
+-- Name: project_environment_workload_specs project_environment_workload__environment_id_app_id_revisio_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_specs
+    ADD CONSTRAINT project_environment_workload__environment_id_app_id_revisio_key UNIQUE (environment_id, app_id, revision);
+
+
+--
+-- Name: project_environment_workload_deployment_specs project_environment_workload_deployment_specs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_deployment_specs
+    ADD CONSTRAINT project_environment_workload_deployment_specs_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: project_environment_workload_heads project_environment_workload_heads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_heads
+    ADD CONSTRAINT project_environment_workload_heads_pkey PRIMARY KEY (environment_id, app_id);
+
+
+--
+-- Name: project_environment_workload_specs project_environment_workload_specs_environment_id_app_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_specs
+    ADD CONSTRAINT project_environment_workload_specs_environment_id_app_id_id_key UNIQUE (environment_id, app_id, id);
+
+
+--
+-- Name: project_environment_workload_specs project_environment_workload_specs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_specs
+    ADD CONSTRAINT project_environment_workload_specs_pkey PRIMARY KEY (id);
 
 
 --
@@ -22149,6 +24524,22 @@ ALTER TABLE ONLY public.runtime_config_revisions
 
 ALTER TABLE ONLY public.runtime_config_revisions
     ADD CONSTRAINT runtime_config_revisions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_environment_scaling_states runtime_environment_scaling_states_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_environment_scaling_states
+    ADD CONSTRAINT runtime_environment_scaling_states_pkey PRIMARY KEY (app_id, environment_key);
+
+
+--
+-- Name: runtime_instance_config_proofs runtime_instance_config_proofs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_instance_config_proofs
+    ADD CONSTRAINT runtime_instance_config_proofs_pkey PRIMARY KEY (instance_id);
 
 
 --
@@ -25202,10 +27593,31 @@ CREATE INDEX instances_watchdog_state_idx ON public.instances USING btree (state
 
 
 --
+-- Name: invocation_environment_queue_domain_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocation_environment_queue_domain_idx ON public.invocation_environment_queue_admissions USING btree (environment_id, app_id, queue_name);
+
+
+--
 -- Name: invocation_work_cancellations_app_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX invocation_work_cancellations_app_created_idx ON public.invocation_work_cancellations USING btree (app_id, created_at);
+
+
+--
+-- Name: invocation_work_environment_admissions_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocation_work_environment_admissions_environment_idx ON public.invocation_work_environment_admissions USING btree (environment_id);
+
+
+--
+-- Name: invocation_work_environment_domains_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocation_work_environment_domains_environment_idx ON public.invocation_work_environment_domains USING btree (environment_id);
 
 
 --
@@ -25283,6 +27695,13 @@ CREATE INDEX invocations_delayed_idx ON public.invocations USING btree (app_id, 
 --
 
 CREATE INDEX invocations_due_idx ON public.invocations USING btree (due_at) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: invocations_environment_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_environment_owner_idx ON public.invocations USING btree (environment_id) WHERE (environment_id IS NOT NULL);
 
 
 --
@@ -25860,6 +28279,27 @@ CREATE UNIQUE INDEX managed_postgres_bindings_target_idx ON public.managed_postg
 
 
 --
+-- Name: managed_postgres_clone_capture_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_postgres_clone_capture_key ON public.managed_postgres_databases USING btree (environment_clone_operation_id, restore_source_database_id) WHERE ((environment_clone_operation_id IS NOT NULL) AND (clone_resource_role = 'checkpoint'::text));
+
+
+--
+-- Name: managed_postgres_clone_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_clone_owner_idx ON public.managed_postgres_databases USING btree (environment_clone_operation_id) WHERE (environment_clone_operation_id IS NOT NULL);
+
+
+--
+-- Name: managed_postgres_clone_reservation_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_postgres_clone_reservation_key ON public.managed_postgres_databases USING btree (environment_clone_operation_id, restore_source_database_id) WHERE ((environment_clone_operation_id IS NOT NULL) AND (clone_resource_role = 'target'::text));
+
+
+--
 -- Name: managed_postgres_cutovers_active_app_scope_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -26140,6 +28580,13 @@ CREATE INDEX object_bucket_encryption_due ON public.object_bucket_encryption USI
 
 
 --
+-- Name: object_bucket_mutations_bucket_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_bucket_mutations_bucket_idx ON public.object_bucket_mutations USING btree (bucket_id);
+
+
+--
 -- Name: object_bucket_object_lock_due; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -26151,6 +28598,13 @@ CREATE INDEX object_bucket_object_lock_due ON public.object_bucket_object_lock U
 --
 
 CREATE INDEX object_bucket_versioning_due ON public.object_bucket_versioning USING btree (retry_at, bucket_id) WHERE (state <> 'ready'::text);
+
+
+--
+-- Name: object_bucket_write_fences_clone_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_bucket_write_fences_clone_idx ON public.object_bucket_write_fences USING btree (clone_operation_id) WHERE (clone_operation_id IS NOT NULL);
 
 
 --
@@ -26319,6 +28773,13 @@ CREATE UNIQUE INDEX object_storage_s3_credentials_managed_binding_idx ON public.
 --
 
 CREATE UNIQUE INDEX object_storage_s3_credentials_rotation_parent_idx ON public.object_storage_s3_credentials USING btree (rotation_parent_id) WHERE ((rotation_parent_id IS NOT NULL) AND (status = 'active'::text));
+
+
+--
+-- Name: object_storage_upload_grants_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_upload_grants_expiry_idx ON public.object_storage_upload_grants USING btree (expires_at, id);
 
 
 --
@@ -26651,6 +29112,13 @@ CREATE INDEX platform_tenants_account_created_id_idx ON public.platform_tenants 
 
 
 --
+-- Name: postgres_contents_account_holds; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX postgres_contents_account_holds ON public.project_environment_clone_postgres_contents USING btree (account_id);
+
+
+--
 -- Name: pr_preview_sets_members_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -26728,6 +29196,90 @@ CREATE INDEX project_environment_cleanup_jobs_lease_idx ON public.project_enviro
 
 
 --
+-- Name: project_environment_clone_active_target_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX project_environment_clone_active_target_uniq ON public.project_environment_clone_operations USING btree (project_id, target_environment) WHERE (status = ANY (ARRAY['pending'::text, 'capturing'::text, 'copying'::text, 'publishing'::text, 'failed'::text, 'compensating'::text]));
+
+
+--
+-- Name: project_environment_clone_layer_pins_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_layer_pins_key_idx ON public.project_environment_clone_layer_pins USING btree (storage_key);
+
+
+--
+-- Name: project_environment_clone_object_uncopied_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_object_uncopied_idx ON public.project_environment_clone_object_entries USING btree (operation_id, source_bucket_id, object_key) WHERE (copied_at IS NULL);
+
+
+--
+-- Name: project_environment_clone_operations_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_operations_status_idx ON public.project_environment_clone_operations USING btree (status, updated_at) WHERE (status <> ALL (ARRAY['ready'::text, 'failed'::text]));
+
+
+--
+-- Name: project_environment_clone_postgres_archives_account_holds; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_postgres_archives_account_holds ON public.project_environment_clone_postgres_archives USING btree (account_id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_capture_holds; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_postgres_copy_capture_holds ON public.project_environment_clone_postgres_copy_targets USING btree (capture_database_id) WHERE (state <> 'retired'::text);
+
+
+--
+-- Name: project_environment_clone_postgres_fork_account_quota; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_postgres_fork_account_quota ON public.project_environment_clone_postgres_snapshot_restores USING btree (account_id) WHERE ((state <> 'deleted'::text) AND (adopted_database_id IS NULL));
+
+
+--
+-- Name: project_environment_clone_postgres_readers_account_holds; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_postgres_readers_account_holds ON public.project_environment_clone_postgres_copy_readers USING btree (account_id) WHERE (state <> 'retired'::text);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_source_hold; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_postgres_snapshot_source_hold ON public.project_environment_clone_postgres_snapshots USING btree (source_database_id) WHERE (state <> 'deleted'::text);
+
+
+--
+-- Name: project_environment_clone_postgres_write_fence_dataset_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX project_environment_clone_postgres_write_fence_dataset_owner ON public.project_environment_clone_postgres_write_fences USING btree (backend_id, backend_fingerprint, source_data_resource_id) WHERE (state <> 'released'::text);
+
+
+--
+-- Name: project_environment_clone_postgres_write_fence_source_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX project_environment_clone_postgres_write_fence_source_owner ON public.project_environment_clone_postgres_write_fences USING btree (source_database_id) WHERE (state <> 'released'::text);
+
+
+--
+-- Name: project_environment_clone_worker_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_clone_worker_due_idx ON public.project_environment_clone_operations USING btree (next_attempt_at, created_at, id) WHERE (status = ANY (ARRAY['pending'::text, 'capturing'::text, 'copying'::text, 'publishing'::text, 'compensating'::text]));
+
+
+--
 -- Name: project_environment_config_latest_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -26760,6 +29312,13 @@ CREATE INDEX project_environment_promotions_lookup_idx ON public.project_environ
 --
 
 CREATE INDEX project_environment_qualifications_latest_idx ON public.project_environment_qualifications USING btree (account_id, project_id, environment_slug, release_set_id, created_at DESC, id DESC);
+
+
+--
+-- Name: project_environment_queue_runtime_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_queue_runtime_environment_idx ON public.project_environment_queue_runtime_sets USING btree (environment_id, app_id);
 
 
 --
@@ -28646,6 +31205,34 @@ CREATE TRIGGER capture_instance_capacity BEFORE INSERT OR UPDATE OF capacity_ram
 
 
 --
+-- Name: project_environment_edge_policies clone_edge_policy_publication_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_edge_policy_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF app_id, account_id, project_id, environment_slug, rules ON public.project_environment_edge_policies FOR EACH ROW EXECUTE FUNCTION public.serialize_clone_value_publication();
+
+
+--
+-- Name: project_environment_route_policies clone_route_policy_publication_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_route_policy_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF app_id, account_id, project_id, environment_slug, only_allow_declared_routes, declared_routes ON public.project_environment_route_policies FOR EACH ROW EXECUTE FUNCTION public.serialize_clone_value_publication();
+
+
+--
+-- Name: app_secrets clone_secret_publication_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_secret_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF account_id, app_id, scope, key, ciphertext, kid, value_hash, secret_class, secret_version, delivery_version, created_at, managed_postgres_binding_id, managed_object_storage_credential_id, managed_credential_ref, managed_credential_generation ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.serialize_clone_value_publication();
+
+
+--
+-- Name: app_envs clone_variable_publication_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clone_variable_publication_fence BEFORE INSERT OR DELETE OR UPDATE OF account_id, app_id, scope, key, value, created_at ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.serialize_clone_value_publication();
+
+
+--
 -- Name: cluster_signing_keys cluster_signing_keys_changed_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28723,6 +31310,13 @@ CREATE TRIGGER data_upstreams_notify_trg AFTER INSERT OR DELETE OR UPDATE ON pub
 
 
 --
+-- Name: dead_letter_events dead_letter_events_environment_ownership; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER dead_letter_events_environment_ownership BEFORE INSERT OR UPDATE ON public.dead_letter_events FOR EACH ROW EXECUTE FUNCTION public.faas_retain_dead_letter_environment_ownership();
+
+
+--
 -- Name: debug_regression_observations debug_regression_observations_webhooks_insert; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28755,6 +31349,13 @@ CREATE TRIGGER deployment_failed_rollback_keeps_target BEFORE UPDATE OF status O
 --
 
 CREATE TRIGGER deployment_openapi_docs_set_updated_at_trg BEFORE UPDATE ON public.deployment_openapi_docs FOR EACH ROW EXECUTE FUNCTION public.deployment_openapi_docs_set_updated_at();
+
+
+--
+-- Name: project_environment_workload_deployment_specs deployment_runtime_environment_bound; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_runtime_environment_bound AFTER INSERT OR UPDATE ON public.project_environment_workload_deployment_specs FOR EACH ROW EXECUTE FUNCTION public.bind_deployment_runtime_environment();
 
 
 --
@@ -28804,6 +31405,13 @@ CREATE TRIGGER deployments_failed_stage_fence BEFORE INSERT OR UPDATE OF status,
 --
 
 CREATE TRIGGER deployments_failed_traffic_fence BEFORE INSERT OR UPDATE OF status, traffic_percent, rollout_state, rollout_aborted_at ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enforce_failed_deployment_traffic_fence();
+
+
+--
+-- Name: deployments deployments_layer_artifact_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_layer_artifact_guard BEFORE INSERT OR UPDATE OF rootfs_key, status ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_deployment_layer_artifacts();
 
 
 --
@@ -29161,6 +31769,13 @@ CREATE TRIGGER guard_managed_postgres_accounting_intent BEFORE UPDATE OF account
 --
 
 CREATE TRIGGER inbound_webhooks_delete_exclusive_binding AFTER DELETE ON public.inbound_webhook_endpoints FOR EACH ROW EXECUTE FUNCTION public.delete_exclusive_webhook_binding();
+
+
+--
+-- Name: instances instance_layer_artifact_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER instance_layer_artifact_guard BEFORE INSERT OR UPDATE OF deployment_id, state ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_instance_layer_artifacts();
 
 
 --
@@ -30039,6 +32654,13 @@ CREATE TRIGGER private_network_set_updated_at_trg BEFORE UPDATE ON public.privat
 
 
 --
+-- Name: project_environment_workload_heads project_environment_workload_head_changed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_environment_workload_head_changed AFTER INSERT OR UPDATE ON public.project_environment_workload_heads FOR EACH ROW EXECUTE FUNCTION public.notify_project_environment_workload_head();
+
+
+--
 -- Name: apps prune_pr_preview_set_on_root_delete; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -30179,6 +32801,34 @@ CREATE TRIGGER runtime_config_operations_notify AFTER INSERT OR UPDATE ON public
 
 
 --
+-- Name: project_environment_workload_deployment_specs runtime_deployment_specs_configuration_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_deployment_specs_configuration_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_deployment_specs FOR EACH ROW EXECUTE FUNCTION public.serialize_runtime_deployment_configuration();
+
+
+--
+-- Name: deployment_runtime_environment_owners runtime_environment_owners_configuration_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_environment_owners_configuration_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_runtime_environment_owners FOR EACH ROW EXECUTE FUNCTION public.serialize_runtime_deployment_configuration();
+
+
+--
+-- Name: deployment_sidecar_layers runtime_sidecar_layers_configuration_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_sidecar_layers_configuration_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.serialize_runtime_deployment_configuration();
+
+
+--
+-- Name: deployment_sidecar_secret_reload_signals runtime_sidecar_signals_configuration_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_sidecar_signals_configuration_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_secret_reload_signals FOR EACH ROW EXECUTE FUNCTION public.serialize_runtime_deployment_configuration();
+
+
+--
 -- Name: runtime_snapshots runtime_snapshots_profile_identity; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -30249,10 +32899,24 @@ CREATE TRIGGER service_capacity_plan_before BEFORE UPDATE OF plan ON public.acco
 
 
 --
+-- Name: deployment_sidecar_layers sidecar_layer_artifact_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER sidecar_layer_artifact_guard BEFORE INSERT OR UPDATE OF storage_key ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.guard_sidecar_layer_artifact();
+
+
+--
 -- Name: snapshots snapshot_fanout_event_after_snapshot; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER snapshot_fanout_event_after_snapshot AFTER INSERT OR UPDATE OF storage_key, stale ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.snapshot_fanout_event_on_snapshot();
+
+
+--
+-- Name: snapshots snapshot_layer_artifact_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER snapshot_layer_artifact_guard BEFORE INSERT OR UPDATE OF deployment_id, stale ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.guard_snapshot_layer_artifacts();
 
 
 --
@@ -32180,6 +34844,14 @@ ALTER TABLE ONLY public.deployment_route_policy_snapshots
 
 
 --
+-- Name: deployment_runtime_environment_owners deployment_runtime_environment_owners_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_environment_owners
+    ADD CONSTRAINT deployment_runtime_environment_owners_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: deployment_scope_exclusions deployment_scope_exclusions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -33084,6 +35756,78 @@ ALTER TABLE ONLY public.instances
 
 
 --
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id);
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.project_environment_queue_consumers(id);
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id);
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id);
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_runtime_set_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_runtime_set_id_fkey FOREIGN KEY (runtime_set_id) REFERENCES public.project_environment_queue_runtime_sets(id);
+
+
+--
+-- Name: invocation_environment_queue_admissions invocation_environment_queue_admissions_workload_spec_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_admissions
+    ADD CONSTRAINT invocation_environment_queue_admissions_workload_spec_id_fkey FOREIGN KEY (workload_spec_id) REFERENCES public.project_environment_workload_specs(id);
+
+
+--
+-- Name: invocation_environment_queue_receipts invocation_environment_queue_receipts_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_environment_queue_receipts
+    ADD CONSTRAINT invocation_environment_queue_receipts_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: invocations invocation_platform_tenant_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -33105,6 +35849,54 @@ ALTER TABLE ONLY public.invocations
 
 ALTER TABLE ONLY public.invocation_work_cancellations
     ADD CONSTRAINT invocation_work_cancellations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_work_environment_admissions invocation_work_environment_admissions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_admissions
+    ADD CONSTRAINT invocation_work_environment_admissions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_work_environment_admissions invocation_work_environment_admissions_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_admissions
+    ADD CONSTRAINT invocation_work_environment_admissions_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id);
+
+
+--
+-- Name: invocation_work_environment_admissions invocation_work_environment_admissions_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_admissions
+    ADD CONSTRAINT invocation_work_environment_admissions_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_work_environment_admissions invocation_work_environment_admissions_workload_spec_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_admissions
+    ADD CONSTRAINT invocation_work_environment_admissions_workload_spec_id_fkey FOREIGN KEY (workload_spec_id) REFERENCES public.project_environment_workload_specs(id);
+
+
+--
+-- Name: invocation_work_environment_domains invocation_work_environment_domains_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_domains
+    ADD CONSTRAINT invocation_work_environment_domains_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_work_environment_domains invocation_work_environment_domains_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_work_environment_domains
+    ADD CONSTRAINT invocation_work_environment_domains_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id);
 
 
 --
@@ -33145,6 +35937,14 @@ ALTER TABLE ONLY public.invocations
 
 ALTER TABLE ONLY public.invocations
     ADD CONSTRAINT invocations_cron_id_fkey FOREIGN KEY (cron_id) REFERENCES public.crons(id) ON DELETE SET NULL;
+
+
+--
+-- Name: invocations invocations_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocations
+    ADD CONSTRAINT invocations_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id);
 
 
 --
@@ -33420,6 +36220,22 @@ ALTER TABLE ONLY public.managed_postgres_bindings
 
 
 --
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_maint_reserved_by_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_maint_reserved_by_operation_id_fkey FOREIGN KEY (reserved_by_operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_maintenance_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_maintenance_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: managed_postgres_cutover_credentials managed_postgres_cutover_credentials_cutover_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -33497,6 +36313,14 @@ ALTER TABLE ONLY public.managed_postgres_health
 
 ALTER TABLE ONLY public.managed_postgres_health
     ADD CONSTRAINT managed_postgres_health_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_restore_proofs managed_postgres_restore_proofs_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_restore_proofs
+    ADD CONSTRAINT managed_postgres_restore_proofs_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --
@@ -33788,6 +36612,14 @@ ALTER TABLE ONLY public.object_bucket_lifecycle
 
 
 --
+-- Name: object_bucket_mutations object_bucket_mutations_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_mutations
+    ADD CONSTRAINT object_bucket_mutations_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
 -- Name: object_bucket_notifications object_bucket_notifications_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -33817,6 +36649,22 @@ ALTER TABLE ONLY public.object_bucket_versioning
 
 ALTER TABLE ONLY public.object_bucket_versioning
     ADD CONSTRAINT object_bucket_versioning_capacity_job_id_fkey FOREIGN KEY (capacity_job_id) REFERENCES public.object_storage_capacity_reconciliations(id);
+
+
+--
+-- Name: object_bucket_write_fences object_bucket_write_fences_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_write_fences
+    ADD CONSTRAINT object_bucket_write_fences_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: object_bucket_write_fences object_bucket_write_fences_clone_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_write_fences
+    ADD CONSTRAINT object_bucket_write_fences_clone_operation_id_fkey FOREIGN KEY (clone_operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
 
 
 --
@@ -34065,6 +36913,38 @@ ALTER TABLE ONLY public.object_storage_s3_credentials
 
 ALTER TABLE ONLY public.object_storage_s3_credentials
     ADD CONSTRAINT object_storage_s3_credentials_rotation_parent_id_fkey FOREIGN KEY (rotation_parent_id) REFERENCES public.object_storage_s3_credentials(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_upload_grants object_storage_upload_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_upload_grants object_storage_upload_grants_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_upload_grants object_storage_upload_grants_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_upload_grants object_storage_upload_grants_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_upload_grants
+    ADD CONSTRAINT object_storage_upload_grants_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES public.object_storage_multipart_uploads(id) ON DELETE CASCADE;
 
 
 --
@@ -34596,6 +37476,14 @@ ALTER TABLE ONLY public.platform_tenants
 
 
 --
+-- Name: project_environment_clone_postgres_imports postgres_imports_original_preparation; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT postgres_imports_original_preparation FOREIGN KEY (operation_id, source_database_id, database_oid, database_sql_pins_ciphertext_sha256) REFERENCES public.project_environment_clone_postgres_database_sql_pins(operation_id, source_database_id, database_oid, ciphertext_sha256);
+
+
+--
 -- Name: pr_preview_sets pr_preview_sets_root_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34676,6 +37564,678 @@ ALTER TABLE ONLY public.project_environment_approvals
 
 
 --
+-- Name: project_environment_clone_configuration_captures project_environment_clone_configuration_captu_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_configuration_captures
+    ADD CONSTRAINT project_environment_clone_configuration_captu_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_layer_pins project_environment_clone_layer_pins_operation_id_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_layer_pins
+    ADD CONSTRAINT project_environment_clone_layer_pins_operation_id_app_id_fkey FOREIGN KEY (operation_id, app_id) REFERENCES public.project_environment_clone_workloads(operation_id, app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_layer_pins project_environment_clone_layer_pins_storage_key_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_layer_pins
+    ADD CONSTRAINT project_environment_clone_layer_pins_storage_key_fkey FOREIGN KEY (storage_key) REFERENCES public.layer_artifact_retention(storage_key);
+
+
+--
+-- Name: project_environment_clone_materializations project_environment_clone_materializations_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_materializations
+    ADD CONSTRAINT project_environment_clone_materializations_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_object_entries project_environment_clone_obj_operation_id_source_bucket_i_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_entries
+    ADD CONSTRAINT project_environment_clone_obj_operation_id_source_bucket_i_fkey FOREIGN KEY (operation_id, source_bucket_id) REFERENCES public.project_environment_clone_object_manifests(operation_id, source_bucket_id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_object_credentials project_environment_clone_object_cred_target_credential_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_credentials
+    ADD CONSTRAINT project_environment_clone_object_cred_target_credential_id_fkey FOREIGN KEY (target_credential_id) REFERENCES public.object_storage_s3_credentials(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_object_credentials project_environment_clone_object_credentials_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_credentials
+    ADD CONSTRAINT project_environment_clone_object_credentials_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_object_manifests project_environment_clone_object_manifests_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_object_manifests
+    ADD CONSTRAINT project_environment_clone_object_manifests_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_operations project_environment_clone_operations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_operations
+    ADD CONSTRAINT project_environment_clone_operations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_operations project_environment_clone_operations_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_operations
+    ADD CONSTRAINT project_environment_clone_operations_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_postgres_membership_plans project_environment_clone_po_operation_id_source_databas_fkey10; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_membership_plans
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey10 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_role_plans(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_plans project_environment_clone_po_operation_id_source_databas_fkey11; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey11 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_role_plans(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_po_operation_id_source_databas_fkey12; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey12 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_database_plans(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_po_operation_id_source_databas_fkey13; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey13 FOREIGN KEY (operation_id, source_database_id, database_oid) REFERENCES public.project_environment_clone_postgres_archives(operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_contents project_environment_clone_po_operation_id_source_databas_fkey14; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey14 FOREIGN KEY (operation_id, source_database_id, inventory_ciphertext_sha256) REFERENCES public.project_environment_clone_postgres_inventories(operation_id, source_database_id, ciphertext_sha256);
+
+
+--
+-- Name: project_environment_clone_postgres_contents project_environment_clone_po_operation_id_source_databas_fkey15; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey15 FOREIGN KEY (operation_id, source_database_id, database_oid, archive_owner_id) REFERENCES public.project_environment_clone_postgres_archives(operation_id, source_database_id, database_oid, owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_contents project_environment_clone_po_operation_id_source_databas_fkey16; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey16 FOREIGN KEY (operation_id, source_database_id, reader_owner_id) REFERENCES public.project_environment_clone_postgres_copy_readers(operation_id, source_database_id, owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_po_operation_id_source_databas_fkey17; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey17 FOREIGN KEY (operation_id, source_database_id, database_oid, contents_owner_id, contents_ciphertext_sha256) REFERENCES public.project_environment_clone_postgres_contents(operation_id, source_database_id, database_oid, owner_id, ciphertext_sha256);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_po_operation_id_source_databas_fkey18; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey18 FOREIGN KEY (operation_id, source_database_id, database_oid, import_id) REFERENCES public.project_environment_clone_postgres_imports(operation_id, source_database_id, database_oid, import_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_po_operation_id_source_databas_fkey19; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey19 FOREIGN KEY (operation_id, source_database_id, database_oid, database_sql_pins_ciphertext_sha256) REFERENCES public.project_environment_clone_postgres_database_sql_pins(operation_id, source_database_id, database_oid, ciphertext_sha256);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_attempts project_environment_clone_po_operation_id_source_databas_fkey20; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_attempts
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey20 FOREIGN KEY (operation_id, source_database_id, database_oid, original_verification_id) REFERENCES public.project_environment_clone_postgres_verifications(operation_id, source_database_id, database_oid, verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_attempts project_environment_clone_po_operation_id_source_databas_fkey21; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_attempts
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey21 FOREIGN KEY (operation_id, source_database_id, database_oid, previous_attempt, previous_verification_id) REFERENCES public.project_environment_clone_postgres_verification_attempts(operation_id, source_database_id, database_oid, attempt, verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_po_operation_id_source_databas_fkey22; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey22 FOREIGN KEY (operation_id, source_database_id, database_oid, original_verification_id) REFERENCES public.project_environment_clone_postgres_verifications(operation_id, source_database_id, database_oid, verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_debits project_environment_clone_po_operation_id_source_databas_fkey23; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_debits
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey23 FOREIGN KEY (operation_id, source_database_id, database_oid, original_verification_id) REFERENCES public.project_environment_clone_postgres_verification_read_budgets(operation_id, source_database_id, database_oid, original_verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_debits project_environment_clone_po_operation_id_source_databas_fkey24; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_debits
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey24 FOREIGN KEY (operation_id, source_database_id, database_oid, retry_attempt, retry_verification_id) REFERENCES public.project_environment_clone_postgres_verification_attempts(operation_id, source_database_id, database_oid, attempt, verification_id);
+
+
+--
+-- Name: project_environment_clone_postgres_checkpoint_selections project_environment_clone_po_operation_id_source_databas_fkey25; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_checkpoint_selections
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_databas_fkey25 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_write_fences(operation_id, source_database_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_po_operation_id_source_database_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey1 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_snapshot_restores(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories project_environment_clone_po_operation_id_source_database_fkey2; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey2 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_snapshot_restores(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_po_operation_id_source_database_fkey3; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey3 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_snapshot_restores(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_po_operation_id_source_database_fkey4; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey4 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_inventories(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_po_operation_id_source_database_fkey5; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey5 FOREIGN KEY (operation_id, source_database_id, database_oid) REFERENCES public.project_environment_clone_postgres_archives(operation_id, source_database_id, database_oid);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_po_operation_id_source_database_fkey6; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey6 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_copy_targets(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins project_environment_clone_po_operation_id_source_database_fkey7; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey7 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_inventories(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins project_environment_clone_po_operation_id_source_database_fkey8; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey8 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_copy_targets(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_role_plans project_environment_clone_po_operation_id_source_database_fkey9; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_role_plans
+    ADD CONSTRAINT project_environment_clone_po_operation_id_source_database_fkey9 FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_target_sql_pins(operation_id, source_database_id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_pos_operation_id_source_database_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_pos_operation_id_source_database_fkey FOREIGN KEY (operation_id, source_database_id) REFERENCES public.project_environment_clone_postgres_snapshots(operation_id, source_database_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_postgres_archives_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_archives project_environment_clone_postgres_archives_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_archives
+    ADD CONSTRAINT project_environment_clone_postgres_archives_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_bindings project_environment_clone_postgres_bindi_target_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
+    ADD CONSTRAINT project_environment_clone_postgres_bindi_target_binding_id_fkey FOREIGN KEY (target_binding_id) REFERENCES public.managed_postgres_bindings(id);
+
+
+--
+-- Name: project_environment_clone_postgres_bindings project_environment_clone_postgres_bindings_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_bindings
+    ADD CONSTRAINT project_environment_clone_postgres_bindings_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_postgres_checkpoint_selections project_environment_clone_postgres_checkpoi_maintenance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_checkpoint_selections
+    ADD CONSTRAINT project_environment_clone_postgres_checkpoi_maintenance_id_fkey FOREIGN KEY (maintenance_id) REFERENCES public.managed_postgres_checkpoint_maintenance(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_co_capture_database_id_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_co_capture_database_id_fkey1 FOREIGN KEY (capture_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_contents project_environment_clone_postgres_contents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT project_environment_clone_postgres_contents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_contents project_environment_clone_postgres_contents_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_contents
+    ADD CONSTRAINT project_environment_clone_postgres_contents_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_cop_capture_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_postgres_cop_capture_database_id_fkey FOREIGN KEY (capture_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_copy_readers_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_copy_readers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_readers project_environment_clone_postgres_copy_readers_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_readers
+    ADD CONSTRAINT project_environment_clone_postgres_copy_readers_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_copy_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_postgres_copy_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_copy_targets project_environment_clone_postgres_copy_targets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_copy_targets
+    ADD CONSTRAINT project_environment_clone_postgres_copy_targets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_postgres_dat_target_database_id_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_dat_target_database_id_fkey1 FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_plans project_environment_clone_postgres_data_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
+    ADD CONSTRAINT project_environment_clone_postgres_data_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_postgres_databa_archive_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_databa_archive_owner_id_fkey FOREIGN KEY (archive_owner_id) REFERENCES public.project_environment_clone_postgres_archives(owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_plans project_environment_clone_postgres_database_pla_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
+    ADD CONSTRAINT project_environment_clone_postgres_database_pla_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_plans project_environment_clone_postgres_database_pla_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_plans
+    ADD CONSTRAINT project_environment_clone_postgres_database_pla_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_postgres_database_sql_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_database_sql_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_database_sql_pins project_environment_clone_postgres_database_sql_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_database_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_database_sql_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_impo_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_impo_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_import_archive_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_import_archive_owner_id_fkey FOREIGN KEY (archive_owner_id) REFERENCES public.project_environment_clone_postgres_archives(owner_id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_imports_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_imports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_imports project_environment_clone_postgres_imports_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_imports
+    ADD CONSTRAINT project_environment_clone_postgres_imports_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories project_environment_clone_postgres_inv_capture_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT project_environment_clone_postgres_inv_capture_database_id_fkey FOREIGN KEY (capture_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories project_environment_clone_postgres_inventories_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT project_environment_clone_postgres_inventories_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_inventories project_environment_clone_postgres_inventories_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_inventories
+    ADD CONSTRAINT project_environment_clone_postgres_inventories_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_membership_plans project_environment_clone_postgres_memb_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_membership_plans
+    ADD CONSTRAINT project_environment_clone_postgres_memb_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_membership_plans project_environment_clone_postgres_membership_p_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_membership_plans
+    ADD CONSTRAINT project_environment_clone_postgres_membership_p_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_membership_plans project_environment_clone_postgres_membership_p_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_membership_plans
+    ADD CONSTRAINT project_environment_clone_postgres_membership_p_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_role_plans project_environment_clone_postgres_role_plans_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_role_plans
+    ADD CONSTRAINT project_environment_clone_postgres_role_plans_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_role_plans project_environment_clone_postgres_role_plans_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_role_plans
+    ADD CONSTRAINT project_environment_clone_postgres_role_plans_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_role_plans project_environment_clone_postgres_role_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_role_plans
+    ADD CONSTRAINT project_environment_clone_postgres_role_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_sna_adopted_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_postgres_sna_adopted_database_id_fkey FOREIGN KEY (adopted_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_snapshots project_environment_clone_postgres_snap_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
+    ADD CONSTRAINT project_environment_clone_postgres_snap_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_snapshot_restores project_environment_clone_postgres_snapshot_res_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshot_restores
+    ADD CONSTRAINT project_environment_clone_postgres_snapshot_res_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_snapshots project_environment_clone_postgres_snapshots_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_snapshots
+    ADD CONSTRAINT project_environment_clone_postgres_snapshots_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins project_environment_clone_postgres_targ_target_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_targ_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins project_environment_clone_postgres_target_sql_p_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_target_sql_p_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_target_sql_pins project_environment_clone_postgres_target_sql_p_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_target_sql_pins
+    ADD CONSTRAINT project_environment_clone_postgres_target_sql_p_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_postgres_verificatio_account_id_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_postgres_verificatio_account_id_fkey1 FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_verification_read_budgets project_environment_clone_postgres_verificatio_project_id_fkey1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verification_read_budgets
+    ADD CONSTRAINT project_environment_clone_postgres_verificatio_project_id_fkey1 FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_postgres_verification_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_postgres_verification_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_environment_clone_postgres_verifications project_environment_clone_postgres_verification_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_verifications
+    ADD CONSTRAINT project_environment_clone_postgres_verification_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_environment_clone_postgres_write_fences project_environment_clone_postgres_writ_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_write_fences
+    ADD CONSTRAINT project_environment_clone_postgres_writ_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_postgres_write_fences project_environment_clone_postgres_write_fenc_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_postgres_write_fences
+    ADD CONSTRAINT project_environment_clone_postgres_write_fenc_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: project_environment_clone_workloads project_environment_clone_workloads_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_workloads
+    ADD CONSTRAINT project_environment_clone_workloads_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_clone_workloads project_environment_clone_workloads_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_clone_workloads
+    ADD CONSTRAINT project_environment_clone_workloads_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_environment_clone_operations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: project_environment_config_versions project_environment_config_versions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34716,6 +38276,14 @@ ALTER TABLE ONLY public.project_environment_edge_policies
 
 
 --
+-- Name: project_environment_promotion_feature_flags project_environment_promotion_feature_flags_promotion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_feature_flags
+    ADD CONSTRAINT project_environment_promotion_feature_flags_promotion_id_fkey FOREIGN KEY (promotion_id) REFERENCES public.project_environment_promotions(id) ON DELETE CASCADE;
+
+
+--
 -- Name: project_environment_promotions project_environment_promotion_previous_target_release_set__fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34729,6 +38297,46 @@ ALTER TABLE ONLY public.project_environment_promotions
 
 ALTER TABLE ONLY public.project_environment_promotions
     ADD CONSTRAINT project_environment_promotion_restored_target_release_set__fkey FOREIGN KEY (restored_target_release_set_id) REFERENCES public.project_release_sets(id) ON DELETE SET NULL;
+
+
+--
+-- Name: project_environment_promotion_workload_specs project_environment_promotion_workload_sp_prepared_spec_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_workload_specs
+    ADD CONSTRAINT project_environment_promotion_workload_sp_prepared_spec_id_fkey FOREIGN KEY (prepared_spec_id) REFERENCES public.project_environment_workload_specs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_promotion_workload_specs project_environment_promotion_workload_sp_previous_spec_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_workload_specs
+    ADD CONSTRAINT project_environment_promotion_workload_sp_previous_spec_id_fkey FOREIGN KEY (previous_spec_id) REFERENCES public.project_environment_workload_specs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: project_environment_promotion_workload_specs project_environment_promotion_workload_specs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_workload_specs
+    ADD CONSTRAINT project_environment_promotion_workload_specs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_promotion_workload_specs project_environment_promotion_workload_specs_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_workload_specs
+    ADD CONSTRAINT project_environment_promotion_workload_specs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_promotion_workload_specs project_environment_promotion_workload_specs_promotion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_workload_specs
+    ADD CONSTRAINT project_environment_promotion_workload_specs_promotion_id_fkey FOREIGN KEY (promotion_id) REFERENCES public.project_environment_promotions(id) ON DELETE CASCADE;
 
 
 --
@@ -34812,6 +38420,62 @@ ALTER TABLE ONLY public.project_environment_qualifications
 
 
 --
+-- Name: project_environment_queue_consumers project_environment_queue_consumers_runtime_set_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_consumers
+    ADD CONSTRAINT project_environment_queue_consumers_runtime_set_id_fkey FOREIGN KEY (runtime_set_id) REFERENCES public.project_environment_queue_runtime_sets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_queue_runtime_sets project_environment_queue_runtime_sets_workload_spec_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_queue_runtime_sets
+    ADD CONSTRAINT project_environment_queue_runtime_sets_workload_spec_id_fkey FOREIGN KEY (workload_spec_id) REFERENCES public.project_environment_workload_specs(id) ON DELETE CASCADE;
+
+
+--
 -- Name: project_environment_route_policies project_environment_route_poli_project_id_environment_slug_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34833,6 +38497,46 @@ ALTER TABLE ONLY public.project_environment_route_policies
 
 ALTER TABLE ONLY public.project_environment_route_policies
     ADD CONSTRAINT project_environment_route_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_workload_heads project_environment_workload__environment_id_app_id_spec_i_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_heads
+    ADD CONSTRAINT project_environment_workload__environment_id_app_id_spec_i_fkey FOREIGN KEY (environment_id, app_id, spec_id) REFERENCES public.project_environment_workload_specs(environment_id, app_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_workload_deployment_specs project_environment_workload_deployment_spec_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_deployment_specs
+    ADD CONSTRAINT project_environment_workload_deployment_spec_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_workload_deployment_specs project_environment_workload_deployment_specs_spec_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_deployment_specs
+    ADD CONSTRAINT project_environment_workload_deployment_specs_spec_id_fkey FOREIGN KEY (spec_id) REFERENCES public.project_environment_workload_specs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_workload_specs project_environment_workload_specs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_specs
+    ADD CONSTRAINT project_environment_workload_specs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_workload_specs project_environment_workload_specs_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_workload_specs
+    ADD CONSTRAINT project_environment_workload_specs_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --
@@ -35185,6 +38889,38 @@ ALTER TABLE ONLY public.route_policy_receipts
 
 ALTER TABLE ONLY public.runtime_config_revisions
     ADD CONSTRAINT runtime_config_revisions_entry_id_fkey FOREIGN KEY (entry_id) REFERENCES public.runtime_config_entries(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_environment_scaling_states runtime_environment_scaling_states_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_environment_scaling_states
+    ADD CONSTRAINT runtime_environment_scaling_states_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_environment_scaling_states runtime_environment_scaling_states_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_environment_scaling_states
+    ADD CONSTRAINT runtime_environment_scaling_states_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_instance_config_proofs runtime_instance_config_proofs_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_instance_config_proofs
+    ADD CONSTRAINT runtime_instance_config_proofs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: runtime_instance_config_proofs runtime_instance_config_proofs_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_instance_config_proofs
+    ADD CONSTRAINT runtime_instance_config_proofs_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
 
 
 --

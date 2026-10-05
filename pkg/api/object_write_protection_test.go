@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// adr: 590
+// adr: 592
 func TestObjectWriteProtectionValidation(t *testing.T) {
 	until := time.Date(2027, 1, 2, 3, 4, 5, 123456789, time.UTC)
 	for _, tc := range []struct {

@@ -57,6 +57,28 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 	if !ok {
 		return
 	}
+	app, environment, problem := s.appEnvironmentSettings(w, r, acct, app, false)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if environment.Slug != "" {
+		resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
+		resp.URL = projectEnvironmentWorkloadURL(environment.ID, app.ID)
+		resp.CanonicalURL = resp.URL
+		_, err := s.store.LiveDeploymentForScope(r.Context(), app.ID, environment.Slug)
+		switch {
+		case err == nil:
+			resp.DeploymentAvailability = api.AppDeploymentAvailabilityLive
+		case errors.Is(err, state.ErrNotFound):
+			resp.DeploymentAvailability = api.AppDeploymentAvailabilityMissing
+		default:
+			api.WriteProblem(w, api.ErrCapacity("could not resolve environment deployment availability"))
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 	resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
 	if _, err := s.store.LiveDeployment(r.Context(), app.ID); err == nil {
 		resp.DeploymentAvailability = api.AppDeploymentAvailabilityLive
@@ -937,6 +959,11 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
+	app, environment, environmentProblem := s.appEnvironmentSettings(w, r, acct, app, true)
+	if environmentProblem != nil {
+		api.WriteProblem(w, environmentProblem)
+		return
+	}
 	var req api.UpdateAppRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
@@ -1445,6 +1472,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			Password: req.PublicAuth.BasicPass,
 			Sealed:   publicAuthSealed,
 		}
+	}
+	if environment.Slug != "" {
+		s.updateEnvironmentAppSettings(w, r, acct, app, environment, params)
+		return
 	}
 	configActivityAtomic := false
 	var configActivityOutboxID int64
@@ -4760,7 +4791,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 				"account", acct.ID,
 				"from", logsanitize.Field(string(acct.Plan)),
 				"to", logsanitize.Field(string(plan)),
-				"err", err)
+				"err", logsanitize.FieldAny(err))
 			if errors.Is(err, billing.ErrAlreadyCancelled) {
 				api.WriteProblem(w, api.NewProblem(http.StatusConflict,
 					api.CodeConflict, "billing subscription unavailable",

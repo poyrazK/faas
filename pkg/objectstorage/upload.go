@@ -259,6 +259,16 @@ func (h *uploadHandler) uploadDestination(w http.ResponseWriter, r *http.Request
 }
 
 func (h *uploadHandler) performLegacyUpload(w http.ResponseWriter, r *http.Request, writer ObjectWriter, bucket state.ObjectBucket, c state.ObjectUploadCompletion) {
+	guard, err := h.admitTrackedObjectWrite(r.Context(), bucket)
+	if err != nil {
+		uploadProblem(w, http.StatusServiceUnavailable, "upload destination writes are temporarily unavailable")
+		return
+	}
+	defer func(ctx context.Context) {
+		if err := guard.finishUnsent(ctx); err != nil {
+			h.log.Warn("unsent upload writer receipt completion failed")
+		}
+	}(r.Context())
 	if err := h.accounting.AdmitObjectURL(r.Context(), c.AccountID, bucket.ID, c.Key, c.Bytes, true, h.registry.Accounting); err != nil {
 		uploadAccountingProblem(w, err)
 		return
@@ -282,7 +292,7 @@ func (h *uploadHandler) performLegacyUpload(w http.ResponseWriter, r *http.Reque
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.registry.TransferTimeout())
 	defer cancel()
-	result, err := writer.WriteObject(ctx, bucket.PhysicalName, c.Key, io.LimitReader(r.Body, c.Bytes), c.Bytes, ObjectMetadata{ContentType: c.ContentType})
+	result, err := guard.write(ctx, writer, c.Key, io.LimitReader(r.Body, c.Bytes), c.Bytes, ObjectMetadata{ContentType: c.ContentType})
 	c.ETag = result.ETag
 	c.Status = "completed"
 	if err != nil {

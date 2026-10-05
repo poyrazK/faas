@@ -1,11 +1,13 @@
 package s3gateway
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 )
 
 func gatewayCopyRequest(w http.ResponseWriter, r *http.Request, req requestContext, source, destination string) (objectstorage.CopyObjectRequest, bool) {
@@ -62,7 +64,9 @@ func (h *Handler) performLegacyGatewayCopy(w http.ResponseWriter, r *http.Reques
 	if !h.admit(w, r, req, c.DestinationKey, size, true) || !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	result, err := copier.CopyObject(r.Context(), req.bucket.PhysicalName, c)
+	result, err := objectstorageactivity.Execute(r.Context(), h.store, req.bucket, func(mutationCtx context.Context) (objectstorage.CopyObjectResult, error) {
+		return copier.CopyObject(mutationCtx, req.bucket.PhysicalName, c)
+	})
 	if err != nil {
 		h.providerError(w, r, req, err, c.SourceKey)
 		return

@@ -362,7 +362,7 @@ func (d *Drain) Tick(ctx context.Context) {
 		for _, appID := range order {
 			for _, inv := range byApp[appID] {
 				if inv.Source == state.InvocationQueue || inv.Source == state.InvocationDelayedTask {
-					if inv.WorkPolicyName == "" && d.queueSourceBound(ctx, appID, inv.Source, queueBindings) {
+					if inv.EnvironmentID == "" && inv.WorkPolicyName == "" && d.queueSourceBound(ctx, appID, inv.Source, queueBindings) {
 						queueTriggerSkipped = true
 						continue
 					}

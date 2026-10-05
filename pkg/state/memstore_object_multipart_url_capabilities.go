@@ -16,6 +16,9 @@ func (m *MemStore) IssueObjectMultipartURLCredential(_ context.Context, c Object
 	if !validObjectURLMultipartUpload(c, u, m.clock()) || u.AppID != expected.AppID || u.ProviderUploadID != expected.ProviderUploadID || !u.Protection.Equal(expected.Protection) || u.EncryptionDefaultRevision != expected.EncryptionDefaultRevision || !u.Encryption.Equal(expected.Encryption) || !m.objectURLCredentialLiveLocked(c) {
 		return ObjectS3Credential{}, ErrConflict
 	}
+	if _, fenced := m.objectWriteFences[c.BucketID]; fenced {
+		return ObjectS3Credential{}, ErrObjectBucketWriteFenced
+	}
 	c, err := m.insertObjectURLCredentialLocked(c)
 	if err != nil {
 		return ObjectS3Credential{}, err
