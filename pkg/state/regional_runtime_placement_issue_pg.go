@@ -11,6 +11,17 @@ import (
 )
 
 func (s *PgStore) IssueRegionalRuntimePlacement(ctx context.Context, p runtimequota.Placement) error {
+	return s.issueRegionalRuntimePlacement(ctx, p, nil)
+}
+
+func (s *PgStore) IssueRegionalRuntimeLaunch(ctx context.Context, p runtimequota.Placement, source runtimequota.LaunchSource) error {
+	if source.Validate() != nil || source.Permit != p.Permit {
+		return ErrInvalidArgument
+	}
+	return s.issueRegionalRuntimePlacement(ctx, p, &source)
+}
+
+func (s *PgStore) issueRegionalRuntimePlacement(ctx context.Context, p runtimequota.Placement, source *runtimequota.LaunchSource) error {
 	if !validIssuedRegionalPlacement(p) {
 		return ErrInvalidArgument
 	}
@@ -27,6 +38,11 @@ func (s *PgStore) IssueRegionalRuntimePlacement(ctx context.Context, p runtimequ
 		if p.Seat != nil {
 			seat, err = prepareRegionalSeat(ctx, tx, q, *p.Seat)
 			if err != nil {
+				return struct{}{}, err
+			}
+		}
+		if source != nil {
+			if err := prepareRegionalLaunchSource(ctx, tx, q, *source, physical); err != nil {
 				return struct{}{}, err
 			}
 		}

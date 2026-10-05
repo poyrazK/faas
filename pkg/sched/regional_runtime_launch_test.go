@@ -4,6 +4,7 @@ package sched
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -35,10 +36,14 @@ func TestRegionalRuntimeSchedulerInitialIssuance(t *testing.T) {
 			// The mandatory Store interface carries issuance through decorators.
 			engine := &Engine{store: struct{ state.Store }{store}, vmm: vmm}
 			spec := AppSpec{AppID: app.ID, AccountID: account.ID, DeploymentID: dep.ID, Plan: account.Plan, PrimeOnly: purpose == runtimequota.CapacityPrime}
-			instance, run := uuid.NewString(), uuid.NewString()
+			instance, run := strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()
 			issued, err := engine.issueRegionalRuntimeLaunch(t.Context(), node.ID, instance, run, purpose, spec, head.Grant)
 			if err != nil || issued.RegionalRuntime == nil {
 				t.Fatal("initial bookkeeping was not issued", err)
+			}
+			source, err := store.RegionalRuntimeLaunchSource(t.Context(), app.ID, issued.RegionalRuntime.Permit.ID)
+			if err != nil || source.Source.InstanceKey != instance || source.Source.Permit != issued.RegionalRuntime.Permit {
+				t.Fatal("scheduler lost actual compact runtime key", source, err)
 			}
 			again, err := engine.issueRegionalRuntimeLaunch(t.Context(), node.ID, instance, run, purpose, issued, head.Grant)
 			if err != nil || again.RegionalRuntime.Permit != issued.RegionalRuntime.Permit || !sameInitialServingSeat(again.RegionalRuntime.Seat, issued.RegionalRuntime.Seat) {
@@ -60,6 +65,59 @@ func TestRegionalRuntimeSchedulerInitialIssuance(t *testing.T) {
 			usage, err = store.RegionalRuntimeCapacityUsage(t.Context(), app.ID, head.Grant.AllocationID)
 			if err != nil || usage.IssuedHeld != 1 || vmm.coldBoots != 0 || vmm.restores != 0 {
 				t.Fatal("issuance dispatched or released work", usage, err)
+			}
+		})
+	}
+}
+
+type unavailableAfterRegionalIssue struct {
+	state.Store
+	commitUnknown bool
+	err           error
+}
+
+func (s unavailableAfterRegionalIssue) IssueRegionalRuntimeLaunch(ctx context.Context, p runtimequota.Placement, source runtimequota.LaunchSource) error {
+	if err := s.Store.IssueRegionalRuntimeLaunch(ctx, p, source); err != nil {
+		return err
+	}
+	if s.commitUnknown {
+		return s.err
+	}
+	return nil
+}
+
+func (s unavailableAfterRegionalIssue) CheckRegionalRuntimeIssuedPlacement(context.Context, runtimequota.Placement) error {
+	return s.err
+}
+
+func TestRegionalRuntimeLaunchRetainsSourceOnUncertainIssuance(t *testing.T) {
+	for _, commitUnknown := range []bool{false, true} {
+		t.Run(map[bool]string{false: "post-issuance-check", true: "commit-reply"}[commitUnknown], func(t *testing.T) {
+			store, account, app, dep := regionalQuotaSchedulerFixture(t)
+			freezeRegionalSchedulerApp(t, store, account, app)
+			head, err := store.RegionalRuntimeQuotaHead(t.Context(), app.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			node, err := store.CreateComputeNode(t.Context(), state.ComputeNode{ID: uuid.NewString(), Name: "source-node", TargetURL: "unix:///run/faas/vmmd-test.sock", Active: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			epoch := runtimequota.HostEpoch{NodeID: node.ID, HostEpochID: uuid.NewString()}
+			vmm := &fakeVMM{statsHook: func(context.Context, string) (*StatsSnapshot, error) {
+				return &StatsSnapshot{RegionalRuntimeHostEpoch: &epoch}, nil
+			}}
+			unavailable := errors.New("issuance reply unavailable")
+			e := &Engine{store: unavailableAfterRegionalIssue{Store: store, commitUnknown: commitUnknown, err: unavailable}, vmm: vmm}
+			instance := strings.ReplaceAll(uuid.NewString(), "-", "")
+			spec := AppSpec{AppID: app.ID, AccountID: account.ID, DeploymentID: dep.ID, Plan: account.Plan}
+			retained, err := e.issueRegionalRuntimeLaunch(t.Context(), node.ID, instance, uuid.NewString(), runtimequota.CapacityServing, spec, head.Grant)
+			if !errors.Is(err, unavailable) || retained.RegionalRuntime == nil {
+				t.Fatal("uncertain issuance discarded original permit", err)
+			}
+			source, err := store.RegionalRuntimeLaunchSource(t.Context(), app.ID, retained.RegionalRuntime.Permit.ID)
+			if err != nil || source.Source.InstanceKey != instance || source.Source.Permit != retained.RegionalRuntime.Permit || vmm.coldBoots != 0 {
+				t.Fatal("uncertain issuance lost source or dispatched", source, err)
 			}
 		})
 	}
@@ -127,7 +185,7 @@ type failingRegionalPlacementWriter struct {
 	err error
 }
 
-func (s failingRegionalPlacementWriter) IssueRegionalRuntimePlacement(context.Context, runtimequota.Placement) error {
+func (s failingRegionalPlacementWriter) IssueRegionalRuntimeLaunch(context.Context, runtimequota.Placement, runtimequota.LaunchSource) error {
 	return s.err
 }
 

@@ -8,6 +8,17 @@ import (
 )
 
 func (s *MemStore) IssueRegionalRuntimePlacement(ctx context.Context, p runtimequota.Placement) error {
+	return s.issueRegionalRuntimePlacement(ctx, p, nil)
+}
+
+func (s *MemStore) IssueRegionalRuntimeLaunch(ctx context.Context, p runtimequota.Placement, source runtimequota.LaunchSource) error {
+	if source.Validate() != nil || source.Permit != p.Permit {
+		return ErrInvalidArgument
+	}
+	return s.issueRegionalRuntimePlacement(ctx, p, &source)
+}
+
+func (s *MemStore) issueRegionalRuntimePlacement(ctx context.Context, p runtimequota.Placement, source *runtimequota.LaunchSource) error {
 	if !validIssuedRegionalPlacement(p) {
 		return ErrInvalidArgument
 	}
@@ -27,6 +38,13 @@ func (s *MemStore) IssueRegionalRuntimePlacement(ctx context.Context, p runtimeq
 	if err != nil {
 		return err
 	}
+	key := capacityKey(app, p.Permit.ID)
+	launch := s.regionalRuntimeLaunchSources[key]
+	if source != nil {
+		if err := checkRegionalLaunchSource(*source, launch, physical); err != nil {
+			return err
+		}
+	}
 	var seat RegionalRuntimeServingSeatReceipt
 	if p.Seat != nil {
 		seat, err = s.prepareRegionalSeatLocked(*p.Seat)
@@ -40,6 +58,9 @@ func (s *MemStore) IssueRegionalRuntimePlacement(ctx context.Context, p runtimeq
 	// Commit both staged receipts together. Existing issued timestamps survive
 	// retries; no failure above has created a new physical or concurrency hold.
 	now := regionalCapacityNow()
+	if source != nil && launch.Source.Permit.ID == "" {
+		s.regionalRuntimeLaunchSources[key] = RegionalRuntimeLaunchSource{Source: *source, CreatedAt: now}
+	}
 	if physical.IssuedAt == nil {
 		physical.IssuedAt = &now
 	}

@@ -13694,6 +13694,37 @@ func (q *Queries) InsertRegionalRuntimeCapacity(ctx context.Context, db DBTX, ar
 	return i, err
 }
 
+const insertRegionalRuntimeLaunchSource = `-- name: InsertRegionalRuntimeLaunchSource :one
+INSERT INTO regional_runtime_launch_sources(app_id,permit_id,instance_key,permit_claims)
+VALUES ($1,$2,$3,$4) RETURNING app_id, permit_id, instance_key, permit_claims, created_at
+`
+
+type InsertRegionalRuntimeLaunchSourceParams struct {
+	AppID        pgtype.UUID
+	PermitID     pgtype.UUID
+	InstanceKey  string
+	PermitClaims []byte
+}
+
+// ADR-633: immutable original launch identity, independent of current rows.
+func (q *Queries) InsertRegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg InsertRegionalRuntimeLaunchSourceParams) (RegionalRuntimeLaunchSource, error) {
+	row := db.QueryRow(ctx, insertRegionalRuntimeLaunchSource,
+		arg.AppID,
+		arg.PermitID,
+		arg.InstanceKey,
+		arg.PermitClaims,
+	)
+	var i RegionalRuntimeLaunchSource
+	err := row.Scan(
+		&i.AppID,
+		&i.PermitID,
+		&i.InstanceKey,
+		&i.PermitClaims,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertRegionalRuntimeQuotaReceipt = `-- name: InsertRegionalRuntimeQuotaReceipt :one
 INSERT INTO regional_runtime_quota_receipts(app_id, allocation_id, generation, grant_claims, grant_envelope, retirement, retirement_envelope)
 VALUES ($1::uuid, $2::uuid, $3::bigint, $4::jsonb,
@@ -20940,6 +20971,56 @@ func (q *Queries) ListRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg 
 			&i.StopClaims,
 			&i.StopEnvelope,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRegionalRuntimeRetirements = `-- name: ListRegionalRuntimeRetirements :many
+SELECT s.instance_key, s.permit_claims, c.fence_id
+FROM regional_runtime_launch_sources s
+JOIN regional_runtime_capacity_receipts c USING (app_id,permit_id)
+WHERE c.issued_at IS NOT NULL AND c.fence_id IS NOT NULL AND c.released_at IS NULL
+  AND c.permit_claims->'Grant'->'Binding'->>'CellID'=$1::text
+  AND ($2::boolean OR (s.app_id,s.permit_id)>($3::uuid,$4::uuid))
+ORDER BY s.app_id,s.permit_id LIMIT $5::int
+`
+
+type ListRegionalRuntimeRetirementsParams struct {
+	CellID      string
+	FirstPage   bool
+	AfterApp    pgtype.UUID
+	AfterPermit pgtype.UUID
+	BatchLimit  int32
+}
+
+type ListRegionalRuntimeRetirementsRow struct {
+	InstanceKey  string
+	PermitClaims []byte
+	FenceID      pgtype.UUID
+}
+
+func (q *Queries) ListRegionalRuntimeRetirements(ctx context.Context, db DBTX, arg ListRegionalRuntimeRetirementsParams) ([]ListRegionalRuntimeRetirementsRow, error) {
+	rows, err := db.Query(ctx, listRegionalRuntimeRetirements,
+		arg.CellID,
+		arg.FirstPage,
+		arg.AfterApp,
+		arg.AfterPermit,
+		arg.BatchLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRegionalRuntimeRetirementsRow{}
+	for rows.Next() {
+		var i ListRegionalRuntimeRetirementsRow
+		if err := rows.Scan(&i.InstanceKey, &i.PermitClaims, &i.FenceID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -37133,6 +37214,28 @@ func (q *Queries) RegionalRuntimeCapacityUsage(ctx context.Context, db DBTX, arg
 	row := db.QueryRow(ctx, regionalRuntimeCapacityUsage, arg.AppID, arg.AllocationID)
 	var i RegionalRuntimeCapacityUsageRow
 	err := row.Scan(&i.TotalHeld, &i.IssuedHeld)
+	return i, err
+}
+
+const regionalRuntimeLaunchSource = `-- name: RegionalRuntimeLaunchSource :one
+SELECT app_id, permit_id, instance_key, permit_claims, created_at FROM regional_runtime_launch_sources WHERE app_id=$1 AND permit_id=$2
+`
+
+type RegionalRuntimeLaunchSourceParams struct {
+	AppID    pgtype.UUID
+	PermitID pgtype.UUID
+}
+
+func (q *Queries) RegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg RegionalRuntimeLaunchSourceParams) (RegionalRuntimeLaunchSource, error) {
+	row := db.QueryRow(ctx, regionalRuntimeLaunchSource, arg.AppID, arg.PermitID)
+	var i RegionalRuntimeLaunchSource
+	err := row.Scan(
+		&i.AppID,
+		&i.PermitID,
+		&i.InstanceKey,
+		&i.PermitClaims,
+		&i.CreatedAt,
+	)
 	return i, err
 }
 

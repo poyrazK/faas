@@ -35,6 +35,7 @@ type RegionalRuntimeCapacityLedger interface {
 	RegionalRuntimeServingSeatStore
 	RegionalRuntimeIssuedPlacementReader
 	RegionalRuntimePlacementWriter
+	RegionalRuntimeLaunchStore
 }
 
 func (a RegionalRuntimeCapacityAuthority) AcceptServingSeatStop(ctx context.Context, e runtimequota.Envelope) (RegionalRuntimeServingSeatReceipt, error) {

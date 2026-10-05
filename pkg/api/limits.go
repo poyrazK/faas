@@ -28,6 +28,9 @@ const (
 	RegionalRuntimeQuotaEnvelopeMaxBytes       = 8192
 	RegionalRuntimeQuotaPayloadMaxBytes        = 4096
 	RegionalRuntimeCapacityPageMax             = 1000
+	RegionalRuntimeRetirementBatch             = 64 // ADR-633: bounded cell recovery, not execution admission.
+	RegionalRuntimeRetirementInterval          = 30 * time.Second
+	RegionalRuntimeRetirementTimeout           = 30 * time.Second
 	RegionalRuntimeHostRecordMaxBytes          = 16384
 	RegionalRuntimeSigningKeyMaxBytes          = 4096 // ADR-632: one PKCS#8 Ed25519 key.
 	RegionalRuntimeTrustBundleMaxBytes         = 65536

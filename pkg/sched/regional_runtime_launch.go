@@ -39,13 +39,14 @@ func (e *Engine) prepareRegionalRuntimeLaunch(ctx context.Context, node, instanc
 	}
 	spec, err = e.issueRegionalRuntimeLaunch(ctx, node, instance, run, purpose, spec, head.Grant)
 	if err != nil {
-		return AppSpec{}, err
+		return spec, err // Keep the original attempt when an issuance reply is uncertain.
 	}
 	return spec, checkRegionalRuntimeQuota(ctx, e.store, spec.AppID)
 }
 
 // Issuance is independently testable bookkeeping. It does not admit work.
 func (e *Engine) issueRegionalRuntimeLaunch(ctx context.Context, node, instance, run, purpose string, spec AppSpec, grant runtimequota.Grant) (AppSpec, error) {
+	actualInstanceKey := instance
 	if (purpose == runtimequota.CapacityPrime) != spec.PrimeOnly {
 		return AppSpec{}, runtimequota.ErrBinding
 	}
@@ -83,13 +84,17 @@ func (e *Engine) issueRegionalRuntimeLaunch(ctx context.Context, node, instance,
 	if spec.RegionalRuntime != nil && (spec.RegionalRuntime.Permit != placement.Permit || !sameInitialServingSeat(spec.RegionalRuntime.Seat, placement.Seat)) {
 		return AppSpec{}, runtimequota.ErrBinding
 	}
-	if err := e.store.IssueRegionalRuntimePlacement(ctx, placement); err != nil {
-		return AppSpec{}, fmt.Errorf("sched: issue regional launch: %w", err)
-	}
-	if err := e.store.CheckRegionalRuntimeIssuedPlacement(ctx, placement); err != nil {
-		return AppSpec{}, fmt.Errorf("sched: check issued regional launch: %w", err)
+	source := runtimequota.LaunchSource{Permit: placement.Permit, InstanceKey: actualInstanceKey}
+	if source.Validate() != nil {
+		return AppSpec{}, runtimequota.ErrBinding
 	}
 	spec.RegionalRuntime = &placement
+	if err := e.store.IssueRegionalRuntimeLaunch(ctx, placement, source); err != nil {
+		return spec, fmt.Errorf("sched: issue regional launch: %w", err)
+	}
+	if err := e.store.CheckRegionalRuntimeIssuedPlacement(ctx, placement); err != nil {
+		return spec, fmt.Errorf("sched: check issued regional launch: %w", err)
+	}
 	return spec, nil
 }
 

@@ -2176,6 +2176,27 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 		}()
 	}
+	if regionalRetirement != nil {
+		// ADR-633: recovery uses immutable original sources, independently of
+		// scheduler app locks and current instance/app collection.
+		regionalRecoveryDone := make(chan struct{})
+		go func() {
+			defer close(regionalRecoveryDone)
+			if err := regionalRetirement.RunRecovery(ctx, log); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("schedd: regional retirement recovery exited", "err", err)
+			}
+		}()
+		defer func() {
+			cancel()
+			timer := time.NewTimer(api.RegionalRuntimeRetirementTimeout)
+			defer timer.Stop()
+			select {
+			case <-regionalRecoveryDone:
+			case <-timer.C:
+				log.Warn("schedd: regional retirement recovery shutdown timed out")
+			}
+		}()
+	}
 
 	// Issue #757 / ADR-0NN (commit #16): trigger dispatch
 	// wakeups. Subscribe to the trigger_ready + trigger_changed

@@ -995,6 +995,7 @@ type Store interface {
 	RegionalRuntimeQuotaAdmissionReader
 	RegionalRuntimeIssuedPlacementReader
 	RegionalRuntimePlacementWriter
+	RegionalRuntimeLaunchStore
 	RegionalRuntimeServingResumeStore
 	RegionalRuntimeCapacityReader
 

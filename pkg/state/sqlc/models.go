@@ -4859,6 +4859,14 @@ type RegionalRuntimeCapacityReceipt struct {
 	StopEnvelope []byte
 }
 
+type RegionalRuntimeLaunchSource struct {
+	AppID        pgtype.UUID
+	PermitID     pgtype.UUID
+	InstanceKey  string
+	PermitClaims []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
 type RegionalRuntimeQuotaHead struct {
 	AppID            pgtype.UUID
 	AllocationID     pgtype.UUID

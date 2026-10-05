@@ -763,6 +763,8 @@ type Querier interface {
 	InsertRegionalReleaseGrant(ctx context.Context, db DBTX, arg InsertRegionalReleaseGrantParams) (RegionalReleaseGrant, error)
 	// ADR-618: issuance is retained bookkeeping; no quota activation is implied.
 	InsertRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg InsertRegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)
+	// ADR-633: immutable original launch identity, independent of current rows.
+	InsertRegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg InsertRegionalRuntimeLaunchSourceParams) (RegionalRuntimeLaunchSource, error)
 	InsertRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg InsertRegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error)
 	InsertRegionalRuntimeServingResume(ctx context.Context, db DBTX, arg InsertRegionalRuntimeServingResumeParams) (RegionalRuntimeServingResume, error)
 	InsertRegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg InsertRegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error)
@@ -1209,6 +1211,7 @@ type Querier interface {
 	ListRecentEventsForAccount(ctx context.Context, db DBTX, arg ListRecentEventsForAccountParams) ([]ListRecentEventsForAccountRow, error)
 	ListRecoveryDelegations(ctx context.Context, db DBTX, arg ListRecoveryDelegationsParams) ([]GlobalReleaseDelegation, error)
 	ListRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg ListRegionalRuntimeCapacityParams) ([]RegionalRuntimeCapacityReceipt, error)
+	ListRegionalRuntimeRetirements(ctx context.Context, db DBTX, arg ListRegionalRuntimeRetirementsParams) ([]ListRegionalRuntimeRetirementsRow, error)
 	ListRegionalRuntimeServingSeats(ctx context.Context, db DBTX, arg ListRegionalRuntimeServingSeatsParams) ([]RegionalRuntimeServingSeat, error)
 	// Canonical read pattern: "give me the last N requests for this app".
 	// Backs GET /v1/apps/{slug}/debug/requests. Uses
@@ -1915,6 +1918,7 @@ type Querier interface {
 	RegionalImageReleaseReceipt(ctx context.Context, db DBTX, arg RegionalImageReleaseReceiptParams) (RegionalImageReleaseReceiptRow, error)
 	RegionalRuntimeCapacity(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)
 	RegionalRuntimeCapacityUsage(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityUsageParams) (RegionalRuntimeCapacityUsageRow, error)
+	RegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg RegionalRuntimeLaunchSourceParams) (RegionalRuntimeLaunchSource, error)
 	RegionalRuntimeQuotaHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalRuntimeQuotaHeadRow, error)
 	RegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg RegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error)
 	// ADR-626: immutable serving resume identities; mutations hold the quota journal lock.

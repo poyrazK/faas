@@ -9607,6 +9607,23 @@ UPDATE deployment_image_preparations p
 SET phase = 'layer_published', updated_at = now()
 FROM publication WHERE p.deployment_id = publication.id;
 
+-- ADR-633: immutable original launch identity, independent of current rows.
+-- name: InsertRegionalRuntimeLaunchSource :one
+INSERT INTO regional_runtime_launch_sources(app_id,permit_id,instance_key,permit_claims)
+VALUES ($1,$2,$3,$4) RETURNING *;
+
+-- name: RegionalRuntimeLaunchSource :one
+SELECT * FROM regional_runtime_launch_sources WHERE app_id=$1 AND permit_id=$2;
+
+-- name: ListRegionalRuntimeRetirements :many
+SELECT s.instance_key, s.permit_claims, c.fence_id
+FROM regional_runtime_launch_sources s
+JOIN regional_runtime_capacity_receipts c USING (app_id,permit_id)
+WHERE c.issued_at IS NOT NULL AND c.fence_id IS NOT NULL AND c.released_at IS NULL
+  AND c.permit_claims->'Grant'->'Binding'->>'CellID'=sqlc.arg(cell_id)::text
+  AND (sqlc.arg(first_page)::boolean OR (s.app_id,s.permit_id)>(sqlc.arg(after_app)::uuid,sqlc.arg(after_permit)::uuid))
+ORDER BY s.app_id,s.permit_id LIMIT sqlc.arg(batch_limit)::int;
+
 -- name: AdvanceImagePreparation :execrows
 UPDATE deployment_image_preparations
 SET phase = sqlc.arg(next_phase)::text, updated_at = now()

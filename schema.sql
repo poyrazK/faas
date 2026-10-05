@@ -6026,6 +6026,35 @@ $$;
 
 
 --
+-- Name: guard_regional_runtime_launch_source(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_regional_runtime_launch_source() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p regional_runtime_capacity_receipts;
+BEGIN
+    IF TG_OP <> 'INSERT' THEN
+        RAISE EXCEPTION 'original regional launch sources are immutable and retained'
+            USING ERRCODE='23514',CONSTRAINT='regional_capacity_identity';
+    END IF;
+    IF current_setting('transaction_isolation')<>'read committed' THEN
+        RAISE EXCEPTION 'regional launch sources require read committed isolation'
+            USING ERRCODE='23514',CONSTRAINT='regional_capacity_frozen';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('gregale-regional-runtime-quota:'||NEW.app_id::text,0));
+    SELECT * INTO p FROM regional_runtime_capacity_receipts WHERE app_id=NEW.app_id AND permit_id=NEW.permit_id;
+    IF NOT FOUND OR NEW.permit_claims IS DISTINCT FROM p.permit_claims
+        OR NEW.instance_key::uuid IS DISTINCT FROM p.instance_id
+        OR p.issued_at IS NOT NULL OR p.fence_id IS NOT NULL OR p.released_at IS NOT NULL THEN
+        RAISE EXCEPTION 'regional launch source must bind the original unissued unfenced permit'
+            USING ERRCODE='23514',CONSTRAINT='regional_capacity_identity';
+    END IF;
+    RETURN NEW;
+END; $$;
+
+
+--
 -- Name: guard_regional_runtime_serving_resume(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -18899,6 +18928,21 @@ CREATE TABLE public.regional_runtime_capacity_receipts (
 
 
 --
+-- Name: regional_runtime_launch_sources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.regional_runtime_launch_sources (
+    app_id uuid NOT NULL,
+    permit_id uuid NOT NULL,
+    instance_key text NOT NULL,
+    permit_claims jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT regional_runtime_launch_sources_instance_key_check CHECK (((instance_key ~ '^([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$'::text) AND ((instance_key)::uuid <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT regional_runtime_launch_sources_permit_claims_check CHECK (((jsonb_typeof(permit_claims) = 'object'::text) AND (octet_length((permit_claims)::text) <= 4096)))
+);
+
+
+--
 -- Name: regional_runtime_quota_heads; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -24629,6 +24673,14 @@ ALTER TABLE ONLY public.regional_runtime_capacity_receipts
 
 
 --
+-- Name: regional_runtime_launch_sources regional_runtime_launch_sources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_launch_sources
+    ADD CONSTRAINT regional_runtime_launch_sources_pkey PRIMARY KEY (app_id, permit_id);
+
+
+--
 -- Name: regional_runtime_quota_heads regional_runtime_quota_heads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29731,6 +29783,13 @@ CREATE INDEX regional_runtime_capacity_held ON public.regional_runtime_capacity_
 
 
 --
+-- Name: regional_runtime_capacity_retirement_scan; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX regional_runtime_capacity_retirement_scan ON public.regional_runtime_capacity_receipts USING btree (app_id, permit_id) WHERE ((issued_at IS NOT NULL) AND (fence_id IS NOT NULL) AND (released_at IS NULL));
+
+
+--
 -- Name: regional_seat_active_permit; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -33424,6 +33483,20 @@ CREATE TRIGGER regional_image_release_ordering_identity_guard BEFORE UPDATE ON p
 --
 
 CREATE TRIGGER regional_image_release_truncate_guard BEFORE TRUNCATE ON public.regional_image_release_receipts FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_image_release_receipt_truncate();
+
+
+--
+-- Name: regional_runtime_launch_sources regional_launch_source_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_launch_source_guard BEFORE INSERT OR DELETE OR UPDATE ON public.regional_runtime_launch_sources FOR EACH ROW EXECUTE FUNCTION public.guard_regional_runtime_launch_source();
+
+
+--
+-- Name: regional_runtime_launch_sources regional_launch_source_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regional_launch_source_truncate_guard BEFORE TRUNCATE ON public.regional_runtime_launch_sources FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_regional_capacity_truncate();
 
 
 --
@@ -38449,6 +38522,14 @@ ALTER TABLE ONLY public.regional_release_grants
 
 ALTER TABLE ONLY public.regional_runtime_capacity_receipts
     ADD CONSTRAINT regional_runtime_capacity_receipts_app_id_allocation_id_fkey FOREIGN KEY (app_id, allocation_id) REFERENCES public.regional_runtime_quota_receipts(app_id, allocation_id);
+
+
+--
+-- Name: regional_runtime_launch_sources regional_runtime_launch_sources_app_id_permit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.regional_runtime_launch_sources
+    ADD CONSTRAINT regional_runtime_launch_sources_app_id_permit_id_fkey FOREIGN KEY (app_id, permit_id) REFERENCES public.regional_runtime_capacity_receipts(app_id, permit_id);
 
 
 --

@@ -242,6 +242,7 @@ type MemStore struct {
 	regionalRuntimeQuotas         map[string]RegionalRuntimeQuotaReceipt
 	regionalRuntimeQuotaHeads     map[string]RegionalRuntimeQuotaHead
 	regionalRuntimeCapacity       map[string]RegionalRuntimeCapacityReceipt
+	regionalRuntimeLaunchSources  map[string]RegionalRuntimeLaunchSource
 	regionalRuntimeServingSeats   map[string]RegionalRuntimeServingSeatReceipt
 	regionalRuntimeServingResumes map[string]RegionalRuntimeServingResumeReceipt
 	deployTokens                  map[string]DeployToken
@@ -1138,6 +1139,7 @@ func NewMemStore() *MemStore {
 		regionalRuntimeQuotas:         map[string]RegionalRuntimeQuotaReceipt{},
 		regionalRuntimeQuotaHeads:     map[string]RegionalRuntimeQuotaHead{},
 		regionalRuntimeCapacity:       map[string]RegionalRuntimeCapacityReceipt{},
+		regionalRuntimeLaunchSources:  map[string]RegionalRuntimeLaunchSource{},
 		regionalRuntimeServingSeats:   map[string]RegionalRuntimeServingSeatReceipt{},
 		regionalRuntimeServingResumes: map[string]RegionalRuntimeServingResumeReceipt{},
 		deployTokens:                  map[string]DeployToken{},
