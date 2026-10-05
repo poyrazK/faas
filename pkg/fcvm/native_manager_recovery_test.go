@@ -100,6 +100,9 @@ func (v *recoveryVMMFixture) prepareNativeLease(ctx context.Context, l Lease) er
 func (v *recoveryVMMFixture) prepareNativeRegionalLease(ctx context.Context, l Lease, p runtimequota.Placement) error {
 	return v.jailer.prepareNativeRegionalLease(ctx, l, p)
 }
+func (v *recoveryVMMFixture) preflightNativeRegionalLaunch(ctx context.Context) error {
+	return v.jailer.preflightNativeRegionalLaunch(ctx)
+}
 func (v *recoveryVMMFixture) preflightSnapshotKeepAlive(ctx context.Context, l Lease, spec SnapshotSpec) error {
 	return v.jailer.preflightSnapshotKeepAlive(ctx, l, spec)
 }

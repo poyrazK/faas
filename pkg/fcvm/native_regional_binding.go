@@ -48,6 +48,42 @@ type nativeRegionalLeaseVMM interface {
 	prepareNativeRegionalLease(context.Context, Lease, runtimequota.Placement) error
 }
 
+type nativeRegionalLaunchPreflighter interface {
+	preflightNativeRegionalLaunch(context.Context) error
+}
+
+// Reject unsupported native modes before quota registration, prefetch or a
+// prepared-network claim. Recovery also precedes new physical registration.
+func (m *Manager) preflightNativeRegionalRuntime(ctx context.Context, p *runtimequota.Placement) error {
+	if p == nil {
+		return nil
+	}
+	if _, native := m.vmm.(nativeRecoveryVMM); !native {
+		return nil // Portable VMMs have no native producer capability.
+	}
+	if _, ok := m.vmm.(nativeRegionalLeaseVMM); !ok {
+		return runtimequotahost.ErrStorage
+	}
+	v, ok := m.vmm.(nativeRegionalLaunchPreflighter)
+	if !ok {
+		return runtimequotahost.ErrStorage
+	}
+	if err := v.preflightNativeRegionalLaunch(ctx); err != nil {
+		return err
+	}
+	return m.RecoverNativeProcesses(ctx)
+}
+
+func (v *JailerVMM) preflightNativeRegionalLaunch(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if v.nativeRecovery == nil || v.nativeRecovery.journal == nil || v.nativeRecovery.support == nil || v.nativeRecovery.resources == nil {
+		return runtimequotahost.ErrStorage
+	}
+	return nil
+}
+
 // Production regional launches require native ownership even when the old
 // lifecycle is configured. Portable VMMs retain their separate test surface.
 func (m *Manager) prepareNativeRuntime(ctx context.Context, lease Lease, p *runtimequota.Placement) error {

@@ -3955,6 +3955,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		return nil, runtimequotahost.ErrBinding
 	}
 	req.RegionalRuntime = cloneRuntimePlacement(req.RegionalRuntime)
+	if err := validateRuntimePlacement(admissionForWake(req)); err != nil {
+		return nil, err
+	}
+	if err := m.preflightNativeRegionalRuntime(ctx, req.RegionalRuntime); err != nil {
+		return nil, fmt.Errorf("manager: preflight native regional wake: %w", err)
+	}
 	finish, admissionErr := m.beginRuntimeLaunch(ctx, admissionForWake(req))
 	if admissionErr != nil {
 		return nil, admissionErr
