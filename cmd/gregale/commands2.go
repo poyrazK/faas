@@ -3493,6 +3493,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			SimpleAppPlan:   resolvedSimplePlan,
 			ResourceProfile: *profile,
 			ExecutionMode:   *executionMode,
+			Healthcheck:     healthcheck,
 			Release: deployPreflightRelease(
 				*safeDeploy, *canaryPreset, *trafficPercent, rollbackOn5xxPtr,
 			),
