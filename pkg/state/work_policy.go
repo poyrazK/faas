@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -241,7 +242,7 @@ func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, po
 }
 
 // lockKeyedClaimTx holds the lane until the caller commits its claim. The
-// oldest active row wins, including a pending retry whose due time is later.
+// running owner wins before pending FIFO, including after in-place replay.
 func lockKeyedClaimTx(ctx context.Context, tx pgx.Tx, id, appID, policyName string, digest []byte) error {
 	return lockWorkLaneClaimTx(ctx, tx, id, appID, policyName, digest, false)
 }
@@ -283,21 +284,10 @@ func lockWorkLaneClaimTx(ctx context.Context, tx pgx.Tx, id, appID, policyName s
 		}
 		return tx.Commit(ctx)
 	}
-	var oldestID string
-	var due bool
-	var oldestState string
-	if err := tx.QueryRow(ctx, `
-		select id, state, due from (
-		  select id::text, state, due_at <= clock_timestamp() as due,
-		         work_sequence from invocations
-		  where app_id=$1 and work_policy_name=$2 and work_key_digest=$3
-		    and state in ('pending','dispatching')
-		  union all
-		  select tr.id::text, tr.state, true as due, tr.work_sequence
-		  from trigger_records tr join triggers t on t.id=tr.trigger_id
-		  where t.app_id=$1 and tr.work_policy_name=$2 and tr.work_key_digest=$3
-		    and tr.state in ('pending','retry','claimed')
-		) work order by work_sequence limit 1`, appID, policyName, digest).Scan(&oldestID, &oldestState, &due); err != nil {
+	head, err := sqlc.New().KeyedWorkLaneHead(ctx, tx, sqlc.KeyedWorkLaneHeadParams{
+		AppID: mustPgUUID(appID), PolicyName: policyName, KeyDigest: digest,
+	})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			if commitErr := commitExpiry(); commitErr != nil {
 				return commitErr
@@ -306,11 +296,11 @@ func lockWorkLaneClaimTx(ctx context.Context, tx pgx.Tx, id, appID, policyName s
 		}
 		return fmt.Errorf("state: keyed claim oldest: %w", err)
 	}
-	claimableState := oldestState == string(InvocationPending)
+	claimableState := head.State == string(InvocationPending)
 	if broker {
-		claimableState = oldestState == "pending" || oldestState == "retry" || oldestState == "claimed"
+		claimableState = head.State == "pending" || head.State == "retry" || head.State == "claimed"
 	}
-	if oldestID != id || !claimableState || !due {
+	if head.ID != id || !claimableState || !head.Due {
 		if err := commitExpiry(); err != nil {
 			return err
 		}

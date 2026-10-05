@@ -737,6 +737,13 @@ suppress that action. Queue-bound dead letters retain their existing in-place
 replay path. See [ADR-584](adr/584-safe-keyed-invocation-replay.md) for ordering,
 expiry and retention behavior.
 
+Keyed dead-letter replay keeps the original receipt and sequence. It waits
+for any same-key invocation or broker delivery already running, including a
+later sequence. An expired lease must be recovered before the replay can
+proceed. Once that ownership is resolved, pending work follows sequence order;
+other keys remain eligible. Replay preserves the original pending expiry.
+See [ADR-585](adr/585-keyed-dead-letter-replay-claim-exclusion.md).
+
 List a consumer's retained replay executions, newest first:
 
 ```bash

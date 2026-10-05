@@ -29,11 +29,19 @@ func retryTriggerReceiptTx(ctx context.Context, tx pgx.Tx, recordID, accountID, 
 		if account.Valid && row.AccountID != account || app.Valid && row.AppID != app {
 			return ErrNotFound
 		}
+		if err := lockInvocationReplayLaneTx(ctx, tx, row.ID, row.AccountID, row.AppID); err != nil {
+			return err
+		}
 		_, err = q.RetryQueueDeadLetterInvocation(ctx, tx, sqlc.RetryQueueDeadLetterInvocationParams{ID: row.ID, AccountID: row.AccountID})
 		return mapErr(err)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("state: queue receipt replay lookup: %w", err)
+	}
+	if err := q.LockTriggerReplayLane(ctx, tx, sqlc.LockTriggerReplayLaneParams{
+		ID: id, ExpectedAccountID: account, ExpectedAppID: app,
+	}); err != nil {
+		return fmt.Errorf("state: trigger replay lane lock: %w", err)
 	}
 	n, err := q.RetryExternalTriggerRecordByOperator(ctx, tx, sqlc.RetryExternalTriggerRecordByOperatorParams{ID: id, ExpectedAccountID: account, ExpectedAppID: app})
 	if err != nil {
@@ -43,6 +51,53 @@ func retryTriggerReceiptTx(ctx context.Context, tx pgx.Tx, recordID, accountID, 
 		return ErrNotFound
 	}
 	return nil
+}
+
+func lockInvocationReplayLaneTx(ctx context.Context, tx pgx.Tx, id, account, app pgtype.UUID) error {
+	if err := sqlc.New().LockInvocationReplayLane(ctx, tx, sqlc.LockInvocationReplayLaneParams{
+		ID: id, AccountID: account, ExpectedAppID: app,
+	}); err != nil {
+		return fmt.Errorf("state: invocation replay lane lock: %w", err)
+	}
+	return nil
+}
+
+func prepareDeadLetterReplayTx(ctx context.Context, tx pgx.Tx, accountID, appID, eventID string, limit int) ([]pgtype.UUID, error) {
+	account, err := parsePgUUID(accountID)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	app, event := mustPgUUID(appID), mustPgUUID(eventID)
+	if appID != "" && !app.Valid || eventID != "" && !event.Valid {
+		return nil, ErrNotFound
+	}
+	q := sqlc.New()
+	candidates, err := q.DeadLetterReplayCandidateIDs(ctx, tx, sqlc.DeadLetterReplayCandidateIDsParams{
+		AccountID: account, ExpectedAppID: app, ExpectedEventID: event, CandidateLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("state: dead-letter replay candidates: %w", err)
+	}
+	ids := make([]pgtype.UUID, 0, len(candidates))
+	for _, candidate := range candidates {
+		ids = append(ids, mustPgUUID(candidate))
+	}
+	if len(ids) == 0 {
+		return ids, nil
+	}
+	// Failure capture locks its execution before upserting the ledger. Replay
+	// must take these locks before its ledger page, even for stale projections
+	// left behind by a direct operator retry. All lanes precede all source rows.
+	if err := q.LockDeadLetterReplayLanes(ctx, tx, ids); err != nil {
+		return nil, fmt.Errorf("state: dead-letter replay lane locks: %w", err)
+	}
+	if err := q.LockKeyedDeadLetterInvocationRows(ctx, tx, ids); err != nil {
+		return nil, fmt.Errorf("state: dead-letter replay invocation locks: %w", err)
+	}
+	if err := q.LockKeyedDeadLetterTriggerRows(ctx, tx, ids); err != nil {
+		return nil, fmt.Errorf("state: dead-letter replay trigger locks: %w", err)
+	}
+	return ids, nil
 }
 
 func (m *MemStore) retryQueueDeadLetterLocked(accountID, invocationID string, now time.Time) (Invocation, error) {

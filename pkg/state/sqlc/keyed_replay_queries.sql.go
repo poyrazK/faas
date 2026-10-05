@@ -11,6 +11,46 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deadLetterReplayCandidateIDs = `-- name: DeadLetterReplayCandidateIDs :many
+SELECT id::text FROM dead_letter_events
+WHERE account_id=$1::uuid AND replayed_at IS NULL
+  AND ($2::uuid IS NULL OR app_id=$2::uuid)
+  AND ($3::uuid IS NULL OR id=$3::uuid)
+ORDER BY last_failed_at DESC,id DESC LIMIT $4::integer
+`
+
+type DeadLetterReplayCandidateIDsParams struct {
+	AccountID       pgtype.UUID
+	ExpectedAppID   pgtype.UUID
+	ExpectedEventID pgtype.UUID
+	CandidateLimit  int32
+}
+
+func (q *Queries) DeadLetterReplayCandidateIDs(ctx context.Context, db DBTX, arg DeadLetterReplayCandidateIDsParams) ([]string, error) {
+	rows, err := db.Query(ctx, deadLetterReplayCandidateIDs,
+		arg.AccountID,
+		arg.ExpectedAppID,
+		arg.ExpectedEventID,
+		arg.CandidateLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const keyedReplayAdvanceLane = `-- name: KeyedReplayAdvanceLane :exec
 UPDATE invocation_work_lanes SET next_sequence=next_sequence+1
 WHERE app_id=$1::uuid AND policy_name=$2::text
@@ -239,5 +279,147 @@ type KeyedReplayRecordChildParams struct {
 
 func (q *Queries) KeyedReplayRecordChild(ctx context.Context, db DBTX, arg KeyedReplayRecordChildParams) error {
 	_, err := db.Exec(ctx, keyedReplayRecordChild, arg.ParentInvocationID, arg.ReplayInvocationID)
+	return err
+}
+
+const keyedWorkLaneHead = `-- name: KeyedWorkLaneHead :one
+SELECT id, state, due FROM (
+  SELECT id::text, state, due_at<=clock_timestamp() AS due, work_sequence
+  FROM invocations
+  WHERE app_id=$1::uuid AND work_policy_name=$2::text
+    AND work_key_digest=$3::bytea AND state IN ('pending','dispatching')
+  UNION ALL
+  SELECT r.id::text, r.state, true AS due, r.work_sequence
+  FROM trigger_records r JOIN triggers t ON t.id=r.trigger_id
+  WHERE t.app_id=$1::uuid AND r.work_policy_name=$2::text
+    AND r.work_key_digest=$3::bytea AND r.state IN ('pending','retry','claimed')
+) work ORDER BY (state IN ('dispatching','claimed')) DESC, work_sequence LIMIT 1
+`
+
+type KeyedWorkLaneHeadParams struct {
+	AppID      pgtype.UUID
+	PolicyName string
+	KeyDigest  []byte
+}
+
+type KeyedWorkLaneHeadRow struct {
+	ID    string
+	State string
+	Due   bool
+}
+
+// In-place replay can restore an older sequence while a later row owns the
+// lane. Ownership wins over pending FIFO; an expired broker owner can still
+// reclaim its own generation before the replay proceeds.
+func (q *Queries) KeyedWorkLaneHead(ctx context.Context, db DBTX, arg KeyedWorkLaneHeadParams) (KeyedWorkLaneHeadRow, error) {
+	row := db.QueryRow(ctx, keyedWorkLaneHead, arg.AppID, arg.PolicyName, arg.KeyDigest)
+	var i KeyedWorkLaneHeadRow
+	err := row.Scan(&i.ID, &i.State, &i.Due)
+	return i, err
+}
+
+const lockDeadLetterReplayLanes = `-- name: LockDeadLetterReplayLanes :exec
+SELECT l.app_id FROM invocation_work_lanes l
+WHERE (l.app_id,l.policy_name,l.key_digest) IN (
+  SELECT i.app_id,i.work_policy_name,i.work_key_digest
+  FROM dead_letter_events e JOIN invocations i ON e.source='invocation' AND i.id=e.source_id
+    AND i.account_id=e.account_id AND i.app_id=e.app_id
+  WHERE e.id=ANY($1::uuid[])
+  UNION
+  SELECT t.app_id,r.work_policy_name,r.work_key_digest
+  FROM dead_letter_events e JOIN trigger_records r ON e.source='trigger_record' AND r.id=e.source_id
+  JOIN triggers t ON t.id=r.trigger_id AND t.account_id=e.account_id AND t.app_id=e.app_id
+  WHERE e.id=ANY($1::uuid[])
+  UNION
+  SELECT i.app_id,i.work_policy_name,i.work_key_digest
+  FROM dead_letter_events e JOIN trigger_records r ON e.source='trigger_record' AND r.id=e.source_id
+  JOIN triggers t ON t.id=r.trigger_id AND t.account_id=e.account_id AND t.app_id=e.app_id
+  JOIN invocations i ON i.id::text=r.item_identifier AND i.app_id=t.app_id AND i.account_id=t.account_id
+    AND i.source=t.source AND (i.queue_binding_id IS NULL OR i.queue_binding_id=t.queue_binding_id)
+  WHERE e.id=ANY($1::uuid[]) AND t.kind='queue' AND t.source IN ('queue','delayed_task')
+) ORDER BY l.app_id,l.policy_name,l.key_digest FOR UPDATE OF l
+`
+
+// Candidate selection holds no ledger locks. Take target lanes and source
+// rows before locking the projection, matching failure writers' lock order.
+func (q *Queries) LockDeadLetterReplayLanes(ctx context.Context, db DBTX, eventIds []pgtype.UUID) error {
+	_, err := db.Exec(ctx, lockDeadLetterReplayLanes, eventIds)
+	return err
+}
+
+const lockInvocationReplayLane = `-- name: LockInvocationReplayLane :exec
+SELECT l.app_id FROM invocation_work_lanes l JOIN invocations i
+  ON l.app_id=i.app_id AND l.policy_name=i.work_policy_name AND l.key_digest=i.work_key_digest
+WHERE i.id=$1::uuid AND i.account_id=$2::uuid
+  AND ($3::uuid IS NULL OR i.app_id=$3::uuid)
+FOR UPDATE OF l
+`
+
+type LockInvocationReplayLaneParams struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	ExpectedAppID pgtype.UUID
+}
+
+func (q *Queries) LockInvocationReplayLane(ctx context.Context, db DBTX, arg LockInvocationReplayLaneParams) error {
+	_, err := db.Exec(ctx, lockInvocationReplayLane, arg.ID, arg.AccountID, arg.ExpectedAppID)
+	return err
+}
+
+const lockKeyedDeadLetterInvocationRows = `-- name: LockKeyedDeadLetterInvocationRows :exec
+SELECT i.id FROM invocations i WHERE i.work_policy_name IS NOT NULL AND i.id IN (
+  SELECT src.id FROM dead_letter_events e JOIN invocations src
+    ON e.source='invocation' AND e.source_id=src.id AND e.account_id=src.account_id AND e.app_id=src.app_id
+  WHERE e.source='invocation'
+    AND e.id=ANY($1::uuid[])
+  UNION
+  SELECT inv.id FROM dead_letter_events e JOIN trigger_records r ON e.source='trigger_record' AND r.id=e.source_id
+  JOIN triggers t ON t.id=r.trigger_id AND t.account_id=e.account_id AND t.app_id=e.app_id
+  JOIN invocations inv ON inv.id::text=r.item_identifier AND inv.app_id=t.app_id AND inv.account_id=t.account_id
+    AND inv.source=t.source AND (inv.queue_binding_id IS NULL OR inv.queue_binding_id=t.queue_binding_id)
+  WHERE t.kind='queue' AND t.source IN ('queue','delayed_task') AND e.id=ANY($1::uuid[])
+) ORDER BY i.id FOR UPDATE OF i
+`
+
+func (q *Queries) LockKeyedDeadLetterInvocationRows(ctx context.Context, db DBTX, eventIds []pgtype.UUID) error {
+	_, err := db.Exec(ctx, lockKeyedDeadLetterInvocationRows, eventIds)
+	return err
+}
+
+const lockKeyedDeadLetterTriggerRows = `-- name: LockKeyedDeadLetterTriggerRows :exec
+SELECT r.id FROM trigger_records r JOIN triggers t ON t.id=r.trigger_id
+WHERE r.id IN (SELECT src.id FROM dead_letter_events e JOIN trigger_records src ON e.source='trigger_record' AND src.id=e.source_id
+  JOIN triggers owner ON owner.id=src.trigger_id AND owner.account_id=e.account_id AND owner.app_id=e.app_id
+  WHERE e.id=ANY($1::uuid[]))
+AND (r.work_policy_name IS NOT NULL OR (t.kind='queue' AND t.source IN ('queue','delayed_task')
+  AND EXISTS (SELECT 1 FROM invocations i WHERE i.id::text=r.item_identifier
+    AND i.app_id=t.app_id AND i.account_id=t.account_id AND i.source=t.source AND i.work_policy_name IS NOT NULL
+    AND (i.queue_binding_id IS NULL OR i.queue_binding_id=t.queue_binding_id))))
+ORDER BY r.id FOR UPDATE OF r
+`
+
+func (q *Queries) LockKeyedDeadLetterTriggerRows(ctx context.Context, db DBTX, eventIds []pgtype.UUID) error {
+	_, err := db.Exec(ctx, lockKeyedDeadLetterTriggerRows, eventIds)
+	return err
+}
+
+const lockTriggerReplayLane = `-- name: LockTriggerReplayLane :exec
+SELECT l.app_id FROM invocation_work_lanes l JOIN trigger_records r
+  ON l.policy_name=r.work_policy_name AND l.key_digest=r.work_key_digest
+JOIN triggers t ON t.id=r.trigger_id AND t.app_id=l.app_id
+WHERE r.id=$1::uuid
+  AND ($2::uuid IS NULL OR t.account_id=$2::uuid)
+  AND ($3::uuid IS NULL OR t.app_id=$3::uuid)
+FOR UPDATE OF l
+`
+
+type LockTriggerReplayLaneParams struct {
+	ID                pgtype.UUID
+	ExpectedAccountID pgtype.UUID
+	ExpectedAppID     pgtype.UUID
+}
+
+func (q *Queries) LockTriggerReplayLane(ctx context.Context, db DBTX, arg LockTriggerReplayLaneParams) error {
+	_, err := db.Exec(ctx, lockTriggerReplayLane, arg.ID, arg.ExpectedAccountID, arg.ExpectedAppID)
 	return err
 }

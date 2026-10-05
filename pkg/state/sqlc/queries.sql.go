@@ -30197,16 +30197,16 @@ select i.id::text from invocations i cross join consumer
 		      where older.app_id = i.app_id
 		        and older.work_policy_name = i.work_policy_name
 		        and older.work_key_digest = i.work_key_digest
-		        and older.work_sequence < i.work_sequence
-		        and older.state in ('pending','dispatching')))
+		        and ((older.work_sequence < i.work_sequence and older.state='pending')
+		          or older.state='dispatching')))
 		  and (i.work_policy_name is null or not exists (
 		      select 1 from trigger_records older
 		      join triggers source on source.id=older.trigger_id
 		      where source.app_id=i.app_id
 		        and older.work_policy_name=i.work_policy_name
 		        and older.work_key_digest=i.work_key_digest
-		        and older.work_sequence<i.work_sequence
-		        and older.state in ('pending','retry','claimed')))
+		        and ((older.work_sequence<i.work_sequence and older.state in ('pending','retry'))
+		          or older.state='claimed')))
 		  and (i.work_fairness_limit is null or (
 		      select count(*) from invocations active
 		      where active.app_id = i.app_id

@@ -15260,8 +15260,8 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 		       where older.app_id = i.app_id
 		         and older.work_policy_name = i.work_policy_name
 		         and older.work_key_digest = i.work_key_digest
-		         and older.work_sequence < i.work_sequence
-		         and older.state in ('pending','dispatching')
+		         and ((older.work_sequence < i.work_sequence and older.state = 'pending')
+		           or older.state = 'dispatching')
 		   ))
 		   and (i.work_policy_name is null or not exists (
 		       select 1 from trigger_records older
@@ -15269,8 +15269,8 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 		       where source.app_id=i.app_id
 		         and older.work_policy_name=i.work_policy_name
 		         and older.work_key_digest=i.work_key_digest
-		         and older.work_sequence<i.work_sequence
-		         and older.state in ('pending','retry','claimed')
+		         and ((older.work_sequence<i.work_sequence and older.state in ('pending','retry'))
+		           or older.state='claimed')
 		   ))
 		   and (i.work_fairness_limit is null or ((
 		       select count(*) from invocations active
@@ -15354,8 +15354,8 @@ func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, af
 		       where older.app_id = i.app_id
 		         and older.work_policy_name = i.work_policy_name
 		         and older.work_key_digest = i.work_key_digest
-		         and older.work_sequence < i.work_sequence
-		         and older.state in ('pending','dispatching')
+		         and ((older.work_sequence < i.work_sequence and older.state = 'pending')
+		           or older.state = 'dispatching')
 		   ))
 		   and (i.work_policy_name is null or not exists (
 		       select 1 from trigger_records older
@@ -15363,8 +15363,8 @@ func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, af
 		       where source.app_id=i.app_id
 		         and older.work_policy_name=i.work_policy_name
 		         and older.work_key_digest=i.work_key_digest
-		         and older.work_sequence<i.work_sequence
-		         and older.state in ('pending','retry','claimed')
+		         and ((older.work_sequence<i.work_sequence and older.state in ('pending','retry'))
+		           or older.state='claimed')
 		   ))
 		   and (i.work_fairness_limit is null or ((
 		       select count(*) from invocations active
@@ -30135,11 +30135,26 @@ func (s *PgStore) RetryQueueDeadLetter(ctx context.Context, accountID, invocatio
 	if err != nil {
 		return Invocation{}, ErrNotFound
 	}
-	row, err := sqlc.New().RetryQueueDeadLetterInvocation(ctx, s.pool, sqlc.RetryQueueDeadLetterInvocationParams{ID: id, AccountID: account})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Invocation{}, fmt.Errorf("state: retry queue dead-letter begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockInvocationReplayLaneTx(ctx, tx, id, account, pgtype.UUID{}); err != nil {
+		return Invocation{}, err
+	}
+	row, err := sqlc.New().RetryQueueDeadLetterInvocation(ctx, tx, sqlc.RetryQueueDeadLetterInvocationParams{ID: id, AccountID: account})
 	if err != nil {
 		return Invocation{}, fmt.Errorf("state: retry queue dead_letter %s: %w", invocationID, mapErr(err))
 	}
-	return invocationFromSQL(row)
+	inv, err := invocationFromSQL(row)
+	if err != nil {
+		return Invocation{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Invocation{}, fmt.Errorf("state: retry queue dead-letter commit: %w", err)
+	}
+	return inv, nil
 }
 
 // ListDeadLetterEvents returns the unified, app-scoped DLQ projection. The
@@ -30237,6 +30252,10 @@ func (s *PgStore) ReplayDeadLetterEventForAccount(ctx context.Context, accountID
 		return DeadLetterEvent{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	ids, err := prepareDeadLetterReplayTx(ctx, tx, accountID, "", eventID, 1)
+	if err != nil {
+		return DeadLetterEvent{}, err
+	}
 
 	row := tx.QueryRow(ctx, `
 		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
@@ -30244,8 +30263,8 @@ func (s *PgStore) ReplayDeadLetterEventForAccount(ctx context.Context, accountID
 		       error_kind, error_detail, retry_count, first_failed_at,
 		       last_failed_at, replayed_at, created_at
 		  from dead_letter_events
-		 where id = $1 and account_id = $2 and replayed_at is null
-		 for update`, eventID, accountID)
+		 where id = $1 and account_id = $2 and replayed_at is null and id=any($3::uuid[])
+		 for update`, eventID, accountID, ids)
 	ev, err := scanDeadLetterEventRows(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -30277,16 +30296,20 @@ func (s *PgStore) ReplayDeadLetterEventsForAccount(ctx context.Context, accountI
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	ids, err := prepareDeadLetterReplayTx(ctx, tx, accountID, "", "", limit)
+	if err != nil {
+		return 0, err
+	}
 	rows, err := tx.Query(ctx, `
 		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
 		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
 		       error_kind, error_detail, retry_count, first_failed_at,
 		       last_failed_at, replayed_at, created_at
 		  from dead_letter_events
-		 where account_id = $1 and replayed_at is null
+		 where account_id = $1 and replayed_at is null and id=any($3::uuid[])
 		 order by last_failed_at desc, id desc
 		 limit $2
-		 for update skip locked`, accountID, limit)
+		 for update skip locked`, accountID, limit, ids)
 	if err != nil {
 		return 0, err
 	}
@@ -30394,6 +30417,10 @@ func (s *PgStore) ReplayDeadLetterEvent(ctx context.Context, accountID, appID, e
 		return DeadLetterEvent{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	ids, err := prepareDeadLetterReplayTx(ctx, tx, accountID, appID, eventID, 1)
+	if err != nil {
+		return DeadLetterEvent{}, err
+	}
 
 	row := tx.QueryRow(ctx, `
 		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
@@ -30402,8 +30429,8 @@ func (s *PgStore) ReplayDeadLetterEvent(ctx context.Context, accountID, appID, e
 		       last_failed_at, replayed_at, created_at
 		  from dead_letter_events
 		 where id = $1 and app_id = $2 and account_id = $3
-		   and replayed_at is null
-		 for update`, eventID, appID, accountID)
+		   and replayed_at is null and id=any($4::uuid[])
+		 for update`, eventID, appID, accountID, ids)
 	ev, err := scanDeadLetterEventRows(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -30438,16 +30465,20 @@ func (s *PgStore) ReplayDeadLetterEvents(ctx context.Context, accountID, appID s
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	ids, err := prepareDeadLetterReplayTx(ctx, tx, accountID, appID, "", limit)
+	if err != nil {
+		return 0, err
+	}
 	rows, err := tx.Query(ctx, `
 		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
 		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
 		       error_kind, error_detail, retry_count, first_failed_at,
 		       last_failed_at, replayed_at, created_at
 		  from dead_letter_events
-		 where account_id = $1 and app_id = $2 and replayed_at is null
+		 where account_id = $1 and app_id = $2 and replayed_at is null and id=any($4::uuid[])
 		 order by last_failed_at desc, id desc
 		 limit $3
-		 for update skip locked`, accountID, appID, limit)
+		 for update skip locked`, accountID, appID, limit, ids)
 	if err != nil {
 		return 0, err
 	}
@@ -30566,6 +30597,9 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 	var err error
 	switch ev.Source {
 	case "invocation":
+		if err := lockInvocationReplayLaneTx(ctx, tx, mustPgUUID(ev.SourceID), mustPgUUID(accountID), mustPgUUID(appID)); err != nil {
+			return time.Time{}, err
+		}
 		var affected int64
 		affected, err = sqlc.New().ReplayDeadLetterInvocation(ctx, tx, sqlc.ReplayDeadLetterInvocationParams{ID: mustPgUUID(ev.SourceID), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)})
 		if affected > 0 {
