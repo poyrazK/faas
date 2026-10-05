@@ -19,7 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 594
+// adr: 598
 func TestEventHoldProtectionTransitions(t *testing.T) {
 	day, year, shorter := int32(30), int32(1), int32(1)
 	until := time.Now().UTC().AddDate(1, 0, 0).Truncate(time.Millisecond)
@@ -74,7 +74,7 @@ func TestEventHoldProtectionTransitions(t *testing.T) {
 	}
 }
 
-// adr: 594
+// adr: 598
 func TestEventHoldProtectionRecoveryHTTP(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		for _, null := range []bool{false, true} {
@@ -241,7 +241,7 @@ func TestEventHoldProtectionRecoveryHTTP(t *testing.T) {
 	}
 }
 
-// adr: 594
+// adr: 598
 func TestEventHoldProtectionJournalGuards(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		t.Run(fmt.Sprint("pg=", pg), func(t *testing.T) {

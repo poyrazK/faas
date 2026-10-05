@@ -36,7 +36,7 @@ func VerifyCredentialSQL(ctx context.Context, dsn string, access CredentialAcces
 	if err != nil {
 		return ErrUnavailable
 	}
-	if row.Login != config.User || row.DatabaseName != config.Database || int(row.VersionNum)/10000 != major || !row.ReadOnly || !row.RowSecurity || !row.SchemaUsage || !row.DataAccess || !row.UnsafeRole.Valid || row.UnsafeRole.Bool || !row.ElevatedRuntime.Valid || row.ElevatedRuntime.Bool {
+	if row.Login != config.User || row.DatabaseName != config.Database || int(row.VersionNum)/10000 != major || !row.ReadOnly || !row.RowSecurity || !row.SchemaUsage || !row.DataAccess.Valid || !row.DataAccess.Bool || !row.UnsafeRole.Valid || row.UnsafeRole.Bool || !row.ElevatedRuntime.Valid || row.ElevatedRuntime.Bool {
 		return ErrConflict
 	}
 	if access == CredentialMigration {

@@ -213,6 +213,65 @@ func TestWorkflowResumeConcurrentRequestsAndQuota(t *testing.T) {
 	})
 }
 
+func TestWorkflowResumePreservesAndFencesPlatformTenantIdentity(t *testing.T) {
+	workflowScheduleStores(t, func(t *testing.T, store Store) {
+		ctx := context.Background()
+		app, _ := seedWorkflowSchedule(t, store, "allow")
+		required := true
+		if _, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{PlatformTenantRequired: &required, SetPlatformTenantRequired: true}); err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err := json.Marshal(simpleResumeSpec())
+		if err != nil {
+			t.Fatal(err)
+		}
+		unbound := &WorkflowRun{AppID: app.ID, WorkflowName: "recover", DefinitionSnapshot: snapshot}
+		if err := store.CreateWorkflowRun(ctx, unbound); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CreateWorkflowSteps(ctx, unbound.ID, []*WorkflowStep{{StepName: "send"}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
+			t.Fatal(err)
+		}
+		failResumeRun(t, store, unbound, "send")
+		if _, _, _, err := store.(WorkflowResumeStore).ResumeWorkflowRun(ctx, resumeOptions(unbound, app, 0)); !errors.Is(err, ErrWorkflowResumeUnavailable) {
+			t.Fatalf("unbound run on tenant-required app resume error=%v, want unavailable", err)
+		}
+		tenants, ok := store.(PlatformTenantStore)
+		if !ok {
+			t.Fatal("workflow store does not implement platform tenant storage")
+		}
+		tenant, _, err := tenants.CreatePlatformTenant(ctx, app.AccountID, "resume-customer", "Resume customer", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run := &WorkflowRun{AppID: app.ID, PlatformTenantID: tenant.ID, WorkflowName: "recover", Input: json.RawMessage(`{"invoice":42}`), DefinitionSnapshot: snapshot}
+		if err := store.CreateWorkflowRun(ctx, run); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CreateWorkflowSteps(ctx, run.ID, []*WorkflowStep{{StepName: "send", Input: run.Input}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
+			t.Fatal(err)
+		}
+		failResumeRun(t, store, run, "send")
+
+		options := resumeOptions(run, app, 0)
+		options.PlatformTenantID = uuid.NewString()
+		if _, _, _, err := store.(WorkflowResumeStore).ResumeWorkflowRun(ctx, options); !errors.Is(err, ErrWorkflowRunNotFound) {
+			t.Fatalf("foreign tenant resume error=%v, want not found", err)
+		}
+		options.PlatformTenantID = tenant.ID
+		resumed, _, _, err := store.(WorkflowResumeStore).ResumeWorkflowRun(ctx, options)
+		if err != nil || resumed.Status != WorkflowRunStatusPending || resumed.PlatformTenantID != tenant.ID {
+			t.Fatalf("resumed tenant run=%+v err=%v", resumed, err)
+		}
+	})
+}
+
 func TestWorkflowResumeReplayRestrictions(t *testing.T) {
 	workflowScheduleStores(t, func(t *testing.T, store Store) {
 		for _, kind := range []string{"cancelled", "unsafe-outbound", "compensation", "active-wait", "pre-dispatch-failure", "wrong-owner", "unavailable"} {

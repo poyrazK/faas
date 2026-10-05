@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 595
+// adr: 599
 func TestObjectEventWriteProtectionMinimum(t *testing.T) {
 	now := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
 	day, year, fixed := int32(30), int32(1), int32(400)

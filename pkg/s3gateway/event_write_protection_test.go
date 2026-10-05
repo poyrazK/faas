@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// adr: 595
+// adr: 599
 func TestEventWriteProtectionHeaders(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

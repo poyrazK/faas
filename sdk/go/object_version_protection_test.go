@@ -73,7 +73,7 @@ func TestVersionProtectionClient(t *testing.T) {
 	}
 }
 
-// adr: 594
+// adr: 598
 func TestEventHoldProtectionClient(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

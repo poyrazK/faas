@@ -29,6 +29,7 @@ func (e *Engine) ReconcileWorkerPoolForScope(ctx context.Context, appID, scope s
 
 type workerScopePlan struct {
 	scope     string
+	app       state.App
 	target    string
 	desired   int
 	signal    string
@@ -66,18 +67,27 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 	plans := map[string]*workerScopePlan{}
 	planFor := func(scope string) *workerScopePlan {
 		if plans[scope] == nil {
-			plans[scope] = &workerScopePlan{scope: scope}
+			plans[scope] = &workerScopePlan{scope: scope, app: app}
 		}
 		return plans[scope]
 	}
-	if app.Status == state.AppActive && instanceModeForApp(app) == string(state.InstanceModeWorker) {
+	if app.Status == state.AppActive {
 		for id := range workerDeploymentTargets(deployments) {
-			scope := normalizedDeploymentScope(byDeployment[id].Scope)
+			dep := byDeployment[id]
+			scope := normalizedDeploymentScope(dep.Scope)
 			if api.ValidateScope(scope) != nil {
 				return state.ErrInvalidArgument
 			}
 			if onlyScope == "" || onlyScope == scope {
-				planFor(scope).target = id
+				deployed, err := state.ResolveAppForDeployment(ctx, e.store, app, dep)
+				if err != nil {
+					return fmt.Errorf("resolve worker policy for %s: %w", scope, err)
+				}
+				plan := planFor(scope)
+				plan.app = deployed
+				if instanceModeForApp(deployed) == string(state.InstanceModeWorker) {
+					plan.target = id
+				}
 			}
 		}
 	}
@@ -108,16 +118,16 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 	}
 	scopes := make([]string, 0, len(plans))
 	for scope, plan := range plans {
-		plan.queueHold, err = e.retiredQueueHasInFlightWork(ctx, app, scope)
+		plan.queueHold, err = e.retiredQueueHasInFlightWork(ctx, plan.app, scope)
 		if err != nil {
 			return fmt.Errorf("retired queue delivery for %s: %w", scope, err)
 		}
 		if plan.target != "" {
-			plan.desired, plan.signal, err = e.workerReplicaTargetForScope(ctx, app, scope, override)
+			plan.desired, plan.signal, err = e.workerReplicaTargetForScope(ctx, plan.app, scope, override)
 			if err != nil {
 				return fmt.Errorf("worker demand for %s: %w", scope, err)
 			}
-			if policy := app.ScalingPolicy; policy != nil && (policy.ScaleOutCooldownS > 0 || policy.ScaleInCooldownS > 0) {
+			if policy := plan.app.ScalingPolicy; policy != nil && (policy.ScaleOutCooldownS > 0 || policy.ScaleInCooldownS > 0) {
 				history, err := e.store.WorkerPoolHistory(ctx, app.ID, plan.target)
 				if err != nil {
 					return fmt.Errorf("worker cooldown for %s: %w", scope, err)
@@ -138,7 +148,7 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 		if plan.queueHold {
 			continue
 		}
-		if err := e.applyWorkerScopePlan(ctx, app, plan, trigger); err != nil {
+		if err := e.applyWorkerScopePlan(ctx, plan.app, plan, trigger); err != nil {
 			return fmt.Errorf("reconcile worker environment %s: %w", scope, err)
 		}
 	}

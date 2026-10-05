@@ -1,3 +1,4 @@
+// adr: 592 — portable reader permissions and capability discovery.
 package neon
 
 import (
@@ -32,12 +33,12 @@ func (f *fakeCredentialRoles) RestrictInherited(context.Context, managedpostgres
 }
 
 type credentialFixture struct {
-	admin              *pgx.Conn
-	config             *pgx.ConnConfig
-	manager            *sqlCredentialRoles
-	material           managedpostgres.CredentialMaterial
-	runtime, migration credentialRole
-	extraRoles         []string
+	admin                        *pgx.Conn
+	config                       *pgx.ConnConfig
+	manager                      *sqlCredentialRoles
+	material                     managedpostgres.CredentialMaterial
+	runtime, readonly, migration credentialRole
+	extraRoles                   []string
 }
 
 // Unlike pgtest.Open's isolated schema, these tests need a private database:
@@ -56,6 +57,8 @@ func newCredentialFixture(t *testing.T) *credentialFixture {
 	provider := &Provider{organizationID: "test-org", databaseName: database}
 	request := managedpostgres.CredentialRequest{ProviderResourceID: "test-" + uuid.NewString(), IdentityKey: "binding", Access: managedpostgres.CredentialReadWrite}
 	f := &credentialFixture{config: config, runtime: provider.credentialRole(request)}
+	request.Access = managedpostgres.CredentialReadOnly
+	f.readonly = provider.credentialRole(request)
 	request.Access = managedpostgres.CredentialMigration
 	f.migration = provider.credentialRole(request)
 	t.Cleanup(func() {
@@ -63,7 +66,7 @@ func newCredentialFixture(t *testing.T) *credentialFixture {
 		if err != nil {
 			t.Errorf("drop isolated database: %v", err)
 		}
-		for _, name := range append([]string{f.runtime.name, f.migration.name, f.runtime.schemaOwner, f.runtime.legacy}, f.extraRoles...) {
+		for _, name := range append([]string{f.runtime.name, f.readonly.name, f.migration.name, f.runtime.schemaOwner, f.runtime.legacy}, f.extraRoles...) {
 			if _, err := boot.Exec(ctx, "DROP ROLE IF EXISTS "+roleIdentifier(name)); err != nil {
 				t.Errorf("drop isolated role: %v", err)
 			}
@@ -73,6 +76,93 @@ func newCredentialFixture(t *testing.T) *credentialFixture {
 	f.manager = &sqlCredentialRoles{connect: func(ctx context.Context, _ string) (*pgx.Conn, error) { return pgx.ConnectConfig(ctx, config.Copy()) }}
 	f.material = managedpostgres.CredentialMaterial{Username: ownerLogin, Password: "test", Database: database, TLSMode: "require", Endpoints: []managedpostgres.Endpoint{{Role: managedpostgres.EndpointDirect, Host: "test.invalid", Port: 5432}}}
 	return f
+}
+
+func TestSQLReadOnlyCredentialsConformAndRotateWithoutDataLoss(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	if err := f.manager.Ensure(ctx, f.material, f.migration); err != nil {
+		t.Fatal(err)
+	}
+	writer := f.connect(t, f.migration.name)
+	if err := managedpostgres.PrepareReadOnlyCredentialProbe(ctx, writer, "readonly_contract"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.manager.Ensure(ctx, f.material, f.readonly); err != nil {
+		t.Fatal(err)
+	}
+	var before, after string
+	if err := f.admin.QueryRow(ctx, `SELECT rolpassword FROM pg_authid WHERE rolname=$1`, f.readonly.name).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.manager.Ensure(ctx, f.material, f.readonly); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.admin.QueryRow(ctx, `SELECT rolpassword FROM pg_authid WHERE rolname=$1`, f.readonly.name).Scan(&after); err != nil || before == "" || before != after {
+		t.Fatal("read-only retry changed the password", err)
+	}
+	reader := f.connect(t, f.readonly.name)
+	if err := managedpostgres.VerifyReadOnlyCredentialProbe(ctx, reader, writer, "readonly_contract"); err != nil {
+		t.Fatal(err)
+	}
+	role := f.readonly
+	role.name += "_next"
+	f.extraRoles = append(f.extraRoles, role.name)
+	if err := f.manager.Ensure(ctx, f.material, role); err != nil {
+		t.Fatal(err)
+	}
+	replacement := f.connect(t, role.name)
+	if err := f.manager.Revoke(ctx, f.material, f.readonly); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.Exec(ctx, "SELECT 1"); err == nil {
+		t.Fatal("retired read-only session survived")
+	}
+	var count int
+	if err := replacement.QueryRow(ctx, `SELECT count(*) FROM public.readonly_contract_future`).Scan(&count); err != nil || count != 1 {
+		t.Fatal("rotation lost readable application data", err)
+	}
+	deniedSQL(t, replacement, `UPDATE public.readonly_contract_future SET value='forbidden'`)
+	if err := f.manager.Revoke(ctx, f.material, f.readonly); err != nil {
+		t.Fatal("read-only revoke replay", err)
+	}
+}
+
+func TestSQLReadOnlyCredentialRejectsPrivilegeDrift(t *testing.T) {
+	for _, kind := range []string{"column write", "public write", "sequence usage", "future write", "definer grant", "other schema", "pg prefix schema", "membership", "owned object"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newCredentialFixture(t)
+			ctx := context.Background()
+			if err := f.manager.Ensure(ctx, f.material, f.readonly); err != nil {
+				t.Fatal(err)
+			}
+			executeSQL(t, f.admin, `CREATE TABLE public.readonly_drift (value text); CREATE SEQUENCE public.readonly_seq`)
+			name := roleIdentifier(f.readonly.name)
+			switch kind {
+			case "column write":
+				executeSQL(t, f.admin, "GRANT UPDATE(value) ON public.readonly_drift TO "+name)
+			case "public write":
+				executeSQL(t, f.admin, "GRANT INSERT ON public.readonly_drift TO PUBLIC")
+			case "sequence usage":
+				executeSQL(t, f.admin, "GRANT USAGE ON SEQUENCE public.readonly_seq TO "+name)
+			case "future write":
+				executeSQL(t, f.admin, "ALTER DEFAULT PRIVILEGES FOR ROLE "+roleIdentifier(f.readonly.schemaOwner)+" IN SCHEMA public GRANT INSERT ON TABLES TO "+name)
+			case "definer grant":
+				executeSQL(t, f.admin, "CREATE FUNCTION public.readonly_definer() RETURNS integer LANGUAGE SQL SECURITY DEFINER AS 'SELECT 1'; REVOKE EXECUTE ON FUNCTION public.readonly_definer() FROM PUBLIC; GRANT EXECUTE ON FUNCTION public.readonly_definer() TO "+name)
+			case "other schema":
+				executeSQL(t, f.admin, "CREATE SCHEMA extra; CREATE TABLE extra.writable(value text); GRANT USAGE ON SCHEMA extra TO "+name+"; GRANT INSERT ON extra.writable TO "+name)
+			case "pg prefix schema":
+				executeSQL(t, f.admin, "CREATE SCHEMA pgcustomer; GRANT CREATE ON SCHEMA pgcustomer TO "+name)
+			case "membership":
+				executeSQL(t, f.admin, "GRANT "+roleIdentifier(f.readonly.schemaOwner)+" TO "+name)
+			case "owned object":
+				executeSQL(t, f.admin, "ALTER TABLE public.readonly_drift OWNER TO "+name)
+			}
+			if err := f.manager.Ensure(ctx, f.material, f.readonly); !errors.Is(err, managedpostgres.ErrConflict) {
+				t.Fatalf("unsafe read-only credential accepted: %v", err)
+			}
+		})
+	}
 }
 
 func (f *credentialFixture) connect(t *testing.T, name string) *pgx.Conn {
@@ -253,6 +343,10 @@ func TestSQLCredentialRestoreDisablesInheritedLogins(t *testing.T) {
 	if err := f.manager.Ensure(ctx, f.material, f.migration); err != nil {
 		t.Fatal(err)
 	}
+	if err := f.manager.Ensure(ctx, f.material, f.readonly); err != nil {
+		t.Fatal(err)
+	}
+	inheritedReader := f.connect(t, f.readonly.name)
 	// A target binding has a distinct scope, even though it shares the schema owner.
 	source := f.runtime
 	f.runtime.name = "gregale_rt_" + strings.ReplaceAll(uuid.NewString()+uuid.NewString(), "-", "")[:40]
@@ -267,13 +361,16 @@ func TestSQLCredentialRestoreDisablesInheritedLogins(t *testing.T) {
 		t.Fatal(err)
 	}
 	var login bool
-	for _, name := range []string{source.name, f.migration.name} {
+	for _, name := range []string{source.name, f.readonly.name, f.migration.name} {
 		if err := f.admin.QueryRow(ctx, `SELECT rolcanlogin FROM pg_roles WHERE rolname=$1`, name).Scan(&login); err != nil || login {
 			t.Fatalf("inherited role still enabled: %v", err)
 		}
 	}
 	if _, err := inherited.Exec(ctx, `SELECT 1`); err == nil {
 		t.Fatal("inherited session survived")
+	}
+	if _, err := inheritedReader.Exec(ctx, `SELECT 1`); err == nil {
+		t.Fatal("inherited read-only session survived")
 	}
 	if err := f.admin.QueryRow(ctx, `SELECT rolcanlogin FROM pg_roles WHERE rolname=$1`, f.runtime.name).Scan(&login); err != nil || !login {
 		t.Fatalf("target role disabled: %v", err)

@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 592
+// adr: 596
 func TestObjectWriteProtectionMem(t *testing.T) {
 	m := state.NewMemStore()
 	// Propagation advances twice; keep the staged inventory in the past.
@@ -41,7 +41,7 @@ func TestObjectWriteProtectionPG(t *testing.T) {
 	}, func() time.Time { return time.Now().UTC() })
 }
 
-// adr: 595
+// adr: 599
 func TestObjectEventWriteProtectionMem(t *testing.T) {
 	m := state.NewMemStore()
 	// Propagation advances twice; keep the staged inventory in the past.
@@ -267,7 +267,7 @@ func writeProtectionMigration(t *testing.T) (string, string) {
 	return parts[0], parts[1]
 }
 
-// adr: 592
+// adr: 596
 func TestObjectWriteProtectionMigrationRoundTrip(t *testing.T) {
 	_, pool, ctx := pgStoreWithPool(t)
 	latest, err := migrations.FS.ReadFile("20261005175131410_object_event_write_protection.sql")

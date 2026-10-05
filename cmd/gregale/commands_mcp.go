@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -13,9 +14,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
+	"golang.org/x/term"
 )
 
 func cmdMCP(args []string) int {
@@ -103,6 +106,158 @@ func mcpArguments(inline, file string) (map[string]any, error) {
 	return args, nil
 }
 
+func mcpInputIsTerminal(input io.Reader) bool {
+	f, ok := input.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
+}
+
+func mcpInputResponses(path string) (map[string]mcphosting.InputResponse, error) {
+	f, err := openCustomerFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("open input response file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	body, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+	if err != nil {
+		return nil, fmt.Errorf("read input response file: %w", err)
+	}
+	if len(body) > 1<<20 {
+		return nil, errors.New("input response file exceeds 1 MiB")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	decoder.DisallowUnknownFields()
+	var responses map[string]mcphosting.InputResponse
+	if err := decoder.Decode(&responses); err != nil || responses == nil {
+		return nil, errors.New("input response file must be one JSON object keyed by elicitation request ID")
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return nil, errors.New("input response file must contain one JSON object")
+	}
+	if len(responses) == 0 {
+		return nil, errors.New("input response file must contain at least one request response")
+	}
+	for id, response := range responses {
+		if id == "" || len(id) > 256 {
+			return nil, errors.New("input response file contains an invalid request ID")
+		}
+		switch response.Action {
+		case "accept":
+			if response.Content == nil {
+				return nil, fmt.Errorf("input response %q must include an object content", id)
+			}
+		case "decline", "cancel":
+			if response.Content != nil {
+				return nil, fmt.Errorf("declined input response %q must not include content", id)
+			}
+		default:
+			return nil, fmt.Errorf("input response %q must use accept, decline or cancel", id)
+		}
+	}
+	return responses, nil
+}
+
+func promptMCPInput(scanner *bufio.Scanner, output io.Writer, form mcphosting.InputRequest) (mcphosting.InputResponse, error) {
+	schema, err := json.MarshalIndent(form.Schema, "", "  ")
+	if err != nil || len(schema) > 64<<10 {
+		return mcphosting.InputResponse{}, errors.New("MCP server supplied an invalid input form")
+	}
+	_, _ = fmt.Fprintf(output, "\nMCP server requests additional input for tool %q (server-provided text is untrusted):\n", form.Tool)
+	if form.Message != "" {
+		_, _ = fmt.Fprintf(output, "%s\n", mcpSafeTerminalText(form.Message))
+	}
+	_, _ = fmt.Fprintf(output, "Form schema:\n%s\n", schema)
+	_, _ = fmt.Fprintln(output, `Enter a JSON object to accept, or type "decline" or "cancel".`)
+	for attempt := 0; attempt < 3; attempt++ {
+		_, _ = fmt.Fprint(output, "Input: ")
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return mcphosting.InputResponse{}, fmt.Errorf("read interactive input: %w", err)
+			}
+			return mcphosting.InputResponse{Action: "cancel"}, nil
+		}
+		line := strings.TrimSpace(scanner.Text())
+		switch strings.ToLower(line) {
+		case "decline":
+			return mcphosting.InputResponse{Action: "decline"}, nil
+		case "cancel":
+			return mcphosting.InputResponse{Action: "cancel"}, nil
+		}
+		decoder := json.NewDecoder(strings.NewReader(line))
+		decoder.UseNumber()
+		var content map[string]any
+		if err := decoder.Decode(&content); err == nil && content != nil {
+			var extra any
+			if decoder.Decode(&extra) == io.EOF {
+				return mcphosting.InputResponse{Action: "accept", Content: content}, nil
+			}
+		}
+		_, _ = fmt.Fprintln(output, "Enter one JSON object, decline, or cancel.")
+	}
+	return mcphosting.InputResponse{}, errors.New("interactive input must be one JSON object; no response was sent")
+}
+
+func mcpSafeTerminalText(value string) string {
+	const (
+		plain = iota
+		escape
+		csi
+		stringSequence
+		stringEscape
+	)
+	state := plain
+	var safe strings.Builder
+	for _, r := range value {
+		switch state {
+		case plain:
+			switch r {
+			case '\x1b':
+				state = escape
+				continue
+			case '\u009b':
+				state = csi
+				continue
+			}
+			if r != '\n' && r != '\t' && unicode.IsControl(r) {
+				continue
+			}
+			safe.WriteRune(r)
+		case escape:
+			switch r {
+			case '[':
+				state = csi
+			case ']':
+				state = stringSequence
+			case 'P', '^', '_':
+				state = stringSequence
+			default:
+				state = plain
+			}
+		case csi:
+			if r >= 0x40 && r <= 0x7e {
+				state = plain
+			}
+		case stringSequence:
+			switch r {
+			case '\a':
+				state = plain
+			case '\x1b':
+				state = stringEscape
+			}
+		case stringEscape:
+			switch r {
+			case '\\', '\a':
+				state = plain
+			case '\x1b':
+			default:
+				state = stringSequence
+			}
+		}
+	}
+	return safe.String()
+}
+
 func mcpEndpoint(ctx context.Context, endpoint, app, path string) (string, error) {
 	if endpoint != "" && app != "" {
 		return "", errors.New("choose --url or --app")
@@ -131,6 +286,8 @@ func cmdMCPRemote(command string, args []string) int {
 	path := fs.String("endpoint", "/mcp", "endpoint path when using --app")
 	tokenEnv := fs.String("token-env", "", "environment variable containing an MCP client access token")
 	legacy := fs.Bool("legacy", false, "also check legacy compatibility (doctor), or use protocol 2025-11-25")
+	interactive := fs.Bool("interactive", false, "answer modern MCP input forms in the terminal (call only)")
+	inputResponsesFile := fs.String("input-responses-file", "", "JSON file with elicitation responses keyed by request ID (call only)")
 	tool := fs.String("tool", "", "tool to call")
 	streamTool := fs.String("stream-tool", "", "explicitly execute this tool to verify live progress (doctor)")
 	inline := fs.String("arguments", "", "tool arguments as a JSON object")
@@ -143,7 +300,35 @@ func cmdMCPRemote(command string, args []string) int {
 	if fs.NArg() != 0 || *timeout <= 0 {
 		return printErr("Invalid MCP flags", errors.New("unexpected positional arguments or nonpositive timeout"))
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	if *interactive && *inputResponsesFile != "" {
+		return printErr("Invalid MCP input flags", errors.New("choose either --interactive or --input-responses-file"))
+	}
+	inputMode := *interactive || *inputResponsesFile != ""
+	if inputMode && (command != "call" || *legacy) {
+		return printErr("Invalid MCP input flags", errors.New("interactive input is supported only by modern mcp call"))
+	}
+	if *interactive && !mcpInputIsTerminal(osStdin) {
+		return printErr("MCP interactive input", errors.New("--interactive requires terminal stdin; use --input-responses-file for non-interactive calls"))
+	}
+	responses := map[string]mcphosting.InputResponse(nil)
+	if *inputResponsesFile != "" {
+		var err error
+		responses, err = mcpInputResponses(*inputResponsesFile)
+		if err != nil {
+			return printErr("MCP input responses", err)
+		}
+	}
+	timeoutValue := *timeout
+	timeoutExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "timeout" {
+			timeoutExplicit = true
+		}
+	})
+	if *interactive && !timeoutExplicit {
+		timeoutValue = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutValue)
 	defer cancel()
 	resolved, err := mcpEndpoint(ctx, *endpoint, *app, *path)
 	if err != nil {
@@ -161,15 +346,36 @@ func cmdMCPRemote(command string, args []string) int {
 	if err != nil {
 		return printErr("MCP endpoint", err)
 	}
-	c.HTTP.Timeout = *timeout
+	c.HTTP.Timeout = timeoutValue
 	arguments, err := mcpArguments(*inline, *file)
 	if err != nil {
 		return printErr("MCP arguments", err)
 	}
-	return runMCPRemote(ctx, command, c, *legacy, *tool, *streamTool, *name, arguments)
+	var responder mcphosting.InputResponder
+	if *interactive {
+		scanner := bufio.NewScanner(osStdin)
+		scanner.Buffer(make([]byte, 4096), 1<<20)
+		responder = func(_ context.Context, form mcphosting.InputRequest) (mcphosting.InputResponse, error) {
+			return promptMCPInput(scanner, osStderr, form)
+		}
+	} else if responses != nil {
+		used := make(map[string]bool, len(responses))
+		responder = func(_ context.Context, form mcphosting.InputRequest) (mcphosting.InputResponse, error) {
+			response, ok := responses[form.ID]
+			if !ok {
+				return mcphosting.InputResponse{}, fmt.Errorf("input response file has no entry for request %q", form.ID)
+			}
+			if used[form.ID] {
+				return mcphosting.InputResponse{}, fmt.Errorf("server requested form %q again; interactive retry is required", form.ID)
+			}
+			used[form.ID] = true
+			return response, nil
+		}
+	}
+	return runMCPRemoteWithResponder(ctx, command, c, *legacy, *tool, *streamTool, *name, arguments, responder)
 }
 
-func runMCPRemote(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name string, args map[string]any) int {
+func runMCPRemoteWithResponder(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name string, args map[string]any, respond mcphosting.InputResponder) int {
 	if command == "config" {
 		return jsonOut(writeJSON(mcphosting.ConnectionConfig(name, c.Endpoint)))
 	}
@@ -204,7 +410,12 @@ func runMCPRemote(ctx context.Context, command string, c *mcphosting.Client, leg
 		if candidate.Name != tool {
 			continue
 		}
-		x, err := c.Call(ctx, candidate, args, true)
+		var x mcphosting.Exchange
+		if respond == nil {
+			x, err = c.Call(ctx, candidate, args, true)
+		} else {
+			x, err = c.CallInteractive(ctx, candidate, args, true, respond)
+		}
 		if x.Result != nil {
 			if code := jsonOut(writeJSON(x)); code != 0 {
 				return code

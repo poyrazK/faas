@@ -305,6 +305,7 @@ type WorkflowRun struct {
 	CancelledAt        *time.Time      `json:"cancelled_at,omitempty"`
 	ID                 string          `json:"id"`
 	AppID              string          `json:"app_id"`
+	PlatformTenantID   string          `json:"platform_tenant_id,omitempty"`
 	WorkflowName       string          `json:"workflow_name"`
 	Status             string          `json:"status"`
 	CurrentStep        *string         `json:"current_step,omitempty"`

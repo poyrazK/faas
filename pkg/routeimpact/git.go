@@ -106,6 +106,14 @@ func (r repository) relative(path string) (string, bool) {
 	return path, path != "" && !strings.ContainsRune(path, '\x00')
 }
 
+func routeSourcePath(path string) bool {
+	return strings.HasSuffix(path, ".py") || strings.HasSuffix(path, ".go") || nodeSourcePath(path)
+}
+
+func routeAnalysisPath(path string) bool {
+	return routeSourcePath(path) || path == "go.mod"
+}
+
 func (r repository) tree(ctx context.Context, commit string) (sourceSnapshot, error) {
 	body, err := runGit(ctx, r.root, nil, "ls-tree", "-r", "-z", "--full-tree", commit)
 	if err != nil {
@@ -114,6 +122,7 @@ func (r repository) tree(ctx context.Context, commit string) (sourceSnapshot, er
 	snapshot := sourceSnapshot{meta: Snapshot{Revision: commit}, files: map[string]sourceFile{}}
 	var objects []string
 	var paths []string
+	pythonFiles, goFiles, javascriptFiles := 0, 0, 0
 	for _, row := range bytes.Split(body, []byte{0}) {
 		if len(row) == 0 {
 			continue
@@ -132,20 +141,30 @@ func (r repository) tree(ctx context.Context, commit string) (sourceSnapshot, er
 			return sourceSnapshot{}, errors.New("source snapshot exceeds the route impact path limit")
 		}
 		if fields[1] != "blob" || fields[0] == "120000" {
-			if strings.HasSuffix(path, ".py") || fields[1] == "commit" {
+			if routeSourcePath(path) || path == "go.mod" || fields[1] == "commit" {
 				snapshot.issues = append(snapshot.issues, Issue{Code: "unsupported_source_entry", File: path,
-					Message: "Symlinked Python sources and submodules are not analyzed."})
+					Message: "Symlinked route source files and submodules are not analyzed."})
 			}
 			continue
 		}
-		if strings.HasSuffix(path, ".py") {
+		if routeSourcePath(path) || path == "go.mod" {
 			objects = append(objects, fields[2])
 			paths = append(paths, path)
+			if routeSourcePath(path) {
+				if strings.HasSuffix(path, ".py") {
+					pythonFiles++
+				} else if strings.HasSuffix(path, ".go") {
+					goFiles++
+				} else if nodeSourcePath(path) {
+					javascriptFiles++
+				}
+			}
 		}
 	}
-	if len(paths) > api.RouteImpactMaxPythonFiles {
-		return sourceSnapshot{}, errors.New("source snapshot exceeds the Python file limit")
+	if pythonFiles > api.RouteImpactMaxPythonFiles || goFiles > api.RouteImpactMaxGoFiles || javascriptFiles > api.RouteImpactMaxJavaScriptFiles {
+		return sourceSnapshot{}, errors.New("source snapshot exceeds a route impact language file limit")
 	}
+	snapshot.meta.PythonFiles, snapshot.meta.GoFiles, snapshot.meta.JavaScriptFiles = pythonFiles, goFiles, javascriptFiles
 	if err := r.readBlobs(ctx, &snapshot, objects, paths); err != nil {
 		return sourceSnapshot{}, err
 	}
@@ -184,7 +203,7 @@ func (r repository) readBlobs(ctx context.Context, snapshot *sourceSnapshot, obj
 	for i, path := range paths {
 		header, err := reader.ReadString('\n')
 		if err != nil {
-			return fmt.Errorf("read Python blob header: %w", err)
+			return fmt.Errorf("read route source blob header: %w", err)
 		}
 		var object, kind string
 		var size int
@@ -193,7 +212,7 @@ func (r repository) readBlobs(ctx context.Context, snapshot *sourceSnapshot, obj
 		}
 		content := make([]byte, size)
 		if _, err := io.ReadFull(reader, content); err != nil {
-			return fmt.Errorf("read Python blob: %w", err)
+			return fmt.Errorf("read route source blob: %w", err)
 		}
 		if delimiter, err := reader.ReadByte(); err != nil || delimiter != '\n' {
 			return errors.New("git returned an invalid blob delimiter")
@@ -212,7 +231,7 @@ func (r repository) worktree(ctx context.Context) (sourceSnapshot, error) {
 		return sourceSnapshot{}, err
 	}
 	snapshot := sourceSnapshot{meta: Snapshot{Revision: "working-tree"}, files: map[string]sourceFile{}}
-	// Start from HEAD metadata to detect all tracked non-Python file changes
+	// Start from HEAD metadata to detect all tracked non-source file changes
 	// without reading their contents (which may contain secrets).
 	head, err := r.commit(ctx, "HEAD")
 	if err != nil {
@@ -223,7 +242,7 @@ func (r repository) worktree(ctx context.Context) (sourceSnapshot, error) {
 		return sourceSnapshot{}, err
 	}
 	for path, file := range tree.files {
-		if !strings.HasSuffix(path, ".py") {
+		if !routeAnalysisPath(path) {
 			snapshot.files[path] = file
 		}
 	}
@@ -232,7 +251,7 @@ func (r repository) worktree(ctx context.Context) (sourceSnapshot, error) {
 		return sourceSnapshot{}, err
 	}
 	for _, name := range bytes.Split(diff, []byte{0}) {
-		if path, scoped := r.relative(string(name)); scoped && !strings.HasSuffix(path, ".py") {
+		if path, scoped := r.relative(string(name)); scoped && !routeAnalysisPath(path) {
 			delete(snapshot.files, path)
 			snapshot.files[path] = sourceFile{path: path, hash: "working-tree-change", mode: "modified"}
 		}
@@ -245,16 +264,16 @@ func (r repository) worktree(ctx context.Context) (sourceSnapshot, error) {
 			continue
 		}
 		seen[path] = true
-		if _, exists := snapshot.files[path]; !exists && !strings.HasSuffix(path, ".py") {
+		if _, exists := snapshot.files[path]; !exists && !routeAnalysisPath(path) {
 			snapshot.files[path] = sourceFile{path: path, hash: "untracked", mode: "untracked"}
 		}
 		if len(snapshot.files) > api.RouteImpactMaxPaths {
 			return sourceSnapshot{}, errors.New("working tree exceeds the route impact path limit")
 		}
-		if !strings.HasSuffix(path, ".py") {
+		if !routeAnalysisPath(path) {
 			continue
 		}
-		file, err := r.readWorktreePython(string(name), path)
+		file, err := r.readWorktreeSource(string(name), path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -264,18 +283,26 @@ func (r repository) worktree(ctx context.Context) (sourceSnapshot, error) {
 		snapshot.files[path] = file
 		if file.mode == "120000" {
 			snapshot.issues = append(snapshot.issues, Issue{Code: "unsupported_source_entry", File: path,
-				Message: "Symlinked Python sources are not analyzed."})
+				Message: "Symlinked route source files are not analyzed."})
 			continue
 		}
 		total += len(file.body)
-		snapshot.meta.PythonFiles++
-		if snapshot.meta.PythonFiles > api.RouteImpactMaxPythonFiles || total > api.RouteImpactSourceMaxBytes {
-			return sourceSnapshot{}, errors.New("working tree exceeds the Python source limit")
+		if routeSourcePath(path) {
+			if strings.HasSuffix(path, ".py") {
+				snapshot.meta.PythonFiles++
+			} else if strings.HasSuffix(path, ".go") {
+				snapshot.meta.GoFiles++
+			} else if nodeSourcePath(path) {
+				snapshot.meta.JavaScriptFiles++
+			}
+		}
+		if snapshot.meta.PythonFiles > api.RouteImpactMaxPythonFiles || snapshot.meta.GoFiles > api.RouteImpactMaxGoFiles || snapshot.meta.JavaScriptFiles > api.RouteImpactMaxJavaScriptFiles || total > api.RouteImpactSourceMaxBytes {
+			return sourceSnapshot{}, errors.New("working tree exceeds a route impact source limit")
 		}
 	}
 	// Deleted non-Python files must remain absent, rather than a change marker.
 	for path := range snapshot.files {
-		if strings.HasSuffix(path, ".py") {
+		if routeAnalysisPath(path) {
 			continue
 		}
 		if _, err := os.Lstat(filepath.Join(r.root, filepath.FromSlash(r.scope), filepath.FromSlash(path))); errors.Is(err, os.ErrNotExist) {
@@ -286,7 +313,7 @@ func (r repository) worktree(ctx context.Context) (sourceSnapshot, error) {
 	return snapshot, nil
 }
 
-func (r repository) readWorktreePython(repoPath, path string) (sourceFile, error) {
+func (r repository) readWorktreeSource(repoPath, path string) (sourceFile, error) {
 	// os.Root prevents directory symlinks from escaping the repository.
 	root, err := os.OpenRoot(r.root)
 	if err != nil {
@@ -299,7 +326,7 @@ func (r repository) readWorktreePython(repoPath, path string) (sourceFile, error
 	for i := 1; i < len(parts); i++ {
 		parent, err := root.Lstat(filepath.FromSlash(strings.Join(parts[:i], "/")))
 		if err != nil {
-			return sourceFile{}, fmt.Errorf("inspect Python source parent: %w", err)
+			return sourceFile{}, fmt.Errorf("inspect route source parent: %w", err)
 		}
 		if parent.Mode()&os.ModeSymlink != 0 {
 			return sourceFile{path: path, mode: "120000", hash: "symlink"}, nil
@@ -307,7 +334,7 @@ func (r repository) readWorktreePython(repoPath, path string) (sourceFile, error
 	}
 	info, err := root.Lstat(repoPath)
 	if err != nil {
-		return sourceFile{}, fmt.Errorf("inspect Python source: %w", err)
+		return sourceFile{}, fmt.Errorf("inspect route source: %w", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		return sourceFile{path: path, mode: "120000", hash: "symlink"}, nil
@@ -317,15 +344,15 @@ func (r repository) readWorktreePython(repoPath, path string) (sourceFile, error
 	}
 	file, err := root.Open(repoPath)
 	if err != nil {
-		return sourceFile{}, fmt.Errorf("open Python source: %w", err)
+		return sourceFile{}, fmt.Errorf("open route source: %w", err)
 	}
 	defer func() { _ = file.Close() }()
 	body, err := io.ReadAll(io.LimitReader(file, api.RouteImpactFileMaxBytes+1))
 	if err != nil {
-		return sourceFile{}, fmt.Errorf("read Python source: %w", err)
+		return sourceFile{}, fmt.Errorf("read route source: %w", err)
 	}
 	if len(body) > api.RouteImpactFileMaxBytes {
-		return sourceFile{}, errors.New("source exceeds the file byte limit")
+		return sourceFile{}, errors.New("route source exceeds the file byte limit")
 	}
 	mode := "100644"
 	if info.Mode().Perm()&0o111 != 0 {
@@ -340,9 +367,29 @@ func contentHash(body []byte) string {
 }
 
 func fingerprint(snapshot *sourceSnapshot) {
+	fingerprintForFramework(snapshot, "")
+}
+
+func fingerprintForFramework(snapshot *sourceSnapshot, framework string) {
 	var paths []string
 	for path, file := range snapshot.files {
-		if file.body != nil {
+		if file.body == nil {
+			continue
+		}
+		switch framework {
+		case "go-nethttp":
+			if strings.HasSuffix(path, ".go") || path == "go.mod" {
+				paths = append(paths, path)
+			}
+		case "fastapi":
+			if strings.HasSuffix(path, ".py") {
+				paths = append(paths, path)
+			}
+		case "node-http":
+			if nodeSourcePath(path) {
+				paths = append(paths, path)
+			}
+		default:
 			paths = append(paths, path)
 		}
 	}
@@ -352,5 +399,22 @@ func fingerprint(snapshot *sourceSnapshot) {
 		_, _ = fmt.Fprintf(hash, "%d:%s:%s\n", len(path), path, snapshot.files[path].hash)
 	}
 	snapshot.meta.SourceSHA256 = hex.EncodeToString(hash.Sum(nil))
-	snapshot.meta.PythonFiles = len(paths)
+	snapshot.meta.PythonFiles, snapshot.meta.GoFiles, snapshot.meta.JavaScriptFiles = 0, 0, 0
+	for _, path := range paths {
+		if framework == "fastapi" && strings.HasSuffix(path, ".py") {
+			snapshot.meta.PythonFiles++
+		} else if framework == "go-nethttp" && strings.HasSuffix(path, ".go") {
+			snapshot.meta.GoFiles++
+		} else if framework == "node-http" && nodeSourcePath(path) {
+			snapshot.meta.JavaScriptFiles++
+		} else if framework == "" {
+			if strings.HasSuffix(path, ".py") {
+				snapshot.meta.PythonFiles++
+			} else if strings.HasSuffix(path, ".go") {
+				snapshot.meta.GoFiles++
+			} else if nodeSourcePath(path) {
+				snapshot.meta.JavaScriptFiles++
+			}
+		}
+	}
 }

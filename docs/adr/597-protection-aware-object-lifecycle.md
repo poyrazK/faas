@@ -1,11 +1,11 @@
-# ADR-593: Protection-aware object lifecycle deletion
+# ADR-597: Protection-aware object lifecycle deletion
 
 Status: Accepted
 Date: 2026-10-05
 
 ## Context
 
-ADR-592 preserves Object Lock policy on new versions. Lifecycle expiration still
+ADR-596 preserves Object Lock policy on new versions. Lifecycle expiration still
 needs to defer protected data without blocking later eligible versions, and a
 native deletion acknowledgment must not erase custody after an uncertain effect.
 

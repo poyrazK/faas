@@ -9926,7 +9926,21 @@ SELECT session_user::text AS login, current_user::text AS effective_user,
  OR (c.relkind='S' AND NOT (has_sequence_privilege(current_user,c.oid,'SELECT') AND
  ((sqlc.arg(access)::text='read_only' AND NOT (has_sequence_privilege(current_user,c.oid,'USAGE')
  OR has_sequence_privilege(current_user,c.oid,'UPDATE'))) OR (sqlc.arg(access)::text<>'read_only'
- AND has_sequence_privilege(current_user,c.oid,'USAGE'))))))) AS data_access
+ AND has_sequence_privilege(current_user,c.oid,'USAGE')))))))
+ AND (sqlc.arg(access)::text<>'read_only' OR NOT (
+ EXISTS (SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+ AND has_schema_privilege(current_user,n.oid,'CREATE'))
+ OR EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+ WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND
+ ((c.relkind IN ('r','p','v','m','f') AND (has_table_privilege(current_user,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+ OR has_any_column_privilege(current_user,c.oid,'INSERT,UPDATE,REFERENCES')))
+ OR (c.relkind='S' AND has_sequence_privilege(current_user,c.oid,'USAGE,UPDATE'))))
+ OR EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+ WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND p.prosecdef AND has_function_privilege(current_user,p.oid,'EXECUTE'))
+ OR EXISTS (SELECT 1 FROM pg_catalog.pg_default_acl d, LATERAL aclexplode(d.defaclacl) a
+ WHERE a.grantee IN (0,e.oid) AND
+ ((d.defaclobjtype='r' AND a.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'))
+ OR (d.defaclobjtype='S' AND a.privilege_type IN ('USAGE','UPDATE')))))) AS data_access
 FROM pg_catalog.pg_roles r JOIN pg_catalog.pg_roles e ON e.rolname=current_user WHERE r.rolname=session_user;
 
 -- name: LockUDPListenerAppOwner :one
@@ -10087,7 +10101,7 @@ sqlc.arg(generation)::bigint,sqlc.arg(name)::text,sqlc.arg(payload)::jsonb,
 nullif(sqlc.arg(webhook_id)::text,'')::uuid,nullif(sqlc.arg(event_type)::text,''));
 
 -- name: ReadManagedWorkflowRunForUpdate :one
-SELECT app_id::text, status FROM workflow_runs
+SELECT app_id::text, coalesce(platform_tenant_id::text, '')::text AS platform_tenant_id, status FROM workflow_runs
 WHERE id=sqlc.arg(run_id)::text::uuid FOR UPDATE;
 
 -- name: ReadManagedWorkflowStepForUpdate :one
@@ -10236,14 +10250,19 @@ WITH exclusive_effect AS (
  SELECT EXISTS(SELECT 1 FROM workflow_operation_effects e
   WHERE e.id=sqlc.arg(delivery_id)::text::uuid)::boolean AS managed,
  EXISTS (
-  SELECT 1 FROM workflow_operation_effects e
-  JOIN accounts ac ON ac.id=e.account_id AND ac.status='active'
-  JOIN apps a ON a.id=e.app_id AND a.account_id=e.account_id AND a.status<>'deleted'
-  JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id
+ SELECT 1 FROM workflow_operation_effects e
+ JOIN accounts ac ON ac.id=e.account_id AND ac.status='active'
+ JOIN apps a ON a.id=e.app_id AND a.account_id=e.account_id AND a.status<>'deleted'
+ JOIN workflow_runs r ON r.id=e.run_id AND r.app_id=e.app_id
+ JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id
    AND d.app_id=e.app_id AND d.account_id=e.account_id AND d.event='operation.effect'
   JOIN app_webhooks h ON h.id=e.webhook_id AND h.account_id=e.account_id
   WHERE e.id=sqlc.arg(delivery_id)::text::uuid AND h.enabled
-   AND 'operation.effect'=ANY(h.event_filter) AND h.scope='app' AND h.app_id=e.app_id
+   AND 'operation.effect'=ANY(h.event_filter)
+   AND ((r.platform_tenant_id IS NULL AND h.scope='app' AND h.app_id=e.app_id)
+    OR (r.platform_tenant_id=h.platform_tenant_id AND h.scope='platform_tenant'
+     AND EXISTS(SELECT 1 FROM platform_tenants t WHERE t.id=r.platform_tenant_id AND t.account_id=e.account_id AND t.status='active')
+     AND EXISTS(SELECT 1 FROM tenant_surfaces s WHERE s.app_id=e.app_id AND s.account_id=e.account_id AND s.platform_tenant_id=r.platform_tenant_id AND s.status='active')))
  )::boolean AS allowed
 )
 SELECT exclusive_effect.managed OR workflow_effect.managed AS managed,
@@ -13386,6 +13405,19 @@ WHERE a.id = sqlc.arg(app_id) AND a.status <> 'deleted' AND NOT a.maintenance_mo
   )
 FOR SHARE OF a, ac, d;
 
+-- name: LockWorkflowResumeTarget :one
+SELECT d.id AS deployment_id, app_workflow_definitions(a.id,d.workflows)::jsonb AS workflows, ac.plan
+FROM apps a JOIN accounts ac ON ac.id = a.account_id
+JOIN deployments d ON d.app_id = a.id
+WHERE a.id = sqlc.arg(app_id) AND a.status <> 'deleted' AND NOT a.maintenance_mode
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
+  AND d.id = (
+      SELECT dep.id FROM deployments dep
+      WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
+      ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
+  )
+FOR SHARE OF a, ac, d;
+
 -- name: LockWorkflowRunAdmission :exec
 SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(app_key)::text, 0));
 
@@ -13478,14 +13510,21 @@ SELECT nextval('automation_definition_versions')::bigint;
 SELECT key_id, public_key_pem FROM cluster_signing_keys WHERE id=1 AND retired_at IS NULL;
 
 -- name: WorkflowOutboundAttempt :one
-SELECT a.account_id, r.app_id, s.outbound_attempt_token
+SELECT a.account_id, r.app_id, r.platform_tenant_id, s.outbound_attempt_token
 FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
 JOIN apps a ON a.id=r.app_id JOIN accounts ac ON ac.id=a.account_id
 WHERE r.id=sqlc.arg(run_id) AND s.step_name=sqlc.arg(step_name) AND s.attempt=sqlc.arg(attempt)
 AND r.status='running' AND r.lease_until>clock_timestamp() AND s.status='running'
 AND s.outbound_attempt_token IS NOT NULL AND a.status<>'deleted'
-AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
-AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale');
+AND NOT a.maintenance_mode AND (NOT a.platform_tenant_required OR r.platform_tenant_id IS NOT NULL)
+AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
+AND (r.platform_tenant_id IS NULL OR EXISTS (
+ SELECT 1 FROM platform_tenants t WHERE t.id=r.platform_tenant_id AND t.account_id=a.account_id AND t.status='active'
+ AND (
+  EXISTS (SELECT 1 FROM api_consumers c WHERE c.account_id=a.account_id AND c.app_id=a.id AND c.platform_tenant_id=t.id AND c.status='active' AND c.revoked_at IS NULL)
+  OR EXISTS (SELECT 1 FROM tenant_surfaces ts WHERE ts.account_id=a.account_id AND ts.app_id=a.id AND ts.platform_tenant_id=t.id AND ts.status='active')
+ )
+));
 
 -- name: AuthorizeWorkflowOutbound :one
 SELECT EXISTS(
@@ -13498,8 +13537,16 @@ SELECT EXISTS(
  AND s.step_name=sqlc.arg(step_name) AND s.attempt=sqlc.arg(attempt)
  AND s.outbound_attempt_token=sqlc.arg(attempt_token) AND r.status='running'
  AND r.lease_until>clock_timestamp() AND s.status='running' AND a.status<>'deleted'
- AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+ AND NOT a.maintenance_mode AND (NOT a.platform_tenant_required OR r.platform_tenant_id IS NOT NULL)
  AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
+ AND COALESCE(r.platform_tenant_id::text, '')=sqlc.arg(tenant_id)::text
+ AND (r.platform_tenant_id IS NULL OR EXISTS (
+  SELECT 1 FROM platform_tenants t WHERE t.id=r.platform_tenant_id AND t.account_id=a.account_id AND t.status='active'
+  AND (
+   EXISTS (SELECT 1 FROM api_consumers tc WHERE tc.account_id=a.account_id AND tc.app_id=a.id AND tc.platform_tenant_id=t.id AND tc.status='active' AND tc.revoked_at IS NULL)
+   OR EXISTS (SELECT 1 FROM tenant_surfaces ts WHERE ts.account_id=a.account_id AND ts.app_id=a.id AND ts.platform_tenant_id=t.id AND ts.status='active')
+  )
+ ))
  AND i.id=sqlc.arg(integration_id) AND i.enabled AND i.owner_kind='customer'
  AND i.provider_auth_mode='managed' AND i.credential_source='customer_sealed'
  AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,integration_id}'=i.id::text
@@ -13642,7 +13689,7 @@ WHERE s.run_id=sqlc.arg(run_id) AND s.step_name=sqlc.arg(step_name) AND (
 
 -- name: LockWorkflowResumeRun :one
 SELECT id,app_id,workflow_name,status,current_step,input,output,definition_snapshot,
- scheduled_for,started_at,finished_at,last_error,created_at,updated_at,resume_count,cancelled_at
+ scheduled_for,started_at,finished_at,last_error,created_at,updated_at,resume_count,cancelled_at,platform_tenant_id
 FROM workflow_runs WHERE id=sqlc.arg(run_id) AND app_id=sqlc.arg(app_id) FOR UPDATE;
 
 -- name: WorkflowResumeSteps :many

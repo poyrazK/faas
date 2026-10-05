@@ -61,6 +61,20 @@ func (e CredentialPrivilegeEvidence) Validate() error {
 	return nil
 }
 
+type ReadOnlyCredentialEvidence struct {
+	Restricted            bool `json:"restricted"`
+	PasswordRecovered     bool `json:"password_recovered"`
+	RotationPreservesData bool `json:"rotation_preserves_data"`
+	Revoked               bool `json:"revoked"`
+}
+
+func (e ReadOnlyCredentialEvidence) Validate() error {
+	if !e.Restricted || !e.PasswordRecovered || !e.RotationPreservesData || !e.Revoked {
+		return ErrUnavailable
+	}
+	return nil
+}
+
 // QualificationReport is safe to persist in an operator audit log. It does
 // not contain provider resource IDs, endpoint hosts, passwords, or URLs.
 type QualificationReport struct {
@@ -73,6 +87,8 @@ type QualificationReport struct {
 	ScaleToZero          *ScaleToZeroEvidence         `json:"scale_to_zero,omitempty"`
 	Restore              *RestoreEvidence             `json:"restore,omitempty"`
 	CredentialPrivileges *CredentialPrivilegeEvidence `json:"credential_privileges,omitempty"`
+	CredentialAccess     []CredentialAccess           `json:"credential_access"`
+	ReadOnlyCredentials  *ReadOnlyCredentialEvidence  `json:"read_only_credentials,omitempty"`
 }
 
 // LifecycleQualificationReport contains the non-sensitive evidence from a
@@ -85,7 +101,7 @@ type LifecycleQualificationReport struct {
 
 // QualificationArtifactVersion is bumped whenever the approval document
 // shape or validation semantics change incompatibly.
-const QualificationArtifactVersion = 3
+const QualificationArtifactVersion = 4
 
 const qualificationArtifactVersion = QualificationArtifactVersion
 
@@ -242,6 +258,24 @@ func ValidateQualificationReport(report QualificationReport) error {
 		return ErrInvalid
 	}
 	requiredChecks := requiredProviderQualificationChecks[:]
+	if len(report.CredentialAccess) == 0 || len(report.CredentialAccess) > 3 {
+		return ErrInvalid
+	}
+	seenAccess := make(map[CredentialAccess]bool, len(report.CredentialAccess))
+	for _, access := range report.CredentialAccess {
+		if seenAccess[access] || (access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration) {
+			return ErrInvalid
+		}
+		seenAccess[access] = true
+	}
+	if seenAccess[CredentialReadOnly] {
+		requiredChecks = append(append([]string(nil), requiredChecks...), "read_only_credentials_probe")
+		if report.ReadOnlyCredentials == nil || report.ReadOnlyCredentials.Validate() != nil {
+			return ErrUnavailable
+		}
+	} else if report.ReadOnlyCredentials != nil {
+		return ErrInvalid
+	}
 	if report.Restore != nil {
 		requiredChecks = append(append([]string(nil), requiredChecks...), restoreQualificationChecks[:]...)
 	}
@@ -405,7 +439,23 @@ func (r *Registry) VerifyQualificationArtifact(artifact QualificationArtifact, e
 		readiness.Reasons = append(readiness.Reasons, "spec_unsupported")
 		readiness.Ready = false
 	}
+	if !sameCredentialAccess(backend.Capabilities.CredentialAccess, artifact.Report.CredentialAccess) {
+		readiness.Reasons = append(readiness.Reasons, "credential_capabilities_mismatch")
+		readiness.Ready = false
+	}
 	return readiness
+}
+
+func sameCredentialAccess(a, b []CredentialAccess) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, access := range a {
+		if !contains(b, access) {
+			return false
+		}
+	}
+	return true
 }
 
 func qualificationReportSHA256(report QualificationReport) string {
@@ -533,6 +583,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	}
 
 	capabilities := provider.Capabilities()
+	report.CredentialAccess = append([]CredentialAccess(nil), capabilities.CredentialAccess...)
 	if err := capabilities.Validate(); !record("capabilities_valid", err) {
 		return report, resultErr
 	}
@@ -714,6 +765,21 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	}
 	if !record("credential_privileges_probe", privilegeErr) {
 		return report, resultErr
+	}
+	if contains(capabilities.CredentialAccess, CredentialReadOnly) {
+		prober, ok := provider.(ReadOnlyCredentialProber)
+		if !ok {
+			record("read_only_credentials_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeReadOnlyCredentials(ctx, providerResourceID)
+		report.ReadOnlyCredentials = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("read_only_credentials_probe", probeErr) {
+			return report, resultErr
+		}
 	}
 	if options.Spec.RestoreWindowSeconds > 0 {
 		restoreAttempted = true

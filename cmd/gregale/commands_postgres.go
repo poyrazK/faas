@@ -19,12 +19,14 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|usage|diagnostics|usage-import|reconcile|create|get|delete|restore|bindings|attach|cutover>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|delete|restore|bindings|attach|cutover>", "postgres")
 		return 1
 	}
 	switch args[0] {
 	case subList:
 		return cmdPostgresList(args[1:])
+	case "capabilities":
+		return cmdPostgresCapabilities(args[1:])
 	case "usage":
 		return cmdPostgresUsage(args[1:])
 	case "diagnostics":

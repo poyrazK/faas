@@ -235,7 +235,7 @@ func versionProtectionControlE2E(t *testing.T, s *server, st state.Store, acct s
 	}
 }
 
-// adr: 594
+// adr: 598
 func TestEventHoldProtectionControlE2E(t *testing.T) {
 	for _, pg := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pg=%t", pg), func(t *testing.T) {

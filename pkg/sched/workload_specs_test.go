@@ -108,3 +108,58 @@ func TestParkUsesPinnedEnvironmentResourceShape(t *testing.T) {
 		t.Fatalf("park used shared/desired RAM instead of pinned RAM: instance=%+v snapshots=%d destroys=%d err=%v", instance, vmm.snapshots, vmm.destroys, err)
 	}
 }
+
+func TestLegacyDeploymentSurvivesDesiredOnlyEdit(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "regression-legacy-pin@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "regression-legacy-pin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "regression-legacy-pin-app", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 2, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Status: state.DeployPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	ram := 512
+	spec, err := state.UpdateEnvironmentWorkloadSettings(ctx, store, app, env, nil, state.UpdateAppParams{RAMMB: &ram})
+	if err != nil || spec.Settings.RAMMB != ram {
+		t.Fatalf("desired settings = %+v, err=%v", spec, err)
+	}
+	engine := &Engine{store: store}
+	resolved, _, _, selected, err := engine.resolveApp(WithScope(ctx, "staging"), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, runtimeErr := engine.loadRuntimeDeploymentValues(ctx, resolved, selected)
+	if runtimeErr != nil || selected.ID != dep.ID || resolved.RAMMB != app.RAMMB {
+		t.Fatalf("legacy runtime: deployment=%s RAM=%d values error=%v", selected.ID, resolved.RAMMB, runtimeErr)
+	}
+	desired, _, _, err := engine.resolveAppForDeploy(WithScope(ctx, "staging"), app.ID)
+	if err != nil || desired.RAMMB != ram {
+		t.Fatalf("new builds lost desired settings: RAM=%d err=%v", desired.RAMMB, err)
+	}
+	// Prime also takes an explicit historical deployment, independently of
+	// the live selector. It must use that deployment's original resource shape.
+	vmm, notifier := &fakeVMM{}, &fakeNotifier{}
+	engine = newEngine(t, store, vmm, notifier, "1.10.0")
+	instanceID := primeRunPlusFrameworkReady(t, store, vmm, notifier, engine, app.ID, dep.ID)
+	instance, err := store.InstanceByID(ctx, instanceID)
+	if err != nil || instance.RAMMB != app.RAMMB {
+		t.Fatalf("legacy prime: RAM=%d err=%v", instance.RAMMB, err)
+	}
+}
