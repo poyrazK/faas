@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# adr: 593. Parallel private test databases share one PostgreSQL lock table.
+# adr: 595. Parallel private test databases share one PostgreSQL lock table.
 set -euo pipefail
 
 container_id="${1:?PostgreSQL service container ID is required}"

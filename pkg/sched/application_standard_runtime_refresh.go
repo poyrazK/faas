@@ -1,4 +1,4 @@
-// adr: 593 — resident processes roll; idle services remain at zero residency.
+// adr: 595 — resident processes roll; idle services remain at zero residency.
 package sched
 
 import (

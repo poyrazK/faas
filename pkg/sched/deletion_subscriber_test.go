@@ -1,4 +1,4 @@
-// adr: 593
+// adr: 595
 package sched
 
 // Tests for the deletion subscriber (ADR-026). MemStore-backed, no

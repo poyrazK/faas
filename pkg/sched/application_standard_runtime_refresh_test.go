@@ -1,4 +1,4 @@
-// adr: 593
+// adr: 595
 package sched
 
 // These tests prove scheduler orchestration with a simulated legacy native

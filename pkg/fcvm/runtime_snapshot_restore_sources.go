@@ -1,6 +1,6 @@
 package fcvm
 
-// adr: 593. Verify every restore input before handing bytes to a native owner.
+// adr: 595. Verify every restore input before handing bytes to a native owner.
 
 import (
 	"context"

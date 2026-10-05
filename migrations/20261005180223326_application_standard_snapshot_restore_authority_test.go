@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 593. Immutable restore hashes use the existing generated wire contract.
+// adr: 595. Immutable restore hashes use the existing generated wire contract.
 package migrations_test
 
 import (

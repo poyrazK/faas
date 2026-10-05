@@ -1,6 +1,6 @@
 package runtimeadmission
 
-// adr: 593. A carried catalog envelope belongs to exactly one restore request.
+// adr: 595. A carried catalog envelope belongs to exactly one restore request.
 
 import (
 	"time"

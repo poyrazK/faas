@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 593
+// adr: 595
 package sched
 
 // adr: 435, 581. PostgreSQL acceptance retains the same honest portable boundary.

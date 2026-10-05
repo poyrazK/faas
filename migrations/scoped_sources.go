@@ -1,6 +1,6 @@
 package migrations
 
-// adr: 593. Adapt issued public declarations to isolated migration targets.
+// adr: 595. Adapt issued public declarations to isolated migration targets.
 
 import (
 	"bytes"

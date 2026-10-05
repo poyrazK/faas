@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# adr: 593. Exercise ordinary replay and reviewed frozen-SQL recovery.
+# adr: 595. Exercise ordinary replay and reviewed frozen-SQL recovery.
 set -euo pipefail
 
 scripts/ci/with-pg16-unix.sh bash -euo pipefail <<'REPLAY_TESTS'

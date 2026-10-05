@@ -9,7 +9,7 @@ The implementation is in progress. Immutable candidates, resource management,
 automatic enrollment, assignment inventory, reviewed approval/operator controls,
 local intent and bounded exception APIs are implemented. Mutation APIs share a
 default-off release gate. Runtime consumer convergence and controlled rollout
-must pass the acceptance checklist in [ADR-593](adr/593-inherited-application-standards.md)
+must pass the acceptance checklist in [ADR-595](adr/595-inherited-application-standards.md)
 before this feature is declared available.
 
 ## Enrollment boundary
@@ -715,6 +715,15 @@ fleet consumer membership, or release a rollout wave. Complete create-path,
 named-environment, consumer and native acceptance is still required before public
 activation.
 
+The exact-head PR preview reservation used by githubd also captures each new
+service's admission version. Replacing a preview set preserves retained
+services' original pins; newly added siblings capture the current admission
+version. A failed batch or replacement rolls back new applications, enrollment
+and service-address allocations together, retaining the previous head and its
+members. A retired sibling keeps its historical enrollment. Shared PostgreSQL
+and memory regressions cover quota rejection after an insert, replacement retry,
+and refusal to deploy before standard installation.
+
 ## Project apply installs standards before queuing builds
 
 Project apply creates or restores its workloads and installs each workload's
@@ -852,5 +861,5 @@ enable the pending restore and promotion lifecycle.
 Dedicated Linux amd64 root/KVM enforcement, `test-metal`, `leakcheck`, fleet
 crash/recovery, remaining onboarding adapters, named production scope and complete
 operational release acceptance remain required. Public standard activation stays
-disabled until the [ADR-593 acceptance checklist](adr/593-inherited-application-standards.md#acceptance-checklist)
+disabled until the [ADR-595 acceptance checklist](adr/595-inherited-application-standards.md#acceptance-checklist)
 is satisfied.

@@ -2,7 +2,7 @@
 
 package state
 
-// adr: 593. Raw SQL must preserve catalog authority independently of Go stores.
+// adr: 595. Raw SQL must preserve catalog authority independently of Go stores.
 // Native receipts in these fixtures are simulations of verified cold fallback.
 
 import (
