@@ -1718,6 +1718,7 @@ type Deployment struct {
 	GithubSourceRef            pgtype.Text
 	GithubInstallationID       pgtype.Int8
 	EnvironmentWorkloadRuntime []byte
+	ServingEndedAt             pgtype.Timestamptz
 }
 
 type DeploymentAlias struct {
@@ -3293,6 +3294,24 @@ type ManagedPostgresUsageCoverage struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+type ManagedPostgresUsageImport struct {
+	AccountID         pgtype.UUID
+	ImportID          pgtype.UUID
+	DatabaseID        pgtype.UUID
+	ActorID           string
+	Reason            string
+	EvidenceReference string
+	EvidenceSha256    string
+	RequestSha256     string
+	PreviewRevision   string
+	Request           []byte
+	Policy            []byte
+	BeforeRecords     []byte
+	AfterRecords      []byte
+	Result            []byte
+	CreatedAt         pgtype.Timestamptz
+}
+
 type ManagedRealtimeChannelHead struct {
 	EndpointID     pgtype.UUID
 	Channel        string
@@ -4008,6 +4027,25 @@ type ObjectUploadRoute struct {
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
 	EncryptionSnapshot  []byte
+}
+
+type ObjectVersionProtection struct {
+	ID              pgtype.UUID
+	BucketID        pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	ObjectKey       string
+	PublicVersionID string
+	NativeVersionID string
+	Intent          []byte
+	State           string
+	LeaseToken      string
+	LeaseUntil      pgtype.Timestamptz
+	RetryAt         pgtype.Timestamptz
+	Dispatched      bool
+	LastErrorCode   string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type ObjectVersionReference struct {

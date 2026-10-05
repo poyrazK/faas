@@ -494,6 +494,28 @@ Set compliance defaults
 | `--event-days <N>` | event hold duration in days |  |
 | `--event-years <N>` | event hold duration in years |  |
 
+### bucket protection
+
+Manage exact version retention and legal holds
+
+#### bucket protection status
+
+Inspect a durable protection operation
+
+`gregale bucket protection status <app> <bucket-id> <operation-id>`
+
+#### bucket protection retention
+
+Read, set or clear fixed retention
+
+`gregale bucket protection retention <app> <bucket-id> <key> <version-id> [clear operation-id | GOVERNANCE|COMPLIANCE retain-until operation-id]`
+
+#### bucket protection legal-hold
+
+Read or change an independent legal hold
+
+`gregale bucket protection legal-hold <app> <bucket-id> <key> <version-id> [ON|OFF operation-id]`
+
 ### bucket reconcile
 
 Start, inspect or cancel a fenced capacity inventory
@@ -844,9 +866,25 @@ printf '%s\n' "$WEBHOOK_SECRET" | gregale alerts add --app my-api --name p95-lat
 
 ### alerts info
 
-Show one alert rule
+Show one alert rule and its last delivery
 
-`gregale alerts info <alert-id>`
+`gregale alerts info --app <slug> <alert-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+
+### alerts deliveries
+
+List a rule&#39;s webhook deliveries, newest first
+
+`gregale alerts deliveries --app <slug> [--limit <N>] [--include-test] <alert-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--limit <N>` | max deliveries (1..100, default 20) |  |
+| `--include-test` | include test deliveries |  |
 
 ### alerts update
 
@@ -2164,11 +2202,16 @@ List jobs in this account
 
 Create a new job
 
-`gregale jobs add --image <REF> [--schedule <EXPR>] [--timezone <TZ>] [--schedule-policy <JSON>] [--failure-rules <JSON>] <name>`
+`gregale jobs add --image <REF> [--command <ARGV>] [--ram <MB>] [--timeout <SECONDS>] [--parallelism <N>] [--retries <N>] [--schedule <EXPR>] [--timezone <TZ>] [--schedule-policy <JSON>] [--failure-rules <JSON>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--image <REF>` | OCI image | required |
+| `--command <ARGV>` | comma-separated entrypoint (e.g. /bin/sh,-c,echo hi) |  |
+| `--ram <MB>` | billable memory in MB (0 = plan default) |  |
+| `--timeout <SECONDS>` | per-task wall-clock deadline (0 = plan default) |  |
+| `--parallelism <N>` | max concurrent tasks across a run (0 = plan default) |  |
+| `--retries <N>` | per-task max retries (0 = plan default) |  |
 | `--schedule <EXPR>` | recurring five-field cron schedule |  |
 | `--timezone <TZ>` | IANA timezone for the recurring schedule |  |
 | `--schedule-policy <JSON>` | versioned recurring schedule policy JSON |  |
@@ -2184,10 +2227,18 @@ Show one job
 
 Update one job
 
-`gregale jobs update [--schedule <EXPR>] [--timezone <TZ>] [--unschedule] [--schedule-policy <JSON>] [--failure-rules <JSON>] <name>`
+`gregale jobs update [--image <REF>] [--command <ARGV>] [--ram <MB>] [--timeout <SECONDS>] [--parallelism <N>] [--retries <N>] [--pause] [--resume] [--schedule <EXPR>] [--timezone <TZ>] [--unschedule] [--schedule-policy <JSON>] [--failure-rules <JSON>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--image <REF>` | new OCI image |  |
+| `--command <ARGV>` | new comma-separated entrypoint |  |
+| `--ram <MB>` | new RAM (MB) |  |
+| `--timeout <SECONDS>` | new per-task timeout |  |
+| `--parallelism <N>` | new max parallel tasks |  |
+| `--retries <N>` | new per-task max retries |  |
+| `--pause` | halt future dispatches (status=paused) |  |
+| `--resume` | resume dispatches (status=active) |  |
 | `--schedule <EXPR>` | replace recurring cron schedule |  |
 | `--timezone <TZ>` | replace schedule IANA timezone |  |
 | `--unschedule` | remove recurring schedule |  |
@@ -2204,10 +2255,13 @@ Soft-delete one job
 
 Dispatch a new run (fan-out N tasks)
 
-`gregale jobs run [--input <ID=REF>] [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>] <job-name>`
+`gregale jobs run [--tasks <N>] [--retries <N>] [--timeout <SECONDS>] [--input <ID=REF>] [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>] <job-name>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--tasks <N>` | number of tasks to fan out (or use --input) |  |
+| `--retries <N>` | override retry max for this run |  |
+| `--timeout <SECONDS>` | override task timeout for this run |  |
 | `--input <ID=REF>` | repeatable input binding |  |
 | `--input-manifest-uri <URI>` | account-readable input manifest object |  |
 | `--input-manifest-sha256 <DIGEST>` | SHA-256 of exact manifest bytes |  |
@@ -2357,6 +2411,12 @@ Show details of a workflow run
 List steps for a workflow run
 
 `gregale workflows steps <run_id>`
+
+### workflows attempts
+
+List retry attempts for one step of a workflow run
+
+`gregale workflows attempts <run_id> <step_name>`
 
 ### workflows cancel
 
@@ -2546,16 +2606,18 @@ gregale deployment wait v42 --app my-api
 
 Advance a canary by one stage with route enforcement
 
-`gregale deployment advance --expected-step <N> <ID>`
+`gregale deployment advance --expected-step <N> [--app <SLUG>] <ID|vN>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--expected-step <N>` | observed current canary step | required |
+| `--expected-step <N>` | observed current canary step (see deployment summary) | required |
+| `--app <SLUG>` | app slug, to resolve a vN revision |  |
 
 Examples:
 
 ```sh
 gregale deployment advance DEPLOYMENT_UUID --expected-step 1
+gregale deployment advance v42 --app my-api --expected-step 1
 ```
 
 ### deployment summary
@@ -2786,11 +2848,11 @@ List custom domain bindings
 
 Bind a custom domain to an app or project environment
 
-`gregale domains add --domain <DOMAIN> --app <SLUG> [--environment <SLUG>]`
+`gregale domains add [--domain <DOMAIN>] --app <SLUG> [--environment <SLUG>] [<domain>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--domain <DOMAIN>` | domain to attach | required |
+| `--domain <DOMAIN>` | domain to attach (or the first argument) |  |
 | `--app <SLUG>` | app slug to attach to | required |
 | `--environment <SLUG>` | project environment to route this domain to |  |
 
@@ -5264,7 +5326,7 @@ Enqueue a wake request
 
 ### queue receive
 
-Receive a wake request
+Wait for the next queue row the platform delivers
 
 `gregale queue receive <slug>`
 

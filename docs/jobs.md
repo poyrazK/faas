@@ -154,6 +154,10 @@ gregale jobs update customer-sync --failure-rules \
 
 `retry` leaves the partition eligible for its remaining attempts;
 `fail_partition` retains its outcome and excludes it from automatic retries.
+When a Job partition classified `retry` has no attempt left, its final
+attempt records `dead_letter` (reason `retry_budget_exhausted`) and the run's
+dead-letter count rises. `gregale jobs retry` refuses a partition past its
+retry budget; re-run its input with `gregale jobs replay-failed JOB RUN_ID`.
 For a command Cron, the bounded retry budget is per occurrence; for a Job, it
 is per partition. `gregale crons runs CRON_ID --run TASK_ID` shows the reported
 outcome code and saved work decision.

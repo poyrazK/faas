@@ -353,7 +353,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			"app_protocol", logsanitize.Field(protocol))
 	}
 
-	stream, err := cli.ForwardHTTPStream(wire.WithRequestCorrelationOutgoing(ctx))
+	stream, err := cli.ForwardHTTPStream(grpcStreamContext{wire.WithRequestCorrelationOutgoing(ctx)}) //nolint:contextcheck // wraps ctx: keeps cancellation, hides only the deadline from grpc-timeout
 	if err != nil {
 		if handleForwardRequestCancellation(w, r, true) {
 			return
@@ -781,7 +781,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		metrics.ObserveWSSessionDuration(string(plan), wsOutcome, time.Since(sessionStart))
 	}()
 
-	stream, err := cli.ForwardRawStream(wire.WithRequestCorrelationOutgoing(ctx))
+	stream, err := cli.ForwardRawStream(grpcStreamContext{wire.WithRequestCorrelationOutgoing(ctx)}) //nolint:contextcheck // wraps ctx: keeps cancellation, hides only the deadline from grpc-timeout
 	if err != nil {
 		if handleForwardRequestCancellation(w, r, true) {
 			return

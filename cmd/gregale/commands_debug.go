@@ -736,9 +736,26 @@ func cmdDebugCompare(args []string) int {
 	return 0
 }
 
+// renderDebugRequestsTable prints the request list. Rows are collapsed
+// per-minute telemetry buckets (COUNT requests each), so the list API
+// usually carries no public request ID. The REQUEST_ID column is shown only
+// when a row has one. It used to print "—" on every row, which suggested the
+// IDs were lost; they are retained in the request-ID journal and resolve
+// through `debug requests get`.
 func renderDebugRequestsTable(w io.Writer, resp api.DebugTelemetryListResponse) {
+	showRequestID := false
+	for _, r := range resp.Requests {
+		if r.RequestID != "" {
+			showRequestID = true
+			break
+		}
+	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ROW_ID\tREQUEST_ID\tTRACE_ID\tROUTE\tMETHOD\tSTATUS\tLATENCY_MS\tCOUNT\tCOLD\tCONSUMER\tRECEIVED_AT")
+	if showRequestID {
+		_, _ = fmt.Fprintln(tw, "ROW_ID\tREQUEST_ID\tTRACE_ID\tROUTE\tMETHOD\tSTATUS\tLATENCY_MS\tCOUNT\tCOLD\tCONSUMER\tRECEIVED_AT")
+	} else {
+		_, _ = fmt.Fprintln(tw, "ROW_ID\tTRACE_ID\tROUTE\tMETHOD\tSTATUS\tLATENCY_MS\tCOUNT\tCOLD\tCONSUMER\tRECEIVED_AT")
+	}
 	for _, r := range resp.Requests {
 		cold := ""
 		if r.ColdBoot {
@@ -756,10 +773,18 @@ func renderDebugRequestsTable(w io.Writer, resp api.DebugTelemetryListResponse) 
 		if r.TraceID != nil && *r.TraceID != "" {
 			traceID = *r.TraceID
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
-			r.ID, requestID, traceID, r.Route, r.Method, r.Status, r.LatencyMS, r.Count, cold, consumer, r.ReceivedAt)
+		if showRequestID {
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t", r.ID, requestID)
+		} else {
+			_, _ = fmt.Fprintf(tw, "%s\t", r.ID)
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\n",
+			traceID, r.Route, r.Method, r.Status, r.LatencyMS, r.Count, cold, consumer, r.ReceivedAt)
 	}
 	_ = tw.Flush()
+	if !showRequestID && len(resp.Requests) > 0 {
+		_, _ = fmt.Fprintln(w, "look up one request by its x-faas-request-id: gregale debug requests get <slug> <request-id>")
+	}
 	if resp.RetentionClamped {
 		_, _ = fmt.Fprintln(w, "window clamped to the plan's telemetry retention")
 	}

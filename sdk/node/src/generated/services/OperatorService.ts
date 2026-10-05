@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ManagedPostgresAccountingDiagnosticsResponse } from '../models/ManagedPostgresAccountingDiagnosticsResponse.js';
+import type { ManagedPostgresUsageImportRequest } from '../models/ManagedPostgresUsageImportRequest.js';
+import type { ManagedPostgresUsageImportResult } from '../models/ManagedPostgresUsageImportResult.js';
 import type { ManagedPostgresUsageOperatorResponse } from '../models/ManagedPostgresUsageOperatorResponse.js';
 import type { ObjectStorageUsageReport } from '../models/ObjectStorageUsageReport.js';
 import type { OperatorRuntimeConfig } from '../models/OperatorRuntimeConfig.js';
@@ -34,6 +37,111 @@ export class OperatorService {
       path: {
         'account_id': accountId,
       },
+    });
+  }
+  /**
+   * Explain managed PostgreSQL accounting blockers
+   * Operator allowlist and admin scope required, with the existing session MFA gate (bearer API keys follow IAM policy). Reads local catalog and ledger evidence only. Each page is one database snapshot; pages are live views, not a frozen account snapshot. No provider requests, opaque provider IDs, or credentials.
+   * @returns ManagedPostgresAccountingDiagnosticsResponse Bounded per-database accounting evidence; Cache-Control no-store
+   * @returns Problem Access denied, invalid pagination, account not found, or accounting unavailable
+   * @throws ApiError
+   */
+  public static listManagedPostgresAccountingDiagnostics({
+    accountId,
+    after,
+    limit = 50,
+  }: {
+    /**
+     * Account whose local accounting evidence is requested.
+     */
+    accountId: string,
+    /**
+     * Resume after the database ID returned as next_cursor.
+     */
+    after?: string,
+    /**
+     * Maximum databases returned in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<ManagedPostgresAccountingDiagnosticsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/managed-postgres/accounting/{account_id}',
+      path: {
+        'account_id': accountId,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
+      },
+    });
+  }
+  /**
+   * Preview retained managed PostgreSQL usage evidence
+   * Operator allowlist and admin scope required, with the existing session MFA gate. Validates normalized complete windows against local catalog and ledger evidence. Makes no provider calls or writes. Returns the revision required for apply; concurrent ledger or lifecycle changes invalidate it.
+   * @returns ManagedPostgresUsageImportResult Validated preview, without accounting changes; Cache-Control no-store
+   * @returns Problem Access denied, invalid evidence, conflicting ledger, or unavailable backend
+   * @throws ApiError
+   */
+  public static previewManagedPostgresUsageImport({
+    accountId,
+    requestBody,
+  }: {
+    /**
+     * Account whose retained usage evidence will be previewed.
+     */
+    accountId: string,
+    /**
+     * Normalized retained readings and source attestation for preview.
+     */
+    requestBody: ManagedPostgresUsageImportRequest,
+  }): CancelablePromise<ManagedPostgresUsageImportResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/managed-postgres/accounting/{account_id}/usage-imports/preview',
+      path: {
+        'account_id': accountId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Apply retained managed PostgreSQL usage evidence
+   * Allowlisted operator session with recent MFA step-up, same-origin checks, and Idempotency-Key required. Bearer API keys cannot apply imports. Requires expected_revision from preview. Commits normalized ledger windows, contiguous coverage, and immutable before/after evidence atomically. import_id durably deduplicates an identical request by the same actor; conflicting reuse is rejected. Evidence observation times are preserved. This neither establishes missing identities or shutdown nor reconciles a final provider invoice.
+   * @returns ManagedPostgresUsageImportResult Applied import or original committed response on identical durable replay; Cache-Control no-store
+   * @returns Problem Access denied, invalid evidence, expired preview, conflicting replay, or unavailable backend
+   * @throws ApiError
+   */
+  public static applyManagedPostgresUsageImport({
+    accountId,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Account owning the reviewed database and imported usage.
+     */
+    accountId: string,
+    /**
+     * Request replay key; import_id additionally provides permanent receipt deduplication.
+     */
+    idempotencyKey: string,
+    /**
+     * Reviewed retained readings with the revision returned by preview.
+     */
+    requestBody: ManagedPostgresUsageImportRequest,
+  }): CancelablePromise<ManagedPostgresUsageImportResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/managed-postgres/accounting/{account_id}/usage-imports',
+      path: {
+        'account_id': accountId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**

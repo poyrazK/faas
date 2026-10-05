@@ -4202,6 +4202,7 @@ last_error_code = CASE WHEN state <> $1 THEN '' ELSE last_error_code END, retry_
 WHERE object_buckets.account_id = $4 AND object_buckets.app_id = $5 AND object_buckets.id = $6
 AND object_buckets.state <> 'deleted' AND (object_buckets.lease_until IS NULL OR object_buckets.lease_until < now())
 AND ($1 = 'deleting' OR object_buckets.state = 'provisioning')
+AND ($1 <> 'deleting' OR NOT EXISTS(SELECT 1 FROM object_version_protection p WHERE p.bucket_id=object_buckets.id AND p.state IN ('waiting','applying')))
 AND ($1 <> 'deleting' OR NOT EXISTS (
   SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id = object_buckets.id
   AND m.state IN ('initiating','active','completing','completing_conditional','aborting')
@@ -8323,7 +8324,7 @@ lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code=$3,retry_at=no
 WHERE id=$1 AND lease_token=$2 AND state='completing_conditional';
 
 -- name: ObjectCapacityFenced :one
-SELECT (EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=$1 AND l.state<>'ready') OR EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1 AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning')))::boolean AS fenced;
+SELECT (EXISTS(SELECT 1 FROM object_version_protection p WHERE p.bucket_id=$1 AND p.state IN ('waiting','applying')) OR EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=$1 AND l.state<>'ready') OR EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1 AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning')))::boolean AS fenced;
 
 -- name: ObjectWriteKeyFenced :one
 SELECT EXISTS(SELECT 1 FROM object_storage_write_admissions w
@@ -8347,7 +8348,7 @@ ON CONFLICT(bucket_id,key_hash) DO UPDATE SET max_bytes=greatest(object_storage_
 
 -- name: ObjectCapacityReadiness :one
 SELECT
- ((SELECT count(*) FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) + (SELECT count(*) FROM object_storage_write_admissions w LEFT JOIN object_storage_multipart_uploads m ON m.id=w.multipart_upload_id
+ ((SELECT count(*) FROM object_version_protection WHERE object_version_protection.bucket_id=$1 AND object_version_protection.state IN ('waiting','applying')) + (SELECT count(*) FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) + (SELECT count(*) FROM object_storage_write_admissions w LEFT JOIN object_storage_multipart_uploads m ON m.id=w.multipart_upload_id
   WHERE w.bucket_id=$1 AND ((w.kind='proxy' AND w.state='pending') OR (w.kind='multipart' AND m.state NOT IN ('completed','aborted')))))::bigint AS pending,
  EXISTS (SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1 AND NOT reclaimable) AS unsafe,
  EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=$1 AND
@@ -8572,7 +8573,7 @@ SELECT bucket_id FROM object_bucket_encryption WHERE state<>'ready' AND retry_at
 SELECT d.*,b.account_id,b.app_id FROM object_deletions d JOIN object_buckets b ON b.id=d.bucket_id WHERE d.id=$1;
 
 -- name: ObjectDeletionActive :one
-SELECT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=$1 AND state IN ('prepared','dispatched'))::boolean AS active;
+SELECT (EXISTS(SELECT 1 FROM object_deletions WHERE object_deletions.bucket_id=$1 AND object_deletions.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_version_protection WHERE object_version_protection.bucket_id=$1 AND object_version_protection.state IN ('waiting','applying')))::boolean AS active;
 
 -- name: ObjectDeletionInsert :exec
 INSERT INTO object_deletions(id,bucket_id,object_key,selector,state,provider_status,reserved_bytes,lease_token,lease_until,retry_at,created_at,updated_at,target_provider_version_id,lifecycle_scan_id,lifecycle_binding)
@@ -11229,13 +11230,19 @@ WHERE d.id=sqlc.arg(deployment_id)::uuid RETURNING status::text;
 
 
 -- name: LatestRetainedRollbackDeployment :one
+-- Most recently serving first (serving_ended_at, migration
+-- 20261004234807528); rows superseded before it fall back to created_at.
+-- A live 0% deployment that served before (a release demoted by `traffic
+-- promote` or `traffic set`) is a rollback target; one that never served
+-- (a dark deploy) needs a retention pin.
 SELECT d.id FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid
 AND (sqlc.narg(scope)::text IS NULL OR d.scope=sqlc.narg(scope)::text)
 AND (sqlc.narg(current_deployment_id)::uuid IS NULL OR d.id<>sqlc.narg(current_deployment_id)::uuid)
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
-    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    d.serving_ended_at IS NOT NULL
+    OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))))
-ORDER BY d.created_at DESC,d.id DESC LIMIT 1;
+ORDER BY coalesce(d.serving_ended_at,d.created_at) DESC,d.created_at DESC,d.id DESC LIMIT 1;
 
 
 -- name: LockRetainedRollbackDeployment :one
@@ -11243,9 +11250,10 @@ SELECT d.id FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope
 AND d.id<>sqlc.arg(current_deployment_id)::uuid
 AND d.environment_workload_runtime IS NULL
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
-    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    d.serving_ended_at IS NOT NULL
+    OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))))
-ORDER BY d.created_at DESC,d.id DESC LIMIT 1 FOR UPDATE OF d;
+ORDER BY coalesce(d.serving_ended_at,d.created_at) DESC,d.created_at DESC,d.id DESC LIMIT 1 FOR UPDATE OF d;
 
 
 -- name: RetireAutoRollbackDeploymentSiblings :exec
@@ -11319,7 +11327,9 @@ source_database_id = EXCLUDED.source_database_id, collected_from = NULL, collect
 observed_at = NULL, updated_at = now();
 
 -- name: ListManagedPostgresAccountingCoverage :many
-SELECT d.state, (d.accounting_required AND NULLIF(d.provider_resource_id, '') IS NULL)::boolean AS unresolved,
+SELECT d.id AS database_id, d.name, d.state, d.accounting_required,
+(NULLIF(d.provider_resource_id, '') IS NOT NULL)::boolean AS identity_known, d.lease_until,
+COALESCE(source.id, d.id)::uuid AS accounting_database_id, COALESCE(source.created_at, d.created_at)::timestamptz AS accounting_created_at, (d.accounting_required AND NULLIF(d.provider_resource_id, '') IS NULL)::boolean AS unresolved,
 COALESCE(source.state, d.state)::text AS accounting_state,
 (CASE WHEN source.id IS NULL THEN d.deleted_at ELSE source.deleted_at END)::timestamptz AS ended_at, COALESCE(c.window_seconds, 0)::bigint AS window_seconds,
 COALESCE(s.collected_from, c.collected_from)::timestamptz AS collected_from,
@@ -11336,7 +11346,8 @@ LEFT JOIN LATERAL (SELECT * FROM managed_postgres_usage_coverage WHERE database_
 LEFT JOIN managed_postgres_databases source ON source.id = c.source_database_id
 LEFT JOIN managed_postgres_usage_coverage s ON s.database_id = c.source_database_id AND s.window_seconds = c.window_seconds
 WHERE d.account_id = sqlc.arg(account_id)::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL OR d.accounting_required)
-ORDER BY d.id;
+AND (sqlc.narg(after_id)::uuid IS NULL OR d.id > sqlc.narg(after_id)::uuid)
+ORDER BY d.id LIMIT sqlc.narg(page_limit)::integer;
 
 -- name: PruneEnvironmentGitOpsReports :exec
 DELETE FROM environment_gitops_runs r USING (
@@ -11396,6 +11407,22 @@ DELETE FROM environment_external_field_owners WHERE environment_id=sqlc.arg(envi
 -- name: EnvironmentFieldOwnershipLegacyApp :one
 SELECT EXISTS(SELECT 1 FROM apps WHERE account_id=sqlc.arg(account_id)::uuid AND slug=sqlc.arg(app)::text AND status<>'deleted'
  AND (project_id IS NULL OR sqlc.arg(environment)::text='default')) AS legacy;
+
+-- name: ObjectVersionProtectionGet :one
+SELECT * FROM object_version_protection WHERE id=$1;
+
+-- name: ObjectVersionProtectionInsert :exec
+INSERT INTO object_version_protection(id,bucket_id,account_id,app_id,object_key,public_version_id,native_version_id,intent)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8);
+
+-- name: ObjectVersionProtectionUpdate :exec
+UPDATE object_version_protection SET state=$2,lease_token=$3,lease_until=$4,retry_at=$5,dispatched=$6,last_error_code=$7,updated_at=now() WHERE id=$1;
+
+-- name: ObjectVersionProtectionDue :many
+SELECT id FROM object_version_protection WHERE state IN ('waiting','applying') AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,id LIMIT $1;
+
+-- name: ObjectVersionProtectionActive :one
+SELECT id FROM object_version_protection WHERE bucket_id=$1 AND state IN ('waiting','applying');
 
 -- ADR-581: persist an irreversible accounting obligation before provider I/O.
 -- name: BeginManagedPostgresAccounting :execrows
@@ -11781,3 +11808,39 @@ WHERE id=sqlc.arg(run_id) AND (sqlc.narg(generation)::integer IS NULL OR resume_
 UPDATE workflow_runs SET lease_until=now()+(sqlc.arg(timeout_ms)::bigint*interval '1 millisecond')+interval '5 minutes'
 WHERE id=sqlc.arg(run_id) AND status='running'
  AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer);
+-- name: GetManagedPostgresUsageImport :one
+SELECT request_sha256, result FROM managed_postgres_usage_imports
+WHERE account_id = $1 AND import_id = $2;
+
+-- name: InsertManagedPostgresUsageImport :exec
+INSERT INTO managed_postgres_usage_imports (
+ account_id, import_id, database_id, actor_id, reason, evidence_reference, evidence_sha256,
+ request_sha256, preview_revision, request, policy, before_records, after_records, result, created_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15);
+
+-- name: ListManagedPostgresImportRecords :many
+SELECT * FROM managed_postgres_usage
+WHERE database_id = sqlc.arg(database_id) AND window_from < sqlc.arg(window_to) AND window_to > sqlc.arg(window_from)
+ORDER BY window_from, meter;
+
+-- name: GetManagedPostgresRawUsageCoverage :one
+SELECT * FROM managed_postgres_usage_coverage WHERE database_id = $1 AND window_seconds = $2;
+
+-- name: HasManagedPostgresIncompatibleUsageWindow :one
+SELECT EXISTS (SELECT 1 FROM managed_postgres_usage
+ WHERE database_id = $1 AND window_to - window_from <> sqlc.arg(window_seconds)::bigint * interval '1 second');
+
+-- name: UpsertManagedPostgresUsageRecord :exec
+INSERT INTO managed_postgres_usage (
+ account_id, database_id, backend_id, backend_fingerprint, window_from, window_to, observed_at, meter, quantity, cost_millicents
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ON CONFLICT (database_id, window_from, window_to, meter) DO UPDATE SET
+ observed_at = EXCLUDED.observed_at, quantity = EXCLUDED.quantity, cost_millicents = EXCLUDED.cost_millicents
+WHERE managed_postgres_usage.observed_at <= EXCLUDED.observed_at;
+
+-- name: UpsertManagedPostgresUsageCoverage :exec
+INSERT INTO managed_postgres_usage_coverage (database_id, window_seconds, collected_from, collected_until, observed_at)
+VALUES ($1,$2,$3,$4,$5)
+ON CONFLICT (database_id, window_seconds) DO UPDATE SET
+ collected_from = EXCLUDED.collected_from, collected_until = EXCLUDED.collected_until,
+ observed_at = EXCLUDED.observed_at, updated_at = now();

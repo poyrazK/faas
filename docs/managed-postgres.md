@@ -458,6 +458,67 @@ continues to fail closed when observations are stale. Provider IDs, provider
 rates, internal cost line items, credentials, and connection URLs never appear
 in the customer response.
 
+Operators can diagnose stale accounting with
+`GET /v1/admin/managed-postgres/accounting/{account_id}` or
+`gregale postgres diagnostics ACCOUNT_ID --json`. The route uses the admin scope,
+MFA middleware, and operator email allowlist. Pages default to 50 resources, with
+`limit` capped at 100 and `after` set to the preceding page's `next_cursor`.
+Each page is a current local snapshot; a multi-page read does not freeze the
+account. The report reads the catalog and ledger without provider calls or writes.
+
+Each resource includes its accounting root, required/collected ranges, observation
+times, lease expiry, and stable stale-admission reasons: `identity_unknown`,
+`legacy_identity_unknown`, `coverage_missing`, `window_mismatch`,
+`shutdown_unconfirmed`, `coverage_incomplete`, `observation_stale`, or
+`final_correction_pending`. Shared restores use their root's evidence. Unknown
+legacy tombstones have no confirmed terminal deadline. A disabled policy reports
+no blockers, while retaining identity and coverage metadata. Empty reasons do not
+establish budget headroom or final provider settlement. Provider IDs and credential
+material are excluded. See [ADR-582](adr/582-managed-postgres-accounting-diagnostics.md).
+
+Operators can repair unavailable historical usage with retained evidence:
+
+```sh
+gregale postgres usage-import ACCOUNT_ID --file retained-usage.json --json
+# Review the costs/coverage; put the returned revision in expected_revision.
+gregale postgres usage-import ACCOUNT_ID --file retained-usage.json --apply --session-file operator-session --json
+```
+
+Preview makes no provider calls or writes. Apply requires an allowlisted operator
+session with a recent MFA step-up; the ordinary CLI bearer login cannot apply.
+The session file contains the opaque `faas_sid` cookie value and must be a private
+regular file (mode 0600). It is never saved in the normal CLI token store.
+Go SDK callers can use an empty bearer token and a cookie jar on `HTTPClient()`;
+other SDK callers must likewise use an operator session for apply.
+
+The JSON input has `import_id` (a UUID preserved across retries), `database_id`,
+`evidence_reference`, `evidence_sha256`, `reason`, and `windows`. Each window has
+RFC3339 `from`, `to`, and `observed_at`, plus `readings` containing `{ "meter":
+"compute_unit_seconds", "quantity": 60 }` entries for **every** meter advertised
+by the backend, including explicit observed zeros. Supply normalized integer
+quantities, without costs. Windows must be complete, contiguous, aligned to the
+configured policy window, and have source observations at or after their end.
+Times cannot be in the future or finer than microsecond precision. Submit at most
+256 windows and 1 MiB per request. Import shared restores against the accounting
+root shown by diagnostics.
+
+Retain and verify the source export's resource identity, completeness, units,
+observation time and SHA-256 before normalizing it. The API records the operator's
+attestation and does not fetch or authenticate source artifacts. References must
+contain no credentials or signed URLs. Preview reports previous/imported costs,
+their signed delta, resulting coverage and a revision. Concurrent accounting,
+policy or lifecycle changes require another preview. Apply atomically commits
+usage, coverage and immutable before/after evidence with the operator, reason,
+source reference/hash and price policy. Identical committed requests by the same
+actor return their original response; changed requests with the same import ID
+conflict. Schema rollback refuses to discard receipts. Final account erasure
+cascades them after confirmed resource deletion.
+
+Imports preserve source observation times. They cannot establish missing provider
+identities or shutdown, bypass freshness/budget checks, replace newer evidence
+with older readings, overlap daily and hourly accounting, or establish final
+invoice settlement. See [ADR-583](adr/583-managed-postgres-retained-usage-import.md).
+
 Operators with the admin scope and MFA can inspect the same account through
 `GET /v1/admin/managed-postgres/usage/{account_id}`. This bounded view adds the
 effective normalized safety ceilings and internal millicent COGS line items;

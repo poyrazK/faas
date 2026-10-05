@@ -2783,6 +2783,7 @@ CREATE TABLE public.deployments (
     github_source_ref text,
     github_installation_id bigint,
     environment_workload_runtime jsonb,
+    serving_ended_at timestamp with time zone,
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -3503,6 +3504,32 @@ BEGIN
   IF (EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=bid AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=bid AND versions_observed) OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=bid AND completion_versions_observed) OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=bid AND versions_required)) THEN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Version inventory is required before new writes';
   END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: fence_object_version_protection(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_version_protection() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bid uuid;
+BEGIN
+ IF TG_TABLE_NAME='object_buckets' THEN
+  IF NEW.state<>'deleting' OR OLD.state='deleting' THEN RETURN NEW; END IF;
+  bid:=NEW.id;
+ ELSE
+  bid:=NEW.bucket_id;
+  IF TG_OP='UPDATE' AND TG_TABLE_NAME IN ('object_bucket_object_lock','object_bucket_encryption','object_bucket_versioning') THEN
+   IF NEW.revision=OLD.revision AND NOT (NOT OLD.dispatched AND NEW.dispatched) THEN RETURN NEW; END IF;
+  END IF;
+  PERFORM 1 FROM object_buckets WHERE id=bid FOR SHARE;
+ END IF;
+ IF EXISTS(SELECT 1 FROM object_version_protection WHERE bucket_id=bid AND state IN ('waiting','applying')) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_version_protection_fenced',MESSAGE='Unsettled version protection fences writes, deletion and configuration';
  END IF;
  RETURN NEW;
 END $$;
@@ -5536,6 +5563,21 @@ $$;
 
 
 --
+-- Name: keep_failed_rollback_target(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.keep_failed_rollback_target() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status = 'failed' AND OLD.status = 'snapshotting' AND OLD.serving_ended_at IS NOT NULL THEN
+  NEW.status := 'superseded';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: managed_realtime_channel_route_targets_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6283,6 +6325,19 @@ END $$;
 
 
 --
+-- Name: protect_managed_postgres_usage_import(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_managed_postgres_usage_import() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' AND NOT EXISTS (SELECT 1 FROM accounts WHERE id = OLD.account_id) THEN RETURN OLD; END IF;
+    RAISE EXCEPTION 'managed postgres usage import evidence is append-only';
+END $$;
+
+
+--
 -- Name: protect_object_bucket_encryption(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6937,6 +6992,51 @@ BEGIN
   END IF;
   IF OLD.write_phase='settled' AND (NEW.write_phase,NEW.status,NEW.etag,NEW.error_code,NEW.version_id) IS DISTINCT FROM (OLD.write_phase,OLD.status,OLD.etag,OLD.error_code,OLD.version_id) THEN
    RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_url_capability_fenced',MESSAGE='Signed URL terminal result is immutable';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_version_protection(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_version_protection() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE b object_buckets; owner uuid;
+BEGIN
+ -- The admission/cascade boundary uses account-before-bucket locking.
+ SELECT account_id INTO owner FROM object_buckets WHERE id=coalesce(NEW.bucket_id,OLD.bucket_id);
+ PERFORM 1 FROM accounts WHERE id=owner FOR UPDATE;
+ SELECT * INTO b FROM object_buckets WHERE id=coalesce(NEW.bucket_id,OLD.bucket_id) FOR NO KEY UPDATE;
+ IF TG_OP='DELETE' THEN
+  IF FOUND AND b.state<>'deleted' THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Preserve protection receipts until physical bucket deletion'; END IF;
+  RETURN OLD;
+ END IF;
+ IF NOT FOUND OR b.state<>'ready' OR (NEW.account_id,NEW.app_id) IS DISTINCT FROM (b.account_id,b.app_id) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protection requires an owned ready bucket';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF NEW.state<>'waiting' OR NEW.dispatched OR NOT object_lock_versioning_ready(NEW.bucket_id) OR NOT object_lock_drained(NEW.bucket_id)
+   OR NOT EXISTS(SELECT 1 FROM object_bucket_object_lock WHERE bucket_id=NEW.bucket_id AND state='ready' AND observed_known AND native_enabled_observed AND observed_snapshot->>'enabled'='true')
+   OR EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=NEW.bucket_id AND state IN ('prepared','dispatched'))
+   OR EXISTS(SELECT 1 FROM object_bucket_encryption WHERE bucket_id=NEW.bucket_id AND state<>'ready') THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protection requires verified Object Lock and drained mutations';
+  END IF;
+  IF NEW.public_version_id<>'null' AND NOT EXISTS(SELECT 1 FROM object_version_references WHERE id=NEW.public_version_id::uuid AND bucket_id=NEW.bucket_id AND object_key=NEW.object_key AND native_version_id=NEW.native_version_id) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protection requires an owned exact version';
+  END IF;
+ ELSE
+  IF (NEW.id,NEW.bucket_id,NEW.account_id,NEW.app_id,NEW.object_key,NEW.public_version_id,NEW.native_version_id,NEW.intent,NEW.created_at)
+   IS DISTINCT FROM (OLD.id,OLD.bucket_id,OLD.account_id,OLD.app_id,OLD.object_key,OLD.public_version_id,OLD.native_version_id,OLD.intent,OLD.created_at)
+   OR OLD.state IN ('ready','failed') OR OLD.dispatched AND NOT NEW.dispatched
+   OR NEW.state='applying' AND NEW.lease_token<>OLD.lease_token AND (OLD.lease_until>clock_timestamp() OR OLD.retry_at>clock_timestamp())
+   OR NOT OLD.dispatched AND NEW.dispatched AND NOT (OLD.state='applying' AND NEW.state='applying' AND OLD.lease_token=NEW.lease_token AND OLD.lease_until>clock_timestamp())
+   OR NEW.state IN ('ready','failed') AND NOT (OLD.state='applying' AND OLD.lease_until>clock_timestamp())
+   OR NEW.state='failed' AND OLD.dispatched AND NEW.last_error_code<>'provider_rejected' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protection intent and leased progress are immutable';
   END IF;
  END IF;
  RETURN NEW;
@@ -7974,6 +8074,23 @@ BEGIN
     RETURN COALESCE(flipped, FALSE);
 END;
 $$;
+
+
+--
+-- Name: stamp_deployment_serving_ended_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_deployment_serving_ended_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status = 'live' AND NEW.traffic_percent > 0 THEN
+  NEW.serving_ended_at := NULL;
+ ELSIF OLD.status = 'live' AND OLD.traffic_percent > 0 AND NEW.status <> 'snapshotting' THEN
+  NEW.serving_ended_at := now();
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -14059,6 +14176,35 @@ CREATE TABLE public.managed_postgres_usage_coverage (
 
 
 --
+-- Name: managed_postgres_usage_imports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_usage_imports (
+    account_id uuid NOT NULL,
+    import_id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    actor_id text NOT NULL,
+    reason text NOT NULL,
+    evidence_reference text NOT NULL,
+    evidence_sha256 text NOT NULL,
+    request_sha256 text NOT NULL,
+    preview_revision text NOT NULL,
+    request jsonb NOT NULL,
+    policy jsonb NOT NULL,
+    before_records jsonb NOT NULL,
+    after_records jsonb NOT NULL,
+    result jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT managed_postgres_usage_imports_actor_id_check CHECK (((octet_length(actor_id) >= 1) AND (octet_length(actor_id) <= 256))),
+    CONSTRAINT managed_postgres_usage_imports_evidence_reference_check CHECK (((octet_length(evidence_reference) >= 1) AND (octet_length(evidence_reference) <= 256))),
+    CONSTRAINT managed_postgres_usage_imports_evidence_sha256_check CHECK ((evidence_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_usage_imports_preview_revision_check CHECK ((preview_revision ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_usage_imports_reason_check CHECK (((octet_length(reason) >= 1) AND (octet_length(reason) <= 512))),
+    CONSTRAINT managed_postgres_usage_imports_request_sha256_check CHECK ((request_sha256 ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
 -- Name: managed_realtime_channel_heads; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15214,6 +15360,43 @@ CREATE TABLE public.object_upload_routes (
     CONSTRAINT object_upload_routes_key_prefix_check CHECK ((length(key_prefix) <= 256)),
     CONSTRAINT object_upload_routes_max_bytes_check CHECK ((max_bytes > 0)),
     CONSTRAINT object_upload_routes_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: object_version_protection; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_version_protection (
+    id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    object_key text NOT NULL,
+    public_version_id text NOT NULL,
+    native_version_id text NOT NULL,
+    intent jsonb NOT NULL,
+    state text DEFAULT 'waiting'::text NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    retry_at timestamp with time zone DEFAULT now() NOT NULL,
+    dispatched boolean DEFAULT false NOT NULL,
+    last_error_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_version_protection_check CHECK (((state = 'applying'::text) = ((lease_token <> ''::text) AND (lease_until IS NOT NULL)))),
+    CONSTRAINT object_version_protection_check1 CHECK (((state = 'applying'::text) OR ((lease_token = ''::text) AND (lease_until IS NULL)))),
+    CONSTRAINT object_version_protection_check2 CHECK (((public_version_id = 'null'::text) = (native_version_id = 'null'::text))),
+    CONSTRAINT object_version_protection_check3 CHECK (COALESCE((((intent ->> 'id'::text) = (id)::text) AND ((intent ->> 'bucket_id'::text) = (bucket_id)::text) AND ((intent ->> 'key'::text) = object_key) AND ((intent ->> 'version_id'::text) = public_version_id)), false)),
+    CONSTRAINT object_version_protection_id_check CHECK (((id)::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)),
+    CONSTRAINT object_version_protection_intent_check CHECK (((jsonb_typeof(intent) = 'object'::text) AND (octet_length((intent)::text) <= 32768) AND COALESCE(((intent ->> 'kind'::text) = ANY (ARRAY['retention'::text, 'legal_hold'::text])), false))),
+    CONSTRAINT object_version_protection_intent_check1 CHECK (COALESCE(((((intent ->> 'kind'::text) = 'legal_hold'::text) AND (NOT (intent ? 'retention'::text)) AND (jsonb_typeof((intent -> 'legal_hold'::text)) = 'object'::text) AND (((intent -> 'legal_hold'::text) ->> 'status'::text) = ANY (ARRAY['ON'::text, 'OFF'::text]))) OR (((intent ->> 'kind'::text) = 'retention'::text) AND (NOT (intent ? 'legal_hold'::text)) AND (jsonb_typeof((intent -> 'retention'::text)) = 'object'::text) AND (NOT ((intent -> 'retention'::text) ? 'event_hold'::text)) AND (NOT ((intent -> 'retention'::text) ? 'event_hold_duration'::text)) AND (((intent -> 'retention'::text) = '{}'::jsonb) OR ((((intent -> 'retention'::text) ->> 'mode'::text) = ANY (ARRAY['GOVERNANCE'::text, 'COMPLIANCE'::text])) AND (jsonb_typeof(((intent -> 'retention'::text) -> 'retain_until_date'::text)) = 'string'::text))))), false)),
+    CONSTRAINT object_version_protection_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'provider_uncertain'::text, 'provider_unsupported'::text, 'provider_mismatch'::text, 'preparation_failed'::text, 'provider_rejected'::text]))),
+    CONSTRAINT object_version_protection_lease_token_check CHECK ((octet_length(lease_token) <= 128)),
+    CONSTRAINT object_version_protection_native_version_id_check CHECK ((((octet_length(native_version_id) >= 1) AND (octet_length(native_version_id) <= 1024)) AND (native_version_id !~ '[\x01-\x1f\x7f]'::text))),
+    CONSTRAINT object_version_protection_object_key_check CHECK ((((octet_length(object_key) >= 1) AND (octet_length(object_key) <= 1024)) AND (object_key !~ '[\x01-\x1f\x7f]'::text))),
+    CONSTRAINT object_version_protection_public_version_id_check CHECK (((public_version_id = 'null'::text) OR (public_version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
+    CONSTRAINT object_version_protection_state_check CHECK ((state = ANY (ARRAY['waiting'::text, 'applying'::text, 'ready'::text, 'failed'::text])))
 );
 
 
@@ -20600,6 +20783,14 @@ ALTER TABLE ONLY public.managed_postgres_usage_coverage
 
 
 --
+-- Name: managed_postgres_usage_imports managed_postgres_usage_imports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_imports
+    ADD CONSTRAINT managed_postgres_usage_imports_pkey PRIMARY KEY (account_id, import_id);
+
+
+--
 -- Name: managed_postgres_usage managed_postgres_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21093,6 +21284,14 @@ ALTER TABLE ONLY public.object_upload_routes
 
 ALTER TABLE ONLY public.object_upload_routes
     ADD CONSTRAINT object_upload_routes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_version_protection object_version_protection_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_version_protection
+    ADD CONSTRAINT object_version_protection_pkey PRIMARY KEY (id);
 
 
 --
@@ -26178,6 +26377,20 @@ CREATE INDEX object_url_credentials_expiry ON public.object_storage_s3_credentia
 
 
 --
+-- Name: object_version_protection_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX object_version_protection_active ON public.object_version_protection USING btree (bucket_id) WHERE (state = ANY (ARRAY['waiting'::text, 'applying'::text]));
+
+
+--
+-- Name: object_version_protection_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_version_protection_due ON public.object_version_protection USING btree (retry_at, id) WHERE (state = ANY (ARRAY['waiting'::text, 'applying'::text]));
+
+
+--
 -- Name: object_version_references_observed_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -28537,6 +28750,13 @@ CREATE TRIGGER deployment_aliases_app_changed AFTER INSERT OR DELETE OR UPDATE O
 
 
 --
+-- Name: deployments deployment_failed_rollback_keeps_target; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_failed_rollback_keeps_target BEFORE UPDATE OF status ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.keep_failed_rollback_target();
+
+
+--
 -- Name: deployment_openapi_docs deployment_openapi_docs_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28548,6 +28768,13 @@ CREATE TRIGGER deployment_openapi_docs_set_updated_at_trg BEFORE UPDATE ON publi
 --
 
 CREATE TRIGGER deployment_scope_exclusions_set_updated_at_trg BEFORE UPDATE ON public.deployment_scope_exclusions FOR EACH ROW EXECUTE FUNCTION public.deployment_scope_exclusions_set_updated_at();
+
+
+--
+-- Name: deployments deployment_serving_ended_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_serving_ended_at BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.stamp_deployment_serving_ended_at();
 
 
 --
@@ -29146,6 +29373,13 @@ CREATE TRIGGER managed_postgres_restore_sources_guard BEFORE UPDATE OF state ON 
 
 
 --
+-- Name: managed_postgres_usage_imports managed_postgres_usage_import_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_usage_import_immutable BEFORE DELETE OR UPDATE ON public.managed_postgres_usage_imports FOR EACH ROW EXECUTE FUNCTION public.protect_managed_postgres_usage_import();
+
+
+--
 -- Name: compute_nodes managed_realtime_channel_route_targets_compute_nodes_update_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -29650,6 +29884,13 @@ CREATE TRIGGER object_version_history_latch BEFORE UPDATE OF recovery_versions_o
 
 
 --
+-- Name: object_version_protection object_version_protection_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_version_protection_guard BEFORE INSERT OR DELETE OR UPDATE ON public.object_version_protection FOR EACH ROW EXECUTE FUNCTION public.protect_object_version_protection();
+
+
+--
 -- Name: object_storage_bucket_usage object_version_reclamation_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -30116,6 +30357,76 @@ CREATE TRIGGER trigger_record_held_queue_guard BEFORE UPDATE OF state, claim_gen
 --
 
 CREATE TRIGGER triggers_delete_exclusive_broker_binding AFTER DELETE ON public.triggers FOR EACH ROW EXECUTE FUNCTION public.delete_exclusive_broker_binding();
+
+
+--
+-- Name: object_buckets version_protection_bucket_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_bucket_fence BEFORE UPDATE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_storage_capacity_reconciliations version_protection_capacity_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_capacity_fence BEFORE INSERT ON public.object_storage_capacity_reconciliations FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_deletions version_protection_delete_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_delete_fence BEFORE INSERT ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_bucket_encryption version_protection_encryption_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_encryption_fence BEFORE INSERT OR UPDATE ON public.object_bucket_encryption FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_storage_key_grants version_protection_grant_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_grant_fence BEFORE INSERT OR UPDATE ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_bucket_object_lock version_protection_lock_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_lock_fence BEFORE INSERT OR UPDATE ON public.object_bucket_object_lock FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_storage_multipart_uploads version_protection_multipart_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_multipart_fence BEFORE INSERT ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_upload_completions version_protection_upload_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_upload_fence BEFORE INSERT ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_bucket_versioning version_protection_versioning_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_versioning_fence BEFORE INSERT OR UPDATE ON public.object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
+
+
+--
+-- Name: object_storage_write_admissions version_protection_write_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER version_protection_write_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_protection();
 
 
 --
@@ -33215,6 +33526,22 @@ ALTER TABLE ONLY public.managed_postgres_usage
 
 
 --
+-- Name: managed_postgres_usage_imports managed_postgres_usage_imports_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_imports
+    ADD CONSTRAINT managed_postgres_usage_imports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_usage_imports managed_postgres_usage_imports_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_imports
+    ADD CONSTRAINT managed_postgres_usage_imports_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
 -- Name: managed_realtime_channel_heads managed_realtime_channel_heads_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -33828,6 +34155,30 @@ ALTER TABLE ONLY public.object_upload_routes
 
 ALTER TABLE ONLY public.object_upload_routes
     ADD CONSTRAINT object_upload_routes_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_version_protection object_version_protection_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_version_protection
+    ADD CONSTRAINT object_version_protection_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_version_protection object_version_protection_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_version_protection
+    ADD CONSTRAINT object_version_protection_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_version_protection object_version_protection_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_version_protection
+    ADD CONSTRAINT object_version_protection_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --

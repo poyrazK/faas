@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"time"
 
@@ -22,6 +23,11 @@ func (m *MemStore) HasActiveObjectDeletion(_ context.Context, account, app, buck
 }
 
 func (m *MemStore) activeDeletionLocked(bucket string) bool {
+	for _, j := range m.objectVersionProtection {
+		if j.BucketID == bucket && protectionActive(j) {
+			return true
+		}
+	}
 	for _, j := range m.objectDeletions {
 		if j.BucketID == bucket && deletionActive(j) {
 			return true
@@ -48,6 +54,9 @@ func (m *MemStore) BeginObjectDeletion(_ context.Context, j ObjectDeletion, poli
 			return old, false, ErrConflict
 		}
 		return cloneDeletion(old), false, nil
+	}
+	if m.activeVersionProtectionLocked(b.ID) {
+		return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectVersionProtectionPending)
 	}
 	if immutableDeletion(j) {
 		identity, exists := m.objectVersionReferenceIDs[j.Selector]

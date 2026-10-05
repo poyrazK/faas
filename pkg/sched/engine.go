@@ -6014,8 +6014,10 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// Per-call deadline (commit 1, spec §6.1). Same rationale as Wake:
 	// Prime's vmmd call gets the ColdBootTimeout budget — a Prime
 	// that takes longer is dead and the operator should restart
-	// imaged's pipeline, not wait for a hung Firecracker.
-	bootCtx, pcancel := context.WithTimeout(ctx, e.budgetFor(state.StateColdBooting))
+	// imaged's pipeline, not wait for a hung Firecracker. An app whose
+	// ADR-138 startup deadline exceeds the spec window gets that much
+	// longer (primeStartupExtension).
+	bootCtx, pcancel := context.WithTimeout(ctx, e.primeColdBootBudget(spec.StartupDeadlineS))
 	defer pcancel()
 	out, err := e.vmm.CreateColdBoot(bootCtx, placement.NodeID, ins.ID, spec)
 	if err != nil {
