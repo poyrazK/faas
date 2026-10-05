@@ -36,7 +36,15 @@ def test_object_lock_nested_configuration() -> None:
         assert request.headers["Authorization"] == "Bearer token"
         assert request.url.path.startswith(f"/v1/apps/demo/buckets/{bucket}/object-lock")
         if request.url.path.endswith("-capabilities"):
-            return httpx.Response(200, json={"bucket_configuration": True, "default_event_hold": True})
+            return httpx.Response(
+                200,
+                json={
+                    "bucket_configuration": True,
+                    "default_event_hold": True,
+                    "version_retention": True,
+                    "version_legal_hold": True,
+                },
+            )
         if request.method == "PUT":
             assert json.loads(request.content) == {"configuration": configuration.to_dict()}
         return httpx.Response(

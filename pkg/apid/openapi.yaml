@@ -2067,6 +2067,126 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/objects/protection/retention:
+    parameters:
+      - { name: slug, in: path, required: true, description: Application owning this retention target., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Owned logical bucket for retention management., schema: { type: string, format: uuid } }
+      - { name: key, in: query, required: true, description: Logical object key whose retention is selected., schema: { type: string, minLength: 1, maxLength: 1024 } }
+      - { name: version_id, in: query, required: true, description: Exact owned version for retention; current selection is unsupported., schema: { type: string, minLength: 1 } }
+    get:
+      operationId: getObjectVersionRetention
+      summary: Read exact version retention
+      description: Read fresh native retention for an explicit owned version with storage manage scope and a bucket read grant. Available with enrollment disabled.
+      tags: [storage]
+      responses:
+        '200':
+          description: Verified native version retention policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionRetentionResult' }
+        default:
+          description: Retention read rejected by validation, capability, ownership or mutation fencing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      operationId: putObjectVersionRetention
+      summary: Request a durable exact version retention change
+      description: Accept durable retention intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Event hold changes and governance bypass are unsupported.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectVersionRetentionRequest' }
+      responses:
+        '200':
+          description: Existing retention operation receipt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionProtection' }
+        '202':
+          description: Durable retention intent accepted for operation inspection
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionProtection' }
+        default:
+          description: Retention mutation rejected by validation, capability, ownership or mutation fencing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/objects/protection/legal-hold:
+    parameters:
+      - { name: slug, in: path, required: true, description: Application owning this legal hold target., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Owned logical bucket for legal hold management., schema: { type: string, format: uuid } }
+      - { name: key, in: query, required: true, description: Logical object key whose legal hold is selected., schema: { type: string, minLength: 1, maxLength: 1024 } }
+      - { name: version_id, in: query, required: true, description: Exact owned version for legal hold; current selection is unsupported., schema: { type: string, minLength: 1 } }
+    get:
+      operationId: getObjectVersionLegalHold
+      summary: Read exact version legal hold
+      description: Read fresh native legal hold for an explicit owned version with storage manage scope and a bucket read grant. Available with enrollment disabled.
+      tags: [storage]
+      responses:
+        '200':
+          description: Verified native version legal hold policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionLegalHoldResult' }
+        default:
+          description: Legal hold read rejected by validation, capability, ownership or mutation fencing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      operationId: putObjectVersionLegalHold
+      summary: Request a durable exact version legal hold change
+      description: Accept durable legal hold intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Event hold changes and governance bypass are unsupported.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectVersionLegalHoldRequest' }
+      responses:
+        '200':
+          description: Existing legal hold operation receipt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionProtection' }
+        '202':
+          description: Durable legal hold intent accepted for operation inspection
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionProtection' }
+        default:
+          description: Legal hold mutation rejected by validation, capability, ownership or mutation fencing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/protection-operations/{operation}:
+    parameters:
+      - { name: slug, in: path, required: true, description: Application owning this protection operation target., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Owned logical bucket for protection operation management., schema: { type: string, format: uuid } }
+      - { name: operation, in: path, required: true, description: Durable protection operation identity., schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectVersionProtection
+      summary: Inspect an owned version protection operation
+      description: Requires storage manage scope and a bucket read grant. Available with ingress or enrollment disabled. Provider identities and worker leases are private.
+      tags: [storage]
+      responses:
+        '200':
+          description: Durable operation status and accepted policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionProtection' }
+        default:
+          description: Protection operation inspection rejected by validation, capability, ownership or mutation fencing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/object-lock-capabilities:
     parameters:
       - { name: slug, in: path, required: true, description: App whose enrolled Object Lock capabilities are being discovered., schema: { type: string } }
@@ -31871,14 +31991,81 @@ components:
         encryption: { $ref: '#/components/schemas/ObjectEncryption', description: Verified active default for new implicit writes. }
         desired_encryption: { $ref: '#/components/schemas/ObjectEncryption', description: Requested default awaiting native verification. }
         updated_at: { type: string, format: date-time }
+    ObjectVersionRetention:
+      type: object
+      additionalProperties: false
+      description: Verified native retention, or a fixed-retention intent. An empty object requests a clear; active retention cannot be shortened without bypass, which is unsupported. Event hold fields are observation only for this contract.
+      properties:
+        mode: { type: string, enum: [GOVERNANCE, COMPLIANCE] }
+        retain_until_date: { type: string, format: date-time }
+        event_hold: { type: string, enum: [ON, OFF] }
+        event_hold_duration: { $ref: '#/components/schemas/ObjectRetentionPeriod' }
+    ObjectVersionLegalHold:
+      type: object
+      description: Independent exact-version legal hold status.
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [ON, OFF] }
+    ObjectVersionRetentionRequest:
+      type: object
+      description: Stable identity and fixed retention intent for an owned version.
+      additionalProperties: false
+      required: [id, retention]
+      properties:
+        id: { type: string, format: uuid, description: Stable caller-generated UUID v4; reuse only for the identical intent. }
+        retention: { $ref: '#/components/schemas/ObjectVersionRetention' }
+    ObjectVersionLegalHoldRequest:
+      type: object
+      description: Stable identity and desired independent legal hold for an owned version.
+      additionalProperties: false
+      required: [id, legal_hold]
+      properties:
+        id: { type: string, format: uuid, description: Caller-generated UUID v4 for this legal-hold intent; retain it when retrying. }
+        legal_hold: { $ref: '#/components/schemas/ObjectVersionLegalHold' }
+    ObjectVersionRetentionResult:
+      type: object
+      description: Selected public version and its observed native retention.
+      additionalProperties: false
+      required: [version_id, retention]
+      properties:
+        version_id: { type: string }
+        retention: { $ref: '#/components/schemas/ObjectVersionRetention' }
+    ObjectVersionLegalHoldResult:
+      type: object
+      description: Selected public version and its observed independent legal hold.
+      additionalProperties: false
+      required: [version_id, legal_hold]
+      properties:
+        version_id: { type: string }
+        legal_hold: { $ref: '#/components/schemas/ObjectVersionLegalHold' }
+    ObjectVersionProtection:
+      type: object
+      description: Durable public protection receipt containing immutable intent and bounded reconciliation progress.
+      additionalProperties: false
+      required: [id, bucket_id, key, version_id, kind, state, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        bucket_id: { type: string, format: uuid }
+        key: { type: string }
+        version_id: { type: string }
+        kind: { type: string, enum: [retention, legal_hold] }
+        state: { type: string, enum: [waiting, applying, ready, failed] }
+        retention: { $ref: '#/components/schemas/ObjectVersionRetention' }
+        legal_hold: { $ref: '#/components/schemas/ObjectVersionLegalHold' }
+        last_error_code: { type: string, enum: [provider_uncertain, provider_unsupported, provider_mismatch, preparation_failed, provider_rejected] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     ObjectLockCapabilities:
       type: object
-      description: Enrolled bucket configuration and default event hold capabilities, without a native health check.
+      description: Enrolled bucket configuration, default event holds, fixed version retention and legal-hold capabilities without a native health check.
       additionalProperties: false
-      required: [bucket_configuration, default_event_hold]
+      required: [bucket_configuration, default_event_hold, version_retention, version_legal_hold]
       properties:
         bucket_configuration: { type: boolean }
         default_event_hold: { type: boolean }
+        version_retention: { type: boolean }
+        version_legal_hold: { type: boolean }
     ObjectRetentionPeriod:
       type: object
       description: Exactly one positive days or years duration must be present. Null values are rejected.

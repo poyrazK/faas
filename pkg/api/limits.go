@@ -8459,6 +8459,10 @@ const (
 	ObjectBucketObjectLockRetry             = 30 * time.Second
 	ObjectBucketObjectLockTimeout           = time.Minute
 	ObjectBucketObjectLockBatch       int32 = 50
+	ObjectVersionProtectionLease            = 2 * time.Minute
+	ObjectVersionProtectionRetry            = 30 * time.Second
+	ObjectVersionProtectionTimeout          = 45 * time.Second
+	ObjectVersionProtectionBatch      int32 = 50
 	MaxObjectBucketObjectLockRevision int64 = 1<<53 - 1
 )
 
