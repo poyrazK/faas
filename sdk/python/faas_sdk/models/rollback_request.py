@@ -22,15 +22,21 @@ class RollbackRequest:
     """
 
     target_deployment_id: UUID | Unset = UNSET
-    """The UUID of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and be
-    superseded or live with zero traffic. Nil/empty falls back to the most-recent superseded deployment (legacy
+    """The UUID or vN of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and
+    be superseded or live with zero traffic. Nil/empty falls back to the most-recent superseded deployment (legacy
     behaviour)."""
     alert_rule_id: UUID | Unset = UNSET
     """SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): when set, the handler stamps the deployment_audit row's
     alert_rule_id column with this UUID so an operator can cross-link the audit timeline back to
-    /dashboard/alerts/{id}. Wire-additive per ADR-016; the field is ignored when nil/empty. Only privileged in-
+    /dashboard/alerts/{id}. Wire-additive per ADR-16; the field is ignored when nil/empty. Only privileged in-
     process callers (meterd ActionDispatcher) set this; the API does not enforce role because the endpoint already
     requires MFA + ScopesDeployWrite."""
+    expected_current_deployment_id: UUID | Unset = UNSET
+    """Exact current deployment UUID or vN. Together with an explicit target starts the checked asynchronous
+    workflow and returns rollback_operation. Rejects a changed current deployment instead of selecting another one.
+   """
+    reason: str | Unset = UNSET
+    """One-line reason for an exact checked rollback. Cannot be combined with alert_rule_id."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,6 +48,12 @@ class RollbackRequest:
         if not isinstance(self.alert_rule_id, Unset):
             alert_rule_id = str(self.alert_rule_id)
 
+        expected_current_deployment_id: str | Unset = UNSET
+        if not isinstance(self.expected_current_deployment_id, Unset):
+            expected_current_deployment_id = str(self.expected_current_deployment_id)
+
+        reason = self.reason
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -49,6 +61,10 @@ class RollbackRequest:
             field_dict["target_deployment_id"] = target_deployment_id
         if alert_rule_id is not UNSET:
             field_dict["alert_rule_id"] = alert_rule_id
+        if expected_current_deployment_id is not UNSET:
+            field_dict["expected_current_deployment_id"] = expected_current_deployment_id
+        if reason is not UNSET:
+            field_dict["reason"] = reason
 
         return field_dict
 
@@ -69,9 +85,20 @@ class RollbackRequest:
         else:
             alert_rule_id = UUID(_alert_rule_id)
 
+        _expected_current_deployment_id = d.pop("expected_current_deployment_id", UNSET)
+        expected_current_deployment_id: UUID | Unset
+        if isinstance(_expected_current_deployment_id, Unset):
+            expected_current_deployment_id = UNSET
+        else:
+            expected_current_deployment_id = UUID(_expected_current_deployment_id)
+
+        reason = d.pop("reason", UNSET)
+
         rollback_request = cls(
             target_deployment_id=target_deployment_id,
             alert_rule_id=alert_rule_id,
+            expected_current_deployment_id=expected_current_deployment_id,
+            reason=reason,
         )
 
         rollback_request.additional_properties = d

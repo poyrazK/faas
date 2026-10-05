@@ -315,7 +315,7 @@ gregale bindings verify public-api --all
 gregale bindings check public-api --scope production --max-verification-age 10m --json
 ```
 
-The check makes one inventory GET and returns exit status 0 when its policy
+The default check makes one inventory GET and returns exit status 0 when its policy
 passes, or 1 for blockers, invalid options or failed reads. It does not create
 tasks, invoke providers or restart instances. Omit `--deployment` to use the
 current manual-task deployment. Use `--deployment ID|vN` to select an exact live,
@@ -324,6 +324,13 @@ handles resolve within the named app. An explicit `--scope` asserts that the
 selected deployment uses that scope; omit it to use the deployment's scope.
 App-wide service, queue and outbound bindings remain included. PostgreSQL and
 object-storage bindings in other scopes are explicitly skipped.
+
+Use `--wait --timeout 5m --poll-interval 1s` to observe already pending probes,
+credential refreshes, runtime replacement or application acknowledgements. Waiting
+pins the first selected deployment and scope and prints one final report. It
+creates no tasks or refreshes. Terminal failures and missing probe evidence stop
+immediately; timeout returns the last blocked report and exit status 1. Ctrl-C
+returns 130. Failed reads stop the wait with a nonzero result.
 
 For a staged rollout, verify and check the same deployment before promotion:
 
@@ -627,6 +634,23 @@ The CLI rejects a passing result when task admission selected a different
 deployment or scope from the inventory selection. Batch results include the
 actual task scope so a deployment change cannot silently mix environments.
 
+`bindings verify --all` reports every inventory binding. Unsupported queue probes
+and outbound bindings without probe configuration have explicit reasons;
+disabled bindings and resources outside the deployment scope are marked skipped.
+JSON includes `total`, `checked`, `passed`, `failed`, `unsupported`, `skipped`,
+`not_checked` and `coverage` (`complete`, `partial` or `none`). A supported probe
+failure, incomplete inventory, unknown binding type, unfinished probe or absence
+of supported probes returns nonzero. Known unsupported bindings retain partial
+coverage even when supported probes succeed with exit status 0. Use `bindings
+check` to enforce coverage and its explicit unsupported waiver policy.
+
+Service probe evidence includes private dependency revisions for target identity,
+service authorization, project preview policy and test-run membership. Changes
+invalidate service evidence and binding-gated promotion approvals together. This
+conservatively invalidates service probes across the account; target metadata and
+revision tokens stay private. Run verification again after such changes. See
+[ADR-596](adr/596-service-binding-dependency-evidence.md).
+
 Verification is point-in-time connectivity from a fresh task guest, not an
 acknowledgement that resident application VMs adopted current credentials.
 The GET inventory remains read-only. Explicit `bindings verify` tasks can
@@ -832,17 +856,32 @@ exact deployment, use an explicit smoke request from the caller:
 
 ```bash
 gregale bindings smoke public-api billing \
-  --deployment DEPLOYMENT_ID \
-  --path /health
+  --caller-deployment v12 \
+  --target-deployment TARGET_DEPLOYMENT_ID \
+  --path /health \
+  --expect-status 200
 ```
 
-Find the ID with `gregale traffic status billing`. This command sends one GET
+Find the target ID with `gregale traffic status billing`. `--caller-deployment`
+selects an exact app-owned live caller deployment, including a candidate at 0%
+traffic; `v12` resolves within `public-api`. Omit it to retain automatic caller
+selection. `--deployment` remains an alias for `--target-deployment`; conflicting
+aliases are rejected. Neither selector changes traffic. This command sends one GET
 over the caller's verified `https://billing.internal` binding and accepts any
 2xx response by default; `--expect-status 204` requires one exact status. It
 does not follow redirects, retain the response body, or include the request
 query in its report. This is an active smoke test: a parked selected deployment
 is woken before forwarding, so its handler may have application-level side
 effects. Use `bindings verify` for a no-wake infrastructure preflight.
+
+The CLI confirms the admitted caller deployment and scope on every task read.
+Success requires a complete matching guest report, the expected HTTP status,
+and a successful task with exit code zero. Truncated, malformed or mismatched
+reports fail. The test exercises the target handler from the caller's task
+runtime; it does not execute the caller's own application handler or count as
+binding-verification evidence. Ctrl-C requests bounded task cancellation;
+`--wait-timeout` bounds CLI reads and waiting, while the task retains its own
+90-second execution limit.
 
 The equivalent raw request sends that same target override explicitly:
 
@@ -1132,3 +1171,123 @@ An optional adoption read failure produces incomplete/unknown adoption and a
 sanitized warning; it blocks strict checks. Application acknowledgements are
 self-attestations and do not independently prove readiness, ongoing health or
 actual credential use. See [ADR-502](adr/502-binding-application-adoption.md).
+### Stored binding release enforcement
+
+Enable verification enforcement for an app's deployment scope after establishing
+its stable serving deployment:
+
+```sh
+gregale bindings release-policy get public-api --scope production
+gregale bindings release-policy set public-api --scope production \
+  --require-verification --max-age 10m --expected-revision 0
+```
+
+Add `--require-application-ack` to require current managed-secret application
+acknowledgements. Use the current revision from `get` for subsequent updates.
+Unconfigured scopes remain off. Enabling the policy does not change serving
+traffic or run probes. Verification age must be a whole number of seconds from
+1s through 24h.
+
+Admit new candidates with explicit zero traffic, verify the exact candidate,
+then promote it or advance its existing canary. The server enforces the saved
+policy on ordinary traffic PATCH, promotion and manual/worker canary advances,
+including any deployment gaining redistributed traffic. Request flags cannot
+relax the saved policy. Missing, stale or changed evidence returns a structured
+conflict with binding blockers. Smoke tests remain diagnostic and do not count
+as binding verification.
+
+To admit a new canary under enforcement, use a custom ladder whose first stage
+is 0%. The built-in presets start with positive traffic and are blocked at
+admission. The zero stage keeps the stable deployment serving while you verify
+the candidate; subsequent advances apply the stored binding policy.
+
+To abort an active canary while enforcement stays enabled, first verify the
+exact retained predecessor, then pin both deployments:
+
+```sh
+gregale bindings verify public-api --deployment v41 --all
+gregale rollouts recover public-api --action abort --deployment v42 \
+  --expected-predecessor v41 --reason 'Restore verified predecessor'
+```
+
+The predecessor must remain live and serving in the same deployment scope.
+Recovery checks its current bindings, policy revision and evidence expiry in
+the traffic transaction, restores it to 100%, and aborts the selected canary.
+The JSON receipt includes both IDs, the committed restored percentage, binding
+check reports and the audit ID. Automatic canary aborts from the circuit breaker,
+alert demotion, stuck-rollout recovery, critical route health and an expired
+progression-worker lease also check the restored recipient. Health and lease
+recovery retain their existing safety conditions. Missing or changed evidence
+leaves traffic unchanged; recovery does not run verification tasks implicitly.
+Binding refusals can be retried with the same idempotency key after supplying
+fresh evidence, while successful recovery responses are replayed.
+
+Positive initial canary admission, legacy canary recovery,
+unchecked historical rollback and project release graph switches currently fail closed in
+enforced scopes when they would increase protected traffic. Graph-wide checked
+activation is not yet supported. During an incident, explicitly disable the
+policy with a reason before using an unguarded recovery path:
+
+```sh
+gregale bindings release-policy set public-api --scope production \
+  --mode off --expected-revision 1 --reason 'Restore stable deployment during incident'
+```
+
+Recover, then re-enable with the new revision. Every policy update has durable
+history; disabling does not require binding/provider availability. Policy
+changes and evidence are rechecked inside the traffic transaction, so a
+concurrent update or expired observation cannot carry an old approval into a
+traffic increase.
+
+
+### Binding-checked service handoffs
+
+A service rollout under enforcement keeps its predecessor serving while APID
+checks the exact ready candidate. Missing evidence appears as bounded blockers
+in `service_rollout_handoff.bindings_check`; supplying current verification lets
+the worker retry without changing the policy. The routing transaction rechecks
+policy, evidence and ready service capacity before publishing weights. Gateway
+acknowledgement and request drain still determine handoff completion.
+
+An exact abort uses the same pinned pair as canary recovery, including a retained
+live predecessor at zero weight after service cutover. Verify that predecessor,
+then request the abort and wait for the selected rollout:
+
+```sh
+gregale bindings verify public-api --deployment v41 --all
+gregale rollouts recover public-api --action abort --deployment v42 \
+  --expected-predecessor v41 --reason 'Restore verified predecessor'
+gregale rollouts status public-api --deployment v42 --wait --timeout 10m
+```
+
+Service recovery returns 202 and `service_recovery` with the request UUID and
+both IDs. This confirms acceptance only. `rollouts status` shows binding checks,
+routing, missing gateway acknowledgements and drain progress. With `--wait`, a
+service abort succeeds only at `rollout_state=aborted` and handoff phase
+`complete`; promotion waits for its corresponding complete handoff. Status and
+wait use GETs only, never run verification, and preserve the last status on a
+timeout. Add `--json` for the exact deployment response. APID restarts resume
+the durable request; a missing pinned predecessor cannot be replaced silently.
+See [ADR-600](adr/600-binding-checked-service-handoffs.md).
+
+Completed deployments can be restored through an exact binding-checked rollback:
+
+```sh
+gregale rollback api --to v41 --expected-current v42 --reason "restore previous release" --wait
+```
+
+The accepted operation retains both deployments through readiness and binding
+checks. The current release keeps serving while the target prepares at zero
+traffic. If bindings are blocked, verify the exact target with the existing
+`gregale bindings verify-all api --deployment v41` command, then inspect or resume
+waiting for the accepted operation:
+
+```sh
+gregale rollback status api --operation OPERATION_UUID --wait
+```
+
+Both waits use read-only operation polling. A changed current release fails the
+operation rather than selecting another deployment. Service completion includes
+gateway acknowledgement and draining. A timeout keeps the last status and binding
+blockers visible; an interrupt exits 130. Add `--json` for the operation receipt.
+See [ADR-601](adr/601-binding-checked-historical-rollback.md) for transaction boundaries.

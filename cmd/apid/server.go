@@ -47,7 +47,7 @@ import (
 // M5+: handlers are grouped by resource in handlers.go (apps, deployments,
 // crons, domains, keys, instances, usage); this file owns the middleware
 // (auth, idempotent), the route table, and small request/response helpers.
-// M7.5: githubd is the GitHub App integration handle — see ADR-012. Slice 1
+// M7.5: githubd is the GitHub App integration handle — see ADR-12. Slice 1
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
@@ -111,14 +111,14 @@ type server struct {
 	// resendWebhook handler returns 500 if it's nil at request
 	// time so a misconfiguration is loud rather than silent.
 	mailBounce mailBounceHandler
-	// githubd is apid's handle to the githubd daemon (ADR-012). Never nil:
+	// githubd is apid's handle to the githubd daemon (ADR-12). Never nil:
 	// slice 1 default is stubGithubdClient; slice 7 swaps for a live dial.
 	githubd GithubdClient
 	// githubDeploysAvailable probes githubd's credential- and database-aware
 	// readiness endpoint. Capability discovery uses it so an installed but
 	// unarmed GitHub integration is never advertised to customers.
 	githubDeploysAvailable func(context.Context) bool
-	// gatewaydControlURL (ADR-093) is the loopback URL apid uses
+	// gatewaydControlURL (ADR-93) is the loopback URL apid uses
 	// to reach gatewayd-internal's control listener
 	// (default http://127.0.0.1:9090). Only the /v1/internal/apps/{slug}/routes
 	// endpoint is dialled today; the quota endpoint at
@@ -151,7 +151,7 @@ type server struct {
 	// initialization in unit tests.
 	events *events.Broadcaster
 	// eventsPlatform is the pkg/events.Platform (issue #517 / PR-C /
-	// ADR-064). When non-nil, the deploy handler emits
+	// ADR-64). When non-nil, the deploy handler emits
 	// wake.deploy_failed on the events table for every
 	// pre-build rejection (signature gate, image format, override
 	// cap). nil opts out (pre-PR-C unit tests + dev mode that
@@ -182,7 +182,7 @@ type server struct {
 	// ephemeral manager (so the daemon still boots in dev with no
 	// /etc/faas/secrets/session.key) — see cmd/apid/main.go.
 	sessions *session.Manager
-	// bindingKeyFn is the IAM-hardening-mega-PR (ADR-076) secret used
+	// bindingKeyFn is the IAM-hardening-mega-PR (ADR-76) secret used
 	// to derive the session binding-hash fingerprint. nil ⇒ binding
 	// is not armed (the unix-socket / cli-auth code path), in which
 	// case pkg/bindinghash.Compute returns "" and the middleware
@@ -236,7 +236,7 @@ type server struct {
 	// unbounded verification workload.
 	domainCreateLimiter *middleware.Limiter
 	// adminAllowlist is the email allowlist gating /v1/compute-nodes
-	// (issue #98 / ADR-028). nil = no admin access (every route
+	// (issue #98 / ADR-28). nil = no admin access (every route
 	// 403s); populated by WithAdminAllowlist from FAAS_ADMIN_EMAILS.
 	adminAllowlist *adminAllowlist
 	// statusCache backs GET /status/slo.json (spec §12 public status
@@ -253,7 +253,7 @@ type server struct {
 	statusMetrics    *statusMetrics
 	// promqlClient is the Prometheus HTTP client shared by the
 	// statusCache and the per-app metrics endpoint (issue #273 /
-	// ADR-042). Owned here so the GET /v1/apps/{slug}/metrics handler
+	// ADR-42). Owned here so the GET /v1/apps/{slug}/metrics handler
 	// reuses the same tested transport; the client is nil-safe (the
 	// handler falls back to a degraded zero-valued payload when
 	// Prometheus isn't configured). See pkg/promql/client.go.
@@ -272,7 +272,7 @@ type server struct {
 	// sbomRoot is the absolute filesystem directory imaged writes
 	// build SBOMs to (imaged populates build_provenance.sbom_storage_key
 	// with the relative path inside this root). Empty means the
-	// GET /v1/builds/{id}/sbom route 503s (issue #299 / ADR-038 Phase 3
+	// GET /v1/builds/{id}/sbom route 503s (issue #299 / ADR-38 Phase 3
 	// — the SBOM populator hadn't landed yet so the storage key is
 	// empty for every pre-PR build).
 	sbomRoot string
@@ -327,7 +327,7 @@ type server struct {
 	// nil-safe: the rotate handler queries the store directly when
 	// the cache is nil (the dev/test boot path).
 	graceWindowCache *graceWindowCache
-	// rekeyRunner is the background re-seal walker (ADR-089 PR-C).
+	// rekeyRunner is the background re-seal walker (ADR-89 PR-C).
 	// Wired only when FAAS_REKEY_ENABLED=true AND mfaIdentities()
 	// is non-empty; nil on daemons where either condition fails.
 	// The HTTP handler reads Progress() through this field; a nil
@@ -344,7 +344,7 @@ type server struct {
 	// sees rekey_no_identities instead of the misleading
 	// "set FAAS_REKEY_ENABLED and restart" detail.
 	rekeyRunnerOptedIn bool
-	// dataPlacementEnabled (ADR-098 PR-B / C4) is the per-PR
+	// dataPlacementEnabled (ADR-98 PR-B / C4) is the per-PR
 	// feature flag (FAAS_DATA_PLACEMENT=1) that gates the
 	// data-upstream handler family
 	// (GET/PUT/DELETE /v1/apps/{slug}/upstreams[...]).
@@ -379,7 +379,7 @@ type server struct {
 	// host_hash_failed audit emit without touching the
 	// host_hash_salt on disk.
 	hostHashFunc func(host string) (string, error)
-	// audit is the IAM-4 (ADR-035) seam that auth-relevant handlers
+	// audit is the IAM-4 (ADR-35) seam that auth-relevant handlers
 	// call to record a security event. The seam wraps
 	// state.Store.AppendEvent with best-effort failure semantics
 	// (log Warn + apid_audit_write_failures_total counter, never
@@ -395,7 +395,7 @@ type server struct {
 	// around nil-Middleware methods, which is fine — those
 	// tests don't call s.requireMFA/Scope either).
 	//
-	// ADR-044.
+	// ADR-44.
 	authMw *authmw.Middleware
 	// oidcHandler is the POST /v1/auth/oidc/exchange handler
 	// (issue #270 / ADR-101). Wired from newServerWithDeps so
@@ -417,10 +417,10 @@ type server struct {
 	// middleware when this is non-nil, so a nil pointer never
 	// reaches the middleware at runtime).
 	//
-	// Issue #190 / IAM-6 / ADR-061, PR 4.
+	// Issue #190 / IAM-6 / ADR-61, PR 4.
 	orgResolver *authz.StoreBackedResolver
 	// oauthConfig is the boot-resolved sign-in OAuth provider state
-	// (issue #419 / ADR-046). Computed once in cmd/apid/main.go
+	// (issue #419 / ADR-46). Computed once in cmd/apid/main.go
 	// via auth.LoadSignInConfigFromEnv, passed into newServerWithDeps,
 	// and read by:
 	//   - handlers_google.go / handlers_github.go to gate the
@@ -472,7 +472,7 @@ const anonymousAccountLabel = "anonymous"
 // WithOpsMetrics attaches the daemon-wide Prometheus registry. The
 // handler-level observe call in observeHandler hits ops; the chain
 // methods stay untouched. Mirrors pkg/builderd/builderd.go's
-// WithOpsMetrics (PR #124, ADR-030) and pkg/githubd/server.go's
+// WithOpsMetrics (PR #124, ADR-30) and pkg/githubd/server.go's
 // WithOpsMetrics (this PR).
 //
 // Issue #286: also wires the failed-login counter surface on the
@@ -529,7 +529,7 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 // prometheus URL degrades the JSON to "no source" rather than 5xx.
 //
 // The Prometheus HTTP client is shared with the per-app metrics
-// endpoint (issue #273 / ADR-042) so both consumers use the same
+// endpoint (issue #273 / ADR-42) so both consumers use the same
 // tested transport. nil promURL keeps both consumers functional but
 // degraded — statusCache returns "no source", the metrics handler
 // returns zeroed fields with Source="degraded".
@@ -557,7 +557,7 @@ func (s *server) WithBillingPortalURL(template string) *server {
 // build_provenance.sbom_storage_key against this root and streams the
 // blob. Empty disables the route — apid returns 503 build_sbom_unavailable
 // rather than 404 so the SDK can distinguish "no SBOM yet" from "no SBOM
-// ever". Issue #299 / ADR-038 Phase 3.
+// ever". Issue #299 / ADR-38 Phase 3.
 func (s *server) WithSBOMRoot(root string) *server {
 	s.sbomRoot = root
 	return s
@@ -626,7 +626,7 @@ func (s *server) WithMailBounce(h mailBounceHandler) *server {
 }
 
 // WithRekeyRunner attaches the background re-seal walker
-// (ADR-089 PR-C). nil is the documented default — the
+// (ADR-89 PR-C). nil is the documented default — the
 // /v1/admin/secrets/rekey-progress handler returns 503
 // code="rekey_disabled" when this field is nil. The setter
 // returns *server so production wiring can chain
@@ -657,7 +657,7 @@ func (s *server) MarkRekeyRunnerOptedIn() *server {
 
 // WithOAuthConfig attaches the sign-in OAuth provider state
 // resolved at boot via auth.LoadSignInConfigFromEnv (issue #419 /
-// ADR-046). Distinct from newServerWithDeps's positional args so
+// ADR-46). Distinct from newServerWithDeps's positional args so
 // the dozens of existing test call sites keep compiling — the
 // setter lives after construction. Production wiring in
 // cmd/apid/main.go::runWithDeps:
@@ -697,7 +697,7 @@ func (s *server) WithCompanionImages(images map[string]string) *server {
 }
 
 // WithEventsPlatform attaches the pkg/events.Platform
-// (issue #517 / PR-C / ADR-064). When non-nil, the deploy
+// (issue #517 / PR-C / ADR-64). When non-nil, the deploy
 // handler emits wake.deploy_failed on the events table for
 // every pre-build rejection (signature gate, image format,
 // override cap, missing slug). nil opts out — pre-PR-C
@@ -709,7 +709,7 @@ func (s *server) WithEventsPlatform(p *events.Platform) *server {
 	return s
 }
 
-// WithDataPlacement (ADR-098 PR-B / C4) attaches the per-PR
+// WithDataPlacement (ADR-98 PR-B / C4) attaches the per-PR
 // feature flag (FAAS_DATA_PLACEMENT=1) that gates the
 // data-upstream handler family. Default false preserves the
 // pre-PR-B byte-for-byte posture. Wired once at boot from
@@ -806,7 +806,7 @@ func (s *server) WithHostHashFunc(fn func(host string) (string, error)) *server 
 	return s
 }
 
-// WithGatewaydControlURL (ADR-093) attaches the loopback URL
+// WithGatewaydControlURL (ADR-93) attaches the loopback URL
 // apid uses to reach gatewayd-internal's control listener
 // (/v1/internal/apps/{slug}/routes and /streaming-cap). Default
 // http://127.0.0.1:9090 matches gatewayd-internal's default
@@ -972,14 +972,14 @@ func newServer(store state.Store, log *slog.Logger, domain string, notif Notifie
 }
 
 // newServerWithDeps wires the full server surface including the M7
-// stripe-webhook + mailer deps, the M7.5 githubd client (ADR-012),
+// stripe-webhook + mailer deps, the M7.5 githubd client (ADR-12),
 // the dashboard session manager + login-token TTL, and the G6 DPA
 // template path.
 //
 // Production (cmd/apid/main.go) calls this with env-loaded values;
 // tests use the simpler newServer (no secret, noop mailer, stub
 // githubd, nil sessions → ephemeral key, default 15m login TTL).
-// The sign-in OAuth config (issue #419 / ADR-046) is wired
+// The sign-in OAuth config (issue #419 / ADR-46) is wired
 // separately via (*server).WithOAuthConfig after construction —
 // same pattern as WithBillingProvider, WithOpsMetrics, etc. so the
 // existing positional call sites in tests don't need editing.
@@ -1055,7 +1055,7 @@ func newServerWithDeps(
 		MaxFailures:   10,
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	})
-	// IAM-4 (ADR-035): the auth audit seam. Wired here so handlers
+	// IAM-4 (ADR-35): the auth audit seam. Wired here so handlers
 	// can call s.audit.Emit(...) without a per-request nil check.
 	// ops is passed in via WithOpsMetrics after this returns; until
 	// then audit.ops is nil and Emit silently skips the counter
@@ -1108,7 +1108,7 @@ func newServerWithDeps(
 		// auditor is wired; nil in tests disables the row. The Limiter
 		// is the shared apiAuthLimiter that backs s.authLimited (the
 		// API surface-level per-IP bucket per spec §11 10/min/IP).
-		// ADR-044.
+		// ADR-44.
 		totp: newTOTPGuard(),
 		authMw: authmw.New(
 			storeAsAuthenticator(store),
@@ -1117,7 +1117,7 @@ func newServerWithDeps(
 			auditorAsAuthAuditor(newAuditor(store, log, nil)),
 			log,
 			apiAuthLimiter,
-			// IAM-hardening-mega-PR (ADR-076): hand the auth
+			// IAM-hardening-mega-PR (ADR-76): hand the auth
 			// middleware the same 32-byte key bytes the session
 			// AEAD uses so the binding-hash cross-check keys off
 			// the host secret. Closure pulls a fresh copy on each
@@ -1125,7 +1125,7 @@ func newServerWithDeps(
 			// past the constructor; we read via Manager.BindingKey).
 			func() []byte { return sessions.BindingKey() },
 		),
-		// Issue #190 / IAM-6 / ADR-061, PR 4: org resolver backs
+		// Issue #190 / IAM-6 / ADR-61, PR 4: org resolver backs
 		// s.loadOrg (cmd/apid/auth_facade.go). Wraps the same
 		// pkg/state.Store the rest of the daemon uses; PR 7 may
 		// add a small LRU cache here when admission pressure
@@ -1139,7 +1139,7 @@ func newServerWithDeps(
 		// inert for those tests — no DB call attempted.
 		orgResolver:      maybeStoreBackedResolver(store),
 		googleIDVerifier: newGoogleIDTokenVerifier(log),
-		// oauthConfig (issue #419 / ADR-046) is left at the
+		// oauthConfig (issue #419 / ADR-46) is left at the
 		// zero value here (both providers Disabled); production
 		// wires the env-resolved config via (*server).WithOAuthConfig
 		// from cmd/apid/main.go, mirroring the With* setter pattern
@@ -1336,7 +1336,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppTask))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelAppTask)))))
 	mux.HandleFunc("POST /v1/admin/object-storage/usage-reports", s.authLimited(s.requireAdminMutation(s.recordObjectStorageUsage)))
-	// IAM-6 (issue #190 / ADR-061, PR 4): active-org whoami. The
+	// IAM-6 (issue #190 / ADR-61, PR 4): active-org whoami. The
 	// route is undocumented in api/openapi.yaml for PR 4 — PR 5
 	// adds the spec coverage + the rest of the /v1/orgs/{slug}/...
 	// surface. Loads the org via s.loadOrg (the pkg/authz middleware
@@ -1344,7 +1344,7 @@ func (s *server) handler() http.Handler {
 	// role. No header resolves the caller's personal organization.
 	mux.HandleFunc("GET /v1/orgs/me", s.auth(s.loadOrg(s.whoamiActiveOrg)))
 
-	// Orgs (ADR-061 / IAM-6 / issue #190, PR 5 + PR 7). Customer-
+	// Orgs (ADR-61 / IAM-6 / issue #190, PR 5 + PR 7). Customer-
 	// visible org CRUD + member management + invitations + ownership
 	// transfer + seat-usage visibility. The full surface is mounted
 	// here in one block so the route table reads top-down by resource.
@@ -1358,7 +1358,7 @@ func (s *server) handler() http.Handler {
 	//     /v1/orgs/{slug}/invitations/{invitation_id} (revoke),
 	//     /v1/orgs/{slug}/seat_usage (PR 7 visibility-only)
 	// PR 9 ships the per-seat billing cut-over (pricing + Stripe
-	// subscription-item quantities) per ADR-061 §"Out of scope";
+	// subscription-item quantities) per ADR-61 §"Out of scope";
 	// PR 8 ships SSO + invitation-accept step-up.
 	mux.HandleFunc("GET /v1/orgs", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listOrgsForCaller)))
 	mux.HandleFunc("POST /v1/orgs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createSharedOrg)))))
@@ -1430,7 +1430,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/keys/grace_window_days", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getGraceWindow))))
 	mux.HandleFunc("PATCH /v1/account/keys/grace_window_days", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.setGraceWindow))))
 	// Per-account additive budget on top of the plan's
-	// apps.egress_allowlist cap (issue #679 / PR-B / ADR-082).
+	// apps.egress_allowlist cap (issue #679 / PR-B / ADR-82).
 	// The override is admin-settable only; the customer-facing
 	// validator reads the value but has no API surface to write it.
 	// Mirrors the grace-window chain shape (admin + MFA + no
@@ -1438,7 +1438,7 @@ func (s *server) handler() http.Handler {
 	// reverts by setting extra=0).
 	mux.HandleFunc("GET /v1/account/egress_allowlist_extra", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getAccountEgressAllowlistExtra))))
 	mux.HandleFunc("PATCH /v1/account/egress_allowlist_extra", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.setAccountEgressAllowlistExtra))))
-	// G6 account self-service (spec §17 G6, ADR-021). /v1/account/dpa
+	// G6 account self-service (spec §17 G6, ADR-21). /v1/account/dpa
 	// is intentionally mounted without s.auth — the DPA is a public
 	// artefact a prospect reads before signing up. The export + delete
 	// + restore paths sit behind s.auth but pass the
@@ -1451,7 +1451,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/restore", s.auth(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreAccount)))
 	mux.HandleFunc("GET /v1/account/dpa", s.dpaTemplate)
 
-	// IAM-3 server-side session revocation (ADR-039, issue #187
+	// IAM-3 server-side session revocation (ADR-39, issue #187
 	// + #244 merged). All four routes sit behind s.auth but
 	// WITHOUT authLimited — session management is rare and
 	// counting 401s would only alarm on a customer who typed
@@ -1623,7 +1623,7 @@ func (s *server) handler() http.Handler {
 	// never charges through Gregale.
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageStatementHandoff))))
 	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.claimAPIConsumerUsageStatement)))))
-	// Issue #273 / ADR-042 — per-app metrics endpoint. Read-only,
+	// Issue #273 / ADR-42 — per-app metrics endpoint. Read-only,
 	// no MFA required (the primary caller is an API key with
 	// ScopesReadSurface). Mirrors getApp's IDOR-safe loadApp so a
 	// cross-account slug is a 404, not a 200 with another tenant's
@@ -1648,7 +1648,7 @@ func (s *server) handler() http.Handler {
 	// loadApp). Plan-gated Hobby+ via AppUsageSummaryAllowed —
 	// same 402 contract as /metrics and /wake-timeline.
 	mux.HandleFunc("GET /v1/apps/{slug}/usage", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppUsage)))
-	// ADR-093: per-route observability reader. Same auth chain
+	// ADR-93: per-route observability reader. Same auth chain
 	// as /v1/apps/{slug}/metrics (read-only, no MFA, primary
 	// caller is an API key with ScopesReadSurface). The handler
 	// reverse-proxies to gatewayd-internal's control listener
@@ -1660,7 +1660,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/routes", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRoutes)))
 	mux.HandleFunc("GET /v1/apps/{slug}/audit/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAudit))))
 	mux.HandleFunc("GET /v1/apps/{slug}/discovered-routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppDiscoveredRoutes))))
-	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
+	// ADR-91 D20.5 amendment / issue #881 — per-route throttle
 	// recommender (Phase 1). Read-only, no MFA, primary caller is
 	// an API key with ScopesReadSurface. IDOR-safe via loadApp —
 	// cross-account slug is a 404, not a 200 with another tenant's
@@ -1683,13 +1683,13 @@ func (s *server) handler() http.Handler {
 	// pgstore helper — there's no (accountID, slug) pair to load
 	// because there's no slug path.
 	mux.HandleFunc("GET /v1/apps/metrics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppsMetrics)))
-	// Issue #696 / ADR-082 — per-app SLO panel. Closed-set
+	// Issue #696 / ADR-82 — per-app SLO panel. Closed-set
 	// windowed vocabulary (1h | 24h | 7d). Auth chain matches
 	// /v1/apps/{slug}/metrics: read-only, NO MFA, primary
 	// caller is an API key with ScopesReadSurface. IDOR-safe
 	// via loadApp (cross-account slug → 404).
 	mux.HandleFunc("GET /v1/apps/{slug}/slo", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppSLO)))
-	// ADR-096 / PR-B — customer-facing automatic error
+	// ADR-96 / PR-B — customer-facing automatic error
 	// grouping. Read-only, no MFA, primary caller is an API key
 	// with ScopesReadSurface. IDOR-safe via loadApp
 	// (cross-account slug → 404, byte-identical to a real 404).
@@ -1699,7 +1699,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/errors/summary", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppErrorsSummary)))
 	mux.HandleFunc("GET /v1/apps/{slug}/errors/{fingerprint}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listAppErrorRequests)))
 	mux.HandleFunc("GET /v1/apps/{slug}/errors/{fingerprint}/first", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppErrorSample)))
-	// Issue #696 / ADR-082 — account-scoped SLO rollup. Flat
+	// Issue #696 / ADR-82 — account-scoped SLO rollup. Flat
 	// scalar responses (Billing-derivable instance_hours /
 	// gb_hours), so the auth chain matches /v1/usage (MFA +
 	// usage:read). Cross-account isolation is the SQL JOIN
@@ -1721,7 +1721,7 @@ func (s *server) handler() http.Handler {
 	// a production app from the customer's POV.
 	mux.HandleFunc("POST /v1/preview/{slug}/destroy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.destroyPreview))))
 	mux.HandleFunc("GET /v1/preview/{slug}/environment", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getPreviewEnvironmentStatus))))
-	// Issue #472 / ADR-054 — admin-only signature-enforcement toggle.
+	// Issue #472 / ADR-54 — admin-only signature-enforcement toggle.
 	// Mounted with the admin+MFA chain (mirrors PATCH /v1/account/plan
 	// at server.go:516) so a customer cannot self-onboard signature
 	// enforcement on their own app. The customer PATCH surface above
@@ -1735,7 +1735,7 @@ func (s *server) handler() http.Handler {
 	// every live canary row before restoring the app to active.
 	mux.HandleFunc("POST /v1/apps/{slug}/security/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recoverAppSecurityQuarantine)))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/security", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.patchAppSecurity))))
-	// Issue #472 / ADR-054 — per-app cosign trusted-publisher list
+	// Issue #472 / ADR-54 — per-app cosign trusted-publisher list
 	// (admin + MFA). GET requires admin (read), PUT/DELETE require
 	// admin + MFA (write). The mount chain handles both via the
 	// admin scope; the same authLimited → requireMFA → requireScope
@@ -1825,7 +1825,7 @@ func (s *server) handler() http.Handler {
 	// handler (state.IsStageName) — invalid from_stage returns 400
 	// with a structured RFC 7807 problem before the storage call.
 	mux.HandleFunc("POST /v1/deployments/{id}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryDeployment))))
-	// DEPLOY-PROV-4 / ADR-092 / issue #739 — headless source-ref
+	// DEPLOY-PROV-4 / ADR-92 / issue #739 — headless source-ref
 	// deploy from CI. Same auth chain as the multipart sibling
 	// (authLimited → requireMFA → requireScope(ScopesDeployWriteSurface)
 	// → idempotent). Idempotency-Key on a CI retry collapses to the
@@ -1907,6 +1907,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/route-health/deployments/{deployment}/investigation", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteHealthInvestigation))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-health/deployments/{deployment}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listRouteHealthHistory))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-health/deployments/{deployment}/history/{decision_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteHealthHistoryEntry))))
+	mux.HandleFunc("GET /v1/apps/{slug}/bindings/release-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getBindingReleasePolicy))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/bindings/release-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putBindingReleasePolicy))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-requirements/gate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCanaryRouteGate))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/route-requirements/gate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putCanaryRouteGate))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-requirements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getSavedRouteRequirements))))
@@ -1918,7 +1920,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/route-requirements/checks/{deployment}/refresh", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.refreshAutomaticRouteCheck))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppOpenAPIImport))))
 	mux.HandleFunc("GET /v1/deployments/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getDeployment))))
-	// Per-deploy grype scan drill-down (issue #464 / ADR-055).
+	// Per-deploy grype scan drill-down (issue #464 / ADR-55).
 	// Returns the typed api.ScanResult envelope (status,
 	// severity counts, vulnerabilities, error). 404 on
 	// not-yet-scanned or cross-account; IDOR posture
@@ -1973,7 +1975,7 @@ func (s *server) handler() http.Handler {
 	// false so the dashboard renders the closed-state chip
 	// without a second round-trip.
 	mux.HandleFunc("GET /v1/deployments/{id}/url", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.getDeploymentURL))))
-	// Issue #557 closure / ADR-072 — PATCH the per-deployment floor
+	// Issue #557 closure / ADR-72 — PATCH the per-deployment floor
 	// (MinInstances). Reuses the deploy-write scope (the only mutable
 	// field is the floor; image / digest / overrides / sidecars stay
 	// immutable post-create).
@@ -2012,28 +2014,28 @@ func (s *server) handler() http.Handler {
 	// {id} placeholder) so there is no conflict with the
 	// sibling {id}-bearing routes above.
 	mux.HandleFunc("POST /v1/apps/{slug}/deployments/clear-obsolete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleClearObsoleteDeployments))))
-	// Builds (DEPLOY-PROV-6 / ADR-089, issue #741). Lifecycle
+	// Builds (DEPLOY-PROV-6 / ADR-89, issue #741). Lifecycle
 	// surface — returns status, timestamps, failure_class,
 	// server-computed duration_seconds for a build id. Companion
-	// to the ADR-038 /v1/builds/{id}/provenance (post-mortem
+	// to the ADR-38 /v1/builds/{id}/provenance (post-mortem
 	// export) and /v1/builds/{id}/sbom (post-mortem blob) routes;
 	// this one is what CI scripts call to fail-fast on build
 	// error without scraping SSE. Same auth (api.ScopesReadSurface)
 	// + same IDOR-safe Build → Deployment → App → AccountID check
 	// as the sibling routes. The status field is the existing
-	// 4-state enum (queued|running|succeeded|failed); see ADR-089
+	// 4-state enum (queued|running|succeeded|failed); see ADR-89
 	// §1 for why 'cancelled' is out of scope.
 	mux.HandleFunc("GET /v1/builds/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getBuild)))
-	// Builds list (DEPLOY-PROV-6 follow-up / ADR-091, issue #741
+	// Builds list (DEPLOY-PROV-6 follow-up / ADR-91, issue #741
 	// close-out). Companion to GET /v1/builds/{id} — same auth +
-	// scope chain (intentionally NO requireMFA per ADR-089 §6;
+	// scope chain (intentionally NO requireMFA per ADR-89 §6;
 	// GET /v1/deployments does use requireMFA but the builds
-	// family deliberately does not — see ADR-089). The IDOR
+	// family deliberately does not — see ADR-89). The IDOR
 	// chain for ?app=<slug> is AppBySlug + App.AccountID == acct.ID
 	// (cross-account slug → 404 app_not_found). Cursor pagination
 	// + status filter mirror GET /v1/deployments.
 	mux.HandleFunc("GET /v1/builds", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listBuilds)))
-	// Builds (ADR-038). The provenance route is the only /v1/builds
+	// Builds (ADR-38). The provenance route is the only /v1/builds
 	// surface today; deployments.id remains the parent resource.
 	// Build:read scope (api.ScopesReadSurface) gates the read.
 	mux.HandleFunc("GET /v1/builds/{id}/provenance", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getBuildProvenance)))
@@ -2044,14 +2046,15 @@ func (s *server) handler() http.Handler {
 	// not_found Problem body — no existence oracle. Same auth +
 	// scope as the cron-run write (ScopesReadSurface).
 	mux.HandleFunc("GET /v1/cron-fire-now-requests/{request_id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFireCronRequest)))
-	// Builds (issue #299 / ADR-038 Phase 3). The /sbom route is the
-	// ADR-038 Phase-3 companion to /provenance — same auth, same
+	// Builds (issue #299 / ADR-38 Phase 3). The /sbom route is the
+	// ADR-38 Phase-3 companion to /provenance — same auth, same
 	// scoping, same IDOR-safe Build → Deployment → App → AccountID
 	// check; the handler streams the CycloneDX JSON file from
 	// FAAS_STORAGE_ROOT/<sbom_storage_key> rather than rendering it
 	// through writeJSON. Returns build_sbom_unavailable (503) when
 	// the imaged syft populator hasn't run for this build.
 	mux.HandleFunc("GET /v1/builds/{id}/sbom", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getBuildSbom)))
+	mux.HandleFunc("GET /v1/apps/{slug}/rollbacks/{operation}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getCheckedRollback)))
 	mux.HandleFunc("POST /v1/apps/{slug}/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.rollbackApp)))))
 	// SAFE-RELEASES-R (issue #976 / ADR-122): the operator
 	// manual-rollout-recovery escape hatch. The CLI subcommand
@@ -2081,7 +2084,7 @@ func (s *server) handler() http.Handler {
 	// (instances.id UUIDv7). Default limit 25, max 100 (strict 400
 	// on bad input via api.ParseLimit). Additive to the per-app
 	// endpoint — dashboards opt in. Per-account rate limit
-	// (ADR-040) fires at the gatewayd-internal edge; this route charges 1
+	// (ADR-40) fires at the gatewayd-internal edge; this route charges 1
 	// token via authLimited just like every other /v1/* call.
 	mux.HandleFunc("GET /v1/instances", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listInstancesForAccount))))
 
@@ -2115,7 +2118,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/crons", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createCron)))))
 	mux.HandleFunc("PATCH /v1/crons/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateCron))))
 	mux.HandleFunc("DELETE /v1/crons/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteCron))))
-	// Single-cron read (issue #791 PR-E / ADR-090 closure). Backs
+	// Single-cron read (issue #791 PR-E / ADR-90 closure). Backs
 	// `gregale crons info <id>` and any dashboard drill-down. Read
 	// surface plus requireMFA — keeps the crons family consistent:
 	// listCrons, listCronRuns, fireCronNow, createCron, updateCron,
@@ -2131,8 +2134,8 @@ func (s *server) handler() http.Handler {
 	// Cancel one command-cron run. Deploy-write scope, optional idempotency
 	// replay, and the same account/MFA guards as the other cron mutations.
 	mux.HandleFunc("POST /v1/crons/{id}/runs/{run_id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelCronCommandRun)))))
-	// Manual fire-now (issue #791 PR-C / ADR-090). Deploy-write scope
-	// (no new cron:write constant per ADR-090 §Sub-decisions 1).
+	// Manual fire-now (issue #791 PR-C / ADR-90). Deploy-write scope
+	// (no new cron:write constant per ADR-90 §Sub-decisions 1).
 	// idempotent is INNERMOST so the replay lookup happens AFTER
 	// auth/scope — a duplicate (account, Idempotency-Key) request
 	// returns the stored 202 without inserting a second row.
@@ -2149,7 +2152,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/triggers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createTrigger)))))
 	mux.HandleFunc("GET /v1/triggers/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getTrigger))))
 
-	// Jobs (issue #1184 Workstream A / ADR-099). Same
+	// Jobs (issue #1184 Workstream A / ADR-99). Same
 	// authLimited + requireMFA + requireScope shape as the
 	// cron family. POST routes (createJob + createJobRun) are
 	// idempotent-wrapped so retries are safe; PATCH/DELETE
@@ -2191,7 +2194,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attempts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobTaskAttempts))))
 	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/artifacts/{artifact}/download", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireScope(api.ScopesStorageReadSurface...)(s.downloadJobArtifact)))))
 
-	// Workflows (ADR-081)
+	// Workflows (ADR-81)
 	// Internal event ingress (EPIC #1278 / ADR-180). The handler persists a
 	// tenant-scoped CloudEvents envelope and wakes schedd's content matcher;
 	// the durable events row remains the recovery source.
@@ -2252,7 +2255,7 @@ func (s *server) handler() http.Handler {
 	// matcher doesn't conflict with the {id} getTrigger route.
 	mux.HandleFunc("POST /v1/triggers:batch_create", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.batchCreateTrigger)))))
 
-	// Projects (ADR-050, Phase 3). Two routes — /scan is dry-run
+	// Projects (ADR-50, Phase 3). Two routes — /scan is dry-run
 	// (no writes), / is the transactional apply. Both are deploy-
 	// write scoped; / is wrapped in s.idempotent so retries are
 	// safe. The middleware order is the same as POST /v1/crons so
@@ -2314,7 +2317,7 @@ func (s *server) handler() http.Handler {
 	// deploys.
 	mux.HandleFunc("DELETE /v1/projects/{slug}/exclusions/{slug2}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteDeploymentScopeExclusion))))
 
-	// Alert rules (ADR-045 / issue #396 PR 3).
+	// Alert rules (ADR-45 / issue #396 PR 3).
 	// CRUD surface under /v1/apps/{slug}/alerts. The rotate-secret
 	// action verb is the literal `/rotate-secret` segment (Go 1.22+
 	// mux wildcard ends at `}` so a colon-form verb would panic —
@@ -2323,6 +2326,8 @@ func (s *server) handler() http.Handler {
 	// listAlertRules so a Free customer posting to a non-existent
 	// slug gets a clean 402, not a 404 that would leak the slug
 	// (PR review finding F4).
+	mux.HandleFunc("GET /v1/apps/{slug}/alert-rollbacks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAlertRollbacks))))
+	mux.HandleFunc("GET /v1/apps/{slug}/alert-rollbacks/{fire}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAlertRollback))))
 	mux.HandleFunc("GET /v1/apps/{slug}/alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAlertRules))))
 	mux.HandleFunc("POST /v1/apps/{slug}/alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAlertRule)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/alerts/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAlertRule))))
@@ -2358,7 +2363,7 @@ func (s *server) handler() http.Handler {
 	// removed still returns a clean 404, not a 5xx.
 	mux.HandleFunc("POST /v1/apps/{slug}/alert-presets/{name}/test", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sendTestAlertPreset))))
 
-	// Edge rules (ADR-089, planned). Customer-facing resource that
+	// Edge rules (ADR-89, planned). Customer-facing resource that
 	// runs in pkg/gateway BEFORE host→app resolution. Mirrors the
 	// alert-rules decorator chain: authLimited → requireMFA →
 	// requireScope (read|deploy-write); POST is also wrapped in
@@ -2414,7 +2419,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/cors-presets/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.patchCorsPreset))))
 	mux.HandleFunc("DELETE /v1/cors-presets/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteCorsPreset))))
 
-	// Outbound webhooks (issue #476 / ADR-076). CRUD surface under
+	// Outbound webhooks (issue #476 / ADR-76). CRUD surface under
 	// /v1/apps/{slug}/webhooks mirrors /v1/apps/{slug}/alerts: same
 	// plan-tier gate (Free → 402 plan_webhooks_not_allowed), same
 	// idempotent + authLimited wrapper, same secretbox.SealBytes
@@ -2535,7 +2540,7 @@ func (s *server) handler() http.Handler {
 	// mux can register them. The wire shape matches the spec-level
 	// intent (`queueSend`, `queueReceive`, `queueAck` handlers).
 	//
-	// IAM-1 (ADR-034): every Move 2 route gets the same per-method
+	// IAM-1 (ADR-34): every Move 2 route gets the same per-method
 	// scope default as the rest of /v1/* — invoke/send/ack/create are
 	// write, receive/get/list are read. None are admin-only because
 	// they're the customer-facing event surface; the existing
@@ -2644,7 +2649,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/apps/{slug}/deploy-tokens/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.revokeDeployToken))))
 	mux.HandleFunc("POST /v1/apps/{slug}/deploy-tokens/{id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.rotateDeployToken)))))
 
-	// PR 6 (issue #190 / IAM-6 / ADR-061) — org-scoped API key surface.
+	// PR 6 (issue #190 / IAM-6 / ADR-61) — org-scoped API key surface.
 	// Compose s.loadOrg (resolves X-Active-Org / ?org= to a membership)
 	// followed by s.authLimited. The OrgAction closed-vocab
 	// (OrgActionCreateApiKey, OrgActionRevokeApiKey) gates the member's
@@ -2681,7 +2686,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/admin/accounts/{id}/abuse-hold",
 		s.authLimited(s.requireAdminMutation(s.releaseAccountAbuseHold)))
 
-	// PR-D / ADR-012 §7 amendment: per-tenant GitHub App webhook
+	// PR-D / ADR-12 §7 amendment: per-tenant GitHub App webhook
 	// secret rotation. Same two-layer gate as issueCredit (scope +
 	// email allowlist inside the handler) so a leaked admin key
 	// from a non-operator account cannot rotate another tenant's
@@ -2707,7 +2712,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/billing-paddle-overage/preflight",
 		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.paddleOveragePreflight)))
 
-	// Operator observability backend (issue #777 / ADR-091). The
+	// Operator observability backend (issue #777 / ADR-91). The
 	// /v1/admin/obs/* surface gives the platform owner read-only
 	// visibility into fleet state (users, apps, nodes, heartbeats).
 	// Same two-layer gate as the rest of /v1/admin/* (admin scope
@@ -2715,7 +2720,7 @@ func (s *server) handler() http.Handler {
 	// via s.adminAllows), plus MFA — the obs view exposes
 	// secret-adjacent metadata (MFA enrollment, account email) and
 	// the cost is a one-time TOTP per 24h session thanks to
-	// step-up elsewhere (ADR-091 §"Two-layer gate confirmed").
+	// step-up elsewhere (ADR-91 §"Two-layer gate confirmed").
 	// All five routes are GETs; no s.idempotent wrapper needed
 	// (matches /v1/compute-nodes read precedent).
 	// ADR-371: which tenant connected to an address at a time. Operator-only
@@ -2744,17 +2749,17 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsNodeDetail))))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsNodeHeartbeats))))
-	// PR #4 (ADR-092 §3.6) — per-node wake-latency quantiles.
+	// PR #4 (ADR-92 §3.6) — per-node wake-latency quantiles.
 	// Literal path /wake-latency sits before the SSE /events
 	// route; Go 1.22+ mux disambiguates by exact match.
 	mux.HandleFunc("GET /v1/admin/obs/nodes/wake-latency",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsNodeWakeLatency))))
-	// PR #2 endpoints (ADR-091 §3.5 + §3.6). Same two-layer gate +
+	// PR #2 endpoints (ADR-91 §3.5 + §3.6). Same two-layer gate +
 	// MFA as PR #1. Anomalies reads usage_minutes only; rate-limits
 	// reads events + the in-process s.apiAuthLimiter snapshot.
 	mux.HandleFunc("GET /v1/admin/obs/anomalies",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAnomalies))))
-	// PR #3 endpoints (ADR-091 §3.7). audit-log/search reads the
+	// PR #3 endpoints (ADR-91 §3.7). audit-log/search reads the
 	// FK-free audit_log table (the regulator-grade evidence path);
 	// events reads the live events table (the live diagnostic path);
 	// nodes/events is the SSE mirror of the (deprecated) old
@@ -2896,7 +2901,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/config/{key}/revisions",
 		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigRevisions)))
 
-	// IAM-4 (ADR-035) — auth audit log surface. Read-only; the
+	// IAM-4 (ADR-35) — auth audit log surface. Read-only; the
 	// events table is append-only (spec §5). Scope gating: session
 	// cookie (implicitly admin) or any API key carrying {admin,
 	// apps:read} (api.ScopesReadSurface). Compute-node admin-only
@@ -2920,7 +2925,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/audit-log", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAuditLog))))
 	mux.HandleFunc("GET /v1/audit-log/all", s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.listAuditLogAll))))
 
-	// ADR-089 PR-C — background re-seal progress (operator-only,
+	// ADR-89 PR-C — background re-seal progress (operator-only,
 	// FAAS_REKEY_ENABLED opt-in). Same gate as /v1/audit-log/all
 	// (admin scope, no MFA — the operator session is already
 	// MFA-gated upstream). The handler returns 503
@@ -2932,14 +2937,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/secrets/rekey-progress",
 		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.getRekeyProgress)))
 
-	// Issue #517 / PR-C / ADR-064: customer-facing wake-timeline
+	// Issue #517 / PR-C / ADR-64: customer-facing wake-timeline
 	// surface. Sub-resource of /v1/apps/{slug} — same auth chain
 	// as the rest of the /v1/apps/* read surface, same §12
 	// per-app rate-limit budget. The query keys on the partial
 	// index events_wake_id_idx (migrations/00113) for O(frames)
 	// latency regardless of events table size.
 	mux.HandleFunc("GET /v1/apps/{slug}/wakes/{wake_id}/timeline", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWakeTimeline))))
-	// Issue #463 / ADR-069: customer-facing sidecar lifecycle timeline.
+	// Issue #463 / ADR-69: customer-facing sidecar lifecycle timeline.
 	// The read is backed by the sidecar_name partial indexes and applies
 	// the same per-app forge-proof as the wake timeline above.
 	mux.HandleFunc("GET /v1/apps/{slug}/sidecars/{sidecar_name}/timeline", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listSidecarTimeline))))
@@ -2961,7 +2966,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/secrets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listSecretsForAccount))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/secrets/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.setSecret))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/secrets/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.deleteSecret))))
-	// Per-secret rotation (ADR-089 PR-B). Distinct verb from PUT so
+	// Per-secret rotation (ADR-89 PR-B). Distinct verb from PUT so
 	// dashboards filtering on audit kind='secret.rotated' see
 	// value-replacement events but not first-time sets. Same
 	// scope + MFA posture as secrets:write — losing the new
@@ -2970,7 +2975,7 @@ func (s *server) handler() http.Handler {
 	// is already in the customer's hand.
 	mux.HandleFunc("POST /v1/apps/{slug}/secrets/{key}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.rotateAppSecret))))
 
-	// Per-app private-registry Basic Auth (issue #461 / ADR-062).
+	// Per-app private-registry Basic Auth (issue #461 / ADR-62).
 	// Password is sealed server-side under namespace "registry_creds";
 	// the same host.age recipient apid loads for app secrets is
 	// reused — same key file, same in-process lifetime. imaged
@@ -2984,7 +2989,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/apps/{slug}/registry-credentials",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesRegistryCredentialsWriteSurface...)(s.deleteRegistryCredential))))
 
-	// Customer env vars (issue #395 / ADR-045). Plaintext VALUE flows
+	// Customer env vars (issue #395 / ADR-45). Plaintext VALUE flows
 	// through PUT over TLS; persisted as-is (no seal step) by
 	// handlers_env.go. env:write is NOT MFA-gated because env vars are
 	// explicitly non-sensitive runtime config — the secret surface is
@@ -2999,7 +3004,7 @@ func (s *server) handler() http.Handler {
 	// same ScopesReadSurface gate as listEnv.
 	mux.HandleFunc("GET /v1/apps/{slug}/env-diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.envDiff)))
 
-	// Data upstreams (ADR-098 §D4 / PR-B). The full handler family is
+	// Data upstreams (ADR-98 §D4 / PR-B). The full handler family is
 	// gated on s.dataPlacementEnabled (FAAS_DATA_PLACEMENT=1); when
 	// the flag is off, each handler returns 402 plan_feature_gated so
 	// pre-PR-B callers see the exact same wire shape as before. The
@@ -3101,7 +3106,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/mfa/disable-email/confirm", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmailConfirm))))
 
 	// Stripe webhook (no auth — Stripe signs requests; for M5 we accept
-	// unsigned and trust the network boundary; ADR-007 hardening later).
+	// unsigned and trust the network boundary; ADR-7 hardening later).
 	mux.HandleFunc("POST /v1/webhooks/stripe", s.stripeWebhook)
 	// Paddle webhook (no auth — Paddle signs requests; same trust
 	// model as the Stripe path). The handler returns 503 if
@@ -3129,7 +3134,7 @@ func (s *server) handler() http.Handler {
 	// boundary. Tokens are stored only as SHA-256 digests.
 	mux.HandleFunc("POST /v1/hooks/{token}", s.receiveInboundWebhook)
 
-	// Operator admin surface (issue #98 / ADR-028). Auth lives in
+	// Operator admin surface (issue #98 / ADR-28). Auth lives in
 	// s.adminAllows (email allowlist via FAAS_ADMIN_EMAILS); handlers
 	// 403 every request when the allowlist is empty. The scope
 	// check is layered on top so a non-admin key never reaches the
@@ -3164,13 +3169,13 @@ func (s *server) handler() http.Handler {
 	// fleet upserts, not the dashboard's mixed-workload feed).
 	mux.HandleFunc("GET /v1/compute-nodes/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.withDeprecation(s.computeNodeEventsHandler)))))
 
-	// M7.5 SSE live-update (ADR-011). Handles session-cookie OR
+	// M7.5 SSE live-update (ADR-11). Handles session-cookie OR
 	// API-key auth itself — the cookie path is for the dashboard,
 	// the Bearer path for the CLI. NOT mounted behind s.auth so the
 	// cookie flow works without an API-key round trip.
 	mux.Handle("GET /v1/events", s.dashboardChain(s.eventsHandler(s.log)))
 
-	// Google OAuth 2.0 Auth (issue #165 PR #2, ADR-032). Routes
+	// Google OAuth 2.0 Auth (issue #165 PR #2, ADR-32). Routes
 	// share the dashboard auth bucket so the §11 10/min/IP budget
 	// applies to the OAuth flow as well as the password form.
 	mux.Handle("GET /v1/auth/google", s.dashboardAuthChain(middleware.AuthLimitConfig{
@@ -3180,7 +3185,7 @@ func (s *server) handler() http.Handler {
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, http.HandlerFunc(s.handleGoogleOAuthCallback)))
 
-	// GitHub OAuth dashboard login (issue #165 PR #2, ADR-032).
+	// GitHub OAuth dashboard login (issue #165 PR #2, ADR-32).
 	// Not the same as /oauth/callback (the GitHub App install-bind
 	// flow at handlers_oauth.go). Shares the dashboard auth bucket
 	// with the other auth entrypoints so brute-force can't isolate
@@ -3191,7 +3196,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /v1/auth/github/callback", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, http.HandlerFunc(s.handleGitHubOAuthCallback)))
-	// Issue #419 / ADR-046: sign-in OAuth capability signal for the
+	// Issue #419 / ADR-46: sign-in OAuth capability signal for the
 	// dashboard. Behind sessionAuth so the response doesn't reveal
 	// the configured-provider set to random scanners; behind
 	// dashboardChain (not dashboardAuthChain) because the route
@@ -3201,7 +3206,7 @@ func (s *server) handler() http.Handler {
 	// s.oauthConfig (loaded once at boot via (*server).WithOAuthConfig).
 	mux.Handle("GET /v1/auth/capabilities", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderAuthCapabilities))))
 
-	// Dashboard surface (M7.5, ADR-011). Lives behind gatewayd-public's
+	// Dashboard surface (M7.5, ADR-11). Lives behind gatewayd-public's
 	// /dashboard/* reverse-proxy (spec §11 single-public-listener).
 	//
 	// Slice 3 wires the magic-link auth flow:
@@ -3362,7 +3367,7 @@ func (s *server) handler() http.Handler {
 	// <img src=…> (defense-in-depth against CSRF-on-GET).
 	mux.Handle("POST /dashboard/install/connect", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.startConnectGitHub))))
 
-	// G6 dashboard delete/restore (spec §17 G6, ADR-021). Both POSTs
+	// G6 dashboard delete/restore (spec §17 G6, ADR-21). Both POSTs
 	// require the confirm_token form field (validated inside the
 	// handler) and sit behind sessionAuth so the call is anchored to
 	// the logged-in account. The handlers reuse scheduleDeletion /
@@ -3390,14 +3395,14 @@ func (s *server) handler() http.Handler {
 	// envelope shape as dashboardDelete (see cmd/apid/dashboard_delete.go).
 	// Step-up gate matches dashboardDelete: a hostile actor with a
 	// stolen post-MFA-clear browser session (PR #653 threat change 6,
-	// ADR-077) cannot silently disable the customer's cap. The 5-minute
+	// ADR-77) cannot silently disable the customer's cap. The 5-minute
 	// TTL is the standard sensitive-op window (review finding #10).
 	mux.Handle("POST /dashboard/raise-overage-cap", s.dashboardChain(s.sessionAuth(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardRaiseOverageCap)))))
 	// Free → paid hosted-checkout hand-off (dashboard_upgrade.go). Same
 	// step-up posture as PATCH /v1/account/plan: starting a checkout is
 	// a billing mutation even though the plan only flips on the webhook.
 	mux.Handle("POST /dashboard/upgrade", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardUpgrade))))))
-	// Issue #791 PR-E / ADR-090 closure — fire-now from the
+	// Issue #791 PR-E / ADR-90 closure — fire-now from the
 	// dashboard's cron section. Same CSRF-envelope shape as the
 	// form POSTs above (the form-render path in renderAppDetail
 	// mints the token via IssueForAuthenticated; the handler
@@ -3752,7 +3757,7 @@ func (s *server) observeWrap(h http.Handler) http.Handler {
 			op = "unmatched"
 		}
 		s.ops.Observe(op, time.Since(start), observeErrFromStatus(rec.status))
-		// Issue #303 / ADR-039: feed the per-customer request-total
+		// Issue #303 / ADR-39: feed the per-customer request-total
 		// counter on every request (success and failure). The counter
 		// is the per-request total — paired with requestFailures
 		// (status >= 400 only) for the error-rate view. The §12
@@ -3950,7 +3955,7 @@ func (s *server) cliAuthSubmitChain(h http.Handler) http.Handler {
 // requireScope wrapper) read it back via principalFrom. Handlers
 // themselves only need the Account and continue to receive it as the
 // third argument, so this change is invisible to the 38 existing
-// accountHandler bodies. See ADR-034.
+// accountHandler bodies. See ADR-34.
 //
 // Pointer mutation (issue #278): s.auth mutates *r in place via
 // `*r = *r.WithContext(...)` so the request seen by the outer
@@ -3963,7 +3968,7 @@ type accountHandler func(w http.ResponseWriter, r *http.Request, acct state.Acco
 // principal is the authenticated caller. Key is nil when the caller
 // authenticated via the dashboard session cookie (in which case the
 // caller is implicitly treated as having the "admin" scope by
-// requireScope). See ADR-034.
+// requireScope). See ADR-34.
 type principal struct {
 	Acct state.Account
 	Key  *state.APIKey
@@ -3976,7 +3981,7 @@ type principal struct {
 // stamped value — without the bridge, the two surfaces would each
 // look at their own (separate) ctx key and requireScope would
 // 500/CodeCapacity on every apid route (PR-1 pkg/auth extraction,
-// ADR-044).
+// ADR-44).
 func principalFrom(r *http.Request) (principal, bool) {
 	acct, key, ok := authmw.AccountFromContext(r)
 	if !ok {
@@ -4017,7 +4022,7 @@ func principalHasScope(p principal, allowed []string) bool {
 
 // auth authenticates by API-key hash and rejects inactive accounts (spec §11).
 //
-// Carve-out for G6 (spec §17 G6, ADR-021): while an account is in
+// Carve-out for G6 (spec §17 G6, ADR-21): while an account is in
 // deleted_pending, the customer still needs to reach
 //   - GET    /v1/account          (Whoami — read-only status probe)
 //   - GET    /v1/account/export   (final export during grace)
@@ -4032,12 +4037,12 @@ func principalHasScope(p principal, allowed []string) bool {
 // via withPrincipal. The accountHandler that wraps s.auth reads the
 // Account out of the principal; the requireScope wrapper reads the
 // scopes. Session-cookie auth produces a principal with Key == nil
-// (treated as implicit admin by the scope check). See ADR-034.
+// (treated as implicit admin by the scope check). See ADR-34.
 // auth is the cmd/apid-side facade. The body lives in
 // pkg/auth (cmd/apid/auth_facade.go::auth is the bridge).
 // Behaviour matches the pre-extraction shape because pkg/auth lifts
 // the bearer + cookie branch + debounce + detached-touch machinery
-// verbatim. ADR-046.
+// verbatim. ADR-46.
 
 // requireScope returns a middleware that enforces the API-key scope
 // vocabulary on the route. The principal must have at least one of the
@@ -4051,12 +4056,12 @@ func principalHasScope(p principal, allowed []string) bool {
 // (api.ScopesAdminOnly / api.ScopesReadSurface /
 // api.ScopesDeployWriteSurface / api.ScopesSecretsWriteSurface /
 // api.ScopesUsageReadSurface) — admin is in every set, so a session
-// cookie or admin key always satisfies. See ADR-034 rev2.
+// cookie or admin key always satisfies. See ADR-34 rev2.
 
 // requireScope is the cmd/apid-side facade. The body lives in
 // pkg/auth (cmd/apid/auth_facade.go::requireScope is the bridge).
 // Behaviour matches the pre-extraction shape because pkg/auth lifts
-// the predicate principalHasScope and the audit path verbatim. ADR-044.
+// the predicate principalHasScope and the audit path verbatim. ADR-44.
 
 // authLimited wraps an accountHandler in s.auth + AuthLimit (spec §11:
 // 10 failed auth attempts per IP per minute). The /v1/* API-key surface
@@ -4077,7 +4082,7 @@ func principalHasScope(p principal, allowed []string) bool {
 // pkg/auth (cmd/apid/auth_facade.go::authLimited is the bridge).
 // Behaviour matches the pre-extraction shape — pkg/auth.RequireLimited
 // wraps RequireSession in pkg/middleware.AuthLimitWithLimiter with the
-// shared s.apiAuthLimiter bucket (spec §11 "10/min/IP"). ADR-046.
+// shared s.apiAuthLimiter bucket (spec §11 "10/min/IP"). ADR-46.
 
 // idempotent replays a stored response for a repeated Idempotency-Key, or runs
 // the handler and stores its response (spec §4.2: kept 24 h). Without the header
@@ -4133,7 +4138,7 @@ func (s *server) idempotent(next accountHandler) accountHandler {
 		}
 		cap := &captureWriter{ResponseWriter: w, status: http.StatusOK}
 		next(cap, r, acct)
-		if idempotencyReplayable(cap.status) {
+		if idempotencyResponseReplayable(cap.status, cap.body.Bytes()) {
 			_ = s.store.PutIdempotent(r.Context(), acct.ID, key, cap.status, cap.body.Bytes())
 		}
 	}
@@ -4154,6 +4159,29 @@ func idempotencyReplayable(status int) bool {
 		return false
 	}
 	return true
+}
+
+// Binding refusals depend on fresh evidence and policy, and must not freeze a
+// worker's exact recovery key for 24 hours after the recipient is verified.
+func idempotencyResponseReplayable(status int, body []byte) bool {
+	if !idempotencyReplayable(status) {
+		return false
+	}
+	if status != http.StatusConflict {
+		return true
+	}
+	var problem struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(body, &problem) != nil {
+		return true
+	}
+	switch problem.Code {
+	case "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged:
+		return false
+	default:
+		return true
+	}
 }
 
 // idempotencyAbandonAfter is how long an in-flight Idempotency-Key
@@ -4188,7 +4216,7 @@ func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct
 		cap := &captureWriter{ResponseWriter: w, status: http.StatusOK}
 		next(cap, r, acct)
 		ctx := context.WithoutCancel(r.Context())
-		if idempotencyReplayable(cap.status) {
+		if idempotencyResponseReplayable(cap.status, cap.body.Bytes()) {
 			_ = s.store.PutIdempotent(ctx, acct.ID, key, cap.status, cap.body.Bytes())
 			return
 		}
@@ -4313,4 +4341,4 @@ func (s *server) notFound(w http.ResponseWriter, what string) {
 // Behaviour matches the pre-extraction shape — pkg/auth.LoadApp
 // does the IDOR-safe slug→App lookup with the ownership predicate
 // (app.AccountID == acct.ID) and the 404 "no such app" response on
-// a cross-account or missing row. ADR-046.
+// a cross-account or missing row. ADR-46.

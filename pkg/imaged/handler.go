@@ -1,5 +1,5 @@
 // Package imaged — deploy-pipeline orchestrator. imaged owns the OCI→rootfs
-// conversion and snapshot writes (spec §4.6, ADR-003, ADR-005). It is the
+// conversion and snapshot writes (spec §4.6, ADR-3, ADR-5). It is the
 // only writer to the `snapshots` table; apid writes deployment rows, imaged
 // advances them through `pending → building → imaging → snapshotting → live`
 // via pg_notify + state.Store updates.
@@ -74,7 +74,7 @@ type LayerBuilder interface {
 	// so cold-boot can pass it as drive0. The base pipeline is the inverse
 	// of Build: no app manifest injection, no plan cap, every layer applied.
 	BuildBase(ctx context.Context, in rootfs.BaseBuildInput) (rootfs.BaseBuildResult, error)
-	// BuildBaseFromStaging (ADR-053) mkfs-es an already-populated
+	// BuildBaseFromStaging (ADR-53) mkfs-es an already-populated
 	// staging dir into the canonical base ext4. The imaged
 	// parent-ref branch cp -a's the parent's tree into a fresh
 	// MkdirBaseStaging dir, applies ONLY the runtime delta OCI
@@ -127,7 +127,7 @@ type Handler struct {
 	jobMaterializationLeaseOverride time.Duration
 
 	// trustedPublishersDir is the directory holding the per-app
-	// cosign trusted-publisher PEM files (issue #472 / ADR-054).
+	// cosign trusted-publisher PEM files (issue #472 / ADR-54).
 	// Read once at daemon startup (via cosign.TrustedPublishersFromDir)
 	// and refreshed on pg_notify('trusted_signer_changed') via
 	// HandleNotification. Empty means "verify disabled" — the
@@ -191,7 +191,7 @@ type Handler struct {
 	deployBaseRefOverride string
 	// storage is the artifact backend where per-app ext4 layers,
 	// snapshot blobs, base images, and kernel artifacts live (issue
-	// #96 / ADR-025 axis 2). Optional; when nil the handler falls back
+	// #96 / ADR-25 axis 2). Optional; when nil the handler falls back
 	// to a per-app LocalStorageBackend rooted at appsRoot so legacy
 	// callers keep working without rewiring New(...).
 	storage storage.StorageBackend
@@ -206,15 +206,15 @@ type Handler struct {
 	// PullLayers path, plus imaged_oci_pull_duration_seconds
 	// per-pull op{manifest,config,blob,above_base}.
 	ops *wire.OpsMetrics
-	// audit (issue #470 / PR C / ADR-074) is the imaged-side
+	// audit (issue #470 / PR C / ADR-74) is the imaged-side
 	// audit-log seam used to emit app.warm_snapshot_stale from the
 	// MarkFCSnapshotsStale path. Wired via WithAudit; nil opts
 	// out (unit-test parity with cmd/schedd/cmd/apid's audit
 	// seam). Subject shape = &app.AccountID for account-scoped
-	// audit listing per ADR-074 §3.2.
+	// audit listing per ADR-74 §3.2.
 	audit *audit.Auditor
 	// grypeRun is the supply-chain scan runner used at base-stage
-	// time to write the Grype scan sidecar (issue #299 / ADR-075
+	// time to write the Grype scan sidecar (issue #299 / ADR-75
 	// PR-2). Wired via WithGrypeRun; nil = default to a subprocess
 	// invocation (grype dir:<outImage> -o json) — production default.
 	// Tests inject a stub returning canned findings so the sidecar
@@ -227,7 +227,7 @@ type Handler struct {
 	// counts off the struct to build the legacy sidecar JSON.
 	grypeRun func(ctx context.Context, dir string) (*ScanResult, error)
 	// syftRun is the post-build SBOM generator used to populate
-	// build_provenance.sbom_storage_key (issue #299 / ADR-038
+	// build_provenance.sbom_storage_key (issue #299 / ADR-38
 	// Phase 3). Wired via WithSyftRun; nil = default to a
 	// subprocess invocation (`syft dir:<outDir> -o cyclonedx-json`)
 	// — production default. Tests inject a stub returning canned
@@ -251,13 +251,13 @@ type Handler struct {
 	// state.Store.UpsertDeploymentSecretFindings and the deploy
 	// transitions to state.DeployFailed with errImageSecretDetected.
 	// The grype CVE path (runDeployScan above) is best-effort by
-	// design (ADR-075 AC #4); the secret path is intentionally NOT
+	// design (ADR-75 AC #4); the secret path is intentionally NOT
 	// — secrets are a security boundary, not metadata.
 	secretScanRun func(ctx context.Context, dir, layer string) ([]secretscan.Finding, error)
 	// abuseScanRun is the ADR-368 abuse signature scan over the same
 	// staged app layer. nil = abusescan.ScanTree. Tests inject a stub.
 	abuseScanRun func(ctx context.Context, dir string) ([]abusescan.Finding, abusescan.Stats, error)
-	// vmmClient (ADR-053) is the imaged-side gRPC client to vmmd
+	// vmmClient (ADR-53) is the imaged-side gRPC client to vmmd
 	// used by the parent-ref staging branch of EnsureBaseExt4. vmmd
 	// owns the loopback mount; imaged is not root (User=faas-imaged
 	// + NoNewPrivileges=yes per spec §11) and cannot mount on its
@@ -281,7 +281,7 @@ type Handler struct {
 	// injected so tests remain hermetic; cmd/imaged wires the debugfs-backed
 	// production validator.
 	baseArtifactValidator func(context.Context, string, []string) error
-	// secretboxIdentity (issue #461 / ADR-062) is the host age
+	// secretboxIdentity (issue #461 / ADR-62) is the host age
 	// identity used to TRANSIENTLY unseal per-app private-registry
 	// Basic Auth passwords during the pull path. The plaintext
 	// password lives only inside one call frame and is GC'd on
@@ -319,7 +319,7 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 // path set. Wired from cmd/imaged when the function runner has been compiled
 // (Makefile target `guest-runners`).
 // WithTrustedPublishersDir configures the directory holding the
-// per-app cosign trusted-publisher PEM files (issue #472 / ADR-054).
+// per-app cosign trusted-publisher PEM files (issue #472 / ADR-54).
 // Wired from cmd/imaged when FAAS_TRUSTED_PUBLISHERS_DIR is set.
 // Empty dir (the default) disables signature verification — the
 // apps.require_signed=false default keeps the open-deploy posture.
@@ -425,7 +425,7 @@ func (h *Handler) checkImageSignature(ctx context.Context, app state.App, ref st
 }
 
 // verifyImageSignature is the deploy-time verify hook (issue #472 /
-// ADR-054). Branches on apps.require_signed; if true, calls
+// ADR-54). Branches on apps.require_signed; if true, calls
 // pkg/cosign.VerifyImageSignature against the in-memory trust list
 // and marks the deployment FAILED with the typed failure reason on
 // either ErrSignatureMissing or ErrSignatureInvalid. Returns nil on
@@ -660,7 +660,7 @@ func (h *Handler) WithDeployBaseRef(ref string) *Handler {
 }
 
 // WithStorage wires the artifact backend the handler publishes per-app
-// layers and base images to. Issue #96 / ADR-025 axis 2 — replaces the
+// layers and base images to. Issue #96 / ADR-25 axis 2 — replaces the
 // direct appsRoot/<slug>/<depID>.ext4 write path in imaged with a
 // StorageBackend.Put under key "apps/<slug>/<depID>.ext4". Production
 // wiring lives in cmd/imaged (PrefixRouter composing apps- and fc-roots);
@@ -712,13 +712,13 @@ func (h *Handler) replicateLayer(ctx context.Context, layerKey string) error {
 // OCI-pull observer reads from it inside aboveBaseLayers +
 // PullLayers. Nil-safe (Observe* is no-op on a nil receiver).
 // Mirrors pkg/builderd/builderd.go's WithOpsMetrics (PR #124,
-// ADR-030) and cmd/apid/server.go's WithOpsMetrics (this PR).
+// ADR-30) and cmd/apid/server.go's WithOpsMetrics (this PR).
 func (h *Handler) WithOpsMetrics(ops *wire.OpsMetrics) *Handler {
 	h.ops = ops
 	return h
 }
 
-// WithAudit (issue #470 / PR C / ADR-074) attaches the daemon-
+// WithAudit (issue #470 / PR C / ADR-74) attaches the daemon-
 // wide audit seam. cmd/imaged wires the same audit.New(store,
 // log, ops, "imaged") instance Loop uses. nil opts out (no row
 // written; pre-PR-C fixtures keep their existing behaviour).
@@ -730,7 +730,7 @@ func (h *Handler) WithAudit(a *audit.Auditor) *Handler {
 }
 
 // WithGrypeRun replaces the default Grype subprocess invocation
-// (issue #299 / ADR-075 PR-2). Default is nil, which falls back
+// (issue #299 / ADR-75 PR-2). Default is nil, which falls back
 // to the production runner that shells out to `grype dir:<dir>
 // -o json` and parses the typed ScanResult. Tests inject a stub
 // returning canned findings so the sidecar write is hermetic.
@@ -742,7 +742,7 @@ func (h *Handler) WithGrypeRun(fn func(ctx context.Context, dir string) (*ScanRe
 }
 
 // WithSyftRun injects the post-build SBOM generator (issue #299 /
-// ADR-038 Phase 3). Mirrors WithGrypeRun's fluent setter shape.
+// ADR-38 Phase 3). Mirrors WithGrypeRun's fluent setter shape.
 // Tests wire a stub returning canned CycloneDX bytes; production
 // leaves the field nil so the default subprocess runner in
 // pkg/imaged/sbom.go fires.
@@ -798,7 +798,7 @@ func (h *Handler) runSecretScan(ctx context.Context, dir, layer string) ([]secre
 }
 
 // WithVMMClient wires the vmmd gRPC client used by the
-// ADR-053 parent-ref staging branch of EnsureBaseExt4. The
+// ADR-53 parent-ref staging branch of EnsureBaseExt4. The
 // client is nil-safe: the legacy "apply all layers" path
 // (RuntimeGo124, RuntimeGo124Alpine, RuntimeDebianParent
 // itself, builder-base) stays operational without a client
@@ -808,7 +808,7 @@ func (h *Handler) runSecretScan(ctx context.Context, dir, layer string) ([]secre
 //
 // Production cmd/imaged constructs the client against
 // FAAS_VMM_SOCK (default unix:///run/faas/vmmd.sock,
-// ADR-015) and calls this once at startup. The client is
+// ADR-15) and calls this once at startup. The client is
 // reused across staging cycles; cmd/imaged also calls
 // h.vmmClient.Close() on SIGTERM so the dial doesn't leak.
 func (h *Handler) WithVMMClient(c VMMClientIface) *Handler {
@@ -818,7 +818,7 @@ func (h *Handler) WithVMMClient(c VMMClientIface) *Handler {
 
 // WithSecretboxIdentity wires the host age identity used to
 // unseal per-app private-registry Basic Auth passwords in the
-// pull path (issue #461 / ADR-062). Mirrors the apid
+// pull path (issue #461 / ADR-62). Mirrors the apid
 // FAAS_HOST_AGE_IDENTITY_PATH loading — same file, same key,
 // same in-process lifetime.
 //
@@ -860,7 +860,7 @@ func (h *Handler) CloseVMMClient() error {
 }
 
 // runGrype dispatches to the injected grypeRun or falls back to
-// the default subprocess runner (issue #299 / ADR-075 PR-2).
+// the default subprocess runner (issue #299 / ADR-75 PR-2).
 // The default shells out to `grype dir:<dir> -o json` and parses
 // the matches[].vulnerability.severity counts into a typed
 // ScanResult. Errors and nil results are surfaced to the caller
@@ -875,7 +875,7 @@ func (h *Handler) runGrype(ctx context.Context, dir string) (*ScanResult, error)
 }
 
 // runDeployScan runs the per-deploy grype scan and stamps the
-// result on the deployment row (issue #464 / ADR-075 / PR-3).
+// result on the deployment row (issue #464 / ADR-75 / PR-3).
 // The scan reads the per-app layer ext4 (appsRoot/<slug>/<depID>.ext4)
 // and writes scan_result + scan_status + scanned_at via
 // state.Store.UpsertDeploymentScanResult. The method is
@@ -899,7 +899,7 @@ func (h *Handler) runGrype(ctx context.Context, dir string) (*ScanResult, error)
 // `<path>` may be a file or directory (it accepts both); the
 // helper returns a path + cleanup func that the caller defers.
 //
-// Routing (ADR-054 acceptance closure, Tier 1 Phase 3):
+// Routing (ADR-54 acceptance closure, Tier 1 Phase 3):
 //
 //   - LocalStorageBackend: return the canonical appsRoot path
 //     unchanged. Single-box behaviour preserved 1:1; the bytes
@@ -987,7 +987,7 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 // A future field that breaks this invariant (e.g. a chan)
 // surfaces as an immediate panic in tests.
 //
-// Scan source: ADR-054 acceptance closure (Tier 1 Phase 3)
+// Scan source: ADR-54 acceptance closure (Tier 1 Phase 3)
 // routes the scan through the wired StorageBackend. Under
 // `FAAS_STORAGE_BACKEND=oci`, the layer ext4 lives in the
 // registry, not on local disk — the helper `stageScanExt4`
@@ -1031,7 +1031,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		// MkdirTemp failure. Stamp scan_status='failed' with
 		// the reason so the dashboard renders the failure
 		// distinctly from a grype runner error (AC #4 of
-		// ADR-075: don't block the deploy).
+		// ADR-75: don't block the deploy).
 		h.log.Warn("imaged: per-deploy scan skipped, stage",
 			"deployment", dep.ID, "app", app.Slug, "err", err)
 		failedResult := &ScanResult{ImageDigest: dep.ImageDigest, Error: err.Error()}
@@ -1072,7 +1072,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 			h.log.Warn("imaged: stamp scan_status=failed",
 				"deployment", dep.ID, "err", writeErr)
 		}
-		// ADR-075: surface the failure as a metric increment so
+		// ADR-75: surface the failure as a metric increment so
 		// the §12 dashboard panel can render a 5-min red rate.
 		// Duration histogram is observed on the failed branch too
 		// — the 5-min SLA bucket catches stuck scans even when
@@ -1110,7 +1110,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 			"deployment", dep.ID, "err", err)
 		return verifiedScanFailure(app.SecurityPolicy, "persist complete scan failed: "+err.Error())
 	}
-	// ADR-075: stamped-clean. Record wall-clock duration +
+	// ADR-75: stamped-clean. Record wall-clock duration +
 	// per-severity counts so the §12 dashboard panel can graph
 	// the fleet-deploy scan latency over a 5-min window.
 	h.ops.ObserveDeployScanDuration(app.Slug, "complete", time.Since(start))
@@ -1135,7 +1135,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 // returns to markDeployFailed on a finding. Mirrors the
 // errStatefulViolation style in pkg/imaged/base.go (G13 closure) —
 // markDeployFailed lifts the sentinel to the wire-stable code
-// "image_secret_detected" via the error_code column. ADR-075 ships
+// "image_secret_detected" via the error_code column. ADR-75 ships
 // the same pattern for grype-side failures; this is the secret-side
 // analog. Free-text column (migration 00021), no schema widening
 // required.
@@ -1198,7 +1198,7 @@ func (h *Handler) handleAbuseFindings(ctx context.Context, app state.App, dep st
 // Mirrors runDeployScan structurally (same stageScanExt4 helper,
 // same observation log line) but the posture is loud-fail: a
 // single finding fails the deploy with errImageSecretDetected.
-// The grype CVE path is best-effort by design (ADR-075 AC #4 —
+// The grype CVE path is best-effort by design (ADR-75 AC #4 —
 // don't block deploys on supply-chain metadata); the secret path
 // is intentionally NOT — secrets are a security boundary, not
 // metadata.
@@ -1349,7 +1349,7 @@ func (h *Handler) setDeploymentRootfs(ctx context.Context, id, path, key string,
 // row contract identical to pre-#96 even when the new Storage path is
 // used to write the ext4.
 //
-// Defensive path-traversal guard (issue #464 / ADR-075 review
+// Defensive path-traversal guard (issue #464 / ADR-75 review
 // finding): a slug that contains `..` or starts with `/` would
 // resolve outside appsRoot after filepath.Join's Clean pass;
 // grype dir:<escaped> would then scan a file outside the intended
@@ -1540,7 +1540,7 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) err
 		}
 		return h.MaterializeJob(ctx, p.JobID)
 	case "trusted_signer_changed":
-		// Issue #472 / ADR-054: apid emits this on every CRUD op on
+		// Issue #472 / ADR-54: apid emits this on every CRUD op on
 		// app_trusted_signers. We refresh the in-memory cache so a
 		// freshly-onboarded publisher takes effect on the next
 		// deploy without an imaged restart. The refresh is cheap
@@ -1715,12 +1715,12 @@ func jobArtifactJobID(key string) (string, bool) {
 // PR-B: buildQueuedPayload and (*Handler).handleBuildQueued were
 // removed. imaged is no longer subscribed to db.NotifyBuildQueued
 // (builderd owns the queue via the durable worker + LISTEN fast path,
-// see ADR-031). The build → OCI-image conversion happens in the
+// see ADR-31). The build → OCI-image conversion happens in the
 // snapshot_boot handler below, which fires AFTER builderd stamps
 // rootfs_path onto the deployment row.
 
 // snapshotWrittenPayload is the JSON shape schedd emits on `snapshot_written`
-// after a Prime/Park writes the blob via vmmd (ADR-018, see pkg/db.NotifyChannels).
+// after a Prime/Park writes the blob via vmmd (ADR-18, see pkg/db.NotifyChannels).
 // imaged is the sole writer to the snapshots table, so it records the row.
 type snapshotWrittenPayload struct {
 	DeploymentID     string `json:"deployment_id"`
@@ -1731,7 +1731,7 @@ type snapshotWrittenPayload struct {
 	NodeID          string    `json:"node_id,omitempty"`
 	VMStatePath     string    `json:"vmstate_path"`
 	// StorageKey is the canonical StorageBackend key (issue #96,
-	// ADR-025 axis 2). schedd populates it on the snapshot_written
+	// ADR-25 axis 2). schedd populates it on the snapshot_written
 	// payload; imaged copies it onto the snapshots row so Wake can
 	// read it back without recomputing the canonical form.
 	StorageKey       string `json:"storage_key"`
@@ -1809,7 +1809,7 @@ func handlesSnapshotBoot(localNode, ownerNode string) bool {
 //     points at the runner.
 //
 // Both paths share the same imaging→snapshotting→live handshake via
-// snapshot_prime (ADR-018). Tarball/dockerfile deployments start via
+// snapshot_prime (ADR-18). Tarball/dockerfile deployments start via
 // build_queued and skip this function.
 func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChangedPayload) (err error) {
 	if p.Kind != string(state.DeploymentKindImage) {
@@ -1886,7 +1886,7 @@ func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChange
 		}
 	}
 
-	// Per-deploy grype scan (issue #464 / ADR-075 / PR-3).
+	// Per-deploy grype scan (issue #464 / ADR-75 / PR-3).
 	// Runs AFTER the per-app ext4 layer is built + published
 	// (buildImageLayer/buildFunctionLayer both stamped
 	// SetDeploymentRootfs above) and BEFORE the
@@ -2091,7 +2091,7 @@ func (h *Handler) handleAppTaskChanged(ctx context.Context, payload db.AppTaskCh
 //     caller fails the deployment loudly (a sealed blob we can't open
 //     is a configuration error, not a soft miss).
 //
-// Issue #461 / ADR-062: keyed by (accountID, appID, host) — the
+// Issue #461 / ADR-62: keyed by (accountID, appID, host) — the
 // (accountID, appID) tuple is the IDOR-safe guard the apid handlers
 // already enforce, and the host comes from the OCI ref (NOT the
 // customer-supplied deployment image_ref). Pulling the host from the
@@ -2142,21 +2142,21 @@ func (h *Handler) resolveRegistryAuth(ctx context.Context, app state.App, host s
 
 // markRegistryCredentialUsed records that the credential for host
 // was used to successfully authenticate a pull (issue #461 /
-// ADR-062). The update is best-effort — a non-fatal warn log on
+// ADR-62). The update is best-effort — a non-fatal warn log on
 // failure. The schema's last_used_at is observed metadata
 // (operator dashboards), NOT a deployment precondition, so a
 // transient update failure must not abort an otherwise-successful
 // build. Returns immediately on nil appAuth (anonymous pull).
 //
 // Callers MUST invoke this AFTER a successful authenticated pull
-// and never on error paths — the contract per ADR-062 §Decision 8
+// and never on error paths — the contract per ADR-62 §Decision 8
 // is "LastUsedAt updated only after a successful authenticated
 // pull".
 //
 // Failure channel: every failed MarkAppRegistryCredentialUsed
 // increments the daemon-wide
 // imaged_registry_credential_mark_used_failures_total counter
-// (ADR-062 / issue #461) so operators can detect a lagging
+// (ADR-62 / issue #461) so operators can detect a lagging
 // last_used_at — non-fatal here would otherwise be silent. h.ops
 // is nil-checked for unit-test paths that don't wire metrics.
 func (h *Handler) markRegistryCredentialUsed(ctx context.Context, app state.App, host string, appAuth *oci.BasicAuth) {
@@ -2187,7 +2187,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	}
 	ref := dep.ImageDigest
 
-	// Issue #461 / ADR-062: resolve the per-app private-registry Basic
+	// Issue #461 / ADR-62: resolve the per-app private-registry Basic
 	// Auth credential (if any) keyed by the OCI ref's host. The plaintext
 	// password lives only inside this call frame. We capture the host
 	// here so both the M5 fallback (legacy PullDigest/PullLayers) and the
@@ -2240,7 +2240,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		return err
 	}
 	ref = selectedRef
-	// Issue #461 / ADR-062: best-effort mark credential used on
+	// Issue #461 / ADR-62: best-effort mark credential used on
 	// successful authenticated pull. Best-effort so a transient
 	// mark-used failure cannot abort an otherwise-successful
 	// build; non-fatal warn log inside markRegistryCredentialUsed.
@@ -2274,7 +2274,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if dep.Handler != "" {
 		manifest.Entrypoint = []string{dep.Handler}
 	}
-	// PR-B (issue #460 / ADR-053): layer the deployment's six persisted
+	// PR-B (issue #460 / ADR-53): layer the deployment's six persisted
 	// override columns onto the OCI-derived manifest before validation. The
 	// helper is a pure function; an error here means a jsonb column failed
 	// to decode (i.e. the row was tampered with or a migration replayed an
@@ -2331,7 +2331,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		return fmt.Errorf("imaged: storageFor: %w", err)
 	}
 	if mp, ok := h.oci.(oci.ManifestPuller); ok {
-		// Issue #461 / ADR-062: thread the customer's per-app
+		// Issue #461 / ADR-62: thread the customer's per-app
 		// registry credential through the M6 two-drive path.
 		// aboveBaseLayers dispatches app manifest + app blobs
 		// with `appAuth`, and base manifest + base blobs with
@@ -2373,7 +2373,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		// dispatchFullRootfs already published the complete main image;
 		// otherwise build the above-base delta through the two-drive path.
 		if !fullRootfsDispatched {
-			// Issue #461 / ADR-062: mark credential used after a successful
+			// Issue #461 / ADR-62: mark credential used after a successful
 			// above-base resolution — every authenticated pull above this
 			// line was either app manifest, app config, or app blob.
 			h.markRegistryCredentialUsed(ctx, app, refHost, appAuth)
@@ -2389,7 +2389,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 				Plan:          acct.Plan,
 				Storage:       be,
 				StorageKey:    appsKey,
-				// Issue #299 / ADR-038 Phase 3: SBOM emission runs
+				// Issue #299 / ADR-38 Phase 3: SBOM emission runs
 				// inside Builder.Build on the staging dir (the only
 				// artefact that contains the customer's source tree at
 				// that point). SBOMKey is stamped onto the
@@ -2403,7 +2403,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 				return fmt.Errorf("imaged: build app layer: %w", err)
 			}
 			// Stamp the SBOM storage key onto build_provenance.sbom_storage_key
-			// (issue #299 / ADR-038 Phase 3). Best-effort: an error here
+			// (issue #299 / ADR-38 Phase 3). Best-effort: an error here
 			// is logged at WARN and the build still succeeds (the SBOM
 			// is observational metadata, schema §4.2).
 			h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
@@ -2433,7 +2433,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			_ = h.markDeployFailed(ctx, dep.ID, err, "oci pull layers")
 			return fmt.Errorf("imaged: pull layers: %w", err)
 		}
-		// Issue #461 / ADR-062: mark credential used after a
+		// Issue #461 / ADR-62: mark credential used after a
 		// successful M5 fallback layer pull.
 		h.markRegistryCredentialUsed(ctx, app, refHost, appAuth)
 		defer func() {
@@ -2448,7 +2448,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			Plan:          acct.Plan,
 			Storage:       be,
 			StorageKey:    appsKey,
-			// Issue #299 / ADR-038 Phase 3: see the two-drive
+			// Issue #299 / ADR-38 Phase 3: see the two-drive
 			// branch above for the SBOM-populator contract.
 			SBOMRun:        h.syftRun,
 			SBOMStorageKey: h.sbomStorageKeyForDeployment(ctx, dep.ID),
@@ -2468,7 +2468,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		}
 		h.log.Info("imaged: build app layer (m5 fallback)", "app", app.Slug, "digest", digest, "key", result.ImageKey, "bytes", result.ContentBytes)
 	}
-	// Issue #463 / ADR-069 / PR-B: after the main app's drive1
+	// Issue #463 / ADR-69 / PR-B: after the main app's drive1
 	// is built and stamped, build + stamp one ext4 per sidecar
 	// the deployment carries. Per-sidecar ext4 lives at
 	// apps/<slug>/<depID>-<sidecarName>.ext4 (sibling of the
@@ -2518,7 +2518,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 }
 
 // buildSidecarLayers handles the per-sidecar image build for
-// issue #463 / ADR-069 / PR-B. For each sidecar in the
+// issue #463 / ADR-69 / PR-B. For each sidecar in the
 // deployment's sidecars jsonb:
 //
 //  1. Decode the api.Sidecar typed shape (validation already
@@ -2530,7 +2530,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 //     (the per-app base digest, captured by imaged during base
 //     staging — pkg/imaged/base_stage.go).
 //  4. Build the sidecar ext4 via rootfs.Builder, same Builder
-//     call as the main path. ADR-040's verbatim-Linkname +
+//     call as the main path. ADR-40's verbatim-Linkname +
 //     clamp-on-traversal invariant lives in rootfs.ApplyLayerGz
 //     so the sidecar layers inherit it for free.
 //  5. Upsert the per-workload row via
@@ -2870,7 +2870,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 			"--handler", "/app/handler",
 		}
 	}
-	// PR-B (issue #460 / ADR-053): same seam as buildImageLayer (handler.go:546).
+	// PR-B (issue #460 / ADR-53): same seam as buildImageLayer (handler.go:546).
 	// Function deploys build their manifest inline (no OCI pull), so the
 	// "OCI base" is the runtime-default argv from the switch above;
 	// overrides layer on top. snapshot-boot fans out through here, so this
@@ -2928,7 +2928,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		StorageKey:          appsKey,
 		FunctionHandlerPath: manifest.Entrypoint[len(manifest.Entrypoint)-1],
 		FunctionRunnerPath:  runnerPath,
-		// Issue #299 / ADR-038 Phase 3: SBOM emission runs inside
+		// Issue #299 / ADR-38 Phase 3: SBOM emission runs inside
 		// Builder.Build on the final staging tree.
 		SBOMRun:        h.syftRun,
 		SBOMStorageKey: h.sbomStorageKeyForDeployment(ctx, dep.ID),
@@ -3029,13 +3029,13 @@ func runtimeToEnvSuffix(runtime string) string {
 // path (handler) and the local-OCI build path (local_oci.go) share the
 // exact same projection + the same ErrImageManifestInvalid failure mode.
 //
-// ADR-051 Phase 4 (characterization boot): the App path must default
+// ADR-51 Phase 4 (characterization boot): the App path must default
 // Port + Healthz and inject PORT into Env so the in-guest probe
 // (guest/init/{characterize,portnorm}_linux.go) sees a known listening
 // port and the app listens on the selected serving port. Without these
 // defaults, the port normalization ladder in portnorm_linux.go must fall
 // through to the userspace forwarder on every first wake, which the architecture
-// avoids (ADR-051 §"Consequences"). Customer-pinned values in
+// avoids (ADR-51 §"Consequences"). Customer-pinned values in
 // cfg.Port / cfg.Env["PORT"] survive this seeding (last-write-wins
 // is the customer's call).
 func manifestFromImageConfig(cfg oci.ImageConfig) (api.AppManifest, error) {
@@ -3055,7 +3055,7 @@ func manifestFromImageConfig(cfg oci.ImageConfig) (api.AppManifest, error) {
 	if err != nil {
 		return api.AppManifest{}, err
 	}
-	// Containerised-defaults overlay (ADR-051 Phase 4) — applied
+	// Containerised-defaults overlay (ADR-51 Phase 4) — applied
 	// AFTER oci.ManifestFromConfig so the default seed wins on the
 	// fields the customer didn't pin (Healthz, Env["PORT"]) and
 	// doesn't overwrite Customer-supplied OCI values (env flattening
@@ -3066,7 +3066,7 @@ func manifestFromImageConfig(cfg oci.ImageConfig) (api.AppManifest, error) {
 }
 
 // applyContainerDefaults seeds the platform-default Healthz path
-// (ADR-051 §"Consequences") and the effective PORT env var when the
+// (ADR-51 §"Consequences") and the effective PORT env var when the
 // customer didn't pin them. Lives here so both the registry pull
 // path (manifestFromImageConfig) and the local OCI build path
 // (buildLocalOCIAppLayer in local_oci.go) share the exact same
@@ -3311,7 +3311,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 
 		snap := state.Snapshot{
 			DeploymentID:     snapshot.DeploymentID,
-			FCVersion:        snapshot.FCVersion,        // pins Firecracker restore compatibility (ADR-005)
+			FCVersion:        snapshot.FCVersion,        // pins Firecracker restore compatibility (ADR-5)
 			BaseImageVersion: snapshot.BaseImageVersion, // pins H2C runner/base compatibility
 			StorageKey:       snapshot.StorageKey,       // see snapshotWrittenPayload.StorageKey
 			MemBytes:         snapshot.MemBytes,
@@ -3517,8 +3517,17 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// actually-superseded predecessor may be drained. Manual traffic splits and
 	// canaries can keep the predecessor live, so confirm its durable state
 	// instead of inferring it from the attempted promotion.
+	checkedRollback := false
+	if rollbacks, ok := h.store.(state.CheckedRollbackStore); ok {
+		operation, err := rollbacks.CheckedRollbackForTarget(ctx, dep.ID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return fmt.Errorf("imaged: read checked rollback: %w", err)
+		}
+		checkedRollback = err == nil && operation.Status == "preparing"
+	}
+
 	var promoteErr error
-	if dep.Kind == state.DeploymentKindGitHub && dep.GitHubSourceRef != "" {
+	if !checkedRollback && dep.Kind == state.DeploymentKindGitHub && dep.GitHubSourceRef != "" {
 		stale, verifyErr := h.gitHubSourceRefIsStale(ctx, dep)
 		if stale || verifyErr != nil {
 			code := api.CodeSourceRefStale
@@ -3534,7 +3543,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			return nil
 		}
 	}
-	if dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindPreview {
+	if !checkedRollback && (dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindPreview) {
 		promoteErr = h.store.MarkGitDrivenDeploymentLiveIfLatest(ctx, dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
@@ -3996,7 +4005,7 @@ func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, t
 // deployment row already reflects the failure and the original error
 // is what the caller actually wants to return).
 //
-// ADR-021: this is the single seam where puller-side sentinels get
+// ADR-21: this is the single seam where puller-side sentinels get
 // lifted into a stable code on deployments.error_code. The wake
 // path reads the same column and lifts it into a Problem on the
 // failed-deployment GET response, so a customer / dashboard can
@@ -4141,7 +4150,7 @@ type aboveBaseStream struct {
 // (this ext4) overlay at guest-init; this function returns only the parts
 // that go into drive1.
 //
-// appAuth (issue #461 / ADR-062) is the customer's per-app
+// appAuth (issue #461 / ADR-62) is the customer's per-app
 // private-registry Basic Auth credential, transiently unsealed by
 // buildImageLayer before calling this method. App manifest + app
 // blob pulls carry it; base manifest + base blob pulls stay
@@ -4263,7 +4272,7 @@ func pullResult(err error) string {
 // The config carries the env/entrypoint (run by guest-init) AND the
 // rootfs.diff_ids that drive the two-drive math.
 //
-// `auth` (issue #461 / ADR-062) threads the customer's per-app
+// `auth` (issue #461 / ADR-62) threads the customer's per-app
 // private-registry Basic Auth credential through the blob fetch.
 // Pass nil for base pulls (the base is always public).
 func (h *Handler) pullConfig(ctx context.Context, mp oci.ManifestPuller, repo, digest string, auth *oci.BasicAuth) (oci.Config, error) {
@@ -4301,7 +4310,7 @@ func repoWithHost(ref string) string {
 // pullDigestWithAuth dispatches PullDigest through the AuthPuller seam
 // when the production RegistryClient is wired; falls back to the
 // anonymous PullDigest for offline DefaultPuller. auth == nil collapses
-// to the anonymous path on both branches (issue #461 / ADR-062).
+// to the anonymous path on both branches (issue #461 / ADR-62).
 func pullDigestWithAuth(ctx context.Context, p oci.Puller, ref string, auth *oci.BasicAuth) (string, error) {
 	if ap, ok := p.(oci.AuthPuller); ok {
 		return ap.PullDigestWithAuth(ctx, ref, auth)
@@ -4328,7 +4337,7 @@ func pullLayersWithAuth(ctx context.Context, p oci.Puller, ref string, auth *oci
 // pullManifestWithAuth dispatches PullManifest through the
 // AuthManifestPuller seam when wired; falls back to the anonymous
 // PullManifest otherwise. The M6 two-drive path calls this for both
-// app manifest + base manifest pulls (issue #461 / ADR-062).
+// app manifest + base manifest pulls (issue #461 / ADR-62).
 func pullManifestWithAuth(ctx context.Context, mp oci.ManifestPuller, ref string, auth *oci.BasicAuth) (oci.Manifest, error) {
 	if amp, ok := mp.(oci.AuthManifestPuller); ok {
 		return amp.PullManifestWithAuth(ctx, ref, auth)
@@ -4350,7 +4359,7 @@ func pullBlobWithAuth(ctx context.Context, mp oci.ManifestPuller, repo, digest s
 //
 // imaged is the sole owner of `/srv/fc/snap/<depID>/` and
 // `<appsRoot>/<slug>/<depID>.ext4`. The DB row is the source of truth; the
-// filesystem is the cache. Missing files log Warn, never fail (ADR-005:
+// filesystem is the cache. Missing files log Warn, never fail (ADR-5:
 // cold boot must always work, even if a stale filesystem lingers).
 //
 // App soft-delete cleanup drops the ext4 AND the snap blobs for every
@@ -4435,7 +4444,7 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 		if err := be.Delete(ctx, appsKey); err != nil {
 			h.log.Warn("imaged: app cleanup ext4", "key", appsKey, "err", err)
 		}
-		// Issue #463 / ADR-069 / PR-B: walk the deployment's
+		// Issue #463 / ADR-69 / PR-B: walk the deployment's
 		// per-workload sidecar ext4 set and delete each. The
 		// store-side FK CASCADE on `deployment_sidecar_layers`
 		// keeps the row consistent; this loop removes the
@@ -4468,11 +4477,11 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 	return nil
 }
 
-// --- F2/Issue #299 / ADR-038 Phase 3: SBOM populator seams -------------------
+// --- F2/Issue #299 / ADR-38 Phase 3: SBOM populator seams -------------------
 
 // sbomStorageKeyForDeployment resolves the canonical CycloneDX storage
 // key for a deployment's source tree, or "" when no build row exists
-// for the deployment (issue #299 / ADR-038 Phase 3). The image-only
+// for the deployment (issue #299 / ADR-38 Phase 3). The image-only
 // deploy path (app.Type == AppTypeApp on the legacy
 // handleDeployment arm) has no build — the OCI image comes straight
 // from the registry, and a build_provenance row would be empty. We
@@ -4510,7 +4519,7 @@ func (h *Handler) sbomStorageKeyForDeployment(ctx context.Context, deploymentID 
 
 // updateBuildProvenanceSBOM stamps the SBOM storage key onto the
 // build_provenance row for this deployment (issue #299 /
-// ADR-038 Phase 3). Best-effort: an error here is logged at WARN
+// ADR-38 Phase 3). Best-effort: an error here is logged at WARN
 // and the build still succeeds (the SBOM is observational
 // metadata, schema §4.2).
 //
@@ -4583,13 +4592,13 @@ func (h *Handler) updateBuildProvenanceRunnerDigest(ctx context.Context, deploym
 // MarkFCSnapshotsStale is the F2 sweep body. It is invoked once at imaged
 // startup (cmd/imaged/main.go wires it) and never on a timer — a Firecracker
 // upgrade requires the operator to restart imaged, which matches the
-// "snapshots are cache, not truth" framing (ADR-005). Idempotent.
+// "snapshots are cache, not truth" framing (ADR-5). Idempotent.
 //
-// Issue #470 / PR C / ADR-074: when n > 0, walk the just-marked-stale
+// Issue #470 / PR C / ADR-74: when n > 0, walk the just-marked-stale
 // rows and emit app.warm_snapshot_stale per affected app. The kind
 // joins with imaged's app.warm_snapshot_promoted and apid's
 // app.warm_snapshot_disabled to give operators a single-grep
-// lifecycle audit trail. Subject = &app.AccountID per ADR-074 §3.2.
+// lifecycle audit trail. Subject = &app.AccountID per ADR-74 §3.2.
 // The walk is best-effort: an audit-write failure here is logged
 // and does NOT roll back the mark-stale (the FC-version truth is
 // what matters; the audit row is observer signal only).
@@ -4648,7 +4657,7 @@ func (h *Handler) snapshotNonStaleByApp(ctx context.Context) (map[string]int64, 
 // A current-generation row survives every imaged replica restart.
 // Called from runFCSweep AFTER F2 (the
 // Firecracker-version sweep). The two sweeps have different
-// triggers (F2 on FC upgrade per ADR-005; F3 on
+// triggers (F2 on FC upgrade per ADR-5; F3 on
 // FAAS_BASE_IMAGE_VERSION bump per ADR-127) and different audit
 // subjects ("fc_version:<v>" vs "app_protocol:<v>") — they are
 // intentionally NOT merged.
@@ -4689,19 +4698,19 @@ func (h *Handler) MarkAppProtocolSnapshotsStale(ctx context.Context) (int64, err
 	return n, nil
 }
 
-// emitWarmSnapshotStale (issue #470 / PR C / ADR-074) emits one
+// emitWarmSnapshotStale (issue #470 / PR C / ADR-74) emits one
 // app.warm_snapshot_stale audit row per app that had at least
 // one snapshot row transition to stale during the FC-version
 // sweep. stale_count is the per-app count of rows that flipped
 // (NOT the fleet total — operators reading the audit row expect
 // the value to be scoped to the app_id subject).
 //
-// Caveat (ADR-074 §3.2): apps whose ENTIRE fleet went stale in
+// Caveat (ADR-74 §3.2): apps whose ENTIRE fleet went stale in
 // this sweep emit no row because ListSnapshotsForGC filters
 // stale=false. Those apps surface through the fleet-level
 // warm_snapshot_write_failures counter, not per-app audit.
 // Best-effort: an audit-write failure is logged and does NOT
-// roll back the mark-stale (ADR-005 says FC version is the
+// roll back the mark-stale (ADR-5 says FC version is the
 // source of truth; the audit row is observer signal only).
 func (h *Handler) emitWarmSnapshotStale(ctx context.Context, fcVersion string, beforeByApp map[string]int64, afterByApp map[string]int64) {
 	for appID, before := range beforeByApp {
@@ -4807,7 +4816,7 @@ func (h *Handler) buildFullRootfsLayer(
 	if err != nil {
 		return fmt.Errorf("imaged: full-rootfs manifest: %w", err)
 	}
-	// Issue #461 / ADR-062: stamp credential used after a
+	// Issue #461 / ADR-62: stamp credential used after a
 	// successful app manifest pull on the full-rootfs path too —
 	// every authenticated pull above this line was either app
 	// manifest, app config, or app blob.

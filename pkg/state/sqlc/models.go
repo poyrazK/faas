@@ -165,6 +165,11 @@ type AlertDelivery struct {
 	IsTest         bool
 }
 
+type AlertHistoricalRollbackClaim struct {
+	DeploymentID pgtype.UUID
+	FireID       pgtype.UUID
+}
+
 type AlertPreset struct {
 	ID                     pgtype.UUID
 	Name                   string
@@ -182,27 +187,36 @@ type AlertPreset struct {
 	UpdatedAt              pgtype.Timestamptz
 }
 
+type AlertRollbackAction struct {
+	FireID    pgtype.UUID
+	AppID     pgtype.UUID
+	Status    string
+	Receipt   []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
 type AlertRule struct {
-	ID                  pgtype.UUID
-	AccountID           pgtype.UUID
-	AppID               pgtype.UUID
-	Name                string
-	Enabled             bool
-	Metric              string
-	Comparison          string
-	Threshold           float64
-	WindowSpec          string
-	FailureSource       pgtype.Text
-	WebhookUrl          string
-	WebhookSecretSealed []byte
-	CooldownMinutes     int32
-	State               string
-	LastFiredAt         pgtype.Timestamptz
-	LastEvaluatedAt     pgtype.Timestamptz
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	OrgID               pgtype.UUID
-	Action              string
+	PostDeployRollbackWindowSeconds int32
+	ID                              pgtype.UUID
+	AccountID                       pgtype.UUID
+	AppID                           pgtype.UUID
+	Name                            string
+	Enabled                         bool
+	Metric                          string
+	Comparison                      string
+	Threshold                       float64
+	WindowSpec                      string
+	FailureSource                   pgtype.Text
+	WebhookUrl                      string
+	WebhookSecretSealed             []byte
+	CooldownMinutes                 int32
+	State                           string
+	LastFiredAt                     pgtype.Timestamptz
+	LastEvaluatedAt                 pgtype.Timestamptz
+	CreatedAt                       pgtype.Timestamptz
+	UpdatedAt                       pgtype.Timestamptz
+	OrgID                           pgtype.UUID
+	Action                          string
 }
 
 type ApiConsumer struct {
@@ -410,9 +424,29 @@ type AppApiRoute struct {
 }
 
 type AppBindingPromotionRevision struct {
-	AppID    pgtype.UUID
-	Epoch    pgtype.UUID
-	Revision int64
+	AppID           pgtype.UUID
+	Epoch           pgtype.UUID
+	Revision        int64
+	ServiceRevision int64
+}
+
+type AppBindingReleasePolicy struct {
+	AppID                 pgtype.UUID
+	Scope                 string
+	Mode                  string
+	Revision              int64
+	MaxAgeSeconds         int64
+	RequireApplicationAck bool
+	Reason                string
+	UpdatedAt             pgtype.Timestamptz
+}
+
+type AppBindingReleasePolicyHistory struct {
+	AppID     pgtype.UUID
+	Scope     string
+	Revision  int64
+	Policy    []byte
+	ChangedAt pgtype.Timestamptz
 }
 
 type AppCpuPolicyNodeStatus struct {
@@ -1070,13 +1104,13 @@ type BuildProvenance struct {
 	FrameworkVersion pgtype.Text
 }
 
-// Per-build wall-clock seconds, one row per terminal build. Source: cmd/builderd reaper + markSucceeded/markFailed adapters. ADR-048. Informational only — not billed.
+// Per-build wall-clock seconds, one row per terminal build. Source: cmd/builderd reaper + markSucceeded/markFailed adapters. ADR-48. Informational only — not billed.
 type BuilderUsage struct {
 	BuildID    pgtype.UUID
 	AccountID  pgtype.UUID
 	AppID      pgtype.UUID
 	FinishedAt pgtype.Timestamptz
-	// build kind (railpack|dockerfile|tarball). Mirrors builds.kind. ADR-048.
+	// build kind (railpack|dockerfile|tarball). Mirrors builds.kind. ADR-48.
 	Kind    string
 	Seconds int64
 	OrgID   pgtype.UUID
@@ -1180,9 +1214,9 @@ type ComputeNode struct {
 	AdmissionCeilingMb int32
 	LastHeartbeatAt    pgtype.Timestamptz
 	CreatedAt          pgtype.Timestamptz
-	// Locality label for the chooser tie-break (pkg/sched/placement.go). Free-form text; nullable so pre-00072 rows accept the schema. The seeded default-local row is backfilled to 'local'. ADR-025.
+	// Locality label for the chooser tie-break (pkg/sched/placement.go). Free-form text; nullable so pre-00072 rows accept the schema. The seeded default-local row is backfilled to 'local'. ADR-25.
 	Region pgtype.Text
-	// Finer locality inside region. Currently informational; nullable. ADR-025.
+	// Finer locality inside region. Currently informational; nullable. ADR-25.
 	Zone            pgtype.Text
 	ScheddTargetUrl pgtype.Text
 	VcpuBudget      int32
@@ -1725,11 +1759,27 @@ type DeploymentOpenapiSnapshot struct {
 	CapturedAt    pgtype.Timestamptz
 }
 
+type DeploymentRecoveryLineage struct {
+	DeploymentID            pgtype.UUID
+	PredecessorDeploymentID pgtype.UUID
+}
+
 type DeploymentRevisionPin struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
 	ExpiresAt    pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
+}
+
+type DeploymentRollbackOperation struct {
+	ID                  pgtype.UUID
+	AppID               pgtype.UUID
+	Scope               string
+	TargetDeploymentID  pgtype.UUID
+	CurrentDeploymentID pgtype.UUID
+	Status              string
+	Receipt             []byte
+	UpdatedAt           pgtype.Timestamptz
 }
 
 type DeploymentRoutePolicySnapshot struct {
@@ -5154,14 +5204,14 @@ type SnapshotRuntimeConfigReceipt struct {
 	SidecarSecretVersions []byte
 }
 
-// Per-(account, app, day) byte totals from snapshots.mem_bytes + disk_bytes + overlay staging. Source: pkg/meter/storage.go cron tick. ADR-049 §B.3. Informational only — not billed today; the future "Pro plan 1 GB included" PR consumes this surface.
+// Per-(account, app, day) byte totals from snapshots.mem_bytes + disk_bytes + overlay staging. Source: pkg/meter/storage.go cron tick. ADR-49 §B.3. Informational only — not billed today; the future "Pro plan 1 GB included" PR consumes this surface.
 type SnapshotStorageDaily struct {
 	AccountID pgtype.UUID
 	AppID     pgtype.UUID
 	Day       pgtype.Date
-	// Σ snapshots.mem_bytes + snapshots.disk_bytes (latest non-stale row per app per day). ADR-049 §B.3. Informational.
+	// Σ snapshots.mem_bytes + snapshots.disk_bytes (latest non-stale row per app per day). ADR-49 §B.3. Informational.
 	SnapshotBytes int64
-	// Σ overlay staging bytes per app per day. ADR-049 §B.3. Informational.
+	// Σ overlay staging bytes per app per day. ADR-49 §B.3. Informational.
 	LayerBytes int64
 	ComputedAt pgtype.Timestamptz
 }
@@ -5346,7 +5396,7 @@ type UploadSession struct {
 	DeployOptions []byte
 }
 
-// Per-(account, app, day) materialised rollup of usage_minutes. Populated by the meterd cron tick FAAS_ROLLUP_INTERVAL (default 5 min) via INSERT ... SELECT ... GROUP BY with ON CONFLICT additive merge. Read by GET /v1/usage/daily. ADR-048. Informational — not billed.
+// Per-(account, app, day) materialised rollup of usage_minutes. Populated by the meterd cron tick FAAS_ROLLUP_INTERVAL (default 5 min) via INSERT ... SELECT ... GROUP BY with ON CONFLICT additive merge. Read by GET /v1/usage/daily. ADR-48. Informational — not billed.
 type UsageDaily struct {
 	AccountID  pgtype.UUID
 	AppID      pgtype.UUID
@@ -5357,7 +5407,7 @@ type UsageDaily struct {
 	TxBytes    int64
 	NetTxBytes int64
 	NetRxBytes int64
-	// Per-day sum of usage_minutes.cold_boot_count for this (account, app, day). ADR-048. Informational — not billed.
+	// Per-day sum of usage_minutes.cold_boot_count for this (account, app, day). ADR-48. Informational — not billed.
 	ColdBootCount  int64
 	BuilderSeconds int64
 	// Timestamp the meterd cron last wrote this row. Stamped on every ON CONFLICT update so a stuck cron is visible in /v1/usage/daily metadata.
@@ -5379,17 +5429,17 @@ type UsageMinute struct {
 	Requests   int32
 	// Cumulative host cgroup CPU-µs consumed by the instance during this minute. Source: vmmd cpustats.Cache (cpu.stat usage_usec delta) → schedd instancestats.Poller → meterd Sampler. Measurement only — billing is on plan RAM. issue #279 / PR-B.
 	CpuUsec int64
-	// Cumulative HTTP response body bytes the gateway forwarded for this instance in this minute. Source: pkg/gateway/handler.go statusRecorder.Bytes → per-(instance, minute) ring buffer → meterd Sampler.SampleAndRoll → AppendUsage. ADR-046. Informational — not billed.
+	// Cumulative HTTP response body bytes the gateway forwarded for this instance in this minute. Source: pkg/gateway/handler.go statusRecorder.Bytes → per-(instance, minute) ring buffer → meterd Sampler.SampleAndRoll → AppendUsage. ADR-46. Informational — not billed.
 	TxBytes int64
-	// Cumulative byte delta on root-side vethHost.rx_bytes for this instance in this minute. Source: vmmd pkg/fcvm/netstats.Cache reading /sys/class/net/<vethHost>/statistics/rx_bytes → vmmd.Stats → schedd instancestats.Poller → meterd Sampler.SampleAndRoll → AppendUsage. ADR-046. Informational — not billed. Unit = interface bytes (includes Ethernet/IP framing).
+	// Cumulative byte delta on root-side vethHost.rx_bytes for this instance in this minute. Source: vmmd pkg/fcvm/netstats.Cache reading /sys/class/net/<vethHost>/statistics/rx_bytes → vmmd.Stats → schedd instancestats.Poller → meterd Sampler.SampleAndRoll → AppendUsage. ADR-46. Informational — not billed. Unit = interface bytes (includes Ethernet/IP framing).
 	NetTxBytes int64
-	// Cumulative byte delta on root-side vethHost.tx_bytes (root→guest = ingress) for this instance in this minute. Source: vmmd pkg/fcvm/netstats.Cache TX path reading /sys/class/net/<vethHost>/statistics/tx_bytes → vmmd.Stats → schedd instancestats.Poller → meterd Sampler.SampleAndRoll → AppendUsage. ADR-048. Informational — not billed. Unit = interface bytes (includes Ethernet/IP framing).
+	// Cumulative byte delta on root-side vethHost.tx_bytes (root→guest = ingress) for this instance in this minute. Source: vmmd pkg/fcvm/netstats.Cache TX path reading /sys/class/net/<vethHost>/statistics/tx_bytes → vmmd.Stats → schedd instancestats.Poller → meterd Sampler.SampleAndRoll → AppendUsage. ADR-48. Informational — not billed. Unit = interface bytes (includes Ethernet/IP framing).
 	NetRxBytes int64
-	// Per-minute count of WAKE_RESTORE→WAKE_COLD_BOOT transitions observed for this instance. Source: scheddgrpc.InstanceStatsRow.LastWakeMethod, sampled by meterd Sampler.SampleAndRoll. ADR-048. Informational — not billed. Idempotent on a redelivered tick within the same minute (only the transition counts).
+	// Per-minute count of WAKE_RESTORE→WAKE_COLD_BOOT transitions observed for this instance. Source: scheddgrpc.InstanceStatsRow.LastWakeMethod, sampled by meterd Sampler.SampleAndRoll. ADR-48. Informational — not billed. Idempotent on a redelivered tick within the same minute (only the transition counts).
 	ColdBootCount int32
-	// Billable builder VM seconds (2-vCPU / 2048-MB per spec §4.5), written once per build at build completion via state.Store.AppendBuilderUsage keyed by build_id. ADR-048. Informational — not billed. NOT counted in CountsForRAM() — runtime GB-RAM-hour billing is unchanged.
+	// Billable builder VM seconds (2-vCPU / 2048-MB per spec §4.5), written once per build at build completion via state.Store.AppendBuilderUsage keyed by build_id. ADR-48. Informational — not billed. NOT counted in CountsForRAM() — runtime GB-RAM-hour billing is unchanged.
 	BuilderSeconds int64
-	// Build kind parallel to builds.kind (railpack / dockerfile / tarball); 'none' for non-build rows. ADR-048. Informational — not billed.
+	// Build kind parallel to builds.kind (railpack / dockerfile / tarball); 'none' for non-build rows. ADR-48. Informational — not billed.
 	BuilderKind string
 	OrgID       pgtype.UUID
 	TailSeconds int64

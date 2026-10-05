@@ -28,6 +28,18 @@ func (m *MemStore) ReadBindingPromotionRevision(_ context.Context, accountID, ap
 // precede their runtime stamp. Only the digest is retained, never these values.
 func (m *MemStore) bindingPromotionRevisionLocked(appID string) (string, error) {
 	facts := map[string]any{"app": m.apps[appID], "stamp": m.runtimeConfigChangedAt[appID], "plan": m.accounts[m.apps[appID].AccountID].Plan}
+	for key, policy := range m.bindingReleasePolicies {
+		if key.appID == appID {
+			facts["release-policy/"+key.scope] = policy
+		}
+	}
+	if len(m.apps[appID].Manifest.ServiceBindings) > 0 {
+		revision, err := m.serviceBindingRevisionLocked(m.apps[appID].AccountID)
+		if err != nil {
+			return "", err
+		}
+		facts["service-dependencies"] = revision
+	}
 	for key, row := range m.envs {
 		if key.AppID == appID {
 			facts["env/"+key.Scope+"/"+key.Key] = row
@@ -109,6 +121,7 @@ func (m *MemStore) bindingPromotionRevisionLocked(appID string) (string, error) 
 }
 
 func (m *MemStore) PromoteDeploymentWithBindings(ctx context.Context, id string, fence BindingPromotionFence, serving string) (BindingPromotionResult, error) {
+	ctx = WithBindingReleaseFences(ctx, []BindingPromotionFence{fence})
 	guard := &bindingTrafficGuard{fence: fence}
 	var expected []string
 	if serving != "" {

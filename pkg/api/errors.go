@@ -443,7 +443,7 @@ const (
 	// mass port scanner or flood tool. The deployment's error detail names
 	// the rules and files.
 	CodeImageAbuseDetected = "image_abuse_detected"
-	// CodeInvalidRef is the DEPLOY-PROV-4 / ADR-092 (issue #739)
+	// CodeInvalidRef is the DEPLOY-PROV-4 / ADR-92 (issue #739)
 	// 400 sentinel for POST /v1/apps/{slug}/deployments/source-ref
 	// when the supplied ref is not a valid commit SHA / branch /
 	// tag, OR the GitHub API failed to resolve it to a SHA. Distinct
@@ -451,7 +451,7 @@ const (
 	// and the shape check rejects it): this is upstream of the
 	// fetch, on the wire itself.
 	CodeInvalidRef = "invalid_ref"
-	// CodeGitHubInstallNotFound is the DEPLOY-PROV-4 / ADR-092 (issue
+	// CodeGitHubInstallNotFound is the DEPLOY-PROV-4 / ADR-92 (issue
 	// #739) 404 sentinel for POST /v1/apps/{slug}/deployments/source-ref
 	// when the account has no durable github_installations row. The
 	// customer must complete the dashboard `gregale connect` bind
@@ -466,7 +466,7 @@ const (
 	CodeGitHubInstallNotOwned   = "github_install_not_owned"
 	CodeGitHubRepoNotAccessible = "github_repo_not_accessible"
 	CodeGitHubInstallAmbiguous  = "github_install_ambiguous"
-	// CodeSourceRefUnavailable is the DEPLOY-PROV-4 / ADR-092 (issue
+	// CodeSourceRefUnavailable is the DEPLOY-PROV-4 / ADR-92 (issue
 	// #739) 503 sentinel for POST /v1/apps/{slug}/deployments/source-ref
 	// when the githubd bridge is down (StreamSourceRef returns
 	// Unavailable) or when a 401 from codeload.github.com survives
@@ -553,7 +553,7 @@ const (
 	// pkg/gateway/mirror_dispatch.go).
 	CodeMirrorSlotAtCapacity = "mirror_slot_at_capacity"
 	// CodeEdgeRuleMaintenance marks a kind=maintenance edge-rule
-	// hit on the gatewayd hot path (ADR-091 amendment, PR-A
+	// hit on the gatewayd hot path (ADR-91 amendment, PR-A
 	// #???). The customer configured an (host, path, http_method)
 	// tuple to return 503 + Retry-After; the gate fires BEFORE
 	// auth and BEFORE wake so a maintenance 503 never pays a
@@ -567,7 +567,7 @@ const (
 	// primitives are differentiable on dashboards.
 	CodeEdgeRuleMaintenance = "edge_rule_maintenance"
 	// CodeAppMaintenance marks an apps.maintenance_mode coarse-gate
-	// hit on the gatewayd hot path (ADR-091 amendment). The
+	// hit on the gatewayd hot path (ADR-91 amendment). The
 	// customer pinned the whole app via PATCH /v1/apps/{slug};
 	// the gatewayd applier (applyAppsMaintenanceMode, §4.1.2.0)
 	// short-circuits every request to this app with 503 +
@@ -614,7 +614,7 @@ const (
 	// cannot lock out other customers.
 	CodeAuthRateLimited = "auth_rate_limited"
 	// CodeForbidden is returned when the authenticated principal lacks
-	// the scope required by the route (IAM-1, ADR-034). Distinct from
+	// the scope required by the route (IAM-1, ADR-34). Distinct from
 	// CodeUnauthorized so a customer can tell "I need to log in" from
 	// "my key does not have permission for this endpoint".
 	CodeForbidden = "insufficient_scope"
@@ -683,7 +683,7 @@ const (
 	// the dashboard can pivot the message from "your key is wrong"
 	// to "complete enrollment or step-up to continue".
 	CodeMFARequired = "mfa_required"
-	// CodeStepUpRequired is returned by RequireStepUp (ADR-077 +
+	// CodeStepUpRequired is returned by RequireStepUp (ADR-77 +
 	// PR-8 acceptance) when a session-cookie principal's
 	// Envelope.StepUpAt stamp is missing or older than the route's
 	// configured TTL. Distinct from CodeMFARequired so the dashboard
@@ -701,7 +701,7 @@ const (
 	// disable confirmation before its mandatory 24-hour waiting period
 	// has elapsed. The response is HTTP 425 and carries Retry-After.
 	CodeMFADisableCooldown = "mfa_disable_cooldown"
-	// CodeSessionExpired is returned by the IAM-3 (ADR-039) cookie-
+	// CodeSessionExpired is returned by the IAM-3 (ADR-39) cookie-
 	// branch cross-check when the cookie's sid is empty (pre-
 	// rollout), the row is gone, or the row is revoked. Distinct
 	// from CodeUnauthorized so the dashboard can pivot to
@@ -784,7 +784,7 @@ const (
 	// signature fails verification (or is missing) on cold-boot.
 	// The deployment transitions to DeployFailed with this code;
 	// the wake that triggered the verify returns 503 to gatewayd-internal
-	// with the same code. ADR-038 §Consequences Compatibility.
+	// with the same code. ADR-38 §Consequences Compatibility.
 	CodeSigInvalid       = "sig_invalid"
 	CodeNoRollbackTarget = "no_rollback_target"
 	// CodeRollbackTargetNotFound is returned when the caller passes an
@@ -810,7 +810,7 @@ const (
 	CodeRollbackTargetUnavailable = "rollback_target_unavailable"
 	// CodeDeploySignatureInvalid is returned by apid when the
 	// customer's OCI image deploy is rejected at the accept-time
-	// signature-enforcement gate (issue #472 / ADR-054). Three
+	// signature-enforcement gate (issue #472 / ADR-54). Three
 	// triggers: (a) apps.require_signed=true but no trusted signers
 	// are configured (fail-closed — the operator toggled the flag
 	// but forgot to onboard a publisher); (b) the image carries no
@@ -834,7 +834,7 @@ const (
 	CodeSecurityScanBlocked = "security_scan_blocked"
 	// CodeTrustedSignerInvalid is returned when the PUT body fails
 	// the PEM-shape validation (size 64..1024 bytes after
-	// base64-decode, ECDSA P-256 SPKI per ADR-038). 400 with the
+	// base64-decode, ECDSA P-256 SPKI per ADR-38). 400 with the
 	// same Problem body shape as CodeSecretInvalidKey.
 	CodeTrustedSignerInvalid = "trusted_signer_invalid"
 	// CodeTrustedSignerNotFound is the 404 mirror of
@@ -882,7 +882,7 @@ const (
 	CodeSecretValueTooLarge = "secret_value_too_large"
 	CodeSecretNotFound      = "secret_not_found"
 
-	// CodeRekeyDisabled — ADR-089 PR-C. Returned with 503 by
+	// CodeRekeyDisabled — ADR-89 PR-C. Returned with 503 by
 	// GET /v1/admin/secrets/rekey-progress when FAAS_REKEY_ENABLED
 	// is unset. The runner is nil on those daemons, so the
 	// handler can't report progress; we surface the
@@ -891,7 +891,7 @@ const (
 	// off" from "feature is on and idle".
 	CodeRekeyDisabled = "rekey_disabled"
 
-	// CodeRekeyNoIdentities — ADR-089 PR-C follow-up (PR #825).
+	// CodeRekeyNoIdentities — ADR-89 PR-C follow-up (PR #825).
 	// Returned with 503 when FAAS_REKEY_ENABLED=true BUT no host
 	// age identities are loaded. The operator has opted in but
 	// the runner is silently skipped because mfaIdentities() is
@@ -901,7 +901,7 @@ const (
 	// misleading "set FAAS_REKEY_ENABLED=true and restart".
 	CodeRekeyNoIdentities = "rekey_no_identities"
 
-	// Customer env vars (issue #395 / ADR-045). Distinct codes from
+	// Customer env vars (issue #395 / ADR-45). Distinct codes from
 	// CodeSecret* so the quota + audit shape is unambiguous to
 	// dashboards and SDK callers — a `plan_limit_env_vars` is a config
 	// quota, not a credential one.
@@ -910,7 +910,7 @@ const (
 	CodeEnvVarValueTooLarge = "env_value_too_large"
 	CodeEnvVarNotFound      = "env_var_not_found"
 
-	// Customer env-var scopes (ADR-090). The scope query param on
+	// Customer env-var scopes (ADR-90). The scope query param on
 	// /v1/apps/{slug}/envs?scope= accepts a domain-valid slug (1..40
 	// lowercase alnum + dash) OR the reserved sentinel "__all__" on
 	// the read path. Two distinct codes so a CLI author can tell
@@ -922,7 +922,7 @@ const (
 	CodeEnvScopeInvalid  = "env_scope_invalid"
 	CodeEnvScopeReserved = "env_scope_reserved"
 
-	// ADR-098 §D5: data-placement hints quota (Free customer + 0 cap
+	// ADR-98 §D5: data-placement hints quota (Free customer + 0 cap
 	// gates the capture path; Hobby+ customers can hold up to their
 	// per-plan DataPlacementHintsPerApp). Distinct codes so a
 	// dashboard can render "your plan doesn't include data
@@ -945,7 +945,7 @@ const (
 	// account from receiving impossible downgrade guidance.
 	CodeDataUpstreamsDisabled = "data_upstreams_disabled"
 
-	// ADR-098 §D4 + §11: explicit-upstream write surface validation.
+	// ADR-98 §D4 + §11: explicit-upstream write surface validation.
 	// Distinct codes from CodeEnvVarInvalidKey / CodeEnvVarValueTooLarge
 	// because the lifecycle and quota shape differ: a data upstream is
 	// keyed by (scope, kind, host, port) and the value is the host
@@ -958,7 +958,7 @@ const (
 	CodeUpstreamInvalidPort = "upstream_invalid_port" // 400, 1..65535 range check
 	CodeUpstreamNotFound    = "upstream_not_found"    // 404, DELETE/GET absent
 
-	// ADR-091 / PR-D: per-deployment env scope collision. The
+	// ADR-91 / PR-D: per-deployment env scope collision. The
 	// partial unique index `deployments_app_scope_live_uniq`
 	// (migration 00213) makes two live rows on the same
 	// (app_id, scope) impossible — the second create returns
@@ -969,7 +969,7 @@ const (
 	// matching the rest of state.ErrConflict's 4xx family.
 	CodeDeploymentScopeCollision = "deployment_scope_collision"
 
-	// Trusted cosign signers (issue #472 / ADR-054). Same shape as
+	// Trusted cosign signers (issue #472 / ADR-54). Same shape as
 	// the env-var quota — config cap, not a credential one — but a
 	// distinct code so the dashboard can surface "trusted publishers"
 	// as its own row and so SDK callers don't accidentally decode a
@@ -995,7 +995,7 @@ const (
 	CodeAPIKeyRevoked       = "api_key_revoked"
 	CodeAPIKeyLimitExceeded = "api_key_limit_exceeded"
 
-	// Per-app private-registry Basic Auth (issue #461 / ADR-062).
+	// Per-app private-registry Basic Auth (issue #461 / ADR-62).
 	// Distinct from CodeSecret* because the lifecycle and quota shape
 	// differ: a registry credential is keyed by (app, host) and the
 	// password is sealed + transiently unsealed in imaged, never
@@ -1021,7 +1021,7 @@ const (
 	// can render actionable retry guidance ("raise your plan or lower
 	// --max-concurrency").
 	CodeInvalidMinInstances = "invalid_min_instances"
-	// CodeMaxMinInstancesExceeded (issue #557 / ADR-071 §Decision 5)
+	// CodeMaxMinInstancesExceeded (issue #557 / ADR-71 §Decision 5)
 	// is a 422 for shape violations: the requested min_instances
 	// exceeds the per-plan MaxMinInstances cap (Hobby 1, Pro 3,
 	// Scale 10). Distinct from CodeInvalidMinInstances because the
@@ -1113,7 +1113,7 @@ const (
 	CodeMirrorRuleNotFound      = "mirror_rule_not_found"
 	CodeInvalidMirrorWindow     = "invalid_mirror_window"
 
-	// Sidecar containers (issue #463 / ADR-068). RFC 7807
+	// Sidecar containers (issue #463 / ADR-68). RFC 7807
 	// codes for the sidecar surface. The cap and type-uniqueness
 	// codes are the load-bearing 400-class shapes; the stateful
 	// and not-on-plan codes are defence-in-depth for future
@@ -1133,7 +1133,7 @@ const (
 	CodeSidecarNotAllowedOnPlan     = "sidecar_not_allowed_on_plan"
 	CodeCompanionPresetUnavailable  = "companion_preset_unavailable"
 
-	// CodeInitSidecarFailed (issue #463 / ADR-069 / PR-B AC #1) is
+	// CodeInitSidecarFailed (issue #463 / ADR-69 / PR-B AC #1) is
 	// the RFC 7807 stable code vmmd stamps onto a deployments row
 	// when an `init` sidecar exec returns a non-zero exit before
 	// framework-ready. Distinct from the DTO-side validation codes
@@ -1171,13 +1171,13 @@ const (
 	// enabled mirror rule for the deployment that served it. Replaying without
 	// that target would silently exercise a different deployment.
 	CodeDebugReplayUnsupported = "debug_replay_unsupported"
-	// CodeBuildProvenanceNotFound is the ADR-038 / Tier 3 #197
+	// CodeBuildProvenanceNotFound is the ADR-38 / Tier 3 #197
 	// B3.10-read sentinel. Distinct from a generic "no such build"
 	// so the customer can branch: a build that exists with no
 	// provenance row is the "populator INSERT failed + WARN logged"
 	// outcome, not a 404 of the build itself.
 	CodeBuildProvenanceNotFound = "build_provenance_not_found"
-	// CodeBuildNotFound is the DEPLOY-PROV-6 / ADR-089 (issue
+	// CodeBuildNotFound is the DEPLOY-PROV-6 / ADR-89 (issue
 	// #741) 404 sentinel for GET /v1/builds/{id} when the build
 	// row does not exist OR belongs to another account. The 404
 	// surface is uniform (the server's IDOR chain collapses every
@@ -1186,7 +1186,7 @@ const (
 	// "build exists, populator INSERT failed").
 	CodeBuildNotFound = "build_not_found"
 
-	// ADR-031 (tier-2 of the network roadmap) — per-app egress
+	// ADR-31 (tier-2 of the network roadmap) — per-app egress
 	// allowlist. Same gate shape as MinInstances: the feature is
 	// plan-locked (Pro/Scale only), and there are two distinct
 	// failure modes that warrant distinct codes so the CLI can
@@ -1205,7 +1205,7 @@ const (
 	CodeInvalidEgressPort         = "invalid_egress_port"
 
 	// Issue #477 / ADR-118 — per-app ingress IP allowlist (extends
-	// the reserved 'ip_allowlist' enum value, ADR-079). Same shape
+	// the reserved 'ip_allowlist' enum value, ADR-79). Same shape
 	// as the egress pair: 403 plan-gate + 400 count cap, distinct
 	// codes so the CLI can render actionable retry guidance.
 	//   * CodePlanPublicAuthIPAllowlistNotAllowed = 403 "your plan
@@ -1216,7 +1216,7 @@ const (
 	CodePlanPublicAuthIPAllowlistNotAllowed = "plan_public_auth_ip_allowlist_not_allowed"
 	CodePublicAuthIPAllowlistTooLong        = "public_auth_ip_allowlist_too_long"
 
-	// Issue #679 / PR-B / ADR-082 — per-account egress allowlist
+	// Issue #679 / PR-B / ADR-82 — per-account egress allowlist
 	// additive budget. Distinct code from CodeEgressAllowlistTooLong
 	// so the CLI can render the "your admin override is too big,
 	// talk to support" message separately from the "you hit the
@@ -1264,7 +1264,7 @@ const (
 	CodePlanInternalIngressNotAllowed = "plan_internal_ingress_not_allowed"
 	CodeAppVisibilityInvalid          = "app_visibility_invalid"
 
-	// Issue #470 / ADR-055: per-app two-tier-snapshot flag (warm.snap
+	// Issue #470 / ADR-55: per-app two-tier-snapshot flag (warm.snap
 	// on top of init.snap). Pro/Scale opt in by default; Free/Hobby
 	// reject PATCH-true with 403 plan_warm_snapshot_not_allowed so
 	// customers see the gate before the SQL CHECK trips on the
@@ -1274,7 +1274,7 @@ const (
 	// the streaming + allowlist copy without conflating them.
 	CodePlanWarmSnapshotNotAllowed = "plan_warm_snapshot_not_allowed"
 	// CodePlanWarmPoolNotAllowed is returned when a Free customer tries
-	// to reserve paused warm-pool VMs (issue #1056 / ADR-074).
+	// to reserve paused warm-pool VMs (issue #1056 / ADR-74).
 	CodePlanWarmPoolNotAllowed = "plan_warm_pool_not_allowed"
 	// CodeInvalidWarmPoolSize is a 422 for values outside
 	// [0, max_concurrency].
@@ -1316,7 +1316,7 @@ const (
 	// telemetry.
 	CodeAppProtocolInvalid = "app_protocol_invalid"
 
-	// Issue #477 / ADR-079 — public-URL auth mode gate. Free apps
+	// Issue #477 / ADR-79 — public-URL auth mode gate. Free apps
 	// stay on the no-signup-friction path (open-only); Hobby unlocks
 	// 'bearer'; Pro+ unlocks both 'bearer' and 'basic'. 402 mirrors
 	// the streaming / warm-snapshot / eviction-priority / crons /
@@ -1328,7 +1328,7 @@ const (
 	CodePlanPublicAuthBearerNotAllowed = "plan_public_auth_bearer_not_allowed"
 	CodePlanPublicAuthBasicNotAllowed  = "plan_public_auth_basic_not_allowed"
 
-	// Issue #676 / ADR-080 — per-app raw-bytes Upgrade bridge gate.
+	// Issue #676 / ADR-80 — per-app raw-bytes Upgrade bridge gate.
 	// 403 returned when a customer on a plan that does not enable
 	// WebSocket (Free) attempts to PATCH apps.websocket_enabled=true.
 	// Same gate shape as CodePlanStreamingNotAllowed /
@@ -1341,7 +1341,7 @@ const (
 	// AND at PATCH time (no override path).
 	CodePlanWebSocketNotAllowed = "plan_websocket_not_allowed"
 
-	// ADR-093: customer attempted PATCH-true on Free for
+	// ADR-93: customer attempted PATCH-true on Free for
 	// apps.route_metrics_enabled. Same gate shape as
 	// CodePlanWebSocketNotAllowed above; distinct code so the
 	// CLI can render "per-route metrics is a paid feature"
@@ -1357,7 +1357,7 @@ const (
 	// apps. The default edge answer is available on every plan.
 	CodePlanHealthPathWakesNotAllowed = "plan_health_path_wakes_not_allowed"
 
-	// Issue #470 / ADR-055: out-of-range warm-snapshot threshold
+	// Issue #470 / ADR-55: out-of-range warm-snapshot threshold
 	// values from a PATCH (warm_snapshot_min_requests outside [1,
 	// 100] or warm_snapshot_min_ms outside [100, 60000]). 422 with
 	// these codes so the customer sees a validation error, not a
@@ -1388,7 +1388,7 @@ const (
 	// reserved" without conflating them.
 	CodePlanEvictionPriorityReservedQuota = "plan_eviction_priority_reserved_quota"
 
-	// Tier A10 / ADR-088 — per-app overflow_node preference. 422
+	// Tier A10 / ADR-88 — per-app overflow_node preference. 422
 	// returned when (a) the wire name does not resolve via
 	// Store.ComputeNodeByName (404→422 mapping, mirrors the
 	// soft-404→404 surface at compute_nodes.go:267) or
@@ -1450,7 +1450,7 @@ const (
 	// the app configuration.
 	CodePublicAuthConfigInvalid = "public_auth_config_invalid"
 
-	// Issue #462 / ADR-058 — per-app scaling policy (PR-A). Three
+	// Issue #462 / ADR-58 — per-app scaling policy (PR-A). Three
 	// new codes, mirroring the existing autoscale shape (one
 	// plan-gate 403 + two shape 422's). The codes are clustered
 	// here so a future reader can see the full #462 surface in
@@ -1479,7 +1479,7 @@ const (
 	CodeInvalidCooldown                            = "invalid_cooldown"
 	CodeScalingTargetIncompatibleWithWorkloadClass = "scaling_target_incompatible_with_workload_class"
 
-	// Issue #554 / ADR-078: liveness probe plan gate. The 403
+	// Issue #554 / ADR-78: liveness probe plan gate. The 403
 	// surfaces on a Free-customer request that includes
 	// `overrides.liveness_probe`; apid reads
 	// Plan.LivenessAllowed() and short-circuits BEFORE the DB is
@@ -1488,7 +1488,7 @@ const (
 	// same "your plan does not unlock X" template.
 	CodePlanLivenessProbeNotAllowed = "plan_liveness_probe_not_allowed"
 
-	// Account self-service (spec §17 G6, ADR-021). The
+	// Account self-service (spec §17 G6, ADR-21). The
 	// "confirm_required" code is returned when a DELETE arrives without
 	// the confirmation header so a stale CLI prompt can't silently wipe
 	// an account. The "pending" code carries the restore_until envelope
@@ -1504,7 +1504,7 @@ const (
 	// distinguishes the two so the CLI can render actionable guidance.
 	CodeAppRenameFailed = "app_rename_failed"
 
-	// Image pull failure modes (ADR-021, spec §17 G1). The three codes
+	// Image pull failure modes (ADR-21, spec §17 G1). The three codes
 	// here are the customer-facing stable string for the puller-side
 	// sentinels in pkg/oci/errors.go. imaged's buildImageLayer failure
 	// path runs SentinelToCode(err) to pick one of these, persists it on
@@ -1606,7 +1606,7 @@ const (
 	CodeConcurrencyQueueFull    = "concurrency_queue_full"
 	CodeConcurrencyQueueTimeout = "concurrency_queue_timeout"
 
-	// Dashboard auth (issue #165, ADR-032). Pre-#165, POST /login
+	// Dashboard auth (issue #165, ADR-32). Pre-#165, POST /login
 	// auto-created an account + minted a "web-console" API key + set
 	// the session cookie on ANY email with zero verification, which
 	// was a full pre-auth account-takeover (spec §11 violation).
@@ -1652,7 +1652,7 @@ const (
 	// /v1/auth/{google,github}{,/callback} handlers when the
 	// boot-resolved auth.SignInConfig reports the provider
 	// Disabled — i.e. both ID and SECRET are unset on this host
-	// (issue #419 / ADR-046). The half-set case refuses to boot at
+	// (issue #419 / ADR-46). The half-set case refuses to boot at
 	// runWithDeps, so this code is the operator-chose-not-to-ship-it
 	// shape (single-box dev with OAuth off, or a tier-2 fleet where
 	// only one provider is wired). The same code covers the stale-
@@ -1665,7 +1665,7 @@ const (
 	// clients can reconnect without parsing infrastructure diagnostics.
 	CodeEventStreamUnavailable = "event_stream_unavailable"
 
-	// Organizations (issue #190 / IAM-6 / ADR-061). Twelve stable
+	// Organizations (issue #190 / IAM-6 / ADR-61). Twelve stable
 	// strings surface the full org lifecycle: slug shape, slug
 	// collision, role gating, member/invitation caps, invitation
 	// lifecycle, ownership-transfer guards, personal-org
@@ -1749,7 +1749,7 @@ const (
 	CodeExecutionNetworkInvalid     = "execution_network_invalid"
 	CodeExecutionWorkflowStepExists = "execution_workflow_step_exists"
 
-	// Jobs (issue #1184 Workstream A / ADR-099 supplement).
+	// Jobs (issue #1184 Workstream A / ADR-99 supplement).
 	//
 	// CodeJobsNotAllowed is the Free-plan gate for all /v1/jobs
 	// routes. Returned as a 404 (not 403) so a Free account can
@@ -1807,7 +1807,7 @@ const (
 	// can't run this argv" rather than "the schema is wrong".
 	CodeJobCommandInvalid = "job_command_invalid"
 
-	// Workflows (ADR-081).
+	// Workflows (ADR-81).
 	CodePlanWorkflowsNotAllowed         = "plan_workflows_not_allowed"
 	CodePlanWorkflowsQuota              = "plan_workflows_quota"
 	CodeWorkflowDAGCycle                = "workflow_dag_cycle"
@@ -1835,7 +1835,7 @@ const SecretKeyPattern = `^[A-Z][A-Z0-9_]*$`
 const MaxSecretKeyLen = 128
 
 // OrgSlugPattern is the regex enforced by the ORG slug validator in PR 5
-// (issue #190 / IAM-6 / ADR-061) and reused by ErrOrgSlugInvalid's detail
+// (issue #190 / IAM-6 / ADR-61) and reused by ErrOrgSlugInvalid's detail
 // string so the rejection copy carries the same shape the handler enforces.
 // Lowercase ASCII letters, digits, and single dashes; must start and end
 // with a letter or digit (no leading or trailing dash); 3..32 chars total.
@@ -1898,7 +1898,7 @@ func StatusForCode(code string) int {
 		return http.StatusServiceUnavailable
 	case CodeBuildSBOMUnavailable:
 		// 503 — the SBOM populator hasn't run (issue #299 /
-		// ADR-038 Phase 3). The build row itself is final; the
+		// ADR-38 Phase 3). The build row itself is final; the
 		// SBOM artefact is best-effort post-mortem. SLO-exempt
 		// for the same reason as CodeScanCritical: "missing
 		// observational metadata" is not a customer-impacting
@@ -1928,7 +1928,7 @@ func StatusForCode(code string) int {
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked:
 		return http.StatusConflict
-	case CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
+	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -2048,7 +2048,7 @@ func StatusForCode(code string) int {
 		return http.StatusBadRequest
 	case CodeSecretValueTooLarge:
 		return http.StatusRequestEntityTooLarge
-	// Issue #461 / ADR-062 — per-app private-registry Basic Auth.
+	// Issue #461 / ADR-62 — per-app private-registry Basic Auth.
 	// The DELETE-absent posture is 400 (mirrors CodeSecretNotFound
 	// convention; the URL resource IS the host, distinct from
 	// CodeNotFound which is reserved for app-not-found). Plan
@@ -2065,7 +2065,7 @@ func StatusForCode(code string) int {
 		return http.StatusRequestEntityTooLarge
 	case CodeJobRegistryCredentialNotFound:
 		return http.StatusBadRequest
-	// ADR-098: data-placement hints (issue #395 mirror + Free gate).
+	// ADR-98: data-placement hints (issue #395 mirror + Free gate).
 	// CodePlanDataUpstreamsNotAllowed = 402 (plan doesn't unlock the
 	// surface, like CodePlanWebhooksNotAllowed). CodePlanLimitDataUpstreams
 	// = 403 (per-plan cap reached, like CodePlanWebhookQuota).
@@ -2101,7 +2101,7 @@ func StatusForCode(code string) int {
 		return http.StatusBadRequest
 	case CodeUpstreamNotFound:
 		return http.StatusNotFound
-	// Env vars (issue #395 / ADR-045): mirror the secrets status shape
+	// Env vars (issue #395 / ADR-45): mirror the secrets status shape
 	// so SDK callers can reuse the same error-decoding pattern. Plan
 	// quota is 403, value size is 413, key regex + not-found are 400.
 	case CodePlanLimitEnvVars:
@@ -2121,7 +2121,7 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeAPIKeyLimitExceeded:
 		return http.StatusConflict
-	// Trusted cosign signers (issue #472 / ADR-054): mirror the env
+	// Trusted cosign signers (issue #472 / ADR-54): mirror the env
 	// status shape. PUT body shape is 400, quota is 403, not-found is
 	// 404 (the URL resource IS the signer name; we deliberately
 	// diverge from the secret/env 400 to make the resource model
@@ -2195,7 +2195,7 @@ func StatusForCode(code string) int {
 	// (plan-tier and budget-shape refusals all live here).
 	case CodeAdmissionRefused:
 		return http.StatusPaymentRequired
-	// Issue #476 / ADR-076 — webhook subscription gate + per-plan
+	// Issue #476 / ADR-76 — webhook subscription gate + per-plan
 	// per-app/per-account webhook quota. Webhooks are Hobby+; the
 	// Free plan gets a 402 mirroring the existing Cron/AlertRules
 	// 402 family. Quota overage (Hobby cap=5/acct, Pro cap=100/acct,
@@ -2216,12 +2216,12 @@ func StatusForCode(code string) int {
 		return http.StatusPaymentRequired
 	case CodePlanLogDrainQuota:
 		return http.StatusForbidden
-	// Issue #462 / ADR-058 — scaling policy gate. PR-A History
+	// Issue #462 / ADR-58 — scaling policy gate. PR-A History
 	// (2026-07-31): Hobby+ tier-up for max_instances. 403 mirrors
 	// CodePlanMinInstancesNotAllowed.
 	case CodePlanMaxInstancesNotAllowed:
 		return http.StatusForbidden
-	// Issue #554 / ADR-078: liveness probe plan gate. 403 mirrors
+	// Issue #554 / ADR-78: liveness probe plan gate. 403 mirrors
 	// CodePlanMaxInstancesNotAllowed / CodePlanEgressAllowlistNotAllowed
 	// so the CLI's "your plan does not unlock X" template renders
 	// uniformly.
@@ -2249,7 +2249,7 @@ func StatusForCode(code string) int {
 		return http.StatusBadRequest
 	case CodeResetTokenInvalid, CodeResetTokenExpired, CodeVerificationLinkInvalid:
 		return http.StatusGone
-	// Organizations (issue #190 / IAM-6 / ADR-061). 404 for slug
+	// Organizations (issue #190 / IAM-6 / ADR-61). 404 for slug
 	// not-found matches the IDOR convention used by LoadApp
 	// (cross-tenant access returns 404, never 403). 422 for slug
 	// invalid is a shape failure (matching the convention of
@@ -2295,7 +2295,7 @@ func StatusForCode(code string) int {
 		return http.StatusRequestEntityTooLarge
 	case CodeExecutionWorkflowStepExists:
 		return http.StatusConflict
-	// Jobs (issue #1184 Workstream A / ADR-099 supplement). Ten
+	// Jobs (issue #1184 Workstream A / ADR-99 supplement). Ten
 	// codes that ship with Mega-1 (CR-8 / code-review #8 — the
 	// gRPC error path lifts a gRPC status into a Problem carrying
 	// only the Code, so any of these eight codes that landed on a
@@ -2699,7 +2699,7 @@ func ErrInternal(detail string) *Problem {
 		"Internal Error", detail)
 }
 
-// ErrStepUpRequired is returned by RequireStepUp (ADR-077 +
+// ErrStepUpRequired is returned by RequireStepUp (ADR-77 +
 // PR-8 acceptance) when the Envelope.StepUpAt stamp is missing or
 // stale. The 403 carries CodeStepUpRequired (not CodeMFARequired)
 // so the dashboard can render "re-enter your authenticator code"
@@ -3354,7 +3354,7 @@ func PlanQuotaScopeDisplayName(scope string) string {
 
 // CodePlanWebhooksNotAllowed is the 402 the customer sees when
 // the plan doesn't unlock outbound webhooks at all (Free today).
-// Issue #476 / ADR-076. Mirrors CodePlanAlertRulesNotAllowed.
+// Issue #476 / ADR-76. Mirrors CodePlanAlertRulesNotAllowed.
 const CodePlanWebhooksNotAllowed = "plan_webhooks_not_allowed"
 
 // CodePlanWebhookQuota is the 403 the customer sees when the plan
@@ -3588,7 +3588,7 @@ const CodeAppWebhookInvalid = "app_webhook_invalid"
 // or authentication header.
 const CodeAppLogDrainInvalid = "app_log_drain_invalid"
 
-// Edge rules (ADR-089). Each code maps to one wire-level failure
+// Edge rules (ADR-89). Each code maps to one wire-level failure
 // mode so the CLI can surface a stable, machine-readable error.
 // Naming follows the alert_rules / webhooks convention
 // (`<resource>_<verb>_<state>`).
@@ -3598,7 +3598,7 @@ const (
 	CodePlanLimitEdgeRules         = "plan_limit_edge_rules"
 	CodePlanEdgeRuleKindNotAllowed = "plan_edge_rule_kind_not_allowed"
 	// CodePlanEdgeRuleKindQuotaReached is the per-kind quota error
-	// (ADR-091 D22). Distinct from CodePlanLimitEdgeRules so the
+	// (ADR-91 D22). Distinct from CodePlanLimitEdgeRules so the
 	// customer sees the specific kind that tripped ("1/1 geo rules
 	// on Free; upgrade to Hobby for 5") rather than the generic
 	// "edge rules cap reached" message. The href in the problem
@@ -3611,7 +3611,7 @@ const (
 	CodeJWTSignatureInvalid          = "jwt_signature_invalid"
 	CodeIPDenied                     = "ip_denied"
 	// CodeGeoDenied mirrors CodeIPDenied for the kind=geo primitive
-	// (ADR-091 D21). Distinct so dashboards / metrics can
+	// (ADR-91 D21). Distinct so dashboards / metrics can
 	// disambiguate a geo deny from any other 403 on the wire — a
 	// geo deny is policy-driven (ISO 3166-1 allow/deny), not an
 	// auth failure or scope check, and the stable code lets
@@ -3634,7 +3634,7 @@ const (
 	// contract is "deadline fires from any hop, not just the
 	// handler body" — surfaces this single stable code on every
 	// outbound problem envelope so an SDK can branch on it
-	// without parsing prose. ADR-093 §Decision.
+	// without parsing prose. ADR-93 §Decision.
 	CodeRequestBudgetExceeded = "request_budget_exceeded"
 	// Upload admission precedes guest execution, so upload failures have
 	// distinct stable codes and do not masquerade as app timeouts.
@@ -3976,7 +3976,7 @@ func ErrPlanEvictionPriorityReservedNotAllowed(p Plan) *Problem {
 
 // ErrPlanPublicAuthBearerNotAllowed is the 402 apid returns when a
 // Free customer PATCHes public_auth_mode='bearer' (issue #477 /
-// ADR-079). The plan DOES have a tier — 'open' — that the customer
+// ADR-79). The plan DOES have a tier — 'open' — that the customer
 // can already use; the upgrade copy is "bearer is a paid feature".
 // 402 PaymentRequired mirrors the streaming / warm-snapshot /
 // eviction-priority / cron / alert-rules / webhooks gate family so
@@ -3992,7 +3992,7 @@ func ErrPlanPublicAuthBearerNotAllowed(p Plan) *Problem {
 
 // ErrPlanPublicAuthBasicNotAllowed is the 402 apid returns when a
 // Free/Hobby customer PATCHes public_auth_mode='basic' (issue #477 /
-// ADR-079). The plan DOES have tiers — 'open' (every plan) and
+// ADR-79). The plan DOES have tiers — 'open' (every plan) and
 // 'bearer' (Hobby+) — that the customer can already use; the upgrade
 // copy is "basic is Pro+". 402 PaymentRequired mirrors the existing
 // 402 gate family. Distinct code from
@@ -4410,7 +4410,7 @@ func ErrWildcardDomainTenantSurfaceOverlap(domain, hostname string) *Problem {
 		fmt.Sprintf("wildcard domain %q overlaps tenant-surface hostname %q; remove or move that hostname before attaching the wildcard.", domain, hostname))
 }
 
-// ErrPlanDataUpstreamsNotAllowed (ADR-098 §D5) is the 402 returned
+// ErrPlanDataUpstreamsNotAllowed (ADR-98 §D5) is the 402 returned
 // by apid's createUpstream handler when the customer's plan has
 // DataPlacementHintsPerApp == 0 (Free today). Mirrors
 // ErrPlanWebhooksNotAllowed at line 1883: fires BEFORE loadApp so a
@@ -4434,7 +4434,7 @@ func ErrDataUpstreamsDisabled() *Problem {
 		WithDocs(docsBase + "/plans#data-placement")
 }
 
-// ErrPlanLimitDataUpstreams (ADR-098 §D5) is the 403 returned when
+// ErrPlanLimitDataUpstreams (ADR-98 §D5) is the 403 returned when
 // CreateDataUpstreamIfUnderQuota surfaces a state-layer quota
 // error. Mirrors ErrPlanWebhookQuota at line 1900 — the plan DOES
 // unlock the surface, the right copy is "delete one to add another",
@@ -4449,7 +4449,7 @@ func ErrPlanLimitDataUpstreams(plan Plan, limit, observed int) *Problem {
 		WithDocs(docsBase + "/plans#data-placement")
 }
 
-// ErrUpstreamInvalidKind (ADR-098 §D4) is the 400 returned when
+// ErrUpstreamInvalidKind (ADR-98 §D4) is the 400 returned when
 // the customer's PUT body names a kind that's not in the 14-value
 // closed vocabulary (postgres, redis, mongo, ...). Distinct from
 // CodeEnvVarInvalidKey because the surface is a typed DTO, not a
@@ -4460,7 +4460,7 @@ func ErrUpstreamInvalidKind(reason string) *Problem {
 		"Invalid data-upstream kind", reason)
 }
 
-// ErrUpstreamInvalidHost (ADR-098 §D4) is the 400 returned when
+// ErrUpstreamInvalidHost (ADR-98 §D4) is the 400 returned when
 // the host fails the RFC-952/1123 regex (with the IPv4 backstop
 // that PR-A added at migration 00226's
 // `data_upstreams_host_check` CHECK constraint). Mirrors
@@ -4470,7 +4470,7 @@ func ErrUpstreamInvalidHost(reason string) *Problem {
 		"Invalid data-upstream host", reason)
 }
 
-// ErrUpstreamInvalidPort (ADR-098 §D4) is the 400 returned when
+// ErrUpstreamInvalidPort (ADR-98 §D4) is the 400 returned when
 // the port is outside [1, 65535] (matching the migration CHECK).
 // Distinct from CodeUpstreamInvalidHost so a customer with a
 // valid host + invalid port gets a precise error code rather than
@@ -4480,7 +4480,7 @@ func ErrUpstreamInvalidPort(reason string) *Problem {
 		"Invalid data-upstream port", reason)
 }
 
-// ErrUpstreamNotFound (ADR-098 §D4) is the 404 returned when a
+// ErrUpstreamNotFound (ADR-98 §D4) is the 404 returned when a
 // DELETE or GET targets an upstream_id that doesn't exist on this
 // app. Mirrors CodeRegistryCredentialNotFound at line 568 — the
 // 404 vs 400 distinction is what lets the SDK distinguish "delete
@@ -4510,7 +4510,7 @@ func ErrDeployFailed(detail string) *Problem {
 
 // ErrDeploySignatureInvalid is returned by apid when an OCI image
 // deploy is rejected at the accept-time signature-enforcement gate
-// (issue #472 / ADR-054). Detail carries the human-readable reason
+// (issue #472 / ADR-54). Detail carries the human-readable reason
 // (one of: "no signature", "signature by untrusted publisher", or
 // "no trusted publishers configured"). The customer sees this code
 // only when apps.require_signed=true; imaged surfaces the deeper
@@ -4680,7 +4680,7 @@ func ErrManagedObjectStorageSecretConflict() *Problem {
 }
 
 // ErrPlanLimitEnvVars is returned when an env PUT would exceed the plan's
-// per-app env-var count (issue #395 / ADR-045). Observed is the post-write
+// per-app env-var count (issue #395 / ADR-45). Observed is the post-write
 // count. The 403 mirrors ErrPlanLimitSecrets so the SDK's error decoder can
 // share the quota-reached branch.
 func ErrPlanLimitEnvVars(l Limits, observed int) *Problem {
@@ -4733,7 +4733,7 @@ func ErrAPIKeyLimitExceeded(l Limits, observed int) *Problem {
 }
 
 // ErrPlanLimitTrustedSigners is returned when a trusted-signer PUT
-// would exceed the plan's per-app count (issue #472 / ADR-054).
+// would exceed the plan's per-app count (issue #472 / ADR-54).
 // Observed is the post-write count. The 403 mirrors ErrPlanLimitEnvVars
 // so the SDK's quota-reached branch decodes this code without
 // hand-rolling a new switch arm. Distinct `code` keeps the dashboard
@@ -4801,7 +4801,7 @@ func ErrEnvScopeInvalid(detail string) *Problem {
 // ErrEnvScopeReserved is returned when the scope query param is the
 // reserved sentinel "__all__" on a WRITE path (PUT/DELETE). The
 // sentinel is read-only — it triggers the nested `env_by_scope`
-// response shape on GET (ADR-090 D3) and MUST NOT be set as a scope
+// response shape on GET (ADR-90 D3) and MUST NOT be set as a scope
 // name. 400, code env_scope_reserved. Detail names the literal
 // sentinel so the CLI can render "you used the all-scopes sentinel
 // on a write — drop the ?scope= flag" without a separate API call.
@@ -4814,7 +4814,7 @@ func ErrEnvScopeReserved(sentinel string) *Problem {
 
 // ErrPlanRegistryCredentialsNotAllowed is returned when the customer's
 // plan has RegistryCredentialMax == 0 (Free today, issue #461 /
-// ADR-062). The 403 fires BEFORE the store is touched so a Free
+// ADR-62). The 403 fires BEFORE the store is touched so a Free
 // customer gets a clean upsell signal — not a quota hint. The plan
 // truly doesn't unlock the surface, so the only path forward is a
 // plan upgrade.
@@ -4894,7 +4894,7 @@ func ErrJobRegistryCredentialNotFound(host, job string) *Problem {
 // plan-tier gate). The customer's bill on Free is built around
 // scale-to-zero; a floor keeps N × RAMMB resident at all times, which
 // is the cost shape of Hobby / Pro / Scale. Hobby was promoted to
-// the gate's "allowed" set by issue #462 / ADR-058 / PR-A — the
+// the gate's "allowed" set by issue #462 / ADR-58 / PR-A — the
 // tier-up is as far as the gate goes, so Free is the remaining
 // locked tier.
 func ErrPlanMinInstancesNotAllowed(p Plan) *Problem {
@@ -4976,7 +4976,7 @@ func ErrInvalidMinInstances(got, maxConcur int) *Problem {
 		WithDocs(docsBase + "/apps#min-instances")
 }
 
-// ErrMaxMinInstancesExceeded (issue #557 / ADR-071 §Decision 5) is
+// ErrMaxMinInstancesExceeded (issue #557 / ADR-71 §Decision 5) is
 // returned when the requested min_instances exceeds the per-plan
 // MaxMinInstances cap (Hobby 1, Pro 3, Scale 10). 422 with
 // WithLimit carrying the cap and the observed value so the CLI
@@ -5221,7 +5221,7 @@ func ErrInvalidMirrorWindow(got string) *Problem {
 }
 
 // ErrSidecarCapExceeded is returned when the request carries more
-// than the global or per-type helper cap (issue #463 / ADR-068 §Decision 1).
+// than the global or per-type helper cap (issue #463 / ADR-68 §Decision 1).
 // 400 because the request shape is wrong; the cap is the load-bearing
 // invariant. The schema CHECK on `deployments.sidecars` is the
 // second-line defence; this error surfaces before that check
@@ -5229,7 +5229,7 @@ func ErrInvalidMirrorWindow(got string) *Problem {
 func ErrSidecarCapExceeded(seen, cap int) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSidecarCapExceeded,
 		"Too many sidecars",
-		fmt.Sprintf("request carried %d helpers; the cap is %d (issue #463 / ADR-068 §Decision 1).", seen, cap)).
+		fmt.Sprintf("request carried %d helpers; the cap is %d (issue #463 / ADR-68 §Decision 1).", seen, cap)).
 		WithLimit(int64(cap), int64(seen)).
 		WithDocs(docsBase + "/sidecars#cap")
 }
@@ -5250,7 +5250,7 @@ func ErrSidecarInvalidType(name, got string) *Problem {
 }
 
 // ErrSidecarInvalidImage is returned when the sidecar image is not
-// digest-pinned (issue #463 / ADR-068 §Decision 5). Tag-pinning is
+// digest-pinned (issue #463 / ADR-68 §Decision 5). Tag-pinning is
 // the documented OCI supply-chain attack vector; the runtime
 // already enforces this; the API gate surfaces a useful error at
 // the client side.
@@ -5267,14 +5267,14 @@ func ErrSidecarInvalidImage(name string, err error) *Problem {
 // dedicated infra, not FaaS.
 //
 // Deprecated for new callers: prefer ErrSidecarStatefulDeniedWithHint
-// (issue #463 / ADR-068 §Decision 4 followup), which surfaces the
+// (issue #463 / ADR-68 §Decision 4 followup), which surfaces the
 // remediation hint from pkg/statefuldenylist.Set in the RFC 7807
 // Detail field. Kept for symmetry with the existing pkg/imaged
 // surface that takes (name, image) only.
 func ErrSidecarStatefulDenied(name, image string) *Problem {
 	return NewProblem(http.StatusForbidden, CodeSidecarStatefulDenied,
 		"Stateful sidecar image is not allowed",
-		fmt.Sprintf("sidecar %q image %q is on the stateful denylist; stateless sidecars only (issue #463 / ADR-068 §Decision 4).", name, image)).
+		fmt.Sprintf("sidecar %q image %q is on the stateful denylist; stateless sidecars only (issue #463 / ADR-68 §Decision 4).", name, image)).
 		WithDocs(docsBase + "/sidecars#stateless")
 }
 
@@ -5290,7 +5290,7 @@ func ErrSidecarStatefulDenied(name, image string) *Problem {
 // sidecar + image even when the Set row has no remediation copy —
 // defence against a future Set entry being added without a hint).
 func ErrSidecarStatefulDeniedWithHint(name, image, hint string) *Problem {
-	detail := fmt.Sprintf("sidecar %q image %q is on the stateful denylist; stateless sidecars only (issue #463 / ADR-068 §Decision 4).", name, image)
+	detail := fmt.Sprintf("sidecar %q image %q is on the stateful denylist; stateless sidecars only (issue #463 / ADR-68 §Decision 4).", name, image)
 	if hint != "" {
 		detail += " Remediation: " + hint + "."
 	}
@@ -5354,14 +5354,14 @@ func ErrSidecarInvalidDiskIOProfile(profile string) *Problem {
 
 // ErrSidecarNotAllowedOnPlan is reserved for a future per-plan
 // gate (PR-A does NOT apply this gate — the global SidecarCapMax
-// is the load-bearing surface; see ADR-068 §Decision 1). The
+// is the load-bearing surface; see ADR-68 §Decision 1). The
 // constructor exists so a follow-up PR doesn't have to invent
 // a new code. 403 because it's a plan-tier decision, not a
 // shape violation.
 func ErrSidecarNotAllowedOnPlan(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodeSidecarNotAllowedOnPlan,
 		"Plan doesn't allow sidecars",
-		fmt.Sprintf("the %s plan doesn't allow sidecars (issue #463 / ADR-068).", p)).
+		fmt.Sprintf("the %s plan doesn't allow sidecars (issue #463 / ADR-68).", p)).
 		WithDocs(docsBase + "/plans#sidecars")
 }
 
@@ -5376,7 +5376,7 @@ func ErrCompanionPresetUnavailable(preset string) *Problem {
 		WithDocs(docsBase + "/companions#managed-presets")
 }
 
-// ErrPlanMaxInstancesNotAllowed (issue #462 / ADR-058) is the
+// ErrPlanMaxInstancesNotAllowed (issue #462 / ADR-58) is the
 // 403 plan-gate mirror of ErrPlanMinInstancesNotAllowed. Free
 // stays off; Hobby + Pro + Scale opt in. The 403 runs first
 // (before the 422 bounds check) so a Free customer PATCHing a
@@ -5388,7 +5388,7 @@ func ErrPlanMaxInstancesNotAllowed(p Plan) *Problem {
 		WithDocs(docsBase + "/apps#max-instances")
 }
 
-// ErrInvalidMaxInstances (issue #462 / ADR-058) is the 422
+// ErrInvalidMaxInstances (issue #462 / ADR-58) is the 422
 // bounds check on `scaling_policy.max_instances`. The PATCH is
 // rejected when the value is below min_instances or above the
 // plan's MaxConcurrency. Distinct from ErrInvalidMinInstances so
@@ -5402,7 +5402,7 @@ func ErrInvalidMaxInstances(got, minInstances, maxConcur int) *Problem {
 		WithDocs(docsBase + "/apps#max-instances")
 }
 
-// ErrInvalidCooldown (issue #462 / ADR-058) is the 422 bounds
+// ErrInvalidCooldown (issue #462 / ADR-58) is the 422 bounds
 // check on `scale_out_cooldown_s` / `scale_in_cooldown_s`. The
 // PATCH is rejected when the value is outside the per-direction
 // [Min, Max] range (1..3600 for scale-out, 5..86400 for
@@ -5417,7 +5417,7 @@ func ErrInvalidCooldown(field string, got, minSeconds, maxSeconds int) *Problem 
 }
 
 // ErrScalingTargetIncompatibleWithWorkloadClass (issue #462 /
-// ADR-058 / PR-D carve-out) is the 422 returned when a target's
+// ADR-58 / PR-D carve-out) is the 422 returned when a target's
 // signal does not match the app's workload shape. HTTP-style apps
 // cannot use queue_depth, while worker-class apps cannot use
 // concurrent_requests because they have no inbound request signal.
@@ -5435,7 +5435,7 @@ func ErrScalingTargetIncompatibleWithWorkloadClass(metric string) *Problem {
 		WithDocs(docsBase + "/apps#scaling-policy")
 }
 
-// ErrPlanEgressAllowlistNotAllowed (ADR-031) is returned when a Free or Hobby
+// ErrPlanEgressAllowlistNotAllowed (ADR-31) is returned when a Free or Hobby
 // account tries to set apps.egress_allowlist. Same gate shape as
 // ErrPlanMinInstancesNotAllowed: the knob is plan-locked, and Pro/Scale
 // is where the operator surface lives. The plan is named in the body so
@@ -5462,7 +5462,7 @@ func ErrPlanPublicAuthIPAllowlistNotAllowed(p Plan) *Problem {
 		WithDocs(docsBase + "/apps#public-auth-ip-allowlist")
 }
 
-// ErrPlanLivenessProbeNotAllowed (issue #554 / ADR-078) is returned when a
+// ErrPlanLivenessProbeNotAllowed (issue #554 / ADR-78) is returned when a
 // Free account tries to pin a per-deployment liveness probe override. The
 // gate is the same shape as ErrPlanEgressAllowlistNotAllowed /
 // ErrPlanMinInstancesNotAllowed: Free's Plan.LivenessAllowed() returns
@@ -5478,7 +5478,7 @@ func ErrPlanLivenessProbeNotAllowed(p Plan) *Problem {
 		WithDocs(docsBase + "/deploy-overrides#liveness-probe")
 }
 
-// ErrEgressAllowlistTooLong (ADR-031) is returned when the PATCH carries more
+// ErrEgressAllowlistTooLong (ADR-31) is returned when the PATCH carries more
 // CIDRs than the plan's per-app cap. 400 (not 422) because the request shape is
 // well-formed — only the count is over budget. The limit + observed pair rides
 // on the Problem so the CLI can branch on its own copy of the cap (no re-fetch).
@@ -5504,7 +5504,7 @@ func ErrPublicAuthIPAllowlistTooLong(got, maxEntries int) *Problem {
 }
 
 // ErrAccountEgressAllowlistExtraOutOfRange (issue #679 / PR-B /
-// ADR-082) is the 400 returned by PATCH
+// ADR-82) is the 400 returned by PATCH
 // /v1/account/egress_allowlist_extra when the value is < 0 or
 // > api.MaxAccountEgressAllowlistExtra. Negative values are also
 // rejected at the DB CHECK layer (postgres 23514), but exposing
@@ -5520,11 +5520,11 @@ func ErrAccountEgressAllowlistExtraOutOfRange(got, maxExtra int) *Problem {
 		WithDocs(docsBase + "/account#egress-allowlist-extra")
 }
 
-// ErrInvalidEgressAllowlist (ADR-031 + ADR-032) is a 400 for
+// ErrInvalidEgressAllowlist (ADR-31 + ADR-32) is a 400 for
 // entries that don't ParsePrefix as a v4 or v6 CIDR, or that
 // have masklen /0. The detail names the offending entry so an
 // operator triaging a rejected PATCH sees exactly which line is
-// bad. ADR-032 — v6 entries are accepted alongside v4 entries;
+// bad. ADR-32 — v6 entries are accepted alongside v4 entries;
 // the non-/0 contract is shared with the DB trigger.
 func ErrInvalidEgressAllowlist(entry string, reason error) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeInvalidEgressAllowlist,
@@ -5762,7 +5762,7 @@ func ErrInvocationWorkloadClass(workloadClass, executionMode string) *Problem {
 		WithDocs(docsBase + "/event-driven#invocations")
 }
 
-// ErrBuildProvenanceNotFound is the ADR-038 surface for a build
+// ErrBuildProvenanceNotFound is the ADR-38 surface for a build
 // whose populator INSERT never landed (best-effort WARN inside
 // builderd.recordProvenance) OR for a pre-PR build that pre-dates
 // build_provenance entirely. Distinct from "no such build" so the
@@ -5776,7 +5776,7 @@ func ErrBuildProvenanceNotFound() *Problem {
 		WithDocs(docsBase + "/builds#provenance")
 }
 
-// ErrBuildNotFound is the DEPLOY-PROV-6 / ADR-089 (issue #741)
+// ErrBuildNotFound is the DEPLOY-PROV-6 / ADR-89 (issue #741)
 // surface for GET /v1/builds/{id} when the build id is unknown
 // OR belongs to another account. The 404 surface is uniform so
 // cross-account probes can't enumerate — distinct from
@@ -5789,7 +5789,7 @@ func ErrBuildNotFound() *Problem {
 		WithDocs(docsBase + "/builds#status")
 }
 
-// ErrInvalidRef is the DEPLOY-PROV-4 / ADR-092 (issue #739)
+// ErrInvalidRef is the DEPLOY-PROV-4 / ADR-92 (issue #739)
 // 400 surface for POST /v1/apps/{slug}/deployments/source-ref
 // when the supplied ref fails gitfetch.IsValidCommitSHA, fails
 // the path-traversal guard, OR when GitHub's commits/{ref}
@@ -5805,7 +5805,7 @@ func ErrInvalidRef(ref string) *Problem {
 		WithDocs(docsBase + "/build/source-ref")
 }
 
-// ErrGitHubInstallNotFound is the DEPLOY-PROV-4 / ADR-092 (issue
+// ErrGitHubInstallNotFound is the DEPLOY-PROV-4 / ADR-92 (issue
 // #739) 404 surface for POST /v1/apps/{slug}/deployments/source-ref
 // when state.GitHubInstallForAccount returns ErrNotFound for the
 // caller's account. Distinct from the generic CodeNotFound so the
@@ -5818,7 +5818,7 @@ func ErrGitHubInstallNotFound() *Problem {
 		WithDocs(docsBase + "/build/source-ref#prereq")
 }
 
-// ErrSourceRefUnavailable is the DEPLOY-PROV-4 / ADR-092 (issue
+// ErrSourceRefUnavailable is the DEPLOY-PROV-4 / ADR-92 (issue
 // #739) 503 surface for POST /v1/apps/{slug}/deployments/source-ref
 // when the githubd bridge is down (StreamSourceRef returned
 // Unavailable) or when a 401 from codeload.github.com survived
@@ -5843,7 +5843,7 @@ func ErrSourceRefStale(reason string) *Problem {
 		WithDocs(docsBase + "/build/source-ref")
 }
 
-// ErrBuildSBOMUnavailable is the issue #299 / ADR-038 Phase 3 surface
+// ErrBuildSBOMUnavailable is the issue #299 / ADR-38 Phase 3 surface
 // for `faas build sbom <id>` (and the SDK GetBuildsIdSbom) when no
 // SBOM artefact has been stored for this build yet — either the imaged
 // syft populator in pkg/imaged/loop.go hasn't landed (pre-PR build) or
@@ -5887,7 +5887,7 @@ func ErrInvalidScheduledAt(details ...string) *Problem {
 		WithDocs(docsBase + "/event-driven#delayed-tasks")
 }
 
-// --- Dashboard auth (issue #165, ADR-032 PR #2) ----------------------------
+// --- Dashboard auth (issue #165, ADR-32 PR #2) ----------------------------
 
 // ErrInvalidCredentials is the 401 returned by POST /login (and the
 // colliding /signup anti-enumeration path). The body is identical
@@ -5967,7 +5967,7 @@ func ErrResetTokenExpired() *Problem {
 		WithDocs(docsBase + "/auth/reset")
 }
 
-// --- Organizations (issue #190 / IAM-6 / ADR-061) --------------------------
+// --- Organizations (issue #190 / IAM-6 / ADR-61) --------------------------
 //
 // Twelve stable constructors cover the full org lifecycle. Each
 // helper is the one-liner PR 5 / PR 6 handlers call; the prefix-
@@ -6115,7 +6115,7 @@ func ErrOrgAPIKeyRequiresOrg() *Problem {
 
 // ErrInvalidOverflowNode is the 422 returned when the
 // overflow_node PATCH or create-time value does not resolve
-// to a real, active compute_node (Tier A10 / ADR-088). Names
+// to a real, active compute_node (Tier A10 / ADR-88). Names
 // the offending value back to the customer so dashboards can
 // surface "spill target X not found" without grepping logs.
 func ErrInvalidOverflowNode(name string) *Problem {
@@ -6126,7 +6126,7 @@ func ErrInvalidOverflowNode(name string) *Problem {
 }
 
 // ----------------------------------------------------------------------------
-// Edge rule errors (ADR-089). Mirrors the alert_rules / webhook
+// Edge rule errors (ADR-89). Mirrors the alert_rules / webhook
 // helper shape so the CLI can render all four 402/403/404/422
 // flavours uniformly.
 // ----------------------------------------------------------------------------
@@ -6171,7 +6171,7 @@ func ErrPlanEdgeRuleKindNotAllowed(plan Plan, kind string) *Problem {
 }
 
 // ErrPlanEdgeRuleKindQuotaReached is the 403 returned when the
-// per-kind edge-rule quota is reached (ADR-091 D22 — currently only
+// per-kind edge-rule quota is reached (ADR-91 D22 — currently only
 // kind=geo has a separate per-kind cap; future paid-kind additions
 // can reuse the same RFC 7807 code with their own kind arg). distinct
 // from ErrPlanEdgeRulesQuotaReached which is the GENERAL cap trip

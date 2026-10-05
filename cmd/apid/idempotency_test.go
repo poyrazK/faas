@@ -153,3 +153,19 @@ func TestIdempotencyReplayable(t *testing.T) {
 		}
 	}
 }
+
+func TestIdempotencyBindingRefusalsAreRetryable(t *testing.T) {
+	for _, code := range []string{"bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged} {
+		if idempotencyResponseReplayable(http.StatusConflict, []byte(`{"code":"`+code+`"}`)) {
+			t.Errorf("binding refusal %s would freeze the retry key", code)
+		}
+	}
+	for _, body := range []string{`{"code":"conflict"}`, `{"code":"canary_step_conflict"}`, `not-json`} {
+		if !idempotencyResponseReplayable(http.StatusConflict, []byte(body)) {
+			t.Errorf("unrelated conflict lost replay behavior: %s", body)
+		}
+	}
+	if !idempotencyResponseReplayable(http.StatusOK, []byte(`{"code":"bindings_check_failed"}`)) {
+		t.Fatal("successful responses must remain replayable")
+	}
+}

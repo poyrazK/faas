@@ -78,6 +78,9 @@ func (m *MemStore) FailBuild(_ context.Context, claim Build, fc FailureClass, me
 	if !ok || (d.Status != DeployPending && d.Status != DeployBuilding) {
 		return ErrNotFound
 	}
+	if err := m.checkBindingReleaseFailureLocked(d); err != nil {
+		return err
+	}
 	b.Status, b.FailureClass, b.FinishedAt = BuildFailed, fc, time.Now()
 	m.builds[b.ID] = b
 	m.failDeploymentLocked(d, message)

@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
     from ..models.deployment_response_stage_state import DeploymentResponseStageState
     from ..models.log_excerpt import LogExcerpt
+    from ..models.rollback_operation import RollbackOperation
     from ..models.scan_result import ScanResult
     from ..models.secret_scan_result import SecretScanResult
     from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
@@ -70,7 +71,7 @@ T = TypeVar("T", bound="DeploymentResponse")
 class DeploymentResponse:
     """One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional
     `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 /
-    ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy
+    ADR-53); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy
     pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the
     ref shape is non-secret by design.
 
@@ -131,7 +132,7 @@ class DeploymentResponse:
     override_cmd: list[str] | Unset = UNSET
     """Cmd override echoed verbatim from the create request."""
     override_env_keys: list[str] | Unset = UNSET
-    """Sorted set of env-var keys set by the env override. VALUES ARE NEVER ECHOED (ADR-053 §Decision 4)."""
+    """Sorted set of env-var keys set by the env override. VALUES ARE NEVER ECHOED (ADR-53 §Decision 4)."""
     override_env_secret_keys: list[str] | Unset = UNSET
     """Sorted set of env-var keys set by the env_secrets override. The parallel refs are echoed in
     `override_env_secret_refs` because the ref shape is non-secret by design."""
@@ -148,16 +149,16 @@ class DeploymentResponse:
     override_main_depends_on: list[WorkloadDependency] | Unset = UNSET
     """Primary workload startup dependencies echoed verbatim. Init companions remain implicit prerequisites."""
     override_liveness_probe: DeploymentLivenessProbe | None | Unset = UNSET
-    """Liveness-probe override echoed verbatim (issue #554 / ADR-078). nil when the deployment used the per-plan
+    """Liveness-probe override echoed verbatim (issue #554 / ADR-78). nil when the deployment used the per-plan
     default (Hobby/Pro/Scale → 5s / 3 consecutive / 60s cooldown). Echoed on GET /v1/apps/{slug}/deployments/{id} so
     the customer can audit which probe the host (cmd/vmmd) is running against the VM."""
     min_instances: int | Unset = UNSET
-    """Per-deployment cold-wake floor override (issue #557 closure / ADR-072). 0 = inherit from parent app
+    """Per-deployment cold-wake floor override (issue #557 closure / ADR-72). 0 = inherit from parent app
     (default); positive value is the deployment's own floor. Effective per-instance floor =
     max(app.EffectiveMinInstances(), d.EffectiveMinInstances()). Validated against the parent app's plan
     MaxMinInstances cap on PATCH."""
     scan: None | ScanResult | Unset = UNSET
-    """Per-deploy grype CVE scan surface (issue #464 / ADR-055). nil on pre-feature rows (the migration backfilled
+    """Per-deploy grype CVE scan surface (issue #464 / ADR-55). nil on pre-feature rows (the migration backfilled
     scan_status='skipped' + scan_result={reason: 'pre-feature'} on those; the apid read path returns nil so the
     dashboard / CLI see a clean absence — the /scan route surfaces the 'skipped' sentinel for those rows). Non-nil
     for post-feature rows in any of the {pending, complete, failed, skipped} states. With security_policy=enforce,
@@ -170,7 +171,7 @@ class DeploymentResponse:
         | None
         | Unset
     ) = UNSET
-    """Per-deployment parking reason (issue #554 / ADR-079 follow-up and scheduled image quarantine). Closed-set
+    """Per-deployment parking reason (issue #554 / ADR-79 follow-up and scheduled image quarantine). Closed-set
     vocabulary enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked
     deployments — surfaced as no field on the wire via omitempty."""
     parked_at: datetime.datetime | None | Unset = UNSET
@@ -180,7 +181,7 @@ class DeploymentResponse:
     """Per-deployment traffic-split weight (issue #556 PR-A). Summed across live rows for the app = 100 by
     construction."""
     scope: None | str | Unset = UNSET
-    """Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash.
+    """Per-deployment env scope (ADR-91 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash.
     nil/omitted = `default`."""
     secret_scan: None | SecretScanResult | Unset = UNSET
     """Per-deploy secret-scan audit row (PR-A / ADR-101). Mirrors
@@ -259,6 +260,9 @@ class DeploymentResponse:
     """Wall-clock timestamp at which the rollout was aborted."""
     rollout_aborted_reason: str | Unset = UNSET
     """Operator or orchestrator reason recorded when the rollout is aborted."""
+    rollback_operation: RollbackOperation | Unset = UNSET
+    """Durable progress of a checked historical rollback. This receipt grants no authority to reuse binding
+    evidence or move traffic for another operation."""
     service_rollout_handoff: ServiceRolloutHandoffResponse | Unset = UNSET
     """Durable scheduler progress for a zero-downtime service rollout routing and request-drain handoff."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -569,6 +573,10 @@ class DeploymentResponse:
 
         rollout_aborted_reason = self.rollout_aborted_reason
 
+        rollback_operation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rollback_operation, Unset):
+            rollback_operation = self.rollback_operation.to_dict()
+
         service_rollout_handoff: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_rollout_handoff, Unset):
             service_rollout_handoff = self.service_rollout_handoff.to_dict()
@@ -693,6 +701,8 @@ class DeploymentResponse:
             field_dict["rollout_aborted_at"] = rollout_aborted_at
         if rollout_aborted_reason is not UNSET:
             field_dict["rollout_aborted_reason"] = rollout_aborted_reason
+        if rollback_operation is not UNSET:
+            field_dict["rollback_operation"] = rollback_operation
         if service_rollout_handoff is not UNSET:
             field_dict["service_rollout_handoff"] = service_rollout_handoff
 
@@ -708,6 +718,7 @@ class DeploymentResponse:
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
         from ..models.deployment_response_stage_state import DeploymentResponseStageState
         from ..models.log_excerpt import LogExcerpt
+        from ..models.rollback_operation import RollbackOperation
         from ..models.scan_result import ScanResult
         from ..models.secret_scan_result import SecretScanResult
         from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
@@ -1250,6 +1261,13 @@ class DeploymentResponse:
 
         rollout_aborted_reason = d.pop("rollout_aborted_reason", UNSET)
 
+        _rollback_operation = d.pop("rollback_operation", UNSET)
+        rollback_operation: RollbackOperation | Unset
+        if isinstance(_rollback_operation, Unset):
+            rollback_operation = UNSET
+        else:
+            rollback_operation = RollbackOperation.from_dict(_rollback_operation)
+
         _service_rollout_handoff = d.pop("service_rollout_handoff", UNSET)
         service_rollout_handoff: ServiceRolloutHandoffResponse | Unset
         if isinstance(_service_rollout_handoff, Unset):
@@ -1318,6 +1336,7 @@ class DeploymentResponse:
             rollout_completed_at=rollout_completed_at,
             rollout_aborted_at=rollout_aborted_at,
             rollout_aborted_reason=rollout_aborted_reason,
+            rollback_operation=rollback_operation,
             service_rollout_handoff=service_rollout_handoff,
         )
 

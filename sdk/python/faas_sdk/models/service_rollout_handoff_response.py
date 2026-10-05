@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -17,6 +17,10 @@ from ..models.service_rollout_handoff_response_phase import (
 )
 from ..types import UNSET, Unset
 
+if TYPE_CHECKING:
+    from ..models.service_rollout_binding_gate import ServiceRolloutBindingGate
+
+
 T = TypeVar("T", bound="ServiceRolloutHandoffResponse")
 
 
@@ -27,6 +31,9 @@ class ServiceRolloutHandoffResponse:
     action: ServiceRolloutHandoffResponseAction
     phase: ServiceRolloutHandoffResponsePhase
     retry_count: int
+    bindings_check: ServiceRolloutBindingGate | Unset = UNSET
+    """Bounded progress of an exact binding check at the service routing boundary. Passed confirms the routing
+    transaction; scheduler ACK and drain completion are reported by the enclosing handoff phase."""
     predecessor_deployment_id: str | Unset = UNSET
     generation: int | Unset = UNSET
     expected_gateways: list[str] | Unset = UNSET
@@ -46,6 +53,10 @@ class ServiceRolloutHandoffResponse:
         phase: str = self.phase
 
         retry_count = self.retry_count
+
+        bindings_check: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.bindings_check, Unset):
+            bindings_check = self.bindings_check.to_dict()
 
         predecessor_deployment_id = self.predecessor_deployment_id
 
@@ -108,6 +119,8 @@ class ServiceRolloutHandoffResponse:
                 "retry_count": retry_count,
             }
         )
+        if bindings_check is not UNSET:
+            field_dict["bindings_check"] = bindings_check
         if predecessor_deployment_id is not UNSET:
             field_dict["predecessor_deployment_id"] = predecessor_deployment_id
         if generation is not UNSET:
@@ -135,12 +148,21 @@ class ServiceRolloutHandoffResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.service_rollout_binding_gate import ServiceRolloutBindingGate
+
         d = dict(src_dict)
         action = check_service_rollout_handoff_response_action(d.pop("action"))
 
         phase = check_service_rollout_handoff_response_phase(d.pop("phase"))
 
         retry_count = d.pop("retry_count")
+
+        _bindings_check = d.pop("bindings_check", UNSET)
+        bindings_check: ServiceRolloutBindingGate | Unset
+        if isinstance(_bindings_check, Unset):
+            bindings_check = UNSET
+        else:
+            bindings_check = ServiceRolloutBindingGate.from_dict(_bindings_check)
 
         predecessor_deployment_id = d.pop("predecessor_deployment_id", UNSET)
 
@@ -228,6 +250,7 @@ class ServiceRolloutHandoffResponse:
             action=action,
             phase=phase,
             retry_count=retry_count,
+            bindings_check=bindings_check,
             predecessor_deployment_id=predecessor_deployment_id,
             generation=generation,
             expected_gateways=expected_gateways,

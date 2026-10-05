@@ -17,6 +17,7 @@ import type { AppUsageSummaryResponse } from '../models/AppUsageSummaryResponse.
 import type { AppWakeResponse } from '../models/AppWakeResponse.js';
 import type { AppWakeTimelineResponse } from '../models/AppWakeTimelineResponse.js';
 import type { AutomaticRouteCheck } from '../models/AutomaticRouteCheck.js';
+import type { BindingReleasePolicy } from '../models/BindingReleasePolicy.js';
 import type { CanaryRouteGate } from '../models/CanaryRouteGate.js';
 import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirementsRequest.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
@@ -84,6 +85,7 @@ import type { RuntimeConfigRestartStatusResponse } from '../models/RuntimeConfig
 import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusResponse.js';
 import type { SavedRouteRequirements } from '../models/SavedRouteRequirements.js';
 import type { SaveRouteRequirementsRequest } from '../models/SaveRouteRequirementsRequest.js';
+import type { SetBindingReleasePolicyRequest } from '../models/SetBindingReleasePolicyRequest.js';
 import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
 import type { SetRouteHealthGateRequest } from '../models/SetRouteHealthGateRequest.js';
 import type { SetRouteMonitorRequest } from '../models/SetRouteMonitorRequest.js';
@@ -100,6 +102,101 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AppsService {
+  /**
+   * Read a scope's stored binding release policy.
+   * Requires apps:read or admin and completed MFA. Defaults to off with revision 0. No probes or provider calls occur.
+   * @returns BindingReleasePolicy Stored policy, or the disabled default.
+   * @throws ApiError
+   */
+  public static getBindingReleasePolicy({
+    slug,
+    scope = 'default',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Exact deployment scope. Omit to select default.
+     */
+    scope?: string,
+  }): CancelablePromise<BindingReleasePolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings/release-policy',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace a binding release policy using its current revision.
+   * Requires deploy:write or admin and completed MFA. expected_revision is
+   * mandatory (0 initially); each accepted write increments it. Enforcement
+   * requires complete fresh verification on every deployment gaining traffic,
+   * including through redistribution. Promotion, direct traffic PATCH and
+   * canary advance evaluate the policy; request flags may only strengthen it.
+   * New candidates must be admitted with explicit zero traffic. Automatic
+   * cutovers, legacy recovery and project release graph switches fail closed
+   * until they support binding fences. To recover without evidence, explicitly
+   * set off with the current revision and a reason, then retry. Every update
+   * has durable policy history. Existing traffic is not changed by this call.
+   *
+   * @returns BindingReleasePolicy Saved policy with incremented revision.
+   * @throws ApiError
+   */
+  public static setBindingReleasePolicy({
+    slug,
+    requestBody,
+    scope = 'default',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetBindingReleasePolicyRequest,
+    /**
+     * Exact deployment scope. Omit to select default.
+     */
+    scope?: string,
+  }): CancelablePromise<BindingReleasePolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/bindings/release-policy',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
   /**
    * Inspect all runtime resource bindings attached to an app.
    * Read-only, best-effort metadata for service, PostgreSQL, object-storage,
@@ -1199,7 +1296,7 @@ export class AppsService {
    * Both default to UTC midnight snaps; `until` defaults to
    * `now()` snapped down, `since` defaults to `until - 30d`. The
    * handler clamps `since` to `until - 90d` so a customer cannot
-   * unbounded-scan `usage_minutes` (ADR-048 retention is 30d; the
+   * unbounded-scan `usage_minutes` (ADR-48 retention is 30d; the
    * 90d ceiling is a forward-compatibility ceiling for when
    * `usage_daily` lands).
    *
@@ -1494,7 +1591,7 @@ export class AppsService {
     });
   }
   /**
-   * Per-route breakdown for opt-in apps (ADR-093).
+   * Per-route breakdown for opt-in apps (ADR-93).
    * Returns the `routes` array of the per-app metrics surface.
    * Production reads the fleet Prometheus aggregate; single-box
    * development may use the gatewayd-internal loopback listener.
@@ -1707,7 +1804,7 @@ export class AppsService {
    * Closed-set windowed SLO panel for one app — the
    * customer-facing equivalent of AWS CloudWatch
    * per-function / GCP Cloud Run per-service. Distinct from
-   * `GET /v1/apps/{slug}/metrics` (issue #273 / ADR-042) which
+   * `GET /v1/apps/{slug}/metrics` (issue #273 / ADR-42) which
    * is the 5m-window dashboard panel. The /slo surface is the
    * "yesterday's SLO" / "this week's SLO" summary, with the
    * customer-facing SLO signals co-located with the
@@ -2306,12 +2403,12 @@ export class AppsService {
     });
   }
   /**
-   * Per-app customer-facing automatic error grouping summary (ADR-096 / PR-B).
+   * Per-app customer-facing automatic error grouping summary (ADR-96 / PR-B).
    * Sentry-style grouped error view scoped to a customer's
    * app. One row per `(account_id, app_id, fingerprint)` over
    * the requested `[since, until]` window, sorted by `count
    * DESC, last_seen_at DESC, fingerprint ASC`. Distinct from
-   * `GET /v1/apps/{slug}/slo` (issue #696 / ADR-082) which is
+   * `GET /v1/apps/{slug}/slo` (issue #696 / ADR-82) which is
    * the closed-set SLO summary (`1h` / `24h` / `7d`) — the
    * errors summary uses a continuous `[since, until]` window
    * with an explicit RFC3339Nano stamp instead.
@@ -2391,7 +2488,7 @@ export class AppsService {
     });
   }
   /**
-   * Per-fingerprint drill-down rows (ADR-096 / PR-B).
+   * Per-fingerprint drill-down rows (ADR-96 / PR-B).
    * Cursor-paginated drill-down over the request rows that
    * landed on this fingerprint. Returns 404 when the
    * fingerprint has been purged by the retention cron or
@@ -2447,7 +2544,7 @@ export class AppsService {
     });
   }
   /**
-   * Single oldest sample row + redacted headers (ADR-096 / PR-B).
+   * Single oldest sample row + redacted headers (ADR-96 / PR-B).
    * Returns the OLDEST request row for the fingerprint plus
    * the redacted `headers_sample` (jsonb-decoded) and the
    * list of `redactions_applied` pattern names so the

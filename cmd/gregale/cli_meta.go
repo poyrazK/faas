@@ -1,4 +1,4 @@
-// commands/cli_meta.go — Tier A8 / ADR-083.
+// commands/cli_meta.go — Tier A8 / ADR-83.
 //
 // Hand-curated manifest of every top-level gregale command, used as the
 // single source of truth for `gregale completion {bash|zsh|fish|powershell}`
@@ -277,7 +277,7 @@ var templateNames13 = []string{
 //
 // When you add a command to main.go, add it here too. The drift test
 // catches the omission; the manifest-drift guard is the load-bearing
-// sync mechanism per ADR-083 §Decision 4.
+// sync mechanism per ADR-83 §Decision 4.
 var cliCommands = []cliCommand{
 	mcpCLICommand(),
 	{
@@ -392,6 +392,18 @@ var cliCommands = []cliCommand{
 			{Name: "scope", Value: "SCOPE", Short: "filter resource bindings by environment scope; app-wide bindings remain included"},
 		},
 		Subcommands: []cliSub{
+			{Name: "release-policy", Short: "Require fresh binding evidence for traffic increases in a scope", Subcommands: []cliSub{
+				{Name: "get", Short: "Read the stored release policy", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "deployment scope (default default)"}}},
+				{Name: "set", Short: "Replace the release policy using its current revision", Positionals: []string{"<app>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "deployment scope (default default)"},
+					{Name: "mode", Value: "off|enforce", Short: "disable or enable enforcement"},
+					{Name: "require-verification", Short: "alias for --mode enforce"},
+					{Name: "max-age", Value: "DURATION", Short: "maximum verification age (default 10m; 1s to 24h)"},
+					{Name: "require-application-ack", Short: "require current application acknowledgements"},
+					{Name: "expected-revision", Value: "N", Req: true, Short: "current policy revision; use 0 initially"},
+					{Name: "reason", Value: "TEXT", Short: "update reason; required when disabling enforcement"},
+				}, Examples: []string{"gregale bindings release-policy set public-api --scope production --require-verification --max-age 10m --expected-revision 0"}},
+			}},
 			{Name: "probe-policy", Short: "Configure or remove an outbound integration probe", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{{Name: "path", Value: "PATH", Short: "provider path declared safe to probe"}, {Name: "method", Value: "METHOD", Short: "GET or HEAD (default GET)"}, {Name: "expect-status", Value: "STATUS", Short: "expected successful response status (default 200)"}, {Name: "delete", Short: "remove probe configuration"}}, Examples: []string{"gregale bindings probe-policy INTEGRATION_ID --path /health --method GET --expect-status 200"}},
 			{
 				Name:        "check",
@@ -403,6 +415,9 @@ var cliCommands = []cliCommand{
 					{Name: "deployment", Value: "ID|vN", Short: "exact live deployment whose evidence must pass, including zero-traffic candidates"},
 					{Name: "allow-unsupported", Short: "waive connectivity coverage for active queue and outbound bindings"},
 					{Name: "require-application-ack", Short: "require current PostgreSQL/object-storage application acknowledgements"},
+					{Name: "wait", Short: "poll read-only inventory while probes, refreshes or application acknowledgements are pending"},
+					{Name: "timeout", Value: "DURATION", Short: "maximum preflight wait (default 5m)"},
+					{Name: "poll-interval", Value: "DURATION", Short: "inventory polling interval with --wait (default 1s)"},
 				}, Examples: []string{"gregale bindings check my-api --max-verification-age 10m --json", "gregale bindings check my-api --scope production", "gregale bindings check my-api --deployment v12 --max-verification-age 10m --json"},
 			},
 			{
@@ -437,12 +452,14 @@ var cliCommands = []cliCommand{
 				Short:       "Invoke a path on one exact live target deployment over the private HTTPS binding",
 				Positionals: []string{"<app>", "<service>"},
 				Flags: []cliFlag{
-					{Name: "deployment", Short: "exact live target deployment to invoke", Req: true, Value: "ID"},
+					{Name: "target-deployment", Short: "exact live target deployment UUID to invoke (or use --deployment)", Value: "ID"},
+					{Name: "deployment", Short: "alias for --target-deployment", Value: "ID"},
+					{Name: "caller-deployment", Short: "exact live caller deployment, including zero-traffic candidates", Value: "ID|vN"},
 					{Name: "path", Short: "absolute path on the target service", Req: true, Value: "PATH"},
 					{Name: "expect-status", Short: "require this exact HTTP status; default accepts any 2xx response", Value: "CODE"},
 					{Name: "poll-interval", Short: "status polling interval while the smoke task runs", Value: "D"},
 					{Name: "wait-timeout", Short: "maximum time to wait for the smoke task", Value: "D"},
-				},
+				}, Examples: []string{"gregale bindings smoke public-api billing --caller-deployment v12 --target-deployment TARGET_UUID --path /ready --expect-status 200"},
 			},
 		},
 	},
@@ -481,8 +498,15 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "alerts",
 		DocSlug: "alerts",
-		Short:   "Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset --app <slug>)",
+		Short:   "Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset|actions --app <slug>)",
 		Subcommands: []cliSub{
+			{Name: "actions", Short: "Read or wait for automatic rollback status, deployment evidence and service handoffs", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "fire", Short: "one production alert delivery UUID", Value: "UUID"},
+				{Name: "wait", Short: "wait for the selected fire to complete"},
+				{Name: "timeout", Short: "wait deadline (default 10m)", Value: "duration"},
+				{Name: "poll-interval", Short: "poll interval (default 2s)", Value: "duration"},
+			}},
 			{Name: "list", Short: "List alert rules", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 			}},
@@ -496,12 +520,14 @@ var cliCommands = []cliCommand{
 				{Name: "failure-source", Short: "any|cron|queue|delayed_task|async_invoke|inbound_webhook", Value: "SOURCE"},
 				{Name: "webhook-url", Short: "https webhook URL", Req: true, Value: "URL"},
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
+				{Name: "post-deploy-rollback-window", Short: "completed-release rollback window (0 off; up to 1h)", Value: "duration"},
 				{Name: "webhook-secret-stdin", Short: "read the webhook signing secret from stdin (this or --webhook-secret is required)"},
 				{Name: "webhook-secret", Short: "webhook signing secret (prefer --webhook-secret-stdin)", Value: "VALUE"},
 			}, Examples: []string{`printf '%s\n' "$WEBHOOK_SECRET" | gregale alerts add --app my-api --name p95-latency --metric latency_p95_ms --comparison gt --threshold 800 --window-spec 15m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin`}},
 			{Name: "info", Short: "Show one alert rule", Positionals: []string{"<alert-id>"}},
 			{Name: "update", Short: "Update one alert rule", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
+				{Name: "post-deploy-rollback-window", Short: "completed-release rollback window (0 off; up to 1h)", Value: "duration"},
 				{Name: "webhook-secret-stdin", Short: "read the replacement webhook secret from stdin"},
 			}},
 			{Name: "rm", Short: "Delete one alert rule", Positionals: []string{"<alert-id>"}},
@@ -1239,7 +1265,7 @@ var cliCommands = []cliCommand{
 			{Name: "repository", Short: "GitHub owner/name to bind to a project", Value: "OWNER/NAME"},
 			{Name: "install-id", Short: "GitHub installation id for a project binding", Value: "N"},
 			{Name: "production-branch", Short: "production branch for a project binding", Value: "BRANCH"},
-			// Issue #739 / ADR-092: --ref pairs with --repo to
+			// Issue #739 / ADR-92: --ref pairs with --repo to
 			// drive the headless source-ref deploy (CI-friendly,
 			// no install-token env). Required when --repo is set.
 			{Name: "ref", Short: "git ref for --repo (branch, tag, or 40-char SHA)", Value: "REF"},
@@ -2521,13 +2547,25 @@ var cliCommands = []cliCommand{
 	{
 		Name:        "rollback",
 		DocSlug:     "rollback",
-		Short:       "Re-promote the previous deployment",
-		Examples:    []string{"gregale rollback my-api", "gregale rollback my-api --to v41"},
+		Short:       "Restore a previous deployment, or check an exact historical rollback",
+		Examples:    []string{"gregale rollback my-api", "gregale rollback my-api --to v41", "gregale rollback my-api --to v41 --expected-current v42 --wait"},
 		Positionals: []string{"<slug>"},
 		Flags: []cliFlag{
 			{Name: "to", Short: "target deployment id or vN revision (e.g. v41)", Value: "deployment_id|vN"},
+			{Name: "expected-current", Short: "exact completed serving deployment; requires --to", Value: "deployment_id|vN"},
+			{Name: "reason", Short: "one-line reason of at most 256 bytes; requires --expected-current", Value: "TEXT"},
+			{Name: "wait", Short: "wait for binding checks and service handoff completion; requires --expected-current"},
+			{Name: "timeout", Short: "wait deadline (default 10m)", Value: "duration"},
+			{Name: "poll-interval", Short: "poll interval (default 2s)", Value: "duration"},
 			{Name: "json", Short: "machine-readable output"},
 		},
+		Subcommands: []cliSub{{Name: "status", Short: "Read an exact rollback operation; waiting never submits another rollback", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+			{Name: "operation", Short: "accepted rollback operation UUID", Value: "UUID", Req: true},
+			{Name: "wait", Short: "wait for completion with a committed audit receipt"},
+			{Name: "timeout", Short: "wait deadline (default 10m)", Value: "duration"},
+			{Name: "poll-interval", Short: "poll interval (default 2s)", Value: "duration"},
+			{Name: "json", Short: "print the operation receipt"},
+		}}},
 	},
 	{
 		// SAFE-RELEASES-R (issue #976 / ADR-122): the
@@ -2542,11 +2580,14 @@ var cliCommands = []cliCommand{
 		Audience: cliAudienceOperator,
 		Subcommands: []cliSub{
 			{Name: "recover", Short: "Manually advance / promote / abort a stuck rollout (operator escape hatch)"},
+			{Name: "status", Short: "Inspect an exact rollout and optionally wait for handoff completion", Flags: []cliFlag{{Name: "deployment", Value: "ID|vN", Req: true, Short: "exact deployment"}, {Name: "wait", Short: "wait for completion"}, {Name: "timeout", Value: "duration", Short: "wait deadline (default 10m)"}, {Name: "poll-interval", Value: "duration", Short: "poll interval (default 2s)"}}},
 		},
 		Positionals: []string{"<slug>"},
 		Flags: []cliFlag{
 			{Name: "action", Short: "recover action", ClosedSet: []string{"advance", "promote", "abort"}, Req: true},
 			{Name: "reason", Short: "operator-supplied reason (logged to deployment_audit)", Value: "text"},
+			{Name: "deployment", Short: "exact deployment for abort", Value: "ID|vN"},
+			{Name: "expected-predecessor", Short: "exact retained predecessor to restore (requires --deployment)", Value: "ID|vN"},
 		},
 	},
 	{
@@ -2706,7 +2747,7 @@ var cliCommands = []cliCommand{
 	{
 		// Compatibility surface for installation-scoped secrets used by
 		// legacy non-GitHub senders. Standard GitHub App webhooks use the
-		// single platform App secret documented in ADR-012 §8.
+		// single platform App secret documented in ADR-12 §8.
 		Name:     "github-webhook-secret",
 		DocSlug:  "github-webhook-secret",
 		Short:    "Manage legacy installation-scoped webhook secrets (admin)",

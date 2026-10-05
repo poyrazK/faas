@@ -109,7 +109,7 @@ type CreateAppRequest struct {
 	HealthPathWakes        bool                  `json:"health_path_wakes,omitempty"`
 	SessionAffinity        *bool                 `json:"session_affinity,omitempty"`
 	PlatformTenantRequired *bool                 `json:"platform_tenant_required,omitempty"`
-	// OverflowNode (Tier A10 / ADR-088) is the customer's per-app
+	// OverflowNode (Tier A10 / ADR-88) is the customer's per-app
 	// preferred spill target. The wire form is a
 	// compute_nodes.name (the operator-supplied human-readable
 	// label), NOT a UUID — apid resolves the name to the
@@ -155,7 +155,7 @@ type UpdateAppRequest struct {
 	// 403 plan_min_instances_not_allowed (apid gate). Must be <=
 	// plan MaxConcurrency (422 invalid_min_instances).
 	MinInstances *int `json:"min_instances,omitempty"`
-	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
+	// EgressAllowlist (ADR-31 + ADR-32, tier-2 of the network
 	// roadmap) is the per-app outbound IP allowlist. Each entry is
 	// a CIDR string ("1.2.3.0/24" for v4, "2001:db8::/32" for v6);
 	// the slice replaces the full list (atomic full-overwrite at the
@@ -187,7 +187,7 @@ type UpdateAppRequest struct {
 	ConsumerAuthMode *string `json:"consumer_auth_mode,omitempty"`
 	// PlatformTenantRequired gates app traffic on verified customer identity.
 	PlatformTenantRequired *bool `json:"platform_tenant_required,omitempty"`
-	// OverflowNode (Tier A10 / ADR-088) is the customer's per-app
+	// OverflowNode (Tier A10 / ADR-88) is the customer's per-app
 	// preferred spill target. The wire form is a
 	// compute_nodes.name; apid resolves to a UUID server-side.
 	// Tri-state: nil → don't touch the column; "" → clear the
@@ -213,7 +213,7 @@ type UpdateAppRequest struct {
 	// CPU path). Pro/Scale only; Free/Hobby return 403 CodePlanScaleUpNotAllowed.
 	// Values outside [1, 100] return 422 CodeInvalidAutoscaleTargetCPUPct.
 	AutoscaleTargetCPUPct *int `json:"autoscale_target_cpu_pct,omitempty"`
-	// PublicAuth (issue #477 / ADR-079) is the per-app
+	// PublicAuth (issue #477 / ADR-79) is the per-app
 	// public-URL auth configuration write shape. nil →
 	// leave the column untouched (the apid path's
 	// SetPublicAuth=false semantics). When present, Mode
@@ -525,14 +525,14 @@ type AppResponse struct {
 	// a valid consumer key.
 	ConsumerAuthMode       string `json:"consumer_auth_mode"`
 	PlatformTenantRequired bool   `json:"platform_tenant_required"`
-	// PublicAuth (issue #477 / ADR-079) is the per-app
+	// PublicAuth (issue #477 / ADR-79) is the per-app
 	// public-URL auth configuration. Mode is the closed
 	// enum {open, bearer, basic}; HasBasicCreds is true
 	// iff the row carries a sealed APP_BASIC_AUTH blob.
 	// The plaintext basic_user / basic_pass are NEVER
 	// returned on this surface — the apid redaction
 	// posture is a load-bearing invariant (see
-	// ADR-079 §Decision "re-redaction invariant"). To
+	// ADR-79 §Decision "re-redaction invariant"). To
 	// rotate credentials, the customer PATCHes a fresh
 	// public_auth block.
 	PublicAuth   *PublicAuthStatus `json:"public_auth,omitempty"`
@@ -562,7 +562,7 @@ type AppResponse struct {
 	// policy returned by the API.
 	ServiceBindingPolicy      ServiceBindingPolicy      `json:"service_binding_policy,omitempty"`
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy `json:"preview_service_calls_policy,omitempty"`
-	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
+	// EgressAllowlist (ADR-31 + ADR-32, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6
 	// ("2001:db8::/32"). The v4-mapped v6 form ("::ffff:1.2.3.0/120")
@@ -595,7 +595,7 @@ type AppResponse struct {
 	// 'reserved' (Hobby+ only, per-account cap enforced) protects
 	// the app from cross-account RAM-pressure eviction.
 	EvictionPriority string `json:"eviction_priority"`
-	// OverflowNode (Tier A10 / ADR-088) is the resolved UUID of
+	// OverflowNode (Tier A10 / ADR-88) is the resolved UUID of
 	// the customer's per-app preferred spill target for the
 	// pressure-rebalance path (pkg/sched/engine.RebalancePressuredApps).
 	// nil when no preference is set — the engine falls back to
@@ -631,7 +631,7 @@ type DeploymentResponse struct {
 	Kind        string `json:"kind"`
 	Status      string `json:"status"`
 	Error       string `json:"error,omitempty"`
-	// ErrorCode carries the RFC 7807 code ADR-021 lifted from the
+	// ErrorCode carries the RFC 7807 code ADR-21 lifted from the
 	// puller-side sentinels (image_not_found / image_egress_denied /
 	// image_manifest_invalid). Empty for every deployment created
 	// before migrations/00021 OR that is not in a failure state —
@@ -659,9 +659,18 @@ type DeploymentResponse struct {
 	// HostingReceipt is the non-secret deployment evidence captured after
 	// readiness. Raw JSON keeps the Go SDK forward-compatible with receipt
 	// schema additions.
-	HostingReceipt json.RawMessage `json:"hosting_receipt,omitempty"`
-	SourceRoot     string          `json:"source_root,omitempty"`
-	TrafficPercent int             `json:"traffic_percent,omitempty"`
+	HostingReceipt        json.RawMessage                `json:"hosting_receipt,omitempty"`
+	SourceRoot            string                         `json:"source_root,omitempty"`
+	TrafficPercent        int                            `json:"traffic_percent,omitempty"`
+	RolloutState          string                         `json:"rollout_state,omitempty"`
+	CanaryStep            int                            `json:"canary_step,omitempty"`
+	CanaryTotalSteps      int                            `json:"canary_total_steps,omitempty"`
+	RolloutStartedAt      *time.Time                     `json:"rollout_started_at,omitempty"`
+	RolloutCompletedAt    *time.Time                     `json:"rollout_completed_at,omitempty"`
+	RolloutAbortedAt      *time.Time                     `json:"rollout_aborted_at,omitempty"`
+	RolloutAbortedReason  string                         `json:"rollout_aborted_reason,omitempty"`
+	RollbackOperation     *RollbackOperation             `json:"rollback_operation,omitempty"`
+	ServiceRolloutHandoff *ServiceRolloutHandoffResponse `json:"service_rollout_handoff,omitempty"`
 }
 
 // UpdateDeploymentTrafficRequest is the body for
@@ -739,7 +748,7 @@ type AccountLimits struct {
 // appears ONLY on creation (POST /v1/keys), never on GET — only the prefix
 // + label + scopes + last_used_at + id are returned thereafter. Scopes is
 // the explicit permission set attached to the key (e.g. ["admin"],
-// ["apps:read", "deploy:write"]); see ADR-034 rev2.
+// ["apps:read", "deploy:write"]); see ADR-34 rev2.
 type APIKeyResponse struct {
 	ID         string   `json:"id"`
 	Prefix     string   `json:"prefix"` // "fp_live_abc12345…" (first 16 chars)
@@ -758,7 +767,7 @@ type APIKeyResponse struct {
 // against the closed vocabulary (admin, apps:read, deploy:write,
 // secrets:read, secrets:write, usage:read) and defaults to
 // ["admin"] when omitted so existing callers keep full access. See
-// ADR-034 rev2.
+// ADR-34 rev2.
 type CreateKeyRequest struct {
 	Label  string   `json:"label,omitempty"`
 	Scopes []string `json:"scopes,omitempty"`
@@ -1011,7 +1020,7 @@ type LatestDeploymentsByAppResponse struct {
 	Items []DeploymentResponse `json:"items"`
 }
 
-// --- Dashboard auth (issue #165, ADR-032 PR #2) ----------------------------
+// --- Dashboard auth (issue #165, ADR-32 PR #2) ----------------------------
 
 // OAuthProvider is the issuer name used by the dashboard OAuth flows
 // (the email/identity brokers). The set is intentionally closed — adding
@@ -1233,13 +1242,13 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int) *Problem {
 	return nil
 }
 
-// --- G6 account self-service (spec §17 G6, ADR-021) -------------------------
+// --- G6 account self-service (spec §17 G6, ADR-21) -------------------------
 
 // AccountExportResponse is the GET /v1/account/export bundle. A
 // single JSON document with one slice per resource type the customer
 // owns (apps, deployments, builds, instances, usage, domains, crons,
 // API keys, app_secrets). Ciphertext passthrough for the secrets
-// slice — the plaintext VALUE never lands in PG (ADR-020), so the
+// slice — the plaintext VALUE never lands in PG (ADR-20), so the
 // customer can rotate their host age key after a restore-from-export
 // without losing the per-secret envelope.
 type AccountExportResponse struct {
@@ -1289,7 +1298,7 @@ type UsageExportResponse struct {
 // the create response, per §4.2). Only the prefix + label + scopes +
 // timestamps. Scopes is included so the customer's GDPR export carries
 // the full audit trail of which keys had which permissions at the
-// moment of export (ADR-034 rev2).
+// moment of export (ADR-34 rev2).
 type APIKeyExportResponse struct {
 	ID        string   `json:"id"`
 	Prefix    string   `json:"prefix"`
@@ -1307,7 +1316,7 @@ type APIKeyExportResponse struct {
 //     "restore"; CompletedAt is empty when the action is still in
 //     flight.
 //   - source="event"  — a security event from the events table (IAM-4,
-//     ADR-035). Kind is the namespaced event kind (e.g. "auth.login",
+//     ADR-35). Kind is the namespaced event kind (e.g. "auth.login",
 //     "key.created"); Data is the original jsonb payload.
 //
 // Rows from both sources are interleaved by timestamp descending in
@@ -1641,7 +1650,7 @@ type ListInvocationsResponse struct {
 	NextBefore  string       `json:"next_before,omitempty"`
 }
 
-// --- IAM-4 (ADR-035) — auth audit event surface -----------------------------
+// --- IAM-4 (ADR-35) — auth audit event surface -----------------------------
 //
 // AuditEventResponse is one row of the customer's own security event
 // timeline. The kind taxonomy is documented in
@@ -1681,12 +1690,12 @@ type ListAuditEventsResponse struct {
 }
 
 // WakeTimelineEvent is one frame in the canonical wake timeline
-// (issue #517 / PR-C / ADR-064). The SDK treats Data as a generic
+// (issue #517 / PR-C / ADR-64). The SDK treats Data as a generic
 // map (the canonical vocabulary — queue_accepted, admitted,
 // boot_started, boot_completed, boot_failed, readiness_200,
 // proxy_first_byte, park_started, park_completed, stalled,
 // build_succeeded, build_failed, deploy_failed — is documented in
-// ADR-064; a typed accessor that downcasts the Data map is
+// ADR-64; a typed accessor that downcasts the Data map is
 // straightforward but not provided here to keep the SDK surface
 // schematic).
 //
@@ -1714,7 +1723,7 @@ type WakeTimelineResponse struct {
 }
 
 // AppMetricsResponse is the per-app metrics payload returned by
-// GET /v1/apps/{slug}/metrics?range= (issue #273 / ADR-042). Field-
+// GET /v1/apps/{slug}/metrics?range= (issue #273 / ADR-42). Field-
 // for-field mirror of pkg/api.AppMetricsResponse — the SDK parity
 // gate (cmd/sdk-coverage) enforces byte-identical JSON output.
 type AppMetricsResponse struct {
@@ -1742,7 +1751,7 @@ type SLODuration struct {
 }
 
 // AppSLOResponse is the per-app SLO panel returned by
-// GET /v1/apps/{slug}/slo?window= (issue #696 / ADR-082).
+// GET /v1/apps/{slug}/slo?window= (issue #696 / ADR-82).
 // Field-for-field mirror of pkg/api.AppSLOResponse.
 type AppSLOResponse struct {
 	AppID                 string      `json:"app_id"`
@@ -1762,7 +1771,7 @@ type AppSLOResponse struct {
 }
 
 // AccountSLOResponse is the account-wide SLO rollup returned
-// by GET /v1/account/slo?window= (issue #696 / ADR-082).
+// by GET /v1/account/slo?window= (issue #696 / ADR-82).
 // Field-for-field mirror of pkg/api.AccountSLOResponse.
 type AccountSLOResponse struct {
 	Window                string      `json:"window"`
@@ -1779,7 +1788,7 @@ type AccountSLOResponse struct {
 	ThrottledTotal        int64       `json:"throttled_total"`
 }
 
-// Org surface (issue #190 / IAM-6 / ADR-061, PR 5). The wire
+// Org surface (issue #190 / IAM-6 / ADR-61, PR 5). The wire
 // shapes mirror pkg/api/orgs.go (the canonical source) byte-for-byte
 // so the public SDK surface stays consistent with pkg/api.Client —
 // the sdk-coverage gate (cmd/sdk-coverage) reads pkg/api/*.go and
@@ -1918,7 +1927,7 @@ type InvitationListResponse struct {
 
 // SeatUsageResponse is the body of GET
 // /v1/orgs/{slug}/seat_usage. Visibility-only — PR 9 ships the
-// per-seat pricing cut-over per ADR-061 §"Out of scope". `limit`
+// per-seat pricing cut-over per ADR-61 §"Out of scope". `limit`
 // returns 0 for the free plan (the fail-closed accessor shape
 // the dashboard renders as "personal org only").
 type SeatUsageResponse struct {
@@ -1931,7 +1940,7 @@ type SeatUsageResponse struct {
 // /v1/orgs/{slug}/members/{user_id}. Role cannot be `owner`.
 
 // ScanSeverityCounts is the per-severity CVE tally on a per-deploy
-// grype scan (issue #464 / ADR-075). Each counter is the number of
+// grype scan (issue #464 / ADR-75). Each counter is the number of
 // findings at that severity level; a deploy with no findings has all
 // five at zero.
 type ScanSeverityCounts struct {
@@ -1965,7 +1974,7 @@ type ScanVulnerability struct {
 }
 
 // ScanResult is the wire shape returned by GET
-// /v1/deployments/{id}/scan (issue #464 / ADR-075 — per-deploy
+// /v1/deployments/{id}/scan (issue #464 / ADR-75 — per-deploy
 // grype CVE scan surface). The Status field is the closed enum
 // (complete|failed|skipped); see pkg/api.ScanResult for the full
 // shape and `pkg/api/limits.go` for the closed-enum definition.
@@ -1985,8 +1994,8 @@ type ScanResult struct {
 	Err              string              `json:"error,omitempty"`
 }
 
-// --- Webhook delivery (issue #476 / ADR-076) -----------------------------
-// --- Webhook delivery (issue #476 / ADR-076) -----------------------------
+// --- Webhook delivery (issue #476 / ADR-76) -----------------------------
+// --- Webhook delivery (issue #476 / ADR-76) -----------------------------
 //
 // Wire shape mirrors pkg/api/webhooks.go. Field names follow the
 // openapi.yaml kebab-case convention (target_url, event_filter, …)
@@ -1994,7 +2003,7 @@ type ScanResult struct {
 // `make spec-sync`. All secret fields are surfaced as
 // `WebhookSecretSealedMasked: "***"` constants — the plaintext
 // never appears in any response (NOT even on rotate-secret — see
-// ADR-076 §3.7).
+// ADR-76 §3.7).
 
 // CreateAppWebhookRequest is the body of POST
 // /v1/apps/{slug}/webhooks. The plaintext WebhookSecret is sent
@@ -2140,7 +2149,7 @@ type ListAppWebhookDeliveriesOptions struct {
 }
 
 // SetAccountEgressAllowlistExtraRequest is the body of PATCH
-// /v1/account/egress_allowlist_extra (issue #679 / PR-B / ADR-082).
+// /v1/account/egress_allowlist_extra (issue #679 / PR-B / ADR-82).
 // Extra is the per-account additive budget on top of the plan's
 // apps.egress_allowlist cap. 0 = no override; the plan cap is
 // authoritative.
@@ -2568,4 +2577,26 @@ type InvokeWork struct {
 	Policy      string          `json:"policy"`
 	Key         json.RawMessage `json:"key"`
 	FairnessKey json.RawMessage `json:"fairness_key,omitempty"`
+}
+
+// ServiceRolloutHandoffResponse exposes the durable scheduler barrier state
+// for readiness-gated service deployments. Gateway lists contain registered
+// node names only; request or customer identifiers are never used as metric
+// labels or placed in this status payload.
+type ServiceRolloutHandoffResponse struct {
+	BindingsCheck           *ServiceRolloutBindingGate `json:"bindings_check,omitempty"`
+	Action                  string                     `json:"action"`
+	Phase                   string                     `json:"phase"`
+	PredecessorDeploymentID string                     `json:"predecessor_deployment_id,omitempty"`
+	Generation              int64                      `json:"generation,omitempty"`
+	ExpectedGateways        []string                   `json:"expected_gateways,omitempty"`
+	AcknowledgedGateways    []string                   `json:"acknowledged_gateways,omitempty"`
+	MissingGateways         []string                   `json:"missing_gateways,omitempty"`
+	RetryCount              int                        `json:"retry_count"`
+	LastError               string                     `json:"last_error,omitempty"`
+	Reason                  string                     `json:"reason,omitempty"`
+	StartedAt               *time.Time                 `json:"started_at,omitempty"`
+	UpdatedAt               *time.Time                 `json:"updated_at,omitempty"`
+	AcknowledgedAt          *time.Time                 `json:"acknowledged_at,omitempty"`
+	CompletedAt             *time.Time                 `json:"completed_at,omitempty"`
 }

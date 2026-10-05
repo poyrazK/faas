@@ -568,7 +568,7 @@ update accounts set status = $2 where id = $1;
 
 -- name: CreateAPIKey :one
 -- scopes is $4 (text[]). The handler is responsible for validating the
--- scope vocabulary; the store does not. See ADR-034 rev2.
+-- scope vocabulary; the store does not. See ADR-34 rev2.
 insert into api_keys (account_id, key_sha256, label, scopes)
 values ($1, $2, $3, $4)
 returning id, account_id, key_sha256, coalesce(label, ''), scopes, created_at, coalesce(last_used_at, 'epoch'::timestamptz);
@@ -577,7 +577,7 @@ returning id, account_id, key_sha256, coalesce(label, ''), scopes, created_at, c
 delete from api_keys where id = $1 and account_id = $2;
 
 -- name: DeleteAPIKeyReturning :one
--- IAM-1 (ADR-034 rev2): delete a key and return the row in one
+-- IAM-1 (ADR-34 rev2): delete a key and return the row in one
 -- statement so the handler can emit `key.deleted` audit with the
 -- dismissed scopes. list_secrets-shaped variant of DeleteAPIKey.
 delete from api_keys where id = $1 and account_id = $2
@@ -585,13 +585,13 @@ returning id, account_id, key_sha256, coalesce(label, ''), scopes, created_at, c
 
 -- name: ListAPIKeys :many
 -- scopes is the auth permission set surfaced to the dashboard and the
--- /v1/keys listing. See ADR-034 rev2.
+-- /v1/keys listing. See ADR-34 rev2.
 select id, account_id, key_sha256, coalesce(label, ''), scopes, created_at, coalesce(last_used_at, 'epoch'::timestamptz)
 from api_keys where account_id = $1 order by created_at desc;
 
 -- name: APIKeyByHash :one
 -- Used by handlers_auth.go so an operator investigating "who signed in
--- as alice?" can identify the key that authenticated. See ADR-034 rev2.
+-- as alice?" can identify the key that authenticated. See ADR-34 rev2.
 select id, account_id, key_sha256, coalesce(label, ''), scopes, created_at, coalesce(last_used_at, 'epoch'::timestamptz)
 from api_keys where key_sha256 = $1;
 
@@ -700,7 +700,7 @@ set status = $2,
 where id = $1;
 
 -- name: SetDeploymentFailed :one
--- ADR-021 (G1, image digest enforcement hardening): durable
+-- ADR-21 (G1, image digest enforcement hardening): durable
 -- carrier for the RFC 7807 failure code that imaged writes when a
 -- deployment transitions to `failed`. pkg/api.SentinelToCode maps
 -- the three puller-side sentinels to the codes pkg/api.CodeImage*
@@ -864,7 +864,7 @@ delete from event_subscriptions
 where id = $1 and account_id = $2 and app_id = $3;
 
 -- name: ListEventsByWakeID :many
--- issue #517 / PR-C / ADR-064 — wake-timeline read-side query.
+-- issue #517 / PR-C / ADR-64 — wake-timeline read-side query.
 -- Filters on the jsonb expression index events_wake_id_idx
 -- (migrations/00114_events_wake_id_idx.sql) and orders by at ASC
 -- so the customer-facing timeline endpoint surfaces a forward
@@ -876,7 +876,7 @@ where id = $1 and account_id = $2 and app_id = $3;
 -- (data->>'wake_id') WHERE data->>'wake_id' IS NOT NULL means
 -- only rows with a wake_id tag (i.e. the 13 wake.* kinds) are
 -- indexed — legacy audit rows are not in scope of PR-C, see
--- ADR-064 §"Compatibility".
+-- ADR-64 §"Compatibility".
 with wake_events as (
   select id, at, actor, kind, subject, data,
          row_number() over (
@@ -894,9 +894,9 @@ order by at asc, id asc
 limit $3;
 
 -- name: ListAllEventsPaged :many
--- ADR-091 §3.7 / PR #3 — operator-obs backend audit-reading surface.
+-- ADR-91 §3.7 / PR #3 — operator-obs backend audit-reading surface.
 -- Reads the live events table (NOT audit_log — distinct source of
--- truth per ADR-091 §3.7.4). Optional filters:
+-- truth per ADR-91 §3.7.4). Optional filters:
 --   * $1 actor    — exact match (handler passes "" to skip)
 --   * $2 kind_prefix — LIKE 'prefix%' (handler passes "" to skip)
 --   * $3 subject  — exact match (handler passes "" to skip)
@@ -921,7 +921,7 @@ order by at desc, id desc
 limit $5::int8;
 
 -- name: ListRecentEventsForAccount :many
--- ADR-091 §3.7 / PR #3 — per-account events drill-down. Backed by
+-- ADR-91 §3.7 / PR #3 — per-account events drill-down. Backed by
 -- the partial index events_actor_account_idx on
 -- (actor_account_id) WHERE actor_account_id IS NOT NULL
 -- (migrations/00099_orgs_memberships_invitations.sql). Filters:
@@ -954,12 +954,12 @@ limit $3::int8;
 -- conflict key — the schedd / meterd accumulators can each call
 -- AppendUsage many times within the same minute; the columns are
 -- the sum of all per-tick deltas.
---   cpu_usec         — issue #279 / PR-B / ADR-039
---   tx_bytes         — ADR-046 (gateway HTTP response body bytes)
---   net_tx_bytes     — ADR-046 (root-side vethHost.rx_bytes delta)
---   net_rx_bytes     — ADR-048 (root-side vethHost.tx_bytes delta; ingress)
---   cold_boot_count  — ADR-048 (WAKE_RESTORE→WAKE_COLD_BOOT transitions)
---   tail_seconds     — issue #667 / ADR-078 (per-minute wall-clock seconds
+--   cpu_usec         — issue #279 / PR-B / ADR-39
+--   tx_bytes         — ADR-46 (gateway HTTP response body bytes)
+--   net_tx_bytes     — ADR-46 (root-side vethHost.rx_bytes delta)
+--   net_rx_bytes     — ADR-48 (root-side vethHost.tx_bytes delta; ingress)
+--   cold_boot_count  — ADR-48 (WAKE_RESTORE→WAKE_COLD_BOOT transitions)
+--   tail_seconds     — issue #667 / ADR-78 (per-minute wall-clock seconds
 --                      draining waitUntil tasks; INFORMATIONAL ONLY — pinned
 --                      by pkg/meter/pusher_shadow_test.go::TestPushHour_ExcludesTailSeconds)
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
@@ -1033,7 +1033,7 @@ order by a.account_id;
 update instances set state = $2 where id = $1;
 
 -- name: BumpInstanceTailCount :one
--- issue #667 / ADR-078 — atomically apply delta to the instance's
+-- issue #667 / ADR-78 — atomically apply delta to the instance's
 -- `tail_count` column and return the post-update value. The
 -- GREATEST(…, 0) floor mirrors DecrementInstanceTailCount's safety
 -- property: a stale receipt from a guest that just parked cannot
@@ -1048,7 +1048,7 @@ update instances
 returning tail_count;
 
 -- name: DecrementInstanceTailCount :exec
--- issue #667 / ADR-078 — canonical "tail task reached terminal" path.
+-- issue #667 / ADR-78 — canonical "tail task reached terminal" path.
 -- Equivalent to BumpInstanceTailCount(ctx, id, -n) but kept as a
 -- separate method because every decrement site is a terminal event
 -- receipt, and the explicit name makes the call sites self-
@@ -1065,7 +1065,7 @@ update instances
  where id = $1;
 
 -- name: GetInstanceTailCount :one
--- issue #667 / ADR-078 — read-only probe for the snapshotAndPark
+-- issue #667 / ADR-78 — read-only probe for the snapshotAndPark
 -- 5s watchdog's poll loop. Single SELECT … FROM instances WHERE
 -- id = $1; the column is on the hot path so the row is already in
 -- shared_buffers under normal load. Returns ErrNotFound when the
@@ -1094,7 +1094,7 @@ update builds set
 where id = $1;
 
 -- name: CreateSession :one
--- IAM-3 (ADR-039, issue #187 + #244 merged). One row per dashboard login.
+-- IAM-3 (ADR-39, issue #187 + #244 merged). One row per dashboard login.
 -- Caller has already generated the uuid (the envelope seal needs the same
 -- value). issued_ip is an inet ('' cast to NULL means "RemoteAddr
 -- unparseable" — surfaced as "" on read by coalesce(host(...))).
@@ -1178,7 +1178,7 @@ where node_id = $1
 order by received_at desc
 limit $3;
 
--- --- Organizations (ADR-061, IAM-6, PR 2) -------------------------------
+-- --- Organizations (ADR-61, IAM-6, PR 2) -------------------------------
 --
 -- PR 2's sqlc queries cover the deterministic reads + simple writes. The
 -- tx-heavy methods (CreateOrg with initial owner membership; RemoveOrgMember
@@ -1330,7 +1330,7 @@ where consumed_at is null
   and expires_at <= $1;
 
 -- name: TrafficAnomalyAggregate :many
--- ADR-091 §3.6 — operator observability backend (PR #2).
+-- ADR-91 §3.6 — operator observability backend (PR #2).
 -- Hour-of-day baseline over a rolling 7-day window:
 --   * baseline is per (account_id, app_id, EXTRACT(HOUR FROM minute))
 --   * an anomaly is a row whose current mb_seconds exceeds
@@ -1353,7 +1353,7 @@ where consumed_at is null
 -- pool scans the same primary key. For the fleet-wide aggregate a
 -- future ADR adds (account_id, app_id, minute) as a covering index;
 -- PR #2 does NOT add it (single-box posture; multi-host moves to
--- PromQL per ADR-091 §3.6).
+-- PromQL per ADR-91 §3.6).
 with baseline as (
     select account_id,
            app_id,
@@ -1419,7 +1419,7 @@ order by z_score desc
 limit $3::int8;
 
 -- name: PerAccountRateLimitAggregate :many
--- ADR-091 §3.5 — operator observability backend (PR #2) durable view.
+-- ADR-91 §3.5 — operator observability backend (PR #2) durable view.
 -- Aggregates `events` rows of kind='auth.rate_limited' over a rolling
 -- window, grouped by subject (account_id, NULL for anonymous actors).
 --   * $1 since  — RFC 3339 lower bound (handler default: now() - 24h,
@@ -1445,7 +1445,7 @@ limit $2::int8;
 
 
 -- name: TrafficAnomalyAggregateByNode :many
--- PR #4 (ADR-092 §3.4 amendment) — per-node variant of
+-- PR #4 (ADR-92 §3.4 amendment) — per-node variant of
 -- TrafficAnomalyAggregate. Joins usage_minutes to instances to
 -- recover the hosting node_id, then groups by
 -- (account_id, app_id, node_id, EXTRACT(HOUR FROM minute)) for
@@ -1539,7 +1539,7 @@ order by z_score desc
 limit $3::int8;
 
 -- ---------------------------------------------------------------------------
--- PR-D / ADR-012 §7 amendment — per-tenant GitHub App webhook secret.
+-- PR-D / ADR-12 §7 amendment — per-tenant GitHub App webhook secret.
 --
 -- The two queries below are exposed by pkg/state/pgstore.go as
 -- (s *PgStore).UpsertGithubWebhookSecret and
@@ -1571,7 +1571,7 @@ SET secret_value = EXCLUDED.secret_value,
 SELECT secret_value FROM github_webhook_secrets WHERE installation_id = $1;
 
 -- ---------------------------------------------------------------------------
--- ADR-096 customer-facing automatic error grouping.
+-- ADR-96 customer-facing automatic error grouping.
 -- Tables live in migrations/00222_app_errors.sql. gatewayd-internal
 -- writes via the apid gRPC IncrementAppError handler (pkg/apidgrpc/
 -- apperrors.proto); apid is the only direct writer to the table
@@ -1584,7 +1584,7 @@ SELECT secret_value FROM github_webhook_secrets WHERE installation_id = $1;
 -- ---------------------------------------------------------------------------
 
 -- name: IncrementAppError :one
--- ADR-096 §3.5 dedupe-merge INSERT. The grpc_server_apperrors.go
+-- ADR-96 §3.5 dedupe-merge INSERT. The grpc_server_apperrors.go
 -- handler runs this inside a single pgx transaction per stream
 -- batch. ON CONFLICT target is app_errors_dedupe_uniq (the
 -- migration's UNIQUE on (account_id, app_id, fingerprint)).
@@ -1638,7 +1638,7 @@ INSERT INTO app_error_requests (
 );
 
 -- name: ListAppErrorGroups :many
--- ADR-096 §4.3 summary endpoint. Top-N grouped fingerprints for
+-- ADR-96 §4.3 summary endpoint. Top-N grouped fingerprints for
 -- one (account_id, app_id) over a (since, until) window.
 -- Cursor pagination via the (count, last_seen_at, fingerprint)
 -- compound tuple (distinct from the operator's (created_at, id)
@@ -1750,7 +1750,7 @@ WHERE account_id = $1
   AND received_at < $2;
 
 -- ---------------------------------------------------------------------------
--- ADR-098 connection-aware execution (§9.A). Tables live in
+-- ADR-98 connection-aware execution (§9.A). Tables live in
 -- migrations/00226_data_upstreams.sql. apid is the only writer to
 -- data_upstreams (env-classifier side, PR-B); meterd is the only writer
 -- to data_upstream_probes (probe loop, PR-C). schedd reads
@@ -1772,7 +1772,7 @@ WHERE account_id = $1
 -- IncrementAppError ON CONFLICT pattern (queries.sql:906).
 -- The handler (PR-B's cmd/apid/extract.go) targets
 -- data_upstreams_dedupe_uniq on (app_id, scope,
--- deployment_scope, kind, host, port) per ADR-098 amendment
+-- deployment_scope, kind, host, port) per ADR-98 amendment
 -- (issue #954 / 00281_data_upstreams_deployment_scope.sql).
 -- On conflict: bump last_seen_at; refresh last_rtt_ms /
 -- last_probed_at / declared_region / deployment_scope
@@ -1808,7 +1808,7 @@ RETURNING id;
 -- list. Index path: data_upstreams_app_created_idx.
 --
 -- Optional ?deployment_scope= server-side filter lands via
--- `cursor_deployment_scope` (issue #954 / ADR-098 amendment).
+-- `cursor_deployment_scope` (issue #954 / ADR-98 amendment).
 -- Empty string means "no filter; return all deployments"
 -- — the wide-open default. Setting a non-empty value restricts
 -- to one deployment. Mirrors the existing ?scope= discipline.
@@ -1849,7 +1849,7 @@ WHERE id = $1;
 
 -- name: DeleteDataUpstreamByID :exec
 -- DELETE /v1/apps/{slug}/upstreams/{id} (PR-B). Soft-
--- delete is rejected by ADR-098 (a soft-deleted row
+-- delete is rejected by ADR-98 (a soft-deleted row
 -- would still trigger pg_notify and confuse schedd);
 -- the handler is the only path and uses a hard
 -- DELETE. The CASCADE on account_id / app_id handles
@@ -1917,7 +1917,7 @@ DELETE FROM data_upstream_probes WHERE sampled_at < $1;
 -- concurrently.
 --
 -- The FOR UPDATE SKIP LOCKED on ClaimTriggerRecords mirrors the
--- precedent set by ADR-099 PR-C's claim_job_tasks query (issue
+-- precedent set by ADR-99 PR-C's claim_job_tasks query (issue
 -- tracker 'job-task pull'): concurrent schedd replicas each claim
 -- disjoint row sets with no advisory-lock plumbing.
 
@@ -4996,7 +4996,7 @@ WHERE catalog_key = sqlc.arg(catalog_key) AND state = 'ready';
 -- host is projected because schedd resolves it locally to write the
 -- nftables element. It never reaches a metric label, a log line, or
 -- the customer-facing API — those carry host_redacted_hash only
--- (ADR-098 §11).
+-- (ADR-98 §11).
 SELECT DISTINCT ON (u.app_id, u.host_redacted_hash, u.port)
     u.app_id,
     u.host_redacted_hash,
@@ -9477,6 +9477,21 @@ LEFT JOIN LATERAL (
 LEFT JOIN trigger_consumer_health h ON h.trigger_id = consumer.id
 WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
 ORDER BY b.created_at, b.id;
+-- name: CreateServiceBindingSmokeTask :one
+INSERT INTO app_tasks (
+ account_id, app_id, deployment_id, kind, command, command_shell,
+ deployment_scope, artifact_key, image_digest, timeout_seconds, max_output_bytes,
+ created_at, updated_at)
+SELECT a.account_id, a.id, d.id, 'manual', sqlc.arg(command)::text[], false,
+ COALESCE(NULLIF(d.scope, ''), 'default'), d.rootfs_key, d.image_digest,
+ sqlc.arg(timeout_seconds), sqlc.arg(max_output_bytes), sqlc.arg(created_at), sqlc.arg(created_at)
+FROM apps a JOIN deployments d ON d.app_id = a.id
+WHERE a.id = sqlc.arg(app_id) AND a.account_id = sqlc.arg(account_id)
+ AND a.status <> 'deleted' AND d.id = sqlc.arg(deployment_id)
+ AND d.status = 'live' AND d.rootfs_key IS NOT NULL AND d.rootfs_key <> '' AND d.image_digest <> ''
+FOR SHARE OF a, d
+RETURNING app_tasks.*;
+
 -- name: CreateBindingVerificationTask :one
 INSERT INTO app_tasks (account_id, app_id, deployment_id, kind, command, command_shell,
  deployment_scope, artifact_key, image_digest, timeout_seconds, max_output_bytes,
@@ -9706,3 +9721,240 @@ LEFT JOIN managed_postgres_databases source ON source.id = c.source_database_id
 LEFT JOIN managed_postgres_usage_coverage s ON s.database_id = c.source_database_id AND s.window_seconds = c.window_seconds
 WHERE d.account_id = sqlc.arg(account_id)::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL)
 ORDER BY d.id;
+
+-- name: ReadServiceBindingRevision :one
+SELECT (r.epoch::text || ':' || r.service_revision::text)::text AS revision
+FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id
+WHERE r.app_id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted';
+
+-- name: ReadBindingReleasePolicy :one
+SELECT COALESCE(to_jsonb(p), '{}'::jsonb)::jsonb AS policy
+FROM apps a LEFT JOIN app_binding_release_policies p ON p.app_id=a.id AND p.scope=sqlc.arg(scope)
+WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted';
+
+-- name: WriteBindingReleasePolicy :one
+INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds,require_application_ack,reason)
+SELECT a.id,sqlc.arg(scope),sqlc.arg(mode),sqlc.arg(expected_revision)::bigint+1,sqlc.arg(max_age_seconds),sqlc.arg(require_application_ack),sqlc.arg(reason)
+FROM apps a WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted'
+ AND sqlc.arg(expected_revision)::bigint=0
+ON CONFLICT(app_id,scope) DO UPDATE SET mode=EXCLUDED.mode,revision=app_binding_release_policies.revision+1,
+ max_age_seconds=EXCLUDED.max_age_seconds,require_application_ack=EXCLUDED.require_application_ack,reason=EXCLUDED.reason,updated_at=clock_timestamp()
+WHERE app_binding_release_policies.revision=sqlc.arg(expected_revision)::bigint
+RETURNING to_jsonb(app_binding_release_policies)::jsonb AS policy;
+
+-- name: UpdateBindingReleasePolicy :one
+UPDATE app_binding_release_policies p SET mode=sqlc.arg(mode),revision=p.revision+1,max_age_seconds=sqlc.arg(max_age_seconds),
+ require_application_ack=sqlc.arg(require_application_ack),reason=sqlc.arg(reason),updated_at=clock_timestamp()
+FROM apps a WHERE p.app_id=a.id AND a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted'
+ AND p.scope=sqlc.arg(scope) AND p.revision=sqlc.arg(expected_revision)
+RETURNING to_jsonb(p)::jsonb AS policy;
+
+-- name: AuthorizeBindingReleaseTraffic :one
+SELECT authorize_binding_release_traffic(sqlc.arg(fences)::jsonb)::boolean;
+
+-- name: ServiceRolloutBindingEnforced :one
+SELECT EXISTS (SELECT 1 FROM app_binding_release_policies WHERE app_id = sqlc.arg(app_id) AND scope = sqlc.arg(scope) AND mode = 'enforce')::boolean;
+
+-- name: SaveServiceRolloutHandoff :exec
+UPDATE deployments SET service_rollout_handoff = sqlc.arg(handoff)::jsonb WHERE id = sqlc.arg(deployment_id);
+
+-- name: ServiceRolloutRecipientTraffic :one
+SELECT traffic_percent FROM deployments WHERE id = sqlc.arg(deployment_id) AND status = 'live';
+
+-- name: ServiceRolloutRecipientReady :one
+SELECT (count(*) >= CASE WHEN sqlc.arg(action)::text = 'promote' THEN coalesce((SELECT (a.manifest->'service_replicas'->>'desired')::integer FROM apps a WHERE a.id = sqlc.arg(app_id)), 1) ELSE 1 END)::boolean
+FROM (SELECT i.id FROM instances i WHERE i.deployment_id = sqlc.arg(deployment_id)::uuid AND i.mode = 'service' AND i.state = 'running' FOR SHARE) ready;
+
+-- name: AppendServiceRolloutBindingAudit :one
+INSERT INTO deployment_audit(deployment_id, account_id, kind, actor, at, data)
+VALUES (sqlc.arg(deployment_id)::uuid, (SELECT account_id FROM apps WHERE id = sqlc.arg(app_id)::uuid), sqlc.arg(kind), sqlc.arg(actor), clock_timestamp(), sqlc.arg(data)::jsonb)
+RETURNING id;
+
+-- name: LockCheckedRollbackApp :one
+SELECT id FROM apps WHERE id=sqlc.arg(app_id) AND account_id=sqlc.arg(account_id) AND status IN ('active','evicted_cold') FOR UPDATE;
+
+-- name: CheckedRollbackTargetFacts :one
+SELECT jsonb_build_object('id',d.id,'app_id',d.app_id,'scope',d.scope,'status',d.status,'traffic_percent',d.traffic_percent,
+ 'canary_total_steps',d.canary_total_steps,'canary_step',d.canary_step,'rollout_state',d.rollout_state,'rootfs_key',coalesce(d.rootfs_key,''),
+ 'image_digest',d.image_digest,'environment_workload_runtime',d.environment_workload_runtime,
+ 'service_rollout_handoff',d.service_rollout_handoff) FROM deployments d
+ WHERE d.id=sqlc.arg(deployment_id) AND d.app_id=sqlc.arg(app_id) FOR UPDATE;
+
+-- name: CheckedRollbackCurrentMatches :one
+SELECT EXISTS(SELECT 1 FROM deployments d WHERE d.id=sqlc.arg(current_id) AND d.app_id=sqlc.arg(app_id)
+ AND d.scope=sqlc.arg(scope) AND d.status='live' AND d.traffic_percent=100
+ AND (d.canary_total_steps=0 OR d.canary_step>=d.canary_total_steps) AND d.rollout_state NOT IN ('pending','rolling_out'))
+ AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=sqlc.arg(app_id) AND d.scope=sqlc.arg(scope)
+ AND d.status='live' AND d.id<>sqlc.arg(current_id) AND d.id<>sqlc.arg(target_id)
+ AND (d.traffic_percent>0 OR d.rollout_state IN ('pending','rolling_out')));
+
+-- name: InsertCheckedRollback :exec
+INSERT INTO deployment_rollback_operations(id,app_id,scope,target_deployment_id,current_deployment_id,status,receipt)
+ VALUES(sqlc.arg(id),sqlc.arg(app_id),sqlc.arg(scope),sqlc.arg(target_id),sqlc.arg(current_id),sqlc.arg(status),sqlc.arg(receipt));
+
+-- name: ReadCheckedRollback :one
+SELECT r.receipt FROM deployment_rollback_operations r JOIN apps a ON a.id=r.app_id
+ WHERE r.id=sqlc.arg(id) AND r.app_id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted';
+
+-- name: LockCheckedRollback :one
+SELECT receipt FROM deployment_rollback_operations WHERE id=sqlc.arg(id) AND app_id=sqlc.arg(app_id) FOR UPDATE;
+
+-- name: CheckedRollbackForTarget :one
+SELECT receipt FROM deployment_rollback_operations WHERE target_deployment_id=sqlc.arg(target_id)
+ AND status NOT IN ('complete','failed') ORDER BY updated_at,id LIMIT 1;
+
+-- name: ListPendingCheckedRollbacks :many
+SELECT receipt FROM deployment_rollback_operations WHERE status NOT IN ('complete','failed') ORDER BY updated_at,id LIMIT sqlc.arg(batch_size);
+
+-- name: SaveCheckedRollback :exec
+UPDATE deployment_rollback_operations SET status=sqlc.arg(status),receipt=sqlc.arg(receipt),updated_at=clock_timestamp()
+ WHERE id=sqlc.arg(id);
+
+-- name: PrepareCheckedRollbackTarget :exec
+UPDATE deployments SET status='snapshotting',error='',error_code='',traffic_percent=0,traffic_percent_explicit=true,
+ canary_preset='none',canary_step=0,canary_total_steps=0,canary_stages=null,canary_step_started_at=clock_timestamp(),
+ rollout_state=sqlc.arg(rollout_state),rollout_started_at=null,rollout_completed_at=null,rollout_aborted_at=null,rollout_aborted_reason='',
+ service_rollout_handoff=sqlc.arg(handoff),api_hosting_receipt='{}'::jsonb,
+ stage_state=jsonb_build_object('current','snapshot_prepare','current_started_at',clock_timestamp(),'history',coalesce(stage_state->'history','[]'::jsonb))
+ WHERE id=sqlc.arg(target_id);
+
+-- name: MarkCheckedRollbackReady :exec
+UPDATE deployments SET status='live',error='',error_code='',traffic_percent=0,
+ rollout_started_at=CASE WHEN rollout_state='rolling_out' THEN clock_timestamp() ELSE NULL END WHERE id=sqlc.arg(target_id);
+
+-- name: AuthorizeCheckedRollback :one
+SELECT set_config('faas.checked_rollback_request',sqlc.arg(request_id)::text,true);
+
+-- name: CutoverCheckedRollbackTarget :exec
+UPDATE deployments SET traffic_percent=100,rollout_state='complete',rollout_completed_at=clock_timestamp() WHERE id=sqlc.arg(target_id);
+
+-- name: RetireCheckedRollbackSiblings :exec
+UPDATE deployments d SET traffic_percent=0,status=CASE WHEN EXISTS(SELECT 1 FROM deployment_revision_pins p
+ WHERE p.deployment_id=d.id AND p.expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM project_release_members rm
+ JOIN project_release_sets rs ON rs.id=rm.release_id WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>clock_timestamp()))
+ THEN 'live' ELSE 'superseded' END
+ WHERE d.app_id=sqlc.arg(app_id) AND d.scope=sqlc.arg(scope) AND d.status='live' AND d.id<>sqlc.arg(target_id);
+
+-- name: RetainCheckedRollbackPredecessor :exec
+INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
+ SELECT d.id,d.app_id,clock_timestamp()+((a.manifest->>'revision_pin_ttl_seconds')::integer*interval '1 second')
+ FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=sqlc.arg(current_id)
+ AND coalesce((a.manifest->>'revision_pin_ttl_seconds')::integer,0) BETWEEN 1 AND 604800
+ ON CONFLICT(deployment_id) DO NOTHING;
+
+-- name: FailCheckedRollbackTarget :exec
+UPDATE deployments SET status='superseded',rollout_state='pending' WHERE id=sqlc.arg(target_id) AND traffic_percent=0;
+
+-- name: FailedCheckedRollbackTarget :one
+SELECT EXISTS(SELECT 1 FROM deployment_rollback_operations WHERE target_deployment_id=sqlc.arg(target_id) AND status='failed');
+
+-- name: NotifyCheckedRollbackCutover :exec
+SELECT pg_notify('deployment_changed',jsonb_build_object('kind','service_rollout','app_id',sqlc.arg(app_id)::text,'deployment_id',sqlc.arg(target_id)::text,'status','live')::text),
+ pg_notify('deployment_changed',jsonb_build_object('app_id',sqlc.arg(app_id)::text,'deployment_id',sqlc.arg(current_id)::text,'status',
+ (SELECT status FROM deployments WHERE id=sqlc.arg(current_id)::uuid))::text);
+
+-- name: LockCheckedRollbackScope :many
+SELECT id FROM deployments WHERE app_id=sqlc.arg(app_id) AND scope=sqlc.arg(scope) ORDER BY id FOR UPDATE;
+
+-- name: LockAlertRollbackFireApp :many
+SELECT a.id FROM apps a JOIN alert_rules r ON r.app_id=a.id AND r.account_id=a.account_id
+ WHERE r.id=sqlc.arg(rule_id) AND r.action='rollback' FOR UPDATE OF a;
+
+-- name: ReadAlertRollbackFireFacts :one
+SELECT jsonb_build_object('rule_id',r.id,'account_id',r.account_id,'app_id',coalesce(r.app_id::text,''),
+ 'app_account_id',coalesce(a.account_id::text,''),'enabled',r.enabled,'action',r.action,'metric',r.metric,'name',r.name,
+ 'comparison',r.comparison,'threshold',r.threshold,'window_spec',r.window_spec,
+ 'service',coalesce(a.manifest->>'execution_mode'='service',false),'window_seconds',r.post_deploy_rollback_window_seconds,
+ 'deployments',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'app_id',d.app_id,'scope',d.scope,'status',d.status,
+ 'traffic_percent',d.traffic_percent,'canary_total_steps',d.canary_total_steps,'canary_step',d.canary_step,
+ 'rollout_state',d.rollout_state,'created_at',d.created_at,'completed_at',d.rollout_completed_at,
+ 'recovery_predecessor_id',coalesce((SELECT predecessor_deployment_id::text FROM deployment_recovery_lineage WHERE deployment_id=d.id),''),
+ 'recovered',EXISTS(SELECT 1 FROM deployment_rollback_operations WHERE target_deployment_id=d.id) OR EXISTS(SELECT 1 FROM deployment_audit WHERE kind='deploy.rolled_back' AND (deployment_id=d.id OR data->>'predecessor_deployment_id'=d.id::text)) OR EXISTS(SELECT 1 FROM alert_rollback_actions WHERE receipt->>'predecessor_deployment_id'=d.id::text AND status='complete'),
+ 'predecessor_deployment_id',coalesce(d.service_rollout_handoff->>'predecessor_deployment_id',''))) FROM deployments d WHERE d.app_id=r.app_id AND d.status IN ('live','superseded') AND d.deleted_at IS NULL),'[]'::jsonb))
+ FROM alert_rules r LEFT JOIN apps a ON a.id=r.app_id AND a.status<>'deleted' WHERE r.id=sqlc.arg(rule_id) AND r.action='rollback';
+
+-- name: InsertAlertRollback :exec
+INSERT INTO alert_rollback_actions(fire_id,app_id,status,receipt)
+ VALUES(sqlc.arg(fire_id),sqlc.narg(app_id)::uuid,sqlc.arg(status),sqlc.arg(receipt));
+
+-- name: ReadAlertRollback :one
+SELECT receipt FROM alert_rollback_actions WHERE fire_id=sqlc.arg(fire_id);
+
+-- name: LockAlertRollback :one
+SELECT receipt FROM alert_rollback_actions WHERE fire_id=sqlc.arg(fire_id) FOR UPDATE;
+
+-- name: GetAlertRollback :one
+SELECT r.receipt FROM alert_rollback_actions r JOIN apps a ON a.id=r.app_id
+ WHERE r.fire_id=sqlc.arg(fire_id) AND a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND r.receipt->>'account_id'=a.account_id::text AND a.status<>'deleted';
+
+-- name: ListAlertRollbacks :many
+SELECT r.receipt FROM alert_rollback_actions r JOIN apps a ON a.id=r.app_id
+ WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND r.receipt->>'account_id'=a.account_id::text AND a.status<>'deleted'
+ ORDER BY r.updated_at DESC,r.fire_id LIMIT sqlc.arg(batch_size);
+
+-- name: ListPendingAlertRollbacks :many
+SELECT receipt FROM alert_rollback_actions WHERE status IN ('pending','blocked') ORDER BY updated_at,fire_id LIMIT sqlc.arg(batch_size);
+
+-- name: SaveAlertRollback :exec
+UPDATE alert_rollback_actions SET status=sqlc.arg(status),receipt=sqlc.arg(receipt),updated_at=clock_timestamp() WHERE fire_id=sqlc.arg(fire_id);
+
+-- name: AppendRolloutRecoveryAudit :one
+INSERT INTO deployment_audit(deployment_id,account_id,alert_rule_id,kind,actor,at,data)
+ VALUES(sqlc.arg(deployment_id)::uuid,sqlc.narg(account_id)::uuid,sqlc.narg(alert_rule_id)::uuid,sqlc.arg(kind),sqlc.arg(actor),sqlc.arg(at),sqlc.arg(data)::jsonb) RETURNING id;
+
+-- name: NotifyAlertRollbackTraffic :exec
+SELECT pg_notify('deployment_changed',jsonb_build_object('kind','traffic','app_id',sqlc.arg(app_id)::text,'deployment_id',sqlc.arg(candidate_id)::text,'traffic_percent',0)::text);
+
+-- name: LockAlertRollbackRule :one
+SELECT id FROM alert_rules WHERE id=sqlc.arg(rule_id) FOR SHARE;
+
+-- name: NotifyAlertServiceRollback :exec
+SELECT pg_notify('deployment_changed',jsonb_build_object('kind','service_rollout_abort','app_id',sqlc.arg(app_id)::text,'deployment_id',sqlc.arg(candidate_id)::text,'status','live')::text);
+
+-- name: ClaimHistoricalAlertRollback :execrows
+INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
+ VALUES(sqlc.arg(deployment_id),sqlc.arg(fire_id)) ON CONFLICT(deployment_id) DO NOTHING;
+
+-- name: InsertCustomerAlertRule :one
+INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,
+ action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds)
+VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
+ sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.arg(action),sqlc.arg(webhook_url),
+ sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds))
+RETURNING *;
+
+-- name: UpdateCustomerAlertRule :one
+UPDATE alert_rules SET name=coalesce(sqlc.narg(name)::text,name),enabled=coalesce(sqlc.narg(enabled)::boolean,enabled),
+ metric=coalesce(sqlc.narg(metric)::text,metric),comparison=coalesce(sqlc.narg(comparison)::text,comparison),
+ threshold=coalesce(sqlc.narg(threshold)::double precision,threshold),window_spec=coalesce(sqlc.narg(window_spec)::text,window_spec),
+ action=coalesce(sqlc.narg(action)::text,action),webhook_url=coalesce(sqlc.narg(webhook_url)::text,webhook_url),
+ webhook_secret_sealed=coalesce(sqlc.narg(webhook_secret_sealed)::bytea,webhook_secret_sealed),
+ cooldown_minutes=coalesce(sqlc.narg(cooldown_minutes)::integer,cooldown_minutes),
+ post_deploy_rollback_window_seconds=coalesce(sqlc.narg(post_deploy_rollback_window_seconds)::integer,post_deploy_rollback_window_seconds),updated_at=now()
+WHERE id=sqlc.arg(id) RETURNING *;
+
+-- name: ReadCustomerAlertRule :one
+SELECT * FROM alert_rules WHERE id=sqlc.arg(id);
+
+-- name: ListCustomerAlertRulesForAccount :many
+SELECT * FROM alert_rules WHERE account_id=sqlc.arg(account_id) ORDER BY created_at DESC;
+
+-- name: ListEnabledCustomerAlertRules :many
+SELECT * FROM alert_rules WHERE enabled=true ORDER BY account_id;
+
+-- name: ListCustomerAlertRulesByPreset :many
+SELECT r.* FROM alert_rules r WHERE r.account_id=sqlc.arg(account_id) AND r.app_id=sqlc.arg(app_id)
+ AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=sqlc.arg(preset_name))
+ ORDER BY r.created_at DESC LIMIT 2;
+
+-- name: ReadHistoricalAlertDeploymentEvidence :one
+-- Keep the app alert's 2xx/5xx denominator, weighted by publisher counts.
+-- The cutover minute and unfinished ingestion minutes are excluded by callers.
+SELECT coalesce(sum(count::bigint),0)::bigint AS requests,
+ coalesce(sum(count::bigint) FILTER (WHERE status BETWEEN 500 AND 599),0)::bigint AS server_errors,
+ max(received_at)::timestamptz AS last_sample_at
+FROM request_telemetry
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND deployment_id=sqlc.arg(deployment_id)::uuid
+ AND received_at>=sqlc.arg(window_start)::timestamptz AND received_at<sqlc.arg(window_end)::timestamptz
+ AND (status BETWEEN 200 AND 299 OR status BETWEEN 500 AND 599);

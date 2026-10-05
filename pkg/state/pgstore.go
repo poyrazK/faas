@@ -1,4 +1,4 @@
-// pgstore.go is the ADR-017 hand-written M5 adapter. It implements the
+// pgstore.go is the ADR-17 hand-written M5 adapter. It implements the
 // Store interface against the Postgres schema in migrations/*.sql; the SQL
 // itself lives in queries.sql so sqlc.yaml is the canonical source. This
 // file is the thin adapter that maps sqlc-style params/rows to the domain
@@ -6,7 +6,7 @@
 //
 // `make sqlc-check` regenerates pkg/state/sqlc/ in CI and fails when it
 // drifts from queries.sql + schema.sql. TODO(M5.1): replace this adapter's
-// query bodies with calls into the generated package. See ADR-017.
+// query bodies with calls into the generated package. See ADR-17.
 package state
 
 import (
@@ -235,7 +235,7 @@ var _ Store = (*PgStore)(nil)
 const heartbeatHistoryMaxRows = 2000
 
 // DefaultEnvScope is the package-local mirror of api.DefaultEnvScope.
-// ADR-092 PR-A deliberately duplicates the literal here rather than
+// ADR-92 PR-A deliberately duplicates the literal here rather than
 // importing pkg/api, because pkg/state → pkg/api would close a cycle
 // (every consumer of pkg/state can import pkg/api on its own, but
 // pkg/api must not import pkg/state — see pkg/api/dto.go for the
@@ -247,7 +247,7 @@ const DefaultEnvScope = "default"
 // --- accounts ---------------------------------------------------------------
 
 func (s *PgStore) CreateAccount(ctx context.Context, email string, plan api.Plan) (Account, error) {
-	// PR 6 (issue #190 / IAM-6 / ADR-061): CreateAccount now ALSO
+	// PR 6 (issue #190 / IAM-6 / ADR-61): CreateAccount now ALSO
 	// writes the personal-org + owner-membership rows so the legacy
 	// entry point stays drop-in compatible with the migration 00129
 	// NOT NULL flip on api_keys.org_id. Pre-PR-6 callers (CLI login,
@@ -269,7 +269,7 @@ func (s *PgStore) CreateAccount(ctx context.Context, email string, plan api.Plan
 }
 
 // CreateAccountWithPersonalOrg is the PR 3 canonical
-// account-creation entry point (issue #190 / ADR-061). Runs the
+// account-creation entry point (issue #190 / ADR-61). Runs the
 // three INSERTs under one tx so the "every account has exactly one
 // personal org" invariant is atomic at the SQL layer.
 //
@@ -425,7 +425,7 @@ func (s *PgStore) APIKeyByHash(ctx context.Context, hash []byte) (APIKey, error)
 // collapsing to a single SQL JOIN halves the round-trips on every
 // authenticated request. Not blocking: index hits are fast enough that
 // the perf cost is negligible at current scale. Revisit when auth
-// latency shows up on the dashboard. See ADR-034 rev2.
+// latency shows up on the dashboard. See ADR-34 rev2.
 //
 // IAM-5 (issue #189) gate: after the key row is loaded, three checks
 // run in order —
@@ -1410,7 +1410,7 @@ func scanAccounts(rows pgx.Rows) ([]Account, error) {
 // ListAllAccounts) so the account policy + requireMFA middleware
 // always see the post-enrollment state — Review Finding #1 fix.
 //
-// egress_allowlist_extra (issue #679 / PR-B / ADR-082) is the
+// egress_allowlist_extra (issue #679 / PR-B / ADR-82) is the
 // per-account additive budget on top of the plan's
 // apps.egress_allowlist cap. NOT NULL DEFAULT 0, so the scan
 // uses an int (no *int): the column is never NULL. The
@@ -1465,7 +1465,7 @@ func (s *PgStore) CreateAPIKey(ctx context.Context, accountID string, hash []byt
 	// account-scoped callers (CLI login, dev seed, e2e
 	// fixtures) don't have an active-org hint but the column is
 	// NOT NULL post-migration 00127, so the store resolves the
-	// personal org id on the caller's behalf. PR 9 (ADR-061
+	// personal org id on the caller's behalf. PR 9 (ADR-61
 	// §C) plans to drop the legacy `account_id` column at the
 	// end of the dual-write window.
 	row := s.pool.QueryRow(ctx,
@@ -1545,7 +1545,7 @@ func (s *PgStore) DeleteAPIKey(ctx context.Context, accountID, keyID string) err
 }
 
 // DeleteAPIKeyReturning deletes the key and returns the row in a
-// single DELETE ... RETURNING statement (IAM-1, ADR-034 rev2). The
+// single DELETE ... RETURNING statement (IAM-1, ADR-34 rev2). The
 // handler uses the returned row's Scopes to emit a key.deleted audit
 // event so an operator investigating "what just got revoked?" can see
 // the dismissed permission set without re-deriving it from logs.
@@ -1815,7 +1815,7 @@ func (s *PgStore) SetAccountKeyGraceWindow(ctx context.Context, accountID string
 
 // GetAccountEgressAllowlistExtra returns the per-account
 // additive budget on top of the plan's apps.egress_allowlist
-// cap (issue #679 / PR-B / ADR-082). 0 = no override; the plan
+// cap (issue #679 / PR-B / ADR-82). 0 = no override; the plan
 // cap is authoritative. The validator at
 // cmd/apid/handlers_ext.go:104 adds this value to the plan cap
 // before the >-maxSize check. The DB CHECK constraint
@@ -1842,7 +1842,7 @@ func (s *PgStore) GetAccountEgressAllowlistExtra(ctx context.Context, accountID 
 // the apid handler enforces the + 1024 ceiling before the
 // call lands here.
 //
-// Issue #679 / PR-B / ADR-082.
+// Issue #679 / PR-B / ADR-82.
 func (s *PgStore) SetAccountEgressAllowlistExtra(ctx context.Context, accountID string, n int) error {
 	_, err := s.pool.Exec(ctx,
 		`update accounts set egress_allowlist_extra = $1 where id = $2`, n, accountID)
@@ -2171,7 +2171,7 @@ func (s *PgStore) RotateOrgAPIKeyWithProvenance(ctx context.Context, orgID, oldK
 // --- apps --------------------------------------------------------------------
 
 func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
-	// ADR-093 / PR-E: DB call seam — propagate the inbound budget
+	// ADR-93 / PR-E: DB call seam — propagate the inbound budget
 	// with a 10 ms overhead reservation. Hot-path Store methods
 	// follow this pattern; the wrapper is a no-op when no Budget
 	// is attached.
@@ -2247,7 +2247,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	if warmMinMs <= 0 {
 		warmMinMs = 100
 	}
-	// Issue #470 / ADR-055 + issue #533 / ADR-066: warm_snapshot_* values
+	// Issue #470 / ADR-55 + issue #533 / ADR-66: warm_snapshot_* values
 	// arrive populated on the App struct from apid (which applies the
 	// plan-gated default from pkg/api/limits.go). The SQL CHECK bounds
 	// are enforced both at the column layer and at the apid handler;
@@ -2260,7 +2260,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	// convention detector's (RootDir, Name) tuple to round-trip.
 	// The schema DEFAULT would yield '' for the convention
 	// workload and merge it with a compose workload of the same
-	// slug on re-apply, tripping apps_slug_key. See ADR-068
+	// slug on re-apply, tripping apps_slug_key. See ADR-68
 	// amendment for the diff path that depends on this.
 	// Issue #475: eviction_priority is NOT NULL DEFAULT 'best_effort'
 	// (migration 00135). The Go zero-value "" is NOT in the CHECK set
@@ -2270,7 +2270,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	// gate (Plan.EvictionPriorityReservedAllowed) at create time for
 	// explicit 'reserved' values.
 	evictionPriority := EvictionPriorityOrBestEffort(app.EvictionPriority)
-	// Issue #695 / ADR-080: public_auth_mode is included in the column
+	// Issue #695 / ADR-80: public_auth_mode is included in the column
 	// list so the App struct's value is written verbatim. Pre-#695 the
 	// schema default ('open') shadowed any value the caller passed,
 	// which broke the per-plan default path on Pro/Scale (default
@@ -2281,7 +2281,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	// (same Set-bit-aware shape) so the per-plan default doesn't get
 	// shadowed by the schema DEFAULT.
 	//
-	// ADR-093: route_metrics_enabled is written explicitly (same
+	// ADR-93: route_metrics_enabled is written explicitly (same
 	// shape) so the per-plan default doesn't get shadowed by the
 	// schema DEFAULT. The CreateApp site is the only place the
 	// column is written at create time — there's no separate
@@ -2289,7 +2289,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	// explicit per-plan default is applied by apid before
 	// reaching this path.
 	//
-	// Tier A10 / ADR-088: overflow_node preference is in the
+	// Tier A10 / ADR-88: overflow_node preference is in the
 	// column list so the App struct's value is written verbatim
 	// at create time. apid resolved the wire name → UUID
 	// server-side via Store.ComputeNodeByName before reaching
@@ -2346,12 +2346,12 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	row := s.pool.QueryRow(ctx, insertAppSQL,
 		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, cidrPrefixesToArray(app.EgressAllowlist), cidrPrefixesToArray(app.PublicAuthIPAllowlist), app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, string(workloadClass), nullString(app.StartCommand), nullString(app.NodeID),
 		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, app.WarmPoolSize, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
-		// Tier A10 / ADR-088: overflow_node preference (nullable
+		// Tier A10 / ADR-88: overflow_node preference (nullable
 		// UUID). nullString coerces a nil pointer or empty
 		// string to SQL NULL; Postgres infers the UUID type
 		// from the column, same as NodeID above.
 		nullString(derefString(app.OverflowNode)),
-		// Issue #272 / ADR-094: per-app preview metadata. Empty
+		// Issue #272 / ADR-94: per-app preview metadata. Empty
 		// strings + zero ints + nil time all land as SQL NULL
 		// via the existing nullString / nullable helpers — the
 		// create path is the production path, and production
@@ -2365,7 +2365,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 		// rows (never commented) and freshly-provisioned
 		// preview rows (comment post happens AFTER CreateApp).
 		nullableTimestamptzPtr(app.PreviewDestroyCommentedAt),
-		// ADR-091 amendment / §4.1.2.0: coarse-gate per-app
+		// ADR-91 amendment / §4.1.2.0: coarse-gate per-app
 		// maintenance flag (apps.maintenance_mode). Written
 		// explicitly so the App struct's value (default false)
 		// round-trips through CREATE — the schema DEFAULT also
@@ -2566,7 +2566,7 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 	if cpuMillicores <= 0 {
 		cpuMillicores = api.DefaultAppCPUMillicores
 	}
-	// Issue #470 / ADR-055: warm_snapshot_min_* have CHECK bounds (1..100 /
+	// Issue #470 / ADR-55: warm_snapshot_min_* have CHECK bounds (1..100 /
 	// 100..60000) added by migration 00109. Mirror the ramMB floor above
 	// so a zero-value App struct (test fixtures, internal callers) lands
 	// inside the bound instead of tripping the CHECK at insert time.
@@ -2597,7 +2597,7 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 	// PlacementClaimSubscriber can stamp the owner asynchronously).
 	// See CreateApp for the post-00091 contract — pgx passes nil for
 	// the empty string so the column defaults to NULL.
-	// Issue #470 / ADR-055: same warm_snapshot_* projection as CreateApp —
+	// Issue #470 / ADR-55: same warm_snapshot_* projection as CreateApp —
 	// the column default would write false/5/2000 for an unset caller,
 	// but apid always populates the App struct with the plan-gated
 	// defaults from pkg/api/limits.go before reaching either insert path;
@@ -2607,25 +2607,25 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 	// root_dir (migration 00074): same rationale as CreateApp —
 	// schema DEFAULT '' but written explicitly so the
 	// (RootDir, WorkloadName) tuple round-trips through the diff
-	// path (ADR-068 amendment).
+	// path (ADR-68 amendment).
 	// Issue #475: eviction_priority is NOT NULL DEFAULT 'best_effort'
 	// (migration 00135). Same snap-to-default shape as CreateApp above
 	// — the Go zero-value "" is NOT in the CHECK set, so the insert
 	// path coerces to 'best_effort' to preserve the pre-#475 create
 	// behaviour bit-for-bit.
 	evictionPriority := EvictionPriorityOrBestEffort(app.EvictionPriority)
-	// Issue #695 / ADR-080: public_auth_mode is in the column list so
+	// Issue #695 / ADR-80: public_auth_mode is in the column list so
 	// the App struct's value is written verbatim (same rationale as
 	// CreateApp above — schema default 'open' would otherwise shadow
 	// the per-plan default).
 	//
 	// Issue #676 / PR-3: websocket_enabled follows the same shape.
 	//
-	// ADR-093: route_metrics_enabled follows the same shape; the
+	// ADR-93: route_metrics_enabled follows the same shape; the
 	// per-plan default is applied by apid before reaching this
 	// path so the App struct's value is authoritative.
 	//
-	// Tier A10 / ADR-088: overflow_node preference is in the
+	// Tier A10 / ADR-88: overflow_node preference is in the
 	// column list so the App struct's value is written verbatim
 	// at create time. apid resolved the wire name → UUID
 	// server-side via Store.ComputeNodeByName before reaching
@@ -2676,12 +2676,12 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 	row := tx.QueryRow(ctx, insertAppSQL,
 		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, string(workloadClass), nullString(app.StartCommand), nullString(app.NodeID),
 		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, app.WarmPoolSize, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
-		// Tier A10 / ADR-088: overflow_node preference (nullable
+		// Tier A10 / ADR-88: overflow_node preference (nullable
 		// UUID). nullString coerces a nil pointer or empty
 		// string to SQL NULL; Postgres infers the UUID type
 		// from the column, same as NodeID above.
 		nullString(derefString(app.OverflowNode)),
-		// Issue #272 / ADR-094: per-app preview metadata. Same
+		// Issue #272 / ADR-94: per-app preview metadata. Same
 		// NULL-all shape as CreateApp above — production apps
 		// (and quota-counted inserts that happen to land via
 		// this path) never carry preview metadata.
@@ -2693,7 +2693,7 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 		// rows (never commented) and freshly-provisioned
 		// preview rows (comment post happens AFTER CreateApp).
 		nullableTimestamptzPtr(app.PreviewDestroyCommentedAt),
-		// ADR-091 amendment / §4.1.2.0: coarse-gate per-app
+		// ADR-91 amendment / §4.1.2.0: coarse-gate per-app
 		// maintenance flag. Same explicit-write posture as
 		// CreateApp above — the schema DEFAULT would yield
 		// false but the explicit write matches the
@@ -2734,7 +2734,7 @@ func (s *PgStore) AppBySlugIncludingDeleted(ctx context.Context, slug string) (A
 	return scanApp(row)
 }
 
-// PreviewAppsByParent (ADR-095 / issue #272) returns every preview
+// PreviewAppsByParent (ADR-95 / issue #272) returns every preview
 // app whose preview_of_slug = parentSlug, scoped to accountID. The
 // query plan uses the partial index apps_preview_of_slug_idx
 // (migration 00220), which carries the same WHERE preview_of_slug IS
@@ -2873,7 +2873,7 @@ func (s *PgStore) ListDevSyncHistory(ctx context.Context, appID string, limit in
 	return out, nil
 }
 
-// ListPreviewsForTeardown (ADR-095 PR-C / issue #272) returns the
+// ListPreviewsForTeardown (ADR-95 PR-C / issue #272) returns the
 // preview rows the teardown janitor should consider on this tick.
 // See the Store interface docstring for the full contract; the
 // load-bearing points restated here because they look like bugs:
@@ -2916,7 +2916,7 @@ func (s *PgStore) ListPreviewsForTeardown(ctx context.Context, now time.Time, ma
 	return scanApps(rows)
 }
 
-// SetPreviewPrState (ADR-095 PR-C / issue #272) advances one preview
+// SetPreviewPrState (ADR-95 PR-C / issue #272) advances one preview
 // row's lifecycle label. The `preview_of_slug is not null` predicate
 // is a safety interlock, not an optimisation: it means a bug in the
 // janitor's sweep can never relabel a customer's production app —
@@ -3348,7 +3348,7 @@ func (s *PgStore) ListOrphanedApps(ctx context.Context, cooldownSeconds, maxPerT
 // fromNodeID to toNodeID and stamps reassigned_at = now()
 // (Tier A4 / migration 00092). Closes the Phase-2
 // follow-up "apps pinned to a dead node" gap
-// (ADR-064). The conditional UPDATE is
+// (ADR-64). The conditional UPDATE is
 //
 //	update apps
 //	   set node_id = $3, reassigned_at = now()
@@ -3409,13 +3409,13 @@ func (s *PgStore) ReassignAppOwner(ctx context.Context, appID, fromNodeID, toNod
 
 // ListLiveInstancesOnNode returns every live instance owned by
 // nodeID — the candidate set for Engine.MigrateLiveInstances
-// (Tier A5 / migration 00097, ADR-066). Filtered to state='running'
+// (Tier A5 / migration 00097, ADR-66). Filtered to state='running'
 // only — the MarkInstanceMigrating predicate that gates Phase 2
 // requires state='running' + node_id=currentNodeID, so a WAKING /
 // COLD_BOOTING / SNAPSHOTTING instance on the dying node would
 // fail Phase 2 and bump outcome="conflict" (polluting the metric).
 // Those states stay on the dying node and the dying vmmd drives
-// the cold-boot to completion (ADR-005 cold-boot-from-disk); the
+// the cold-boot to completion (ADR-5 cold-boot-from-disk); the
 // migration path is only the right primitive for RUNNING instances.
 //
 // Returns an empty slice (not ErrNotFound) when nodeID has no
@@ -3475,7 +3475,7 @@ func (s *PgStore) ListLiveInstancesOnNode(ctx context.Context, nodeID string, ma
 }
 
 // MarkInstanceMigrating is the Phase-2 atom of the four-phase
-// cross-node live-instance handoff (Tier A5 / ADR-066). Transitions
+// cross-node live-instance handoff (Tier A5 / ADR-66). Transitions
 // the instance to state='migrating' under a conditional UPDATE that
 // requires state='running' and node_id = currentNodeID. Returns
 // ErrConflict on RowsAffected()==0 — peer rollback, owner change, or
@@ -3524,7 +3524,7 @@ func (s *PgStore) MarkInstanceMigrating(ctx context.Context, instanceID, current
 }
 
 // MigrateInstanceOwner is the Phase-3 commit of the four-phase
-// cross-node live-instance handoff (Tier A5 / ADR-066). Conditional
+// cross-node live-instance handoff (Tier A5 / ADR-66). Conditional
 // UPDATE that flips instances.node_id, stamps the migration lineage
 // columns (migrated_from_node_id, migrated_at, lease_token),
 // transitions state from 'migrating' back to 'running', AND stamps
@@ -3593,7 +3593,7 @@ func (s *PgStore) MigrateInstanceOwner(ctx context.Context, instanceID, fromNode
 }
 
 // CancelInstanceMigration is the Phase-4 rollback of the four-phase
-// cross-node live-instance handoff (Tier A5 / ADR-066). Conditional
+// cross-node live-instance handoff (Tier A5 / ADR-66). Conditional
 // UPDATE that transitions the instance back from 'migrating' to
 // 'parked' on the original owner. The dying vmmd resumes the VM;
 // the snapshot stays where it was. Predicates:
@@ -3634,7 +3634,7 @@ func (s *PgStore) CancelInstanceMigration(ctx context.Context, instanceID, origi
 
 // ListExpiredMigrations returns leased instance rows in
 // state='migrating' whose migration_started_at is older than the
-// requested lease age (Tier A6 / ADR-067 migrating-instance watchdog).
+// requested lease age (Tier A6 / ADR-67 migrating-instance watchdog).
 // The watchdog is the only writer that can move a row out of
 // 'migrating' without a peer commit, so the unresolved row is the input
 // set. A row in 'migrating' without a lease or start timestamp is ignored
@@ -3690,7 +3690,7 @@ func (s *PgStore) ListExpiredMigrations(ctx context.Context, maxPerTick int, old
 }
 
 // ReinviteMigratingInstance is the active-owner ack gate of the
-// Tier A6 / ADR-067 migrating-instance watchdog. Conditional
+// Tier A6 / ADR-67 migrating-instance watchdog. Conditional
 // UPDATE that flips state='migrating' → 'running', stamps
 // migrated_at = now(), and clears lease_token — the same work
 // the A5 Phase-3 commit (MigrateInstanceOwner) does, but launched
@@ -3731,7 +3731,7 @@ func (s *PgStore) ReinviteMigratingInstance(ctx context.Context, instanceID, lea
 }
 
 // AbortMigratingInstance is the dead-owner hard-delete gate of
-// the Tier A6 / ADR-067 migrating-instance watchdog. Conditional
+// the Tier A6 / ADR-67 migrating-instance watchdog. Conditional
 // UPDATE that flips state='migrating' → 'parked' and clears
 // lease_token so a future re-attempt at migration mints a fresh
 // lease. node_id is left UNCHANGED — the row's node_id is still
@@ -3790,7 +3790,7 @@ func (s *PgStore) AbortMigratingInstance(ctx context.Context, instanceID, leaseT
 // FAILED is excluded from CountsForRAM(), which is what actually stops
 // the billing leak: meterd's sampler skips the row on its next tick.
 // FAILED (not PARKED) because no snapshot was taken — the VM died with
-// its host. The wake path treats FAILED as cold-bootable (ADR-005), so
+// its host. The wake path treats FAILED as cold-bootable (ADR-5), so
 // the customer's next request still serves.
 func (s *PgStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID, nodeID string, threshold time.Time) error {
 	if instanceID == "" {
@@ -3857,7 +3857,7 @@ func (s *PgStore) CountAppsWithEvictionPriority(ctx context.Context, accountID, 
 	return n, err
 }
 
-// CountAuthDefaultFlippedApps (issue #695 / ADR-080) returns the
+// CountAuthDefaultFlippedApps (issue #695 / ADR-80) returns the
 // per-account count of apps stamped by the apps-auth-default
 // grand-father migration. Migration 00155 sets
 // auth_default_flipped_at on every pre-flip row; this query reads
@@ -3881,7 +3881,7 @@ func (s *PgStore) CountAuthDefaultFlippedApps(ctx context.Context, accountID str
 	return n, err
 }
 
-// AuthDefaultFlippedAt (issue #695 / ADR-080) reads the
+// AuthDefaultFlippedAt (issue #695 / ADR-80) reads the
 // `apps.auth_default_global_flipped` event's `at` timestamp. The
 // migration emits exactly one of these rows on apply (guarded by
 // `WHERE NOT EXISTS`); a replay produces no additional row, so the
@@ -3920,7 +3920,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 	if p.Manifest != nil {
 		manifestBytes, _ = json.Marshal(*p.Manifest)
 	}
-	// Issue #462 / ADR-058 / PR-A: the scaling policy is the jsonb
+	// Issue #462 / ADR-58 / PR-A: the scaling policy is the jsonb
 	// column `apps.scaling_policy`. The store writes the jsonb
 	// AND keeps the legacy `min_instances` column in sync so the
 	// reaper + the SDK see the same floor without a fan-out read.
@@ -3970,7 +3970,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 		   warm_snapshot_min_ms = case when $35 then $36 else warm_snapshot_min_ms end,
 		   eviction_priority = case when $37 then $38 else eviction_priority end,
 		   require_authn = case when $39 then $40 else require_authn end,
-		   -- Issue #477 / ADR-079: per-app public_auth. The mode
+		   -- Issue #477 / ADR-79: per-app public_auth. The mode
 		   -- column is the canonical per-app config; the
 		   -- basic-sealed blob is the secretbox-encrypted
 		   -- credential pair (mode='basic' only). The two
@@ -3979,7 +3979,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 		   -- mode='basic' PATCH) clears the blob atomically.
 		   public_auth_mode   = case when $41 then $42::text  else public_auth_mode   end,
 		   public_auth_basic  = case when $41 then $43::bytea else public_auth_basic  end,
--- Issue #695 / ADR-080: grand-father marker. Cleared
+-- Issue #695 / ADR-80: grand-father marker. Cleared
 			   -- when the customer makes a deliberate PATCH choice
 			   -- on a grandfathered app (ClearAuthDefaultFlippedAt
 			   -- flag set by apid when SetRequireAuthn OR
@@ -3994,7 +3994,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 			   -- Plan.WebSocketResponseAllowed() (Free → 403
 			   -- plan_websocket_not_allowed).
 			   websocket_enabled = case when $45 then $46 else websocket_enabled end,
-			   -- ADR-093: per-route observability opt-in.
+			   -- ADR-93: per-route observability opt-in.
 			   -- Same Set-bit convention as websocket_enabled
 			   -- above; apid gates PATCH-true through
 			   -- Plan.RouteMetricsResponseAllowed() (Free →
@@ -4003,7 +4003,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 			   -- distinguishes "don't touch" (default) from
 			   -- "explicit false" (opt out).
 			   route_metrics_enabled = case when $47 then $48 else route_metrics_enabled end,
-			   -- Tier A10 / ADR-088: per-app overflow_node
+			   -- Tier A10 / ADR-88: per-app overflow_node
 			   -- preference. Same Set-bit convention as the
 			   -- surrounding fields — SetOverflowNode
 			   -- distinguishes "don't touch" (default)
@@ -4013,7 +4013,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 			   -- enforce the integrity contract; the store
 			   -- is a plain column write.
 			   overflow_node = case when $49 then $50 else overflow_node end,
-				   -- ADR-091 amendment / §4.1.2.0: coarse-gate per-app
+				   -- ADR-91 amendment / §4.1.2.0: coarse-gate per-app
 				   -- maintenance flag. Same Set-bit convention as the
 				   -- surrounding fields — SetMaintenanceMode
 				   -- distinguishes "don't touch" (default) from
@@ -4026,7 +4026,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 				   -- (cmd/gatewayd-internal/backend.go) sees one
 				   -- event per flip, not one per app UPDATE.
 				   maintenance_mode = case when $51 then $52 else maintenance_mode end,
-			   -- ADR-091 CORS improvements D1: per-app
+			   -- ADR-91 CORS improvements D1: per-app
 			   -- default CORS opt-in. SetCORSDefaultEnabled
 			   -- distinguishes "don't touch" from
 			   -- "explicit false" (opt out); apid gates
@@ -4036,7 +4036,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 			   -- origin" surface customers expect from
 			   -- any FaaS, so no plan gate.
 				   cors_default_enabled = case when $53 then $54 else cors_default_enabled end,
-			   -- ADR-091 CORS improvements D1:
+			   -- ADR-91 CORS improvements D1:
 			   -- per-app default CORS allowlist. Set bit
 			   -- gates the ARRAY write; nil + Set=true
 			   -- is rejected upstream by apid (the
@@ -4100,7 +4100,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 	// the same column; the policy-comes-first CASE preserves the
 	// policy author as the canonical writer at PR-A.
 	//
-	// Issue #470 / ADR-055: warm_snapshot_* updates follow the same
+	// Issue #470 / ADR-55: warm_snapshot_* updates follow the same
 	// Set*/optional-pointer pattern as require_signed / streaming_enabled
 	// so unset-vs-explicit-false is distinguishable on the wire.
 	var policyMinInstances int
@@ -4142,7 +4142,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 		// may PATCH true → false on a Pro-upgraded app; Hobby
 		// customers may opt back out the same way.
 		p.SetRequireAuthn, boolOrFalse(p.RequireAuthn),
-		// Issue #477 / ADR-079: public_auth block. The Set bit
+		// Issue #477 / ADR-79: public_auth block. The Set bit
 		// gates BOTH columns via the same CASE so a stale
 		// sealed blob from a prior mode='basic' PATCH is
 		// cleared when the customer PATCHes mode='open' or
@@ -4151,7 +4151,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 		p.SetPublicAuth,
 		derefString(ptrOrEmpty(p.PublicAuth)),
 		nilOrBytes(p.PublicAuth),
-		// Issue #695 / ADR-080: grand-father clear path. apid sets
+		// Issue #695 / ADR-80: grand-father clear path. apid sets
 		// this when the customer PATCHed require_authn or public_auth,
 		// which is the deliberate-choice signal the dashboard banner
 		// looks for. No-op for new post-flip apps (column is already
@@ -4161,12 +4161,12 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 		// Issue #676 / PR-3: per-app raw-bytes Upgrade bridge.
 		// Same Set*/optional-pointer pattern as streaming_enabled.
 		p.SetWebSocketEnabled, boolOrFalse(p.WebSocketEnabled),
-		// ADR-093: per-route observability opt-in. Same Set*/optional-
+		// ADR-93: per-route observability opt-in. Same Set*/optional-
 		// pointer pattern as websocket_enabled above. The per-plan
 		// gate runs upstream in apid (Plan.RouteMetricsResponseAllowed)
 		// so by the time this UPDATE runs, the value is authoritative.
 		p.SetRouteMetricsEnabled, boolOrFalse(p.RouteMetricsEnabled),
-		// Tier A10 / ADR-088: overflow_node preference. The
+		// Tier A10 / ADR-88: overflow_node preference. The
 		// Set bit controls the CASE; the value slot is a
 		// nullable UUID — nullString coerces nil/empty to
 		// SQL NULL, and Postgres infers the UUID type from
@@ -4174,14 +4174,14 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 		// touch" (don't run the SET clause) from "explicit
 		// NULL" (clear — back to A9 fallback).
 		p.SetOverflowNode, nullString(derefString(p.OverflowNode)),
-		// ADR-091 amendment / §4.1.2.0: coarse-gate per-app
+		// ADR-91 amendment / §4.1.2.0: coarse-gate per-app
 		// maintenance flag. The Set bit distinguishes "don't
 		// touch" (default) from "explicit false" (opt out); the
 		// companion trigger fires pg_notify ONLY on the flip
 		// (migration 00237) so the cmd-side listener sees one
 		// event per flip rather than one per app UPDATE.
 		p.SetMaintenanceMode, boolOrFalse(p.MaintenanceMode),
-		// ADR-091 CORS improvements D1: per-app default CORS
+		// ADR-91 CORS improvements D1: per-app default CORS
 		// opt-in + allowlist. Same Set*/optional-pointer
 		// pattern as overflow_node / streaming_enabled.
 		// The validator on the apid side rejects
@@ -4353,8 +4353,8 @@ func (s *PgStore) SetAppMinInstances(ctx context.Context, appID string, min int)
 	return nil
 }
 
-// SetAppWorkloadClass overwrites apps.workload_class (ADR-050 §3,
-// ADR-051). Single round-trip UPDATE … RETURNING; the RETURNING
+// SetAppWorkloadClass overwrites apps.workload_class (ADR-50 §3,
+// ADR-51). Single round-trip UPDATE … RETURNING; the RETURNING
 // projection matches appsSelectColumns so scanAppInto can decode it.
 // SQLSTATE 23514 (apps_workload_class_chk) maps to ErrInvalidArgument
 // via mapErr; SQLSTATE 23502 (not_null) is unreachable because the
@@ -4363,7 +4363,7 @@ func (s *PgStore) SetAppMinInstances(ctx context.Context, appID string, min int)
 // The `source` argument is caller metadata only — the store does NOT
 // log or persist it. The engine/reconcile caller writes an audit row
 // carrying {app_id, observed_class, source} with the same value
-// (ADR-035 best-effort).
+// (ADR-35 best-effort).
 //
 // Returns the fresh App row so the cold-boot path in pkg/sched
 // (PR-D) can pass it on to SetInstanceRuntime without a second read.
@@ -4788,7 +4788,7 @@ func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, err
 	return a, nil
 }
 
-// --- Projects (ADR-050, Phase 1) ----------------------------------
+// --- Projects (ADR-50, Phase 1) ----------------------------------
 //
 // Phase 1 lands the storage seam: a project row + 7 methods. The
 // patterns below mirror the existing App methods (RETURNING-id style,
@@ -5353,7 +5353,7 @@ func (s *PgStore) deleteProjectEnvironmentWithCleanup(
 // one transaction. The critical section sits behind a
 // `SELECT … FOR UPDATE` on the parent accounts row so two concurrent
 // applies on the same account serialise; an over-quota call returns
-// *QuotaError with Kind set and zero rows inserted. Per ADR-050 §3
+// *QuotaError with Kind set and zero rows inserted. Per ADR-50 §3
 // and repo_decomposition_implementation.md §3 (lines 268-276):
 // quota is evaluated before any write, the limit problem carries
 // limit + observed + docs URL, and nothing is created on a tripped
@@ -5537,7 +5537,7 @@ func (s *PgStore) ApplyProjectPlan(
 			manifestBytes, a.MinInstances, cidrPrefixesToArray(a.EgressAllowlist), cidrPrefixesToArray(a.PublicAuthIPAllowlist),
 			insertedProject.ID, a.RootDir, a.WorkloadName, string(a.WorkloadClass),
 			nullString(a.StartCommand),
-			// Issue #272 / ADR-094: preview columns default to
+			// Issue #272 / ADR-94: preview columns default to
 			// NULL on ApplyProjectPlan — repo-decomposed
 			// projects never carry preview metadata at create
 			// time. The preview path provisions rows via
@@ -6042,7 +6042,7 @@ func (s *PgStore) InstallationIDForRepo(ctx context.Context, repoFullName string
 }
 
 // UpsertGithubInstallBinding persists the (account → app → install,
-// repo, branch) edge on the apps row. PR-B (ADR-012 closure). The
+// repo, branch) edge on the apps row. PR-B (ADR-12 closure). The
 // (account_id, binding_id) unique partial index added in migration
 // 00047 makes the upsert idempotent on retry: a second call with the
 // same payload overwrites the prior values without a new row.
@@ -6833,7 +6833,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 	// before this fix). Both columns are nullable; empty string on the
 	// write side mirrors the rest of the read-side coalesce shape.
 	//
-	// Issue #460 / ADR-053: include the six override_* columns. Empty
+	// Issue #460 / ADR-53: include the six override_* columns. Empty
 	// text[] is signalled by the caller passing a nil []string — pgx
 	// marshals nil to NULL which the column accepts (nullable).
 	// jsonb columns accept NULL too; the handler marshals an empty
@@ -6919,7 +6919,7 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		d.TrafficPercent,
 		d.RolloutState,
 		d.RolloutStartedAt,
-		// ADR-091 / PR-D: empty caller Scope collapses to the
+		// ADR-91 / PR-D: empty caller Scope collapses to the
 		// literal 'default' (matches the schema DEFAULT). A non-empty
 		// Scope is passed through verbatim. Mirrors the handler's
 		// scope-default collapse so pgstore never inserts a literal
@@ -7072,7 +7072,7 @@ func (s *PgStore) LiveDeployment(ctx context.Context, appID string) (Deployment,
 	return scanDeploymentWithRootfs(row)
 }
 
-// LiveDeploymentForScope (ADR-091 / PR-D) returns the newest live
+// LiveDeploymentForScope (ADR-91 / PR-D) returns the newest live
 // deployment for the (app_id, scope) pair. Stable deployments remain
 // unique in Postgres, while an active canary deliberately overlaps its
 // predecessor (issue #976); ordering keeps the wake path deterministic
@@ -7261,7 +7261,7 @@ func (s *PgStore) SafedeployStampRollout(ctx context.Context, id string, rollout
 // #555 PR-6). The DeploymentCounterWatcher
 // (pkg/sched/deployment_counter_watcher.go) uses this to detect the
 // "last live instance parked" transition. The SQL is a single
-// count(*) against the existing deployment_id column (ADR-072); no
+// count(*) against the existing deployment_id column (ADR-72); no
 // new index needed at the deployment_id cardinality we expect.
 //
 // The state strings are lowercase to match the convention in the
@@ -7299,7 +7299,7 @@ func (s *PgStore) LatestSupersededDeployment(ctx context.Context, appID string) 
 // Uses scanDeploymentWithRootfs (matches DeploymentByID) so the caller has
 // the rootfs_path/key/bytes needed for downstream wake and audit. The
 // rollback handler deliberately does NOT add a "snapshot must exist" gate
-// here — per ADR-005 ("cold boot must always work") and CLAUDE.md invariant
+// here — per ADR-5 ("cold boot must always work") and CLAUDE.md invariant
 // #3, the wake path cold-boots from the returned rootfs when the rollback
 // target's snapshot is missing/stale, so this loader is purely a state
 // lookup and intentionally not coupled to snapshot retention.
@@ -7352,7 +7352,7 @@ func (s *PgStore) HasSnapshotHistory(ctx context.Context, deploymentID string) (
 }
 
 // ListAllDeployments returns every non-deleted deployment (parent
-// app is not 'deleted'). Issue #557 closure / ADR-072 — the floor
+// app is not 'deleted'). Issue #557 closure / ADR-72 — the floor
 // reconciler's wake sweep walks this list when no owner-node sharding
 // is configured (the one-box posture). The single-box posture
 // reads it; multi-box reads ListDeploymentsByNodeID.
@@ -7491,7 +7491,7 @@ func (s *PgStore) ConcurrencyForDeployment(ctx context.Context, appID, deploymen
 }
 
 // UpdateDeploymentMinInstances overwrites deployments.min_instances.
-// Issue #557 closure / ADR-072 — the PATCH route at
+// Issue #557 closure / ADR-72 — the PATCH route at
 // /v1/deployments/{id} writes through this method. Returns the
 // fresh Deployment row (via the canonical scanDeployment) so the
 // handler can build the response without a second round-trip.
@@ -7621,6 +7621,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		return Deployment{}, ErrTrafficChangeDuringCanary
 	}
 
+	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
+		return Deployment{}, err
+	}
 	if guard != nil {
 		current, err := s.checkBindingTrafficGuard(ctx, tx, guard)
 		if err != nil {
@@ -7884,6 +7887,9 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	} else if len(siblings) == 0 {
 		return Deployment{}, 0, ErrTrafficPercentSumInvalid
 	}
+	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
+		return Deployment{}, 0, err
+	}
 	newWeights := RedistributeTraffic(siblings, 100-params.TrafficPercent)
 	if terminal {
 		var manifestJSON []byte
@@ -8093,7 +8099,7 @@ func RedistributeTraffic(siblings []struct {
 }
 
 // SetDeploymentParked stamps the per-deployment parked_reason +
-// parked_at columns (issue #554 / ADR-079 follow-up, migration
+// parked_at columns (issue #554 / ADR-79 follow-up, migration
 // 00157). Idempotent: re-parking an already-parked deployment is
 // a no-op — the WHERE filter `parked_reason is null` guarantees
 // parked_at is set exactly once. A second park during a schedd
@@ -8537,7 +8543,7 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 // predecessor observed by the caller is still live and serving in the same
 // scope. The exact pair is checked under row locks before traffic is changed.
 func (s *PgStore) RecoverRolloutForDeployment(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
-	if deploymentID == "" || expectedPredecessorID == "" || deploymentID == expectedPredecessorID || action != "abort" {
+	if deploymentID == "" || expectedPredecessorID == "" || sameDeploymentID(deploymentID, expectedPredecessorID) || action != "abort" {
 		return Deployment{}, 0, ErrRolloutStateInvalid
 	}
 	return s.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil)
@@ -8698,15 +8704,15 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		}
 	}
 	if expectedPredecessorID != "" {
-		if IsServiceRollout(dep) {
+		if IsServiceRollout(dep) || expectedPredecessorID == dep.ID {
 			return dep, 0, ErrRolloutStateInvalid
 		}
 		var predecessorID string
 		if err := tx.QueryRow(ctx,
 			`select id from deployments
 			  where app_id = $1 and scope = $2 and id = $3::uuid
-			    and status = 'live' and traffic_percent > 0
-			  for update`, dep.AppID, dep.Scope, expectedPredecessorID).Scan(&predecessorID); err != nil {
+			    and status = 'live' and traffic_percent > 0 and created_at < $4
+			  for update`, dep.AppID, dep.Scope, expectedPredecessorID, dep.CreatedAt).Scan(&predecessorID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return dep, 0, ErrNotFound
 			}
@@ -8908,6 +8914,11 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		auditData = rolloutAuditData("promote", reason)
 
 	case "abort":
+		if expectedPredecessorID != "" {
+			if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
+				return dep, 0, err
+			}
+		}
 		if _, err := tx.Exec(ctx,
 			`update deployments set
 				rollout_state = 'aborted',
@@ -8977,6 +8988,9 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		}
 		auditKind = DeployRolledBack
 		auditData = rolloutAuditData("abort", reason)
+		if expectedPredecessorID != "" {
+			auditData = rolloutRecoveryAuditData(reason, expectedPredecessorID, bindingReleaseFences(ctx))
+		}
 	}
 
 	// Audit emit rides the same tx as the deployment stamp. The actor
@@ -8985,24 +8999,23 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 	if emergencyGrace != nil {
 		actor = "apid:safe_release_lease_expired"
 	}
-	var auditAccountID *uuid.UUID
+	var auditAccountID, auditRuleID *uuid.UUID
 	if auditOverride != nil {
 		auditKind, auditData, actor, now = auditOverride.Kind, auditOverride.Data, auditOverride.Actor, auditOverride.At
-		auditAccountID = auditOverride.AccountID
+		auditAccountID, auditRuleID = auditOverride.AccountID, auditOverride.AlertRuleID
+		if expectedPredecessorID != "" && len(bindingReleaseFences(ctx)) > 0 {
+			var err error
+			auditData, err = addRolloutRecoveryAuditFences(auditData, expectedPredecessorID, bindingReleaseFences(ctx))
+			if err != nil {
+				return dep, 0, err
+			}
+		}
 	}
-	var auditID int64
-	if err := tx.QueryRow(ctx,
-		`insert into deployment_audit
-		    (deployment_id, account_id, kind, actor, at, data)
-		 values ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb)
-		 returning id`,
-		dep.ID,
-		auditAccountID, // nullable for existing operator and emergency recoveries
-		string(auditKind),
-		actor,
-		now,
-		auditData,
-	).Scan(&auditID); err != nil {
+	auditID, err := sqlc.New().AppendRolloutRecoveryAudit(ctx, tx, sqlc.AppendRolloutRecoveryAuditParams{
+		DeploymentID: mustPgUUID(dep.ID), AccountID: optionalPgUUID(auditAccountID), AlertRuleID: optionalPgUUID(auditRuleID),
+		Kind: string(auditKind), Actor: actor, At: pgtype.Timestamptz{Time: now, Valid: true}, Data: auditData,
+	})
+	if err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: recover_rollout append audit: %w", err)
 	}
 
@@ -9128,6 +9141,21 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 		}
 		return fmt.Errorf("state: mark deployment live load: %w", err)
 	}
+	if r, readErr := s.CheckedRollbackForTarget(ctx, id); readErr == nil && r.Status == "preparing" {
+		if err := s.markCheckedRollbackReadyTx(ctx, tx, dep, r); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	} else if readErr != nil && !errors.Is(readErr, ErrNotFound) {
+		return readErr
+	}
+
+	if failed, err := sqlc.New().FailedCheckedRollbackTarget(ctx, tx, mustPgUUID(id)); err != nil {
+		return err
+	} else if failed && dep.Status != DeployLive {
+		return ErrCheckedRollbackRequired
+	}
+
 	if dep.Status == DeployCancelled {
 		return ErrInvalidStateTransition
 	}
@@ -10556,7 +10584,7 @@ func (s *PgStore) PrepareDeploymentRollback(ctx context.Context, appID, targetDe
 }
 
 func (s *PgStore) SetDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error {
-	// Issue #96 / ADR-025 axis 2 (PR #116): rootfs_key is the canonical
+	// Issue #96 / ADR-25 axis 2 (PR #116): rootfs_key is the canonical
 	// StorageBackend key (e.g. "apps/<slug>/<depID>.ext4") schedd carries
 	// on the wake wire. Local backends map the key to the same file as
 	// rootfs_path; remote backends (OCI registry) resolve over HTTP. Both
@@ -10624,7 +10652,7 @@ func (s *PgStore) SetDeploymentRuntimeProfile(ctx context.Context, id string, pr
 }
 
 // UpsertDeploymentScanResult records the per-deploy grype CVE
-// scan on the deployment row (issue #464 / ADR-055 / PR-3).
+// scan on the deployment row (issue #464 / ADR-55 / PR-3).
 // The whole row's scan columns are overwritten — scan_result +
 // scan_status + scanned_at — so a re-imaged rebuild's new
 // scan replaces the prior scan in place. scanned_at is stamped
@@ -11329,7 +11357,7 @@ func legacyStatusSeverity(impact publicstatus.State) string {
 }
 
 // SetDeploymentSidecarLayer is the per-workload filesystem handle
-// for sidecars (issue #463 / ADR-069 / PR-B). Upserts one row
+// for sidecars (issue #463 / ADR-69 / PR-B). Upserts one row
 // keyed by (deployment_id, sidecar_name). The whole row is
 // overwritten on conflict — bytes + content_digest + storage_key
 // — so a re-imaged rebuild's new key replaces the prior build's
@@ -11376,7 +11404,7 @@ func (s *PgStore) SetDeploymentSidecarLayer(ctx context.Context, l DeploymentSid
 }
 
 // ListDeploymentSidecarLayers returns the deployment's full sidecar
-// set ordered by sidecar_name ASC (issue #463 / ADR-069 / PR-B).
+// set ordered by sidecar_name ASC (issue #463 / ADR-69 / PR-B).
 // Returns an empty slice when no sidecars exist; ErrNotFound only
 // when the deployment itself is missing. vmmd's Wake path
 // consumes this eagerly — Order-by-name keeps the workload slice
@@ -11437,7 +11465,7 @@ func (s *PgStore) SetDeploymentSourceURL(ctx context.Context, id, sourceURL, com
 	return nil
 }
 
-// SetDeploymentFailed is the failure-specific helper ADR-021 introduced
+// SetDeploymentFailed is the failure-specific helper ADR-21 introduced
 // alongside the deployments.error_code column. Status is pinned to
 // 'failed' (no caller choice — use UpdateDeploymentStatus for other
 // transitions). code is the RFC 7807 code pkg/api.SentinelToCode lifted
@@ -11780,7 +11808,7 @@ func (s *PgStore) UpdateBuildStatus(ctx context.Context, id string, status Build
 }
 
 // CreateBuildProvenance stamps the post-mortem "what ran?" row for a
-// successful Build (ADR-038, Tier 3 / issue #197 B3.1). The
+// successful Build (ADR-38, Tier 3 / issue #197 B3.1). The
 // `ON CONFLICT (build_id) DO UPDATE` clause makes a redelivered
 // build (LISTEN race between the apid write path and imaged's
 // reaper; PR-A's redelivery dedupe) idempotent — the row is updated
@@ -11861,7 +11889,7 @@ func (s *PgStore) BuildProvenanceByBuildID(ctx context.Context, buildID string) 
 }
 
 // UpdateBuildProvenanceSBOM stamps the SBOM storage key onto an
-// existing build_provenance row (issue #299 / ADR-038 Phase 3).
+// existing build_provenance row (issue #299 / ADR-38 Phase 3).
 // The SBOM populator runs in imaged AFTER the row is created by
 // builderd's recordProvenance: by the time imaged has the source
 // tree to enumerate, the build is already marked succeeded and
@@ -13191,7 +13219,7 @@ func (s *PgStore) ReactivateCronsForApp(ctx context.Context, appID string) (int,
 	return int(tag.RowsAffected()), nil
 }
 
-// --- alert rules (issue #396, ADR-045) ---------------------------------------
+// --- alert rules (issue #396, ADR-45) ---------------------------------------
 //
 // Schema: migrations/00062_alert_rules.sql. Account-scoped webhook
 // delivery for the {error rate, latency p50/p95/p99, cold-start %,
@@ -13217,115 +13245,8 @@ func (s *PgStore) ReactivateCronsForApp(ctx context.Context, appID string) (int,
 //   - webhook_secret_sealed is []byte (NOT NULL); the handler seals
 //     via pkg/secretbox.SealOne before calling.
 
-const alertRuleSelectCols = `id, account_id, app_id, name, enabled, metric, comparison,
-       threshold, window_spec, failure_source, action, webhook_url,
-       webhook_secret_sealed, cooldown_minutes, state,
-       last_fired_at, last_evaluated_at, created_at, updated_at`
-
-func scanAlertRule(row pgx.Row) (AlertRule, error) {
-	r, err := scanAlertRuleCols(row.Scan)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return AlertRule{}, ErrNotFound
-		}
-		return AlertRule{}, err
-	}
-	return r, nil
-}
-
-func scanAlertRules(rows pgx.Rows) ([]AlertRule, error) {
-	var out []AlertRule
-	for rows.Next() {
-		r, err := scanAlertRuleCols(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-// scanAlertRuleCols is the single source of column order for
-// alert_rules. The select clause above is the contract — every
-// SELECT against alert_rules lists these columns in this order, and
-// the SELECT statement binds Scan's positional arguments against
-// this list. A future column add lands here first, in the same
-// commit, so a SELECT-write drift cannot silently swallow a column.
-func scanAlertRuleCols(scan func(...any) error) (AlertRule, error) {
-	r := AlertRule{}
-	var metric, comparison, windowSpec, action, state string
-	var appID, failureSource *string
-	var secret []byte
-	var lastFired, lastEvaluated *time.Time
-	if err := scan(
-		&r.ID, &r.AccountID, &appID, &r.Name, &r.Enabled,
-		&metric, &comparison, &r.Threshold, &windowSpec, &failureSource,
-		&action, &r.WebhookURL, &secret, &r.CooldownMinutes, &state,
-		&lastFired, &lastEvaluated, &r.CreatedAt, &r.UpdatedAt,
-	); err != nil {
-		return AlertRule{}, err
-	}
-	r.Metric = AlertMetric(metric)
-	r.Comparison = AlertComparison(comparison)
-	r.WindowSpec = AlertWindowSpec(windowSpec)
-	r.Action = AlertAction(action)
-	r.State = AlertState(state)
-	if failureSource != nil && *failureSource != "" {
-		r.FailureSource = AlertFailureSource(*failureSource)
-	}
-	if appID != nil {
-		r.AppID = *appID
-	}
-	if len(secret) > 0 {
-		r.WebhookSecretSealed = secret
-	}
-	if lastFired != nil {
-		r.LastFiredAt = *lastFired
-	}
-	if lastEvaluated != nil {
-		r.LastEvaluatedAt = *lastEvaluated
-	}
-	return r, nil
-}
-
 func (s *PgStore) CreateAlertRule(ctx context.Context, in AlertRule) (AlertRule, error) {
-	var appIDArg any
-	if in.AppID != "" {
-		appIDArg = in.AppID
-	}
-	var sourceArg any
-	if in.FailureSource != "" {
-		sourceArg = string(in.FailureSource)
-	}
-	stateArg := string(in.State)
-	if stateArg == "" {
-		stateArg = string(AlertStateOk)
-	}
-	actionArg := string(in.Action)
-	if actionArg == "" {
-		actionArg = string(AlertActionWebhook)
-	}
-	row := s.pool.QueryRow(ctx, `
-		insert into alert_rules (
-			account_id, app_id, name, enabled, metric, comparison,
-			threshold, window_spec, failure_source, action, webhook_url,
-			webhook_secret_sealed, cooldown_minutes, state
-		) values (
-			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9, $10, $11,
-			$12, $13, $14
-		)
-		returning `+alertRuleSelectCols,
-		in.AccountID, appIDArg, in.Name, in.Enabled,
-		string(in.Metric), string(in.Comparison), in.Threshold,
-		string(in.WindowSpec), sourceArg, actionArg, in.WebhookURL,
-		in.WebhookSecretSealed, in.CooldownMinutes, stateArg,
-	)
-	r, err := scanAlertRule(row)
-	if err != nil {
-		return AlertRule{}, mapErr(err)
-	}
-	return r, nil
+	return insertCustomerAlertRule(ctx, s.pool, in)
 }
 
 // CreateAlertRuleIfUnderQuota — see Store interface. Account-wide
@@ -13391,37 +13312,10 @@ func (s *PgStore) CreateAlertRuleIfUnderQuota(ctx context.Context, in AlertRule,
 		}
 	}
 
-	var appIDArg any
-	if in.AppID != "" {
-		appIDArg = in.AppID
-	}
-	var sourceArg any
-	if in.FailureSource != "" {
-		sourceArg = string(in.FailureSource)
-	}
-	actionArg := string(in.Action)
-	if actionArg == "" {
-		actionArg = string(AlertActionWebhook)
-	}
-	row := tx.QueryRow(ctx, `
-		insert into alert_rules (
-			account_id, app_id, name, enabled, metric, comparison,
-			threshold, window_spec, failure_source, action, webhook_url,
-			webhook_secret_sealed, cooldown_minutes, state
-		) values (
-			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9, $10, $11,
-			$12, $13, 'ok'
-		)
-		returning `+alertRuleSelectCols,
-		in.AccountID, appIDArg, in.Name, in.Enabled,
-		string(in.Metric), string(in.Comparison), in.Threshold,
-		string(in.WindowSpec), sourceArg, actionArg, in.WebhookURL,
-		in.WebhookSecretSealed, in.CooldownMinutes,
-	)
-	r, err := scanAlertRule(row)
+	in.State = AlertStateOk
+	r, err := insertCustomerAlertRule(ctx, tx, in)
 	if err != nil {
-		return AlertRule{}, mapErr(err)
+		return AlertRule{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return AlertRule{}, fmt.Errorf("state: commit create alert rule: %w", err)
@@ -13430,9 +13324,11 @@ func (s *PgStore) CreateAlertRuleIfUnderQuota(ctx context.Context, in AlertRule,
 }
 
 func (s *PgStore) AlertRuleByID(ctx context.Context, id string) (AlertRule, error) {
-	row := s.pool.QueryRow(ctx,
-		`select `+alertRuleSelectCols+` from alert_rules where id = $1`, id)
-	return scanAlertRule(row)
+	key, err := alertPgUUID(id)
+	if err != nil {
+		return AlertRule{}, err
+	}
+	return customerAlertRuleResult(sqlc.New().ReadCustomerAlertRule(ctx, s.pool, key))
 }
 
 // AlertRuleByAccountAppAndPresetName resolves the alert_rules row
@@ -13453,21 +13349,15 @@ func (s *PgStore) AlertRuleByID(ctx context.Context, id string) (AlertRule, erro
 //
 // Refs: ADR-123 PR-C, issue #1233, plan §Commit 2.
 func (s *PgStore) AlertRuleByAccountAppAndPresetName(ctx context.Context, accountID, appID, presetName string) (AlertRule, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT `+alertRuleSelectCols+`
-		FROM alert_rules r
-		WHERE r.account_id = $1
-		  AND r.app_id = $2
-		  AND r.name LIKE (
-		    SELECT (display_name || ' (%') FROM alert_presets WHERE name = $3
-		  )
-		ORDER BY r.created_at DESC
-		LIMIT 2`, accountID, appID, presetName)
+	acct, err := alertPgUUID(accountID)
 	if err != nil {
 		return AlertRule{}, err
 	}
-	defer rows.Close()
-	matched, err := scanAlertRules(rows)
+	app, err := alertPgUUID(appID)
+	if err != nil {
+		return AlertRule{}, err
+	}
+	matched, err := customerAlertRules(sqlc.New().ListCustomerAlertRulesByPreset(ctx, s.pool, sqlc.ListCustomerAlertRulesByPresetParams{AccountID: acct, AppID: app, PresetName: presetName}))
 	if err != nil {
 		return AlertRule{}, err
 	}
@@ -13477,11 +13367,6 @@ func (s *PgStore) AlertRuleByAccountAppAndPresetName(ctx context.Context, accoun
 	case 1:
 		return matched[0], nil
 	default:
-		// Defensive: catalog display_name uniqueness + the
-		// (account_id, app_id, name) UNIQUE constraint should make
-		// this unreachable. Returning ErrConflict keeps the handler
-		// clean — 409 with a sane message beats a panic or a silent
-		// "send test alert to a stale rule" outcome.
 		return AlertRule{}, ErrConflict
 	}
 }
@@ -13492,53 +13377,6 @@ func (s *PgStore) AlertRuleByAccountAppAndPresetName(ctx context.Context, accoun
 // path) and a non-nil replaces the column. FailureSource is not on
 // UpdateAlertRuleParams — see the struct godoc for why metric and
 // source rotate together or not at all.
-func (s *PgStore) UpdateAlertRule(ctx context.Context, id string, p UpdateAlertRuleParams) (AlertRule, error) {
-	var nameArg, urlArg any
-	if p.Name != nil {
-		nameArg = *p.Name
-	}
-	if p.WebhookURL != nil {
-		urlArg = *p.WebhookURL
-	}
-	var secretArg any
-	if p.WebhookSecretSealed != nil {
-		secretArg = *p.WebhookSecretSealed
-	}
-	var metricArg, comparisonArg, windowArg any
-	if p.Metric != nil {
-		metricArg = string(*p.Metric)
-	}
-	if p.Comparison != nil {
-		comparisonArg = string(*p.Comparison)
-	}
-	if p.WindowSpec != nil {
-		windowArg = string(*p.WindowSpec)
-	}
-
-	row := s.pool.QueryRow(ctx, `
-		update alert_rules set
-			name    = coalesce($2, name),
-			enabled = coalesce($3, enabled),
-			metric  = coalesce($4, metric),
-			comparison = coalesce($5, comparison),
-			threshold  = coalesce($6, threshold),
-			window_spec = coalesce($7, window_spec),
-			webhook_url = coalesce($8, webhook_url),
-			webhook_secret_sealed = coalesce($9, webhook_secret_sealed),
-			cooldown_minutes = coalesce($10, cooldown_minutes),
-			action  = coalesce($11, action),
-			updated_at = now()
-		where id = $1
-		returning `+alertRuleSelectCols,
-		id, nameArg, p.Enabled, metricArg, comparisonArg, p.Threshold,
-		windowArg, urlArg, secretArg, p.CooldownMinutes, p.Action,
-	)
-	r, err := scanAlertRule(row)
-	if err != nil {
-		return AlertRule{}, mapErr(err)
-	}
-	return r, nil
-}
 
 func (s *PgStore) DeleteAlertRule(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `delete from alert_rules where id = $1`, id)
@@ -13552,28 +13390,19 @@ func (s *PgStore) DeleteAlertRule(ctx context.Context, id string) error {
 }
 
 func (s *PgStore) ListAlertRulesForAccount(ctx context.Context, accountID string) ([]AlertRule, error) {
-	rows, err := s.pool.Query(ctx,
-		`select `+alertRuleSelectCols+` from alert_rules
-		 where account_id = $1 order by created_at desc`, accountID)
+	id, err := alertPgUUID(accountID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return scanAlertRules(rows)
+	return customerAlertRules(sqlc.New().ListCustomerAlertRulesForAccount(ctx, s.pool, id))
 }
 
 func (s *PgStore) ListEnabledAlertRules(ctx context.Context) ([]AlertRule, error) {
-	rows, err := s.pool.Query(ctx,
-		`select `+alertRuleSelectCols+` from alert_rules where enabled = true order by account_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanAlertRules(rows)
+	return customerAlertRules(sqlc.New().ListEnabledCustomerAlertRules(ctx, s.pool))
 }
 
 // ----------------------------------------------------------------------------
-// Edge rules (ADR-089, planned). Schema: migrations/00192_edge_rules.sql.
+// Edge rules (ADR-89, planned). Schema: migrations/00192_edge_rules.sql.
 // apid is the only writer; gatewayd-internal reads via
 // MatchEdgeRulesForHost. Per-app scope only — there is no
 // account-wide flavour. The action column is jsonb (kind-tagged
@@ -13787,7 +13616,7 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 			Observed: appCount,
 		}
 	}
-	// Per-kind quota (ADR-091 D22). The general EdgeRulesPerApp
+	// Per-kind quota (ADR-91 D22). The general EdgeRulesPerApp
 	// count above covers the cheap-tier guardrail; geo gets its own
 	// tighter cap (Free=1, Hobby=5, Pro=25, Scale=100) so the
 	// abuse-desk customer persona ("block everything except DE")
@@ -13810,7 +13639,7 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 			}
 		}
 	}
-	// kind='throttle' per-app quota (ADR-091 D20.5 amendment, issue
+	// kind='throttle' per-app quota (ADR-91 D20.5 amendment, issue
 	// #881). Mirrors the geo shape: tighter cap than
 	// EdgeRulesPerApp because per-route throttles are a
 	// higher-touch cardinality lever. Free customers get 1 rule
@@ -14756,7 +14585,7 @@ func (s *PgStore) CountEdgeRulesForApp(ctx context.Context, appID string) (int, 
 }
 
 // CountEdgeRulesByKindForApp is the per-kind quota reader
-// (ADR-091 D22). Same shape as CountEdgeRulesForApp but filtered
+// (ADR-91 D22). Same shape as CountEdgeRulesForApp but filtered
 // by kind. The Postgres runtime index edge_rules_app_kind_idx
 // (composite on (app_id, kind)) makes this O(log n) without
 // needing a sequence scan. The check that's load-bearing for race
@@ -14773,7 +14602,7 @@ func (s *PgStore) CountEdgeRulesByKindForApp(ctx context.Context, appID string, 
 	return n, nil
 }
 
-// MatchEdgeRulesForHost is the gateway hot-path read (ADR-089 §8).
+// MatchEdgeRulesForHost is the gateway hot-path read (ADR-89 §8).
 // Returns every enabled rule whose match_host matches `host` (or
 // "*"), ordered by priority ASC. The gatewayd matcher iterates in
 // priority order and short-circuits on first match — the ORDER BY
@@ -14862,6 +14691,10 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
+	if _, err := sqlc.New().LockAlertRollbackFireApp(ctx, tx, mustPgUUID(ruleID)); err != nil {
+		return "", false, fmt.Errorf("state: lock alert rollback app: %w", err)
+	}
+
 	var exists bool
 	if err := tx.QueryRow(ctx,
 		`select true from alert_rules where id = $1`, ruleID,
@@ -14896,6 +14729,10 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 			return "", false, nil
 		}
 		return "", false, fmt.Errorf("state: claim alert fire insert %s: %w", ruleID, err)
+	}
+
+	if err := s.captureAlertRollbackTx(ctx, tx, ruleID, deliveryID, observed, at); err != nil {
+		return "", false, fmt.Errorf("state: capture alert rollback: %w", err)
 	}
 
 	// Stamp last_fired_at alongside the INSERT. The stamp is a
@@ -16576,7 +16413,7 @@ func (s *PgStore) CreateInstance(ctx context.Context, appID, deploymentID, state
 	// (commit 3, spec §6.1).
 	//
 	// nodeID is the compute_node the instance lives on
-	// (issue #97 / ADR-025 axis 3). The NOT NULL constraint added
+	// (issue #97 / ADR-25 axis 3). The NOT NULL constraint added
 	// by migrations/00024_compute_nodes enforces non-null at the
 	// schema layer; passing an empty string here would surface as a
 	// Postgres error from the INSERT. schedd's Wake flow resolves
@@ -16748,7 +16585,7 @@ func (s *PgStore) MigrationInstanceByID(ctx context.Context, id string) (Instanc
 // for the given wake_id (state IN ('waking', 'cold_booting',
 // 'running')) — the winner of the cluster-coord race that
 // instances_wake_attempt_active_idx (migration 00384, audit F4 /
-// ADR-098 amendment) protects. Returns ErrNotFound when the
+// ADR-98 amendment) protects. Returns ErrNotFound when the
 // wake_id has no in-flight row (the race lost and the winner
 // already parked — unusual but possible if the caller retried
 // after a long sleep).
@@ -17048,7 +16885,7 @@ func (s *PgStore) UpdateInstanceStateToTerminal(ctx context.Context, id, state s
 	return nil
 }
 
-// IncInstanceRequestCount (ADR-098 C8) bumps the per-instance
+// IncInstanceRequestCount (ADR-98 C8) bumps the per-instance
 // request_count column by the supplied delta. The writer is
 // additive ("request_count = request_count + delta") on purpose:
 // schedd batches 250ms of per-instance request events into a
@@ -17155,7 +16992,7 @@ func (s *PgStore) ClearInstanceFrameworkReadyAt(ctx context.Context, id string) 
 
 // BumpInstanceTailCount atomically applies delta to the instance's
 // `tail_count` column and returns the post-update value (issue #667
-// / ADR-078). The arithmetic happens in SQL so concurrent receipts
+// / ADR-78). The arithmetic happens in SQL so concurrent receipts
 // (a runner firing several terminal events in quick succession)
 // cannot lose increments. The GREATEST(…, 0) floor mirrors
 // DecrementInstanceTailCount's safety property — a stale receipt
@@ -17200,7 +17037,7 @@ func (s *PgStore) BumpInstanceTailCount(ctx context.Context, id string, delta in
 }
 
 // DecrementInstanceTailCount is the canonical "tail task reached
-// terminal" path (issue #667 / ADR-078). Equivalent to
+// terminal" path (issue #667 / ADR-78). Equivalent to
 // BumpInstanceTailCount(ctx, id, -n) — kept as a separate method
 // because every decrement site is a terminal event receipt, and
 // the explicit name makes the call sites self-documenting.
@@ -17235,7 +17072,7 @@ func (s *PgStore) DecrementInstanceTailCount(ctx context.Context, id string, n i
 }
 
 // GetInstanceTailCount returns the instance's current tail_count
-// (issue #667 / ADR-078). Used by the snapshotAndPark watchdog to
+// (issue #667 / ADR-78). Used by the snapshotAndPark watchdog to
 // poll for drain completion. Single SELECT … FROM instances WHERE
 // id = $1 — the column is on the hot path so the row is already
 // in shared_buffers under normal load; pgx returns the column as
@@ -17536,7 +17373,7 @@ func (s *PgStore) TouchInstancesLastSeen(ctx context.Context, touches []Instance
 	return int(tag.RowsAffected()), nil
 }
 
-// TouchInstancesWithRequestDelta (ADR-098 C9) is the batched
+// TouchInstancesWithRequestDelta (ADR-98 C9) is the batched
 // request_count writer. Same shape as TouchInstancesLastSeen
 // (unnest, single round-trip) but additionally bumps
 // request_count by the supplied delta on each row. The delta is
@@ -17586,7 +17423,7 @@ func (s *PgStore) TouchInstancesWithRequestDelta(ctx context.Context, touches []
 // ErrConflict so imaged can ignore a duplicate emission; the rest of imaged
 // treats the first successful write as truth.
 //
-// Tier (issue #470 / ADR-055): empty tier defaults to "init" for legacy
+// Tier (issue #470 / ADR-55): empty tier defaults to "init" for legacy
 // callers; new warm-tier capture code passes SnapshotTierWarm explicitly.
 func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, error) {
 	return createSnapshotWithQuerier(ctx, s.pool, snap)
@@ -17707,7 +17544,7 @@ func createSnapshotWithQuerier(ctx context.Context, q snapshotQuerier, snap Snap
 }
 
 // LatestSnapshot returns the freshest non-stale snapshot for a deployment
-// across BOTH tiers. Warm wins on a created_at tie (issue #470 / ADR-055):
+// across BOTH tiers. Warm wins on a created_at tie (issue #470 / ADR-55):
 // the order-by clause ranks (tier='warm') before created_at so a fresh
 // warm-tier promotion pre-empts a stale-or-equal init-tier row.
 //
@@ -17723,7 +17560,7 @@ func (s *PgStore) LatestSnapshot(ctx context.Context, deploymentID string) (Snap
 }
 
 // LatestSnapshotForTier returns the freshest non-stale snapshot for a
-// deployment at a specific tier (issue #470 / ADR-055). Empty tier is
+// deployment at a specific tier (issue #470 / ADR-55). Empty tier is
 // treated as "init" for legacy callers; the returned Snapshot has its
 // Tier field populated so schedd can detect the warm-tier hit.
 //
@@ -17741,7 +17578,7 @@ func (s *PgStore) LatestSnapshotForTier(ctx context.Context, deploymentID, tier 
 	return scanSnapshot(row)
 }
 
-// MarkSnapshotStale flags a snapshot unusable after a failed restore (ADR-005):
+// MarkSnapshotStale flags a snapshot unusable after a failed restore (ADR-5):
 // the next wake cold-boots and the next park re-snapshots. Idempotent.
 func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) error {
 	tag, err := s.pool.Exec(ctx, `update snapshots set stale = true where id = $1`, snapshotID)
@@ -17795,12 +17632,12 @@ func (s *PgStore) AppRuntimeConfigChangedAt(ctx context.Context, appID string) (
 // apps/<slug>/<dep>.ext4 storage key without re-issuing a
 // DeploymentByID + AppByID round-trip per eviction.
 //
-// Issue #470 / ADR-055: also projects s.tier so the GC loop can keep
+// Issue #470 / ADR-55: also projects s.tier so the GC loop can keep
 // the newest three deployment generations per app for warm-tier apps (both
 // init and warm rows), while warm-disabled apps keep init rows only. The tier
 // column is included in the projection alongside the storage metadata.
 //
-// Issue #470 / PR C / ADR-072: also projects a.warm_snapshot_enabled as
+// Issue #470 / PR C / ADR-72: also projects a.warm_snapshot_enabled as
 // the final Scan value so the rollback-window GC policy can decide whether to
 // retain both tiers for protected generations or init rows only without a
 // per-row AppByID round-trip. Same
@@ -17923,7 +17760,7 @@ func (s *PgStore) ListSnapshotDeploymentIDs(ctx context.Context) ([]string, erro
 
 // DeleteSnapshotsByID bulk-removes the named rows. No cascade; schedd's
 // runtime accounting (instances table) doesn't reference snapshots, so a
-// snapshot can be deleted without affecting live wakes — ADR-005 says
+// snapshot can be deleted without affecting live wakes — ADR-5 says
 // "cold boot must always work" precisely so this can be done in any
 // state. Idempotent: a second call returns 0 and nil.
 func (s *PgStore) DeleteSnapshotsByID(ctx context.Context, ids []string) (int64, error) {
@@ -17938,7 +17775,7 @@ func (s *PgStore) DeleteSnapshotsByID(ctx context.Context, ids []string) (int64,
 }
 
 // MarkAllSnapshotsStaleByFCVersion flips every non-stale row whose
-// fc_version != currentVersion stale (ADR-005). Idempotent. Returns
+// fc_version != currentVersion stale (ADR-5). Idempotent. Returns
 // the number of rows affected; a 0-row result on a stable box is the
 // expected steady state.
 func (s *PgStore) MarkAllSnapshotsStaleByFCVersion(ctx context.Context, currentVersion string) (int64, error) {
@@ -17978,7 +17815,7 @@ func (s *PgStore) MarkOldSnapshotsStale(ctx context.Context, beforeSnapshotIDs [
 //
 // This is the app-protocol dimension of the F2/F3 split: F2
 // (MarkAllSnapshotsStaleByFCVersion above) handles Firecracker-
-// version mismatch (ADR-005); F3 handles base-image mismatch for
+// version mismatch (ADR-5); F3 handles base-image mismatch for
 // the wire-protocol-capable slice. app_protocol=http1 snapshots
 // are never affected — they ride the unchanged H1+chunked bridge
 // path (ADR-126 §Decision 6).
@@ -18104,7 +17941,7 @@ type SnapshotSize struct {
 	LayerBytes    int64
 }
 
-// --- compute nodes (issue #97 / ADR-025 axis 3) -----------------------------
+// --- compute nodes (issue #97 / ADR-25 axis 3) -----------------------------
 //
 // schedd is the sole reader (single-leader CP); apid is the sole writer
 // (POST /v1/compute-nodes admin endpoint). The synthetic 'default-local'
@@ -18547,7 +18384,7 @@ func (s *PgStore) MaintainComputeNodeHeartbeatHistory(ctx context.Context, cutof
 	return result, nil
 }
 
-// AppendComputeNodeHeartbeatWithStats (PR #4 / ADR-091 §3.6
+// AppendComputeNodeHeartbeatWithStats (PR #4 / ADR-91 §3.6
 // amendment) extends AppendComputeNodeHeartbeat with the cpu_pct_60s
 // and disk_used_bytes columns added by migration 00199. The two new
 // columns are nullable (pre-PR #4 rows keep NULL — see migration
@@ -18653,7 +18490,7 @@ func (s *PgStore) latestHeartbeatStatsWhere(ctx context.Context, whereClause str
 // instance_node_bindings table; after re-reading migration 00024
 // during implementation we discovered instances.node_id is already
 // a NOT NULL FK to compute_nodes(id), backfilled on pre-existing
-// rows. ADR-092 §8 amends §2.1 to drop the binding-table design.
+// rows. ADR-92 §8 amends §2.1 to drop the binding-table design.
 // This query mirrors the corrected design: the inner GROUP BY
 // walks the instances table directly. The +8 on ram_mb mirrors
 // §6.2 invariant #2 — Σ(ram_mb + 8) ≤ 47,600 MB — so per-node
@@ -18851,7 +18688,7 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 }
 
 // UpsertComputeNode inserts or updates a row by name (issue #98 /
-// ADR-028). vmmd's self-registration calls this at startup; a node
+// ADR-28). vmmd's self-registration calls this at startup; a node
 // rebooting brings itself back without operator intervention. The ON
 // CONFLICT branch re-applies operator-tunable capacity and re-activates
 // a row that an operator had previously drained (active=false → true).
@@ -19033,7 +18870,7 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 // instead of the second box. See
 // docs/runbooks/multi-host-rollout.md §3.5 + §4.5.
 //
-// Multi-host safety cluster PR-4 (audit F6, ADR-052 amendment)
+// Multi-host safety cluster PR-4 (audit F6, ADR-52 amendment)
 // adds a pre-flight check: if the existing row's cert_fingerprint
 // is set AND differs from node.CertFingerprint, the upsert refuses
 // with ErrCertFingerprintDrift rather than silently COALESCEing
@@ -19158,7 +18995,7 @@ func (s *PgStore) loadComputeNodeCertFingerprint(ctx context.Context, name strin
 }
 
 // UpsertNodeKey inserts or updates a (compute_node_id, key_id) row
-// in compute_node_keys (migration 00076, ADR-053). vmmd's
+// in compute_node_keys (migration 00076, ADR-53). vmmd's
 // self-registration calls this on startup once it has loaded its
 // node signing key (cmd/vmmd/main.go::loadNodeSigningKey) and
 // computed the key_id (the SHA-256 hex of the SubjectPublicKeyInfo).
@@ -20111,7 +19948,7 @@ func (s *PgStore) ListEventsPage(ctx context.Context, subject string, beforeAt t
 	return out, rows.Err()
 }
 
-// ListEventsByWakeID (issue #517 / PR-C, ADR-064) — the
+// ListEventsByWakeID (issue #517 / PR-C, ADR-64) — the
 // production read-side query for the customer-facing
 // GET /v1/apps/{slug}/wakes/{wake_id}/timeline endpoint. Filters
 // on the jsonb expression index events_wake_id_idx
@@ -20327,7 +20164,7 @@ WHERE kind = 'wake.boot_started'
 	return n, nil
 }
 
-// ListAllEventsPaged (ADR-091 §3.7 / PR #3) is the operator-obs
+// ListAllEventsPaged (ADR-91 §3.7 / PR #3) is the operator-obs
 // backend's read-side query for the live events table. Mirrors the
 // SQL in pkg/state/queries.sql::ListAllEventsPaged; the raw-SQL
 // fallback here keeps the param semantics identical to the sqlc
@@ -20405,7 +20242,7 @@ func (s *PgStore) ListEventsByTraceID(ctx context.Context, traceID string, limit
 	return out, nil
 }
 
-// ListRecentEventsForAccount (ADR-091 §3.7 / PR #3) is the
+// ListRecentEventsForAccount (ADR-91 §3.7 / PR #3) is the
 // per-account events drill-down. Backed by the partial
 // events_actor_account_idx on (actor_account_id) WHERE actor_account_id IS NOT NULL
 // (migrations/00099_orgs_memberships_invitations.sql). Same raw-SQL
@@ -20450,7 +20287,7 @@ func (s *PgStore) ListRecentEventsForAccount(ctx context.Context, actorAccountID
 	return out, rows.Err()
 }
 
-// ListEventsBySidecar (issue #463 / ADR-069 / PR-B) is the
+// ListEventsBySidecar (issue #463 / ADR-69 / PR-B) is the
 // sidecar-aware read-side twin of ListEventsByWakeID. Filters on
 // the jsonb expression data->>'sidecar_name' AND the closed
 // kind IN ('wake.sidecar_init_exit', 'wake.sidecar_restart',
@@ -20544,12 +20381,12 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 	// deduplicates on a coarser window before pushing, so the
 	// additive merge is safe end-to-end.
 	//
-	//   cpu_usec         — issue #279 / PR-B / ADR-039
-	//   tx_bytes         — ADR-046 (gateway HTTP response body bytes)
-	//   net_tx_bytes     — ADR-046 (root-side vethHost.rx_bytes delta)
-	//   net_rx_bytes     — ADR-048 (root-side vethHost.tx_bytes delta; ingress)
-	//   cold_boot_count  — ADR-048 (requests whose wake outcome was a cold boot)
-	//   tail_seconds     — issue #667 / ADR-078 (per-minute wall-clock
+	//   cpu_usec         — issue #279 / PR-B / ADR-39
+	//   tx_bytes         — ADR-46 (gateway HTTP response body bytes)
+	//   net_tx_bytes     — ADR-46 (root-side vethHost.rx_bytes delta)
+	//   net_rx_bytes     — ADR-48 (root-side vethHost.tx_bytes delta; ingress)
+	//   cold_boot_count  — ADR-48 (requests whose wake outcome was a cold boot)
+	//   tail_seconds     — issue #667 / ADR-78 (per-minute wall-clock
 	//                      seconds draining waitUntil tasks;
 	//                      INFORMATIONAL ONLY — does not enter billing;
 	//                      pinned by
@@ -20750,7 +20587,7 @@ func (s *PgStore) InstanceBillingSeconds(ctx context.Context, start, end time.Ti
 }
 
 // AppendBuilderUsage records one builder-time usage row at build
-// completion (ADR-048 §4). Idempotent on (build_id): a redelivered
+// completion (ADR-48 §4). Idempotent on (build_id): a redelivered
 // meterd / webhook / builderd restart sees ON CONFLICT DO NOTHING
 // and the row stays as the first write. The per-build grain lives
 // in a separate `builder_usage` table (PK build_id) created by
@@ -21629,7 +21466,7 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 // usage (billing stays on plan RAM) but the column is available for
 // future per-hour dashboards without re-rolling per-minute rows.
 //
-// tx_bytes and net_tx_bytes (ADR-046) are summed in the same query
+// tx_bytes and net_tx_bytes (ADR-46) are summed in the same query
 // so the per-hour rollup exposes both contributions. The asymmetry
 // the same as cpu_usec: additive on (instance_id, minute) conflict
 // so the SUM over the hour window is the full amount. Future
@@ -21829,8 +21666,8 @@ func (s *PgStore) RecordBillingMeterUsageDelivery(ctx context.Context, provider,
 
 // UsageDaily returns the per-(account, app, day) rollup rows that the
 // meterd rollup loop (pkg/meter/rollup.go) populated into the
-// usage_daily table (ADR-048 §5, migration 00067; tail_seconds
-// added by issue #667 / ADR-078 / migration 00151). day is a UTC
+// usage_daily table (ADR-48 §5, migration 00067; tail_seconds
+// added by issue #667 / ADR-78 / migration 00151). day is a UTC
 // midnight timestamp; only the date portion is used in the predicate
 // so a caller that already normalised to midnight does not have to
 // truncate again.
@@ -21868,7 +21705,7 @@ func (s *PgStore) UsageDaily(ctx context.Context, accountID string, day time.Tim
 // UsageDailyForAccount returns the trailing 30 UTC calendar days of the
 // materialised daily usage rollup. The UTC conversion is explicit rather than
 // relying on the Postgres session timezone so a customer in a non-UTC session
-// never loses the boundary day. ADR-048 / issue #308.
+// never loses the boundary day. ADR-48 / issue #308.
 func (s *PgStore) UsageDailyForAccount(ctx context.Context, accountID string) ([]DailyUsage, error) {
 	rows, err := s.pool.Query(ctx,
 		`select app_id, day, mb_seconds, requests, cpu_usec,
@@ -21898,7 +21735,7 @@ func (s *PgStore) UsageDailyForAccount(ctx context.Context, accountID string) ([
 // UsageSLOForApp returns the customer-facing SLO rollup
 // (instance_hours, gb_hours) for one app over the half-open
 // UTC range [start, end). Powers GET /v1/apps/{slug}/slo
-// (issue #696 / ADR-082).
+// (issue #696 / ADR-82).
 //
 // Defensive cross-account: the SQL filters on BOTH
 // `m.app_id = $1` AND `a.account_id = $2`. The handler
@@ -21987,7 +21824,7 @@ func (s *PgStore) UsageSLOForAccount(ctx context.Context, accountID string, star
 // NOT additive merge: the storage rollup is a point-in-time snapshot
 // of the current snapshot+layer bytes (pkg/meter/storage.go computes
 // the cumulative total for the day, then writes). Re-running for the
-// same day overwrites the existing row. ADR-049 §B.3.
+// same day overwrites the existing row. ADR-49 §B.3.
 func (s *PgStore) AppendSnapshotStorage(ctx context.Context, accountID, appID string, day time.Time, snapshotBytes, layerBytes int64) error {
 	_, err := s.pool.Exec(ctx,
 		`insert into snapshot_storage_daily
@@ -22011,7 +21848,7 @@ func (s *PgStore) AppendSnapshotStorage(ctx context.Context, accountID, appID st
 // (deployment_id) WHERE stale=false makes the inner lookup a
 // bounded Index Scan instead of a per-app heap scan. Returns
 // (0, 0, nil) when the app has no live deployment yet — a cold
-// start, not an error. ADR-049 §B.3.
+// start, not an error. ADR-49 §B.3.
 func (s *PgStore) LatestSnapshotBytes(ctx context.Context, appID string) (int64, int64, error) {
 	var memBytes, diskBytes int64
 	err := s.pool.QueryRow(ctx,
@@ -22078,7 +21915,7 @@ func (s *PgStore) RetainedLayerBytes(ctx context.Context, appID string) (int64, 
 // StorageUsage returns the per-(account, app, day) storage rollup
 // rows. day is a UTC midnight timestamp; only the date portion is
 // used in the predicate (mirrors UsageDaily's AT TIME ZONE 'UTC'
-// conversion). ADR-049 §B.3.
+// conversion). ADR-49 §B.3.
 func (s *PgStore) StorageUsage(ctx context.Context, accountID string, day time.Time) ([]StorageUsage, error) {
 	rows, err := s.pool.Query(ctx,
 		`select app_id, day, snapshot_bytes, layer_bytes
@@ -22583,12 +22420,12 @@ func (s *PgStore) ReleaseIdempotent(ctx context.Context, accountID, key string) 
 // accounts(id) is honored (no FK on app_id today; see migration 00005).
 
 // UpsertAppSecret inserts or replaces the (app_id,
-// scope='default', key) ciphertext row (ADR-092 PR-A).
+// scope='default', key) ciphertext row (ADR-92 PR-A).
 // updated_at is bumped on conflict so schedd's "freshest per app" cache
 // can re-stage drive1 even if the value didn't change (matters for
 // rotation flows that re-seal with the same plaintext).
 //
-// ADR-089 PR-A: this method preserves the pre-PR-A wire shape (no kid
+// ADR-89 PR-A: this method preserves the pre-PR-A wire shape (no kid
 // stamp) for backward compatibility with existing call sites that
 // don't track the sealing identity — webhook secret stores, the
 // alert-rule dispatcher, etc. New callers (the per-secret rotate
@@ -22600,13 +22437,13 @@ func (s *PgStore) UpsertAppSecret(ctx context.Context, accountID, appID, key str
 }
 
 // UpsertAppSecretWithKid is the kid-stamping sibling of
-// UpsertAppSecret (ADR-089 PR-A / migration 00166). The kid column
+// UpsertAppSecret (ADR-89 PR-A / migration 00166). The kid column
 // records which host identity sealed the row so operators can
 // answer "what key sealed this row?" without parsing the
 // ciphertext blob. Hardcodes scope='default' (PR-A); use
 // UpsertAppSecretWithKidInScope for any other scope.
 //
-// ADR-089 D4: the kid is stamped at every Seal, both the user-
+// ADR-89 D4: the kid is stamped at every Seal, both the user-
 // initiated rotate handler (PR-B) and the rekey.Replayer (PR-A).
 // Rows sealed before this PR stay with kid = "" until a subsequent
 // Seal (re-key, re-seal, or new PUT) stamps them. The rekey pass
@@ -22628,7 +22465,7 @@ func (s *PgStore) GetAppSecret(ctx context.Context, accountID, appID, key string
 }
 
 // UpsertAppSecretInScope is the scope-aware sibling of
-// UpsertAppSecret (ADR-092 PR-A / migration 00214). Writes-or-
+// UpsertAppSecret (ADR-92 PR-A / migration 00214). Writes-or-
 // replaces the (app_id, scope, key) row at the caller-supplied
 // scope. Mirrors UpsertAppSecret's ON CONFLICT shape — the PK
 // widening to (app_id, scope, key) means the conflict target is
@@ -22655,7 +22492,7 @@ func (s *PgStore) UpsertAppSecretInScope(ctx context.Context, accountID, appID, 
 }
 
 // UpsertAppSecretWithKidInScope is the kid-stamping scope-aware
-// sibling (ADR-092 PR-A). Mirrors UpsertAppSecretInScope but
+// sibling (ADR-92 PR-A). Mirrors UpsertAppSecretInScope but
 // stamps kid alongside ciphertext.
 func (s *PgStore) UpsertAppSecretWithKidInScope(ctx context.Context, accountID, appID, scope, key, kid string, ciphertext []byte) error {
 	tag, err := s.mutateCustomerAppSecret(ctx, appID, scope, key,
@@ -22973,7 +22810,7 @@ func (s *PgStore) DeleteManagedObjectStorageSecrets(ctx context.Context, credent
 }
 
 // GetAppSecretInScope is the scope-aware sibling of GetAppSecret
-// (ADR-092 PR-A). Returns the (account_id, app_id, scope, key) row
+// (ADR-92 PR-A). Returns the (account_id, app_id, scope, key) row
 // including ciphertext, kid, and timestamps. Returns ErrNotFound
 // when no row matches.
 func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, scope, key string) (*AppSecret, error) {
@@ -23011,7 +22848,7 @@ func (s *PgStore) GetAppSecretInScope(ctx context.Context, accountID, appID, sco
 }
 
 // ListAppSecretsForRekey is the global paginated walk consumed by
-// pkg/rekey.Replayer.Run (ADR-089 PR-A). Order is
+// pkg/rekey.Replayer.Run (ADR-89 PR-A). Order is
 // (account_id ASC, app_id ASC, key ASC) so a cursor based on the
 // last visited tuple yields a deterministic continuation across
 // daemon restarts.
@@ -23052,7 +22889,7 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 	// composite-uuid text ordering is what gives us a stable, restartable
 	// walk — see pkg/rekey/rekey.go for the cursor semantics.
 	//
-	// ADR-092 PR-A widened the cursor from 3-tuple to 4-tuple by adding
+	// ADR-92 PR-A widened the cursor from 3-tuple to 4-tuple by adding
 	// `scope`. The 3-tuple form is still accepted for the lazy-fallback
 	// window so an in-flight Replayer that persisted a pre-PR LastID
 	// continues to work after the rollout — a 3-tuple cursor is treated
@@ -23125,7 +22962,7 @@ func (s *PgStore) ListAppSecretsForRekey(ctx context.Context, limit int, cursor 
 }
 
 // DeleteAppSecret removes the (app_id, scope='default', key) row
-// scoped to accountID (ADR-092 PR-A). Returns ErrNotFound when no
+// scoped to accountID (ADR-92 PR-A). Returns ErrNotFound when no
 // row matches — the handler renders 400 CodeSecretNotFound
 // (intentional: the URL resource IS the secret name, by design).
 // Use DeleteAppSecretInScope for non-default scopes.
@@ -23134,7 +22971,7 @@ func (s *PgStore) DeleteAppSecret(ctx context.Context, accountID, appID, key str
 }
 
 // DeleteAppSecretInScope is the scope-aware sibling of
-// DeleteAppSecret (ADR-092 PR-A). The PK widening to
+// DeleteAppSecret (ADR-92 PR-A). The PK widening to
 // (app_id, scope, key) means the WHERE clause gains a `scope = $3`
 // predicate.
 func (s *PgStore) DeleteAppSecretInScope(ctx context.Context, accountID, appID, scope, key string) error {
@@ -23321,7 +23158,7 @@ func lockAppSecretTarget(ctx context.Context, tx pgx.Tx, appID, scope, key strin
 }
 
 // ListAppSecretsInScope is the scope-aware sibling of
-// ListAppSecrets (ADR-092 PR-A). Returns every (key, ciphertext,
+// ListAppSecrets (ADR-92 PR-A). Returns every (key, ciphertext,
 // kid, timestamps) row on the app where scope matches the
 // caller-supplied value, scoped to accountID. Order: by scope
 // ASC, key ASC for deterministic wake staging.
@@ -23338,7 +23175,7 @@ func (s *PgStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, s
 }
 
 // ListAppSecrets returns every secret on the app where scope =
-// 'default', scoped to accountID (ADR-092 PR-A delegation). Use
+// 'default', scoped to accountID (ADR-92 PR-A delegation). Use
 // ListAppSecretsInScope for the scope-aware path; use
 // ListAllAppSecrets for the cross-scope enumeration the GET
 // ?scope=__all__ handler renders (PR-B).
@@ -23347,7 +23184,7 @@ func (s *PgStore) ListAppSecrets(ctx context.Context, accountID, appID string) (
 }
 
 // ListAllAppSecrets is the cross-scope mirror of ListAppSecrets
-// (ADR-092 PR-A). Used by apid's GET
+// (ADR-92 PR-A). Used by apid's GET
 // /v1/apps/{slug}/secrets?scope=__all__ arm (PR-B) to render the
 // nested secrets_by_scope response shape. Order: by scope ASC,
 // key ASC.
@@ -23411,7 +23248,7 @@ func (s *PgStore) ListAllAppSecrets(ctx context.Context, accountID, appID string
 // SQL is the only IDOR guard. Returns nil slice (not error) when
 // the account has no secrets.
 //
-// ADR-092 PR-B: pre-PR-B the cursor was just (slug, key) which
+// ADR-92 PR-B: pre-PR-B the cursor was just (slug, key) which
 // silently dropped the trailing rows when a customer had the
 // same key at multiple scopes. The fix widens the cursor model
 // in lockstep with the (slug, scope, key) sort key.
@@ -23442,14 +23279,14 @@ func (s *PgStore) ListAppSecretsForAccount(ctx context.Context, accountID string
 	return out, rows.Err()
 }
 
-// CountAppSecrets is the quota helper (ADR-092 PR-A). Used by
+// CountAppSecrets is the quota helper (ADR-92 PR-A). Used by
 // apid's PUT handler (PR-B widens it to scope-aware) to enforce
 // Limits.SecretCountMax BEFORE UpsertAppSecretInScope so a
 // quota-exceeded request never overwrites an existing
 // (app_id, scope, key) row.
 //
-// ADR-092 limits decision: SecretCountMax is GLOBAL across scopes
-// (parallel to ADR-090 D6 on env). A customer with 80 prod +
+// ADR-92 limits decision: SecretCountMax is GLOBAL across scopes
+// (parallel to ADR-90 D6 on env). A customer with 80 prod +
 // 80 staging secrets is 160 total — exceeds Scale cap of 100
 // and returns ErrPlanLimitSecrets. This is the right cap
 // because customers will assume "100 per scope" without
@@ -23765,7 +23602,7 @@ func (s *PgStore) ListAppSecretRuntimeReloadTargets(ctx context.Context, account
 	return out, nil
 }
 
-// --- per-app private-registry Basic Auth (issue #461 / ADR-062) -------------
+// --- per-app private-registry Basic Auth (issue #461 / ADR-62) -------------
 //
 // Mirror of the sealed-secrets shape (lines 6446-6551) keyed by
 // (app_id, registry) instead of (app_id, key). The password column is
@@ -23916,7 +23753,7 @@ func (s *PgStore) MarkAppRegistryCredentialUsed(ctx context.Context, accountID, 
 	return nil
 }
 
-// --- app env vars (issue #395 / ADR-045) -------------------------------------
+// --- app env vars (issue #395 / ADR-45) -------------------------------------
 //
 // Mirror of the sealed-secrets shape (lines 4608-4676) minus the
 // ciphertext column. Plaintext TEXT values; apid is the sole writer;
@@ -23929,7 +23766,7 @@ func (s *PgStore) MarkAppRegistryCredentialUsed(ctx context.Context, accountID, 
 // posture as the secrets table (rotation flows re-PUT without changing
 // the value are still treated as a write).
 //
-// ADR-090 PR-A: the underlying PK is (app_id, scope, key) post-00203,
+// ADR-90 PR-A: the underlying PK is (app_id, scope, key) post-00203,
 // so the flat writers hardcode scope='default' at the SQL boundary.
 // Use UpsertAppEnvInScope for any other scope.
 func (s *PgStore) UpsertAppEnv(ctx context.Context, accountID, appID, key, value string) error {
@@ -23940,7 +23777,7 @@ func (s *PgStore) UpsertAppEnv(ctx context.Context, accountID, appID, key, value
 // to accountID. Returns ErrNotFound when no row matches — handler
 // renders 400 CodeEnvVarNotFound.
 //
-// ADR-090 PR-A: hardcodes scope='default' (see UpsertAppEnv).
+// ADR-90 PR-A: hardcodes scope='default' (see UpsertAppEnv).
 func (s *PgStore) DeleteAppEnv(ctx context.Context, accountID, appID, key string) error {
 	return s.DeleteAppEnvInScope(ctx, accountID, appID, "default", key)
 }
@@ -23951,7 +23788,7 @@ func (s *PgStore) DeleteAppEnv(ctx context.Context, accountID, appID, key string
 // as pre-00203 because all its rows share scope='default'). Returns
 // nil slice when the app has no env rows.
 //
-// ADR-090 PR-A: the WHERE clause adds `scope='default'` so the flat
+// ADR-90 PR-A: the WHERE clause adds `scope='default'` so the flat
 // reader keeps seeing the pre-PR row set. The composite index
 // `app_envs_account_app_scope_idx (account_id, app_id, scope)` makes
 // the (account_id, app_id, scope) prefix a single index scan.
@@ -23961,10 +23798,10 @@ func (s *PgStore) ListAppEnv(ctx context.Context, accountID, appID string) ([]Ap
 
 // CountAppEnv is the quota helper used by apid's PUT handler to enforce
 // Limits.EnvVarsMax BEFORE UpsertAppEnv. Counts ALL scope values for
-// the app per ADR-090 D6 (EnvVarsMax is per-app, not per-scope).
+// the app per ADR-90 D6 (EnvVarsMax is per-app, not per-scope).
 // Mirrors CountAppSecrets.
 //
-// ADR-090 PR-A: the WHERE clause drops the scope filter (per-D6
+// ADR-90 PR-A: the WHERE clause drops the scope filter (per-D6
 // per-app semantics). PR-B's per-scope quota enforcement (if it
 // lands) uses CountAppEnvInScope instead.
 func (s *PgStore) CountAppEnv(ctx context.Context, accountID, appID string) (int, error) {
@@ -24036,7 +23873,7 @@ func (s *PgStore) ListAppEnvInScope(ctx context.Context, accountID, appID, scope
 
 // CountAppEnvInScope is the scope-aware sibling of CountAppEnv.
 // Counts only rows where scope matches the caller-supplied value.
-// Reserved for future per-scope caps (ADR-091 follow-up); PR-A does
+// Reserved for future per-scope caps (ADR-91 follow-up); PR-A does
 // not call it.
 func (s *PgStore) CountAppEnvInScope(ctx context.Context, accountID, appID, scope string) (int, error) {
 	n, err := sqlc.New().CountAppEnvironmentIntentInScope(ctx, s.pool, sqlc.CountAppEnvironmentIntentInScopeParams{
@@ -24046,7 +23883,7 @@ func (s *PgStore) CountAppEnvInScope(ctx context.Context, accountID, appID, scop
 
 // ListAllAppEnv returns every env row on the app across all scopes,
 // scoped to accountID. Order: by scope ASC, key ASC. Used by apid's
-// GET /v1/apps/{slug}/envs?scope=__all__ arm (ADR-090 PR-B) to
+// GET /v1/apps/{slug}/envs?scope=__all__ arm (ADR-90 PR-B) to
 // render the nested `env_by_scope` response shape (D3).
 //
 // The composite index `app_envs_account_app_scope_idx
@@ -24075,7 +23912,7 @@ func (s *PgStore) ListAllAppEnv(ctx context.Context, accountID, appID string) ([
 	return out, rows.Err()
 }
 
-// --- app trusted cosign signers (issue #472 / ADR-054) -----------------------
+// --- app trusted cosign signers (issue #472 / ADR-54) -----------------------
 //
 // Per-app allowlist of cosign public keys whose signatures on OCI images
 // are accepted at deploy time. Mirrors AWS Lambda's CodeSigningConfig
@@ -24245,12 +24082,12 @@ func scanAppInto(a *App, row pgx.Row) error {
 	var workloadClassStr string
 	var consumerAuthModeStr string
 	var scalingPolicyBytes []byte
-	// Tier A10 / ADR-088: scratch sink for the overflow_node
+	// Tier A10 / ADR-88: scratch sink for the overflow_node
 	// projection. coalesce(overflow_node::text, '') returns
 	// '' for the NULL-preference case, which we promote to
 	// App.OverflowNode == nil below.
 	var overflowNodeStr string
-	// ADR-091 CORS improvements D1: scratch sink for the
+	// ADR-91 CORS improvements D1: scratch sink for the
 	// cors_default_enabled scan target. The schema's NOT
 	// NULL DEFAULT false makes the bool value always present
 	// at scan time; the *bool field is built by lifting
@@ -24277,7 +24114,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		&a.RequireAuthn,
 		// ADR-120: per-app end-customer credential policy.
 		&consumerAuthModeStr,
-		// Issue #477 / ADR-079: per-app public_auth. Both
+		// Issue #477 / ADR-79: per-app public_auth. Both
 		// columns land positionally after require_authn. The
 		// mode column is NOT NULL DEFAULT 'open' so a plain
 		// *string scan is safe; the basic blob is nullable
@@ -24285,7 +24122,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		// into a *[]byte to keep the SQL NULL → Go nil
 		// convention explicit.
 		&a.PublicAuthMode, &a.PublicAuthBasicSealed,
-		// Issue #695 / ADR-080: grand-father marker. Nullable
+		// Issue #695 / ADR-80: grand-father marker. Nullable
 		// timestamptz scanned into *time.Time (pgx handles the
 		// SQL NULL → Go nil conversion natively — same shape
 		// as ReassignedAt / MigratedAt above). NOT NULL after
@@ -24296,12 +24133,12 @@ func scanAppInto(a *App, row pgx.Row) error {
 		// NOT NULL DEFAULT false (migration 00155); plain bool
 		// scan is safe.
 		&a.WebSocketEnabled,
-		// ADR-093: per-route observability opt-in. NOT NULL
+		// ADR-93: per-route observability opt-in. NOT NULL
 		// DEFAULT false (migration 00212); plain bool scan is
 		// safe. Order is positional and must match
 		// appsSelectColumns.
 		&a.RouteMetricsEnabled,
-		// Tier A10 / ADR-088: per-app overflow_node preference.
+		// Tier A10 / ADR-88: per-app overflow_node preference.
 		// Scanned into a scratch string then conditionally
 		// promoted to *string so NULL round-trips as Go-nil —
 		// nil = "no preference" (back to A9 fallback). The
@@ -24310,7 +24147,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		// string-shaped values like RootDir / WorkloadName
 		// (see below).
 		&overflowNodeStr,
-		// Issue #272 / ADR-094: per-app preview metadata. The
+		// Issue #272 / ADR-94: per-app preview metadata. The
 		// column projection wraps preview_of_slug and
 		// preview_pr_state in coalesce(..., '') so the scan
 		// targets can be plain strings (NULL → '' round-trips
@@ -24325,7 +24162,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		// nullable timestamptz scanned into *time.Time
 		// directly (pgx handles SQL NULL → Go nil natively).
 		//
-		// ADR-091 CORS improvements D1: per-app default CORS
+		// ADR-91 CORS improvements D1: per-app default CORS
 		// opt-in + allowlist. cors_default_enabled is NOT
 		// NULL DEFAULT false in the schema so the scan lands
 		// a plain bool; we lift it into *bool below so the
@@ -24347,7 +24184,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		// PreviewExpiresAt above).
 		&a.PreviewDestroyCommentedAt,
 		&corsDefaultEnabled, &a.CORSDefaultOrigins,
-		// ADR-091 amendment / §4.1.2.0: coarse-gate per-app
+		// ADR-91 amendment / §4.1.2.0: coarse-gate per-app
 		// maintenance flag (apps.maintenance_mode). NOT NULL
 		// DEFAULT false (migration 00237); plain bool scan is
 		// safe. Order is positional and must match
@@ -24443,20 +24280,20 @@ func scanAppInto(a *App, row pgx.Row) error {
 // Column provenance (most-recent first):
 //
 //	warm_snapshot_enabled, warm_snapshot_min_requests,
-//	  warm_snapshot_min_ms  — issue #470 / ADR-055 (two-tier snapshot;
+//	  warm_snapshot_min_ms  — issue #470 / ADR-55 (two-tier snapshot;
 //	    migration 00109 adds the columns, migration 00110 adds the
 //	    per-tier unique index on snapshots)
-//	node_id, reassigned_at  — issue #533 / ADR-066 (Phase 2 / Gate A
+//	node_id, reassigned_at  — issue #533 / ADR-66 (Phase 2 / Gate A
 //	    shard key + Tier A4 cross-node rebalance)
 //	scaling_policy,
 //	  last_scale_out_at,
-//	  last_scale_in_at      — issue #462 / ADR-058 PR-A (scaling policy)
-//	require_signed          — issue #472 / ADR-054 (cosign enforce)
+//	  last_scale_in_at      — issue #462 / ADR-58 PR-A (scaling policy)
+//	require_signed          — issue #472 / ADR-54 (cosign enforce)
 //	streaming_enabled       — issue #471 PR-A (streaming response)
 //	project_id, root_dir,
 //	  workload_name,
 //	  workload_class,
-//	  start_command         — ADR-050 Phase 1 (repo decomposition)
+//	  start_command         — ADR-50 Phase 1 (repo decomposition)
 //	require_authn          — issue #560 (per-deployment
 //	  authentication opt-in; Cloud Run --no-allow-unauthenticated
 //	  analogue). Surfaced on GET /v1/apps/{slug} so dashboards can
@@ -24476,9 +24313,9 @@ const appsSelectColumns = `
 	require_authn,
 	-- ADR-120: per-app end-customer credential policy.
 	consumer_auth_mode,
-	-- Issue #477 / ADR-079: per-app public_auth
+	-- Issue #477 / ADR-79: per-app public_auth
 	public_auth_mode, public_auth_basic,
--- Issue #695 / ADR-080: grand-father marker. Set by
+-- Issue #695 / ADR-80: grand-father marker. Set by
 	-- migration 00156 on every pre-flip row; reads null on
 	-- apps created post-flip.
 	auth_default_flipped_at,
@@ -24487,13 +24324,13 @@ const appsSelectColumns = `
 	-- Plan.WebSocketEnabled() at CreateApp time and gates PATCH
 	-- writes through Plan.WebSocketResponseAllowed().
 	websocket_enabled,
-	-- ADR-093: per-route observability opt-in. Boolean NOT NULL
+	-- ADR-93: per-route observability opt-in. Boolean NOT NULL
 	-- DEFAULT false (migration 00212); apid applies
 	-- Plan.RouteMetricsEnabled() at CreateApp time and gates PATCH
 	-- writes through Plan.RouteMetricsResponseAllowed() (Free →
 	-- 403 plan_route_metrics_not_allowed).
 	route_metrics_enabled,
-	-- Tier A10 / ADR-088: per-app overflow_node preference.
+	-- Tier A10 / ADR-88: per-app overflow_node preference.
 	-- Nullable UUID; FK to compute_nodes(id) with ON DELETE SET
 	-- NULL cascades the preference to NULL on operator-side
 	-- compute_node deletion (migration 00167). The empty-uuid
@@ -24502,7 +24339,7 @@ const appsSelectColumns = `
 	-- scan sees a string target — the App.OverflowNode field
 	-- is *string (nil = no preference = default A9 fallback).
 	coalesce(overflow_node::text, ''),
-	-- Issue #272 / ADR-094: per-app preview metadata. NULL on
+	-- Issue #272 / ADR-94: per-app preview metadata. NULL on
 	-- production apps. preview_of_slug carries the parent app's
 	-- slug (no FK — parent may be deleted while previews are
 	-- still open). preview_pr_state is the closed-set label
@@ -24530,7 +24367,7 @@ const appsSelectColumns = `
 	-- pgx scan sees a non-nil slice on legacy rows (the gateway treats
 	-- len==0 as "deny all" — same contract as EgressAllowlist).
 	cors_default_enabled, coalesce(cors_default_origins, '{}'::text[]),
-	-- ADR-091 amendment / §4.1.2.0: coarse-gate per-app
+	-- ADR-91 amendment / §4.1.2.0: coarse-gate per-app
 	-- maintenance flag. Boolean NOT NULL DEFAULT false
 	-- (migration 00237); plain bool scan is safe. Order is
 	-- positional and must match scanApp below.
@@ -24589,7 +24426,7 @@ var _ = appsSelectColumns
 // order is load-bearing — pgx scans scanDeploymentInto positionally,
 // and the scan order matches the SELECT list.
 //
-// Issue #460 / ADR-053: the trailing 6 columns are the override shape.
+// Issue #460 / ADR-53: the trailing 6 columns are the override shape.
 // Coalesce rules:
 //   - text[] columns: coalesce with ARRAY[]::text[] so the read
 //     destination is always a non-nil []string (mirrors the pre-PR
@@ -24773,13 +24610,13 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 	var canaryStepStartedAt *time.Time
 	var rolloutStartedAt, rolloutCompletedAt, rolloutAbortedAt *time.Time
 	var serviceRolloutHandoff json.RawMessage
-	// Issue #460 / ADR-053: six override columns scanned here so
+	// Issue #460 / ADR-53: six override columns scanned here so
 	// the SELECT projections in DeploymentByID / LatestDeployment /
 	// etc. match. The scan order matches the column order in the
 	// SELECT list — keep them in lockstep or pgx's positional Scan
 	// returns the wrong field into the wrong destination.
 	//
-	// Issue #464 / ADR-055: scan columns (scan_result jsonb,
+	// Issue #464 / ADR-55: scan columns (scan_result jsonb,
 	// scan_status text, scanned_at timestamptz) are scanned here
 	// too. scan_status is nullable (NULL on pre-PR-#651 rows,
 	// before the backfill passes — and NULL inside the window
@@ -24911,7 +24748,7 @@ func scanDeployment(row pgx.Row) (Deployment, error) {
 // (used by schedd's prime handshake, M5, and by the engine's Wake
 // flow at LiveDeployment) uses this so the snapshot_prime
 // consumer sees the layer path AND schedd's wake wire can carry
-// the layer key (issue #96 / ADR-025 axis 2 / PR #116). Ordering
+// the layer key (issue #96 / ADR-25 axis 2 / PR #116). Ordering
 // matches the SELECT projections in DeploymentByID, LiveDeployment,
 // and SetDeploymentFailed.
 func scanDeploymentWithRootfs(row pgx.Row) (Deployment, error) {
@@ -24992,7 +24829,7 @@ func scanBuild(row pgx.Row) (Build, error) {
 }
 
 // scanBuildProvenance reads a build_provenance row into the
-// BuildProvenance struct (ADR-038). All columns except id, build_id,
+// BuildProvenance struct (ADR-38). All columns except id, build_id,
 // source_sha256, started_at, finished_at are COALESCEd to empty
 // string on the read side so the struct's text fields stay
 // valid (avoiding a nil-deref if a future migration loosens a
@@ -25128,7 +24965,7 @@ func scanInstances(rows pgx.Rows) ([]Instance, error) {
 // scanInstanceCols scans one instances row. started_at, last_request_at, and
 // parked_at are nullable (a cold_booting instance has none yet), so they scan
 // through *time.Time intermediates and stay the zero Time when NULL.
-// node_id is the 12th column (issue #97 / ADR-025 axis 3) — NOT NULL since
+// node_id is the 12th column (issue #97 / ADR-25 axis 3) — NOT NULL since
 // migrations/00024_compute_nodes but scanned into a string so a future
 // regression that re-allows NULL surfaces as an empty string in Go rather
 // than a scan error (the SELECT column list pins the contract; a divergence
@@ -25140,7 +24977,7 @@ func scanInstances(rows pgx.Rows) ([]Instance, error) {
 // distinction survives the Scan trip (pgx returns untyped nil for NULL
 // TIMESTAMPTZ, which is exactly the marker we want to keep on the struct).
 //
-// tail_count is the 15th column (issue #667 / ADR-078, migration 00151),
+// tail_count is the 15th column (issue #667 / ADR-78, migration 00151),
 // mode is the 16th column (issue #1186 / ADR-137), and request_count is
 // the 17th column. Persisted request counts must reach snapshot promotion gates.
 // NOT NULL DEFAULT 0 — every pre-#667 row reads as 0 (the column
@@ -25181,9 +25018,9 @@ func scanInstanceCols(scan func(...any) error) (Instance, error) {
 // scanInstanceColsWithMigration is the 21-column variant of
 // scanInstanceCols that also lifts framework_ready_at (PR #543 /
 // migration 00120), migrated_from_node_id, migrated_at, and
-// lease_token (Tier A5 / migration 00097, ADR-066), migration_started_at,
+// lease_token (Tier A5 / migration 00097, ADR-66), migration_started_at,
 // and
-// tail_count (issue #667 / ADR-078, migration 00151). Used by
+// tail_count (issue #667 / ADR-78, migration 00151). Used by
 // ListLiveInstancesOnNode and ListExpiredMigrations — the rest
 // of the codebase reads 15-column instances rows and doesn't
 // need the migration lineage. Column order matches the SELECTs
@@ -25253,7 +25090,7 @@ func scanInstanceColsWithMigration(scan func(...any) error) (Instance, error) {
 // column (PR #470-FU-B migration 00112); for the retention sweep it's
 // always NULL (terminal rows pre-date the warm-capture path) but the
 // column is part of the row shape so we scan it for shape parity.
-// tail_count is the 15th column (issue #667 / ADR-078, migration 00151),
+// tail_count is the 15th column (issue #667 / ADR-78, migration 00151),
 // terminal_at is the 16th column, and mode is the 17th column;
 // for the retention sweep it's always 0 (terminal rows have no active
 // tails) but the column is part of the row shape so we scan it for
@@ -25294,7 +25131,7 @@ func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
 
 func scanSnapshot(row pgx.Row) (Snapshot, error) {
 	s := Snapshot{}
-	// The 12th column is tier (issue #470 / ADR-055). Every query
+	// The 12th column is tier (issue #470 / ADR-55). Every query
 	// in this file now selects the tier column explicitly; the
 	// scan returns "init" if the column is NULL (legacy rows from
 	// before migration 00110 applied).
@@ -25338,7 +25175,7 @@ var ErrRollbackTargetAlreadyLive = errors.New("state: rollback target is already
 // Distinct from ErrNotFound so callers can map empty-input bugs to
 // 400 (validation) rather than 404 (missing row). Used by the
 // MemStore side of the password / OAuth-link primitives introduced
-// for issue #165 / ADR-032.
+// for issue #165 / ADR-32.
 var ErrInvalidArgument = errors.New("state: invalid argument")
 
 // checkViolationMappedToInvalid lists the constraint names whose
@@ -25381,6 +25218,18 @@ func mapErr(err error) error {
 			}
 			return err
 		case pgerrcode.CheckViolation:
+			switch pgErr.ConstraintName {
+			case "checked_rollback_required":
+				return ErrCheckedRollbackRequired
+			case "binding_release_required":
+				return ErrBindingReleaseRequired
+			case "binding_release_changed":
+				return ErrBindingPromotionChanged
+			case "binding_release_expired":
+				return ErrBindingPromotionExpired
+			case "binding_release_policy_revision":
+				return ErrBindingReleasePolicyRevision
+			}
 			if pgErr.ConstraintName == "queue_binding_environment_unavailable" {
 				return ErrQueueBindingEnvironmentUnavailable
 			}
@@ -25473,7 +25322,7 @@ func nullAppStatus(p *AppStatus) any {
 // nullJSONRaw returns nil for an empty json.RawMessage so the DB column
 // is NULL rather than the byte string "{}" or "null". Used by the
 // CreateDeployment INSERT for the override_*_env / override_healthcheck
-// jsonb columns (issue #460 / ADR-053) — a deployment that didn't
+// jsonb columns (issue #460 / ADR-53) — a deployment that didn't
 // carry an override writes NULL, not an empty object.
 //
 // json.RawMessage IS []byte, so the non-empty branch is a direct
@@ -25488,7 +25337,7 @@ func nullJSONRaw(b json.RawMessage) any {
 }
 
 // notNullEmptyJSONRaw is the sidecar-shape variant of nullJSONRaw
-// (issue #463 / ADR-066 / migration 00095). The `deployments.sidecars`
+// (issue #463 / ADR-66 / migration 00095). The `deployments.sidecars`
 // column is jsonb NOT NULL DEFAULT '[]'::jsonb, so an explicit NULL
 // parameter at INSERT would 23502-fail (DEFAULT only applies to
 // columns not mentioned in the column list). This helper converts
@@ -25778,7 +25627,7 @@ func (s *PgStore) MarkAccountEmailVerified(ctx context.Context, accountID string
 	return nil
 }
 
-// DeleteOldEvents (ADR-075) prunes audit-log events whose `at` is
+// DeleteOldEvents (ADR-75) prunes audit-log events whose `at` is
 // older than the cutoff. Returns the row count. The
 // (subject, at desc) partial index on the events table keeps the
 // WHERE a partial range scan; the per-tick cost is bounded by
@@ -26102,7 +25951,7 @@ func (s *PgStore) ListDeploymentLogs(ctx context.Context, deploymentID string, b
 	return out, hasMore, nil
 }
 
-// --- G6 account self-service (spec §17 G6, ADR-021) -------------------------
+// --- G6 account self-service (spec §17 G6, ADR-21) -------------------------
 //
 // DELETE /v1/account schedules a 30-day grace window; pkg/grace in apid
 // sweeps on a 60s timer and calls DeleteAccount once the window lapses.
@@ -26359,7 +26208,7 @@ func (s *PgStore) ListBuildsForAccount(ctx context.Context, accountID string) ([
 
 // ListBuildsForAccountPaged returns one page of builds across the
 // account's deployments, ordered started_at desc nulls last with
-// id DESC as the tiebreaker (DEPLOY-PROV-6 follow-up / ADR-091,
+// id DESC as the tiebreaker (DEPLOY-PROV-6 follow-up / ADR-91,
 // issue #741 close-out, post-review fix).
 //
 // Keyset pagination: pass the previous response's (started_at, id)
@@ -26989,7 +26838,7 @@ func (s *PgStore) MarkDunningStep(ctx context.Context, id string, from, to Accou
 	return nil
 }
 
-// --- IAM-3 sessions (ADR-039, issue #187 + #244 merged) ---------------------
+// --- IAM-3 sessions (ADR-39, issue #187 + #244 merged) ---------------------
 //
 // One row per dashboard login. The cookie envelope carries the row's
 // uuid as `sid`; every authenticated dashboard request re-validates
@@ -27140,7 +26989,7 @@ func (s *PgStore) TouchSessionLastSeen(ctx context.Context, id string) error {
 	return err
 }
 
-// --- Organizations (ADR-061 / IAM-6, PR 2) -------------------------------
+// --- Organizations (ADR-61 / IAM-6, PR 2) -------------------------------
 //
 // PR 2 is the additive-schema milestone: schema lands here, apid stays
 // unchanged. Every method here uses inline SQL on s.pool for simple CRUD
@@ -27356,7 +27205,7 @@ func scanOrg(r rowScanner) (Org, error) {
 // PK, ErrOrgLastOwner when adding a second active owner would trip the
 // partial unique, ErrNotFound when the org row is missing.
 //
-// IAM-6 / ADR-061 PR 7 note: this method does NOT enforce
+// IAM-6 / ADR-61 PR 7 note: this method does NOT enforce
 // Plan.OrgMembersMax. The cap is only enforced inside
 // ConsumeOrgInvitation's tx (the load-bearing gate). The
 // initial-owner seed at org creation bypasses the cap by design —
@@ -27382,7 +27231,7 @@ func (s *PgStore) AddOrgMember(ctx context.Context, orgID, accountID string, rol
 		return ErrNotFound
 	}
 
-	// Defence-in-depth note (IAM-6 / ADR-061 PR 2):
+	// Defence-in-depth note (IAM-6 / ADR-61 PR 2):
 	// AddOrgMember does NOT enforce the OrgMembersMax cap here. The
 	// cap is enforced at two layers instead:
 	//   1. Wire helper `cmd/apid::enforceMemberCap` (handler prelude)
@@ -27529,7 +27378,7 @@ func (s *PgStore) UpdateOrgMemberRole(ctx context.Context, orgID, accountID stri
 }
 
 // TransferOrgOwnership atomically promotes toAccountID to owner and
-// demotes fromAccountID to admin under one tx (PR 5; ADR-061). The
+// demotes fromAccountID to admin under one tx (PR 5; ADR-61). The
 // exactly-one-owner invariant is enforced by the partial unique
 // org_memberships_one_owner_idx (migrations/00099); the tripwire is
 // sqlstate 23505 if either side of the swap would briefly leave two
@@ -27863,7 +27712,7 @@ func scanOrgInvitation(r rowScanner) (OrgInvitation, error) {
 }
 
 // ConsumeOrgInvitation is the tx-heavy PR 5 acceptance path. Per
-// ADR-061 §Migration strategy every step runs under one tx with the
+// ADR-61 §Migration strategy every step runs under one tx with the
 // invitation row locked FOR UPDATE. Returns ErrOrgMemberCapExceeded on
 // the plan cap, ErrOrgInvitationInvalid / ErrOrgInvitationExpired on
 // state failures, ErrOrgAlreadyMember on the membership PK collision.
@@ -28343,9 +28192,9 @@ func (s *PgStore) ListAuditLog(ctx context.Context, filter AuditLogFilter) ([]Au
 
 // TrafficAnomalyAggregate is the pgstore-side hand-rolled mirror of
 // the sqlc query TrafficAnomalyAggregate (queries.sql). The pgstore
-// adapter still hand-rolls SQL per ADR-017 / M5 (TODO(M5.1) is to
+// adapter still hand-rolls SQL per ADR-17 / M5 (TODO(M5.1) is to
 // replace this with a call into the generated package — the sqlc
-// query is the canonical source). See ADR-091 §3.6 / PR #2 for
+// query is the canonical source). See ADR-91 §3.6 / PR #2 for
 // the anomaly model; the handler bounds since / baseline / limit
 // per pkg/api/limits.go::ObsAdminWindowMaxHours + ObsAdminAnomaly*
 // before calling this method.
@@ -28447,7 +28296,7 @@ func (s *PgStore) TrafficAnomalyAggregate(ctx context.Context, arg sqlc.TrafficA
 
 // TrafficAnomalyAggregateByNode is the pgstore wrapper around
 // the sqlc-generated TrafficAnomalyAggregateByNode query
-// (PR #4 / ADR-092 §3.4 amendment). The raw SQL mirrors the
+// (PR #4 / ADR-92 §3.4 amendment). The raw SQL mirrors the
 // sqlc-emitted string verbatim so the generated code can stay
 // the source of truth for the column shapes. Same scoring
 // formula as TrafficAnomalyAggregate; one extra GROUP BY key
@@ -28562,7 +28411,7 @@ func (s *PgStore) TrafficAnomalyAggregateByNode(ctx context.Context, arg sqlc.Tr
 
 // PerAccountRateLimitAggregate is the pgstore-side hand-rolled
 // mirror of the sqlc query PerAccountRateLimitAggregate
-// (queries.sql). See ADR-091 §3.5 / PR #2 for the model. The
+// (queries.sql). See ADR-91 §3.5 / PR #2 for the model. The
 // handler bounds since / limit per pkg/api/limits.go before
 // calling this method.
 func (s *PgStore) PerAccountRateLimitAggregate(ctx context.Context, arg sqlc.PerAccountRateLimitAggregateParams) ([]sqlc.PerAccountRateLimitAggregateRow, error) {
@@ -28601,7 +28450,7 @@ func (s *PgStore) PerAccountRateLimitAggregate(ctx context.Context, arg sqlc.Per
 
 // UpsertGithubWebhookSecret installs or rotates the per-tenant
 // GitHub App webhook secret for the given installation_id. PR-D /
-// ADR-012 §7 amendment: replaces the platform-wide
+// ADR-12 §7 amendment: replaces the platform-wide
 // FAAS_GITHUB_WEBHOOK_SECRET with a row-per-install lookup so a
 // leaked tenant secret can rotate without coordinating every
 // GitHub install. upgradedAt + upgradedBy form a §11 audit trail
@@ -28670,7 +28519,7 @@ func (s *PgStore) GetGithubWebhookSecret(ctx context.Context, installationID int
 	return secret, nil
 }
 
-// --- ADR-096 customer-facing automatic error grouping ---
+// --- ADR-96 customer-facing automatic error grouping ---
 //
 // The sqlc-generated methods (pkg/state/sqlc/queries.sql.go) own
 // the canonical SQL text. PgStore delegates to them via a
@@ -29198,11 +29047,11 @@ func (s *PgStore) ListAppsWithRecentTelemetry(ctx context.Context, arg pgtype.In
 }
 
 // ----------------------------------------------------------------------------
-// ADR-098 connection-aware execution (§9.A). pgstore wrappers for the
+// ADR-98 connection-aware execution (§9.A). pgstore wrappers for the
 // sqlc-generated data_upstreams + data_upstream_probes query surface
-// (queries.sql ADR-098 block). Per-call helper mirrors
+// (queries.sql ADR-98 block). Per-call helper mirrors
 // appErrorsQueries() at pgstore.go:14924. The typed DataUpstream /
-// DataUpstreamProbe structs (types.go ADR-098 block) are the handler
+// DataUpstreamProbe structs (types.go ADR-98 block) are the handler
 // boundary; pgtype-flavored rows stay inside this adapter.
 //
 // PR-A: thin wrappers over sqlc. The call sites are PR-B (apid
@@ -29212,7 +29061,7 @@ func (s *PgStore) ListAppsWithRecentTelemetry(ctx context.Context, arg pgtype.In
 // the rest of the package.
 // ----------------------------------------------------------------------------
 
-// dataUpstreamsQueries is the per-call helper for the ADR-098 §9.A
+// dataUpstreamsQueries is the per-call helper for the ADR-98 §9.A
 // typed query surface. Mirrors appErrorsQueries() at pgstore.go:14924
 // — no state, no caching, allocated per call.
 func (s *PgStore) dataUpstreamsQueries() *sqlc.Queries { return sqlc.New() }
@@ -29258,7 +29107,7 @@ func (s *PgStore) ListDataUpstreamsByApp(ctx context.Context, arg sqlc.ListDataU
 			AppID:     uuidFromPgtype(r.AppID),
 			Source:    DataUpstreamSource(r.Source),
 			Scope:     r.Scope,
-			// DeploymentScope widens the dedupe key in ADR-098
+			// DeploymentScope widens the dedupe key in ADR-98
 			// amendment (issue #954). Read-through; the column is
 			// NOT NULL DEFAULT 'default' on the SQL side so the
 			// empty-string default stamp is what backfills land as.
@@ -29300,7 +29149,7 @@ func (s *PgStore) GetDataUpstreamByID(ctx context.Context, id uuid.UUID) (DataUp
 		AppID:     uuidFromPgtype(row.AppID),
 		Source:    DataUpstreamSource(row.Source),
 		Scope:     row.Scope,
-		// DeploymentScope widens the dedupe key in ADR-098
+		// DeploymentScope widens the dedupe key in ADR-98
 		// amendment (issue #954). Single-row read so the
 		// DELETE-handler audit site can round-trip the value
 		// into the data_upstream.deleted payload.
@@ -29709,7 +29558,7 @@ func (s *PgStore) ListEnabledTriggers(ctx context.Context) ([]sqlc.Trigger, erro
 // ClaimTriggerRecords is the schedd-side pull from the per-trigger
 // pending/retry queue. FOR UPDATE SKIP LOCKED (set in queries.sql)
 // lets concurrent schedd replicas each claim disjoint row sets —
-// ADR-099 PR-C precedent for claim_job_tasks.
+// ADR-99 PR-C precedent for claim_job_tasks.
 func (s *PgStore) ClaimTriggerRecords(ctx context.Context, triggerID string, limit int32) ([]sqlc.TriggerRecord, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -30711,9 +30560,9 @@ type AppUpstreamProbeScore struct {
 	OK               bool
 }
 
-// ListAppUpstreamProbeScores (ADR-098 PR-D) returns the freshest
+// ListAppUpstreamProbeScores (ADR-98 PR-D) returns the freshest
 // probe per (data_upstreams.id, region) for the given app, scoped
-// to a single deployment. ADR-098 amendment (issue #954) widens
+// to a single deployment. ADR-98 amendment (issue #954) widens
 // the dedupe key to (app_id, scope, deployment_scope, ...); the
 // chooser must therefore scope its probe scan to the deployment
 // the wake targets — a staging deployment should bias on staging
@@ -30790,7 +30639,7 @@ func (s *PgStore) ListAppUpstreamProbeScores(ctx context.Context, accountID, app
 // app across all scopes, scoped to accountID. Used by apid's
 // GET /v1/apps/{slug}/upstreams?scope=__all__ arm to render the
 // full list without a cursor. The row count is bounded by
-// DataPlacementHintsPerApp (0/3/10/50 by plan per ADR-098 §D5)
+// DataPlacementHintsPerApp (0/3/10/50 by plan per ADR-98 §D5)
 // so the scan is cheap.
 func (s *PgStore) ListAllAppDataUpstreams(ctx context.Context, accountID, appID string) ([]DataUpstream, error) {
 	rows, err := s.pool.Query(ctx,
@@ -30836,7 +30685,7 @@ func (s *PgStore) ListAllAppDataUpstreams(ctx context.Context, accountID, appID 
 			AppID:     uuidFromPgtype(appIDpg),
 			Source:    DataUpstreamSource(source),
 			Scope:     scope,
-			// DeploymentScope (ADR-098 amendment issue #954) — the
+			// DeploymentScope (ADR-98 amendment issue #954) — the
 			// ?scope=__all__ arm of listUpstreams must surface the
 			// same deployment overlay the per-page arm does;
 			// otherwise the staging-vs-prod view regresses here.
@@ -30856,7 +30705,7 @@ func (s *PgStore) ListAllAppDataUpstreams(ctx context.Context, accountID, appID 
 }
 
 // CountDataUpstreamsByApp is the per-plan quota helper. Counts
-// ALL scope values for the app per ADR-098 §D5
+// ALL scope values for the app per ADR-98 §D5
 // (DataPlacementHintsPerApp is per-app, not per-scope). Mirrors
 // CountAppEnv's posture.
 func (s *PgStore) CountDataUpstreamsByApp(ctx context.Context, accountID, appID string) (int, error) {

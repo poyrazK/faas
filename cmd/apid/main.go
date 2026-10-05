@@ -434,7 +434,7 @@ type runDeps struct {
 	// from env at startup" via mail.SenderFromEnv — same pattern meterd
 	// uses (cmd/meterd/main.go:82-87). Tests inject a stub.
 	mailer mail.Sender
-	// capCheck: DEPLOY-1 / ADR-075 capdecl gate seam (review
+	// capCheck: DEPLOY-1 / ADR-75 capdecl gate seam (review
 	// finding M2). nil → runtimecheck.MustCheckOnBoot(capsDecl,
 	// log, nil) which exits on violation in production. Tests
 	// inject func() error { return nil } to bypass the live
@@ -471,7 +471,7 @@ type runDeps struct {
 	// runDeps directly (those tests should set preLoadedConfig
 	// instead).
 	config *Config
-	// ADR-094: closePool is the pool-cleanup hook run() wires after
+	// ADR-94: closePool is the pool-cleanup hook run() wires after
 	// db.Open succeeds. runWithDeps calls it on every early-return
 	// between db.Open and the post-bind defer-install (so an error
 	// anywhere in the bind path closes the pool out, not the
@@ -480,7 +480,7 @@ type runDeps struct {
 	// shape — which never sets up a real pool — keeps working.
 	// nil in production before run() sets it.
 	closePool func()
-	// PR-B (issue #678 / ADR-056): pool is the *pgxpool.Pool run() opens
+	// PR-B (issue #678 / ADR-56): pool is the *pgxpool.Pool run() opens
 	// via db.Open. runWithDeps needs it to construct the handshake-
 	// layer PGNodeVerifier (wire.NewPGNodeLoader(pool)) and to wire
 	// its notification drain (db.SubscribeWithReconnect(ctx, pool,
@@ -491,7 +491,7 @@ type runDeps struct {
 	// is nil (the cfg.NodeName == "" production path AND the
 	// pre-PR-B test paths). nil in production before run() sets it.
 	pool *pgxpool.Pool
-	// PR-B (issue #678 / ADR-056): preLoadedNodeVerifier lets tests
+	// PR-B (issue #678 / ADR-56): preLoadedNodeVerifier lets tests
 	// inject a stub wire.NodeVerifier without booting Postgres or
 	// wiring a real PGNodeLoader. nil in production (the
 	// cfg.NodeName != "" block in runWithDeps owns the
@@ -500,7 +500,7 @@ type runDeps struct {
 	// that sets only preLoadedConfig and preLoadedNodeVerifier == nil
 	// keeps the single-box wire behaviour.
 	preLoadedNodeVerifier wire.NodeVerifier
-	// PR-B (issue #678 / ADR-056): captureDialTLS is a test-side hook
+	// PR-B (issue #678 / ADR-56): captureDialTLS is a test-side hook
 	// invoked at every Load*TLSWithVerifier dial site with (name,
 	// *tls.Config). name is "githubd", "advisory", or "bridge".
 	// nil in production; nil-tolerant (runWithDeps no-ops on nil).
@@ -570,7 +570,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 
-	// DEPLOY-1 / ADR-075 capdecl gate. apid serves only a Unix socket and
+	// DEPLOY-1 / ADR-75 capdecl gate. apid serves only a Unix socket and
 	// high loopback ports behind Caddy, so its allowlist is empty. A future code
 	// path that requires an undeployed capability fails fast at boot. The
 	// capCheck seam lets tests stub the live /proc/self/status
@@ -631,7 +631,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// closing the pool. See closePoolAfterCancel for why the order matters.
 	ctx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
-	// ADR-094: the pool's lifetime is no longer bound to run()'s
+	// ADR-94: the pool's lifetime is no longer bound to run()'s
 	// defer. The pre-bind goroutines in bgBefore (rekey walker,
 	// sseFanIn, audit subscriber, grace sweep, etc.) each call
 	// pool.Acquire(); an early-return anywhere between here and
@@ -644,7 +644,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// / advisory / bridge listener sections, just before
 	// srv.Serve).
 	//
-	// ADR-094 pins this shape via pkg/db/warmup_architecture_test.go
+	// ADR-94 pins this shape via pkg/db/warmup_architecture_test.go
 	// so a future refactor that drops closePool() at an early-return
 	// site fails the test instead of silently reintroducing the
 	// race.
@@ -697,12 +697,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		log.Info("apid: legacy single-box (cfg.NodeName empty)")
 	}
 	deps.notif = func() Notifier { return pgNotifier{pool: pool, log: log} }
-	// ADR-094: hand runWithDeps the same closePool helper so the
+	// ADR-94: hand runWithDeps the same closePool helper so the
 	// post-bind defer (installed just before srv.Serve) and every
 	// pre-bind early-return close the pool consistently. Tests that
 	// build runDeps directly without a pool pass a no-op closure.
 	deps.closePool = closePool
-	// PR-B (issue #678 / ADR-056): hand runWithDeps the same
+	// PR-B (issue #678 / ADR-56): hand runWithDeps the same
 	// *pgxpool.Pool so the handshake-layer PGNodeVerifier
 	// construction block can use wire.NewPGNodeLoader(pool) and
 	// db.SubscribeWithReconnect(ctx, pool, ...). nil in tests that
@@ -711,6 +711,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
 		go srv.runSafeReleaseEmergencyAbort(ctx)
+		go srv.runServiceRolloutBindingWorker(ctx)
+		go srv.runCheckedRollbackWorker(ctx)
+		go srv.runAlertRollbackWorker(ctx)
 		go srv.runObjectStorageRecovery(ctx)
 		go srv.runObjectStorageAccounting(ctx)
 		go srv.runManagedPostgresReconciler(ctx)
@@ -732,7 +735,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				log.Error("runtime_config subscriber exited", "err", err)
 			}
 		}()
-		// ADR-089 PR-C — background re-seal runner. The runner is
+		// ADR-89 PR-C — background re-seal runner. The runner is
 		// nil when FAAS_REKEY_ENABLED is unset (or when identities
 		// failed to load); we skip the goroutine launch in that
 		// case so the boot path is a no-op on the default deploy.
@@ -781,7 +784,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		srv.startIssuesMaintenance(ctx)
-		// G6 grace timer (spec §17 G6, ADR-021): the 30-day deletion
+		// G6 grace timer (spec §17 G6, ADR-21): the 30-day deletion
 		// grace sweep lives in apid (not meterd) because the write
 		// side (DELETE /v1/account, POST /v1/account/restore) is here
 		// and meterd owns quotas/billing only. Default Interval 60s
@@ -801,7 +804,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			Audit: srv.audit, // issue #755 / PR-5.5: emit account.deleted from the sweep
 		})
 		go func() { _ = graceLoop.Run(ctx) }()
-		// Login-token cleanup (issue #165 PR #2, ADR-032). The
+		// Login-token cleanup (issue #165 PR #2, ADR-32). The
 		// login_tokens table backs password-reset (15-min TTL) and
 		// the legacy magic-link surface PR #1 removed. The
 		// /login/forgot → POST /auth/reset pair is the only
@@ -815,7 +818,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			Log:   log,
 		})
 		go func() { _ = loginTokenCleanup.Run(ctx) }()
-		// ADR-075: 90-day audit retention. The events table grows
+		// ADR-75: 90-day audit retention. The events table grows
 		// ~3-4 GB/year/active-tier through the auth / key / secret
 		// / account / stateless audit namespaces plus the future
 		// wake-timeline / sidecar surfaces. The daily loop trims
@@ -827,7 +830,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			Store: srv.store,
 			Log:   log,
 		})
-		// ADR-091 D20.3 / PR-B residual: thread the Ops into the
+		// ADR-91 D20.3 / PR-B residual: thread the Ops into the
 		// audit-event retention cleanup loop. srv.ops is populated
 		// by srv.WithOpsMetrics(ctx, ops) on line ~1027 BEFORE
 		// deps.bgBefore is invoked (line 1248), so reading srv.ops
@@ -911,7 +914,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// 60s matches the meterd dunning sweep cadence.
 		webhookSweeper := webhookdedupe.NewSweeper(webhookdedupe.DefaultSweepInterval)
 		go func() { _ = webhookSweeper.Run(ctx) }()
-		// Issue #472 / ADR-058: bridge the `audit_event` pg_notify
+		// Issue #472 / ADR-58: bridge the `audit_event` pg_notify
 		// channel (imaged emits signature-failure events via this
 		// channel since imaged is the only fire-and-forget audit
 		// publisher that doesn't write the events table directly)
@@ -922,7 +925,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// error is fatal — silent drop is the bug we're closing.
 		if srv.audit != nil {
 			go func() {
-				// issue #517 / PR-C / ADR-064: thread the
+				// issue #517 / PR-C / ADR-64: thread the
 				// events Platform through the audit
 				// subscriber so verify-rejection kinds
 				// (app.signature_invalid /
@@ -967,7 +970,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}
 			}()
 		}
-		// Issue #472 / ADR-058: maintain the on-disk mirror of
+		// Issue #472 / ADR-58: maintain the on-disk mirror of
 		// app_trusted_signers at /etc/faas/secrets/trusted-publishers
 		// (the dir imaged reads at startup and on every
 		// trusted_signer_changed notify). Without this writer, the
@@ -1126,7 +1129,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}()
 
-	// ADR-094: pool-close gate. closePool closes the pool; the
+	// ADR-94: pool-close gate. closePool closes the pool; the
 	// Once guards against double-close when an early-return path
 	// closes the pool explicitly and the deferred fallback also
 	// runs. Production wires deps.closePool to the helper built
@@ -1158,7 +1161,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		cfg = &Config{}
 	}
 
-	// PR-B (issue #678 / ADR-056): handshake-layer NodeVerifier. The
+	// PR-B (issue #678 / ADR-56): handshake-layer NodeVerifier. The
 	// verifier sits in front of every mTLS leg on this daemon
 	// (githubd client dial, advisory server listener, githubd-bridge
 	// server listener) so leaf-CNs from peers not in the registered
@@ -1317,11 +1320,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	mailer := newMailerAdapter(m)
-	// M7.5: githubd socket path (ADR-012). Empty = stub client (every
+	// M7.5: githubd socket path (ADR-12). Empty = stub client (every
 	// method returns api.Problem{Code:"githubd_not_ready"}), which is
 	// fine until githubd is actually deployed on this host.
 	//
-	// ADR-052: multi-box deployments dial githubd over tcp:// +
+	// ADR-52: multi-box deployments dial githubd over tcp:// +
 	// mTLS. cfg.LoadGithubdTLS reads the githubd_tls_* cluster
 	// from apid.toml (issue #678 PR-0); the env-var analogue
 	// FAAS_GITHUBD_TLS_* was the pre-PR-#678 path. Empty TLS
@@ -1329,14 +1332,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// PR-0 is behaviour-preserving — see cmd/apid/config.go for
 	// the env-overlay contract.
 	//
-	// PR-B (issue #678 / ADR-056): the WithVerifier variant threads
+	// PR-B (issue #678 / ADR-56): the WithVerifier variant threads
 	// the handshake-layer NodeVerifier through LoadClientTLSConfig
 	// → SetVerifyPeerCertificate → crypto/tls. cfg.NodeName == ""
 	// (single-box dev) leaves nodeVerifier nil; the wire helper's
 	// setVerifyHook no-ops on a nil verifier and the stdlib trust
 	// path runs unchanged.
 	//
-	// ADR-052 §5 / PR-E: route the load through the WithReload
+	// ADR-52 §5 / PR-E: route the load through the WithReload
 	// factory so a SIGHUP-driven reload swaps the client leaf on
 	// the next outbound githubd handshake. githubdRotator holds
 	// the live *tls.Config; newGithubdClient captures the rotator's
@@ -1377,7 +1380,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if sessionsWarn != "" {
 		log.Warn("session manager in dev mode; sessions reset on restart", "warning", sessionsWarn)
 	}
-	// Issue #419 / ADR-046: validate the sign-in OAuth env vars at
+	// Issue #419 / ADR-46: validate the sign-in OAuth env vars at
 	// boot. Half-configured (e.g. GOOGLE_CLIENT_ID set but
 	// GOOGLE_CLIENT_SECRET unset) refuses to start — that's the
 	// 500-into-customer-request footgun the loader exists to close.
@@ -1482,7 +1485,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// deploy, and never interpolate untrusted input.
 	srv.WithBillingPortalURL(deps.getenv("FAAS_BILLING_PORTAL_URL"))
 
-	// Billing provider dispatch (ADR-025 / public-release billing).
+	// Billing provider dispatch (ADR-25 / public-release billing).
 	// FAAS_BILLING_PROVIDER defaults to "polar" when unset — the loader
 	// constructs a *polar.Provider and requires the configured catalog
 	// and meter to pass preflight before the daemon accepts billing traffic.
@@ -1525,7 +1528,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv.WithBillingProviderName(provName)
 
-	// Issue #299 / ADR-038 Phase 3: imagd stores CycloneDX JSON under
+	// Issue #299 / ADR-38 Phase 3: imagd stores CycloneDX JSON under
 	// sboms/<buildID>.cdx.json and records that storage key in provenance.
 	// Read through the same storage backend here so OCI-backed deployments
 	// do not depend on an apid-local mirror. FAAS_SBOM_ROOT remains the
@@ -1544,7 +1547,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("apid: rollback artifact verifier ready", "pub", signPubPath)
 	}
 
-	// Issue #98 / ADR-028: admin allowlist for /v1/compute-nodes.
+	// Issue #98 / ADR-28: admin allowlist for /v1/compute-nodes.
 	// Empty in dev = all admin routes 403 with code admin_required;
 	// production sets FAAS_ADMIN_EMAILS to the operator team's
 	// comma-separated addresses. The allowlist is read at startup,
@@ -1575,7 +1578,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	})
 	srv.WithOpsMetrics(ctx, ops)
 
-	// ADR-093 / PR-D: end-to-end request budgets on the apid
+	// ADR-93 / PR-D: end-to-end request budgets on the apid
 	// listener. Same shape as gatewayd-public PR-B: a fresh
 	// prometheus registry holds the budget histogram + counter,
 	// the middleware stamps a per-request Budget onto r.Context(),
@@ -1610,7 +1613,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: reqbudget middleware config: %w", err)
 	}
 
-	// issue #517 / PR-C / ADR-064: thread the events Platform
+	// issue #517 / PR-C / ADR-64: thread the events Platform
 	// into the server so the audit subscriber (which receives
 	// the signature-rejection kinds from imaged's verify hook)
 	// can emit the typed wake.deploy_failed row. nil opts out
@@ -1619,7 +1622,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	eventsPlatform := events.NewPlatform("apid", store, log, ops, nil)
 	srv.WithEventsPlatform(eventsPlatform)
 
-	// ADR-093: gatewayd-internal control-listener URL for the
+	// ADR-93: gatewayd-internal control-listener URL for the
 	// per-route observability reader. Default
 	// http://127.0.0.1:9090 matches gatewayd-internal's default
 	// control bind (cmd/gatewayd-internal/config.go ControlAddr,
@@ -1721,7 +1724,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if fleetRecipientPath != "" {
 			outboundCredentialRecipient = func() *age.X25519Recipient { return r }
 		}
-		// Issue #463 / ADR-068: the sidecar seal helper reuses the
+		// Issue #463 / ADR-68: the sidecar seal helper reuses the
 		// same host age recipient (one age identity per host). A
 		// separate getter keeps the seal helpers testable in
 		// isolation without leaking the secret-handler test seam.
@@ -1739,7 +1742,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// in use — without it, /enroll still works (recipient-only)
 	// but /confirm /verify /disable /recover all 503.
 	//
-	// Issue #316 / ADR-057: we also load host.age.previous via
+	// Issue #316 / ADR-57: we also load host.age.previous via
 	// LoadHostKeys(dir) and wire the slice through SetMFAIdentities
 	// so the 30-day rotation overlap window unseals envelopes
 	// sealed under the previous key. The single-identity SetMFAIdentity
@@ -1855,7 +1858,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	// Recovery-code HMAC key — closes the SHA-256 rainbow-reversal
 	// threat on a leaked PG blob (logical change 7 of the IAM-hardening
-	// mega-PR, ADR-035 §"Rejected alternatives" #4). The recovery-code
+	// mega-PR, ADR-35 §"Rejected alternatives" #4). The recovery-code
 	// hash column is bytea; the digest algorithm is HMAC-SHA256 keyed
 	// by a per-box secret. The audit-hmac.key path above uses a
 	// Warn-and-continue zero-key fallback because HashEmail joins
@@ -1894,7 +1897,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: set recovery HMAC secret: %w", err)
 	}
 
-	// ADR-089 PR-C — background re-seal runner. Opt-in via
+	// ADR-89 PR-C — background re-seal runner. Opt-in via
 	// FAAS_REKEY_ENABLED; default false. When enabled, the
 	// runner walks app_secrets and re-seals every row under the
 	// current host identity (pkg/rekey.Replayer wrapped by
@@ -1971,7 +1974,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	listenBind := cfg.GetListenAddr(deps.getenv)
-	// ADR-093 / PR-D: wrap srv.handler() with the BudgetMiddleware
+	// ADR-93 / PR-D: wrap srv.handler() with the BudgetMiddleware
 	// so every apid request runs under a Budget-decorated ctx.
 	// Per-handler WithTimeout ceilings (PromQL 3 s, billingOps 30 s,
 	// sync-invoke 5 s / 30 s) become children of the budget via
@@ -2014,7 +2017,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the test seam (deps.getenv), then falls back to cfg.GetMetricsAddr
 	// (TOML), then to metricsAddrDefault.
 	//
-	// ADR-093 / PR-D: combine ops + budgetReg into a single
+	// ADR-93 / PR-D: combine ops + budgetReg into a single
 	// prometheus.Gatherers so /metrics scrapes both the standard
 	// apid_* ops metrics AND the budget histogram + counter
 	// families in one round-trip.
@@ -2077,13 +2080,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
-	// Wave 0 PR-C / ADR-047: stateless-advisory gRPC listener. vmmd
+	// Wave 0 PR-C / ADR-47: stateless-advisory gRPC listener. vmmd
 	// dials /run/faas/apid.sock to forward fanotify batches from
 	// guest-init. Empty FAAS_APID_ADVISORY_SOCK disables (matches the
 	// metricsAddr explicit-empty pattern so the e2e harness can stamp
 	// empty and avoid the bind race).
 	//
-	// ADR-052: when the target is tcp:// or dns:// (multi-box path),
+	// ADR-52: when the target is tcp:// or dns:// (multi-box path),
 	// the operator must also set advisory_tls_* in apid.toml to a
 	// per-daemon leaf. Single-box deployments leave the TLS cluster
 	// unset and continue to use the unix socket; cfg.LoadAdvisoryTLS
@@ -2093,12 +2096,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// that replaces the inline env reads. The behaviour is identical
 	// (env-overlay path is preserved via the Get helpers).
 	//
-	// PR-B (issue #678 / ADR-056): the WithVerifier variant installs
+	// PR-B (issue #678 / ADR-56): the WithVerifier variant installs
 	// the handshake-layer NodeVerifier hook on the server-side
 	// tls.Config. vmmd dials in here; the hook rejects any peer
 	// whose leaf-CN is not in compute_nodes.name.
 	//
-	// ADR-052 §5 / PR-E: route through the WithReload factory so a
+	// ADR-52 §5 / PR-E: route through the WithReload factory so a
 	// SIGHUP-driven reload swaps the server's leaf via stdlib's
 	// per-handshake GetConfigForClient callback.
 	var advisorySrv *grpc.Server
@@ -2138,12 +2141,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// PR-0 (issue #678): cfg.LoadGithubdBridgeTLS is the issue-#678
 	// surface that replaces the inline env reads.
 	//
-	// PR-B (issue #678 / ADR-056): the WithVerifier variant installs
+	// PR-B (issue #678 / ADR-56): the WithVerifier variant installs
 	// the handshake-layer NodeVerifier hook on the server-side
 	// tls.Config. githubd dials in here; the hook rejects any peer
 	// whose leaf-CN is not in compute_nodes.name.
 	//
-	// ADR-052 §5 / PR-E: route through the WithReload factory for
+	// ADR-52 §5 / PR-E: route through the WithReload factory for
 	// SIGHUP-driven leaf rotation.
 	var bridgeSrv *grpc.Server
 	var bridgeLis net.Listener
@@ -2171,7 +2174,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
-	// ADR-096 PR-A: customer-facing automatic error grouping.
+	// ADR-96 PR-A: customer-facing automatic error grouping.
 	// The IncrementAppError gRPC server lives behind
 	// FAAS_APP_ERRORS_ENABLED. PR-A shipped the kill-switch OFF
 	// so the schema populated only by hand; PR-B ships the
@@ -2267,7 +2270,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}()
 		}
 
-		// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation. Apid
+		// ADR-52 §5 / PR-E: SIGHUP-driven TLS cert rotation. Apid
 		// doesn't yet have its own hupCh (pkg/wire.Daemon's is consumed
 		// by watchLogLevelReload). Install three parallel ones — each
 		// gets every SIGHUP (signal.Notify fans the signal out to every
@@ -2702,7 +2705,7 @@ func loadHostHMACKey(path string) ([]byte, error) {
 // dial without root, and the mode is 0660 — the standing repo
 // convention (pkg/wire.DefaultSocketMode). Multi-box deployments
 // pass a tcp:// or dns:// target + a non-nil tlsCfg loaded via
-// wire.LoadServerTLSConfig (ADR-052). Empty sock disables the
+// wire.LoadServerTLSConfig (ADR-52). Empty sock disables the
 // listener entirely (matches the e2e harness path).
 //
 // Returns the server (caller calls Serve) and the listener. Errors
@@ -2712,7 +2715,7 @@ func runAdvisoryServer(ctx context.Context, target string, tlsCfg *tls.Config, s
 	// Guard: a tcp/dns target without TLS would silently build an
 	// insecure server (wire.Listen returns raw TCP, ServerCredsOrEmpty
 	// yields zero opts). Refuse; the operator must set the
-	// FAAS_APID_ADVISORY_TLS_{CERT,KEY,CA}_PATH env trio. ADR-052.
+	// FAAS_APID_ADVISORY_TLS_{CERT,KEY,CA}_PATH env trio. ADR-52.
 	if !isUnixSocketPath(target) && tlsCfg == nil {
 		return nil, nil, fmt.Errorf(
 			"advisory: target %q is non-unix but %s is empty (set FAAS_APID_ADVISORY_TLS_CERT_PATH / KEY_PATH / CA_PATH or point the target at a unix socket for single-box mode)",
@@ -2768,7 +2771,7 @@ func runAdvisoryServer(ctx context.Context, target string, tlsCfg *tls.Config, s
 func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string) (*grpc.Server, net.Listener, error) {
 	// Same multi-box guard as runAdvisoryServer — a tcp/dns
 	// target without TLS would silently build an insecure server.
-	// ADR-052.
+	// ADR-52.
 	if !isUnixSocketPath(target) && tlsCfg == nil {
 		return nil, nil, fmt.Errorf(
 			"githubd bridge: target %q is non-unix but %s is empty (set FAAS_APID_GITHUBD_BRIDGE_TLS_CERT_PATH / KEY_PATH / CA_PATH or point the target at a unix socket for single-box mode)",
@@ -2809,7 +2812,7 @@ func isUnixSocketPath(target string) bool {
 }
 
 // runAppErrorsServer brings up the AppErrors gRPC server
-// (ADR-096 §3.5: gatewayd-internal → apid IncrementAppError
+// (ADR-96 §3.5: gatewayd-internal → apid IncrementAppError
 // streaming RPC). Unix targets retain the local DAC-authenticated
 // single-box path; tcp:// targets use the same mTLS-only listener
 // contract as the other split-box gRPC surfaces.

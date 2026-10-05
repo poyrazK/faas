@@ -1,5 +1,5 @@
 // Package alerts is the meterd-side evaluator that fires customer-
-// configured alert rules (issue #396 / ADR-045). The package is
+// configured alert rules (issue #396 / ADR-45). The package is
 // deliberately split off pkg/meter so pkg/meter stays a pure tick
 // scheduler and the alert logic can be unit-tested without spinning
 // the full daemon timer set.
@@ -16,7 +16,7 @@
 // Single meterd process today → no two evaluators race on
 // ClaimAlertFire per rule. A future meterd-replica deploy relies on
 // the `alert_deliveries.idempotency_key` UNIQUE constraint as the
-// load-bearing dedupe (migrations/00062). Documented in ADR-045.
+// load-bearing dedupe (migrations/00062). Documented in ADR-45.
 //
 // pkg/webhookout.Dispatcher is concurrency-unsafe (see the type's
 // doc comment); the evaluator serialises calls via a sync.Mutex
@@ -112,6 +112,12 @@ type ActionExecutor interface {
 	Execute(ctx context.Context, rule state.AlertRule, observed float64, at time.Time) error
 }
 
+// ClaimedActionExecutor can address an action by its committed alert fire ID.
+// APID also sweeps this durable outbox when the callback never runs.
+type ClaimedActionExecutor interface {
+	ExecuteClaimed(context.Context, state.AlertRule, string, float64, time.Time) error
+}
+
 // Ops is the narrow counter surface the evaluator increments.
 // Defined here so the unit tests can pass a stub; the production
 // pkg/wire.OpsMetrics satisfies it.
@@ -203,7 +209,7 @@ type EvaluatorOptions struct {
 	Audit    *audit.Auditor
 	Identity func() *age.X25519Identity
 	// Identities is the rotation-overlap accessor (issue #316 /
-	// ADR-057): multi-identity slice from secretbox.LoadHostKeys(dir).
+	// ADR-57): multi-identity slice from secretbox.LoadHostKeys(dir).
 	// Pre-rotation: length 1 (just the current). During the 30-day
 	// overlap window: length 2 ([current, previous]). nil means
 	// "not wired" — the evaluator falls back to Identity for
@@ -502,7 +508,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// signature, and we never re-open a future-namespace blob.
 	//
 	// Prefer the rotation-aware identities slice (issue #316 /
-	// ADR-057) over the single identity accessor when both are
+	// ADR-57) over the single identity accessor when both are
 	// wired. The fallback to identity preserves the pre-rotation
 	// contract for callers that haven't migrated to LoadHostKeys.
 	if e.identity == nil && e.identities == nil {
@@ -591,7 +597,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// dispatcher in the future; today the lock is just
 	// precautionary.
 	e.dispatchMu.Lock()
-	e.runAction(ctx, rule, observed, now, stats)
+	e.runAction(ctx, rule, deliveryID, observed, now, stats)
 	e.dispatchMu.Unlock()
 }
 
@@ -604,7 +610,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 // relays the fire to the ActionExecutor which in turn talks to
 // apid via pkg/api.Client (or for the manual-recover path, via
 // the existing handlers_rollouts.go surface landed in commit 6).
-func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, observed float64, now time.Time, stats *Stats) {
+func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, fireID string, observed float64, now time.Time, stats *Stats) {
 	action := rule.Action
 	// Empty string and the explicit 'webhook' default are the
 	// legacy path — ActionExecutor is not consulted.
@@ -628,12 +634,10 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, observe
 	}
 	actionExec := e.getActionExec()
 	if actionExec == nil {
-		// ActionExec was never wired (older meterd or test
-		// harness that omits the surface — or the meterd is
-		// running without FAAS_SAFEDEPLOY_TOKEN). The webhook
-		// fan-out already succeeded above; this rule's
-		// side-effect simply doesn't happen.
-		e.log.Warn("alerts: action set but ActionExecutor not wired; side-effect skipped",
+		// Rollback fires already own an APID outbox entry. Skipping this
+		// callback cannot lose that action; other actions still need the
+		// in-process executor.
+		e.log.Warn("alerts: ActionExecutor not wired; in-process callback skipped",
 			"rule", rule.ID, "name", rule.Name, "action", action)
 		stats.ActionSkipped++
 		return
@@ -644,12 +648,18 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, observe
 		// connection-reset.
 		return
 	}
-	if err := actionExec.Execute(ctx, rule, observed, now); err != nil {
+	var actionErr error
+	if claimed, ok := actionExec.(ClaimedActionExecutor); ok {
+		actionErr = claimed.ExecuteClaimed(ctx, rule, fireID, observed, now)
+	} else {
+		actionErr = actionExec.Execute(ctx, rule, observed, now)
+	}
+	if actionErr != nil {
 		// Fail-soft: log warn + bump ActionFailed. The webhook
 		// path's result is already stamped on the delivery row;
 		// a rollback failure does not block the next tick.
 		e.log.Warn("alerts: action execute failed",
-			"rule", rule.ID, "name", rule.Name, "action", action, "err", err)
+			"rule", rule.ID, "name", rule.Name, "action", action, "err", actionErr)
 		stats.ActionFailed++
 		return
 	}
@@ -663,6 +673,7 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, observe
 		// the seed in migration 00477 already includes it.
 		e.audit.Emit(ctx, "alert.action_executed", &rule.AccountID, map[string]any{
 			"rule_id":  rule.ID,
+			"fire_id":  fireID,
 			"rule":     rule.Name,
 			"action":   action,
 			"observed": observed,

@@ -22,6 +22,7 @@ import type { LatestDeploymentsByAppResponse } from '../models/LatestDeployments
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
+import type { RollbackOperation } from '../models/RollbackOperation.js';
 import type { RollbackRequest } from '../models/RollbackRequest.js';
 import type { RolloutTransitionResponse } from '../models/RolloutTransitionResponse.js';
 import type { ScanResult } from '../models/ScanResult.js';
@@ -419,7 +420,7 @@ export class DeploymentsService {
   }
   /**
    * Create a deployment from a Git source-ref (headless).
-   * Headless deploy path (issue #739 / DEPLOY-PROV-4 / ADR-092).
+   * Headless deploy path (issue #739 / DEPLOY-PROV-4 / ADR-92).
    * Resolves the GitHub install bound to the caller's account,
    * fetches the (repo, ref) tarball via the githubd bridge, spools
    * it under the per-plan SourceTarballMaxMB cap, validates shape,
@@ -504,7 +505,7 @@ export class DeploymentsService {
    * fetch.
    *
    * Distinct from the source-ref path
-   * (`POST /v1/apps/{slug}/deployments/source-ref`, ADR-092) which
+   * (`POST /v1/apps/{slug}/deployments/source-ref`, ADR-92) which
    * resolves the GitHub install and pins the tarball to a 40-char
    * SHA. The source-ref handler is unchanged; this is a parallel
    * trust path for first-deploy customers without the GitHub App
@@ -602,13 +603,21 @@ export class DeploymentsService {
    *
    * With `target_deployment_id` in the body, rolls back to the
    * named deployment. The id must belong to this app and the row
-   * must have `status='superseded'`. Rolling back to the
+   * must be superseded or live with zero traffic. Rolling back to the
    * already-current live deployment is rejected (409
    * `rollback_target_already_live`). A target whose snapshot has
    * been garbage-collected is rejected (409
    * `rollback_target_snapshot_expired`).
+   * With both `target_deployment_id` and `expected_current_deployment_id`,
+   * starts an exact checked rollback. The expected deployment must still
+   * serve all traffic with no active rollout in this scope. A 202 response
+   * includes `rollback_operation`, confirming durable intent. Readiness,
+   * artifact and API contract checks precede a zero-traffic activation;
+   * fresh binding evidence is checked at the traffic transaction. Service
+   * completion also waits for the existing gateway ACK and drain handoff.
+   * Stored binding enforcement requires this exact workflow.
    *
-   * @returns DeploymentResponse The deployment that was created by rolling back to the previous version.
+   * @returns DeploymentResponse The selected deployment and, for an exact checked request, its accepted durable rollback operation. Acceptance does not imply completion.
    * @throws ApiError
    */
   public static rollbackApp({
@@ -652,6 +661,48 @@ export class DeploymentsService {
     });
   }
   /**
+   * Read an exact historical rollback operation.
+   * Read-only progress for a pinned deployment pair. Complete includes a committed routing audit; service completion also requires the matching handoff to finish. Blocked operations retry fresh evidence without choosing another deployment.
+   * @returns RollbackOperation Durable rollback progress.
+   * @throws ApiError
+   */
+  public static getRollbackOperation({
+    slug,
+    operation,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the accepted historical rollback operation.
+     */
+    operation: string,
+  }): CancelablePromise<RollbackOperation> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/rollbacks/{operation}',
+      path: {
+        'slug': slug,
+        'operation': operation,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * Operator manual rollout recovery (SAFE-RELEASES-R, issue
    * The operator escape hatch for a stuck canary rollout. Three
    * closed-set actions:
@@ -682,6 +733,23 @@ export class DeploymentsService {
    * so the operator's terminal can echo `audit_id=…`. Plan-tier
    * gated to Pro+ (Hobby / Free get 403
    * `plan_traffic_split_not_allowed`).
+   *
+   * For an exact canary abort, supply both `deployment_id` and
+   * `expected_predecessor_deployment_id`. The older predecessor must
+   * remain live and serving in the same app/scope. If its stored binding
+   * release policy enforces verification, recovery checks that exact
+   * recipient's fresh evidence and rechecks policy revisions and expiry
+   * inside the recovery transaction. Missing or changed evidence leaves
+   * traffic unchanged. Success restores the predecessor to 100 percent,
+   * aborts the selected canary, and includes an exact recovery receipt.
+   * For an exact service abort, the pinned predecessor may remain live
+   * at zero weight after cutover. The response is 202 with a
+   * `service_recovery` receipt confirming the durable request only.
+   * APID checks that recipient and ready service capacity before publishing
+   * routes; schedd then completes gateway acknowledgement and request drain.
+   * GET the exact deployment to observe `service_rollout_handoff` progress
+   * and bounded `bindings_check` blockers. Restarted workers resume the same
+   * request and never substitute a different predecessor.
    *
    * @returns RolloutTransitionResponse The post-recovery deployment + audit row id.
    * @throws ApiError
@@ -820,7 +888,7 @@ export class DeploymentsService {
   /**
    * Set the per-deployment cold-wake floor.
    * Update the deployment's min_instances (issue #557 closure /
-   * ADR-072). The only mutable field on a deployment post-create;
+   * ADR-72). The only mutable field on a deployment post-create;
    * image / digest / overrides / sidecars stay immutable (a new
    * deployment is the canonical way to change them). Pass
    * min_instances=0 to inherit from the parent app's floor.
@@ -1385,7 +1453,7 @@ export class DeploymentsService {
   /**
    * Get per-deploy grype scan.
    * Returns the per-deploy grype CVE scan payload (issue #464 /
-   * ADR-055). The scan runs on the per-app layer ext4 in imaged's
+   * ADR-55). The scan runs on the per-app layer ext4 in imaged's
    * deploy-complete path (after `SetDeploymentRootfs`, before the
    * pending→snapshotting transition) and lands on the
    * `deployments` row.
@@ -1685,7 +1753,7 @@ export class DeploymentsService {
    * on this page — server-emitted, round-tripped verbatim. The
    * id tiebreaker makes the keyset deterministic for queued
    * tails (started_at IS NULL) and for sub-second collisions
-   * on started_at. See ADR-091 §3.
+   * on started_at. See ADR-91 §3.
    *
    * BuildResponse.started_at (the per-row wire field) is
    * RFC3339 (whole-second) for backward compatibility with
@@ -1802,7 +1870,7 @@ export class DeploymentsService {
   }
   /**
    * Get build provenance.
-   * Returns the ADR-038 `build_provenance` row for a single build.
+   * Returns the ADR-38 `build_provenance` row for a single build.
    * Each successful build produces exactly one provenance row
    * (builderd's populator runs at the `markSucceeded` sites); the
    * row is the customer-visible "what ran?" record: buildkit /

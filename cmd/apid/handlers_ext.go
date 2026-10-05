@@ -92,7 +92,7 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 // Plan tier: only Pro/Scale may set MinInstances > 0 (403).
 // Bounds: must be in [0, MaxConcurrency] (422).
 //
-// ADR-031 (tier-2 of the network roadmap): the egress allowlist is
+// ADR-31 (tier-2 of the network roadmap): the egress allowlist is
 // the second tier-locked knob. Same gate shape — only Pro/Scale may
 // patch it (403 plan_egress_allowlist_not_allowed). Distinct
 // failure modes warrant distinct codes so the CLI can branch:
@@ -170,7 +170,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if *req.MinInstances < 0 || *req.MinInstances > limits.MaxConcurrency {
 			return api.ErrInvalidMinInstances(*req.MinInstances, limits.MaxConcurrency)
 		}
-		// ADR-071 §Decision 5: per-plan MaxMinInstances cap
+		// ADR-71 §Decision 5: per-plan MaxMinInstances cap
 		// (Hobby 1, Pro 3, Scale 10). Tighter than MaxConcurrency
 		// to protect the §6.2-2 RAM ceiling from a single API
 		// call pinning a large fraction of the box.
@@ -178,7 +178,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.ErrMaxMinInstancesExceeded(*req.MinInstances, acct.Plan.MaxMinInstances())
 		}
 	}
-	// Issue #1056 / ADR-074: customer-facing paused warm-pool size.
+	// Issue #1056 / ADR-74: customer-facing paused warm-pool size.
 	// Plan gate runs before shape validation for non-zero values so Free
 	// customers receive the feature-gate response. The bound uses the
 	// post-PATCH max_concurrency when both knobs are changed together.
@@ -215,7 +215,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if !acct.Plan.EgressAllowlistAllowed() {
 			return api.ErrPlanEgressAllowlistNotAllowed(acct.Plan)
 		}
-		// Issue #679 / PR-B / ADR-082: per-account additive
+		// Issue #679 / PR-B / ADR-82: per-account additive
 		// budget widens the effective cap for THIS account only.
 		// 0 (the default) = plan cap alone, preserves pre-PR-B
 		// behaviour. The ceiling is enforced at the admin
@@ -227,7 +227,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.ErrEgressAllowlistTooLong(len(*req.EgressAllowlist), maxSize)
 		}
 		// Per-entry shape: every CIDR must ParsePrefix as either v4
-		// or v6 (ADR-032 — the v6 mirror), with a non-zero mask. The
+		// or v6 (ADR-32 — the v6 mirror), with a non-zero mask. The
 		// Postgres cidr[] TRIGGER `apps_egress_allowlist_cidr`
 		// (migration 00033) rejects families outside {4,6} and any
 		// /0 at write time — catching it here just gives a more
@@ -236,7 +236,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		// future /0 rejection in either layer cannot quietly
 		// disagree.
 		//
-		// PR-C (ADR-031+032 follow-up): beyond the bare shape check,
+		// PR-C (ADR-31+032 follow-up): beyond the bare shape check,
 		// this loop now also (a) rewrites the v4-mapped v6 form
 		// (RFC 4291 §2.5.5.2 — `::ffff:0:0/96` block) to its v4
 		// form so the persisted row never carries a "::ffff:"
@@ -355,7 +355,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				fmt.Sprintf("autoscale_target_cpu_pct must be 0 (disable) or in [1, 100]; got %d", *req.AutoscaleTargetCPUPct))
 		}
 	}
-	// Issue #471 / ADR-047: per-app streaming flag. The plan gate
+	// Issue #471 / ADR-47: per-app streaming flag. The plan gate
 	// runs after the bounds checks above so a Free customer
 	// PATCHing true receives a 403 plan_streaming_not_allowed
 	// (the action is forbidden for this account), not a 422
@@ -371,7 +371,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				"Free tier does not support per-app streaming; upgrade to Hobby or higher.")
 		}
 	}
-	// Issue #676 / ADR-080: per-app raw-bytes Upgrade bridge flag.
+	// Issue #676 / ADR-80: per-app raw-bytes Upgrade bridge flag.
 	// Same plan-gate shape as streaming — Free + true = 403
 	// plan_websocket_not_allowed. Free is the abuse-floor tier where
 	// a single long-lived WS would pin a wake past wake_idle_timeout,
@@ -387,7 +387,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				"Free tier does not support per-app WebSocket; upgrade to Hobby or higher.")
 		}
 	}
-	// ADR-093: per-route observability opt-in. Same plan-gate
+	// ADR-93: per-route observability opt-in. Same plan-gate
 	// shape as WebSocket above — Free + true = 403
 	// plan_route_metrics_not_allowed. The per-app route cap (50)
 	// + __route_other__ overflow bounds the cardinality regardless
@@ -435,7 +435,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			}
 		}
 	}
-	// Issue #470 / ADR-055: per-app two-tier-snapshot flag. Same
+	// Issue #470 / ADR-55: per-app two-tier-snapshot flag. Same
 	// plan-gate shape as streaming — Free/Hobby + true = 403
 	// plan_warm_snapshot_not_allowed. Out-of-range thresholds =
 	// 422 invalid_warm_snapshot_min_* (the SQL CHECK rejects the
@@ -597,7 +597,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			}
 		}
 	}
-	// Issue #477 / ADR-079 + ADR-118: per-app public_auth
+	// Issue #477 / ADR-79 + ADR-118: per-app public_auth
 	// (open|bearer|basic|ip_allowlist). Plan-gated upstream:
 	// apid returns 403 plan_public_auth_{bearer,basic,
 	//ip_allowlist}_not_allowed when the customer's plan
@@ -607,7 +607,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 	// secretbox seal + per-app unseal and is Pro+;
 	// ip_allowlist is a per-app CIDR list (mirrors egress
 	// schema) and is also Pro+ — Hobby/Free use edge rules
-	// (kind='ip') for the abuse-floor posture (ADR-091).
+	// (kind='ip') for the abuse-floor posture (ADR-91).
 	// 'open' is always allowed (the pre-#477 default).
 	// Validation runs FIRST (closed-enum + length bounds)
 	// so a Free customer who tries PATCH mode='weird' gets
@@ -700,7 +700,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			}
 		}
 	}
-	// Issue #462 / ADR-058: per-app scaling policy (PR-A persists
+	// Issue #462 / ADR-58: per-app scaling policy (PR-A persists
 	// + Hobby+ tier-up; PR-C wires the engine; PR-D carves out the
 	// worker-class branch). The DTO uses value semantics so the
 	// wire form allows `{}` (zero-value policy = "scale to zero,
@@ -802,7 +802,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if sp.MinInstances < 0 || reachableMin > limits.MaxConcurrency {
 			return api.ErrInvalidMinInstances(reachableMin, limits.MaxConcurrency)
 		}
-		// ADR-071 §Decision 5: per-plan MaxMinInstances cap
+		// ADR-71 §Decision 5: per-plan MaxMinInstances cap
 		// (Hobby 1, Pro 3, Scale 10). Tighter than MaxConcurrency
 		// to protect the §6.2-2 RAM ceiling from a single API
 		// call pinning a large fraction of the box.
@@ -862,7 +862,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return err
 		}
 	}
-	// Issue #472 / ADR-054: per-app cosign signature-enforcement flag
+	// Issue #472 / ADR-54: per-app cosign signature-enforcement flag
 	// is NOT settable via the customer PATCH surface — the operator
 	// controls it through PATCH /v1/apps/{slug}/security
 	// (handlers_security.go) which mounts with the admin+MFA chain.
@@ -1017,7 +1017,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
-	// Issue #462 / ADR-058 / PR-D carve-out (worker-class vs
+	// Issue #462 / ADR-58 / PR-D carve-out (worker-class vs
 	// `target.metric = concurrent_requests`) lives inside
 	// validateUpdateApp below, where it runs AFTER the unknown-
 	// fields check so a malformed wire body surfaces the wire-shape
@@ -1047,7 +1047,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			return
 		}
 	}
-	// Tier A10 / ADR-088: per-app overflow_node preference.
+	// Tier A10 / ADR-88: per-app overflow_node preference.
 	// Resolve the wire name → UUID server-side before the
 	// store call so the column carries the resolved UUID
 	// (the column-shape integrity contract — uuid NULL, not
@@ -1064,7 +1064,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// SetMinInstances: nil pointer means "don't touch"; non-nil
 	// (even pointing at 0) means "explicit set" → scale to zero.
 	//
-	// ADR-031: EgressAllowlist follows the same convention — nil
+	// ADR-31: EgressAllowlist follows the same convention — nil
 	// pointer = "don't touch the column", non-nil = "atomic
 	// full-overwrite of the list" (including the empty slice, which
 	// clears the allowlist back to chain-default-accept). Validation
@@ -1113,7 +1113,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 	}
 
-	// Issue #477 / ADR-079: seal the basic-auth creds (if
+	// Issue #477 / ADR-79: seal the basic-auth creds (if
 	// the operator PATCHed mode='basic'). The seal happens
 	// here, BEFORE the UpdateAppParams construction, so
 	// the on-wire UpdateAppParams.PublicAuth.BasicSealed
@@ -1249,19 +1249,19 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		SetAutoscaleTargetRPS:    req.AutoscaleTargetRPS != nil,
 		AutoscaleTargetCPUPct:    req.AutoscaleTargetCPUPct,
 		SetAutoscaleTargetCPUPct: req.AutoscaleTargetCPUPct != nil,
-		// Issue #471 / ADR-047: per-app streaming flag. Set bit
+		// Issue #471 / ADR-47: per-app streaming flag. Set bit
 		// distinguishes "unset" from "explicit false" (opt out of
 		// streaming). Apid validation already gated the plan; the
 		// store is a plain column write.
 		StreamingEnabled:    req.StreamingEnabled,
 		SetStreamingEnabled: req.StreamingEnabled != nil,
-		// Issue #676 / ADR-080: per-app raw-bytes Upgrade bridge
+		// Issue #676 / ADR-80: per-app raw-bytes Upgrade bridge
 		// flag. The setter bit distinguishes "unset" from "explicit
 		// false" (opt out of websocket). Apid validation already
 		// gated the plan; the store is a plain column write.
 		WebSocketEnabled:    req.WebSocketEnabled,
 		SetWebSocketEnabled: req.WebSocketEnabled != nil,
-		// ADR-093: per-route observability opt-in. Same Set-bit
+		// ADR-93: per-route observability opt-in. Same Set-bit
 		// convention as WebSocketEnabled above; apid validation
 		// already gated the plan (CodePlanRouteMetricsNotAllowed
 		// for Free customers PATCHing true), so the store is a
@@ -1288,7 +1288,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// value is authoritative.
 		AppProtocol:    req.AppProtocol,
 		SetAppProtocol: req.AppProtocol != nil,
-		// ADR-091 amendment / §4.1.2.0: coarse-gate per-app
+		// ADR-91 amendment / §4.1.2.0: coarse-gate per-app
 		// maintenance flag (apps.maintenance_mode). Same Set-bit
 		// convention as RouteMetricsEnabled above — nil pointer
 		// means "don't touch the column"; non-nil pointer writes
@@ -1302,7 +1302,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// stale MaintenanceMode before the next request lands.
 		MaintenanceMode:    req.MaintenanceMode,
 		SetMaintenanceMode: req.MaintenanceMode != nil,
-		// Issue #462 / ADR-058: per-app scaling policy. The
+		// Issue #462 / ADR-58: per-app scaling policy. The
 		// setter bit on UpdateAppParams distinguishes "don't
 		// touch" (nil pointer) from "explicit zero policy"
 		// (non-nil with all-zero fields = "scale to zero"). The
@@ -1314,7 +1314,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		SetScalingPolicy: req.ScalingPolicy != nil,
 		RetryPolicyJSON:  retryPolicyPtr,
 		SetRetryPolicy:   req.RetryPolicy != nil,
-		// Issue #472 / ADR-054: per-app cosign signature-enforcement
+		// Issue #472 / ADR-54: per-app cosign signature-enforcement
 		// flag is NOT settable via the customer PATCH surface.
 		// Operators control it through PATCH /v1/apps/{slug}/security
 		// (handlers_security.go), which mounts with the admin+MFA
@@ -1324,7 +1324,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// imaged reads the column at buildImageLayer time regardless
 		// of how it got set.
 		//
-		// Issue #470 / ADR-055: per-app warm-snapshot knobs ARE
+		// Issue #470 / ADR-55: per-app warm-snapshot knobs ARE
 		// settable via the customer PATCH surface. The plan gate
 		// (Free/Hobby + true → 403 plan_warm_snapshot_not_allowed)
 		// is enforced inside this handler before the store call so
@@ -1361,7 +1361,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		SetConsumerAuthMode:       req.ConsumerAuthMode != nil,
 		PlatformTenantRequired:    req.PlatformTenantRequired,
 		SetPlatformTenantRequired: req.PlatformTenantRequired != nil,
-		// Issue #477 / ADR-079: per-app public_auth
+		// Issue #477 / ADR-79: per-app public_auth
 		// (open|bearer|basic). Set bit distinguishes "unset"
 		// (don't touch) from explicit mode flip. The sealed
 		// blob is always ciphertext (the seal ran above for
@@ -1390,7 +1390,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// operator PATCHed a non-ip_allowlist mode.
 		PublicAuthIPAllowlist:    &publicAuthIPAllowlist,
 		SetPublicAuthIPAllowlist: req.PublicAuth != nil && req.PublicAuth.Mode == api.AppPublicAuthModeIPAllowlist,
-		// Issue #695 / ADR-080: grand-father clear path. Set
+		// Issue #695 / ADR-80: grand-father clear path. Set
 		// whenever the customer made a deliberate choice on
 		// require_authn OR public_auth — that's the signal
 		// the dashboard banner looks for. A no-touch PATCH
@@ -1399,7 +1399,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// re-rendering. New post-flip apps (column NULL on
 		// create) are unaffected by the SET.
 		ClearAuthDefaultFlippedAt: req.RequireAuthn != nil || req.PublicAuth != nil,
-		// Tier A10 / ADR-088: per-app overflow_node preference.
+		// Tier A10 / ADR-88: per-app overflow_node preference.
 		// `req.OverflowNode != nil` distinguishes "don't touch
 		// the column" (nil pointer) from "explicit clear or
 		// explicit set" (non-nil pointer; "" means clear,
@@ -1546,14 +1546,14 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		newApp["autoscale_target_cpu_pct"] = updated.AutoscaleTargetCPUPct
 	}
 	if req.StreamingEnabled != nil {
-		// Issue #471 / ADR-047: record what the customer altered on
+		// Issue #471 / ADR-47: record what the customer altered on
 		// the streaming flag. Same shape as the autoscale entries
 		// above — only fields the caller touched appear in the audit.
 		oldApp["streaming_enabled"] = app.StreamingEnabled
 		newApp["streaming_enabled"] = updated.StreamingEnabled
 	}
 	if req.WebSocketEnabled != nil {
-		// Issue #676 / ADR-080: record what the customer altered on
+		// Issue #676 / ADR-80: record what the customer altered on
 		// the websocket flag. Same shape as the streaming block
 		// above — only fields the caller touched appear in the
 		// audit. The plan gate already validated this is a legal
@@ -1566,7 +1566,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// path for the toggle lives on PATCH /v1/apps/{slug}/security
 	// (handlers_security.go) where the admin+MFA chain guarantees
 	// the operator-only posture.
-	// Issue #470 / ADR-055: warm-snapshot toggles + threshold
+	// Issue #470 / ADR-55: warm-snapshot toggles + threshold
 	// overrides are recorded alongside the other app.updated
 	// entries. The Set bit drives "what did the customer actually
 	// change" — a `false` here means the audit row is unchanged
@@ -1603,7 +1603,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// (app.authn_disabled) below handles the true → false
 	// transition as a single-purpose greppable signal, same
 	// shape as app.warm_snapshot_disabled (PR #525 /
-	// ADR-074).
+	// ADR-74).
 	if req.RequireAuthn != nil {
 		oldApp["require_authn"] = app.RequireAuthn
 		newApp["require_authn"] = updated.RequireAuthn
@@ -1619,7 +1619,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		oldApp["platform_tenant_required"] = app.PlatformTenantRequired
 		newApp["platform_tenant_required"] = updated.PlatformTenantRequired
 	}
-	// Issue #477 / ADR-079: record the public_auth mode
+	// Issue #477 / ADR-79: record the public_auth mode
 	// flip. Only the mode (not the credentials) is mirrored
 	// to the audit row — `has_basic_creds: bool` would
 	// double up the second-event row below, so the
@@ -1682,7 +1682,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if configActivityOutboxID > 0 {
 		s.deliverOrgActivityOutbox(r.Context(), configActivityOutboxID)
 	}
-	// Issue #470 / PR C / ADR-074: emit a second audit row when the
+	// Issue #470 / PR C / ADR-74: emit a second audit row when the
 	// warm-snapshot opt-in flips true → false. The app.updated
 	// row already carries the old/new snapshot of warm_snapshot_
 	// enabled; this row is a single-purpose, single-keyword-
@@ -1716,7 +1716,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"new":    updated.EvictionPriority,
 		})
 	}
-	// Issue #1056 / ADR-074: emit a focused audit row when the desired
+	// Issue #1056 / ADR-74: emit a focused audit row when the desired
 	// paused warm-pool size changes. The app.updated event retains the
 	// complete before/after snapshot; this row makes operational searches
 	// and billing investigations cheap without recording request data.
@@ -1755,7 +1755,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"new":    false,
 		})
 	}
-	// Issue #477 / ADR-079 + ADR-118: emit app.public_auth_changed on
+	// Issue #477 / ADR-79 + ADR-118: emit app.public_auth_changed on
 	// mode transitions. Same single-purpose, single-keyword-greppable
 	// shape as app.eviction_priority_changed above so operators
 	// can `gregale audit-events --kind-prefix public_auth` and
@@ -1764,7 +1764,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// target state (no-op transition) or when the operator left
 	// it unset (no intent to flip).
 	//
-	// Redaction posture (load-bearing — see ADR-079 §Decision
+	// Redaction posture (load-bearing — see ADR-79 §Decision
 	// "re-redaction invariant"): the payload carries mode only
 	// (open|bearer|basic|ip_allowlist) and a `has_basic_creds`
 	// bool flag. Plaintext username / password / sealed blob are
@@ -1885,7 +1885,7 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	_ = s.notif.Notify(r.Context(), db.NotifyAppDelete,
 		fmt.Sprintf(`{"slug":"%s","app_id":"%s"}`, app.Slug, app.ID))
 	s.log.Info("app deleted", "app", app.ID, "slug", app.Slug, "account", acct.ID)
-	// IAM-4 (issue #291): record the soft delete. ADR-035 lists
+	// IAM-4 (issue #291): record the soft delete. ADR-35 lists
 	// `account.deletion_scheduled` / `account.deletion_restored`
 	// for account-level churn; this is the per-app counterpart
 	// (spec §9: row goes to AppDeleted, snapshot GC follows on
@@ -1963,7 +1963,7 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 	writeJSON(w, http.StatusOK, s.deploymentResponseWithBuild(r.Context(), d, app))
 }
 
-// updateDeploymentMinInstances (issue #557 closure / ADR-074) is the
+// updateDeploymentMinInstances (issue #557 closure / ADR-74) is the
 // PATCH /v1/deployments/{id} handler. The only mutable field on a
 // deployment post-create is the cold-wake floor (min_instances);
 // image / digest / overrides / sidecars stay immutable (a new
@@ -1975,7 +1975,7 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 //   - 403 on a Free account — Free plans cannot set the per-deployment
 //     min_instances floor. Plan tier first (same as the per-app gate
 //     at validateUpdateApp) so a Free customer sees the plan error
-//     rather than the value error. Pre-#557 / ADR-072 this branch
+//     rather than the value error. Pre-#557 / ADR-72 this branch
 //     was missing: Free plans masked the bug accidentally because
 //     `MaxMinInstances == 0` made `v > planMax` always true, but the
 //     wrong error code (422 ErrMaxMinInstancesExceeded, "value") was
@@ -1989,7 +1989,7 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 //   - 400 on a malformed body.
 //
 // Audit: emits a deployment.min_instances_changed row via the
-// existing auditor (kind list frozen by ADR-074 §Decision 6).
+// existing auditor (kind list frozen by ADR-74 §Decision 6).
 func (s *server) updateDeploymentMinInstances(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
 	d, err := s.store.DeploymentByID(r.Context(), id)
@@ -2013,7 +2013,7 @@ func (s *server) updateDeploymentMinInstances(w http.ResponseWriter, r *http.Req
 			"min_instances must be present (use 0 to inherit from the parent app)"))
 		return
 	}
-	// Plan tier gate (issue #557 / ADR-072). Must run BEFORE the
+	// Plan tier gate (issue #557 / ADR-72). Must run BEFORE the
 	// bounds check so a Free account PATCHing min_instances=1 sees
 	// the 403 plan_min_instances_not_allowed rather than the 422
 	// max_min_instances_exceeded (the value is legal; the plan is
@@ -2046,7 +2046,7 @@ func (s *server) updateDeploymentMinInstances(w http.ResponseWriter, r *http.Req
 			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
-	// Audit emit (issue #557 / ADR-072 §Decision 6). The kind
+	// Audit emit (issue #557 / ADR-72 §Decision 6). The kind
 	// name is the same one the doc comment promised at the top of
 	// this function; pre-#557 the emit was a doc-only contract
 	// and no row was ever written. Operators correlate the bill
@@ -2154,10 +2154,19 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 	}
 	prev := d.TrafficPercent
 	var updated state.Deployment
-	if req.ExpectedServingDeploymentID != nil {
-		updated, err = s.store.UpdateDeploymentTraffic(r.Context(), id, req.TrafficPercent, *req.ExpectedServingDeploymentID)
-	} else {
-		updated, err = s.store.UpdateDeploymentTraffic(r.Context(), id, req.TrafficPercent)
+	var gateProblem *api.Problem
+	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
+		var writeErr error
+		if req.ExpectedServingDeploymentID != nil {
+			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent, *req.ExpectedServingDeploymentID)
+		} else {
+			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent)
+		}
+		return writeErr
+	})
+	if gateProblem != nil {
+		api.WriteProblem(w, gateProblem)
+		return
 	}
 	if err != nil {
 		switch {
@@ -2256,6 +2265,15 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 			return
 		}
 	}
+	if req.ExpectedCurrentDeploymentID != nil {
+		s.startCheckedRollback(w, r, acct, app, req)
+		return
+	}
+	if req.Reason != "" {
+		api.WriteProblem(w, bindingPromotionValidation("reason requires an exact checked rollback"))
+		return
+	}
+
 	target, problem := s.rollbackAppCore(r, acct, app, req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -2320,6 +2338,16 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 			return state.Deployment{}, api.ErrNoRollbackTarget()
 		}
 	}
+	if policies, ok := s.store.(state.BindingReleasePolicyStore); ok {
+		policy, err := policies.GetBindingReleasePolicy(ctx, acct.ID, app.ID, target.Scope)
+		if err != nil {
+			return state.Deployment{}, api.ErrCapacity("could not read rollback release policy")
+		}
+		if policy.Mode == "enforce" {
+			return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeBindingReleaseRequired, "Exact rollback required", "Use target_deployment_id and expected_current_deployment_id to start a checked historical rollback.")
+		}
+	}
+
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
 		return state.Deployment{}, problem
 	}
@@ -3957,7 +3985,7 @@ func (s *server) deleteCron(w http.ResponseWriter, r *http.Request, acct state.A
 	_ = s.notif.Notify(r.Context(), db.NotifyCronChanged, `{"kind":"deleted","cron":"`+id+`"}`)
 	// IAM-4 (issue #291): record the cron removal so a teammate
 	// removing a customer's alarm is observable in the audit feed.
-	// Symmetric to cron.created; ADR-035's `key.*` / `secret.*`
+	// Symmetric to cron.created; ADR-35's `key.*` / `secret.*`
 	// already pair .created with .deleted, so this closes the
 	// surface for the cron family.
 	s.audit.Emit(r.Context(), "cron.deleted", &acct.ID, map[string]any{
@@ -3967,7 +3995,7 @@ func (s *server) deleteCron(w http.ResponseWriter, r *http.Request, acct state.A
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// getCron reads a single cron by id (issue #791 PR-E / ADR-090 closure).
+// getCron reads a single cron by id (issue #791 PR-E / ADR-90 closure).
 //
 // GET /v1/crons/{id}. Same IDOR-safe two-step as updateCron/deleteCron:
 // resolve the cron, then resolve its app and compare account ids. Both
@@ -4241,7 +4269,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"created","account":"`+acct.ID+`"}`)
 	s.log.Info("key created", "key", k.ID, "account", acct.ID)
-	// IAM-4 (ADR-035): record the key mint. subject = account_id (the
+	// IAM-4 (ADR-35): record the key mint. subject = account_id (the
 	// owner); data.scopes is the per-key permission set so the
 	// audit row can answer "who minted which scopes today?".
 	//
@@ -4362,7 +4390,7 @@ func (s *server) revokeAPIKey(r *http.Request, acct state.Account, id string) (s
 		return state.APIKey{}, err
 	}
 	_ = s.notif.Notify(ctx, db.NotifyKeyChanged, `{"kind":"revoked","account":"`+acct.ID+`"}`)
-	// IAM-4 + IAM-1 (ADR-034 rev2 / ADR-035): record the key
+	// IAM-4 + IAM-1 (ADR-34 rev2 / ADR-35): record the key
 	// revocation carrying the dismissed scopes so an operator can
 	// answer "what did this key allow before it died?" without
 	// re-deriving it from logs. The `reason` field is "manual"
@@ -4572,7 +4600,7 @@ func (s *server) getUsage(w http.ResponseWriter, r *http.Request, acct state.Acc
 			// when no CPU has been recorded yet (boot, or the
 			// app has not been woken). Not billed.
 			CPUUsageUsec: u.CPUUsec,
-			// ADR-046 (step 10): per-app monthly egress
+			// ADR-46 (step 10): per-app monthly egress
 			// bytes — informational only, not billed.
 			// The two columns are sourced independently
 			// (TXBytes = gateway response bytes via
@@ -4583,7 +4611,7 @@ func (s *server) getUsage(w http.ResponseWriter, r *http.Request, acct state.Acc
 			// PR-2; both fields are 0 until then.
 			TXBytes:    u.TXBytes,
 			NetTxBytes: u.NetTxBytes,
-			// ADR-048: ingress + cold-boot transition
+			// ADR-48: ingress + cold-boot transition
 			// count. Informational only — not billed.
 			// Wire regen (PR-A commit #2 follow-up)
 			// gates the live data path; today both stay
@@ -4765,7 +4793,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 	// future relax of plan.Valid() cannot smuggle CR/LF into the audit
 	// line.
 	s.log.Info("plan changed", "account", acct.ID, "plan", logsanitize.Field(string(plan)))
-	// IAM-4 (ADR-035): record the plan transition. data carries
+	// IAM-4 (ADR-35): record the plan transition. data carries
 	// the pre-change plan (acct.Plan) and post-change plan so the
 	// audit row is self-describing — no need to walk the gdpr ledger
 	// to find the prior state.
@@ -5573,7 +5601,7 @@ func (s *server) lookupAccountByStripeID(ctx context.Context, stripeID string) (
 
 // lookupAccountByPaddleID is the Paddle counterpart to
 // lookupAccountByStripeID. The accounts.provider_customer_id column is
-// reused (ADR-025 — column rename is a separate migration PR), so the
+// reused (ADR-25 — column rename is a separate migration PR), so the
 // underlying store method is a 1-line pass-through; the dedicated
 // helper name keeps the Paddle call sites self-documenting.
 func (s *server) lookupAccountByPaddleID(ctx context.Context, paddleID string) (state.Account, error) {
@@ -5583,7 +5611,7 @@ func (s *server) lookupAccountByPaddleID(ctx context.Context, paddleID string) (
 // --- response helpers ------------------------------------------------------
 
 func (s *server) deploymentResponse(d state.Deployment, app state.App) api.DeploymentResponse {
-	// Issue #460 / ADR-053: echo the override_* columns on the
+	// Issue #460 / ADR-53: echo the override_* columns on the
 	// response. Env values are NEVER echoed (override_env_keys
 	// carries only the key set). Env-secret refs ARE echoed
 	// verbatim because "secret:NAME" is non-secret by design — the
@@ -5626,7 +5654,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		// tx). For the single-live-deployment case (the most common
 		// shape today), Σ = 100 is trivially this one field.
 		TrafficPercent: d.TrafficPercent,
-		// ADR-091 / PR-D: per-deployment env scope echo. Always
+		// ADR-91 / PR-D: per-deployment env scope echo. Always
 		// written — even when scope == "default" — so dashboards
 		// can branch on the literal value rather than treating
 		// absent == "default" (the migration backfills the
@@ -5672,6 +5700,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 	if d.ServiceRolloutHandoff.Action != "" {
 		h := d.ServiceRolloutHandoff
 		resp.ServiceRolloutHandoff = &api.ServiceRolloutHandoffResponse{
+			BindingsCheck:           h.BindingsCheck,
 			Action:                  h.Action,
 			Phase:                   h.Phase,
 			PredecessorDeploymentID: h.PredecessorDeploymentID,
@@ -5696,7 +5725,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 	}
 	if len(d.OverrideEnv) > 0 {
 		// Decode the jsonb map to surface the KEYS only. Values are
-		// never echoed (ADR-053 §Decision 4). Stable order: sorted
+		// never echoed (ADR-53 §Decision 4). Stable order: sorted
 		// alphabetically so two deploys with the same key set hash
 		// to the same JSON body.
 		var env map[string]string
@@ -5744,7 +5773,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 			resp.OverrideMainDependsOn = dependencies
 		}
 	}
-	// Liveness probe override (issue #554 / ADR-078). The
+	// Liveness probe override (issue #554 / ADR-78). The
 	// per-deployment override; cmd/vmmd's liveness_recv goroutine
 	// picks this up at every BringUp via the resolved struct
 	// (cmd/vmmd/liveness_recv.go::livenessProbeConfig).
@@ -5754,7 +5783,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 			resp.OverrideLivenessProbe = &lp
 		}
 	}
-	// Per-deploy grype scan (issue #464 / ADR-075 / PR-3).
+	// Per-deploy grype scan (issue #464 / ADR-75 / PR-3).
 	// Populate DeploymentResponse.Scan from the typed payload
 	// written by imaged's deploy-complete hook (PR-3 commit 2).
 	// The handler-side conversion from the on-disk jsonb shape
@@ -5786,7 +5815,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 	// on the absence. A present-but-clean row has
 	// SecretScan != nil with Findings = [].
 	resp.SecretScan = s.secretScanResponse(d)
-	// Issue #554 / ADR-079 follow-up (AC #3 wire): surface the
+	// Issue #554 / ADR-79 follow-up (AC #3 wire): surface the
 	// per-deployment parked_reason + parked_at columns from
 	// migration 00157. omitempty on the DTO handles the "never
 	// parked" branch — the field is absent on the wire for the
@@ -5876,7 +5905,7 @@ func buildPlanFramework(framework string) string {
 }
 
 // buildProvenanceResponse renders a state.BuildProvenance as the
-// public DTO (ADR-038). Field-by-field mirror; timestamps render
+// public DTO (ADR-38). Field-by-field mirror; timestamps render
 // as RFC3339 UTC strings. Empty strings (cache-hit builds today;
 // pre-Phase-3 builds once Phase 3 ships) pass through as-is so the
 // customer can branch on <field> != "".
@@ -5901,7 +5930,7 @@ func (s *server) buildProvenanceResponse(p state.BuildProvenance) api.BuildProve
 }
 
 // buildResponse projects a state.Build into the wire BuildResponse
-// (DEPLOY-PROV-6 / ADR-089, issue #741). state.Build is the
+// (DEPLOY-PROV-6 / ADR-89, issue #741). state.Build is the
 // in-memory shape (string IDs, plain time.Time) — the sqlc
 // pgtype.Timestamptz values are translated to time.Time by the
 // store layer. We treat the zero time as "unset" (queued builds
@@ -5949,7 +5978,7 @@ func (s *server) buildResponse(b state.Build) api.BuildResponse {
 
 // instanceResponse projects a state.Instance into the wire
 // InstanceResponse. The minInstancesTarget parameter carries the
-// parent app's effective min_instances (issue #557 / ADR-071) so
+// parent app's effective min_instances (issue #557 / ADR-71) so
 // dashboards can verify the proactive floor is being met on a
 // per-instance basis. Zero is omitted via the JSON `omitempty`
 // contract — customers who never opted in see no field.
@@ -6169,7 +6198,7 @@ func formatBuildCursorNano(b state.Build, id string) string {
 
 // listBuilds serves GET /v1/builds — every build the account owns,
 // in started_at desc nulls last order (DEPLOY-PROV-6 follow-up /
-// ADR-091, issue #741 close-out). Optional ?app=<slug> narrows
+// ADR-91, issue #741 close-out). Optional ?app=<slug> narrows
 // to one app; optional ?status=<s> filters to the 4-value status
 // enum. Cursor pagination via ?before=<opaque tuple cursor>;
 // limit defaults to 50, capped at 200.
@@ -6184,10 +6213,10 @@ func formatBuildCursorNano(b state.Build, id string) string {
 // succeeded|failed (bad values → 400 CodeValidation). Cursor must
 // parse as RFC3339Nano with RFC3339 fallback (bad → 400).
 //
-// Per ADR-089 §6 the route uses authLimited(requireScope(...))
+// Per ADR-89 §6 the route uses authLimited(requireScope(...))
 // WITHOUT requireMFA — same shape as GET /v1/builds/{id} (this
 // is intentional; GET /v1/deployments does use requireMFA but
-// the builds family does not — see ADR-089 §6). The route mount
+// the builds family does not — see ADR-89 §6). The route mount
 // in cmd/apid/server.go calls this out.
 func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	limit := 50
@@ -6209,7 +6238,7 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 		// (b) wire RFC3339 truncates sub-second DB precision so
 		// rows whose sub-second started_at falls in the cursor's
 		// wall-clock second were silently dropped past page 1.
-		// The id tiebreaker solves both — see ADR-091 §3 + the
+		// The id tiebreaker solves both — see ADR-91 §3 + the
 		// code-review follow-up.
 		t, id, ok := parseBuildCursor(v)
 		if !ok {
@@ -6262,7 +6291,7 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 		// `(b.started_at = $4 AND b.id < $5)` is reachable on
 		// rows whose sub-second started_at falls between the
 		// cursor's nanosecond and the next whole second (this
-		// was code-review Finding 2 — see ADR-091 §3).
+		// was code-review Finding 2 — see ADR-91 §3).
 		//
 		// The cursor segment is opaque to clients per the
 		// `before` query-parameter docstring; only the SDK
@@ -6271,7 +6300,7 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 		// the wire response (BuildResponse.StartedAt is
 		// unchanged at whole-second RFC3339).
 		//
-		// Caveat (intentional, documented in ADR-091): when
+		// Caveat (intentional, documented in ADR-91): when
 		// the page exactly fills to the last row in the
 		// dataset, the next-page request returns 0 rows but the
 		// client has already received a cursor. Clients should
@@ -6394,7 +6423,7 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 		EgressOverageGB:       egressOverage,
 		EgressMillicentsPerGB: egressPrice,
 		Executions:            executionUsage,
-		// ADR-048: ingress Σ + cold-boot Σ across every
+		// ADR-48: ingress Σ + cold-boot Σ across every
 		// app on this account for the month. Both
 		// informational, not billed.
 		UsedIngressGB: float64(netRxBytes) / (1024 * 1024 * 1024),
@@ -6542,9 +6571,9 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 
 // usageDaily serves GET /v1/usage/daily?day=YYYY-MM-DD — the
 // per-app rollup row the meterd rollup loop has populated into
-// usage_daily (ADR-048 §5, migration 00067). Distinct from
+// usage_daily (ADR-48 §5, migration 00067). Distinct from
 // usageSummary's per-month SUM: this is a single-day read for the
-// dashboard hot path. All numeric fields are informational per ADR-048.
+// dashboard hot path. All numeric fields are informational per ADR-48.
 //
 // day is required; without it we 400 to keep the dashboard
 // unambiguously anchored. A future ?month= query can layer on
@@ -6586,7 +6615,7 @@ func (s *server) usageDaily(w http.ResponseWriter, r *http.Request, acct state.A
 }
 
 // usageStorage serves GET /v1/usage/storage?day=YYYY-MM-DD — the
-// per-(app, day) snapshot+layer byte rollup (ADR-049 §B.3,
+// per-(app, day) snapshot+layer byte rollup (ADR-49 §B.3,
 // migration 00070). Distinct from /v1/usage which reports billable
 // compute; this route reports storage footprint. Informational
 // only today — the future "Pro plan 1 GB included" PR consumes
@@ -6841,7 +6870,7 @@ func validCron(s string) bool {
 
 // streamDeploymentLogs serves the build log for a deployment as a
 // real Server-Sent Event stream backed by the deployment_logs table
-// (M7.5 slice 5; spec §14 + ADR-011). Two phases:
+// (M7.5 slice 5; spec §14 + ADR-11). Two phases:
 //
 //  1. Initial page — `ListDeploymentLogs(deploymentID, before_seq,
 //     limit)`, written out in order from oldest → newest (the table
@@ -7138,7 +7167,7 @@ func writeLogEvent(w http.ResponseWriter, flusher http.Flusher, e state.LogEntry
 }
 
 // getBuild returns the lifecycle row for a build id (DEPLOY-PROV-6
-// / ADR-089, issue #741). Companion to the ADR-038
+// / ADR-89, issue #741). Companion to the ADR-38
 // /v1/builds/{id}/provenance (post-mortem export) and
 // /v1/builds/{id}/sbom (post-mortem blob) routes — this one is
 // the LIFECYCLE surface (status, timestamps, failure_class,
@@ -7153,7 +7182,7 @@ func writeLogEvent(w http.ResponseWriter, flusher http.Flusher, e state.LogEntry
 // The "no such build" envelope is shared with the other
 // /v1/builds/{id}/* routes.
 //
-// Per ADR-034 rev2 the route is gated by api.ScopesReadSurface
+// Per ADR-34 rev2 the route is gated by api.ScopesReadSurface
 // (the same chain as getBuildProvenance / getBuildSbom; see
 // cmd/apid/server.go:803).
 func (s *server) getBuild(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -7176,7 +7205,7 @@ func (s *server) getBuild(w http.ResponseWriter, r *http.Request, acct state.Acc
 	writeJSON(w, http.StatusOK, s.buildResponse(build))
 }
 
-// getBuildProvenance returns the ADR-038 provenance row for a build
+// getBuildProvenance returns the ADR-38 provenance row for a build
 // (Tier 3 / issue #197 B3.10-read half). Two-step ownership check:
 // BuildByID → DeploymentByID → AppByID, comparing App.AccountID against
 // the requesting account. A mismatch renders 404 with the same
@@ -7188,7 +7217,7 @@ func (s *server) getBuild(w http.ResponseWriter, r *http.Request, acct state.Acc
 // inside builderd.recordProvenance) renders 404 with code
 // build_provenance_not_found — distinct from "no such build"
 // so the customer can branch on the difference.
-// Per ADR-034 rev2 the route is gated by the same `build:read`
+// Per ADR-34 rev2 the route is gated by the same `build:read`
 // scope the rest of the build surface uses.
 func (s *server) getBuildProvenance(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
@@ -7216,7 +7245,7 @@ func (s *server) getBuildProvenance(w http.ResponseWriter, r *http.Request, acct
 }
 
 // getBuildSbom streams the CycloneDX SBOM for a build id (issue #299
-// / ADR-038 Phase 3). `faas build sbom <id>` and the SDK's
+// / ADR-38 Phase 3). `faas build sbom <id>` and the SDK's
 // GetBuildsIdSbom surface route through here.
 //
 // IDOR-safe: every step mirrors getBuildProvenance — Build → Deployment

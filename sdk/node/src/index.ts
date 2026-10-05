@@ -23,6 +23,7 @@ export type { OpenAPIConfig } from './generated/index.js';
 // Generated services (one class per OpenAPI tag).
 export { AccountService } from './generated/services/AccountService.js';
 export { AppsService } from './generated/services/AppsService.js';
+export { AlertRulesService } from './generated/services/AlertRulesService.js';
 export { AuditService } from './generated/services/AuditService.js';
 export { AuthService } from './generated/services/AuthService.js';
 export { CronsService } from './generated/services/CronsService.js';

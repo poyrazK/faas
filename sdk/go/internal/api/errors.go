@@ -210,7 +210,7 @@ const (
 	// session-aware helper when the caller has the dashboard cookies.
 	CodeUnsupportedByCLI = "unsupported_by_cli"
 	// CodeForbidden is returned when the authenticated principal lacks
-	// the scope required by the route (IAM-1, ADR-034). Distinct from
+	// the scope required by the route (IAM-1, ADR-34). Distinct from
 	// CodeUnauthorized so a customer can tell "I need to log in" from
 	// "my key does not have permission for this endpoint".
 	CodeForbidden                      = "insufficient_scope"
@@ -243,7 +243,7 @@ const (
 	CodeSecretValueTooLarge = "secret_value_too_large"
 	CodeSecretNotFound      = "secret_not_found"
 
-	// Sidecar containers (issue #463 / ADR-068). Eight RFC 9457
+	// Sidecar containers (issue #463 / ADR-68). Eight RFC 9457
 	// codes for the sidecar surface. The cap and type-uniqueness
 	// codes are the load-bearing 400-class shapes; the stateful
 	// and not-on-plan codes are defence-in-depth for future
@@ -281,7 +281,7 @@ const (
 	CodePlanDelayedCap     = "plan_delayed_tasks_cap"
 	CodeInvocationNotFound = "invocation_not_found"
 
-	// ADR-031 (tier-2 of the network roadmap) — per-app egress
+	// ADR-31 (tier-2 of the network roadmap) — per-app egress
 	// allowlist. Same gate shape as MinInstances: the feature is
 	// plan-locked (Hobby/Pro/Scale only), and there are two distinct
 	// failure modes that warrant distinct codes so the CLI can
@@ -294,7 +294,7 @@ const (
 	CodePlanEgressAllowlistNotAllowed = "plan_egress_allowlist_not_allowed"
 	CodeEgressAllowlistTooLong        = "egress_allowlist_too_long"
 
-	// Issue #679 / PR-B / ADR-082 — per-account additive budget on
+	// Issue #679 / PR-B / ADR-82 — per-account additive budget on
 	// top of the plan's apps.egress_allowlist cap. Out-of-range
 	// PATCH (negative or > the global MaxAccountEgressAllowlistExtra
 	// ceiling) reports this code so the CLI can render the
@@ -334,7 +334,7 @@ const (
 	CodeAPIKeyRevoked       = "api_key_revoked"
 	CodeAPIKeyLimitExceeded = "api_key_limit_exceeded"
 
-	// Account self-service (spec §17 G6, ADR-021). The
+	// Account self-service (spec §17 G6, ADR-21). The
 	// "confirm_required" code is returned when a DELETE arrives without
 	// the confirmation header so a stale CLI prompt can't silently wipe
 	// an account. The "pending" code carries the restore_until envelope
@@ -349,7 +349,7 @@ const (
 	// distinguishes the two so the CLI can render actionable guidance.
 	CodeAppRenameFailed = "app_rename_failed"
 
-	// Image pull failure modes (ADR-021, spec §17 G1). The three codes
+	// Image pull failure modes (ADR-21, spec §17 G1). The three codes
 	// here are the customer-facing stable string for the puller-side
 	// sentinels in pkg/oci/errors.go. imaged's buildImageLayer failure
 	// path runs SentinelToCode(err) to pick one of these, persists it on
@@ -384,7 +384,7 @@ const (
 	CodeConcurrencyQueueFull    = "concurrency_queue_full"
 	CodeConcurrencyQueueTimeout = "concurrency_queue_timeout"
 
-	// Dashboard auth (issue #165, ADR-032). Pre-#165, POST /login
+	// Dashboard auth (issue #165, ADR-32). Pre-#165, POST /login
 	// auto-created an account + minted a "web-console" API key + set
 	// the session cookie on ANY email with zero verification, which
 	// was a full pre-auth account-takeover (spec §11 violation).
@@ -471,7 +471,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeDeclaredRoutePolicyUnavailable:
 		return http.StatusServiceUnavailable
-	case CodeConflict, CodeRouteGateBlocked, CodeDomainNotVerified, CodeNoRollbackTarget:
+	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeConflict, CodeRouteGateBlocked, CodeDomainNotVerified, CodeNoRollbackTarget:
 		return http.StatusConflict
 	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile:
 		return http.StatusUnprocessableEntity
@@ -707,7 +707,7 @@ func ErrInvalidMinInstances(got, maxConcur int) *Problem {
 		WithDocs(docsBase + "/apps#min-instances")
 }
 
-// ErrPlanEgressAllowlistNotAllowed (ADR-031) is returned when a Free
+// ErrPlanEgressAllowlistNotAllowed (ADR-31) is returned when a Free
 // account tries to set apps.egress_allowlist. Same gate shape as
 // ErrPlanMinInstancesNotAllowed: the knob is plan-locked, and Hobby/Pro/Scale
 // are the paid tiers where the operator surface lives. The plan is named in the body so
@@ -720,7 +720,7 @@ func ErrPlanEgressAllowlistNotAllowed(p Plan) *Problem {
 		WithDocs(docsBase + "/apps#egress-allowlist")
 }
 
-// ErrEgressAllowlistTooLong (ADR-031) is returned when the PATCH carries more
+// ErrEgressAllowlistTooLong (ADR-31) is returned when the PATCH carries more
 // CIDRs than the plan's per-app cap. 400 (not 422) because the request shape is
 // well-formed — only the count is over budget. The limit + observed pair rides
 // on the Problem so the CLI can branch on its own copy of the cap (no re-fetch).
@@ -732,11 +732,11 @@ func ErrEgressAllowlistTooLong(got, maxSize int) *Problem {
 		WithDocs(docsBase + "/apps#egress-allowlist")
 }
 
-// ErrInvalidEgressAllowlist (ADR-031 + ADR-032) is a 400 for
+// ErrInvalidEgressAllowlist (ADR-31 + ADR-32) is a 400 for
 // entries that don't ParsePrefix as a v4 or v6 CIDR, or that
 // have masklen /0. The detail names the offending entry so an
 // operator triaging a rejected PATCH sees exactly which line is
-// bad. ADR-032 — v6 entries are accepted alongside v4 entries;
+// bad. ADR-32 — v6 entries are accepted alongside v4 entries;
 // the non-/0 contract is shared with the DB trigger.
 func ErrInvalidEgressAllowlist(entry string, reason error) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeInvalidEgressAllowlist,
@@ -746,7 +746,7 @@ func ErrInvalidEgressAllowlist(entry string, reason error) *Problem {
 }
 
 // ErrAccountEgressAllowlistExtraOutOfRange (issue #679 / PR-B /
-// ADR-082) is a 400 for PATCH /v1/account/egress_allowlist_extra
+// ADR-82) is a 400 for PATCH /v1/account/egress_allowlist_extra
 // values outside [0, MaxAccountEgressAllowlistExtra]. The
 // MaxAccountEgressAllowlistExtra value is the same global ceiling
 // the server enforces (flat 1024 — see pkg/api/dto.go).
@@ -850,7 +850,7 @@ func ErrInvalidScheduledAt() *Problem {
 		WithDocs(docsBase + "/event-driven#delayed-tasks")
 }
 
-// --- Dashboard auth (issue #165, ADR-032 PR #2) ----------------------------
+// --- Dashboard auth (issue #165, ADR-32 PR #2) ----------------------------
 
 // ErrInvalidCredentials is the 401 returned by POST /login (and the
 // colliding /signup anti-enumeration path). The body is identical
@@ -915,7 +915,7 @@ func ErrResetTokenExpired() *Problem {
 // no scheme/path). Wrapping the underlying detail keeps the specific
 // failure visible to the CLI without leaking the input verbatim into
 // a 5xx. Mirrors pkg/api/errors.go::ErrInvalidRegistryHost for SDK-side
-// validation (issue #461 / ADR-064).
+// validation (issue #461 / ADR-64).
 func ErrInvalidRegistryHost(detail error) *Problem {
 	return NewProblem(http.StatusBadRequest, "invalid_registry_host",
 		"Invalid registry host", detail.Error()).

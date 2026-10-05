@@ -90,7 +90,7 @@ func main() {
 }
 
 func init() {
-	// Tier A8 / ADR-083: gregaleVersion is the value substituted into
+	// Tier A8 / ADR-83: gregaleVersion is the value substituted into
 	// the man page header (`.TH GREGALE 1 "date" "gregale" "version"`). Wired once
 	// at process boot from wire.Version so the man page reflects the
 	// binary the user is running, not a hardcoded literal.
@@ -155,7 +155,7 @@ func run(args []string) (status int) {
 		PrintUsage(os.Stderr, message, "cli")
 		return 1
 	case "completion":
-		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
+		// Tier A8 / ADR-83. Routes to one of bash|zsh|fish|powershell
 		// via cmdCompletion; the dispatcher is in completion.go.
 		return cmdCompletion(args[1:])
 	case "config":
@@ -169,7 +169,7 @@ func run(args []string) (status int) {
 	case "capabilities":
 		return cmdCapabilities(args[1:])
 	case "man":
-		// Tier A8 / ADR-083. No arg → gregale(1); one arg →
+		// Tier A8 / ADR-83. No arg → gregale(1); one arg →
 		// gregale-<command>(1). Dispatcher is in man.go.
 		return cmdMan(args[1:])
 	case "login":
@@ -244,7 +244,7 @@ func run(args []string) (status int) {
 		if len(args) > 1 && args[1] == subRestore {
 			return cmdAppsRestore(args[2:])
 		}
-		// `gregale apps routes <slug>` — ADR-093 Tier B item #2
+		// `gregale apps routes <slug>` — ADR-93 Tier B item #2
 		// operator entry point. Must come before the default
 		// fall-through so a slug-shaped token ("routes") is never
 		// misread as the delete path. The delete path requires
@@ -323,7 +323,7 @@ func run(args []string) (status int) {
 		// for future siblings (timeline, events, artifacts).
 		return cmdDeploys(args[1:])
 	case dispatchBuild:
-		// `gregale build provenance <id>` — ADR-038 / Tier 3 / issue
+		// `gregale build provenance <id>` — ADR-38 / Tier 3 / issue
 		// #197 B3.10-read half. The parent dispatch is in
 		// commands_builds.go::cmdBuild; future build-surface
 		// subcommands (`logs`, `sbom`) land there without
@@ -331,7 +331,7 @@ func run(args []string) (status int) {
 		return cmdBuild(args[1:])
 	case dispatchInspect:
 		// Issue #952 — `gregale inspect <slug> --upstreams`
-		// (ADR-098 §9.A cluster follow-up). Read-only operator
+		// (ADR-98 §9.A cluster follow-up). Read-only operator
 		// surface for diagnosing why schedd places a given app
 		// where it does. The verb-level dispatcher lives in
 		// commands_inspect.go; future leaves (--env, --crons)
@@ -417,18 +417,18 @@ func run(args []string) (status int) {
 		return cmdWorkers(args[1:])
 	case "delayed-task":
 		// Tier D: scheduled-at deferred invocations (issue #557 /
-		// ADR-072 sibling). Mirrors crons for dispatcher shape
+		// ADR-72 sibling). Mirrors crons for dispatcher shape
 		// (add|get|cancel); cmdDelayedTask lives in
 		// commands_delayed_task.go.
 		return cmdDelayedTask(args[1:])
 	case "registry":
 		// Tier D: per-app private container registry credentials
-		// (issue #461 / ADR-062). Mirrors alerts for the
+		// (issue #461 / ADR-62). Mirrors alerts for the
 		// list|set|rm dispatcher shape; cmdRegistry lives in
 		// commands_registry.go.
 		return cmdRegistry(args[1:])
 	case "webhooks":
-		// Issue #476 / ADR-076 — outbound webhook subscriptions
+		// Issue #476 / ADR-76 — outbound webhook subscriptions
 		// and delivery ledger. Mirrors the crons surface (list /
 		// add / update / rm + deliveries / retry). Routes through
 		// authedClient() the same way crons does; the dispatcher
@@ -437,7 +437,7 @@ func run(args []string) (status int) {
 	case "keys":
 		return cmdKeys(args[1:])
 	case dispatchTrustedPublishers:
-		// Issue #472 / ADR-054 — operator CLI for the per-app
+		// Issue #472 / ADR-54 — operator CLI for the per-app
 		// cosign trusted-publisher list. Admin API key required;
 		// every leaf calls authedClient() and hits apid. The
 		// operator-only surfaces (sign-keys, node-key, pki,
@@ -449,7 +449,7 @@ func run(args []string) (status int) {
 	case "secrets":
 		return cmdSecrets(args[1:])
 	case "github-webhook-secret":
-		// PR-D / ADR-012 §7 amendment. Distinct top-level
+		// PR-D / ADR-12 §7 amendment. Distinct top-level
 		// command; dispatches to a single verb (set) for the
 		// per-tenant webhook secret rotation.
 		return githubWebhookSecretSet(args[1:])
@@ -468,7 +468,7 @@ func run(args []string) (status int) {
 		// Unknown positionals are rejected by the dispatcher.
 		return cmdUsage(args[1:])
 	case "wake-timeline":
-		// Tier D: per-wake event stream (issue #517 PR-C / ADR-064).
+		// Tier D: per-wake event stream (issue #517 PR-C / ADR-64).
 		// Mirrors cmdAuditEventsGet for the positional shape;
 		// cmdWakeTimeline lives in commands_wake_timeline.go.
 		return cmdWakeTimeline(args[1:])
@@ -502,7 +502,7 @@ func run(args []string) (status int) {
 		// lives in commands_jobs.go (cmdJobs).
 		return cmdJobs(args[1:])
 	case "workflows":
-		// ADR-081: durable execution workflows (list|run|status|steps|cancel|events).
+		// ADR-81: durable execution workflows (list|run|status|steps|cancel|events).
 		return cmdWorkflows(args[1:])
 	case "commit":
 		return cmdCommit(args[1:])
@@ -537,7 +537,7 @@ func run(args []string) (status int) {
 	case "tail":
 		return cmdTail(args[1:])
 	case "audit-events":
-		// Wave 0 PR-C / ADR-047: customer/operator CLI for the
+		// Wave 0 PR-C / ADR-47: customer/operator CLI for the
 		// /v1/audit-events surface. Default scope = caller's own
 		// account; --kind-prefix filters (stateless.advisory is
 		// the Wave 0 use case); --include-anonymous surfaces the
@@ -564,7 +564,7 @@ func run(args []string) (status int) {
 		return cmdThrottleSuggestions(args[1:])
 	case "slo":
 		// Move 2 PR-A: CLI twin for GET /v1/apps/{slug}/slo
-		// (issue #696 / ADR-082). Closed-set windowed SLO
+		// (issue #696 / ADR-82). Closed-set windowed SLO
 		// panel (1h | 24h | 7d) — distinct from `metrics` which
 		// is the 5m dashboard panel.
 		return cmdSLO(args[1:])
@@ -581,7 +581,7 @@ func run(args []string) (status int) {
 		// in commands_mfa.go.
 		return cmdMfa(args[1:])
 	case "orgs":
-		// IAM-6 / ADR-061 / issue #190: org CRUD + members +
+		// IAM-6 / ADR-61 / issue #190: org CRUD + members +
 		// invitations + ownership transfer. Sub-dispatchers live in
 		// commands_orgs.go (`orgs members ...`, `orgs invitations ...`).
 		return cmdOrgs(args[1:])
@@ -651,7 +651,11 @@ func printManifestHelp(w io.Writer, command cliCommand, args []string) bool {
 			return true
 		}
 		if helpPath == "rollouts recover" {
-			PrintUsage(w, rolloutsUsage, command.DocSlug)
+			PrintUsage(w, rolloutsRecoverUsage, command.DocSlug)
+			return true
+		}
+		if helpPath == "rollouts status" {
+			PrintUsage(w, rolloutsStatusUsage, command.DocSlug)
 			return true
 		}
 		if helpPath == "deploys retry" {
@@ -675,6 +679,7 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	switch command.Name {
 	case "rollback":
 		_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", command.Short, strings.TrimPrefix(rollbackUsage, "usage: "))
+		_, _ = fmt.Fprintf(w, "  %s\n", strings.TrimPrefix(rollbackStatusUsage, "usage: "))
 		if len(command.Examples) > 0 {
 			_, _ = fmt.Fprintln(w, "\nExamples:")
 			printCLIExamples(w, command.Examples)

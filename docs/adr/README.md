@@ -56,6 +56,16 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 596 | [# ADR-596 · Service binding dependency evidence](596-service-binding-dependency-evidence.md) | accepted | Versioned evidence for service binding dependencies. |
+| 597 | [Exact caller deployment for service smoke tests](597-caller-pinned-service-smoke.md) | accepted | Probe the exact selected caller deployment. |
+| 598 | [Stored binding release policy per deployment scope](598-stored-binding-release-policy.md) | accepted | Persist and enforce binding checks at release transitions. |
+| 599 | [Binding-checked exact canary recovery](599-binding-checked-canary-recovery.md) | accepted | Recover an exact canary pair with fresh binding evidence. |
+| 600 | [Binding-checked service routing and abort handoffs](600-binding-checked-service-handoffs.md) | accepted | Fence service handoff, application ACK and drain completion. |
+| 601 | [Binding-checked historical rollback](601-binding-checked-historical-rollback.md) | accepted | Prepare and restore an exact historical deployment safely. |
+| 602 | [Durable binding-checked alert rollback](602-durable-binding-checked-alert-rollback.md) | accepted | Persist alert-triggered canary recovery and resume retries. |
+| 603 | [Alert-driven service rollback](603-alert-driven-service-rollback.md) | accepted | Resume alert-triggered service recovery through its handoff barriers. |
+| 604 | [Alert-driven rollback after completed releases](604-alert-driven-historical-rollback.md) | accepted | Pin completed-release alert recovery to an eligible predecessor. |
+| 605 | [Deployment evidence for post-release automatic rollback](605-deployment-evidence-for-post-release-rollback.md) | accepted | Require exact post-cutover error evidence before accepting automatic rollback. |
 | 568 | [Git-owned environment intent and continuous reconciliation](568-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, field ownership, durable effects, and scoped runtime convergence |
 | 520 | [Self-hosted TLS for customer custom domains](520-self-hosted-custom-domain-tls.md) | proposed | Caddy on-demand certificates gated by gatewayd-public's ask endpoint; durable per-wildcard issuance budget; no CDN in the customer-domain path |
 | 580 | [Control-plane role convergence in CD](580-control-plane-convergence-in-cd.md) | proposed | CD runs the control-plane bootstrap play before release activation whenever a hash of its inputs (roles, inventory, operator vars) changes |

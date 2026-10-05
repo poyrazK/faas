@@ -138,6 +138,12 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	checkedRollbacks            map[string]api.RollbackOperation
+	alertRollbacks              map[string]api.AlertRollback
+	alertHistoricalClaims       map[string]string
+	recoveryPredecessors        map[string]string
+	bindingReleasePolicies      map[bindingReleasePolicyKey]api.BindingReleasePolicy
+	bindingReleasePolicyHistory []api.BindingReleasePolicy
 	qualificationExecutions     map[string]EnvironmentQualificationExecutionStatus
 	environmentGitOps           map[string]*environmentGitOpsMemory
 	financialEvidence           []FinancialUsageRecord
@@ -271,13 +277,13 @@ type MemStore struct {
 	// githubBindings is keyed by appID. Holds the (install_id,
 	// repo_full_name, production_branch) tuple the /oauth/callback
 	// handler writes after verifying the install against api.github.com
-	// (review findings #1 + #2 closure, ADR-012).
+	// (review findings #1 + #2 closure, ADR-12).
 	githubBindings map[string]GitHubBinding
 	// githubInstalls is keyed by accountID + NUL + installationID so an
 	// account can retain personal and organization installations.
 	githubInstalls map[string]GitHubInstall
 	// githubWebhookSecrets is the per-tenant webhook secret
-	// store (PR-D / ADR-012 §7 amendment). Keyed by
+	// store (PR-D / ADR-12 §7 amendment). Keyed by
 	// installation_id so the resolver cache at
 	// pkg/githubd/webhook_secret.go can match the prod
 	// ON CONFLICT (installation_id) DO UPDATE shape.
@@ -314,7 +320,7 @@ type MemStore struct {
 	// production and intentionally private here; tests exercise the same
 	// claim/complete capability through the state interface.
 	builderVMCleanup map[string]builderVMCleanupRow
-	// buildProvenance is the ADR-038 "what ran?" record keyed by
+	// buildProvenance is the ADR-38 "what ran?" record keyed by
 	// build_id (mirrors build_provenance.build_id UNIQUE). MemStore
 	// holds the same idempotent-replace semantics as PgStore's
 	// ON CONFLICT (build_id) DO UPDATE so a redelivered build
@@ -347,7 +353,7 @@ type MemStore struct {
 	triggerDeadLetters  []sqlc.TriggerDeadLetter
 	deadLetterSnapshots map[string]DeadLetterEvent
 	deadLetterPurged    map[string]struct{}
-	// jobs / jobRuns / jobTasks mirror the ADR-099 / issue #1184
+	// jobs / jobRuns / jobTasks mirror the ADR-99 / issue #1184
 	// Workstream A tables (migrations/00255-00257, 00571-00578) for
 	// handler / dispatch-tick tests. Keyed by id / run_id. The task
 	// map is nested so per-run task slice access is O(1) without a
@@ -368,7 +374,7 @@ type MemStore struct {
 	// requiring Postgres.
 	migrationLeases map[string]MigrationLease // lease_token → lease
 
-	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
+	// workflows / workflowSteps / workflowEvents mirror ADR-81 (the
 	// timestamped workflow schema migration).
 	workflowRuns         map[string]WorkflowRun
 	workflowSteps        map[string]map[string]WorkflowStep // run_id → step_name → step
@@ -454,7 +460,7 @@ type MemStore struct {
 	// idempotency key — even at a strictly later at — lose the
 	// second attempt; a fresh key with a later bucket time wins.
 	alertClaimKeys map[string]time.Time
-	// edgeRules mirrors edge_rules for handler tests (ADR-089). Keyed
+	// edgeRules mirrors edge_rules for handler tests (ADR-89). Keyed
 	// by ruleID. The single-process m.mu serialises the count +
 	// insert in CreateEdgeRuleIfUnderQuota; no separate TOCTOU fence
 	// is needed. Soft-delete semantics (apps.status='deleted') are
@@ -622,7 +628,7 @@ type MemStore struct {
 	// dashboard claims the code; the claim statement fills it in
 	// atomically. See pkg/state/types.go CliAuthCode.
 	cliAuthCodes map[string]CliAuthCode
-	// accountPasswords is keyed by account_id (issue #165 / ADR-032).
+	// accountPasswords is keyed by account_id (issue #165 / ADR-32).
 	// OAuth-only accounts have no row; the absence of a row is the
 	// signal that an OAuth-only flow is required to mint a session.
 	accountPasswords map[string]AccountPassword
@@ -640,7 +646,7 @@ type MemStore struct {
 	deploymentLogs map[string][]LogEntry
 	deploymentSeq  map[string]int64
 	logEvents      []LogEvent
-	// deploymentSidecarLayers (issue #463 / ADR-069 / PR-B)
+	// deploymentSidecarLayers (issue #463 / ADR-69 / PR-B)
 	// mirrors the per-workload filesystem handle table. Keyed by
 	// "<deploymentID>\x00<sidecarName>" to give O(1) upsert +
 	// list-by-deployment; the NUL separator is safe (sidecar
@@ -733,7 +739,7 @@ type MemStore struct {
 	// the last cumulative interface counters atomically reflected in usage.
 	networkUsageCheckpoints map[string]networkUsageCheckpoint
 	// builderUsage is the per-build grain backing AppendBuilderUsage
-	// (ADR-048 §4). PK is build_id; the meterd rollup cron sums
+	// (ADR-48 §4). PK is build_id; the meterd rollup cron sums
 	// into usage_daily.builder_seconds per (account, app, day).
 	builderUsage []builderUsageRow
 	idem         map[string]idemEntry
@@ -818,21 +824,21 @@ type MemStore struct {
 	secretRuntimeProcesses          map[secretRuntimeProcessKey]appSecretRuntimeProcess
 	secretRevocations               map[string]AppSecretRevocation
 	// registryCreds mirrors app_registry_credentials (issue #461 /
-	// ADR-062). Same composite-key shape as secrets/envs. Value
+	// ADR-62). Same composite-key shape as secrets/envs. Value
 	// carries account_id for the ownership check on delete and the
 	// cross-account ErrNotFound predicate in Get.
 	registryCreds map[registryCredKey]AppRegistryCredential
-	// envs is the plaintext app_envs mirror (issue #395 / ADR-045).
+	// envs is the plaintext app_envs mirror (issue #395 / ADR-45).
 	// Same composite-key shape as secrets; same ownership semantics.
 	envs                             map[envKey]AppEnv
 	appEnvironmentSecretRefs         map[environmentSecretRefKey]environmentSecretRef
 	appEnvironmentSecretSuppressions map[environmentSecretRefKey]time.Time
 	appEnvironmentWorkloadIntents    map[environmentWorkloadIntentKey]EnvironmentWorkloadIntent
 	// trustedSigners is the in-memory mirror of app_trusted_signers
-	// (issue #472 / ADR-054). Populated by the admin CRUD handlers in
+	// (issue #472 / ADR-54). Populated by the admin CRUD handlers in
 	// cmd/apid/handlers_trusted_signers.go; not exposed to schedd.
 	trustedSigners map[trustedSignerKey]AppTrustedSigner
-	// orgs / memberships / invitations are the IAM-6 / ADR-061 in-memory
+	// orgs / memberships / invitations are the IAM-6 / ADR-61 in-memory
 	// mirrors. orgs is keyed by Org.ID; orgsBySlug (case-folded) backs
 	// the case-insensitive OrgBySlug lookup; memberships are keyed by
 	// the composite (orgID, accountID) PK; invitations by the SHA-256
@@ -844,13 +850,13 @@ type MemStore struct {
 	memberships map[orgAccountKey]OrgMembership
 	invitations map[string]OrgInvitation // hex(hash) -> OrgInvitation
 	// computeNodes mirrors the compute_nodes table; keyed by id (issue
-	// #97 / ADR-025 axis 3). The synthetic 'default-local' row is
+	// #97 / ADR-25 axis 3). The synthetic 'default-local' row is
 	// seeded by NewMemStore so tests don't have to call
 	// CreateComputeNode to exercise the single-box path. Production
 	// (PgStore) gets the same row from migrations/00024_compute_nodes.
 	computeNodes map[string]ComputeNode
 	// computeNodeKeys is the in-memory mirror of compute_node_keys
-	// (migration 00076, ADR-053). Keyed by (nodeID, keyID) tuple
+	// (migration 00076, ADR-53). Keyed by (nodeID, keyID) tuple
 	// joined by a NUL so the composite key stays string-typed for
 	// map lookup; the value is the canonical public_key_pem string.
 	// Tests that don't pre-seed this map have empty key registries
@@ -866,14 +872,14 @@ type MemStore struct {
 	// the read path; ListComputeNodeHeartbeats iterates the
 	// per-node slice in received_at-desc order.
 	computeNodeHeartbeats map[string][]ComputeNodeHeartbeat
-	// sessions is the IAM-3 (ADR-039) in-memory mirror of the
+	// sessions is the IAM-3 (ADR-39) in-memory mirror of the
 	// `sessions` table — one row per dashboard login, keyed by
 	// uuid. Revocation authority is RevokedAt != nil; LastSeenAt
 	// may update post-revocation (operational signal only, not
 	// authorization). MemStore's m.mu mirrors the SQL `for update`
 	// semantics the PgStore uses.
 	sessions map[string]Session
-	// projects is the ADR-050 Phase 1 in-memory mirror of the
+	// projects is the ADR-50 Phase 1 in-memory mirror of the
 	// `projects` table. Keyed by project id. The two secondary
 	// indexes mirror the (account_id, slug) and (install_id,
 	// repo_full_name) partial uniques from migration 00073 so
@@ -921,7 +927,7 @@ type installRepoKey struct {
 }
 
 // secretKey mirrors the app_secrets PRIMARY KEY (app_id, scope, key)
-// post-ADR-092-PR-A (migration 00214). Pre-PR the PK was (app_id,
+// post-ADR-92-PR-A (migration 00214). Pre-PR the PK was (app_id,
 // key); the Scope field is always 'default' for the flat methods
 // (UpsertAppSecret / DeleteAppSecret / ListAppSecrets /
 // CountAppSecrets) and is the caller-supplied value for the …InScope
@@ -942,7 +948,7 @@ type secretRuntimeReloadObservationKey struct {
 }
 
 // envKey mirrors the app_envs PRIMARY KEY (app_id, scope, key)
-// post-ADR-090-PR-A (migration 00203). Pre-PR the PK was
+// post-ADR-90-PR-A (migration 00203). Pre-PR the PK was
 // (app_id, key); the Scope field is always 'default' for the flat
 // methods (UpsertAppEnv / DeleteAppEnv / ListAppEnv / CountAppEnv)
 // and is the caller-supplied value for the …InScope variants. The
@@ -955,7 +961,7 @@ type envKey struct {
 }
 
 // trustedSignerKey mirrors the app_trusted_signers PRIMARY KEY
-// (app_id, signer_name) added in migration 00083 (issue #472 / ADR-058).
+// (app_id, signer_name) added in migration 00083 (issue #472 / ADR-58).
 // Same composite-key shape as secretKey/envKey by intent — the handler
 // URL is /v1/apps/{slug}/trusted_signers/{name}, so the resource IS the
 // signer_name.
@@ -1011,13 +1017,13 @@ type usageMinute struct {
 	// TXBytes is the cumulative HTTP response body bytes the
 	// gateway forwarded for this instance in this minute.
 	// Source: pkg/gateway/handler.go statusRecorder.Bytes →
-	// meterd Sampler. ADR-046. Informational — not billed.
+	// meterd Sampler. ADR-46. Informational — not billed.
 	// Additive on conflict (instance_id, minute).
 	TXBytes int64
 	// NetTxBytes is the cumulative byte delta on root-side
 	// vethHost.rx_bytes for this instance in this minute.
 	// Source: vmmd pkg/fcvm/netstats.Cache → schedd
-	// instancestats.Poller → meterd Sampler. ADR-046.
+	// instancestats.Poller → meterd Sampler. ADR-46.
 	// Informational — not billed. Additive on conflict
 	// (instance_id, minute). Unit = interface bytes (incl.
 	// framing).
@@ -1026,18 +1032,18 @@ type usageMinute struct {
 	// vethHost.tx_bytes (root→guest = ingress) for this
 	// instance in this minute. Source: vmmd pkg/fcvm/netstats
 	// TX cache → schedd instancestats.Poller → meterd Sampler.
-	// ADR-048. Informational — not billed. Additive on conflict
+	// ADR-48. Informational — not billed. Additive on conflict
 	// (instance_id, minute). Unit = interface bytes.
 	NetRxBytes int64
 	// ColdBootCount is the per-minute count of
 	// WAKE_RESTORE→WAKE_COLD_BOOT transitions observed for this
 	// instance. Source: scheddgrpc.InstanceStatsRow.LastWakeMethod,
-	// sampled by meterd Sampler. ADR-048. Informational — not
+	// sampled by meterd Sampler. ADR-48. Informational — not
 	// billed. Additive on conflict (idempotent — only the
 	// transition counts; a redelivered tick within the same
 	// minute is a no-op).
 	ColdBootCount int32
-	// TailSeconds (issue #667 / ADR-078) is the per-minute wall-clock
+	// TailSeconds (issue #667 / ADR-78) is the per-minute wall-clock
 	// seconds this instance spent draining waitUntil tasks. Source:
 	// vmmd pkg/fcvm.Manager.ReadAndResetTailSeconds, sampled by
 	// meterd Sampler. INFORMATIONAL ONLY — does NOT enter billing.
@@ -1047,7 +1053,7 @@ type usageMinute struct {
 	TailSeconds int64
 }
 
-// builderUsageRow is the per-build grain (ADR-048 §4) backing
+// builderUsageRow is the per-build grain (ADR-48 §4) backing
 // AppendBuilderUsage. Mirrors builder_usage created by
 // migrations/00068_builder_usage.sql. PK is BuildID; first write
 // wins, a redelivered webhook / meterd restart is a no-op. The
@@ -1075,7 +1081,7 @@ type builderVMCleanupRow struct {
 }
 
 // NewMemStore returns an empty in-memory store with the synthetic
-// 'default-local' compute_node row seeded (issue #97 / ADR-025 axis 3).
+// 'default-local' compute_node row seeded (issue #97 / ADR-25 axis 3).
 // The seed mirrors migrations/00024_compute_nodes.sql so unit tests
 // don't have to call CreateComputeNode to exercise the single-box path.
 // Production (PgStore) gets the same row from the migration.
@@ -1116,7 +1122,7 @@ func NewMemStore() *MemStore {
 		githubDeployPolicies:    map[string]GitHubDeployPolicy{},
 		githubBindings:          map[string]GitHubBinding{},
 		githubInstalls:          map[string]GitHubInstall{},
-		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
+		// PR-D / ADR-12 §7 amendment: per-tenant webhook secret
 		// store (mirror of github_webhook_secrets).
 		githubWebhookSecrets:    map[int64][]byte{},
 		githubWebhookSecretMeta: map[int64]webhookSecretMeta{},
@@ -1131,7 +1137,7 @@ func NewMemStore() *MemStore {
 		statusBuckets:       map[string]StatusBucket{},
 		builds:              map[string]Build{},
 		builderVMCleanup:    map[string]builderVMCleanupRow{},
-		// buildProvenance is the ADR-038 "what ran?" map keyed by
+		// buildProvenance is the ADR-38 "what ran?" map keyed by
 		// build_id (mirrors the build_provenance.build_id UNIQUE).
 		// Starts empty; CreateBuildProvenance fills it.
 		buildProvenance: map[string]BuildProvenance{},
@@ -1163,7 +1169,7 @@ func NewMemStore() *MemStore {
 		triggerDeadLetters:  []sqlc.TriggerDeadLetter{},
 		deadLetterSnapshots: map[string]DeadLetterEvent{},
 		deadLetterPurged:    map[string]struct{}{},
-		// ADR-099 / issue #1184 Workstream A — job store maps.
+		// ADR-99 / issue #1184 Workstream A — job store maps.
 		// Empty until the first JobCreate / JobRunCreate; the
 		// per-account count in JobCreateIfUnderQuota walks m.jobs.
 		jobs:                            map[string]Job{},
@@ -1278,7 +1284,7 @@ func NewMemStore() *MemStore {
 		oauthLinks:                      map[string]OAuthLink{},
 		deploymentLogs:                  map[string][]LogEntry{},
 		deploymentSeq:                   map[string]int64{},
-		// Issue #463 / ADR-069 / PR-B — per-workload filesystem
+		// Issue #463 / ADR-69 / PR-B — per-workload filesystem
 		// handles (mirrors migration 00119's PK + ON CONFLICT
 		// semantics).
 		deploymentSidecarLayers:           map[string]DeploymentSidecarLayer{},
@@ -1441,7 +1447,7 @@ func (m *MemStore) CreateAccount(_ context.Context, email string, plan api.Plan)
 }
 
 // CreateAccountWithPersonalOrg is the PR 3 canonical
-// account-creation entry point (issue #190 / ADR-061). The m.mu
+// account-creation entry point (issue #190 / ADR-61). The m.mu
 // lock is the atomicity boundary — under the lock we run the email
 // uniqueness probe, the personal-org uniqueness probe, the three
 // in-memory inserts, and return. The mutex serialises concurrent
@@ -1577,7 +1583,7 @@ func (m *MemStore) APIKeyByHash(_ context.Context, hash []byte) (APIKey, error) 
 
 // AuthenticateKey mirrors the key+account lookup the apid auth
 // middleware needs. Single lock acquisition; returns ErrNotFound when
-// the hash has no matching key. See ADR-034.
+// the hash has no matching key. See ADR-34.
 //
 // IAM-5 (issue #189) gate: identical to PgStore.AuthenticateKey.
 // After the key row is loaded, three checks run in order —
@@ -2177,7 +2183,7 @@ func (m *MemStore) CountDeployments(_ context.Context, id string) (int, error) {
 // for O(1) webhook lookup; PgStore mirrors with a schema-level
 // unique index (added in Slice 2's migration). The shared
 // accounts.provider_customer_id column is reused for both providers
-// per ADR-025 — the two ID shapes are disjoint prefixes so the
+// per ADR-25 — the two ID shapes are disjoint prefixes so the
 // shared column is safe in single-provider deployments
 // (FAAS_BILLING_PROVIDER is per-deployment, not per-row).
 func (m *MemStore) UpdateAccountProviderCustomerID(_ context.Context, id, providerCustomerID string) error {
@@ -2514,7 +2520,7 @@ func (m *MemStore) DeleteAPIKey(_ context.Context, accountID, keyID string) erro
 	return nil
 }
 
-// DeleteAPIKeyReturning is the IAM-1 (ADR-034 rev2) variant of
+// DeleteAPIKeyReturning is the IAM-1 (ADR-34 rev2) variant of
 // DeleteAPIKey: deletes the key in one statement and returns the
 // pre-delete row so the apid handler can emit a `key.deleted` audit
 // event carrying the dismissed scopes. Mirrors PgStore's
@@ -2766,7 +2772,7 @@ func (m *MemStore) SetAccountKeyGraceWindow(_ context.Context, accountID string,
 // cmd/apid/handlers_ext.go:104 adds this to the plan cap before
 // the >-maxSize check on the per-app EgressAllowlist patch.
 //
-// Issue #679 / PR-B / ADR-082.
+// Issue #679 / PR-B / ADR-82.
 func (m *MemStore) GetAccountEgressAllowlistExtra(_ context.Context, accountID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2780,7 +2786,7 @@ func (m *MemStore) GetAccountEgressAllowlistExtra(_ context.Context, accountID s
 // SetAccountEgressAllowlistExtra mirrors PgStore. n == 0 clears
 // the override (the plan cap is authoritative again).
 //
-// Issue #679 / PR-B / ADR-082.
+// Issue #679 / PR-B / ADR-82.
 func (m *MemStore) SetAccountEgressAllowlistExtra(_ context.Context, accountID string, n int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2927,7 +2933,7 @@ func (m *MemStore) RotateOrgAPIKey(_ context.Context, orgID, oldKeyID string, ne
 	return newKey, old, nil
 }
 
-// --- Projects (ADR-050, Phase 1) -------------------------------------------
+// --- Projects (ADR-50, Phase 1) -------------------------------------------
 //
 // MemStore mirrors the pgstore contract exactly: the same error sentinels
 // (ErrNotFound, ErrConflict), the same monotonic-upgrade semantics in
@@ -4076,7 +4082,7 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	// would. Pre-#475 tests that built App{} structs continue to read
 	// 'best_effort' on the round-trip.
 	app.EvictionPriority = EvictionPriorityOrBestEffort(app.EvictionPriority)
-	// Issue #695 / ADR-080: defence-in-depth snap for public_auth_mode.
+	// Issue #695 / ADR-80: defence-in-depth snap for public_auth_mode.
 	// pgstore floors '' to AppPublicAuthModeOpen at the SQL path
 	// (pgstore.go:1546-1549 / 1693-1697). CreateAppIfUnderQuota below
 	// already has this snap (added with issue #695); CreateApp was
@@ -4240,7 +4246,7 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 	// unconditional path so the per-account reserved-tier cap reader
 	// sees the same wire value.
 	app.EvictionPriority = EvictionPriorityOrBestEffort(app.EvictionPriority)
-	// Issue #695 / ADR-080: see CreateApp — same defence-in-depth
+	// Issue #695 / ADR-80: see CreateApp — same defence-in-depth
 	// snap for the public_auth mode. require_authn is bool (zero
 	// is the schema default), so no snap is needed there.
 	if app.PublicAuthMode == "" {
@@ -4313,7 +4319,7 @@ func (m *MemStore) AppBySlugIncludingDeleted(_ context.Context, slug string) (Ap
 	return App{}, ErrNotFound
 }
 
-// PreviewAppsByParent (ADR-095 / issue #272) is the MemStore mirror
+// PreviewAppsByParent (ADR-95 / issue #272) is the MemStore mirror
 // of PgStore.PreviewAppsByParent. Walks the in-memory map under the
 // same lock as CreateApp / AppByID / ListApps. Returns an empty slice
 // (not an error) when no previews exist for the parent — the
@@ -4354,7 +4360,7 @@ func (m *MemStore) PreviewAppByProjectWorkload(_ context.Context, accountID, pro
 	return App{}, ErrNotFound
 }
 
-// ListPreviewsForTeardown (ADR-095 PR-C / issue #272) is the MemStore
+// ListPreviewsForTeardown (ADR-95 PR-C / issue #272) is the MemStore
 // mirror of PgStore.ListPreviewsForTeardown. Same contract: return
 // every non-torn_down preview row that is either in a terminal-ish
 // PR state (closed / stale) or past its preview_expires_at TTL.
@@ -4404,7 +4410,7 @@ func (m *MemStore) ListPreviewsForTeardown(_ context.Context, now time.Time, max
 	return out, nil
 }
 
-// SetPreviewPrState (ADR-095 PR-C / issue #272) is the MemStore
+// SetPreviewPrState (ADR-95 PR-C / issue #272) is the MemStore
 // mirror of PgStore.SetPreviewPrState. Preview-only by construction:
 // a row with empty PreviewOfSlug returns ErrNotFound so a bug in the
 // janitor cannot relabel a production app.
@@ -4641,7 +4647,7 @@ func (m *MemStore) ListAppsByNodeID(_ context.Context, nodeID string) ([]App, er
 }
 
 // ListAllDeployments mirrors PgStore.ListAllDeployments. Issue #557
-// closure / ADR-072 — the floor reconciler's wake sweep calls this
+// closure / ADR-72 — the floor reconciler's wake sweep calls this
 // in unit tests + the e2e harness's fake schedd. Excludes deployments
 // whose parent app is soft-deleted (the deployment has no
 // `deleted` flag of its own).
@@ -4833,7 +4839,7 @@ func (m *MemStore) UpdateDeploymentMinInstances(_ context.Context, id string, mi
 // critical section as its traffic rebalance and audit insert. The expected
 // step is a compare-and-swap: concurrent meterd workers cannot both advance
 // the same row.
-func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdvanceParams) (Deployment, int64, error) {
+func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdvanceParams) (Deployment, int64, error) {
 	if params.ExpectedStep < 0 || params.TrafficPercent < 0 || params.TrafficPercent > 100 {
 		return Deployment{}, 0, ErrCanaryStateInvalid
 	}
@@ -4907,6 +4913,14 @@ func (m *MemStore) AdvanceCanary(_ context.Context, id string, params CanaryAdva
 		return Deployment{}, 0, ErrTrafficPercentSumInvalid
 	}
 
+	proposed := map[string]int{id: params.TrafficPercent}
+	weights := RedistributeTraffic(toHelperSiblings(siblings), 100-params.TrafficPercent)
+	for i, sibling := range siblings {
+		proposed[sibling.ID] = weights[i]
+	}
+	if err := m.checkBindingReleaseTrafficLocked(ctx, proposed); err != nil {
+		return Deployment{}, 0, err
+	}
 	d.CanaryStep = persistedStep
 	d.CanaryStepStartedAt = &now
 	d.TrafficPercent = params.TrafficPercent
@@ -4981,7 +4995,7 @@ func (m *MemStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPe
 	return m.updateDeploymentTraffic(ctx, id, newPercent, expectedServingID, nil)
 }
 
-func (m *MemStore) updateDeploymentTraffic(_ context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (Deployment, error) {
+func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (Deployment, error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, ErrInvalidTrafficPercent
 	}
@@ -5023,9 +5037,6 @@ func (m *MemStore) updateDeploymentTraffic(_ context.Context, id string, newPerc
 		}
 	}
 
-	// Stamp target first; sibling weights collected for redistribution.
-	d.TrafficPercent = newPercent
-	m.deployments[id] = d
 	appID := d.AppID
 
 	// Collect siblings (id-ordered for stable tie-break).
@@ -5053,6 +5064,15 @@ func (m *MemStore) updateDeploymentTraffic(_ context.Context, id string, newPerc
 		helperSiblings[i].Prior = s.Prior
 	}
 	newWeights := RedistributeTraffic(helperSiblings, 100-newPercent)
+	proposed := map[string]int{id: newPercent}
+	for i, sibling := range siblings {
+		proposed[sibling.ID] = newWeights[i]
+	}
+	if err := m.checkBindingReleaseTrafficLocked(ctx, proposed); err != nil {
+		return Deployment{}, err
+	}
+	d.TrafficPercent = newPercent
+	m.deployments[id] = d
 	for i, s := range siblings {
 		other := m.deployments[s.ID]
 		other.TrafficPercent = newWeights[i]
@@ -5756,7 +5776,7 @@ func (m *MemStore) CountAppsWithEvictionPriority(_ context.Context, accountID, p
 	return n, nil
 }
 
-// CountAuthDefaultFlippedApps (issue #695 / ADR-080) mirrors the
+// CountAuthDefaultFlippedApps (issue #695 / ADR-80) mirrors the
 // pgstore implementation — counts live (non-deleted) apps with
 // auth_default_flipped_at != nil per account. See the pgstore
 // counterpart for the load-bearing semantics; the dashboard
@@ -5780,7 +5800,7 @@ func (m *MemStore) CountAuthDefaultFlippedApps(_ context.Context, accountID stri
 	return n, nil
 }
 
-// AuthDefaultFlippedAt (issue #695 / ADR-080) returns the
+// AuthDefaultFlippedAt (issue #695 / ADR-80) returns the
 // earliest stamp across all in-memory apps whose
 // AuthDefaultFlippedAt is non-nil. This stands in for the
 // pgstore events-table read; in memstore there's no separate
@@ -5901,7 +5921,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 		a.MinInstances = intOrZero(p.MinInstances)
 	}
 	if p.SetEgressAllowlist {
-		// ADR-031 + ADR-032: nil-with-Set is treated as "clear to
+		// ADR-31 + ADR-32: nil-with-Set is treated as "clear to
 		// default (empty)" so the API can express "drop the
 		// allowlist back to no-list" via a PATCH with
 		// egress_allowlist:[] ; non-nil is copied verbatim. The
@@ -5946,7 +5966,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if p.SetStreamingEnabled {
 		a.StreamingEnabled = boolOrFalse(p.StreamingEnabled)
 	}
-	// Issue #676 / ADR-080: per-app raw-bytes Upgrade bridge. Same
+	// Issue #676 / ADR-80: per-app raw-bytes Upgrade bridge. Same
 	// Set-bit convention as streaming_enabled above — the Set bit
 	// distinguishes "don't touch" from "explicit false" (opt out
 	// of Upgrade traffic). Apid already gated the plan; the store
@@ -5954,7 +5974,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if p.SetWebSocketEnabled {
 		a.WebSocketEnabled = boolOrFalse(p.WebSocketEnabled)
 	}
-	// ADR-093: per-route observability opt-in. Same Set-bit
+	// ADR-93: per-route observability opt-in. Same Set-bit
 	// convention as WebSocketEnabled above — the Set bit
 	// distinguishes "don't touch" from "explicit false" (opt out
 	// of per-route metrics). Apid already gated the plan; the
@@ -5972,7 +5992,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 			a.DeclaredRoutes[i].Methods = append([]string(nil), a.DeclaredRoutes[i].Methods...)
 		}
 	}
-	// Issue #462 / ADR-058 / PR-A: per-app scaling policy. The
+	// Issue #462 / ADR-58 / PR-A: per-app scaling policy. The
 	// Set bit is the canonical "unset vs explicit zero" signal;
 	// when Set is true the jsonb column is overwritten (deep-copied
 	// to avoid caller-mutation aliasing) and the legacy
@@ -5997,7 +6017,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 			a.RetryPolicyJSON = append(json.RawMessage(nil), (*p.RetryPolicyJSON)...)
 		}
 	}
-	// Issue #472 / ADR-054: per-app cosign signature-enforcement flag.
+	// Issue #472 / ADR-54: per-app cosign signature-enforcement flag.
 	// Same Set-bit convention — SetRequireSigned distinguishes "don't
 	// touch" from "explicit false" (opt out of signed-image enforcement).
 	// Apid already gated the admin scope; the store is a plain column
@@ -6008,7 +6028,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if p.SetSecurityPolicy && p.SecurityPolicy != nil && p.SecurityPolicy.Valid() {
 		a.SecurityPolicy = *p.SecurityPolicy
 	}
-	// Issue #470 / ADR-055: per-app warm-snapshot knobs. Same Set-bit
+	// Issue #470 / ADR-55: per-app warm-snapshot knobs. Same Set-bit
 	// convention as require_signed / streaming_enabled — the Set bit
 	// distinguishes "don't touch" from "explicit reset". Apid already
 	// gated the plan (Free/Hobby + true is rejected) and the bounds
@@ -6022,7 +6042,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if p.SetWarmSnapshotMinMs {
 		a.WarmSnapshotMinMs = intOrZero(p.WarmSnapshotMinMs)
 	}
-	// Issue #1056 / ADR-074: desired paused warm-pool size. The API
+	// Issue #1056 / ADR-74: desired paused warm-pool size. The API
 	// layer owns plan and max-concurrency validation; MemStore mirrors
 	// the durable Set-bit semantics for tests and local development.
 	if p.SetWarmPoolSize {
@@ -6059,7 +6079,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if p.SetVisibility && p.Visibility != nil {
 		a.Visibility = api.NormalizeAppVisibility(*p.Visibility)
 	}
-	// Issue #477 / ADR-079: per-app public_auth
+	// Issue #477 / ADR-79: per-app public_auth
 	// (open|bearer|basic). Memstore mirrors the on-disk shape —
 	// PublicAuthMode is the column-equivalent text + the
 	// PublicAuthBasicSealed byte slice is the secretbox blob
@@ -6074,7 +6094,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 		a.PublicAuthMode = p.PublicAuth.Mode
 		a.PublicAuthBasicSealed = append([]byte(nil), p.PublicAuth.Sealed...)
 	}
-	// Phase 5 repo decomposition (ADR-050 §3): pkg/reconcile uses
+	// Phase 5 repo decomposition (ADR-50 §3): pkg/reconcile uses
 	// these to stamp a fresh workload identity on a changed app. The
 	// apid handler never sets them (customers don't touch root_dir
 	// / workload_name / start_command via PATCH today). nil = leave
@@ -6091,7 +6111,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if p.StartCommand != nil {
 		a.StartCommand = *p.StartCommand
 	}
-	// Issue #695 / ADR-080: grand-father clear path. Mirrors the
+	// Issue #695 / ADR-80: grand-father clear path. Mirrors the
 	// pgstore $44 CASE so the in-memory and on-disk shapes stay
 	// consistent. Apid sets ClearAuthDefaultFlippedAt whenever the
 	// customer made a deliberate PATCH choice on require_authn OR
@@ -6101,7 +6121,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if p.ClearAuthDefaultFlippedAt {
 		a.AuthDefaultFlippedAt = nil
 	}
-	// Tier A10 / ADR-088: per-app overflow_node preference.
+	// Tier A10 / ADR-88: per-app overflow_node preference.
 	// Set bit controls the write — "don't touch" by default,
 	// "explicit NULL" (clear → A9 fallback) when Set is true
 	// with a nil pointer, and "set" when Set is true with a
@@ -6965,7 +6985,7 @@ func (m *MemStore) RecordGitHubInstallationSync(_ context.Context, installationI
 	return nil
 }
 
-// UpsertGithubWebhookSecret mirrors PgStore (PR-D / ADR-012 §7
+// UpsertGithubWebhookSecret mirrors PgStore (PR-D / ADR-12 §7
 // amendment). The MemStore is the unit-test stand-in for the
 // resolver; the bytea is held in an in-memory map keyed by
 // installation_id.
@@ -7123,6 +7143,15 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 		return Deployment{}, 0, err
 	}
 
+	intended := d.TrafficPercent
+	if intended == 0 && !d.TrafficPercentExplicit && d.CanaryTotalSteps <= 0 && !serviceRollout {
+		intended = 100
+	}
+	if intended > 0 {
+		if err := m.rejectUncheckedBindingReleaseLocked(d.AppID, d.Scope); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
 	// Find the most-recent non-terminal deployment row for this app and
 	// deployment scope. Production and staging are independent rollout
 	// lanes; a staging push must never supersede production.
@@ -7201,6 +7230,7 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 	if d.Revision <= 0 {
 		d.Revision = m.nextDeploymentRevisionLocked(d.AppID)
 	}
+	m.recordRecoveryPredecessorLocked(d)
 	m.deployments[d.ID] = d
 	var outboxID int64
 	if activity != nil {
@@ -7394,7 +7424,7 @@ func (m *MemStore) LiveDeployment(_ context.Context, appID string) (Deployment, 
 	return latest, nil
 }
 
-// LiveDeploymentForScope (ADR-091 / PR-D) mirrors PgStore — iterates
+// LiveDeploymentForScope (ADR-91 / PR-D) mirrors PgStore — iterates
 // m.deployments filtering on (app_id, scope, status='live') and
 // keeps the most-recent row. Active canaries intentionally create two
 // live rows with the same (app, scope), so the newest row wins for new
@@ -7629,13 +7659,19 @@ func (m *MemStore) RecoverRollout(ctx context.Context, appID string, action, rea
 }
 
 func (m *MemStore) RecoverRolloutForDeployment(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
-	if deploymentID == "" || expectedPredecessorID == "" || deploymentID == expectedPredecessorID || action != "abort" {
+	if deploymentID == "" || expectedPredecessorID == "" || sameDeploymentID(deploymentID, expectedPredecessorID) || action != "abort" {
 		return Deployment{}, 0, ErrRolloutStateInvalid
 	}
 	return m.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason)
 }
 
-func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
+func (m *MemStore) recoverRollout(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string) (Deployment, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.recoverRolloutLocked(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil)
+}
+
+func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, auditOverride *DeploymentAudit) (Deployment, int64, error) {
 	// Validate action at the store boundary so a direct store
 	// caller (CLI test path) gets the same 422 shape as the
 	// handler. The handler also validates via
@@ -7650,9 +7686,6 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 	// stores disagree, a MemStore test observes a reason the SQL store would
 	// have rewritten, and the divergence goes unnoticed until production.
 	reason = normalizeRolloutReason(reason)
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	// Find the active deployment for this app: rollout_state ∈
 	// ('pending','rolling_out') and status='live'. There can be
@@ -7674,6 +7707,11 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 	}
 	if target == nil {
 		return Deployment{}, 0, ErrNotFound
+	}
+	if action != "abort" || expectedPredecessorID == "" {
+		if err := m.rejectUncheckedBindingReleaseLocked(target.AppID, target.Scope); err != nil {
+			return *target, 0, err
+		}
 	}
 	if target.CanaryTotalSteps <= 0 && !IsServiceRollout(*target) {
 		return *target, 0, ErrRolloutStateInvalid
@@ -7699,8 +7737,8 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 			return *target, 0, ErrRolloutStateInvalid
 		}
 		predecessor, exists := m.deployments[expectedPredecessorID]
-		if !exists || predecessor.AppID != appID || predecessor.Status != DeployLive ||
-			normalizedDeploymentScope(predecessor.Scope) != normalizedDeploymentScope(target.Scope) || predecessor.TrafficPercent <= 0 {
+		if !exists || predecessor.ID == target.ID || predecessor.AppID != appID || predecessor.Status != DeployLive ||
+			normalizedDeploymentScope(predecessor.Scope) != normalizedDeploymentScope(target.Scope) || predecessor.TrafficPercent <= 0 || !predecessor.CreatedAt.Before(target.CreatedAt) {
 			return *target, 0, ErrNotFound
 		}
 		for otherID, other := range m.deployments {
@@ -7712,6 +7750,9 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 			if rolloutState == "pending" || rolloutState == "rolling_out" {
 				return *target, 0, ErrRolloutStateInvalid
 			}
+		}
+		if err := m.checkBindingReleaseTrafficLocked(ctx, map[string]int{expectedPredecessorID: 100}); err != nil {
+			return *target, 0, err
 		}
 	}
 	before := *target
@@ -7901,14 +7942,12 @@ func (m *MemStore) recoverRollout(_ context.Context, appID, deploymentID, expect
 			predecessor.TrafficPercent = 100
 			m.deployments[expectedPredecessorID] = predecessor
 			m.deployments[target.ID] = *target
-			auditID, err := m.appendDeploymentAuditLocked(DeploymentAudit{
-				DeploymentID: uuid.MustParse(target.ID),
-				AccountID:    nil,
-				Kind:         DeployRolledBack,
-				Actor:        "operator:cli:recover_rollout",
-				At:           now,
-				Data:         json.RawMessage(rolloutAuditData("abort", reason)),
-			})
+			entry := DeploymentAudit{DeploymentID: uuid.MustParse(target.ID), Kind: DeployRolledBack, Actor: "operator:cli:recover_rollout", At: now,
+				Data: json.RawMessage(rolloutRecoveryAuditData(reason, expectedPredecessorID, bindingReleaseFences(ctx)))}
+			if auditOverride != nil {
+				entry = *auditOverride
+			}
+			auditID, err := m.appendDeploymentAuditLocked(entry)
 			if err != nil {
 				return Deployment{}, 0, fmt.Errorf("state: append recovery audit: %w", err)
 			}
@@ -8390,6 +8429,16 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	if err := m.checkServiceCapacityDeploymentLocked(proposal); err != nil {
 		return err
 	}
+	if status == DeployLive && d.Status != DeployLive && d.TrafficPercent > 0 {
+		if err := m.rejectUncheckedBindingReleaseLocked(d.AppID, d.Scope); err != nil {
+			return err
+		}
+	}
+	if status == DeployFailed {
+		if err := m.checkBindingReleaseFailureLocked(d); err != nil {
+			return err
+		}
+	}
 	previousStatus := d.Status
 	if status == DeployFailed {
 		m.failDeploymentLocked(d, errMsg)
@@ -8509,10 +8558,25 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 	if !ok {
 		return ErrNotFound
 	}
+	if r, ok := m.checkedRollbackForTargetLocked(id); ok && r.Status == "preparing" {
+		return m.markCheckedRollbackReadyLocked(ctx, d, r)
+	}
+
+	for _, operation := range m.checkedRollbacks {
+		if operation.TargetDeploymentID == id && operation.Status == "failed" && d.Status != DeployLive {
+			return ErrCheckedRollbackRequired
+		}
+	}
+
 	proposal := d
 	proposal.Status = DeployLive
 	if err := m.checkServiceCapacityDeploymentLocked(proposal); err != nil {
 		return err
+	}
+	if d.Status != DeployLive && (d.TrafficPercent > 0 || !d.TrafficPercentExplicit && d.CanaryTotalSteps <= 0 && !IsServiceRollout(d)) {
+		if err := m.rejectUncheckedBindingReleaseLocked(d.AppID, d.Scope); err != nil {
+			return err
+		}
 	}
 	before := d
 	previousStatus := d.Status
@@ -8602,6 +8666,13 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 			other.TrafficPercent = newWeights[i]
 			updatedSiblings[sibling.ID] = other
 		}
+		proposed := map[string]int{id: d.TrafficPercent}
+		for siblingID, other := range updatedSiblings {
+			proposed[siblingID] = other.TrafficPercent
+		}
+		if err := m.checkBindingReleaseTrafficLocked(ctx, proposed); err != nil {
+			return err
+		}
 		if err := m.captureAndStoreDeploymentSnapshotsLocked(ctx, d, previousStatus != DeployLive); err != nil {
 			return err
 		}
@@ -8676,6 +8747,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 		// There is no previous revision to receive the residual. A
 		// first deployment cannot be meaningfully canaried, so make it
 		// a safe 100% completion instead of publishing a broken split.
+		if err := m.rejectUncheckedBindingReleaseLocked(d.AppID, d.Scope); err != nil {
+			return err
+		}
 		now := time.Now().UTC()
 		d.Status = DeployLive
 		d.Error = ""
@@ -8707,6 +8781,13 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 		other := m.deployments[sibling.ID]
 		other.TrafficPercent = newWeights[i]
 		updatedSiblings[sibling.ID] = other
+	}
+	proposed := map[string]int{id: d.TrafficPercent}
+	for siblingID, other := range updatedSiblings {
+		proposed[siblingID] = other.TrafficPercent
+	}
+	if err := m.checkBindingReleaseTrafficLocked(ctx, proposed); err != nil {
+		return err
 	}
 	if err := m.captureAndStoreDeploymentSnapshotsLocked(ctx, d, previousStatus != DeployLive); err != nil {
 		return err
@@ -9272,6 +9353,9 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		// No rollback target — succeed as a no-op (mirrors PG path).
 		return "", nil
 	}
+	if err := m.rejectUncheckedBindingReleaseLocked(cur.AppID, cur.Scope); err != nil {
+		return "", err
+	}
 	now := time.Now().UTC()
 	for id, d := range m.deployments {
 		if d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || d.Status != DeployLive {
@@ -9329,6 +9413,9 @@ func (m *MemStore) PrepareDeploymentRollback(_ context.Context, appID, targetDep
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.prepareDeploymentRollbackLocked(appID, targetDeploymentID)
+}
+func (m *MemStore) prepareDeploymentRollbackLocked(appID, targetDeploymentID string) (Deployment, error) {
 	target, ok := m.deployments[targetDeploymentID]
 	if !ok || target.AppID != appID {
 		return Deployment{}, ErrNoRollbackTarget
@@ -9379,7 +9466,7 @@ func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, 
 	if !ok {
 		return ErrNotFound
 	}
-	// Issue #96 / ADR-025 axis 2 (PR #116): mirror PgStore — both
+	// Issue #96 / ADR-25 axis 2 (PR #116): mirror PgStore — both
 	// rootfs_path and rootfs_key are stamped on the same mutation so
 	// the in-memory store tracks Postgres' column-pair contract.
 	d.RootfsPath = path
@@ -9430,7 +9517,7 @@ func (m *MemStore) SetDeploymentRuntimeProfile(_ context.Context, id string, pro
 }
 
 // UpsertDeploymentScanResult mirrors PgStore.UpsertDeploymentScanResult
-// (issue #464 / ADR-055 / PR-3). Stamps the per-deploy grype scan on
+// (issue #464 / ADR-55 / PR-3). Stamps the per-deploy grype scan on
 // the in-memory deployments row. The Deployment struct's scan fields
 // are added in this PR — PR-1 only added them to the sqlc-generated
 // model and the DB, so the in-memory mirror needed its own
@@ -10167,7 +10254,7 @@ func (m *MemStore) UpsertAppOpenAPIDocIfUnderQuota(_ context.Context, appID, acc
 }
 
 // SetDeploymentSidecarLayer mirrors PgStore (issue #463 /
-// ADR-069 / PR-B). Upserts on the (deployment_id, sidecar_name)
+// ADR-69 / PR-B). Upserts on the (deployment_id, sidecar_name)
 // pair — same idempotency contract as the schema CHECK + ON
 // CONFLICT DO UPDATE; the in-memory map key (deploymentID +
 // "\x00" + sidecarName) gives the same uniqueness. Defers to
@@ -10242,7 +10329,7 @@ func (m *MemStore) SetDeploymentSourceURL(_ context.Context, id, sourceURL, comm
 	return nil
 }
 
-// SetDeploymentFailed mirrors PgStore.SetDeploymentFailed (ADR-021):
+// SetDeploymentFailed mirrors PgStore.SetDeploymentFailed (ADR-21):
 // status pinned to 'failed'; error_code is the RFC 7807 code lifted
 // from pkg/api.SentinelToCode; error keeps the free-text message.
 // Returns the refreshed row.
@@ -10255,6 +10342,9 @@ func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message stri
 	}
 	if d.Status == DeployCancelled {
 		return Deployment{}, ErrInvalidStateTransition
+	}
+	if err := m.checkBindingReleaseFailureLocked(d); err != nil {
+		return Deployment{}, err
 	}
 	if err := m.enqueueDeploymentOutcomeActivityLocked(id, "failed", code); err != nil {
 		return Deployment{}, err
@@ -10305,6 +10395,9 @@ func (m *MemStore) SetDeploymentFailedEx(
 	if d.Status == DeployCancelled {
 		return Deployment{}, ErrInvalidStateTransition
 	}
+	if err := m.checkBindingReleaseFailureLocked(d); err != nil {
+		return Deployment{}, err
+	}
 	if err := m.enqueueDeploymentOutcomeActivityLocked(id, "failed", code); err != nil {
 		return Deployment{}, err
 	}
@@ -10320,7 +10413,7 @@ func (m *MemStore) SetDeploymentFailedEx(
 }
 
 // SetDeploymentParked stamps the per-deployment parked_reason +
-// parked_at columns (issue #554 / ADR-079 follow-up). Idempotent:
+// parked_at columns (issue #554 / ADR-79 follow-up). Idempotent:
 // a second call on an already-parked deployment is a no-op — the
 // closed-set reason and parked_at are set once. Same contract as
 // PgStore.SetDeploymentParked. Returns ErrNotFound when the
@@ -10465,6 +10558,9 @@ func (m *MemStore) FailSourceDeployment(_ context.Context, id, message string) e
 			return nil
 		}
 	}
+	if err := m.checkBindingReleaseFailureLocked(d); err != nil {
+		return err
+	}
 	if err := m.enqueueDeploymentOutcomeActivityLocked(id, "failed", ""); err != nil {
 		return err
 	}
@@ -10537,7 +10633,7 @@ func (m *MemStore) UpdateBuildStatus(_ context.Context, id string, status BuildS
 }
 
 // CreateBuildProvenance mirrors PgStore.CreateBuildProvenance
-// (ADR-038, Tier 3 / issue #197 B3.1). Idempotent: re-creating a
+// (ADR-38, Tier 3 / issue #197 B3.1). Idempotent: re-creating a
 // row for an existing build_id overwrites the existing entry in
 // place (mirrors ON CONFLICT (build_id) DO UPDATE). Empty BuildID
 // is a programming error and returns an error so a unit-test path
@@ -11739,7 +11835,7 @@ func (m *MemStore) CountActiveCronInvocations(_ context.Context, cronID string) 
 	return n, nil
 }
 
-// Fire-now request queue (ADR-090 PR-C). In-memory mirrors the
+// Fire-now request queue (ADR-90 PR-C). In-memory mirrors the
 // cron_fire_now_requests table (migrations/00193) — same shape, same
 // status enum. Tests that exercise the fire-now path construct a
 // MemStore with fireNowRequests pre-seeded; production wiring uses
@@ -12089,7 +12185,7 @@ func (m *MemStore) OperatorIntentOutcomeMissingCounts(_ context.Context, thresho
 // is NOT consulted (audit_log is the post-deletion evidence
 // table, not the live diagnostic surface — see
 // PgStore.OperatorActionTraceCompleteness comment for the
-// ADR-091 §3.7.4 two-surface split).
+// ADR-91 §3.7.4 two-surface split).
 //
 // Vacuous-truth rule: kinds with zero rows in the window are
 // ABSENT from the returned map; the handler seeds them to 1.0
@@ -13674,7 +13770,7 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 	// describe a state-machine shape that no production code reaches.
 	//
 	// nodeID is the compute_node the instance lives on
-	// (issue #97 / ADR-025 axis 3). MemStore does NOT enforce the
+	// (issue #97 / ADR-25 axis 3). MemStore does NOT enforce the
 	// FK to compute_nodes(id) — the production constraint lives in
 	// migrations/00024_compute_nodes. A test that passes an
 	// arbitrary nodeID here will succeed; the constraint divergence
@@ -14296,7 +14392,7 @@ func (m *MemStore) UpdateInstanceStateIf(_ context.Context, id, expectedState, n
 	return nil
 }
 
-// IncInstanceRequestCount (ADR-098 C8) bumps the per-instance
+// IncInstanceRequestCount (ADR-98 C8) bumps the per-instance
 // request_count column by delta. Mirrors PgStore's behaviour:
 // idempotent on Phase-4-loser re-applies (the writer is additive),
 // returns -1 when the row is gone. The memstore mirrors the column
@@ -14436,7 +14532,7 @@ func (m *MemStore) ClearInstanceFrameworkReadyAt(_ context.Context, id string) e
 }
 
 // BumpInstanceTailCount mirrors pgstore.BumpInstanceTailCount
-// (issue #667 / ADR-078). Applies the signed delta to the
+// (issue #667 / ADR-78). Applies the signed delta to the
 // in-memory instance's TailCount under the existing instance
 // mutex so a concurrent receipt cannot lose increments, and
 // floors at 0 to mirror the SQL GREATEST(…, 0) guard. Returns
@@ -14466,7 +14562,7 @@ func (m *MemStore) BumpInstanceTailCount(_ context.Context, id string, delta int
 }
 
 // DecrementInstanceTailCount mirrors pgstore.DecrementInstanceTailCount
-// (issue #667 / ADR-078). Decrement by n with the 0-floor guard.
+// (issue #667 / ADR-78). Decrement by n with the 0-floor guard.
 // Kept as a separate method (vs the BumpInstanceTailCount form)
 // for symmetry with the pgstore API and to make every decrement
 // site self-documenting at the call site. The snapshotAndPark
@@ -14492,7 +14588,7 @@ func (m *MemStore) DecrementInstanceTailCount(_ context.Context, id string, n in
 }
 
 // GetInstanceTailCount mirrors pgstore.GetInstanceTailCount
-// (issue #667 / ADR-078). Used by the snapshotAndPark watchdog to
+// (issue #667 / ADR-78). Used by the snapshotAndPark watchdog to
 // poll for drain completion.
 func (m *MemStore) GetInstanceTailCount(_ context.Context, id string) (int32, error) {
 	m.mu.Lock()
@@ -14758,7 +14854,7 @@ func (m *MemStore) TouchInstancesLastSeen(_ context.Context, touches []InstanceT
 	return applied, nil
 }
 
-// TouchInstancesWithRequestDelta (ADR-098 C9) applies both
+// TouchInstancesWithRequestDelta (ADR-98 C9) applies both
 // last_request_at and the per-instance request_count delta. The
 // memstore mirrors the writer contract: additive
 // (`request_count = request_count + delta`), idempotent on
@@ -14844,7 +14940,7 @@ func (m *MemStore) createSnapshotLocked(snap Snapshot) (Snapshot, error) {
 		return Snapshot{}, errors.New("state: MemStore.CreateSnapshot: storage_key required (populate via sched.SnapshotMemKey at the call site)")
 	}
 	if snap.Tier == "" {
-		// Issue #470 / ADR-055: empty tier is treated as "init" for
+		// Issue #470 / ADR-55: empty tier is treated as "init" for
 		// legacy callers; new warm-tier capture code passes
 		// SnapshotTierWarm explicitly.
 		snap.Tier = SnapshotTierInit
@@ -14889,7 +14985,7 @@ func (m *MemStore) LatestSnapshot(_ context.Context, deploymentID string) (Snaps
 			found = true
 			continue
 		}
-		// Issue #470 / ADR-055: warm wins on a created_at tie. The
+		// Issue #470 / ADR-55: warm wins on a created_at tie. The
 		// (tier='warm') order-by clause in PgStore.LatestSnapshot
 		// mirrors this preference.
 		sWarm := s.Tier == SnapshotTierWarm
@@ -14911,7 +15007,7 @@ func (m *MemStore) LatestSnapshot(_ context.Context, deploymentID string) (Snaps
 // the freshest non-stale snapshot for (deploymentID, tier). Empty tier
 // is treated as "init" for legacy callers. Returns ErrNotFound when no
 // non-stale row exists; schedd's tier-fallback chain treats that as
-// "fall through to the next tier" (issue #470 / ADR-055).
+// "fall through to the next tier" (issue #470 / ADR-55).
 func (m *MemStore) LatestSnapshotForTier(_ context.Context, deploymentID, tier string) (Snapshot, error) {
 	if tier == "" {
 		tier = SnapshotTierInit
@@ -15021,19 +15117,19 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 			FCVersion:        s.FCVersion,
 			MemBytes:         s.MemBytes,
 			DiskBytes:        s.DiskBytes,
-			// Issue #470 / ADR-055: forward the tier so the GC loop's
+			// Issue #470 / ADR-55: forward the tier so the GC loop's
 			// rollback-window policy can retain both tiers for each
 			// protected generation on warm-enabled apps and init rows
 			// only on warm-disabled apps.
 			Tier: s.Tier,
-			// #96 / ADR-025 axis 2: forward the canonical storage
+			// #96 / ADR-25 axis 2: forward the canonical storage
 			// key so imaged's GC loop can Storage.Delete under it
 			// without a second hop through Snapshot.
 			StorageKey:    s.StorageKey,
 			Stale:         s.Stale,
 			DeletePending: s.DeletePending,
 			CreatedAt:     s.CreatedAt,
-			// Issue #470 / PR C / ADR-072: forward
+			// Issue #470 / PR C / ADR-72: forward
 			// apps.warm_snapshot_enabled so the rollback-window
 			// policy can retain both tiers on warm-enabled apps and
 			// init rows only on disabled apps. Same denormalisation
@@ -15151,7 +15247,7 @@ func (m *MemStore) DeleteSnapshotsByID(_ context.Context, ids []string) (int64, 
 }
 
 // MarkAllSnapshotsStaleByFCVersion mirrors the SQL UPDATE: every non-stale
-// row whose fc_version != currentVersion is flipped. ADR-005.
+// row whose fc_version != currentVersion is flipped. ADR-5.
 func (m *MemStore) MarkAllSnapshotsStaleByFCVersion(_ context.Context, currentVersion string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -15334,7 +15430,7 @@ func parseSubjectID(s string) *uuid.UUID {
 	return nil
 }
 
-// --- Compute nodes (issue #97 / ADR-025 axis 3) ---------------------------
+// --- Compute nodes (issue #97 / ADR-25 axis 3) ---------------------------
 //
 // Mirrors the compute_nodes table. The synthetic 'default-local' row
 // is auto-seeded by NewMemStore via seedDefaultLocalNodeLocked (same
@@ -15610,7 +15706,7 @@ func (m *MemStore) CreateComputeNode(_ context.Context, node ComputeNode) (Compu
 }
 
 // UpsertComputeNode mirrors pgstore's INSERT ... ON CONFLICT DO UPDATE
-// (issue #98 / ADR-028). vmmd's self-registration calls this at startup
+// (issue #98 / ADR-28). vmmd's self-registration calls this at startup
 // — a node that has already been registered has its capacity refreshed
 // and is reactivated (active=true), even if an operator had previously
 // drained it. The explicit FromVmmd path below preserves the operator's
@@ -15683,7 +15779,7 @@ func (m *MemStore) UpsertComputeNodeFromOperator(_ context.Context, node Compute
 // This is the load-bearing fix for the second-box cutover. See
 // pgstore's comment on UpsertComputeNodeFromVmmd for the trap.
 //
-// Multi-host safety cluster PR-4 (audit F6, ADR-052 amendment):
+// Multi-host safety cluster PR-4 (audit F6, ADR-52 amendment):
 // like pgstore, this method refuses to silently overwrite an
 // existing row whose cert_fingerprint differs from the new row's.
 // The check happens BEFORE upsertComputeNodeLocked modifies the
@@ -15775,7 +15871,7 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 
 // UpsertNodeKey inserts or updates a (compute_node_id, key_id) row
 // in the in-memory mirror of compute_node_keys (migration 00076,
-// ADR-053). Mirrors PgStore.UpsertNodeKey's ON CONFLICT DO NOTHING
+// ADR-53). Mirrors PgStore.UpsertNodeKey's ON CONFLICT DO NOTHING
 // semantics: a re-insert of the same (nodeID, keyID) is a no-op
 // (the existing public_key_pem is preserved). See
 // PgStore.UpsertNodeKey for the write-once rationale.
@@ -15828,7 +15924,7 @@ func (m *MemStore) LookupNodeKey(_ context.Context, computeNodeID string, keyID 
 }
 
 // SetComputeNodeActive flips active on a row by id (issue #98 /
-// ADR-028). The watchdog drains a stale node to false; the heartbeat
+// ADR-28). The watchdog drains a stale node to false; the heartbeat
 // goroutine reanimates a drained node to true on the next successful
 // dial. MemStore flips the flag in place; production also flips but
 // additionally fires the compute_node_changed pg_notify trigger so
@@ -16111,7 +16207,7 @@ func cloneTimePtr(in *time.Time) *time.Time {
 }
 
 // ListComputeNodes returns every row in name order (issue #98 /
-// ADR-028). When includeInactive is false, drained rows are filtered
+// ADR-28). When includeInactive is false, drained rows are filtered
 // out — placement-equivalent semantics, backed by the partial
 // compute_nodes_active_idx on the production side.
 func (m *MemStore) ListComputeNodes(_ context.Context, includeInactive bool) ([]ComputeNode, error) {
@@ -16234,7 +16330,7 @@ func (m *MemStore) ListComputeNodeHeartbeats(_ context.Context, nodeID string, s
 	return out, nil
 }
 
-// AppendComputeNodeHeartbeatWithStats (PR #4 / ADR-091 §3.6
+// AppendComputeNodeHeartbeatWithStats (PR #4 / ADR-91 §3.6
 // amendment) is the v2 of AppendComputeNodeHeartbeat that also
 // carries the per-node CPU and disk pressure at heartbeat-mint
 // time. The PgStore impl is the load-bearing one — MemStore mirrors
@@ -16341,7 +16437,7 @@ func (m *MemStore) latestHeartbeatStatsWhere(sourceFilter string, onlyMatchingNo
 // instance_node_bindings table; after re-reading migration 00024
 // during implementation we discovered instances.node_id is already
 // a NOT NULL FK to compute_nodes(id), backfilled on pre-existing
-// rows. ADR-092 §8 amends §2.1 to drop the binding-table design.
+// rows. ADR-92 §8 amends §2.1 to drop the binding-table design.
 // This implementation mirrors the SQL GROUP BY directly: the
 // memstore's m.instances is the rows, the lookup onto
 // m.computeNodes is the JOIN, and only the live states count.
@@ -17042,7 +17138,7 @@ func cloneOrgActivity(row OrgActivity) OrgActivity {
 	return row
 }
 
-// ListEventsByWakeID (issue #517 / PR-C, ADR-064) — the
+// ListEventsByWakeID (issue #517 / PR-C, ADR-64) — the
 // in-memory twin of the pgstore ListEventsByWakeID read query.
 // Filters on the jsonb data.wake_id key (the index shape on the
 // production path), keeps one canonical wake.boot_started row per
@@ -17099,7 +17195,7 @@ func (m *MemStore) ListEventsByWakeID(_ context.Context, wakeID string, since ti
 	return out, nil
 }
 
-// ListAllEventsPaged (ADR-091 §3.7 / PR #3) is the in-memory twin
+// ListAllEventsPaged (ADR-91 §3.7 / PR #3) is the in-memory twin
 // of PgStore.ListAllEventsPaged. Applies the same filter
 // semantics (actor / kind_prefix / subject / since) with the same
 // "empty string / zero time = no filter" sentinel used by the SQL
@@ -17182,7 +17278,7 @@ func (m *MemStore) ListEventsByTraceID(_ context.Context, traceID string, limit 
 	return out, nil
 }
 
-// ListRecentEventsForAccount (ADR-091 §3.7 / PR #3) is the
+// ListRecentEventsForAccount (ADR-91 §3.7 / PR #3) is the
 // per-account events drill-down. Same filter contract as the
 // pgstore version. Backed by the in-memory append order so the
 // partial-index shape (migrations/00099) is mirrored by the
@@ -17237,7 +17333,7 @@ func (m *MemStore) ListRecentEventsForAccount(_ context.Context, actorAccountID 
 	return out, nil
 }
 
-// ListEventsBySidecar (issue #463 / ADR-069 / PR-B) is the
+// ListEventsBySidecar (issue #463 / ADR-69 / PR-B) is the
 // sidecar-aware read-side twin of ListEventsByWakeID. Filters on
 // the jsonb data.sidecar_name key AND the closed wake.kind IN
 // ('wake.sidecar_init_exit', 'wake.sidecar_restart',
@@ -17297,7 +17393,7 @@ func (m *MemStore) ListEventsBySidecar(_ context.Context, sidecarName string, si
 // audit that surfaced this contract change.
 //
 // cpu_usec, tx_bytes, and net_tx_bytes are ADDITIVE on the same
-// conflict key (issue #279 / PR-B for cpu_usec, ADR-046 for
+// conflict key (issue #279 / PR-B for cpu_usec, ADR-46 for
 // tx_bytes / net_tx_bytes): the schedd / meterd accumulators can
 // each call AppendUsage many times within the same minute (250 ms
 // cadence × ~240 ticks/minute), and the per-tick deltas need to be
@@ -17447,7 +17543,7 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, accountID, a
 }
 
 // AppendBuilderUsage mirrors pgstore's AppendBuilderUsage
-// (ADR-048 §4). Idempotent on build_id — first write wins; a
+// (ADR-48 §4). Idempotent on build_id — first write wins; a
 // redelivered webhook is a no-op. The meterd rollup cron sums
 // these into usage_daily.builder_seconds. seconds is wall-clock
 // seconds from builds.started_at to finishedAt (matches the
@@ -18458,7 +18554,7 @@ func utcDay(t time.Time) time.Time {
 // UsageDailyForAccount derives the same bounded shape from MemStore's minute
 // rows. MemStore does not run the production usage_daily rollup cron, but
 // aggregating its source rows keeps dashboard and API tests representative of
-// the production read contract. ADR-048 / issue #308.
+// the production read contract. ADR-48 / issue #308.
 func (m *MemStore) UsageDailyForAccount(_ context.Context, accountID string) ([]DailyUsage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -18502,7 +18598,7 @@ func (m *MemStore) UsageDailyForAccount(_ context.Context, accountID string) ([]
 }
 
 // UsageSLOForApp + UsageSLOForAccount mirror pgstore for the
-// customer-facing SLO surface (issue #696 / ADR-082). The
+// customer-facing SLO surface (issue #696 / ADR-82). The
 // MemStore does not maintain usage_minutes — pkg/meter
 // wires directly to PgStore in production. Returns (0, 0, nil)
 // so the handler treats the SLO panel as "empty" without
@@ -18517,7 +18613,7 @@ func (m *MemStore) UsageSLOForAccount(_ context.Context, _ string, _, _ time.Tim
 }
 
 // AppendSnapshotStorage + StorageUsage mirror pgstore's point-in-time
-// snapshot rollup (ADR-049 §B.3). Repeated writes for the same primary key
+// snapshot rollup (ADR-49 §B.3). Repeated writes for the same primary key
 // replace the byte counts instead of adding them.
 func (m *MemStore) AppendSnapshotStorage(_ context.Context, accountID, appID string, day time.Time, snapshotBytes, layerBytes int64) error {
 	m.mu.Lock()
@@ -18552,7 +18648,7 @@ func storageUsageKey(accountID, appID string, day time.Time) string {
 }
 
 // LatestSnapshotBytes mirrors pgstore for the storage rollup
-// (ADR-049 §B.3). The MemStore does not maintain a snapshot set;
+// (ADR-49 §B.3). The MemStore does not maintain a snapshot set;
 // returns (0, 0, nil) so the rollup writes a zero-byte day rather
 // than crashing. Tests that exercise the rollup's write path use
 // PgStore against a real Postgres (migrations/00070_snapshot_storage_daily_test.go).
@@ -19196,7 +19292,7 @@ func (m *MemStore) MarkAccountEmailVerified(_ context.Context, accountID string)
 	return nil
 }
 
-// DeleteOldEvents (ADR-075) prunes audit-log events whose `at` is
+// DeleteOldEvents (ADR-75) prunes audit-log events whose `at` is
 // older than the cutoff. Mirrors the PgStore shape so tests can
 // drive the in-memory twin of the daily retention loop without
 // spinning up Postgres. Returns the number removed.
@@ -19525,12 +19621,12 @@ func (m *MemStore) ListDeploymentLogs(_ context.Context, deploymentID string, be
 // without touching Postgres.
 
 // UpsertAppSecret inserts or replaces the (account_id, app_id,
-// scope='default', key) row (ADR-092 PR-A).
+// scope='default', key) row (ADR-92 PR-A).
 // updated_at is bumped on every call so schedd's wake staging
 // observes a fresh mtime even when the ciphertext is identical
 // (rotation flows re-seal with the same plaintext).
 //
-// ADR-089 PR-A: preserves the pre-PR-A wire shape (no kid stamp)
+// ADR-89 PR-A: preserves the pre-PR-A wire shape (no kid stamp)
 // for backward compatibility. New callers use
 // UpsertAppSecretWithKid (or UpsertAppSecretWithKidInScope for
 // non-default scope).
@@ -19539,7 +19635,7 @@ func (m *MemStore) UpsertAppSecret(ctx context.Context, accountID, appID, key st
 }
 
 // UpsertAppSecretWithKid is the kid-stamping sibling of
-// UpsertAppSecret (ADR-089 PR-A). Mirrors the pgstore impl — see
+// UpsertAppSecret (ADR-89 PR-A). Mirrors the pgstore impl — see
 // pkg/state/pgstore.go::UpsertAppSecretWithKid for the rationale.
 // Hardcodes scope='default' (PR-A); use
 // UpsertAppSecretWithKidInScope for any other scope.
@@ -19548,7 +19644,7 @@ func (m *MemStore) UpsertAppSecretWithKid(ctx context.Context, accountID, appID,
 }
 
 // UpsertAppSecretInScope is the scope-aware sibling of
-// UpsertAppSecret (ADR-092 PR-A). Mirrors the pgstore impl's
+// UpsertAppSecret (ADR-92 PR-A). Mirrors the pgstore impl's
 // `ON CONFLICT (app_id, scope, key) DO UPDATE` semantics: an
 // existing row at the (app_id, scope, key) tuple is replaced and
 // updated_at bumped.
@@ -19585,8 +19681,8 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 }
 
 // UpsertAppSecretWithKidInScope is the kid-stamping scope-aware
-// sibling (ADR-092 PR-A). Mirrors UpsertAppSecretInScope but
-// stamps kid alongside ciphertext (see ADR-089 PR-A for the
+// sibling (ADR-92 PR-A). Mirrors UpsertAppSecretInScope but
+// stamps kid alongside ciphertext (see ADR-89 PR-A for the
 // kid semantics).
 func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, appID, scope, key, kid string, ciphertext []byte) error {
 	m.mu.Lock()
@@ -19855,7 +19951,7 @@ func (m *MemStore) DeleteAppSecret(ctx context.Context, accountID, appID, key st
 }
 
 // GetAppSecretInScope is the scope-aware sibling of GetAppSecret
-// (ADR-092 PR-A). Returns the (app_id, scope, key) row scoped to
+// (ADR-92 PR-A). Returns the (app_id, scope, key) row scoped to
 // accountID. Returns ErrNotFound when no row matches.
 func (m *MemStore) GetAppSecretInScope(_ context.Context, accountID, appID, scope, key string) (*AppSecret, error) {
 	m.mu.Lock()
@@ -19871,7 +19967,7 @@ func (m *MemStore) GetAppSecretInScope(_ context.Context, accountID, appID, scop
 }
 
 // DeleteAppSecretInScope is the scope-aware sibling of
-// DeleteAppSecret (ADR-092 PR-A).
+// DeleteAppSecret (ADR-92 PR-A).
 func (m *MemStore) DeleteAppSecretInScope(ctx context.Context, accountID, appID, scope, key string) error {
 	_, err := m.DeleteAppSecretInScopeWithRevocation(ctx, accountID, appID, scope, key)
 	return err
@@ -20050,8 +20146,8 @@ func (m *MemStore) GetAppSecretRevocation(_ context.Context, accountID, appID, r
 }
 
 // ListAppSecretsForRekey is the global paginated walk consumed by
-// pkg/rekey.Replayer.Run (ADR-089 PR-A, widened to 4-tuple in
-// ADR-092 PR-A). Order is (account_id ASC, app_id ASC, scope ASC,
+// pkg/rekey.Replayer.Run (ADR-89 PR-A, widened to 4-tuple in
+// ADR-92 PR-A). Order is (account_id ASC, app_id ASC, scope ASC,
 // key ASC) so the cursor walk is monotonic across the
 // (account_id, app_id, scope, key) primary-key order — see
 // pkg/state/pgstore.go::ListAppSecretsForRekey for the SQL
@@ -20117,7 +20213,7 @@ func (m *MemStore) ListAppSecretsForRekey(_ context.Context, limit int, cursor s
 }
 
 // ListAppSecretsInScope is the scope-aware sibling of
-// ListAppSecrets (ADR-092 PR-A). Returns every (key, ciphertext,
+// ListAppSecrets (ADR-92 PR-A). Returns every (key, ciphertext,
 // kid, timestamps) row on the app where scope matches the
 // caller-supplied value, scoped to accountID. Order: by scope
 // ASC, key ASC for deterministic wake staging.
@@ -20149,7 +20245,7 @@ func (m *MemStore) ListAppSecrets(ctx context.Context, accountID, appID string) 
 }
 
 // ListAllAppSecrets is the cross-scope mirror of ListAppSecrets
-// (ADR-092 PR-A). Returns every secret row on the app across all
+// (ADR-92 PR-A). Returns every secret row on the app across all
 // scopes, scoped to accountID. Order: by scope ASC, key ASC.
 // Used by apid's GET /v1/apps/{slug}/secrets?scope=__all__ arm
 // (PR-B) to render the nested secrets_by_scope response shape.
@@ -20550,7 +20646,7 @@ func appendSecretRuntimeReloadTarget(m *MemStore, out []AppSecretRuntimeReloadTa
 	return append(out, target)
 }
 
-// --- per-app private-registry Basic Auth (issue #461 / ADR-062) -------------
+// --- per-app private-registry Basic Auth (issue #461 / ADR-62) -------------
 //
 // Mirror of the customer-secrets surface (lines 4479-4544) keyed by
 // (app_id, registry) instead of (app_id, key). Same ownership
@@ -20696,7 +20792,7 @@ func (m *MemStore) MarkAppRegistryCredentialUsed(_ context.Context, accountID, a
 	return nil
 }
 
-// --- app env vars (issue #395 / ADR-045) -------------------------------------
+// --- app env vars (issue #395 / ADR-45) -------------------------------------
 //
 // Mirror of the customer-secrets surface (lines 4479-4544) minus the
 // ciphertext column. Plaintext values live only in this map; never
@@ -20706,7 +20802,7 @@ func (m *MemStore) MarkAppRegistryCredentialUsed(_ context.Context, accountID, a
 // 'default', key) row. updated_at is bumped on every call so schedd's
 // wake staging observes a fresh mtime on every write.
 //
-// ADR-090 PR-A: hardcodes scope='default' at the map key site. Use
+// ADR-90 PR-A: hardcodes scope='default' at the map key site. Use
 // UpsertAppEnvInScope for non-default scopes.
 func (m *MemStore) UpsertAppEnv(ctx context.Context, accountID, appID, key, value string) error {
 	return m.UpsertAppEnvInScope(ctx, accountID, appID, "default", key, value)
@@ -20716,7 +20812,7 @@ func (m *MemStore) UpsertAppEnv(ctx context.Context, accountID, appID, key, valu
 // row. Returns ErrNotFound when no row matches — same semantics as
 // PgStore so the handler renders 400 CodeEnvVarNotFound.
 //
-// ADR-090 PR-A: hardcodes scope='default' (see UpsertAppEnv).
+// ADR-90 PR-A: hardcodes scope='default' (see UpsertAppEnv).
 func (m *MemStore) DeleteAppEnv(ctx context.Context, accountID, appID, key string) error {
 	return m.DeleteAppEnvInScope(ctx, accountID, appID, "default", key)
 }
@@ -20744,7 +20840,7 @@ func (m *MemStore) ListAppEnv(_ context.Context, accountID, appID string) ([]App
 }
 
 // CountAppEnv is the quota helper. Counts ALL scope values for the
-// app per ADR-090 D6 (EnvVarsMax is per-app, not per-scope). Mirrors
+// app per ADR-90 D6 (EnvVarsMax is per-app, not per-scope). Mirrors
 // PgStore.CountAppEnv.
 func (m *MemStore) CountAppEnv(_ context.Context, accountID, appID string) (int, error) {
 	m.mu.Lock()
@@ -20834,7 +20930,7 @@ func (m *MemStore) ListAppEnvInScope(_ context.Context, accountID, appID, scope 
 }
 
 // CountAppEnvInScope is the scope-aware sibling of CountAppEnv.
-// Reserved for future per-scope caps (ADR-091 follow-up); PR-A does
+// Reserved for future per-scope caps (ADR-91 follow-up); PR-A does
 // not call it.
 func (m *MemStore) CountAppEnvInScope(_ context.Context, accountID, appID, scope string) (int, error) {
 	m.mu.Lock()
@@ -20855,7 +20951,7 @@ func (m *MemStore) CountAppEnvInScope(_ context.Context, accountID, appID, scope
 // scoped to accountID. Order: by scope ASC, key ASC (mirrors the
 // pgstore ORDER BY so handler tests see the same wire shape).
 // Used by apid's GET /v1/apps/{slug}/envs?scope=__all__ arm
-// (ADR-090 PR-B / D3) to render the nested `env_by_scope` response
+// (ADR-90 PR-B / D3) to render the nested `env_by_scope` response
 // shape.
 func (m *MemStore) ListAllAppEnv(_ context.Context, accountID, appID string) ([]AppEnv, error) {
 	m.mu.Lock()
@@ -20876,7 +20972,7 @@ func (m *MemStore) ListAllAppEnv(_ context.Context, accountID, appID string) ([]
 	return out, nil
 }
 
-// --- app trusted cosign signers (issue #472 / ADR-054) -----------------------
+// --- app trusted cosign signers (issue #472 / ADR-54) -----------------------
 //
 // MemStore mirrors the PgStore trusted-signer CRUD so handler tests
 // exercise the same shape the production store enforces. Same posture as
@@ -20982,7 +21078,7 @@ func (m *MemStore) CountAppTrustedSigners(_ context.Context, accountID, appID st
 	return n, nil
 }
 
-// --- G6 account self-service (spec §17 G6, ADR-021) -------------------------
+// --- G6 account self-service (spec §17 G6, ADR-21) -------------------------
 //
 // MemStore mirrors PgStore for the G6 endpoints so handler tests
 // exercise the same shape the production store enforces. The grace
@@ -21480,7 +21576,7 @@ func (m *MemStore) ListBuildsForAccount(_ context.Context, accountID string) ([]
 
 // ListBuildsForAccountPaged returns one page of builds across the
 // account's deployments, ordered started_at desc nulls last with
-// id DESC as the tiebreaker (DEPLOY-PROV-6 follow-up / ADR-091,
+// id DESC as the tiebreaker (DEPLOY-PROV-6 follow-up / ADR-91,
 // issue #741 close-out, post-review fix).
 //
 // statusFilter="" matches any status; appIDFilter="" matches any
@@ -21615,7 +21711,7 @@ func (m *MemStore) ListCronsForAccount(_ context.Context, accountID string) ([]C
 	return out, nil
 }
 
-// --- alert rules (issue #396, ADR-045) --------------------------------------
+// --- alert rules (issue #396, ADR-45) --------------------------------------
 //
 // MemStore mirrors the Postgres shape. The ClaimAlertFire semantics
 // ride a single timestamp per rule (last_fired_at) so two ticks in
@@ -21629,6 +21725,9 @@ func (m *MemStore) ListCronsForAccount(_ context.Context, accountID string) ([]C
 // same field values the PgStore does (default gen_random_uuid +
 // default now() are faked by MemStore with newID/time.Now).
 func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, error) {
+	if !validAlertRollbackWindow(in) {
+		return AlertRule{}, ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.alertRules {
@@ -21659,6 +21758,9 @@ func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, 
 // gates the count + insert. Account-wide rules (AppID == "") skip
 // the per-app branch but still hit the per-account branch.
 func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, limits api.Limits) (AlertRule, error) {
+	if !validAlertRollbackWindow(in) {
+		return AlertRule{}, ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.alertRules {
@@ -21822,6 +21924,12 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if p.Action != nil {
 		r.Action = AlertAction(*p.Action)
 	}
+	if p.PostDeployRollbackWindowSeconds != nil {
+		r.PostDeployRollbackWindowSeconds = *p.PostDeployRollbackWindowSeconds
+	}
+	if !validAlertRollbackWindow(r) {
+		return AlertRule{}, ErrInvalidArgument
+	}
 	r.UpdatedAt = time.Now()
 	m.alertRules[id] = r
 	return r, nil
@@ -21834,6 +21942,12 @@ func (m *MemStore) DeleteAlertRule(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.alertRules, id)
+	for key, delivery := range m.alertDeliveries {
+		if delivery.RuleID == id {
+			delete(m.alertDeliveries, key)
+			delete(m.alertRollbacks, alertRollbackFireID(delivery.ID))
+		}
+	}
 	return nil
 }
 
@@ -21864,7 +21978,7 @@ func (m *MemStore) ListEnabledAlertRules(_ context.Context) ([]AlertRule, error)
 }
 
 // ----------------------------------------------------------------------------
-// Edge rules (ADR-089). MemStore mirrors the pgstore contract for
+// Edge rules (ADR-89). MemStore mirrors the pgstore contract for
 // the 8 methods. The single-process m.mu serialises the count +
 // insert in CreateEdgeRuleIfUnderQuota, so the FOR UPDATE row lock
 // in pgstore is unnecessary here. Action is round-tripped by value
@@ -21979,7 +22093,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 			Observed: appCount,
 		}
 	}
-	// Per-kind quota (ADR-091 D22). Same shape as the pgstore
+	// Per-kind quota (ADR-91 D22). Same shape as the pgstore
 	// branch. The memstore holds the entire edgeRules slice under
 	// m.mu so the per-kind count is trivially race-free.
 	if in.Kind == EdgeRuleKindGeo && limits.EdgeRulesGeoPerApp > 0 {
@@ -21999,7 +22113,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 			}
 		}
 	}
-	// kind='throttle' per-app quota (ADR-091 D20.5 amendment, issue
+	// kind='throttle' per-app quota (ADR-91 D20.5 amendment, issue
 	// #881). Mirror of the pgstore branch: race-free under the
 	// memstore's own m.mu (pgstore needs the explicit FOR UPDATE
 	// on apps for race-freedom that the local slice doesn't).
@@ -22763,6 +22877,9 @@ func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey stri
 	if _, dup := m.alertClaimKeys[cacheKey]; dup {
 		return "", false, nil
 	}
+	if r.Action == AlertActionRollback && alertRollbackMetricAllowed(r.Metric) && !api.IsFiniteFloat(observed) {
+		return "", false, ErrInvalidArgument
+	}
 	if r.LastFiredAt.Before(at) || r.LastFiredAt.IsZero() {
 		r.LastFiredAt = at.UTC()
 		m.alertRules[ruleID] = r
@@ -22790,6 +22907,7 @@ func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey stri
 			ObservedValue:  observed,
 			FiredAt:        at.UTC(),
 		}
+		m.captureAlertRollbackLocked(id, r, observed, at)
 		return id, true, nil
 	}
 	return "", false, nil
@@ -23481,7 +23599,7 @@ func (m *MemStore) SetDeletionRequestedAtForTest(id string, at time.Time) error 
 	return nil
 }
 
-// --- IAM-3 sessions (ADR-039, issue #187 + #244 merged) ---------------------
+// --- IAM-3 sessions (ADR-39, issue #187 + #244 merged) ---------------------
 //
 // One row per dashboard login, keyed by uuid. Revocation is
 // RevokedAt != nil; LastSeenAt may update post-revocation. IDOR
@@ -23656,7 +23774,7 @@ func (m *MemStore) Ping(ctx context.Context) error {
 var _ Store = (*MemStore)(nil)
 
 // webhookSecretMeta is the per-tenant meta stamped alongside
-// the secret (PR-D / ADR-012 §7 amendment). The shape mirrors
+// the secret (PR-D / ADR-12 §7 amendment). The shape mirrors
 // github_webhook_secrets.upgraded_at + upgraded_by so the apid
 // admin handler can echo the row back without a second
 // round-trip.
@@ -23742,7 +23860,7 @@ func (m *MemStore) SetSnapshotStorageKeyForTest(deploymentID, storageKey string)
 	}
 }
 
-// derefPrefixes is the []netip.Prefix sibling of intOrZero (ADR-031).
+// derefPrefixes is the []netip.Prefix sibling of intOrZero (ADR-31).
 // Returns the underlying slice or nil so callers see a uniform shape
 // for both branches of `SetEgressAllowlist`. Mirrors pgstore's
 // copy; the duplication is intentional — pgstore dereferences for
@@ -23754,7 +23872,7 @@ func derefPrefixes(p *[]netip.Prefix) []netip.Prefix {
 	return *p
 }
 
-// --- Organizations (ADR-061, IAM-6, PR 2) --------------------------------
+// --- Organizations (ADR-61, IAM-6, PR 2) --------------------------------
 //
 // Mirrors the schema + sqlc surface 1:1 under m.mu. Errors returned here
 // must match the PgStore sentinel set (ErrConflict, ErrNotFound,
@@ -24111,7 +24229,7 @@ func (m *MemStore) ConsumeOrgInvitation(_ context.Context, hash []byte, acceptin
 	if !strings.EqualFold(inv.Email, acceptingAccount.Email) {
 		return OrgMembership{}, OrgInvitation{}, ErrOrgInvitationInvalid
 	}
-	// IAM-6 / ADR-061 PR 2 cap check (load-bearing). Mirrors
+	// IAM-6 / ADR-61 PR 2 cap check (load-bearing). Mirrors
 	// PgStore.ConsumeOrgInvitation. Free + unknown plans read 0
 	// (plan-policy fail-closed) so the `limit > 0` early-return keeps
 	// them quiet — the abuse-floor tier cannot host shared orgs in
@@ -24313,7 +24431,7 @@ func (m *MemStore) ExpireOrgInvitations(_ context.Context, now time.Time) (int64
 // formula. Empty result on an empty store; full result when usage
 // rows are seeded.
 //
-// See ADR-091 §3.6 / PR #2 for the scoring model.
+// See ADR-91 §3.6 / PR #2 for the scoring model.
 func (m *MemStore) TrafficAnomalyAggregate(_ context.Context, arg sqlc.TrafficAnomalyAggregateParams) ([]sqlc.TrafficAnomalyAggregateRow, error) {
 	if !arg.Minute.Valid || !arg.Minute_2.Valid || arg.Column3 <= 0 {
 		return nil, fmt.Errorf("state: traffic_anomaly_aggregate: invalid params (since=%v baseline=%v limit=%d)", arg.Minute, arg.Minute_2, arg.Column3)
@@ -24604,7 +24722,7 @@ func (m *MemStore) TrafficAnomalyAggregateByNode(_ context.Context, arg sqlc.Tra
 // (PgStore).PerAccountRateLimitAggregate. Counts events rows of
 // kind='auth.rate_limited' over the since window, grouped by
 // subject (uuid) — anonymous events (subject empty) collapse under
-// the all-zeros UUID. See ADR-091 §3.5 / PR #2.
+// the all-zeros UUID. See ADR-91 §3.5 / PR #2.
 func (m *MemStore) PerAccountRateLimitAggregate(_ context.Context, arg sqlc.PerAccountRateLimitAggregateParams) ([]sqlc.PerAccountRateLimitAggregateRow, error) {
 	if !arg.At.Valid || arg.Column2 <= 0 {
 		return nil, fmt.Errorf("state: per_account_rate_limit_aggregate: invalid params (since=%v limit=%d)", arg.At, arg.Column2)

@@ -10,7 +10,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
 | [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
-| [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
+| [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset\|actions --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`commit`](#commit) | Manage transactional PostgreSQL outbox sources (internal) |
 | [`events`](#events) | Preview routing, publish events, inspect deliveries and routing history, and replay failures |
@@ -81,7 +81,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`dlq`](#dlq) | Inspect, replay, or purge unified dead-letter events |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
 | [`realtime`](#realtime) | Manage realtime endpoints, policies, connections, channels, and auth |
-| [`rollback`](#rollback) | Re-promote the previous deployment |
+| [`rollback`](#rollback) | Restore a previous deployment, or check an exact historical rollback |
 | [`projects`](#projects) | Inspect and recover repository projects |
 | [`scan`](#scan) | Decomposition dry-run (--tarball \| --path \| --repo OWNER/NAME) |
 | [`secrets`](#secrets) | Manage sealed secrets and environment secret references |
@@ -661,6 +661,42 @@ Inspect app bindings, verification, runtime freshness, and rotation progress
 | `--require-complete` | fail if binding metadata, verification, runtime freshness or refresh progress is incomplete |  |
 | `--scope <SCOPE>` | filter resource bindings by environment scope; app-wide bindings remain included |  |
 
+### bindings release-policy
+
+Require fresh binding evidence for traffic increases in a scope
+
+#### bindings release-policy get
+
+Read the stored release policy
+
+`gregale bindings release-policy get [--scope <SCOPE>] <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | deployment scope (default default) |  |
+
+#### bindings release-policy set
+
+Replace the release policy using its current revision
+
+`gregale bindings release-policy set [--scope <SCOPE>] [--mode <off|enforce>] [--require-verification] [--max-age <DURATION>] [--require-application-ack] --expected-revision <N> [--reason <TEXT>] <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | deployment scope (default default) |  |
+| `--mode <off|enforce>` | disable or enable enforcement |  |
+| `--require-verification` | alias for --mode enforce |  |
+| `--max-age <DURATION>` | maximum verification age (default 10m; 1s to 24h) |  |
+| `--require-application-ack` | require current application acknowledgements |  |
+| `--expected-revision <N>` | current policy revision; use 0 initially | required |
+| `--reason <TEXT>` | update reason; required when disabling enforcement |  |
+
+Examples:
+
+```sh
+gregale bindings release-policy set public-api --scope production --require-verification --max-age 10m --expected-revision 0
+```
+
 ### bindings probe-policy
 
 Configure or remove an outbound integration probe
@@ -684,7 +720,7 @@ gregale bindings probe-policy INTEGRATION_ID --path /health --method GET --expec
 
 Evaluate recorded binding evidence and runtime freshness for CI
 
-`gregale bindings check [--scope <SCOPE>] [--max-verification-age <DURATION>] [--deployment <ID|vN>] [--allow-unsupported] [--require-application-ack] <app>`
+`gregale bindings check [--scope <SCOPE>] [--max-verification-age <DURATION>] [--deployment <ID|vN>] [--allow-unsupported] [--require-application-ack] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -693,6 +729,9 @@ Evaluate recorded binding evidence and runtime freshness for CI
 | `--deployment <ID|vN>` | exact live deployment whose evidence must pass, including zero-traffic candidates |  |
 | `--allow-unsupported` | waive connectivity coverage for active queue and outbound bindings |  |
 | `--require-application-ack` | require current PostgreSQL/object-storage application acknowledgements |  |
+| `--wait` | poll read-only inventory while probes, refreshes or application acknowledgements are pending |  |
+| `--timeout <DURATION>` | maximum preflight wait (default 5m) |  |
+| `--poll-interval <DURATION>` | inventory polling interval with --wait (default 1s) |  |
 
 Examples:
 
@@ -778,15 +817,23 @@ gregale bindings verify my-api --object-storage GREGALE_S3_ASSETS
 
 Invoke a path on one exact live target deployment over the private HTTPS binding
 
-`gregale bindings smoke --deployment <ID> --path <PATH> [--expect-status <CODE>] [--poll-interval <D>] [--wait-timeout <D>] <app> <service>`
+`gregale bindings smoke [--target-deployment <ID>] [--deployment <ID>] [--caller-deployment <ID|vN>] --path <PATH> [--expect-status <CODE>] [--poll-interval <D>] [--wait-timeout <D>] <app> <service>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--deployment <ID>` | exact live target deployment to invoke | required |
+| `--target-deployment <ID>` | exact live target deployment UUID to invoke (or use --deployment) |  |
+| `--deployment <ID>` | alias for --target-deployment |  |
+| `--caller-deployment <ID|vN>` | exact live caller deployment, including zero-traffic candidates |  |
 | `--path <PATH>` | absolute path on the target service | required |
 | `--expect-status <CODE>` | require this exact HTTP status; default accepts any 2xx response |  |
 | `--poll-interval <D>` | status polling interval while the smoke task runs |  |
 | `--wait-timeout <D>` | maximum time to wait for the smoke task |  |
+
+Examples:
+
+```sh
+gregale bindings smoke public-api billing --caller-deployment v12 --target-deployment TARGET_UUID --path /ready --expect-status 200
+```
 
 
 ## capabilities
@@ -798,13 +845,27 @@ Show feature maturity and plan availability
 
 ## alerts
 
-Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset --app &lt;slug&gt;)
+Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset|actions --app &lt;slug&gt;)
 
 `gregale alerts [<subcommand>] [--app <slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug |  |
+
+### alerts actions
+
+Read or wait for automatic rollback status, deployment evidence and service handoffs
+
+`gregale alerts actions --app <slug> [--fire <UUID>] [--wait] [--timeout <duration>] [--poll-interval <duration>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--fire <UUID>` | one production alert delivery UUID |  |
+| `--wait` | wait for the selected fire to complete |  |
+| `--timeout <duration>` | wait deadline (default 10m) |  |
+| `--poll-interval <duration>` | poll interval (default 2s) |  |
 
 ### alerts list
 
@@ -820,7 +881,7 @@ List alert rules
 
 Add an alert rule
 
-`gregale alerts add --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--failure-source <SOURCE>] --webhook-url <URL> [--action <ACTION>] [--webhook-secret-stdin] [--webhook-secret <VALUE>]`
+`gregale alerts add --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--failure-source <SOURCE>] --webhook-url <URL> [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -833,6 +894,7 @@ Add an alert rule
 | `--failure-source <SOURCE>` | any\|cron\|queue\|delayed_task\|async_invoke\|inbound_webhook |  |
 | `--webhook-url <URL>` | https webhook URL | required |
 | `--action <ACTION>` | alert action | one of `webhook` · `rollback` · `demote` · `promote` |
+| `--post-deploy-rollback-window <duration>` | completed-release rollback window (0 off; up to 1h) |  |
 | `--webhook-secret-stdin` | read the webhook signing secret from stdin (this or --webhook-secret is required) |  |
 | `--webhook-secret <VALUE>` | webhook signing secret (prefer --webhook-secret-stdin) |  |
 
@@ -852,11 +914,12 @@ Show one alert rule
 
 Update one alert rule
 
-`gregale alerts update [--action <ACTION>] [--webhook-secret-stdin] <alert-id>`
+`gregale alerts update [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] <alert-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--action <ACTION>` | alert action | one of `webhook` · `rollback` · `demote` · `promote` |
+| `--post-deploy-rollback-window <duration>` | completed-release rollback window (0 off; up to 1h) |  |
 | `--webhook-secret-stdin` | read the replacement webhook secret from stdin |  |
 
 ### alerts rm
@@ -5566,13 +5629,18 @@ Show bearer token rotation state
 
 ## rollback
 
-Re-promote the previous deployment
+Restore a previous deployment, or check an exact historical rollback
 
-`gregale rollback <slug> [--to <deployment_id|vN>] [--json]`
+`gregale rollback [<subcommand>] <slug> [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--wait] [--timeout <duration>] [--poll-interval <duration>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--to <deployment_id|vN>` | target deployment id or vN revision (e.g. v41) |  |
+| `--expected-current <deployment_id|vN>` | exact completed serving deployment; requires --to |  |
+| `--reason <TEXT>` | one-line reason of at most 256 bytes; requires --expected-current |  |
+| `--wait` | wait for binding checks and service handoff completion; requires --expected-current |  |
+| `--timeout <duration>` | wait deadline (default 10m) |  |
+| `--poll-interval <duration>` | poll interval (default 2s) |  |
 | `--json` | machine-readable output |  |
 
 Examples:
@@ -5580,7 +5648,22 @@ Examples:
 ```sh
 gregale rollback my-api
 gregale rollback my-api --to v41
+gregale rollback my-api --to v41 --expected-current v42 --wait
 ```
+
+### rollback status
+
+Read an exact rollback operation; waiting never submits another rollback
+
+`gregale rollback status --operation <UUID> [--wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--operation <UUID>` | accepted rollback operation UUID | required |
+| `--wait` | wait for completion with a committed audit receipt |  |
+| `--timeout <duration>` | wait deadline (default 10m) |  |
+| `--poll-interval <duration>` | poll interval (default 2s) |  |
+| `--json` | print the operation receipt |  |
 
 
 ## projects
