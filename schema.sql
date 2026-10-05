@@ -3373,6 +3373,56 @@ END $$;
 
 
 --
+-- Name: fence_object_lifecycle_protection(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_lifecycle_protection() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE aid uuid; required boolean;
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF NEW.protection_verified OR NEW.deletion_verified OR NEW.protection_required AND NEW.state<>'prepared' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protected lifecycle intents must begin prepared and unverified';
+  END IF;
+  SELECT account_id INTO aid FROM object_buckets WHERE id=NEW.bucket_id;
+  PERFORM 1 FROM accounts WHERE id=aid FOR UPDATE;
+  PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR NO KEY UPDATE;
+  SELECT NEW.lifecycle_scan_id IS NOT NULL AND NEW.selector<>'' AND EXISTS(
+   SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=NEW.bucket_id
+    AND (l.enabled_required OR l.native_enabled_observed OR l.observed_snapshot->>'enabled'='true')
+  ) INTO required;
+  IF NEW.protection_required IS DISTINCT FROM required OR required AND jsonb_typeof(NEW.lifecycle_binding->'expected_delete_marker') IS DISTINCT FROM 'boolean' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protected lifecycle deletion requires a frozen target classification';
+  END IF;
+ ELSE
+  IF NEW.protection_required<>OLD.protection_required OR OLD.protection_verified AND NOT NEW.protection_verified OR OLD.deletion_verified AND NOT NEW.deletion_verified THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Lifecycle protection evidence is immutable';
+  END IF;
+  IF NOT OLD.protection_verified AND NEW.protection_verified AND NOT (NEW.protection_required AND OLD.state='prepared' AND NEW.state='dispatched') THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protection proof must accompany initial dispatch';
+  END IF;
+  IF NOT OLD.deletion_verified AND NEW.deletion_verified AND NOT (OLD.state='dispatched' AND NEW.state='completed') THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Absence proof must accompany completion';
+  END IF;
+  IF NEW.last_error_code='object_protected' AND NOT (OLD.state='prepared' AND NEW.state='failed') AND OLD.last_error_code<>'object_protected' THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='A dispatched uncertain attempt cannot be dismissed as protected';
+  END IF;
+  IF OLD.state='prepared' AND NEW.state='dispatched' AND NEW.protection_required AND NOT NEW.protection_verified THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Fresh native policy proof is required before lifecycle dispatch';
+  END IF;
+ END IF;
+ IF NEW.protection_required AND NEW.state='completed' AND (
+  NOT NEW.deletion_verified OR jsonb_typeof(NEW.lifecycle_binding->'expected_delete_marker') IS DISTINCT FROM 'boolean'
+  OR NEW.delete_marker::text IS DISTINCT FROM NEW.lifecycle_binding->>'expected_delete_marker'
+  OR NEW.provider_version_id IS DISTINCT FROM NEW.lifecycle_binding->>'expected_provider_version_id') THEN
+  RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Exact lifecycle target absence proof is required before completion';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: fence_object_lock_admission(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15378,17 +15428,21 @@ CREATE TABLE public.object_deletions (
     lifecycle_binding jsonb DEFAULT '{}'::jsonb NOT NULL,
     target_provider_version_id text DEFAULT ''::text NOT NULL,
     recovery_claimed boolean DEFAULT false NOT NULL,
-    CONSTRAINT object_deletion_lifecycle_binding CHECK ((((lifecycle_scan_id IS NULL) AND (lifecycle_binding = '{}'::jsonb)) OR ((lifecycle_scan_id IS NOT NULL) AND (jsonb_typeof(lifecycle_binding) = 'object'::text) AND (lifecycle_binding ?& ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'kind'::text, 'expected_provider_version_id'::text, 'expected_last_modified'::text]) AND ((lifecycle_binding - ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'kind'::text, 'expected_provider_version_id'::text, 'expected_last_modified'::text]) = '{}'::jsonb) AND ((lifecycle_binding ->> 'scan_id'::text) = (lifecycle_scan_id)::text) AND (jsonb_typeof((lifecycle_binding -> 'scan_token'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'scan_token'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'scan_token'::text)) <= 128)) AND (jsonb_typeof((lifecycle_binding -> 'rule_id'::text)) = 'string'::text) AND ((char_length((lifecycle_binding ->> 'rule_id'::text)) >= 1) AND (char_length((lifecycle_binding ->> 'rule_id'::text)) <= 255)) AND (jsonb_typeof((lifecycle_binding -> 'expected_provider_version_id'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'expected_provider_version_id'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'expected_provider_version_id'::text)) <= 1024)) AND (jsonb_typeof((lifecycle_binding -> 'expected_last_modified'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_last_modified'::text) <> ''::text) AND (octet_length((lifecycle_binding)::text) <= 8192) AND ((((lifecycle_binding ->> 'kind'::text) = 'current'::text) AND (selector = ''::text)) OR (((lifecycle_binding ->> 'kind'::text) = ANY (ARRAY['noncurrent'::text, 'expired_marker'::text])) AND (selector <> ''::text)))))),
+    protection_required boolean DEFAULT false NOT NULL,
+    protection_verified boolean DEFAULT false NOT NULL,
+    deletion_verified boolean DEFAULT false NOT NULL,
+    CONSTRAINT object_deletion_lifecycle_binding CHECK ((((lifecycle_scan_id IS NULL) AND (lifecycle_binding = '{}'::jsonb)) OR ((lifecycle_scan_id IS NOT NULL) AND (jsonb_typeof(lifecycle_binding) = 'object'::text) AND (lifecycle_binding ?& ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'kind'::text, 'expected_provider_version_id'::text, 'expected_last_modified'::text]) AND ((lifecycle_binding - ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'kind'::text, 'expected_provider_version_id'::text, 'expected_last_modified'::text, 'expected_delete_marker'::text]) = '{}'::jsonb) AND ((NOT (lifecycle_binding ? 'expected_delete_marker'::text)) OR (jsonb_typeof((lifecycle_binding -> 'expected_delete_marker'::text)) = 'boolean'::text)) AND ((lifecycle_binding ->> 'scan_id'::text) = (lifecycle_scan_id)::text) AND (jsonb_typeof((lifecycle_binding -> 'scan_token'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'scan_token'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'scan_token'::text)) <= 128)) AND (jsonb_typeof((lifecycle_binding -> 'rule_id'::text)) = 'string'::text) AND ((char_length((lifecycle_binding ->> 'rule_id'::text)) >= 1) AND (char_length((lifecycle_binding ->> 'rule_id'::text)) <= 255)) AND (jsonb_typeof((lifecycle_binding -> 'expected_provider_version_id'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'expected_provider_version_id'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'expected_provider_version_id'::text)) <= 1024)) AND (jsonb_typeof((lifecycle_binding -> 'expected_last_modified'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_last_modified'::text) <> ''::text) AND (octet_length((lifecycle_binding)::text) <= 8192) AND ((((lifecycle_binding ->> 'kind'::text) = 'current'::text) AND (selector = ''::text)) OR (((lifecycle_binding ->> 'kind'::text) = ANY (ARRAY['noncurrent'::text, 'expired_marker'::text])) AND (selector <> ''::text)))))),
+    CONSTRAINT object_deletion_protection_proof CHECK ((((NOT protection_required) OR ((lifecycle_scan_id IS NOT NULL) AND (selector <> ''::text))) AND ((NOT protection_verified) OR (protection_required AND (state = ANY (ARRAY['dispatched'::text, 'completed'::text, 'failed'::text])))) AND ((NOT deletion_verified) OR (protection_required AND (state = 'completed'::text))) AND ((NOT protection_required) OR (state <> 'completed'::text) OR deletion_verified) AND ((last_error_code <> 'object_protected'::text) OR (protection_required AND (state = 'failed'::text))))),
     CONSTRAINT object_deletions_baseline_check CHECK (((jsonb_typeof(baseline) = 'array'::text) AND (jsonb_array_length(baseline) <= 4096) AND (octet_length((baseline)::text) <= 278530))),
     CONSTRAINT object_deletions_check CHECK (((lease_token = ''::text) = (lease_until IS NULL))),
     CONSTRAINT object_deletions_check1 CHECK (((state = ANY (ARRAY['prepared'::text, 'dispatched'::text])) OR (lease_token = ''::text))),
-    CONSTRAINT object_deletions_check2 CHECK (((state <> 'failed'::text) OR (last_error_code = ANY (ARRAY['preparation_failed'::text, 'preparation_expired'::text, 'provider_rejected'::text])))),
+    CONSTRAINT object_deletions_check2 CHECK (((state <> 'failed'::text) OR (last_error_code = ANY (ARRAY['preparation_failed'::text, 'preparation_expired'::text, 'provider_rejected'::text, 'object_protected'::text])))),
     CONSTRAINT object_deletions_check3 CHECK (((state <> 'completed'::text) OR (last_error_code = ''::text))),
     CONSTRAINT object_deletions_check4 CHECK (((state <> 'completed'::text) OR (selector <> 'null'::text) OR (version_id = 'null'::text))),
     CONSTRAINT object_deletions_check5 CHECK (((state <> 'completed'::text) OR (provider_status <> 'Enabled'::text) OR (selector <> ''::text) OR (delete_marker AND (version_id <> ALL (ARRAY[''::text, 'null'::text])) AND (provider_version_id <> ALL (ARRAY[''::text, 'null'::text]))))),
     CONSTRAINT object_deletions_check6 CHECK (((reserved_bytes = 0) OR ((selector = ''::text) AND (provider_status <> ''::text)))),
     CONSTRAINT object_deletions_check7 CHECK (((provider_status = 'Enabled'::text) OR (baseline = '[]'::jsonb))),
-    CONSTRAINT object_deletions_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'provider_uncertain'::text, 'configuration'::text, 'preparation_failed'::text, 'preparation_expired'::text, 'provider_rejected'::text]))),
+    CONSTRAINT object_deletions_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'provider_uncertain'::text, 'configuration'::text, 'preparation_failed'::text, 'preparation_expired'::text, 'provider_rejected'::text, 'object_protected'::text]))),
     CONSTRAINT object_deletions_lease_token_check CHECK ((octet_length(lease_token) <= 128)),
     CONSTRAINT object_deletions_object_key_check CHECK (((octet_length(object_key) >= 1) AND (octet_length(object_key) <= 1024))),
     CONSTRAINT object_deletions_provider_status_check CHECK ((provider_status = ANY (ARRAY[''::text, 'Enabled'::text, 'Suspended'::text]))),
@@ -32231,6 +32285,13 @@ CREATE TRIGGER object_deletion_multipart_fence BEFORE INSERT ON public.object_st
 --
 
 CREATE TRIGGER object_deletion_protected BEFORE UPDATE ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.protect_object_deletion();
+
+
+--
+-- Name: object_deletions object_deletion_protection_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_deletion_protection_fence BEFORE INSERT OR UPDATE ON public.object_deletions FOR EACH ROW EXECUTE FUNCTION public.fence_object_lifecycle_protection();
 
 
 --

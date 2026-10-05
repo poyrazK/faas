@@ -28942,7 +28942,7 @@ components:
         state: { type: string, enum: [prepared, dispatched, completed, failed] }
         version_id: { type: string, description: Selected public version UUID or new public marker UUID or null when acknowledged; private provider IDs are never exposed. }
         delete_marker: { type: boolean }
-        last_error_code: { type: string, enum: [provider_uncertain, configuration, preparation_failed, preparation_expired, provider_rejected] }
+        last_error_code: { type: string, enum: [provider_uncertain, configuration, preparation_failed, preparation_expired, provider_rejected, object_protected], description: object_protected defers a lifecycle target under retention or a hold until a later scan. }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     ObjectTaggingRequest:

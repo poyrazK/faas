@@ -3807,6 +3807,9 @@ type ObjectDeletion struct {
 	LifecycleBinding        []byte
 	TargetProviderVersionID string
 	RecoveryClaimed         bool
+	ProtectionRequired      bool
+	ProtectionVerified      bool
+	DeletionVerified        bool
 }
 
 type ObjectLifecycleScan struct {

@@ -1925,11 +1925,11 @@ gregale bucket object-lock clear-default <app> <bucket-id>
 
 [ADR-584](adr/584-durable-object-version-protection.md) adds the per-version
 management described below. [ADR-592](adr/592-durable-object-write-protection.md) adds the write snapshots
-described below. Event-hold changes, governance bypass and protected lifecycle
-deletion remain separate work. The gateway rejects unsupported event-hold and
-governance-bypass headers. New
-Object Lock enrollment remains disabled for release. Local tests qualify the
-implementation; production provider activation remains deployment work.
+described below. [ADR-593](adr/593-protection-aware-object-lifecycle.md) adds protected
+lifecycle deletion. Event-hold changes and governance bypass remain separate work.
+The gateway rejects unsupported event-hold and governance-bypass headers. Object
+Lock enrollment remains explicit per backend; deployment defaults stay disabled.
+Local tests qualify the implementation; production activation remains deployment work.
 
 ## Per-version retention and legal holds
 
@@ -2025,8 +2025,8 @@ Bucket deletion must return a native 204 acknowledgment or a parsed
 `NoSuchBucket`; an empty listing cannot authorize a cascade. Inactive accounts
 cannot reserve more buckets, and restoration closes at the existing grace
 expiry. Account metadata is removed only after confirmed native cleanup. New
-Object Lock enrollment remains disabled pending per-write protection snapshots
-and qualified protected lifecycle deletion.
+Object Lock writes and protected lifecycle deletion are locally qualified by
+ADRs 592 and 593. Backend enrollment and production activation remain explicit.
 
 Key custody does not revoke native URLs issued before tracking, out-of-band
 writers or provider lifecycle rules. Missing proof stays pending with its
@@ -2072,6 +2072,28 @@ receipt and capacity reservation; recovery reads the original private proof and
 never repeats a PUT or copy. Accepted recovery continues after enrollment is
 disabled. Private policy snapshots are bounded to 16 KiB and remain internal.
 
-New Object Lock enrollment remains disabled pending protection-aware lifecycle
-expiration. Local S3 protocol tests qualify this implementation without requiring
-a real provider environment.
+Object Lock enrollment remains explicit per backend. Local S3 protocol tests
+qualify this implementation without requiring a real provider environment.
+
+## Protection-aware lifecycle expiration
+
+Permanent lifecycle deletion in a durably protected bucket checks fresh native
+Object Lock configuration, Enabled versioning and the exact data version's
+retention/legal hold. Active fixed retention, legal holds and event holds defer
+the target with deletion receipt `last_error_code: object_protected`. Scans continue
+past held versions, within their existing action limit, and reconsider them on
+a later hourly scan. Unknown policy fails closed. Lifecycle never removes a hold
+or sends a governance bypass. Current expiration can create a delete marker while
+preserving locked data; marker cleanup does not read per-version data protection.
+
+A native DELETE acknowledgment cannot complete a protected permanent deletion.
+Gregale verifies complete bounded exact-key version history before clearing its
+fence. Recovery settles a missing immutable target without another DELETE, and
+rechecks a still-present target's policy before retrying. Qualified existing null
+versions require permanent Object Lock and fresh Enabled versioning; ordinary
+mutable deletions keep their conservative recovery behavior. Accepted receipt
+recovery continues with new ingress or enrollment disabled. Missing historical
+classification, malformed history or unknown effects retain custody and capacity.
+Only verified all-version inventory changes the quota baseline after deletion.
+
+See [ADR-593](adr/593-protection-aware-object-lifecycle.md).

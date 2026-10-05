@@ -87,6 +87,17 @@ func TestBucketObjectLockCapabilityEnrollment(t *testing.T) {
 	if (ObjectLockConfig{Enabled: true}).PublicCapabilities(struct{ Provider }{p}).BucketConfiguration {
 		t.Fatal("partial provider advertised")
 	}
+	readsOnly := struct {
+		Provider
+		BucketObjectLockProvider
+		ObjectVersionLockProvider
+		BucketVersioningProvider
+		ObjectVersionInventoryProvider
+		ObjectVersionLister
+	}{p, p.(BucketObjectLockProvider), p.(ObjectVersionLockProvider), p.(BucketVersioningProvider), p.(ObjectVersionInventoryProvider), p.(ObjectVersionLister)}
+	if c.PublicCapabilities(readsOnly).BucketConfiguration {
+		t.Fatal("provider without protected writes and lifecycle deletion advertised enrollment")
+	}
 	for _, tc := range []struct {
 		c      ObjectLockConfig
 		driver string
