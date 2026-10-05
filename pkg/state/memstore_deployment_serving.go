@@ -28,6 +28,13 @@ func (m *MemStore) putDeploymentLocked(id string, d Deployment) {
 	}
 }
 
+// deploymentServedLocked reports whether id stopped serving traffic at some
+// point (deployments.serving_ended_at IS NOT NULL).
+func (m *MemStore) deploymentServedLocked(id string) bool {
+	_, ok := m.deploymentServingEndedAt[id]
+	return ok
+}
+
 // deploymentServing reports whether d currently receives traffic.
 func deploymentServing(d Deployment) bool {
 	return d.Status == DeployLive && d.TrafficPercent > 0
