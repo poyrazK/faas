@@ -206,9 +206,10 @@ func (m *Metrics) ObserveReconcile(observation ReconcileObservation) {
 		return
 	}
 	operation := metricsOperationCreate
-	if observation.Operation == StateDeleting {
+	switch observation.Operation {
+	case StateDeleting:
 		operation = metricsOperationDelete
-	} else if observation.Operation == StateUpdating {
+	case StateUpdating:
 		operation = metricsOperationResize
 	}
 	outcome := string(observation.Outcome)
