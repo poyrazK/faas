@@ -144,6 +144,14 @@ func (w *Watchdog) runOne(ctx context.Context, now time.Time, st state.State, bu
 				continue
 			}
 		}
+		// A deploy prime for an app with an ADR-138 startup deadline beyond
+		// the spec window gets the matching reprieve, so the watchdog does not
+		// kill a slow-starting first boot that the prime RPC still allows.
+		if st == state.StateColdBooting && !ins.StartedAt.IsZero() {
+			if extra := w.primeWatchdogExtension(ctx, ins); extra > 0 && now.Sub(ins.StartedAt) < budget+extra {
+				continue
+			}
+		}
 		if err := w.engine.KillStuck(ctx, ins.ID, ins.AppID, reason); err != nil {
 			w.log.Warn("watchdog: kill stuck", "instance", ins.ID, "state", st, "reason", reason, "err", err)
 		}
