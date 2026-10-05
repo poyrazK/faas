@@ -36,6 +36,22 @@ type ServiceDiscoveryDNSHandler struct {
 	blocklist     *DNSBlocklist
 	onBlocked     func(category string)
 	onResolved    ResolvedEgressHook
+	serviceAddr   ServiceAddressLookup
+}
+
+// ServiceAddressLookup returns the private service address (ADR-576) the
+// caller at remoteAddr should dial for a <service>.svc.gregale name. ok=false
+// keeps the tenant-bridge answer, which every caller can always use for HTTP;
+// implementations fail safe to it on any doubt or error.
+type ServiceAddressLookup func(ctx context.Context, remoteAddr, service string) (addr netip.Addr, ok bool)
+
+// WithServiceAddressLookup answers <service>.svc.gregale with the target's
+// service address when the lookup vouches for it (ADR-576). HTTP calls keep
+// working because the host forwards the service ports on that address to
+// the bridge HTTP proxy. Binding-scoped .internal aliases are unaffected.
+func (h *ServiceDiscoveryDNSHandler) WithServiceAddressLookup(lookup ServiceAddressLookup) *ServiceDiscoveryDNSHandler {
+	h.serviceAddr = lookup
+	return h
 }
 
 // WithBlocklist makes the resolver answer NXDOMAIN for names on the ADR-373
@@ -220,12 +236,22 @@ func (h *ServiceDiscoveryDNSHandler) ServeDNS(w dns.ResponseWriter, req *dns.Msg
 	msg.SetReply(req)
 	msg.Authoritative = true
 	msg.RecursionAvailable = false
+	remote := ""
+	if addr := w.RemoteAddr(); addr != nil {
+		remote = addr.String()
+	}
 	for _, question := range req.Question {
 		switch question.Qtype {
 		case dns.TypeA:
+			answer := h.bridgeIP
+			if service := serviceDiscoveryName(question.Name); service != "" && h.serviceAddr != nil {
+				if addr, ok := h.serviceAddr(lookupCtx, remote, service); ok && addr.Is4() {
+					answer = addr
+				}
+			}
 			msg.Answer = append(msg.Answer, &dns.A{
 				Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: serviceDiscoveryTTL},
-				A:   h.bridgeIP.AsSlice(),
+				A:   answer.AsSlice(),
 			})
 		case dns.TypeAAAA, dns.TypeCNAME:
 			// The v1 bridge is IPv4-only. An authoritative empty answer for

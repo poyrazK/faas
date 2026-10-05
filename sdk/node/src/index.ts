@@ -34,6 +34,7 @@ export { GithubService } from './generated/services/GithubService.js';
 export { InstancesService } from './generated/services/InstancesService.js';
 export { InvocationsService } from './generated/services/InvocationsService.js';
 export { KeysService } from './generated/services/KeysService.js';
+export { ManagedPostgresService } from './generated/services/ManagedPostgresService.js';
 export { MetaService } from './generated/services/MetaService.js';
 export { MfaService } from './generated/services/MfaService.js';
 export { OutboundService } from './generated/services/OutboundService.js';
@@ -44,6 +45,8 @@ export { RunsService } from './generated/services/RunsService.js';
 export { SecretsService } from './generated/services/SecretsService.js';
 export { UsageService } from './generated/services/UsageService.js';
 export { WebhooksService } from './generated/services/WebhooksService.js';
+export { WorkflowsService } from './generated/services/WorkflowsService.js';
+export { InboundWebhooksService } from './generated/services/InboundWebhooksService.js';
 
 // Generated models (one type per OpenAPI schema).
 export type * from './generated/models/index.js';
@@ -157,4 +160,19 @@ export {
 } from './dev-bridge.js';
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
-export { insertCommitEvent, type CommitEvent, type CommitTransaction } from "./commit.js";
+export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
+
+export { operationReceiptSchema } from "./operation-contract.js";
+export {
+  operationRequestFromHeaders,
+  operationRequestDigest,
+  withOperationTransaction,
+  OperationConflictError,
+  OperationCommitUnknownError,
+  type OperationRequest,
+  type OperationOutcome,
+  type OperationTransaction,
+  type OperationConnection,
+  type OperationPool,
+  type OperationTransactionResult,
+} from "./operations.js";

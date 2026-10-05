@@ -115,7 +115,7 @@ const (
 	statusLive = "live"
 
 	// Build status enum values from /v1/builds/{id} (DEPLOY-PROV-6
-	// / ADR-89, issue #741). 4-state enum per schema.sql CHECK
+	// / ADR-089, issue #741). 4-state enum per schema.sql CHECK
 	// constraint — matches BuildStatus constants in pkg/state.
 	// Lifted out so the SSE polling fallback in streamDeployLogs +
 	// terminalExitForBuild don't trip goconst when the same
@@ -194,7 +194,7 @@ const (
 // (ux_spec §6.5): N instances stay RUNNING regardless of idle
 // timeout. 0 = scale to zero (default).
 //
-// `--warm-snapshot` / `--no-warm-snapshot` (issue #470 / PR C / ADR-74)
+// `--warm-snapshot` / `--no-warm-snapshot` (issue #470 / PR C / ADR-074)
 // opt the app into the warm tier: Park captures a warm-row snapshot
 // alongside the init row, and the wake path prefers warm → init
 // → cold-boot. `--warm-snapshot-min-requests N` and
@@ -208,11 +208,13 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
 	fs := newFlagSet("app", flag.ContinueOnError)
+	environment := fs.String("environment", "", "read or edit this project environment's workload settings")
+	workloadRevision := int64(-1)
 	visibility := fs.String("visibility", "", "set public edge exposure: public|internal (Pro/Scale only for internal)")
 	ram := fs.Int("ram", 0, "update RAM (MB)")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
@@ -240,7 +242,7 @@ func cmdApp(args []string) int {
 	// --autoscale-target-rps=0).
 	rps := fs.Int("autoscale-target-rps", 0, "per-instance RPS target for reactive scale-up (Hobby+/0 = disable)")
 	cpu := fs.Int("autoscale-target-cpu-pct", 0, "per-instance CPU%% target for reactive scale-up (Pro+ only; 1-100; 0 = disable)")
-	// Issue #470 / PR C / ADR-74: warm-snapshot opt-in flags. The
+	// Issue #470 / PR C / ADR-074: warm-snapshot opt-in flags. The
 	// pair is mutually exclusive — passing both is a usage error
 	// rather than a silent last-one-wins. Visit-flag detection lets
 	// the user distinguish "unset" (no patch) from explicit true/false.
@@ -311,7 +313,7 @@ func cmdApp(args []string) int {
 	// already a sentinel-friendly enum (unlike the bool pair
 	// for require_authn).
 	appProtocol := fs.String("app-protocol", "", "wire-protocol selector: http1|http2|grpc (omit to use server default)")
-	// Issue #477 / ADR-79 and ADR-118: per-app public-URL auth
+	// Issue #477 / ADR-079 and ADR-118: per-app public-URL auth
 	// mode. The CLI uses a single string flag plus mode-specific
 	// basic credentials or repeatable CIDRs for ip_allowlist.
 	// The apid seal step encrypts
@@ -331,7 +333,7 @@ func cmdApp(args []string) int {
 	basicPass := fs.String("basic-pass", "", "basic-auth password (RFC 7617 §2); required when --public-auth=basic")
 	var ipAllowlist stringListFlag
 	fs.Var(&ipAllowlist, "ip-allowlist", "CIDR allowed through the public URL; repeat with --public-auth=ip_allowlist (Pro+)")
-	// Tier A10 / ADR-88: per-app overflow_node preference.
+	// Tier A10 / ADR-088: per-app overflow_node preference.
 	// The CLI takes the operator-supplied compute_nodes.name
 	// (the human-readable label) — apid resolves to UUID
 	// server-side. Empty string = clear the preference; non-
@@ -388,7 +390,7 @@ func cmdApp(args []string) int {
 		// allow-list to keep in sync.
 		var conflict string
 		fs.Visit(func(f *flag.Flag) {
-			if f.Name != "concurrency" && conflict == "" {
+			if f.Name != "concurrency" && f.Name != "environment" && conflict == "" {
 				conflict = f.Name
 			}
 		})
@@ -404,7 +406,7 @@ func cmdApp(args []string) int {
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		a, err := client.GetApp(context.Background(), slug)
+		a, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).GetApp(context.Background(), slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
 		}
@@ -451,7 +453,7 @@ func cmdApp(args []string) int {
 		req.MaxConcurrency = &v
 	}
 	if explicit["concurrency-overflow"] || explicit["max-queue-depth"] || setQueueWait || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] {
-		policy, err := cliScalingPolicyPatchWithQueues(ctx, client, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
+		policy, err := cliScalingPolicyPatchWithQueues(ctx, environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
 		if err != nil {
 			return printErr("Invalid concurrency policy", err)
 		}
@@ -630,7 +632,7 @@ func cmdApp(args []string) int {
 		}
 		req.AppProtocol = &v
 	}
-	// Issue #477 / ADR-79 + ADR-118: public-auth block. The CLI
+	// Issue #477 / ADR-079 + ADR-118: public-auth block. The CLI
 	// validates the mode locally (so a typo surfaces
 	// before the round-trip) and forwards the
 	// basic_user + basic_pass as plaintext — the apid
@@ -688,7 +690,7 @@ func cmdApp(args []string) int {
 		return printErr("Invalid --ip-allowlist",
 			fmt.Errorf("--ip-allowlist requires --public-auth=ip_allowlist"))
 	}
-	// Tier A10 / ADR-88: per-app overflow_node preference.
+	// Tier A10 / ADR-088: per-app overflow_node preference.
 	// The fs.Visit branch distinguishes "flag not passed" (nil
 	// pointer → don't touch the column) from "flag passed with
 	// empty value" (pointer to "" → explicit clear) from
@@ -708,7 +710,7 @@ func cmdApp(args []string) int {
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
 		req.MaintenanceMode == nil && req.StreamingEnabled == nil && req.WebSocketEnabled == nil && req.RouteMetricsEnabled == nil && req.ConsumerAuthMode == nil && req.PlatformTenantRequired == nil &&
 		req.OverflowNode == nil && req.AppProtocol == nil && req.Visibility == nil && req.OnlyAllowDeclaredRoutes == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil && req.ScalingPolicy == nil {
-		a, err := client.GetApp(ctx, slug)
+		a, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
 		}
@@ -778,7 +780,7 @@ func cmdApp(args []string) int {
 				fmt.Printf("%-30s %d bytes (%d MiB)\n", "request body cap:", l.RequestBodyMaxBytes, l.RequestBodyMaxBytes/(1024*1024))
 			}
 		}
-		// ADR-31 + ADR-32: surface the per-app outbound CIDR
+		// ADR-031 + ADR-032: surface the per-app outbound CIDR
 		// allowlist in the text-mode `gregale app <slug>` output so a
 		// customer can verify their PATCH round-tripped without
 		// dropping into --json. Print only when non-empty — empty
@@ -801,7 +803,7 @@ func cmdApp(args []string) int {
 		} else {
 			fmt.Printf("%-30s %s\n", "autoscale target cpu:", "disabled")
 		}
-		// Issue #470 / PR C / ADR-74: warm-snapshot state. Mirror
+		// Issue #470 / PR C / ADR-074: warm-snapshot state. Mirror
 		// the autoscale rendering: enabled/disabled for the toggle,
 		// bare value for the gating thresholds.
 		if a.WarmSnapshotEnabled {
@@ -868,12 +870,12 @@ func cmdApp(args []string) int {
 		} else {
 			fmt.Printf("%-30s %s\n", "only declared routes:", "disabled")
 		}
-		// Tier A10 / ADR-88: surface the resolved overflow_node
+		// Tier A10 / ADR-088: surface the resolved overflow_node
 		// preference (the UUID apid returns) so the customer can
 		// verify their PATCH round-tripped. nil on the wire means
 		// "no preference" — render the A9 fallback label so the
 		// CLI output stays self-documenting (the customer doesn't
-		// need to read ADR-88 to know what "no overflow_node"
+		// need to read ADR-088 to know what "no overflow_node"
 		// means in practice).
 		if a.OverflowNode == nil || *a.OverflowNode == "" {
 			fmt.Printf("%-30s %s\n", "overflow node:", "none (A9 fallback)")
@@ -889,11 +891,13 @@ func cmdApp(args []string) int {
 		// Issue #1395 / A4: show a best-effort wake-tier recommendation
 		// only for apps with enough recent wake history. JSON output stays
 		// a stable AppResponse payload, so this is text-mode only.
-		renderWakeRecommendation(ctx, client, slug, a)
+		if *environment == "" {
+			renderWakeRecommendation(ctx, client, slug, a)
+		}
 		return 0
 	}
 
-	updated, err := client.UpdateApp(ctx, slug, req)
+	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(ctx, slug, req)
 	if err != nil {
 		return printErr("Update failed", err)
 	}
@@ -979,7 +983,7 @@ func cmdAppsRestore(args []string) int {
 // opens the dashboard's repo-picker page (slice 8) where the customer binds
 // the repo + branch; subsequent pushes auto-deploy via the webhook path.
 //
-// buildCreateRequest stamps the issue #737 / ADR-83 fields onto the
+// buildCreateRequest stamps the issue #737 / ADR-083 fields onto the
 // CreateAppRequest the CLI hands to apid. Two non-obvious fields:
 //
 //   - Type: shapeFunction → "function", else "" (apid treats empty
@@ -2097,7 +2101,7 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 
 // cmdDeployTarball implements `gregale deploy` (image / tarball / repo
 // / template / zero-config). Zero-config (issue #313) packs the selected source directory
-// and proceeds down the --tarball path. Issue #737 / ADR-83 added the
+// and proceeds down the --tarball path. Issue #737 / ADR-083 added the
 // function-vs-app auto-detect on the zero-config path and the
 // --function / --app explicit-shape flags.
 //
@@ -2155,7 +2159,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	sourcePath := fs.String("path", "", "deploy this source directory (relative to the current directory)")
 	sourceMode := fs.String("source", "auto", "local source to deploy: auto, head, or worktree")
 	worktree := fs.Bool("worktree", false, "deploy the selected source directory from the working tree, including local changes")
-	// Issue #739 / ADR-92: --repo pairs with --ref to drive the
+	// Issue #739 / ADR-092: --repo pairs with --ref to drive the
 	// headless source-ref deploy (server-side foundation lives in
 	// cmd/apid/handlers_source_ref.go). The previous M7.5 dashboard
 	// browser flow is deleted in PR-B; --repo without --ref is an
@@ -2184,7 +2188,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	restartPolicy := fs.String("restart-policy", "", "restart policy: no|on-failure|always|unless-stopped")
 	startupDeadlineS := fs.Int("startup-deadline-s", 0, "maximum startup deadline in seconds (0 = plan default)")
 	maxRetries := fs.Int("max-retries", 0, "maximum lifecycle restart attempts (0 = plan default)")
-	// Issue #737 / ADR-83: explicit shape override. Without either flag
+	// Issue #737 / ADR-083: explicit shape override. Without either flag
 	// the CLI auto-detects from the cwd (handler.*-only → function,
 	// otherwise app). With --function or --app, detection is skipped.
 	// Mutually exclusive — silently mixing is exactly the bug this ADR
@@ -2279,7 +2283,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	noTraffic := fs.Bool("no-traffic", false, "stage the deployment with 0% production traffic and print its preview URL")
 	rollbackOn5xx := fs.Bool("rollback-on-5xx", false, "automatically roll back after repeated first-wake 5xx responses")
 	disableStartupCPUBoost := fs.Bool("disable-startup-cpu-boost", false, "disable the temporary CPU boost during VM startup")
-	// Issue #791 PR-C / ADR-90: skip the `gregale.yaml` triggers fan-out.
+	// Issue #791 PR-C / ADR-090: skip the `gregale.yaml` triggers fan-out.
 	// The flag is the explicit opt-out; without it, a present
 	// gregale.yaml with a `triggers:` block is applied after app
 	// provisioning (and before the deploy body ships) — see
@@ -2573,12 +2577,18 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	canarySpec, canaryErr := buildCanarySpec(*canaryPreset, *canaryStages)
 	if canaryErr != nil {
-		return printErr("Invalid canary rollout", &api.APIError{Problem: *api.ErrInvalidCanaryPreset(canaryErr.Error())})
+		// The flag validation message is the detail. ErrInvalidCanaryPreset
+		// takes a preset name, so passing the message printed
+		// `canary preset "--canary-stages requires …" is not in the
+		// closed-set catalog`.
+		problem := api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidCanaryPreset, "Invalid canary rollout", canaryErr.Error()).
+			WithDocs("https://gregale.dev/docs/deployments#canary-presets")
+		return printErr("Invalid canary rollout", &api.APIError{Problem: *problem})
 	}
 	if explicit["traffic-percent"] && canarySpec != nil {
 		return printErr("Invalid rollout policy", &api.APIError{Problem: *api.ErrValidation("traffic_percent and canary are mutually exclusive rollout policies")})
 	}
-	// Issue #737 / ADR-83: --function and --app are mutually exclusive.
+	// Issue #737 / ADR-083: --function and --app are mutually exclusive.
 	// Setting both is ambiguous noise; reject before any side effects so
 	// the customer's first response from the CLI is not a silent shape
 	// pick. Mirrors the --require-authn/--no-require-authn check above.
@@ -2813,7 +2823,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 
 	// --repo is the headless source-ref deploy path (issue #739 /
-	// ADR-92). The previous M7.5 dashboard browser flow was deleted
+	// ADR-092). The previous M7.5 dashboard browser flow was deleted
 	// in PR-B; the server resolves the install token from
 	// github_installations, so CI runs need only FAAS_TOKEN + --ref.
 	if *repo != "" {
@@ -2968,7 +2978,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// to set --dockerfile when a Dockerfile is at the root. --repo returned
 	// earlier and --template already set *tarball, so reaching here with both
 	// *image and *tarball empty means the customer gave no source at all.
-	// Issue #737 / ADR-83: resolved shape from the selected source directory or
+	// Issue #737 / ADR-083: resolved shape from the selected source directory or
 	// the explicit --function/--app short-circuit. Defaults to
 	// shapeApp so a --tarball / --image / --template deploy (no cwd
 	// pack) stays on the existing app-shaped path. The CreateApp call
@@ -2987,7 +2997,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// affecting functions, projects, or explicit lifecycle modes.
 	var resolvedSimplePlan *simpleapp.Plan
 	var workspaceContextRoot string
-	// Issue #737 / ADR-83: explicit --function / --app on a
+	// Issue #737 / ADR-083: explicit --function / --app on a
 	// --tarball / --template path skips the cwd detector (no cwd
 	// pack happens), but still flips resolvedShape so CreateApp
 	// sends Type="function" when the customer asked for it. Without
@@ -3279,7 +3289,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// Provenance and the committed archive were resolved before doctor.
 		// sourceDir now names the extracted HEAD view in default mode, or the
 		// selected working directory when --worktree/non-git fallback applies.
-		// Issue #737 / ADR-83: resolveDeployShape does detect +
+		// Issue #737 / ADR-083: resolveDeployShape does detect +
 		// infer + print in one seam so the unit test can drive the
 		// "Detected:" line without bringing up apid. The print goes
 		// BEFORE the multipart upload so the customer's first
@@ -3487,6 +3497,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			SimpleAppPlan:   resolvedSimplePlan,
 			ResourceProfile: *profile,
 			ExecutionMode:   *executionMode,
+			Healthcheck:     healthcheck,
 			Release: deployPreflightRelease(
 				*safeDeploy, *canaryPreset, *trafficPercent, rollbackOn5xxPtr,
 			),
@@ -3602,7 +3613,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// --template / zero-config
 	// pack. The plan is fetched via ScanProject, the apply is
 	// transactional on the server (rollback on over-quota per
-	// ADR-50), and mutation requires --yes or an interactive prompt;
+	// ADR-050), and mutation requires --yes or an interactive prompt;
 	// non-TTY invocations fail closed after rendering the plan.
 	if projectRequested {
 		if *createOnly {
@@ -3830,7 +3841,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 	}
 
-	// Issue #791 PR-C / ADR-90: gregale.yaml triggers are staged after
+	// Issue #791 PR-C / ADR-090: gregale.yaml triggers are staged after
 	// CreateApp so the slug exists for the FK, and before the deployment
 	// request. If upload/build/submission fails, the deferred compensation
 	// reverses every create, update, and removal to restore the prior trigger
@@ -4662,18 +4673,28 @@ func cmdDomains(args []string) int {
 		}
 		return 0
 	case subAdd:
-		fs := newFlagSet("domains-add", flag.ContinueOnError)
-		domain := fs.String("domain", "", "domain to attach (required)")
+		fs := newFlagSet("domains add", flag.ContinueOnError)
+		domain := fs.String("domain", "", "domain to attach (or pass it as the first argument)")
 		slug := fs.String("app", "", "app slug to attach to (required)")
 		environment := fs.String("environment", "", "project environment to route this domain to")
-		if err := fs.Parse(args[1:]); err != nil {
+		// Every other domains subcommand takes <domain> positionally, so
+		// accept `domains add <domain> --app <slug>` too, with flags before
+		// or after it.
+		if err := parseInterspersed(fs, args[1:]); err != nil {
 			return 1
 		}
-		if rejectUnexpectedFlagArgs(fs) {
+		if fs.NArg() == 1 {
+			if *domain != "" && *domain != fs.Arg(0) {
+				PrintUsage(os.Stderr, "usage: gregale domains add <domain> --app <slug> [--environment <environment>]", "domains")
+				return 1
+			}
+			*domain = fs.Arg(0)
+		} else if fs.NArg() != 0 {
+			PrintUsage(os.Stderr, "usage: gregale domains add <domain> --app <slug> [--environment <environment>]", "domains")
 			return 1
 		}
 		if *domain == "" || *slug == "" {
-			PrintUsage(os.Stderr, "usage: gregale domains add --domain <d> --app <slug> [--environment <environment>]", "domains")
+			PrintUsage(os.Stderr, "usage: gregale domains add <domain> --app <slug> [--environment <environment>]", "domains")
 			return 1
 		}
 		client, err := authedClient()
@@ -5325,8 +5346,8 @@ func cmdKeysGraceWindow(args []string) int {
 //	gregale usage --month YYYY-MM          → cmdUsageList     (per-app rows, explicit month)
 //	gregale usage summary                  → cmdUsageSummary  (account roll-up, current month)
 //	gregale usage summary --month YYYY-MM  → cmdUsageSummary  (account roll-up, explicit month)
-//	gregale usage daily [--day YYYY-MM-DD] → cmdUsageDaily    (per-(app, day) rollup, ADR-48 §5)
-//	gregale usage storage [--day YYYY-MM-DD] → cmdUsageStorage (per-(app, day) snapshot+layer bytes, ADR-49 §B.3)
+//	gregale usage daily [--day YYYY-MM-DD] → cmdUsageDaily    (per-(app, day) rollup, ADR-048 §5)
+//	gregale usage storage [--day YYYY-MM-DD] → cmdUsageStorage (per-(app, day) snapshot+layer bytes, ADR-049 §B.3)
 //
 // Strict positional dispatch matches cmdCrons / cmdDomains / cmdKeys:
 // an unknown positional returns 1 with `unknown usage subcommand "..."`.
@@ -5347,13 +5368,13 @@ func cmdUsage(args []string) int {
 	case subSummary:
 		return cmdUsageSummary(args[1:])
 	case "daily":
-		// Tier C: per-(app, day) usage rollup (ADR-48 §5).
+		// Tier C: per-(app, day) usage rollup (ADR-048 §5).
 		// Distinct from `usage summary` which aggregates the
 		// whole month for billing.
 		return cmdUsageDaily(args[1:])
 	case "storage":
 		// Tier C: per-(app, day) snapshot+layer byte rollup
-		// (ADR-49 §B.3). Informational — not billed today.
+		// (ADR-049 §B.3). Informational — not billed today.
 		return cmdUsageStorage(args[1:])
 	}
 	PrintUsage(os.Stderr, "usage: gregale usage [--month YYYY-MM] | gregale usage summary [--month YYYY-MM] | gregale usage daily [--day YYYY-MM-DD] | gregale usage storage [--day YYYY-MM-DD]", "usage")
@@ -5406,7 +5427,7 @@ func cmdUsageList(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "App — requests · GB-hours (included GB-h) · egress\n")
 	for _, u := range rows {
-		// ADR-46: tx_bytes (HTTP response bytes, gateway-side) and
+		// ADR-046: tx_bytes (HTTP response bytes, gateway-side) and
 		// net_tx_bytes (root-side vethHost interface bytes, includes
 		// framing) are informational, NOT billed. Surfaced as a
 		// trailing column so a customer can spot egress anomalies
@@ -6090,6 +6111,11 @@ func cmdLogs(args []string) int {
 			return printErr("Could not resolve deployment", resolveErr)
 		}
 		deploymentRef = resolved
+		if logSource != logsSourceHTTP && !archiveRequested {
+			if code, handled := buildLogsForUnrunDeployment(context.Background(), logsClient, deploymentRef, *follow); handled {
+				return code
+			}
+		}
 	}
 	if logSource == logsSourceHTTP {
 		return runHTTPLogsQuery(context.Background(), slug, deploymentRef, strings.TrimSpace(*requestID), strings.TrimSpace(*traceID), *route, normalizedSince, *status, *limit, *all, now)
@@ -6704,7 +6730,7 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 			return 130
 		}
 		// Stream unreachable up front — first try the new
-		// /v1/builds/{id} poller (DEPLOY-PROV-6 / ADR-89); only if
+		// /v1/builds/{id} poller (DEPLOY-PROV-6 / ADR-089); only if
 		// the build is still queued/running OR the new endpoint is
 		// unavailable do we fall through to the legacy
 		// pollDeploymentFinal. A fast tarball deploy on a slow link
@@ -6859,7 +6885,7 @@ streamLoop:
 		return 130
 	}
 	// Stream ended without a terminal frame — poll the new
-	// /v1/builds/{id} endpoint (DEPLOY-PROV-6 / ADR-89, issue
+	// /v1/builds/{id} endpoint (DEPLOY-PROV-6 / ADR-089, issue
 	// #741) so a fast build that raced the SSE open isn't reported
 	// as "follow manually" when we actually have the answer. Only
 	// fall back to pollDeploymentFinal when the new poll reports
@@ -6889,7 +6915,7 @@ streamLoop:
 // (_, false) on any error or non-terminal status — the caller treats
 // both as "no answer, give up cleanly".
 //
-// Deprecated by DEPLOY-PROV-6 / ADR-89 (issue #741): pollBuildStatus
+// Deprecated by DEPLOY-PROV-6 / ADR-089 (issue #741): pollBuildStatus
 // is the more-correct fallback now that /v1/builds/{id} exists.
 // pollDeploymentFinal stays as a last-ditch safety net so a server
 // where /v1/builds/{id} is unavailable still degrades gracefully;
@@ -6937,7 +6963,7 @@ func pollDeploymentFinalUntilContext(ctx context.Context, c *Client, dep api.Dep
 // pollBuildStatus polls GET /v1/builds/{id} until the build reaches
 // a terminal status (succeeded|failed) or the deadline elapses.
 // Replaces the one-shot pollDeploymentFinal the SSE fallback in
-// streamDeployLogs used before DEPLOY-PROV-6 / ADR-89; with a real
+// streamDeployLogs used before DEPLOY-PROV-6 / ADR-089; with a real
 // status endpoint there's no reason to give up after a single GET.
 //
 // Backoff: 1s base, capped at 5s, jittered ±10% to avoid the
@@ -7040,7 +7066,7 @@ func terminalExitForDeploymentWithFailureContext(ctx context.Context, c *Client,
 
 // terminalExitForBuild maps a polled terminal BuildResponse to a CLI
 // exit code. Mirrors terminalExitForDeployment but reads from the
-// build row (DEPLOY-PROV-6 / ADR-89, issue #741) — the polled
+// build row (DEPLOY-PROV-6 / ADR-089, issue #741) — the polled
 // build row lacks the rich Error string from the deployment row,
 // so on failure we render a compact "BuildStatus=failed
 // failure_class=…" block and exit 2 (same exit-code convention as
@@ -7194,12 +7220,12 @@ func mapFailureProblem(p *api.Problem) string {
 }
 
 // cmdUsageDaily: GET /v1/usage/daily?day=YYYY-MM-DD. Per-(app, day)
-// rollup (ADR-48 §5). Day is required by the server; we default
+// rollup (ADR-048 §5). Day is required by the server; we default
 // to today UTC when omitted, matching the dashboard panel.
 //
 // Renders one row per app: <app_id> <day> <requests> <gb-hours>
 // <egress GB>. The byte counters (tx_bytes, net_tx_bytes) follow
-// ADR-46 — informational, not billed — and are rendered only when
+// ADR-046 — informational, not billed — and are rendered only when
 // non-zero (matches cmdUsageList's trailing-column policy).
 func cmdUsageDaily(args []string) int {
 	fs := newFlagSet("usage-daily", flag.ContinueOnError)
@@ -7217,6 +7243,10 @@ func cmdUsageDaily(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	var slugs map[string]string
+	if !jsonOutput {
+		slugs = appSlugsByID(client)
+	}
 	resp, err := client.UsageDaily(context.Background(), *day)
 	if err != nil {
 		return printErr("Could not fetch daily usage", err)
@@ -7225,7 +7255,7 @@ func cmdUsageDaily(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	if len(resp.Items) == 0 {
-		_, _ = fmt.Fprintf(os.Stdout, "No daily usage recorded for %s.\n", *day)
+		_, _ = fmt.Fprintf(osStdout, "No daily usage recorded for %s.\n", *day)
 		return 0
 	}
 	for _, u := range resp.Items {
@@ -7233,17 +7263,17 @@ func cmdUsageDaily(args []string) int {
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
 			txGB := float64(u.TXBytes) / (1024 * 1024 * 1024)
 			netGB := float64(u.NetTxBytes) / (1024 * 1024 * 1024)
-			fmt.Printf("%-36s %s %8d  %7.3f GB-h  egress %.3f GB (tx %.2f / net %.2f)\n",
-				u.AppID, u.Day, u.Requests, gbh, netGB, txGB, netGB)
+			_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h  egress %.3f GB (tx %.2f / net %.2f)\n",
+				appLabel(slugs, u.AppID), u.Day, u.Requests, gbh, netGB, txGB, netGB)
 			continue
 		}
-		fmt.Printf("%-36s %s %8d  %7.3f GB-h\n", u.AppID, u.Day, u.Requests, gbh)
+		_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h\n", appLabel(slugs, u.AppID), u.Day, u.Requests, gbh)
 	}
 	return 0
 }
 
 // cmdUsageStorage: GET /v1/usage/storage?day=YYYY-MM-DD. Per-(app,
-// day) snapshot+layer byte rollup (ADR-49 §B.3). Informational
+// day) snapshot+layer byte rollup (ADR-049 §B.3). Informational
 // only — not billed today. Renders one row per app: <app_id> <day>
 // <snapshot MB> <layer MB> <total MB>.
 func cmdUsageStorage(args []string) int {
@@ -7262,6 +7292,10 @@ func cmdUsageStorage(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	var slugs map[string]string
+	if !jsonOutput {
+		slugs = appSlugsByID(client)
+	}
 	resp, err := client.StorageUsage(context.Background(), *day)
 	if err != nil {
 		return printErr("Could not fetch storage usage", err)
@@ -7270,12 +7304,12 @@ func cmdUsageStorage(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	if len(resp.Items) == 0 {
-		_, _ = fmt.Fprintf(os.Stdout, "No storage rollup recorded for %s.\n", *day)
+		_, _ = fmt.Fprintf(osStdout, "No storage rollup recorded for %s.\n", *day)
 		return 0
 	}
 	for _, u := range resp.Items {
-		fmt.Printf("%-36s %s snapshot=%6d MB  layer=%6d MB  total=%6d MB\n",
-			u.AppID, u.Day,
+		_, _ = fmt.Fprintf(osStdout, "%-36s %s snapshot=%6d MB  layer=%6d MB  total=%6d MB\n",
+			appLabel(slugs, u.AppID), u.Day,
 			u.SnapshotBytes/(1024*1024),
 			u.LayerBytes/(1024*1024),
 			(u.SnapshotBytes+u.LayerBytes)/(1024*1024))

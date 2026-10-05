@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -115,6 +116,18 @@ func (h *Handler) admitGatewayCopy(w http.ResponseWriter, r *http.Request, req r
 }
 
 func (h *Handler) executeAdmittedGatewayCopy(w http.ResponseWriter, r *http.Request, req requestContext, ctx context.Context, st state.ObjectTrackedGatewayCopyStore, copier objectstorage.TrackedObjectCopier, copy objectstorage.CopyObjectRequest, source objectstorage.CopySourceSnapshot, conditions objectstorage.CopySourceConditions, c *state.ObjectUploadCompletion, dispatched *bool) (objectstorage.CopyObjectResult, error, bool) {
+	receipt, err := objectstorageactivity.Begin(ctx, h.store, req.bucket, state.ObjectBucketMutationRequest)
+	if err != nil {
+		return objectstorage.CopyObjectResult{}, err, true
+	}
+	result, err, ok := h.executeUnfencedAdmittedGatewayCopy(w, r, req, ctx, st, copier, copy, source, conditions, c, dispatched)
+	if err == nil && validGatewayETag(result.ETag) {
+		err = objectstorageactivity.Finish(ctx, h.store, receipt)
+	}
+	return result, err, ok
+}
+
+func (h *Handler) executeUnfencedAdmittedGatewayCopy(w http.ResponseWriter, r *http.Request, req requestContext, ctx context.Context, st state.ObjectTrackedGatewayCopyStore, copier objectstorage.TrackedObjectCopier, copy objectstorage.CopyObjectRequest, source objectstorage.CopySourceSnapshot, conditions objectstorage.CopySourceConditions, c *state.ObjectUploadCompletion, dispatched *bool) (objectstorage.CopyObjectResult, error, bool) {
 	var err error
 	var result objectstorage.CopyObjectResult
 	if !c.Encryption.Empty() {

@@ -130,29 +130,37 @@ func TestObjectStorageUsageReportOperatorBoundary(t *testing.T) {
 
 type inventoryProvider struct {
 	fakeObjectProvider
-	fail  bool
-	cycle bool
+	mode string
 }
 
 func (p *inventoryProvider) ListObjects(_ context.Context, _, _, cursor string, _ int32) (objectstorage.ObjectPage, error) {
 	if cursor == "" {
+		if p.mode == "empty-truncated" {
+			return objectstorage.ObjectPage{NextCursor: "page2"}, nil
+		}
+		if p.mode == "unexpected-prefix" {
+			return objectstorage.ObjectPage{CommonPrefixes: []string{"folder/"}}, nil
+		}
 		return objectstorage.ObjectPage{Items: []objectstorage.Object{{Key: "a", Size: 3}}, NextCursor: "page2"}, nil
 	}
-	if p.fail {
+	if p.mode == "failed" {
 		return objectstorage.ObjectPage{}, errors.New("do not log upstream secrets")
 	}
-	if p.cycle {
+	if p.mode == "cycle" {
 		return objectstorage.ObjectPage{NextCursor: "page2"}, nil
+	}
+	if p.mode == "duplicate" {
+		return objectstorage.ObjectPage{Items: []objectstorage.Object{{Key: "a", Size: 4}}}, nil
 	}
 	return objectstorage.ObjectPage{Items: []objectstorage.Object{{Key: "b", Size: 4}}}, nil
 }
 
 func TestObjectStorageInventoryPublishesOnlyCompleteScans(t *testing.T) {
-	for _, mode := range []string{"complete", "failed", "cycle"} {
+	for _, mode := range []string{"complete", "failed", "cycle", "empty-truncated", "unexpected-prefix", "duplicate"} {
 		t.Run(mode, func(t *testing.T) {
 			e := setup(t, api.PlanPro)
 			createApp(t, e, "inventory")
-			p := &inventoryProvider{fail: mode == "failed", cycle: mode == "cycle"}
+			p := &inventoryProvider{mode: mode}
 			policy := api.ObjectStoragePolicy{MaxAccountBytes: 1000, MaxBucketBytes: 500, MaxAccountKeys: 100, MaxMonthlyCostMillicents: 1000, MaxMonthlyRequests: 1000, MaxMonthlyEgressBytes: 1000, MaxMonthlyAuthorizations: 1000, MaxReportAgeSeconds: 3600}
 			registry, err := objectstorage.NewRegistry(objectstorage.Config{Accounting: &policy, DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "external"}, Backends: []objectstorage.BackendConfig{{ID: "external", Driver: "fake", Region: "us-east-1", Namespace: "isolated", Endpoint: "https://s3.example.test", S3Region: "us-east-1", UsageReportsPath: "/var/spool/faas/external-usage.json"}}}, func(string) string { return "" }, map[string]objectstorage.Factory{"fake": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) { return p, nil }})
 			if err != nil {

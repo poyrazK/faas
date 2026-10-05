@@ -96,7 +96,7 @@ func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource) (
 		return 0, "database_unavailable", nil
 	}
 	defer pool.Close()
-	if err := commitwork.QualifySchema(ctx, pool); err != nil {
+	if err := commitwork.QualifySchemaVersion(ctx, pool, src.ContractVersion); err != nil {
 		return 0, "schema_unqualified", nil
 	}
 	if err := commitwork.QualifySource(ctx, pool, src.ID); err != nil {
@@ -127,7 +127,7 @@ func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource) (
 		return count, "cleanup_pending", nil
 	}
 	rows, blockedErr := pool.Query(ctx, `SELECT event_id::text,left(event_type,256),
- CASE WHEN blocked_code IN ('invalid_event','identity_conflict','destination_unqualified','payload_too_large','acceptance_rejected') THEN blocked_code ELSE 'blocked' END,created_at
+ CASE WHEN blocked_code IN ('invalid_event','invalid_routing','identity_conflict','destination_unqualified','payload_too_large','acceptance_rejected') THEN blocked_code ELSE 'blocked' END,created_at
  FROM public.gregale_outbox WHERE accepted_at IS NULL AND blocked_code IS NOT NULL ORDER BY created_at,event_id LIMIT 32`)
 	if blockedErr != nil {
 		return count, "blocked_scan_pending", nil
@@ -196,7 +196,7 @@ func (a *acceptor) Accept(ctx context.Context, e commitwork.Event) (commitwork.R
 	// Recover receipt before current version/plan checks. Content comparison is
 	// always performed by the durable store, even when the destination changed.
 	if _, err := a.store.CommitReceiptByEvent(ctx, a.source.AccountID, a.source.ID, e.ID); err == nil {
-		r, err := a.store.AcceptCommitEvent(ctx, a.source.AccountID, a.source.ID, e.ID, e.Type, e.Data, state.Invocation{}, 0)
+		r, err := a.store.AcceptCommitEvent(ctx, a.source.AccountID, a.source.ID, e.ID, e.Type, e.Data, state.Invocation{}, 0, e.Routing)
 		return convert(r, err)
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return commitwork.Receipt{}, err
@@ -205,7 +205,7 @@ func (a *acceptor) Accept(ctx context.Context, e commitwork.Event) (commitwork.R
 	if err != nil {
 		return commitwork.Receipt{}, err
 	}
-	if app.AccountID != a.source.AccountID || app.PlatformTenantRequired || !app.AcceptsRequestInvocations() {
+	if app.AccountID != a.source.AccountID || (app.PlatformTenantRequired && !a.source.AllowTenantSelection) || !app.AcceptsRequestInvocations() {
 		return commitwork.Receipt{}, &commitwork.PermanentError{Code: "destination_unqualified"}
 	}
 	account, err := a.store.AccountByID(ctx, a.source.AccountID)
@@ -234,16 +234,22 @@ func (a *acceptor) Accept(ctx context.Context, e commitwork.Event) (commitwork.R
 		return commitwork.Receipt{}, err
 	}
 	inv := state.Invocation{AccountID: account.ID, AppID: app.ID, Source: state.InvocationAsyncInvoke, Method: "POST", Path: "/", Payload: payload, DueAt: time.Now().UTC(), RetryPolicyJSON: retryPolicy}
+	if e.Routing != nil {
+		inv.PlatformTenantID = e.Routing.PlatformTenantID
+	}
 	inv, _, err = state.ResolveInvocationVersion(ctx, a.store, inv)
 	if err != nil {
 		return commitwork.Receipt{}, err
 	}
-	r, err := a.store.AcceptCommitEvent(ctx, account.ID, a.source.ID, e.ID, e.Type, e.Data, inv, limits.MaxQueueDepth)
+	r, err := a.store.AcceptCommitEvent(ctx, account.ID, a.source.ID, e.ID, e.Type, e.Data, inv, limits.MaxQueueDepth, e.Routing)
 	return convert(r, err)
 }
 func convert(r state.CommitReceipt, err error) (commitwork.Receipt, error) {
 	if errors.Is(err, state.ErrConflict) || errors.Is(err, exclusivework.ErrIdentityConflict) {
 		err = &commitwork.PermanentError{Code: "identity_conflict"}
+	}
+	if errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrNotFound) {
+		err = &commitwork.PermanentError{Code: "destination_unqualified"}
 	}
 	return commitwork.Receipt{ID: r.ID, InvocationID: r.InvocationID, OperationID: r.OperationID}, err
 }

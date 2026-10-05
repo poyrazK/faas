@@ -2,7 +2,7 @@
 // public Go SDK shape: typed DTOs, the RFC 7807 problem envelope, the
 // streaming SSE decoder, and the bearer/idempotency-key/pagination
 // conventions every Client method honours. The daemon's pkg/api/*
-// package is the server-side counterpart; see ADR-38 (issue #266) for
+// package is the server-side counterpart; see ADR-038 (issue #266) for
 // the split contract this module enforces.
 package api
 
@@ -88,7 +88,7 @@ type Limits struct {
 	AsyncInvokeAllowed          bool
 
 	// EgressAllowlistAllowed toggles the per-app outbound IP allowlist
-	// (ADR-31, tier-2 of the network roadmap). Pro + Scale opt in.
+	// (ADR-031, tier-2 of the network roadmap). Pro + Scale opt in.
 	EgressAllowlistAllowed bool
 	// EgressAllowlistMaxSize is the per-app count cap on CIDR entries.
 	// 0 with Allowed=false (Free/Hobby); non-zero with Allowed=true

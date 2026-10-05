@@ -100,8 +100,8 @@ func (m *MemStore) FinalizeServiceRollout(ctx context.Context, id string) (Deplo
 			if _, exists := m.revisionPins[row.id]; !exists {
 				m.revisionPins[row.id] = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
 			}
-			other.Status = DeployLive
-		} else if m.deploymentInUsableReleaseLocked(row.id) {
+		}
+		if m.deploymentRevisionRetainedLocked(row.id) || m.deploymentInUsableReleaseLocked(row.id) {
 			other.Status = DeployLive
 		} else {
 			other.Status = DeploySuperseded
@@ -278,7 +278,7 @@ func (m *MemStore) AbortServiceRollout(ctx context.Context, id, reason string) (
 		if row.id == previousID {
 			other.Status = DeployLive
 			other.TrafficPercent = 100
-		} else if m.deploymentInUsableReleaseLocked(row.id) {
+		} else if m.deploymentRevisionRetainedLocked(row.id) || m.deploymentInUsableReleaseLocked(row.id) {
 			other.Status = DeployLive
 			other.TrafficPercent = 0
 		} else {
@@ -289,6 +289,9 @@ func (m *MemStore) AbortServiceRollout(ctx context.Context, id, reason string) (
 	}
 	now := time.Now().UTC()
 	target.Status = DeploySuperseded
+	if m.operationRetainsDeploymentLocked(target.ID) {
+		target.Status = DeployLive
+	}
 	target.TrafficPercent = 0
 	target.RolloutState = "aborted"
 	target.RolloutCompletedAt = nil

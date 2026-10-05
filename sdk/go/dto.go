@@ -204,6 +204,10 @@ type (
 	ExclusiveWorkPolicyRecord          = api.ExclusiveWorkPolicyRecord
 	ExclusiveWorkPolicyList            = api.ExclusiveWorkPolicyList
 	ExclusiveOperationRecord           = api.ExclusiveOperationRecord
+	ManagedOperationResult             = api.ManagedOperationResult
+	ManagedOperationEffect             = api.ManagedOperationEffect
+	OperationEffectRecord              = api.OperationEffectRecord
+	OperationEffectPayload             = api.OperationEffectPayload
 	InvocationDestinations             = api.InvocationDestinations
 	QueueSendRequest                   = api.QueueSendRequest
 	QueueSendResponse                  = api.QueueSendResponse
@@ -364,6 +368,8 @@ type CommitSourceResponse = api.CommitSourceResponse
 type CommitReceiptResponse = api.CommitReceiptResponse
 type CommitOperationResponse = api.CommitOperationResponse
 type CommitEventRequest = api.CommitEventRequest
+type CommitRouting = api.CommitRouting
+type CreateCommitSourceRequest = api.CreateCommitSourceRequest
 
 type CommitBlockedEventResponse = api.CommitBlockedEventResponse
 type CommitBlockedEventsResponse = api.CommitBlockedEventsResponse

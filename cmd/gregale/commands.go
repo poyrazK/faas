@@ -329,7 +329,7 @@ func cmdApps() int {
 	// Header row + data rows. Deployment availability is separate from app
 	// lifecycle status so apps with damaged deployment history are not
 	// presented as runnable merely because their app row is active.
-	// AUTH column (issue #695 / ADR-80) shows the app's
+	// AUTH column (issue #695 / ADR-080) shows the app's
 	// require_authn + public_auth_mode state in human-readable
 	// form. The "since YYYY-MM-DD" suffix renders only when
 	// auth_default_flipped_at is non-null — pre-flip apps
@@ -352,7 +352,7 @@ func formatAppDeploymentAvailability(a api.AppResponse) string {
 	}
 }
 
-// formatAppAuth (issue #695 / ADR-80) renders the AUTH column for
+// formatAppAuth (issue #695 / ADR-080) renders the AUTH column for
 // the `gregale app list` table. Prefix matches the customer's
 // observable auth state:
 //
@@ -445,7 +445,7 @@ func printErr(title string, err error) int {
 	// `code` ("secret_scan_strict").
 	var strictErr *StrictSecretScanError
 	hasStrict := errors.As(err, &strictErr)
-	// Issue #744 / ADR-86: extract the nested-marker workspace hint
+	// Issue #744 / ADR-086: extract the nested-marker workspace hint
 	// from the error chain BEFORE the jsonOutput branch so both modes
 	// can route it to stderr. The hint must NEVER appear on stdout (it
 	// would corrupt `gregale deploy --json | jq`), so JSON mode prints

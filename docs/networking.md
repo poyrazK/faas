@@ -210,7 +210,9 @@ unknown names, self-edges, and ambiguous names are rejected.
 
 By default, `GREGALE_SERVICE_BILLING_URL` remains the legacy HTTP URL, and
 `GREGALE_SERVICE_BILLING_HTTPS_URL=https://billing.internal` is available as
-an explicit HTTPS alias. A caller can opt into HTTPS-first transport for all
+an explicit HTTPS alias. `GREGALE_SERVICE_BILLING_HOST=billing.svc.gregale`
+is the bare host for non-HTTP clients (see
+[Private TCP between services](#private-tcp-between-services)). A caller can opt into HTTPS-first transport for all
 of its declared service bindings:
 
 ```yaml
@@ -1114,9 +1116,8 @@ ordinary gRPC client against `http://APP_SLUG.svc.gregale:10081`. Response
 trailers — including `grpc-status` — are preserved across the hop.
 `Connection: Upgrade` requests (WebSocket and friends) take the verbatim-bytes
 bridge and are neither buffered nor retried; they require the target app to
-have WebSockets enabled and return `501` otherwise. Non-HTTP raw TCP between
-services is not part of the discovery contract: address those listeners
-through named ports instead.
+have WebSockets enabled and return `501` otherwise. Non-HTTP protocols use
+private TCP addresses, described below.
 
 ### Managed binding application adoption
 
@@ -1291,3 +1292,80 @@ operation rather than selecting another deployment. Service completion includes
 gateway acknowledgement and draining. A timeout keeps the last status and binding
 blockers visible; an interrupt exits 130. Add `--json` for the operation receipt.
 See [ADR-601](adr/601-binding-checked-historical-rollback.md) for transaction boundaries.
+
+## Private TCP between services
+
+Same-account services can also talk over plain TCP, which covers protocols
+such as PostgreSQL, Redis, MQTT, AMQP and custom binary protocols. Dial the
+service name on its own port:
+
+```text
+redis://cache.svc.gregale:6379
+postgres://db.svc.gregale:5432
+```
+
+`cache.svc.gregale` resolves to a stable private address for the `cache` app,
+for example `198.19.0.7`. The address belongs to the app, not to a machine,
+so it stays the same across restarts, scale-to-zero and moves between
+nodes. It is meaningful only inside your account; another account's
+workloads cannot use it to reach your services. HTTP calls to
+`http://cache.svc.gregale:10081` keep working on the same name.
+
+A service exposes these TCP ports:
+
+- every TCP port it declares in `ports`, including internal ones (see below);
+- the port it serves on (its main listener).
+
+Image `EXPOSE` entries other than the serving port are not exposed
+automatically: declare them. Ports 10080, 10081 and 443 on a service address
+always belong to the HTTP service mesh.
+
+Declare listeners that should never be public with compose `expose:`:
+
+```yaml
+services:
+  api:
+    build: ./api
+    depends_on: [cache]
+  cache:
+    build: ./cache
+    expose: ["6379"]
+```
+
+`expose:` entries become `internal` listeners. Same-account services reach
+them at the service address, but they never get a public
+`--port-<name>` hostname or a public raw TCP listener. Only TCP entries are
+supported; UDP and port ranges are skipped with a warning. Through the app
+API, set `"internal": true` on an entry in `ports`.
+
+Each declared dependency also receives `GREGALE_SERVICE_<NAME>_HOST`, the bare
+host for non-HTTP clients:
+
+```bash
+redis-cli -h "$GREGALE_SERVICE_CACHE_HOST" -p 6379 PING
+```
+
+The same caller policy as HTTP service calls applies when the connection
+opens: same account, the caller's `depends_on` (under the `declared` policy),
+the target's allowed callers, and preview scoping. A target that grants a
+caller only method/path scopes (`x-gregale-allow-call-scopes`) refuses that
+caller's raw TCP connections, because those scopes cannot be enforced on raw
+bytes.
+
+A parked service is woken when a connection arrives. The connection is held
+for up to 30 seconds, then forwarded. While bytes keep flowing, the target
+stays running. A connection that is idle for longer than the target's idle
+timeout is closed, so an idle connection pool does not keep a service awake
+longer than idle HTTP traffic would. Configure your client pool to reconnect.
+Concurrent private TCP connections are capped per account on each node, by
+plan.
+
+A connection that is refused (unknown service, undeclared port, denied
+caller, or a target that cannot be woken) is reset with no data, since raw
+TCP carries no error message. Raw TCP connections carry no caller-assertion
+header; authenticate inside your protocol if the target must know the
+caller.
+
+Private TCP addresses are a node-level rollout. Until your node has it
+enabled, `*.svc.gregale` keeps answering with the HTTP-only address, and HTTP
+service calls work as before.

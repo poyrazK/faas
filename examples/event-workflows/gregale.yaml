@@ -1,0 +1,27 @@
+schema_version: 1
+workflows:
+  - name: paid_invoice
+    trigger:
+      type: event
+      source: billing.*
+      event_type: invoice.paid
+      filter:
+        data:
+          amount:
+            $gt: 100
+      enabled: true
+    steps:
+      - name: record
+        path: /record-payment
+        input:
+          invoice_id: "{{input.data.invoice_id}}"
+          amount: "{{input.data.amount}}"
+        retry:
+          max_attempts: 3
+          backoff: exponential
+      - name: notify
+        path: /send-receipt
+        depends_on: [record]
+        input:
+          invoice_id: "{{input.data.invoice_id}}"
+          receipt_id: "{{steps.record.output.receipt_id}}"

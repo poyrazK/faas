@@ -27,7 +27,7 @@ class RolloutTransitionResponse:
     deployment: DeploymentResponse
     """One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional
     `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 /
-    ADR-53); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last
+    ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last
     deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed
     because the ref shape is non-secret by design."""
     audit_id: str

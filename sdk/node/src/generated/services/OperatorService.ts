@@ -2,6 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ManagedPostgresAccountingDiagnosticsResponse } from '../models/ManagedPostgresAccountingDiagnosticsResponse.js';
+import type { ManagedPostgresAccountingReconciliationRequest } from '../models/ManagedPostgresAccountingReconciliationRequest.js';
+import type { ManagedPostgresAccountingReconciliationResult } from '../models/ManagedPostgresAccountingReconciliationResult.js';
+import type { ManagedPostgresUsageImportRequest } from '../models/ManagedPostgresUsageImportRequest.js';
+import type { ManagedPostgresUsageImportResult } from '../models/ManagedPostgresUsageImportResult.js';
 import type { ManagedPostgresUsageOperatorResponse } from '../models/ManagedPostgresUsageOperatorResponse.js';
 import type { ObjectStorageUsageReport } from '../models/ObjectStorageUsageReport.js';
 import type { OperatorRuntimeConfig } from '../models/OperatorRuntimeConfig.js';
@@ -34,6 +39,179 @@ export class OperatorService {
       path: {
         'account_id': accountId,
       },
+    });
+  }
+  /**
+   * Explain managed PostgreSQL accounting blockers
+   * Operator allowlist and admin scope required, with the existing session MFA gate (bearer API keys follow IAM policy). Reads local catalog and ledger evidence only. Each page is one database snapshot; pages are live views, not a frozen account snapshot. No provider requests, opaque provider IDs, or credentials.
+   * @returns ManagedPostgresAccountingDiagnosticsResponse Bounded per-database accounting evidence; Cache-Control no-store
+   * @returns Problem Access denied, invalid pagination, account not found, or accounting unavailable
+   * @throws ApiError
+   */
+  public static listManagedPostgresAccountingDiagnostics({
+    accountId,
+    after,
+    limit = 50,
+  }: {
+    /**
+     * Account whose local accounting evidence is requested.
+     */
+    accountId: string,
+    /**
+     * Resume after the database ID returned as next_cursor.
+     */
+    after?: string,
+    /**
+     * Maximum databases returned in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<ManagedPostgresAccountingDiagnosticsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/managed-postgres/accounting/{account_id}',
+      path: {
+        'account_id': accountId,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
+      },
+    });
+  }
+  /**
+   * Preview retained managed PostgreSQL usage evidence
+   * Operator allowlist and admin scope required, with the existing session MFA gate. Validates normalized complete windows against local catalog and ledger evidence. Makes no provider calls or writes. Returns the revision required for apply; concurrent ledger or lifecycle changes invalidate it.
+   * @returns ManagedPostgresUsageImportResult Validated preview, without accounting changes; Cache-Control no-store
+   * @returns Problem Access denied, invalid evidence, conflicting ledger, or unavailable backend
+   * @throws ApiError
+   */
+  public static previewManagedPostgresUsageImport({
+    accountId,
+    requestBody,
+  }: {
+    /**
+     * Account whose retained usage evidence will be previewed.
+     */
+    accountId: string,
+    /**
+     * Normalized retained readings and source attestation for preview.
+     */
+    requestBody: ManagedPostgresUsageImportRequest,
+  }): CancelablePromise<ManagedPostgresUsageImportResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/managed-postgres/accounting/{account_id}/usage-imports/preview',
+      path: {
+        'account_id': accountId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Apply retained managed PostgreSQL usage evidence
+   * Allowlisted operator session with recent MFA step-up, same-origin checks, and Idempotency-Key required. Bearer API keys cannot apply imports. Requires expected_revision from preview. Commits normalized ledger windows, contiguous coverage, and immutable before/after evidence atomically. import_id durably deduplicates an identical request by the same actor; conflicting reuse is rejected. Evidence observation times are preserved. This neither establishes missing identities or shutdown nor reconciles a final provider invoice.
+   * @returns ManagedPostgresUsageImportResult Applied import or original committed response on identical durable replay; Cache-Control no-store
+   * @returns Problem Access denied, invalid evidence, expired preview, conflicting replay, or unavailable backend
+   * @throws ApiError
+   */
+  public static applyManagedPostgresUsageImport({
+    accountId,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Account owning the reviewed database and imported usage.
+     */
+    accountId: string,
+    /**
+     * Request replay key; import_id additionally provides permanent receipt deduplication.
+     */
+    idempotencyKey: string,
+    /**
+     * Reviewed retained readings with the revision returned by preview.
+     */
+    requestBody: ManagedPostgresUsageImportRequest,
+  }): CancelablePromise<ManagedPostgresUsageImportResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/managed-postgres/accounting/{account_id}/usage-imports',
+      path: {
+        'account_id': accountId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Preview legacy PostgreSQL identity and shutdown reconciliation
+   * Operator allowlist and admin scope with existing MFA read policy required. Validates retained evidence against local catalog and ledger state without provider calls or writes. Only deleted accountable resources with unknown identities are eligible. Returns the revision required for apply.
+   * @returns ManagedPostgresAccountingReconciliationResult Reconciliation preview with no catalog or accounting changes; Cache-Control no-store
+   * @returns Problem Access denied, invalid evidence, incompatible ledger, conflicting identity, or unavailable backend
+   * @throws ApiError
+   */
+  public static previewManagedPostgresAccountingReconciliation({
+    accountId,
+    requestBody,
+  }: {
+    /**
+     * Account owning the legacy database being reconciled.
+     */
+    accountId: string,
+    /**
+     * Operator-verified identity and actual shutdown evidence; maximum 32 KiB.
+     */
+    requestBody: ManagedPostgresAccountingReconciliationRequest,
+  }): CancelablePromise<ManagedPostgresAccountingReconciliationResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/managed-postgres/accounting/{account_id}/reconciliations/preview',
+      path: {
+        'account_id': accountId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Reconcile a legacy PostgreSQL identity and confirmed shutdown
+   * Allowlisted operator session with recent MFA step-up, same-origin checks and Idempotency-Key required. Bearer keys cannot apply. Requires a current expected_revision. Atomically attaches the evidence-backed identity and actual shutdown boundary, resets derived coverage and retains immutable before/after evidence. Existing usage quantities and accounting obligations remain intact. Recovery and final corrections remain required; this does not settle an invoice. reconciliation_id permanently deduplicates identical requests by the same actor.
+   * @returns ManagedPostgresAccountingReconciliationResult Committed reconciliation or original durable response; Cache-Control no-store
+   * @returns Problem Access denied, invalid evidence, stale preview, conflicting identity/replay, or unavailable backend
+   * @throws ApiError
+   */
+  public static applyManagedPostgresAccountingReconciliation({
+    accountId,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Account owning the reviewed legacy database.
+     */
+    accountId: string,
+    /**
+     * Request replay key; reconciliation_id also provides permanent deduplication.
+     */
+    idempotencyKey: string,
+    /**
+     * Reviewed identity and shutdown evidence with preview revision; maximum 32 KiB.
+     */
+    requestBody: ManagedPostgresAccountingReconciliationRequest,
+  }): CancelablePromise<ManagedPostgresAccountingReconciliationResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/managed-postgres/accounting/{account_id}/reconciliations',
+      path: {
+        'account_id': accountId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**

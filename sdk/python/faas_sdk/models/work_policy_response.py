@@ -20,7 +20,10 @@ T = TypeVar("T", bound="WorkPolicyResponse")
 
 @_attrs_define
 class WorkPolicyResponse:
-    """Saved app policy and revision used for subsequent work admissions."""
+    """Saved policy definition and revision. For stage desired settings, created_at and updated_at identify the containing
+    immutable workload configuration revision; stage execution remains gated.
+
+    """
 
     name: str
     revision: int

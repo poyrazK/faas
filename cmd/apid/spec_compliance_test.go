@@ -29,30 +29,30 @@ import (
 const (
 	serverSrcPath                 = "server.go"
 	dtoFile                       = "dto.go"
-	workflowFile                  = "workflow_dag.go" // ADR-81 — workflow deployment DTOs and validation
+	workflowFile                  = "workflow_dag.go" // ADR-081 — workflow deployment DTOs and validation
 	secretsFile                   = "secrets.go"
-	envFile                       = "env.go"             // issue #395 / ADR-45
-	registryFile                  = "registry_auth.go"   // issue #461 / ADR-62
-	alertsFile                    = "alerts.go"          // issue #396 PR 3 / ADR-45
+	envFile                       = "env.go"             // issue #395 / ADR-045
+	registryFile                  = "registry_auth.go"   // issue #461 / ADR-062
+	alertsFile                    = "alerts.go"          // issue #396 PR 3 / ADR-045
 	alertsDeliveryFile            = "alerts_delivery.go" // ADR-123 PR-D — AlertDeliveryResponse wire DTO
 	alertsPresetsFile             = "alerts_presets.go"  // ADR-123 / issue #1233 — alert-preset catalog DTOs
 	canaryCustomStageFile         = "canary/dto.go"      // issue #976 / ADR-122 / production-leveling Stream F — CustomStage wire DTO
 	manifestFile                  = "appmanifest.go"
 	cliauthFile                   = "cliauth.go"
 	mfaFile                       = "mfa.go"
-	sessionsFile                  = "sessions.go" // IAM-3 (ADR-39)
+	sessionsFile                  = "sessions.go" // IAM-3 (ADR-039)
 	errorsFile                    = "errors.go"
-	wakeTLFile                    = "wake_timeline.go"    // issue #517 PR-C / ADR-64
-	sidecarTimelineFile           = "sidecar_timeline.go" // issue #463 / ADR-69 — sidecar lifecycle timeline DTOs
-	orgsFile                      = "orgs.go"             // issue #190 / IAM-6 / ADR-61 PR 5
-	scanFile                      = "dto_scan.go"         // issue #464 / ADR-55 — per-deploy grype CVE scan DTOs
-	webhooksFile                  = "webhooks.go"         // issue #476 / ADR-76
+	wakeTLFile                    = "wake_timeline.go"    // issue #517 PR-C / ADR-064
+	sidecarTimelineFile           = "sidecar_timeline.go" // issue #463 / ADR-069 — sidecar lifecycle timeline DTOs
+	orgsFile                      = "orgs.go"             // issue #190 / IAM-6 / ADR-061 PR 5
+	scanFile                      = "dto_scan.go"         // issue #464 / ADR-055 — per-deploy grype CVE scan DTOs
+	webhooksFile                  = "webhooks.go"         // issue #476 / ADR-076
 	inboundWebhooksFile           = "inbound_webhooks.go" // ADR-212 — durable provider webhook ingress DTOs
 	realtimeFile                  = "realtime.go"         // ADR-156 — managed realtime endpoint DTOs
 	logDrainsFile                 = "logdrains.go"        // issue #1398 O4 — customer runtime log destinations
 	billingFile                   = "billing.go"          // PR-P3 — admin reconcile + future billing DTOs
 	diffFile                      = "diff.go"             // PR-1 of the deploy-diff cluster — DiffRequest / DiffResponse wire DTOs
-	upstreamsFile                 = "upstreams.go"        // ADR-98 §9.A PR-B
+	upstreamsFile                 = "upstreams.go"        // ADR-098 §9.A PR-B
 	triggerFile                   = "trigger.go"          // issue #757 / ADR-100 — trigger primitive wire DTOs
 	oidcFile                      = "oidc.go"             // ADR-101 / PR-A — OIDC / keyless deploy auth DTOs
 	envDiffFile                   = "env_diff.go"         // ADR-117 PR-C — EnvDiffResponse / EnvDiffRow / EnvDiffCell wire DTOs
@@ -81,7 +81,7 @@ const (
 // public OpenAPI spec. Keep this in sync with the explanatory comments in
 // server.go's handler() method. Sorted alphabetically for diff stability.
 //
-// PR #2 (issue #165, ADR-32) moved /login, /signup, /login/forgot,
+// PR #2 (issue #165, ADR-032) moved /login, /signup, /login/forgot,
 // /auth/reset, /v1/auth/google, /v1/auth/github, and
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
@@ -94,10 +94,10 @@ var routeExclude = map[string]bool{
 	"GET /v1/dev/bridges/{id}/status":            true, // attachment-authenticated CLI readiness protocol
 	"GET /v1/account/dpa":                        true, // public markdown (no auth)
 	"POST /v1/webhooks/stripe":                   true, // HMAC-signed webhook
-	"POST /v1/webhooks/paddle":                   true, // HMAC-signed webhook (PR #3 / ADR-25)
+	"POST /v1/webhooks/paddle":                   true, // HMAC-signed webhook (PR #3 / ADR-025)
 	"POST /v1/webhooks/polar":                    true, // Standard Webhooks-signed webhook
 	"POST /v1/webhooks/resend":                   true, // Svix-signed webhook (issue #246 / ADR-115)
-	"GET /v1/compute-nodes":                      true, // operator-only (ADR-29)
+	"GET /v1/compute-nodes":                      true, // operator-only (ADR-029)
 	"GET /v1/compute-nodes/{name}":               true, // operator-only node detail
 	"POST /v1/compute-nodes":                     true, // operator-only
 	"DELETE /v1/compute-nodes/{name}":            true, // operator-only
@@ -109,30 +109,30 @@ var routeExclude = map[string]bool{
 	"GET /v1/internal/metrics/builderd-targets":  true, // compute daemon metrics use the active node registry
 	"GET /v1/internal/metrics/realtimed-targets": true, // compute daemon metrics use the active node registry
 	"GET /v1/internal/metrics/promtail-targets":  true, // issue #274 — loopback Promtail HTTP-SD endpoint
-	// Issue #777 / ADR-91: operator observability backend.
+	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
 	// AND cmd/sdk-coverage/main.go::routeExclude. The two lists
 	// must move together; the SDK does not model operator-only
 	// surfaces, and the public OpenAPI spec does not document
 	// them.
-	"GET /v1/admin/obs/overview":                true, // ADR-91 — operator-only
+	"GET /v1/admin/obs/overview":                true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/capacity":                true, // operator-only capacity projection
-	"GET /v1/admin/obs/tenants":                 true, // ADR-91 — operator-only
+	"GET /v1/admin/obs/tenants":                 true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/360":        true, // operator-only tenant 360 projection
-	"GET /v1/admin/obs/tenants/{id}":            true, // ADR-91 — operator-only
+	"GET /v1/admin/obs/tenants/{id}":            true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/activity":   true, // operator-only tenant activity drill-down
 	"GET /v1/admin/obs/apps/{id}":               true, // operator-only app workload drill-down
-	"GET /v1/admin/obs/nodes":                   true, // ADR-91 — operator-only
+	"GET /v1/admin/obs/nodes":                   true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/nodes/{name}/detail":     true, // operator-only node workload drill-down
-	"GET /v1/admin/obs/nodes/{name}/heartbeats": true, // ADR-91 — operator-only
-	"GET /v1/admin/obs/nodes/events":            true, // ADR-91 — operator-only SSE (PR #3; successor to /v1/compute-nodes/events)
-	"GET /v1/admin/obs/nodes/wake-latency":      true, // ADR-92 — operator-only per-node wake-latency quantiles (PR #4)
-	"GET /v1/admin/obs/anomalies":               true, // ADR-91 — operator-only (PR #2)
-	"GET /v1/admin/obs/audit-log/search":        true, // ADR-91 — operator-only (PR #3)
-	"GET /v1/admin/obs/events":                  true, // ADR-91 — operator-only (PR #3)
+	"GET /v1/admin/obs/nodes/{name}/heartbeats": true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/nodes/events":            true, // ADR-091 — operator-only SSE (PR #3; successor to /v1/compute-nodes/events)
+	"GET /v1/admin/obs/nodes/wake-latency":      true, // ADR-092 — operator-only per-node wake-latency quantiles (PR #4)
+	"GET /v1/admin/obs/anomalies":               true, // ADR-091 — operator-only (PR #2)
+	"GET /v1/admin/obs/audit-log/search":        true, // ADR-091 — operator-only (PR #3)
+	"GET /v1/admin/obs/events":                  true, // ADR-091 — operator-only (PR #3)
 	"GET /v1/admin/obs/traces/{trace_id}":       true, // operator-only exact trace correlation
-	"GET /v1/admin/obs/rate-limits":             true, // ADR-91 — operator-only (PR #2)
-	"GET /v1/admin/obs/builder-heartbeats":      true, // ADR-91 — operator-only (operator-side mega-PR Commit 7 / P5)
+	"GET /v1/admin/obs/rate-limits":             true, // ADR-091 — operator-only (PR #2)
+	"GET /v1/admin/obs/builder-heartbeats":      true, // ADR-091 — operator-only (operator-side mega-PR Commit 7 / P5)
 	"GET /v1/admin/obs/health":                  true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
 	"GET /v1/admin/obs/incidents":               true, // operator-only bounded incident correlation inbox
 
@@ -191,7 +191,7 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/account/dpa":                                 true, // session-auth twin of DPA
 	"POST /dashboard/raise-overage-cap":                          true, // HTML form (issue #561)
 	"POST /dashboard/upgrade":                                    true, // HTML form (hosted-checkout hand-off)
-	"POST /dashboard/apps/{slug}/crons/{id}/fire-now":            true, // HTML form, cron fire-now (issue #791 PR-E / ADR-90)
+	"POST /dashboard/apps/{slug}/crons/{id}/fire-now":            true, // HTML form, cron fire-now (issue #791 PR-E / ADR-090)
 	"POST /dashboard/apps/{slug}/crons/{id}/policy":              true, // HTML form, scheduled-work policy editor (ADR-385)
 	"POST /dashboard/apps/{slug}/env":                            true, // HTML form, env editor (issue #1397 G2)
 	"POST /dashboard/apps/{slug}/env/{key}/delete":               true, // HTML form, env editor (issue #1397 G2)
@@ -254,7 +254,7 @@ var routeExclude = map[string]bool{
 	"GET /status/slo.json":                                                       true, // public status JSON
 	"GET /healthz":                                                               true, // loopback infra probe
 	"GET /readyz":                                                                true, // loopback dependency-aware readiness probe (PR #1038 pre-release-readiness-gates)
-	"GET /v1/orgs/me":                                                            true, // PR-4 LoadOrg seam (issue #190 / IAM-6 / ADR-61); documented in PR 5 alongside the rest of /v1/orgs/{slug}
+	"GET /v1/orgs/me":                                                            true, // PR-4 LoadOrg seam (issue #190 / IAM-6 / ADR-061); documented in PR 5 alongside the rest of /v1/orgs/{slug}
 	"GET /v1/traces/{trace_id}":                                                  true, // issue #555: gatewayd-public trace endpoint (mounted via bare /v1/traces/ prefix; the scanner doesn't match it)
 
 	// Issue #961 / Mega-B PR-3 / ADR-116. The dashboard's
@@ -332,7 +332,7 @@ var dtoExclude = map[string]bool{
 	"ComputeNodeEnrollmentRequest":      true, // authenticated operator-only compute-node mutation payload
 	"ComputeNodeOperatorResponse":       true, // authenticated operator-only compute-node projection
 	"StatusPage":                        true, // GET /status/slo.json (public status)
-	"SessionsRevokeRequest":             true, // IAM-3 (ADR-39): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
+	"SessionsRevokeRequest":             true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
 	"ManagedPostgresPlanLimits":         true, // internal plan policy, not a wire DTO
 	"RealtimeLimits":                    true, // internal plan policy, not a wire DTO
 	"ExecutionSnapshotShape":            true, // internal snapshot compatibility key, not a wire DTO
@@ -348,14 +348,14 @@ var dtoExclude = map[string]bool{
 	"ServiceBindingProbeCheck":  true,
 	"ServiceBindingProbeReport": true,
 	"ServiceBindingSmokeReport": true,
-	// Issue #190 / IAM-6 / ADR-61 PR 5 — typed inputs at the
+	// Issue #190 / IAM-6 / ADR-061 PR 5 — typed inputs at the
 	// pkg/api ↔ pkg/state seam. The wire DTOs are OrgResponse /
 	// OrgMemberResponse / OrgInvitationResponse; the *Row types
 	// are the typed counterparts (state row → wire DTO).
 	"OrgRow":           true,
 	"OrgMemberRow":     true,
 	"OrgInvitationRow": true,
-	// Issue #476 / ADR-76 — internal conversion structs (state row
+	// Issue #476 / ADR-076 — internal conversion structs (state row
 	// → wire DTO) and client-only option bags. The
 	// wire DTOs are AppWebhookResponse / AppWebhookDeliveryResponse
 	// etc.; the *Row types are the typed counterparts at the
@@ -371,7 +371,7 @@ var dtoExclude = map[string]bool{
 	"InboundWebhookEndpointRow":                       true,
 	"AppLogDrainRow":                                  true,
 	"QueueBindingRow":                                 true,
-	// ADR-91 D20.5 amendment / issue #881 — per-route throttle
+	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// validator context. The EdgeRuleThrottleAction.Validate() takes
 	// a per-plan ceiling argument bag (RateLimitRPS / RateLimitBurst)
 	// rather than reading limits globally; the context is the
@@ -421,7 +421,7 @@ var dtoExclude = map[string]bool{
 	// pkg/state seam (state row → wire DTO). It does not cross the
 	// wire on its own.
 	"AlertPresetRow": true,
-	// Issue #777 / ADR-91 — operator observability backend DTOs
+	// Issue #777 / ADR-091 — operator observability backend DTOs
 	// are admin-only (/v1/admin/obs/*); they belong to a non-public
 	// surface and are not registered in the customer-facing OpenAPI
 	// spec. The Mega-PR #1099 shipped the DTOs but did not register
@@ -820,7 +820,7 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 	// `serverSrcPath` is the canonical apid route table. After
 	// issue #254 / Move 4 PR-2 (gatewayd-internal AppLogsHandler) the
 	// `GET /v1/apps/{slug}/logs` route is owned by cmd/gatewayd-internal
-	// (ADR-43 + ADR-68 / Tier A7 split: gatewayd-internal is the
+	// (ADR-043 + ADR-068 / Tier A7 split: gatewayd-internal is the
 	// routing + wake + proxy daemon and imports pkg/scheddgrpc). The
 	// scanner therefore walks both daemons' route tables — apid's
 	// server.go plus the gatewayd-internal run.go that mounts a
@@ -1018,6 +1018,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_lock.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_object_lock.go"),
+		filepath.Join(root, "pkg", "api", "object_version_protection.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_versioning.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_s3_copy_sources.go"),
@@ -1030,6 +1031,14 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_capacity_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "object_storage_usage.go"),
 		filepath.Join(root, "pkg", "api", workflowFile),
+		filepath.Join(root, "pkg", "api", "workflow_schedules.go"),
+		filepath.Join(root, "pkg", "api", "automations.go"),
+		filepath.Join(root, "pkg", "api", "automation_simulation.go"),
+		filepath.Join(root, "pkg", "api", "workflow_outbound.go"),
+		filepath.Join(root, "pkg", "api", "workflow_guard.go"),
+		filepath.Join(root, "pkg", "api", "workflow_join.go"),
+		filepath.Join(root, "pkg", "api", "workflow_foreach.go"),
+		filepath.Join(root, "pkg", "api", "workflow_resume.go"),
 		filepath.Join(root, "pkg", "api", secretsFile),
 		filepath.Join(root, "pkg", "api", "secret_references.go"),
 		filepath.Join(root, "pkg", "api", envFile),
@@ -1048,6 +1057,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", scanFile),
 		filepath.Join(root, "pkg", "api", webhooksFile),
 		filepath.Join(root, "pkg", "api", inboundWebhooksFile),
+		filepath.Join(root, "pkg", "api", "workflow_webhooks.go"),
 		filepath.Join(root, "pkg", "api", realtimeFile),
 		filepath.Join(root, "pkg", "api", logDrainsFile),
 		filepath.Join(root, "pkg", "api", billingFile),
@@ -1063,6 +1073,10 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
+		filepath.Join(root, "pkg", "api", "managed_postgres_diagnostics.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_capabilities.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_usage_import.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_accounting_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", openapiContractFile),
 		filepath.Join(root, "pkg", "api", executionsFile),
 		filepath.Join(root, "pkg", "api", executionWorkflowManagedFile),
@@ -1070,6 +1084,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", executionArtifactGrantsFile),
 		filepath.Join(root, "pkg", "api", appTasksFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
+		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-590
+		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", "dev_bridge.go"),
 		filepath.Join(root, "pkg", "api", privateNetworkFile),

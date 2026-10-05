@@ -28,7 +28,8 @@ func (m *MemStore) requestServiceAlertRollbackLocked(ctx context.Context, r api.
 		return r, err
 	}
 	r.AuditID = strconv.FormatInt(auditID, 10)
-	m.deployments[target.ID], m.alertRollbacks[r.ID] = target, r
+	m.putDeploymentLocked(target.ID, target)
+	m.alertRollbacks[r.ID] = r
 	return cloneAlertRollback(r), nil
 }
 

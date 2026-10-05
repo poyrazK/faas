@@ -144,6 +144,19 @@ For long-lived consumers, call `c.WatchExecution` directly and repeatedly
 call `Next`. `Cursor` exposes the latest replay position for checkpointing;
 `Close` is idempotent and releases the active stream.
 
+## Transactional operation handlers
+
+For managed HTTP operations, use `OperationRequestFromHTTP(r, originalBody)` and
+`WithOperationTransaction(ctx, db, operation, callback)`. The callback receives an
+`OperationSQLTransaction` and returns an `OperationOutcome`. The wrapper commits
+business writes and the result/webhook intent together; retries return the saved
+body without repeating committed writes.
+
+Install `OperationReceiptSchema` explicitly as the database owner and send
+`response.Body` unchanged as `application/json`. `response.Replayed` reports
+recovery. See the [transactional handler guide](../../docs/operation-transactions.md)
+for scope checks, receipt retention, and `ErrOperationCommitUnknown` handling.
+
 ## Idempotency
 
 Every mutating call (POST/PATCH/DELETE) carries an `Idempotency-Key`
@@ -309,3 +322,14 @@ A replacement must contain at least one rule; use DELETE to clear it. Starting
 or resuming a due scan returns its durable ID. A completed scan means discovery
 finished; admitted cleanup can still be retrying. Removing rules preserves that
 cleanup. See the [lifecycle guide](../../docs/object-storage.md#lifecycle-rules-and-discovery).
+
+## Object version protection
+
+The Storage API supports typed retention/legal-hold reads and mutations, plus
+protection operation inspection. Use an explicit owned public version UUIDv4
+(or `null` in an eligible Object Lock bucket). Mutations require a stable UUIDv4
+operation ID and return a durable receipt; retain the returned ID for retries
+and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
+holds are supported. Event-hold changes and governance bypass are unsupported.
+See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
+for enrollment, pending-operation fences and recovery behavior.

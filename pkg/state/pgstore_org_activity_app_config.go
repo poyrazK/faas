@@ -31,6 +31,10 @@ func (s *PgStore) UpdateAppWithActivity(ctx context.Context, id string, p Update
 	if err != nil {
 		return App{}, 0, err
 	}
+	after, err = syncProductionWorkloadSpecTx(ctx, tx, after, p)
+	if err != nil {
+		return App{}, 0, err
+	}
 	data, record, err := build(before, after)
 	if err != nil {
 		return App{}, 0, err

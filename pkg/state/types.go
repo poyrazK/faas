@@ -72,7 +72,7 @@ type MailSuppressionInput struct {
 	ExpiresAt       *time.Time // nil = suppression is permanent
 }
 
-// AppType distinguishes a plain App from a Function (spec §2, ADR-3).
+// AppType distinguishes a plain App from a Function (spec §2, ADR-003).
 type AppType string
 
 const (
@@ -100,14 +100,14 @@ const (
 	// dispatch path (issue #432 phase 5 follow-up). The physical
 	// build pipeline is identical to DeploymentKindTarball
 	// (builderd reads dep.SourcePath as a local .tar.gz), but the
-	// deployment row identifies it as github-triggered so ADR-48
+	// deployment row identifies it as github-triggered so ADR-048
 	// metering dashboards and per-customer billing breakdowns
 	// can split apid-CLI deploys from githubd webhook deploys.
 	// The CHECK constraint on builds.kind is relaxed to allow
 	// this value by migration 00085.
 	DeploymentKindGitHub DeploymentKind = "github"
 	// DeploymentKindPreview tags builds enqueued by the githubd
-	// pull_request preview path (issue #272, ADR-94). Same wire
+	// pull_request preview path (issue #272, ADR-094). Same wire
 	// shape as DeploymentKindGitHub (the codeload tarball is
 	// fetched server-side via the install-token mint), but the
 	// deployment row identifies it as a PR preview so per-customer
@@ -291,7 +291,7 @@ func IsStageName(name StageName) bool {
 const MaxStageHistory = 64
 
 // ParkReason is the closed-set label on deployments.parked_reason
-// (issue #554 / ADR-79 follow-up, migration 00157). The schema
+// (issue #554 / ADR-079 follow-up, migration 00157). The schema
 // CHECK constraint deployments_parked_reason_check enforces the
 // same vocabulary at the storage layer; this Go type exists so
 // callers (engine.ParkDeployment, future admin parkApp handler)
@@ -301,7 +301,7 @@ type ParkReason string
 
 const (
 	// ParkReasonLivenessExhausted is stamped when the liveness
-	// window trips (issue #554 / ADR-79) — the only path that
+	// window trips (issue #554 / ADR-079) — the only path that
 	// emits today. The audit row is the durable source of
 	// truth; this is the per-deployment column projection.
 	ParkReasonLivenessExhausted ParkReason = "liveness_exhausted"
@@ -464,7 +464,7 @@ type Account struct {
 	// deploy and billing gates independent of the credential used on a request.
 	EmailVerifiedAt *time.Time
 	// DeletionRequestedAt is stamped when the customer schedules the
-	// account for deletion (G6, ADR-21). NULL on every row that has
+	// account for deletion (G6, ADR-021). NULL on every row that has
 	// never been scheduled. pkg/grace uses it to decide whether the
 	// 30-day grace window has lapsed and a hard delete should run.
 	DeletionRequestedAt *time.Time
@@ -484,7 +484,7 @@ type Account struct {
 	// MFAEnrolledAt is stamped by /v1/account/mfa/confirm on the first
 	// successful TOTP verification. NULL = never enrolled. The gate
 	// the login handlers check is (MFARequired && MFAEnrolledAt == nil)
-	// — issued as an mfa_pending session cookie. See ADR-35 and the
+	// — issued as an mfa_pending session cookie. See ADR-035 and the
 	// IAM-2 plan in issue #186.
 	MFAEnrolledAt *time.Time
 	// MFASecretEncrypted is the age-sealed base32 TOTP secret produced
@@ -520,12 +520,12 @@ type Account struct {
 	KeyGraceWindowDays *int
 	// EgressAllowlistExtra is the per-account additive budget on top
 	// of the plan's apps.egress_allowlist cap (issue #679 / PR-B /
-	// ADR-82). 0 = no override; the plan cap (Pro 16 / Scale 64 /
+	// ADR-082). 0 = no override; the plan cap (Pro 16 / Scale 64 /
 	// Free,Hobby 0) is authoritative. Positive values widen the
 	// effective cap for THIS account's apps by the given amount,
 	// subject to the apid-layer ceiling of
 	// api.MaxAccountEgressAllowlistExtra (1024). The operator-bundle
-	// axis (PR-A / ADR-81) is a separate additive layer that merges
+	// axis (PR-A / ADR-081) is a separate additive layer that merges
 	// at the vmmd side; this field is consumed at the apid
 	// validator. The DB CHECK constraint
 	// accounts.egress_allowlist_extra (>= 0) is the wire-bypass
@@ -614,7 +614,7 @@ func (a Account) MFAEnrolled() bool { return a.MFAEnrolledAt != nil }
 // APIKey is a hashed, account-scoped credential. Scopes is the set of
 // authorization scopes attached to the key (e.g. "admin", "read", "write");
 // the apid middleware checks them on every authenticated request. See
-// ADR-34 and the IAM-1 plan.
+// ADR-034 and the IAM-1 plan.
 //
 // The trailing four fields are the IAM-5 (issue #189) surface:
 //
@@ -1056,7 +1056,7 @@ type App struct {
 	// scaling input or the owning scheduler node changes; schedulers
 	// acknowledge observing this revision without creating a deployment.
 	ScalingPolicyRevision int64
-	// EgressAllowlist is the per-app outbound CIDR allowlist (ADR-31,
+	// EgressAllowlist is the per-app outbound CIDR allowlist (ADR-031,
 	// tier-2 of the network roadmap). Empty => no allowlist rule
 	// emitted, current behaviour preserved; non-empty => the per-netns
 	// forward chain gains an `iifname tap0 ip daddr { … } accept`
@@ -1126,7 +1126,7 @@ type App struct {
 	// permanently removed. Restore is accepted only before this time.
 	DeleteGraceUntil *time.Time
 	// ProjectID is the parent project for apps that came from a
-	// multi-workload repo (ADR-50). Empty for standalone apps; the
+	// multi-workload repo (ADR-050). Empty for standalone apps; the
 	// apps.project_id column is nullable. ON DELETE SET NULL so a
 	// project's hard delete (Phase 5) orphans the app rather than
 	// cascading it.
@@ -1140,8 +1140,8 @@ type App struct {
 	// Empty for standalone apps.
 	WorkloadName string
 	// WorkloadClass is the per-app shape classification. Phase 1
-	// (ADR-50) stamps the value as a scan hint from the repo; Phase
-	// 4 (ADR-51) re-derives the authoritative class via the probe
+	// (ADR-050) stamps the value as a scan hint from the repo; Phase
+	// 4 (ADR-051) re-derives the authoritative class via the probe
 	// boot. The schema CHECK (apps_workload_class_chk) admits
 	// http|graphql|grpc|job|worker only; the Go zero-value is "" and
 	// is intentionally NOT in that set — code that persists an App
@@ -1149,16 +1149,16 @@ type App struct {
 	// explicitly before CreateApp.
 	WorkloadClass WorkloadClass
 	// StreamingEnabled toggles the per-app streaming response path
-	// through gatewayd-internal (issue #471 / ADR-47). When true, gatewayd-internal
+	// through gatewayd-internal (issue #471 / ADR-047). When true, gatewayd-internal
 	// streams response body chunks instance → gateway → client with
-	// a periodic 200 ms / 256 KiB tx_bytes flush so ADR-46 metering
+	// a periodic 200 ms / 256 KiB tx_bytes flush so ADR-046 metering
 	// stays accurate. Plan-gated upstream: Free defaults to false and
 	// cannot PATCH it to true (apid returns 403 plan_streaming_not_allowed);
 	// Hobby/Pro/Scale default to true. The buffered path remains the
 	// v1 contract — a Free app with StreamingEnabled=false keeps the
 	// legacy 25 MB / 300 s envelope (spec §4.1).
 	StreamingEnabled bool
-	// WebSocketEnabled (issue #676 / ADR-80) toggles the per-app
+	// WebSocketEnabled (issue #676 / ADR-080) toggles the per-app
 	// raw-bytes Upgrade bridge. When true, gatewayd-internal's
 	// Upgrade detector routes inbound Connection: Upgrade +
 	// Upgrade: <token> requests to rawStreamReverseProxy (which
@@ -1168,7 +1168,7 @@ type App struct {
 	// PATCH it to true (apid returns 403
 	// plan_websocket_not_allowed); Hobby/Pro/Scale default to true.
 	//
-	// Per-session caps (issue #676 / ADR-80 PR-C):
+	// Per-session caps (issue #676 / ADR-080 PR-C):
 	//   - Inbound bytes capped at api.RawStreamMaxRequestBytes
 	//     (100 MiB) at pkg/vmmdgrpc/forward.go:rawBridgeBodyLoop.
 	//     Exceeding it returns ResourceExhausted → gateway 502.
@@ -1185,9 +1185,9 @@ type App struct {
 	//     rawStreamOnceWithEvents — see pkg/gateway/handler.go
 	//     WithEgressSink + pkg/gateway/egresssink. They
 	//     populate usage_minutes.tx_bytes alongside plain HTTP
-	//     chunk writes (ADR-46).
+	//     chunk writes (ADR-046).
 	WebSocketEnabled bool
-	// RouteMetricsEnabled (ADR-93) opts the app into the per-route
+	// RouteMetricsEnabled (ADR-093) opts the app into the per-route
 	// observability surface. Mirrors WebSocketEnabled's plan-gating
 	// contract: Free defaults to false and cannot PATCH it to true
 	// (apid returns 403 plan_route_metrics_not_allowed); Hobby/Pro/
@@ -1205,7 +1205,7 @@ type App struct {
 	// (x-faas-protocol header stamp at pkg/gateway/handler.go)
 	// reads this field via pgRouter.toApp.
 	AppProtocol string
-	// MaintenanceMode (ADR-91 amendment, PR-A #???) opts the
+	// MaintenanceMode (ADR-091 amendment, PR-A #???) opts the
 	// whole app into 503 + Retry-After mode — the coarse primitive
 	// for "every route is in maintenance". When true, the gatewayd
 	// applier (pkg/gateway.(*Handler).applyAppsMaintenanceMode,
@@ -1227,7 +1227,7 @@ type App struct {
 	// DeclaredRoutes is an optional explicit route list. When populated, the
 	// gateway uses it instead of the imported OpenAPI document.
 	DeclaredRoutes []DeclaredRoute
-	// RequireSigned gates OCI image deploys (issue #472 / ADR-54) on
+	// RequireSigned gates OCI image deploys (issue #472 / ADR-054) on
 	// a valid cosign signature from a trusted publisher. When true,
 	// imaged's buildImageLayer calls pkg/cosign.VerifyImageSignature
 	// before pulling the OCI manifest and rejects (FAILED +
@@ -1254,7 +1254,7 @@ type App struct {
 	StartCommand string
 	Manifest     AppManifest
 	// ScalingPolicy is the per-app autoscaling configuration
-	// (issue #462 / ADR-58). The on-disk shape is jsonb
+	// (issue #462 / ADR-058). The on-disk shape is jsonb
 	// (`apps.scaling_policy`); the in-memory field is the
 	// canonical source for new writes. Legacy rows read back
 	// through the empty-policy projection path: nil pointer +
@@ -1268,7 +1268,7 @@ type App struct {
 	RetryPolicyJSON json.RawMessage
 	// LastScaleOutAt is the wall-clock time of the most recent
 	// scale-out event schedd admitted for this app (issue #462 /
-	// ADR-58). Used by the wake-gate cooldown helper
+	// ADR-058). Used by the wake-gate cooldown helper
 	// (`pkg/sched/engine.go::admitGate`) to short-circuit requests
 	// that hit the `ScaleOutCooldownS` window. Nullable:
 	// schedd stamps this on the admit branch (same Tx as the
@@ -1292,7 +1292,7 @@ type App struct {
 	// installs preserve bit-for-bit behaviour.
 	NodeID string
 	// OverflowNode is the customer's per-app preferred spill
-	// target (Tier A10, ADR-88, migration 00167). When set, the
+	// target (Tier A10, ADR-088, migration 00167). When set, the
 	// Tier A9 capacity-pressure rebalancer consults it BEFORE
 	// falling back to the first-peer-with-headroom selection.
 	// Nullable: a NULL app is the "no preference" default — the
@@ -1321,8 +1321,8 @@ type App struct {
 	ReassignedAt *time.Time
 	// MigratedAt is the wall-clock time of the most recent
 	// cross-node LIVE-INSTANCE migration for this app
-	// (Tier A5, migration 00098, ADR-68, follow-up to
-	// ADR-64). Distinct from ReassignedAt, which carries the
+	// (Tier A5, migration 00098, ADR-068, follow-up to
+	// ADR-064). Distinct from ReassignedAt, which carries the
 	// PARKED-app rebalance commit. Both columns can coexist
 	// on the same app — an app whose instances migrated live
 	// last week AND whose owner was rebalanced to a new node
@@ -1336,7 +1336,7 @@ type App struct {
 	// rebalancer's hot filter is on instances.state, not on
 	// apps.migrated_at.
 	MigratedAt *time.Time
-	// WarmSnapshotEnabled (issue #470 / ADR-55) toggles the
+	// WarmSnapshotEnabled (issue #470 / ADR-055) toggles the
 	// two-tier snapshot path (init.snap + warm.snap). When true
 	// and the customer's plan is Pro or Scale, schedd captures a
 	// second snapshot after the framework listener reports ready,
@@ -1357,7 +1357,7 @@ type App struct {
 	// keep every new app public). Operators may PATCH true → false
 	// on any plan to opt out per-app.
 	RequireAuthn bool
-	// PublicAuthMode (issue #477 / ADR-79) is the per-app
+	// PublicAuthMode (issue #477 / ADR-079) is the per-app
 	// public-URL auth mode ('open'|'bearer'|'basic'). When
 	// 'open' (the default — every pre-existing app stays
 	// public-by-default), gatewayd-internal pass-throughs
@@ -1376,7 +1376,7 @@ type App struct {
 	// PlatformTenantRequired admits app traffic only after the gateway has
 	// verified a platform tenant through a linked key, surface, or JWT rule.
 	PlatformTenantRequired bool
-	// PublicAuthBasicSealed (issue #477 / ADR-79) is the
+	// PublicAuthBasicSealed (issue #477 / ADR-079) is the
 	// secretbox-sealed APP_BASIC_AUTH blob carrying the
 	// {username, password} pair the basic-auth path verifies
 	// against. Nil/empty for open/bearer modes; set ONLY when
@@ -1385,7 +1385,7 @@ type App struct {
 	// db.NotifyKeyChanged invalidation) so the secretbox
 	// hot-path doesn't run on every request.
 	PublicAuthBasicSealed []byte
-	// AuthDefaultFlippedAt (issue #695 / ADR-80) is the
+	// AuthDefaultFlippedAt (issue #695 / ADR-080) is the
 	// grandfather marker for the apps-auth-default flip. Stamped
 	// on every pre-flip app by migration 00155 so the dashboard
 	// banner query + `faas apps list` annotation can render the
@@ -1396,7 +1396,7 @@ type App struct {
 	// in apid's buildApp path). Read-only at the wire surface —
 	// the PATCH path never writes this column. A future
 	// contributor adding a PATCH path that writes it must refuse
-	// the field with 422 unprocessable_entity per ADR-80 §9.
+	// the field with 422 unprocessable_entity per ADR-080 §9.
 	AuthDefaultFlippedAt *time.Time
 	// WarmSnapshotMinRequests is the minimum successful request
 	// count before schedd promotes a warm-tier capture. Range
@@ -1412,7 +1412,7 @@ type App struct {
 	// the 60 s ceiling bounds the per-park latency cost the warm
 	// capture adds to the cold path (R1 in the plan).
 	WarmSnapshotMinMs int
-	// WarmPoolSize (issue #1056 / ADR-74) is the desired number of
+	// WarmPoolSize (issue #1056 / ADR-074) is the desired number of
 	// paused VMs retained for low-latency resume. Runtime reconciliation
 	// is deliberately separate from this durable customer contract.
 	WarmPoolSize int
@@ -1424,7 +1424,7 @@ type App struct {
 	// from cross-account RAM-pressure eviction — every best_effort
 	// candidate is drained before any reserved is parked. Not
 	// Lambda-style provisioned concurrency: a reserved app does NOT
-	// keep instances resident (ADR-5 — cold boot must always work).
+	// keep instances resident (ADR-005 — cold boot must always work).
 	// Plan-gated upstream in apid via
 	// api.Plan.EvictionPriorityReservedAllowed(); the column CHECK
 	// (apps_eviction_priority_chk) is the data-integrity backstop.
@@ -1432,7 +1432,7 @@ type App struct {
 	// PreviewOfSlug names the parent (production) app this row is
 	// a PR preview of. Empty for production apps. Non-empty for
 	// preview rows provisioned by githubd's pull_request handler
-	// (issue #272 / ADR-94). The slug pair (preview_of_slug,
+	// (issue #272 / ADR-094). The slug pair (preview_of_slug,
 	// preview_pr_number) is the natural lookup key for the
 	// dashboard's "preview environments" pane and for the teardown
 	// janitor's nightly scan. Nullable text in SQL; the empty-
@@ -1478,7 +1478,7 @@ type App struct {
 	// previews provisioned before this migration landed).
 	PreviewDestroyCommentedAt *time.Time
 	// CORSDefaultEnabled is the per-app default CORS opt-in
-	// (ADR-91 CORS improvements D1 / spec §4.1.2.6). When
+	// (ADR-091 CORS improvements D1 / spec §4.1.2.6). When
 	// false (the default for every pre-PR app), the gateway
 	// applies no default CORS and the "no rule → no CORS"
 	// contract is preserved unchanged. When true, the gateway
@@ -1629,7 +1629,7 @@ func EvictionPriorityOrBestEffort(p string) string {
 // PreviewPrStateOpen / Closed / Stale / TearingDown / TornDown are the
 // closed-set values for state.App.PreviewPrState. Mirrors the
 // apps_preview_pr_state_chk CHECK constraint introduced by
-// migration 00220 (issue #272 / ADR-94), extended by the teardown-claim
+// migration 00220 (issue #272 / ADR-094), extended by the teardown-claim
 // migration. Empty string means
 // "production app, no preview state" — the SQL CHECK allows
 // NULL or one of these values; the Go side represents NULL
@@ -1816,7 +1816,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 }
 
 // ScalingPolicy is the per-app autoscaling configuration (issue #462 /
-// ADR-58). The struct is the canonical in-memory form; the on-disk
+// ADR-058). The struct is the canonical in-memory form; the on-disk
 // shape is jsonb (column `apps.scaling_policy`) round-tripped through
 // MarshalJSON / UnmarshalJSON.
 //
@@ -2052,7 +2052,7 @@ func ScalingPolicyOrDefault(p *ScalingPolicy) ScalingPolicy {
 
 // GitHubBinding is the (app → github_installation) edge persisted on
 // the apps row by the /oauth/callback handler after it verifies the
-// installation against api.github.com (ADR-12, review finding #1+#2
+// installation against api.github.com (ADR-012, review finding #1+#2
 // closure). githubd reads this via the BindingsLookup interface so
 // CheckRun writes go out under the right installation token instead
 // of the hardcoded install_id=1 placeholder that M7.5 shipped with.
@@ -2159,10 +2159,10 @@ type Deployment struct {
 	GitHubInstallationID int64
 	// RootfsPath / RootfsBytes are stamped by imaged after the per-app ext4 layer
 	// is built (spec §4.6, drive1). schedd's prime handshake reads this row so
-	// it can attach drive1 from the right path on the cold boot (ADR-18).
+	// it can attach drive1 from the right path on the cold boot (ADR-018).
 	RootfsPath string
 	// RootfsKey is the canonical StorageBackend key for the same layer
-	// (issue #96 / ADR-25 axis 2, PR #116). Mirror column of
+	// (issue #96 / ADR-025 axis 2, PR #116). Mirror column of
 	// RootfsPath: every row carries both. schedd carries the key on the
 	// wake wire; vmmd resolves it via Storage.Get and stages into the
 	// jail chroot. Local backends map the key to the same file as
@@ -2190,7 +2190,7 @@ type Deployment struct {
 	ReorderedAt *time.Time
 	Error       string
 	// ErrorCode is the RFC 7807 code stamped at the same time as
-	// Error when a deployment transitions to `failed`. ADR-21:
+	// Error when a deployment transitions to `failed`. ADR-021:
 	// oci.ErrImageNotFound / ErrImageEgressDenied /
 	// ErrImageManifestInvalid map via pkg/api.SentinelToCode to
 	// the stable codes that imaged writes here. Empty for every
@@ -2233,7 +2233,7 @@ type Deployment struct {
 	// clear. Pairs with DeletedAt.
 	DeletedByPrincipal string
 	CreatedAt          time.Time
-	// Override columns (issue #460 / ADR-53). Six optional fields
+	// Override columns (issue #460 / ADR-053). Six optional fields
 	// that layer on top of the OCI image config when the customer
 	// redeploys the same digest-pinned image with a different
 	// entrypoint/cmd/env/port/healthcheck. PR-A persists the
@@ -2250,7 +2250,7 @@ type Deployment struct {
 	OverridePort        int             `json:"override_port,omitempty"`
 	OverrideHealthcheck json.RawMessage `json:"override_healthcheck,omitempty"`
 	// OverrideLivenessProbe is the per-deployment liveness-probe
-	// override JSON (issue #554 / ADR-78). Mirrors
+	// override JSON (issue #554 / ADR-078). Mirrors
 	// OverrideHealthcheck — coalesce(override_liveness_probe,
 	// '{}'::jsonb) on the read side; nullable jsonb column
 	// (migrations/00154_deployment_liveness_probe.sql). The
@@ -2266,7 +2266,7 @@ type Deployment struct {
 	// OverrideMainDependsOn is the primary workload's startup dependency list.
 	// It is persisted independently so the runtime can apply the graph at boot.
 	OverrideMainDependsOn json.RawMessage `json:"override_main_depends_on,omitempty"`
-	// Sidecars (issue #463 / ADR-68). Up to 5 stateless helpers
+	// Sidecars (issue #463 / ADR-068). Up to 5 stateless helpers
 	// (1 init + 4 long-running companions) per app. Persisted as jsonb on the
 	// `deployments.sidecars` column (migration 00095). Field is
 	// json.RawMessage (NOT []api.Sidecar) so the state package
@@ -2289,12 +2289,12 @@ type Deployment struct {
 	// the plan/auto policy, true forces full-rootfs assembly, and false
 	// preserves the strict shared-base behavior.
 	FullRootfsOverride *bool `json:"full_rootfs_override,omitempty"`
-	// Workflows is the validated ADR-81 workflow definition set attached
+	// Workflows is the validated ADR-081 workflow definition set attached
 	// to this deployment. Keeping it on the deployment row makes the live
 	// deployment the source of truth for new run snapshots.
 	Workflows json.RawMessage `json:"workflows,omitempty"`
 	// MinInstances is the per-deployment cold-wake floor override
-	// (issue #557 closure / ADR-72). Default 0 = "inherit from
+	// (issue #557 closure / ADR-072). Default 0 = "inherit from
 	// parent app"; an explicit positive value is the deployment's
 	// own floor. Effective per-instance floor =
 	// `max(app.EffectiveMinInstances(), d.EffectiveMinInstances())`
@@ -2319,7 +2319,7 @@ type Deployment struct {
 	// explicitly requested zero. It is persisted for activation semantics but
 	// remains internal; TrafficPercent is the customer-visible value.
 	TrafficPercentExplicit bool `json:"-"`
-	// Scan columns (issue #464 / ADR-55 / PR-3). Per-deploy grype
+	// Scan columns (issue #464 / ADR-055 / PR-3). Per-deploy grype
 	// scan result, status, and scanned_at. Mirror the deployments
 	// table columns added by migrations/00135. The pgstore reads
 	// these as raw bytes via SQL (ScanResult []byte, ScanStatus
@@ -2409,7 +2409,7 @@ type Deployment struct {
 	// stable deployments.
 	ServiceRolloutHandoff ServiceRolloutHandoff `json:"service_rollout_handoff,omitempty"`
 
-	// Parking reason + timestamp (issue #554 / ADR-79 follow-up).
+	// Parking reason + timestamp (issue #554 / ADR-079 follow-up).
 	// pkg/sched.Engine.ParkDeployment sets these before flipping
 	// apps.status to `evicted_cold`; the apid GET /v1/apps/{slug}
 	// surface renders them as the `parked_deployment: { id,
@@ -2418,7 +2418,7 @@ type Deployment struct {
 	// deployments_parked_reason_check constraint (migration 00157).
 	ParkedReason string     `json:"parked_reason,omitempty"`
 	ParkedAt     *time.Time `json:"parked_at,omitempty"`
-	// Scope (ADR-91 / PR-D) — per-deployment env targeting.
+	// Scope (ADR-091 / PR-D) — per-deployment env targeting.
 	// The deployment declares which named scope (`default`/
 	// `staging`/`prod`/...) its wake should read env from.
 	// Backfilled to `'default'` by migration 00213's PG11+
@@ -2787,7 +2787,7 @@ type StageStateItem struct {
 }
 
 // DeploymentSidecarLayer is one sidecar's per-workload filesystem
-// handle (issue #463 / ADR-69 / PR-B). imaged writes one row per
+// handle (issue #463 / ADR-069 / PR-B). imaged writes one row per
 // sidecar during the buildImageLayer pass; vmmd reads it at wake
 // time to resolve the StorageBackend key into a tmp path. The
 // five-row cap is mirrored at the schema layer via the
@@ -2828,7 +2828,7 @@ type Build struct {
 	LogPath      string
 	StartedAt    time.Time
 	FinishedAt   time.Time
-	EnqueuedAt   time.Time // set at CreateBuild; builderd measures queue wait against it (ADR-30)
+	EnqueuedAt   time.Time // set at CreateBuild; builderd measures queue wait against it (ADR-030)
 	// CancelledAt is the wall-clock at which the build row
 	// transitioned to BuildCancelled. Set by MarkBuildCancelled
 	// (ADR-124). Nil for every other row.
@@ -2849,7 +2849,7 @@ type Build struct {
 }
 
 // BuildProvenance is the post-mortem "what ran?" record for a Build
-// (ADR-38, Tier 3 / issue #197 B3.1). Populated by builderd at the
+// (ADR-038, Tier 3 / issue #197 B3.1). Populated by builderd at the
 // two markSucceeded sites; read by apid at GET /v1/builds/{id}/provenance
 // and by the CLI at `faas build provenance <id>`.
 //
@@ -2877,9 +2877,9 @@ type BuildProvenance struct {
 	// .python-version / .tool-versions / go.mod ::go X.Y). Surfaced
 	// for operator observability — NEVER read by the build pipeline
 	// (the runtime version is bound by the OCI base ref via
-	// FAAS_DEPLOY_BASE_REF_<RUNTIME>; see ADR-52 §rejected-alts).
+	// FAAS_DEPLOY_BASE_REF_<RUNTIME>; see ADR-052 §rejected-alts).
 	// Populated by pkg/builderd::recordProvenance (issue #740 /
-	// DEPLOY-PROV-5 / ADR-87). Empty when no version file is found
+	// DEPLOY-PROV-5 / ADR-087). Empty when no version file is found
 	// or any parser fails — best-effort, never an error.
 	FrameworkVer string
 }
@@ -3031,7 +3031,7 @@ const (
 )
 
 // FireNowRequest is one row of cron_fire_now_requests (migrations/00193).
-// ADR-90 PR-C: apid inserts on POST /v1/crons/{id}/run; schedd claims
+// ADR-090 PR-C: apid inserts on POST /v1/crons/{id}/run; schedd claims
 // (FOR UPDATE SKIP LOCKED) on each NotifyCronRunNow wakeup, calls
 // RunCronNow in-process, then transitions status to terminal.
 //
@@ -3135,7 +3135,7 @@ type OperatorIntent struct {
 }
 
 // AlertMetric is a closed vocabulary for the metric side of an AlertRule
-// condition (issue #396, ADR-45). Names mirror the AppMetricsResponse
+// condition (issue #396, ADR-045). Names mirror the AppMetricsResponse
 // payload verbatim so the evaluator and the customer-facing metrics
 // endpoint cannot drift. failed_invocations is the only non-Prometheus
 // metric; its source dimension comes through AlertRule.FailureSource.
@@ -3148,7 +3148,7 @@ type OperatorIntent struct {
 // Issue #1395 B3 adds new_error_fingerprint, cold_wake_rate_pct, and
 // daily_cost_cents from the durable observability rollups. F2 adds
 // cert_issuance_failed, backed by custom_domains.cert_failed_at. Issue
-// #1398 O2 adds the ADR-82 multi-window SLO burn-rate signal.
+// #1398 O2 adds the ADR-082 multi-window SLO burn-rate signal.
 type AlertMetric string
 
 const (
@@ -3170,7 +3170,7 @@ const (
 	AlertMetricNewErrorFingerprint       AlertMetric = "new_error_fingerprint"
 	AlertMetricColdWakeRatePct           AlertMetric = "cold_wake_rate_pct"
 	AlertMetricDailyCostCents            AlertMetric = "daily_cost_cents"
-	// AlertMetricSLOBurnRate is the customer-facing ADR-82 API
+	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
 	AlertMetricSLOBurnRate AlertMetric = "slo_burn_rate"
@@ -3343,7 +3343,7 @@ type UpdateAlertRuleParams struct {
 	CooldownMinutes     *int
 }
 
-// AlertRule is one customer-configurable rule (issue #396, ADR-45).
+// AlertRule is one customer-configurable rule (issue #396, ADR-045).
 // Account-scoped on the FK root; AppID is empty (zero string) for an
 // account-wide rule, set otherwise. The webhook secret is at-rest
 // sealed (webhookSecretSealed, age/X25519 via pkg/secretbox) and is
@@ -3431,7 +3431,7 @@ func (e *AlertRuleQuotaError) Error() string {
 }
 
 // ----------------------------------------------------------------------------
-// Outbound webhook delivery (issue #476 / ADR-76)
+// Outbound webhook delivery (issue #476 / ADR-076)
 //
 // AppWebhook is an app-, account-, or platform-tenant subscription;
 // AppWebhookDelivery is the persistent ledger row drained by cmd/schedd's
@@ -3448,7 +3448,7 @@ func (e *AlertRuleQuotaError) Error() string {
 //     inside schedd and lives until the customer POSTs
 //     /retry or deletes the subscription.
 // Co-locating them would force a union type and break both
-// dispatcher's hot-path claim queries. ADR-76 documents this split.
+// dispatcher's hot-path claim queries. ADR-076 documents this split.
 // ----------------------------------------------------------------------------
 
 // AppWebhookEvent is the closed vocabulary on app_webhooks.event_filter.
@@ -3476,6 +3476,7 @@ const (
 	AppWebhookEventRolloutAborted                   AppWebhookEvent = "rollout.aborted"
 	AppWebhookEventErrorNew                         AppWebhookEvent = "error.new"
 	AppWebhookEventJobFinished                      AppWebhookEvent = "job.finished"
+	AppWebhookEventOperationFinished                AppWebhookEvent = "operation.finished"
 	AppWebhookEventPreviewCreated                   AppWebhookEvent = "preview.created"
 	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
 	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
@@ -3519,6 +3520,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRolloutAborted,
 	AppWebhookEventErrorNew,
 	AppWebhookEventJobFinished,
+	AppWebhookEventOperationFinished,
 	AppWebhookEventPreviewCreated,
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
@@ -3623,7 +3625,7 @@ const (
 // creating an app subscription when passed an account-scoped request.
 var ErrInvalidAppWebhookScope = errors.New("state: invalid app webhook scope")
 
-// AppWebhook is a subscription row (ADR-76, ADR-224). Its sealed secret is
+// AppWebhook is a subscription row (ADR-076, ADR-224). Its sealed secret is
 // never surfaced on a read; the apid response carries a masked constant.
 type AppWebhook struct {
 	ID               string
@@ -3976,9 +3978,17 @@ type Invocation struct {
 	// ExclusiveClaim is short-lived schedd-to-gateway capability metadata. It
 	// is never stored in the invocation ledger or exposed by the customer API.
 	ExclusiveClaim *exclusivework.Claim `json:"-"`
-	ID             string               `json:"id"`
-	AppID          string               `json:"app_id"`
-	AccountID      string               `json:"account_id"`
+	// Host-to-host operation metadata is trusted protocol state, never persisted or guest-authored.
+	OperationResultVersion     int    `json:"-"`
+	ManagedOperationID         string `json:"-"`
+	ManagedOperationGeneration int64  `json:"-"`
+	ManagedOperationAccountID  string `json:"-"`
+	ID                         string `json:"id"`
+	AppID                      string `json:"app_id"`
+	AccountID                  string `json:"account_id"`
+	// OperationID is trusted claim metadata populated from the execution ledger.
+	// It is not accepted from a request header or JSON invocation envelope.
+	OperationID string `json:"-"`
 	// DeploymentScope is captured when work is accepted and never changes on
 	// retry or replay. Queue producers expose it through their environment
 	// contract; the ledger keeps the routing field internal.
@@ -3987,6 +3997,9 @@ type Invocation struct {
 	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
 	InstanceID       string           `json:"instance_id,omitempty"`
 	Source           InvocationSource `json:"source"`
+	// EnvironmentID is authenticated operational ownership, never request
+	// intent. Production remains NULL; stage admission persists the UUID.
+	EnvironmentID string `json:"-"`
 	// QueueBindingID is captured at admission and retained on retry/replay.
 	// It is internal until scoped producers and consumers expose one contract.
 	QueueBindingID string `json:"-"`
@@ -4285,8 +4298,11 @@ type FailOptions struct {
 	// ClaimAttempt fences a keyed dispatch against a newer lease of the
 	// same invocation. Zero is valid only for pre-claim or unkeyed work.
 	ClaimAttempt int
-	WorkDecision *workpolicy.Decision
-	OutcomeCode  string
+	// DispatchNotStarted is set only before invoking the guest. A lost lease
+	// or an error after dispatch leaves external effects uncertain.
+	DispatchNotStarted bool
+	WorkDecision       *workpolicy.Decision
+	OutcomeCode        string
 	// HasWorkClassification distinguishes an explicit empty outcome code from
 	// a call site that does not update scheduled-work classification.
 	HasWorkClassification bool
@@ -4302,6 +4318,8 @@ type FailOption func(*FailOptions)
 func WithOutcome(o InvocationOutcome) FailOption {
 	return func(f *FailOptions) { f.Outcome = o }
 }
+
+func WithDispatchNotStarted() FailOption { return func(f *FailOptions) { f.DispatchNotStarted = true } }
 
 func WithClaimAttempt(attempt int) FailOption {
 	return func(f *FailOptions) { f.ClaimAttempt = attempt }
@@ -4469,7 +4487,7 @@ type Instance struct {
 	// state ∈ {STOPPED, FAILED} AND terminal_at < now-30d.
 	TerminalAt *time.Time
 	// NodeID is the compute_node the instance lives on
-	// (issue #97 / ADR-25 axis 3). Set by Engine.Wake via
+	// (issue #97 / ADR-025 axis 3). Set by Engine.Wake via
 	// sched.ChoosePlacement at instance creation; read by Park /
 	// snapshotAndPark to route the vmmd RPC through the right
 	// target URL. NOT NULL enforced by migrations/00024_compute_nodes;
@@ -4490,7 +4508,7 @@ type Instance struct {
 	WakeID string
 	// MigratedFromNodeID is the prior owner compute_node after a
 	// cross-node live-instance handoff (Tier A5, migration 00097,
-	// ADR-68, follow-up to ADR-64). FK to compute_nodes(id) ON
+	// ADR-068, follow-up to ADR-064). FK to compute_nodes(id) ON
 	// DELETE SET NULL — the lineage reference stays honest when a
 	// node is decommissioned (the row stays, the column flips to
 	// NULL). Distinct from apps.node_id (the durable shard key for
@@ -4545,7 +4563,7 @@ type Instance struct {
 	// are backfilled with the migration's DEFAULT NULL.
 	FrameworkReadyAt *time.Time
 	// TailCount is the in-flight waitUntil(promise) task count
-	// for this instance (issue #667 / ADR-78). Incremented by
+	// for this instance (issue #667 / ADR-078). Incremented by
 	// the runner each time ctx.waitUntil(promise) is called and
 	// decremented when the task reaches a terminal outcome
 	// (completed / failed / timeout). Persisted in the `tail_count`
@@ -4560,7 +4578,7 @@ type Instance struct {
 	// pre-existing rows are backfilled to 0 on apply.
 	TailCount int
 	// RequestCount is the per-instance monotonically-increasing
-	// request counter (ADR-98 C8/C9/C10). Persisted in the
+	// request counter (ADR-098 C8/C9/C10). Persisted in the
 	// `request_count` column added by migrations/00221_instances_request_count.sql.
 	// The counter is the gate for warm-snapshot promotion (C10):
 	// when count >= WarmSnapshotMinRequests (per-app config), the
@@ -4583,7 +4601,7 @@ type Instance struct {
 	// enforces it. Default 'normal' on pre-feature rows so no
 	// existing customer is affected.
 	Mode string
-	// Kind (issue #1184 Workstream A / ADR-99) discriminates
+	// Kind (issue #1184 Workstream A / ADR-099) discriminates
 	// app VMs from job-task VMs. Closed vocabulary enforced at
 	// the SQL layer by migration 00578's
 	// instances_kind_check CHECK constraint:
@@ -4654,7 +4672,7 @@ const (
 	// desired-count via replacement wakes (commit 6).
 	InstanceModeService InstanceMode = "service"
 	// InstanceModeJob tags an instance that the schedd created to
-	// run a single job task (issue #1184 Workstream A / ADR-99
+	// run a single job task (issue #1184 Workstream A / ADR-099
 	// supplement + ADR-137). Unlike mirror, a job VM IS
 	// billable — the sampler path counts it like a normal VM;
 	// the only mode-specific branch is the per-account
@@ -4809,7 +4827,7 @@ type MirrorSummary struct {
 	WindowSeconds                   int
 }
 
-// ComputeNode is one vmmd host in the fleet (issue #97 / ADR-25 axis
+// ComputeNode is one vmmd host in the fleet (issue #97 / ADR-025 axis
 // 3). schedd's single-leader CP owns placement across N rows; the
 // legacy single-host deployment has exactly one row (the synthetic
 // 'default-local' seeded by migrations/00024_compute_nodes.sql).
@@ -5040,7 +5058,7 @@ type ComputeNodeHeartbeat struct {
 	LastHeartbeatAt time.Time
 	Source          string
 	// CPUPct60s is the 60-second sliding-window CPU utilization as
-	// a percentage of vpcpus × 100 (PR #4 / ADR-91 §3.6 amendment).
+	// a percentage of vpcpus × 100 (PR #4 / ADR-091 §3.6 amendment).
 	// Nil when the row predates migrations/00199 or vmmd hadn't
 	// sampled yet. Bounded [0.00, 100.00] for sane values.
 	CPUPct60s *float64
@@ -5121,7 +5139,7 @@ type OperatorCapacitySnapshot struct {
 type InstanceTouch struct {
 	InstanceID  string
 	LastRequest time.Time
-	// RequestDelta (ADR-98 C9) is the per-instance request count
+	// RequestDelta (ADR-098 C9) is the per-instance request count
 	// delta the gateway has observed since the last touch. The
 	// gateway's per-instance cache (Target.RequestCount) is the
 	// authoritative hot path; the engine batched-writer flushes
@@ -5476,13 +5494,13 @@ type Usage struct {
 	// gateway forwarded for this app in this month. Source:
 	// pkg/gateway/handler.go statusRecorder.Bytes → per-(instance,
 	// minute) ring buffer → meterd Sampler.SampleAndRoll →
-	// AppendUsage. ADR-46. Informational — not billed.
+	// AppendUsage. ADR-046. Informational — not billed.
 	TXBytes int64
 	// NetTxBytes is the cumulative byte delta on root-side
 	// vethHost.rx_bytes for this app in this month. Source:
 	// vmmd pkg/fcvm/netstats.Cache → vmmd.Stats → schedd
 	// instancestats.Poller → meterd Sampler.SampleAndRoll →
-	// AppendUsage. ADR-46. This is the canonical optional egress billing
+	// AppendUsage. ADR-046. This is the canonical optional egress billing
 	// source; it remains informational while the provider policy is off. Unit
 	// = interface bytes (includes Ethernet/IP framing).
 	NetTxBytes int64
@@ -5490,13 +5508,13 @@ type Usage struct {
 	// vethHost.tx_bytes (root→guest = ingress) for this app
 	// in this month. Source: vmmd pkg/fcvm/netstats.Cache TX
 	// path → vmmd.Stats → schedd instancestats.Poller → meterd
-	// Sampler.SampleAndRoll → AppendUsage. ADR-48.
+	// Sampler.SampleAndRoll → AppendUsage. ADR-048.
 	// Informational — not billed. Unit = interface bytes.
 	NetRxBytes int64
 	// ColdBootCount is the per-month sum of customer requests whose
 	// wake outcome was WAKE_COLD_BOOT across this app's instances.
 	// Source: gatewayd's minute-bucketed usage stream.
-	// ADR-48. Informational — not billed.
+	// ADR-048. Informational — not billed.
 	ColdBootCount int64
 }
 
@@ -5530,7 +5548,7 @@ type BillingMeterWindow struct {
 }
 
 // DailyUsage is the per-(account, app, day) row read by
-// Store.UsageDaily (ADR-48 §5). Mirrors the columns declared
+// Store.UsageDaily (ADR-048 §5). Mirrors the columns declared
 // in migrations/00067_extend_metering_telemetry.sql::usage_daily.
 // Day is a UTC midnight date; PK is (account_id, app_id, day).
 // Informational — not billed.
@@ -5546,7 +5564,7 @@ type DailyUsage struct {
 	NetRxBytes     int64
 	ColdBootCount  int64
 	BuilderSeconds int64
-	// TailSeconds (issue #667 / ADR-78) is the per-day wall-clock
+	// TailSeconds (issue #667 / ADR-078) is the per-day wall-clock
 	// seconds this instance spent draining waitUntil tasks.
 	// INFORMATIONAL ONLY — does not enter billing. Pinned by
 	// pkg/meter/pusher_shadow_test.go::TestPushHour_ExcludesTailSeconds.
@@ -5555,7 +5573,7 @@ type DailyUsage struct {
 }
 
 // StorageUsage is the per-(account, app, day) row read by
-// Store.StorageUsage (ADR-49 §B.3). Mirrors
+// Store.StorageUsage (ADR-049 §B.3). Mirrors
 // migrations/00070_snapshot_storage_daily.sql::snapshot_storage_daily.
 // Day is a UTC midnight date; PK is (account_id, app_id, day).
 // Informational — not billed today; the future "Pro plan 1 GB
@@ -5721,7 +5739,7 @@ type UpdateAppParams struct {
 	MinInstances    *int
 	SetMinInstances bool
 	// EgressAllowlist is the per-app outbound CIDR allowlist
-	// (ADR-31). SetEgressAllowlist distinguishes "unset" from
+	// (ADR-031). SetEgressAllowlist distinguishes "unset" from
 	// "explicit empty" (= "no allowlist rule, current behaviour").
 	// A nil pointer when SetEgressAllowlist is false leaves the
 	// column unchanged; a non-nil empty slice with
@@ -5770,7 +5788,7 @@ type UpdateAppParams struct {
 	// (e.g. a synchronous JSON API that wants Content-Length).
 	StreamingEnabled    *bool
 	SetStreamingEnabled bool
-	// WebSocketEnabled (issue #676 / ADR-80) toggles the per-app
+	// WebSocketEnabled (issue #676 / ADR-080) toggles the per-app
 	// raw-bytes Upgrade bridge. SetWebSocketEnabled distinguishes
 	// "unset" (don't touch) from "explicit false" (opt out of
 	// Upgrade traffic). Plan-gated upstream: apid returns 403
@@ -5780,7 +5798,7 @@ type UpdateAppParams struct {
 	// should never accept an Upgrade).
 	WebSocketEnabled    *bool
 	SetWebSocketEnabled bool
-	// RouteMetricsEnabled (ADR-93) toggles the per-app per-route
+	// RouteMetricsEnabled (ADR-093) toggles the per-app per-route
 	// observability surface. SetRouteMetricsEnabled distinguishes
 	// "unset" (don't touch) from "explicit false" (opt out of the
 	// per-route breakdown). Plan-gated upstream: apid returns 403
@@ -5818,7 +5836,7 @@ type UpdateAppParams struct {
 	// would otherwise mask the explicit-write intent).
 	AppProtocol    *string
 	SetAppProtocol bool
-	// MaintenanceMode (ADR-91 amendment) opts the whole app
+	// MaintenanceMode (ADR-091 amendment) opts the whole app
 	// into 503 + Retry-After mode. SetMaintenanceMode
 	// distinguishes "unset" (don't touch) from "explicit false"
 	// (opt out of maintenance mode). Free-tier allowed (no plan
@@ -5827,7 +5845,7 @@ type UpdateAppParams struct {
 	// an app during a deploy rollback or a billing investigation.
 	MaintenanceMode    *bool
 	SetMaintenanceMode bool
-	// RequireSigned (issue #472 / ADR-54) gates OCI image deploys
+	// RequireSigned (issue #472 / ADR-054) gates OCI image deploys
 	// on a valid cosign signature from a trusted publisher. SetRequireSigned
 	// distinguishes "unset" (don't touch) from "explicit false"
 	// (opt out of signature enforcement). Admin-only via PATCH
@@ -5839,7 +5857,7 @@ type UpdateAppParams struct {
 	// admin+MFA-only setting on the dedicated security endpoint.
 	SecurityPolicy    *api.AppSecurityPolicy
 	SetSecurityPolicy bool
-	// WarmSnapshotEnabled (issue #470 / ADR-55) toggles the
+	// WarmSnapshotEnabled (issue #470 / ADR-055) toggles the
 	// two-tier snapshot path. SetWarmSnapshotEnabled distinguishes
 	// "unset" (don't touch) from "explicit false" (disable warm
 	// capture). Plan-gated upstream: apid returns
@@ -5848,13 +5866,13 @@ type UpdateAppParams struct {
 	// PATCH true → false on any plan to opt out per-app.
 	WarmSnapshotEnabled    *bool
 	SetWarmSnapshotEnabled bool
-	// WarmSnapshotMinRequests (issue #470 / ADR-55) is the
+	// WarmSnapshotMinRequests (issue #470 / ADR-055) is the
 	// request-count threshold for warm-tier capture. Range [1, 100].
 	// SetWarmSnapshotMinRequests distinguishes "unset" from
 	// "explicit zero" (illegal — the SQL CHECK rejects 0).
 	WarmSnapshotMinRequests    *int
 	SetWarmSnapshotMinRequests bool
-	// WarmSnapshotMinMs (issue #470 / ADR-55) is the
+	// WarmSnapshotMinMs (issue #470 / ADR-055) is the
 	// time-since-first-ready threshold for warm-tier capture.
 	// Range [100, 60000]. SetWarmSnapshotMinMs distinguishes
 	// "unset" from "explicit low value" (illegal — the SQL CHECK
@@ -5895,7 +5913,7 @@ type UpdateAppParams struct {
 	SetConsumerAuthMode       bool
 	PlatformTenantRequired    *bool
 	SetPlatformTenantRequired bool
-	// PublicAuth (issue #477 / ADR-79) is the per-app
+	// PublicAuth (issue #477 / ADR-079) is the per-app
 	// public-URL auth block on the PATCH request. Three
 	// shapes:
 	//   - nil (the default): leave the apps row's
@@ -5920,7 +5938,7 @@ type UpdateAppParams struct {
 	// only reads ciphertext.
 	PublicAuth    *AppPublicAuthUpdate
 	SetPublicAuth bool
-	// ClearAuthDefaultFlippedAt (issue #695 / ADR-80) is set
+	// ClearAuthDefaultFlippedAt (issue #695 / ADR-080) is set
 	// by the apid PATCH handler when the customer makes any
 	// explicit choice on a grandfathered app (require_authn or
 	// public_auth PATCH). The signal means "the customer has
@@ -5936,7 +5954,7 @@ type UpdateAppParams struct {
 	Status                    *AppStatus
 	Manifest                  *AppManifest
 	// RootDir is the workload's repo-relative build context (Phase 5
-	// repo decomposition, ADR-50 §3). Populated by pkg/reconcile on
+	// repo decomposition, ADR-050 §3). Populated by pkg/reconcile on
 	// update; the apid handler leaves it nil on customer-initiated
 	// PATCH. Empty string = default ('' in DB). No Set* flag: the
 	// "nil vs explicit empty" distinction is irrelevant for a column
@@ -5961,7 +5979,7 @@ type UpdateAppParams struct {
 	// apid handler leaves it nil.
 	StartCommand *string
 	// ScalingPolicy is the per-app autoscaling configuration
-	// (issue #462 / ADR-58). SetScalingPolicy distinguishes "unset"
+	// (issue #462 / ADR-058). SetScalingPolicy distinguishes "unset"
 	// (don't touch) from "explicit zero" (scale to zero, the
 	// default behaviour). The on-disk shape is jsonb; the in-memory
 	// field is the canonical form for the (de)serialiser. When
@@ -5974,7 +5992,7 @@ type UpdateAppParams struct {
 	// distinguishes an omitted PATCH field from an explicit `{}` clear.
 	RetryPolicyJSON *[]byte
 	SetRetryPolicy  bool
-	// OverflowNode (issue Tier A10 / ADR-88) is the customer's
+	// OverflowNode (issue Tier A10 / ADR-088) is the customer's
 	// per-app preferred spill target (compute_node UUID). Apid
 	// has already resolved the wire name → UUID server-side
 	// (cmd/apid/handlers_ext.go::validateUpdateApp). Set bit
@@ -5986,7 +6004,7 @@ type UpdateAppParams struct {
 	OverflowNode    *string
 	SetOverflowNode bool
 	// CORSDefaultEnabled is the per-app default CORS opt-in
-	// (ADR-91 CORS improvements D1). SetCORSDefaultEnabled
+	// (ADR-091 CORS improvements D1). SetCORSDefaultEnabled
 	// distinguishes "unset" (don't touch) from "explicit
 	// false" (turn the default off). PATCHing from true →
 	// false is non-destructive: the column is metadata only,
@@ -6020,7 +6038,7 @@ type UpdateAppParams struct {
 	SetEgressPorts bool
 }
 
-// AppPublicAuthUpdate (issue #477 / ADR-79) is the
+// AppPublicAuthUpdate (issue #477 / ADR-079) is the
 // per-app public-URL auth block carried on UpdateAppParams
 // + the apid PATCH /v1/apps/{slug} handler. The store
 // layer turns Mode + Sealed into the column pair
@@ -6047,7 +6065,7 @@ type AppPublicAuthUpdate struct {
 }
 
 // Canonical public-auth mode strings for the state
-// layer (issue #477 / ADR-79). Values must stay in sync
+// layer (issue #477 / ADR-079). Values must stay in sync
 // with the apps_public_auth_mode_chk CHECK constraint in
 // migrations/00153_apps_public_auth.sql AND with the
 // pkg/gateway's package-local copies. The three layers
@@ -6063,12 +6081,12 @@ const (
 	AppPublicAuthModeInternalOnly = "internal_only"
 )
 
-// Snapshot is one restoreable microVM state (spec §4.6, ADR-5).
+// Snapshot is one restoreable microVM state (spec §4.6, ADR-005).
 //
 // imaged is the only writer; schedd reads the latest non-stale row per
 // deployment to decide whether to wake-from-snapshot or cold-boot. The
 // `Stale` flag is flipped on Firecracker upgrades (snapshots are pinned to
-// the FC version that made them — see ADR-5).
+// the FC version that made them — see ADR-005).
 type Snapshot struct {
 	ID           string
 	DeploymentID string
@@ -6082,7 +6100,7 @@ type Snapshot struct {
 	// StoredBytes is the physical filesystem allocation of the published
 	// mem + vmstate + private-drive artifacts. Zero identifies legacy writers.
 	StoredBytes int64
-	// Tier (issue #470 / ADR-55) is which snapshot tier this row
+	// Tier (issue #470 / ADR-055) is which snapshot tier this row
 	// belongs to: "init" (taken right after guest-init signals
 	// :8080 bound; restore pays framework warmup) or "warm"
 	// (taken after N successful requests ≥ warm_snapshot_min_ms,
@@ -6092,7 +6110,7 @@ type Snapshot struct {
 	// so legacy callers stay valid.
 	Tier string
 	// StorageKey is the canonical StorageBackend key for the mem
-	// blob (issue #96, ADR-25 axis 2). Local backends resolve it
+	// blob (issue #96, ADR-025 axis 2). Local backends resolve it
 	// to a file under /srv/fc; remote backends (OCI registry)
 	// resolve it to a manifest tag. Always populated by the
 	// production write path (imaged copies it from the
@@ -6106,7 +6124,7 @@ type Snapshot struct {
 	CreatedAt     time.Time
 }
 
-// Snapshot tier constants (issue #470 / ADR-55). Use these rather
+// Snapshot tier constants (issue #470 / ADR-055). Use these rather
 // than bare string literals so the snapshot_written payload wire
 // shape and the LatestSnapshotForTier callers cannot drift. The
 // CHECK constraint on snapshots.tier enforces the same vocabulary at
@@ -6118,19 +6136,28 @@ const (
 
 // SnapshotForGC is the join-projection used by the imaged nightly GC
 // (spec §4.6: keep the bounded rollback window of deployment snapshots per
-// app; fleet budget pressure evicts from biggest-over-quota accounts first).
+// environment lifetime; budget pressure evicts from the largest accounts first).
 // It denormalises snapshot → deployment → app → account into one row so
 // the GC algorithm doesn't have to round-trip per row.
 //
 // AppStatus and DeploymentStatus let the GC discard snapshots that cannot
 // participate in a future wake. In particular, deleted apps and
-// failed/cancelled deployments must not consume the per-app rollback window;
+// failed/cancelled deployments must not consume the environment rollback window;
 // superseded deployments remain eligible because they are rollback targets.
 type SnapshotForGC struct {
 	ID           string
 	DeploymentID string
 	AppID        string
 	AccountID    string
+	// EnvironmentID retains the original lifetime, including after deletion.
+	// Legacy deployments without an environment use normalized Scope instead.
+	EnvironmentID string
+	Scope         string
+	// RuntimeOwnerInvalid marks snapshots whose original environment or pinned
+	// configuration no longer exists. These cannot occupy a rollback slot.
+	RuntimeOwnerInvalid bool
+	// DeploymentRootfsKey preserves the physical layer key across stage copies.
+	DeploymentRootfsKey string
 	// AppSlug is the apps.slug of the parent app. Populated from the
 	// snapshot → deployments → apps JOIN so the GC algorithm doesn't
 	// have to issue per-eviction DeploymentByID + AppByID lookups to
@@ -6144,7 +6171,7 @@ type SnapshotForGC struct {
 	FCVersion        string
 	MemBytes         int64
 	DiskBytes        int64
-	// Tier (issue #470 / ADR-55) is the snapshot tier — see
+	// Tier (issue #470 / ADR-055) is the snapshot tier — see
 	// Snapshot.Tier for the semantics. The GC projection carries
 	// it so the rollback-window policy can keep both tiers for each protected
 	// deployment generation instead of an arbitrary row count per tier.
@@ -6156,11 +6183,8 @@ type SnapshotForGC struct {
 	// artifact GC sets it before attempting remote deletion.
 	DeletePending bool
 	CreatedAt     time.Time
-	// AppWarmSnapshotEnabled (issue #470 / PR C / ADR-72) projects
-	// apps.warm_snapshot_enabled from the JOIN so the GC policy can
-	// apply the two-tier rollback window only on apps that opted in to warm.
-	// Apps with warm_snapshot_enabled=false keep init rows only. Denormalised
-	// to avoid an AppByID round-trip per eviction row.
+	// AppWarmSnapshotEnabled is the deployment's pinned warm policy. Genuine
+	// unpinned legacy deployments use apps.warm_snapshot_enabled instead.
 	AppWarmSnapshotEnabled bool
 }
 
@@ -6208,7 +6232,7 @@ type CliAuthCode struct {
 }
 
 // AccountPassword is one row of the account_passwords table
-// (issue #165 / ADR-32 PR #2). It carries the Argon2id PHC string
+// (issue #165 / ADR-032 PR #2). It carries the Argon2id PHC string
 // for an account that has set a password. OAuth-only accounts have
 // no row — the absence of a row is the signal that an OAuth-only
 // flow is required to mint a session on that account.
@@ -6228,7 +6252,7 @@ type AccountPassword struct {
 }
 
 // OAuthLink is one row of the oauth_links table (issue #165 /
-// ADR-32 PR #2). It binds an OAuth (provider, subject) pair to
+// ADR-032 PR #2). It binds an OAuth (provider, subject) pair to
 // exactly one account_id. The composite primary key on the table
 // enforces the §11 anti-takeover invariant: one OAuth subject maps
 // to one account, period.
@@ -6237,7 +6261,7 @@ type AccountPassword struct {
 // Google account is bound" without a re-fetch. EmailVerified is a
 // snapshot of the provider's email_verified value at link time.
 // Once true at link, the row stays; a future "re-verify" flow can
-// refresh EmailVerified (ADR-32 "Open follow-ups"). Per spec §11,
+// refresh EmailVerified (ADR-032 "Open follow-ups"). Per spec §11,
 // no session is ever minted with EmailVerified=false at link time.
 type OAuthLink struct {
 	Provider        string // "google" | "github" | (future providers)
@@ -6288,7 +6312,7 @@ type Session struct {
 	IssuedAt   time.Time
 	LastSeenAt *time.Time // nil until first authenticated request post-mint
 	RevokedAt  *time.Time // nil == active; non-nil == revoked
-	// BindingHash is the IAM-3-evolved ADR-76 fingerprint
+	// BindingHash is the IAM-3-evolved ADR-076 fingerprint
 	// (HMAC-SHA256 of `ip || "\x00" || ua_family`, keyed by the
 	// host's session-key secret). Empty for pre-PR-076 rows and
 	// for the unix-socket / CLI-auth code paths that don't have
@@ -6309,7 +6333,7 @@ type Session struct {
 // ErrNotFound (handlers render 400 CodeSecretNotFound by design — the URL
 // resource IS the secret name).
 //
-// ADR-92 PR-A: the PRIMARY KEY widened from (app_id, key) to
+// ADR-092 PR-A: the PRIMARY KEY widened from (app_id, key) to
 // (app_id, scope, key) by migration 00214_app_secrets_scope.sql — mirrors
 // the same widening that 00203_app_envs_scope.sql did for app_envs. Pre-PR
 // rows backfill on first read with scope='default' via the PG11+
@@ -6349,7 +6373,7 @@ type AppSecret struct {
 	// that sealed this row's ciphertext. Set by the apid PUT
 	// handler (cmd/apid/handlers_secrets.go::setSecret) and by
 	// pkg/rekey.Replayer at every re-seal. Rows sealed before
-	// migration 00166 (ADR-89 PR-A) have Kid = "" until the
+	// migration 00166 (ADR-089 PR-A) have Kid = "" until the
 	// rekey pass or a subsequent PUT stamps it.
 	//
 	// Operators reading the kid column answer "what key sealed
@@ -6434,8 +6458,10 @@ type AppSecretDeliveryCandidate struct {
 
 // AppSecretDeliveryResult records one runtime-start attempt for the staged
 // candidates. ErrorCode is a closed, non-sensitive reason; secret values and
-// ciphertext are intentionally absent.
+// ciphertext are intentionally absent. Fence captures the host's owned input
+// snapshot; InstanceID/WakeID identify the exact current boot attempt.
 type AppSecretDeliveryResult struct {
+	Fence       RuntimeAppSecretFence
 	AccountID   string
 	AppID       string
 	WakeID      string
@@ -6474,6 +6500,7 @@ const (
 // signal outcome for an exact set of secret versions. It is deliberately not
 // an application acknowledgement: the process may still fail to apply them.
 type AppSecretRuntimeReloadResult struct {
+	Fence        RuntimeAppSecretFence
 	AccountID    string
 	AppID        string
 	InstanceID   string
@@ -6489,6 +6516,7 @@ type AppSecretRuntimeReloadResult struct {
 // AppSecretRuntimeReloadAckResult records an application-owned outcome for
 // the current secret revision. It attests only what the application reports.
 type AppSecretRuntimeReloadAckResult struct {
+	Fence        RuntimeAppSecretFence
 	AccountID    string
 	AppID        string
 	InstanceID   string
@@ -6609,7 +6637,7 @@ func (r AppSecretRevocation) Progress() (status string, acknowledged, pending in
 // orders by (app_slug ASC, key ASC), so the cursor is the pair).
 //
 // Scope is the env-scope identifier attached at write time
-// (ADR-92 PR-B). Always 'default' for legacy rows backfilled via
+// (ADR-092 PR-B). Always 'default' for legacy rows backfilled via
 // the column DEFAULT (migration 00217, PR-A). The account-wide
 // list crosses scopes — a customer with prod + staging rows
 // needs the scope echoed alongside (app_slug, key) so the
@@ -6630,7 +6658,7 @@ type AccountAppSecret struct {
 	UpdatedAt   time.Time
 }
 
-// AppEnv is one row of customer runtime env vars (issue #395 / ADR-45).
+// AppEnv is one row of customer runtime env vars (issue #395 / ADR-045).
 // apid is the only writer. Value is plaintext TEXT (NOT sealed): env vars
 // are explicitly non-credential config, and putting non-sensitive config
 // behind the age seal would (a) double-count against SecretCountMax for no
@@ -6642,7 +6670,7 @@ type AccountAppSecret struct {
 // on (AccountID, AppID, Scope, Key) so cross-account access returns
 // ErrNotFound.
 //
-// Scope is the multi-scope identifier from ADR-90 (Phase 2 of the
+// Scope is the multi-scope identifier from ADR-090 (Phase 2 of the
 // 2026-08-10 secrets+envs roadmap). Mirrors the schema's
 // `app_envs.scope` column added by migration 00203; the default is
 // the literal string "default" for pre-00203 rows and for the
@@ -6664,13 +6692,13 @@ type AppEnv struct {
 }
 
 // AppTrustedSigner is one row of the per-app cosign trusted-publisher
-// list (issue #472 / ADR-54). apid is the only writer; imaged reads
+// list (issue #472 / ADR-054). apid is the only writer; imaged reads
 // the matching set at deploy-time verify and caches the parsed keys in
 // memory (refreshed on pg_notify('trusted_signer_changed')).
 //
 // CosignPublicKey is the raw DER SubjectPublicKeyInfo blob (mirrors the
 // bytea shape pkg/cosign.LoadPublicKeyFile returns for ECDSA P-256 per
-// ADR-38). SignerName matches the DNS-1123-label CHECK on the table —
+// ADR-038). SignerName matches the DNS-1123-label CHECK on the table —
 // the handler MUST pre-validate before INSERT.
 //
 // AccountID is the row's owning account. PgStore filters on
@@ -6685,7 +6713,7 @@ type AppTrustedSigner struct {
 }
 
 // AppRegistryCredential is one row of per-app private-registry Basic
-// Auth (issue #461 / ADR-62). apid is the only writer (the PUT
+// Auth (issue #461 / ADR-062). apid is the only writer (the PUT
 // handler in cmd/apid/handlers_registry_auth.go). imaged is the only
 // reader (pkg/imaged/handler.go::buildImageLayer looks up by
 // (accountID, appID, registryHost) and unseals transiently in the
@@ -6725,7 +6753,7 @@ type AppRegistryCredential struct {
 }
 
 // ProjectScanSource is the discoverer that produced the project's
-// current scan (ADR-50 §3, docs/repo_decomposition_implementation.md
+// current scan (ADR-050 §3, docs/repo_decomposition_implementation.md
 // §2). The stable set is closed by projects_scan_source_chk on the
 // projects table. 'single' is the backfill label for projects that
 // existed before repo decomposition; every other value comes from
@@ -6822,9 +6850,9 @@ func tierRank(s ProjectScanSource) scanSourceRank {
 	}
 }
 
-// WorkloadClass is the per-app shape classification (ADR-50 §3).
+// WorkloadClass is the per-app shape classification (ADR-050 §3).
 // Phase 1 stamps the value as a scan hint from the repo; Phase 4
-// (ADR-51) re-derives the authoritative class via the probe boot.
+// (ADR-051) re-derives the authoritative class via the probe boot.
 // Every state column carries a CHECK (CLAUDE.md), so the
 // apps_workload_class_chk constraint mirrors this set.
 //
@@ -6844,7 +6872,7 @@ const (
 )
 
 // Project groups apps that share one (account, install_id, repo)
-// binding (ADR-50 / impl plan §2). Phase 1 lands the read +
+// binding (ADR-050 / impl plan §2). Phase 1 lands the read +
 // monotonic-upgrade seams; the apid createProject transactional
 // endpoint and the push-dispatch path are Phase 3 / Phase 5.
 //
@@ -6946,6 +6974,10 @@ type ProjectEnvironmentPromotion struct {
 	PreviousTargetConfigSnapshot json.RawMessage
 	TargetConfigVersion          int64
 	RollbackConfigVersion        int64
+	// Expected flag identities supplied by a preview. The store freezes the
+	// actual snapshots atomically with creation; callers cannot supply payloads.
+	SourceFeatureFlagsHash         string
+	PreviousTargetFeatureFlagsHash string
 }
 
 // ProjectEnvironmentPromotionWorkload is one checkpoint within a promotion.
@@ -6989,7 +7021,7 @@ func (p Project) IsZero() bool {
 // shared sentinels (ErrNotFound, ErrConflict, ErrQuotaExceeded).
 var ErrScanSourceDowngrade = errors.New("state: scan_source downgrade rejected")
 
-// --- Organizations (ADR-61, IAM-6) -----------------------------------------
+// --- Organizations (ADR-061, IAM-6) -----------------------------------------
 //
 // PR 2 introduces `orgs`, `org_memberships`, and `org_invitations` tables
 // plus nullable `org_id` columns on the 19 tenant-root tables
@@ -7001,7 +7033,7 @@ var ErrScanSourceDowngrade = errors.New("state: scan_source downgrade rejected")
 // to ErrOrgRoleForbidden / ErrOrgInvitationInvalid / etc. via the
 // existing mapErr helper. MemStore enforces the same enum in code.
 
-// OrgRole is one of the five RBAC roles per ADR-61 §Role vocabulary.
+// OrgRole is one of the five RBAC roles per ADR-061 §Role vocabulary.
 // "owner" is reachable only via TransferOwnership (PR 5); the handler
 // PATCH /members/{id} never sets it (the SQL CHECK on
 // org_memberships.role ALSO enforces this — see migration 00099).
@@ -7041,7 +7073,7 @@ const (
 
 // Org is the tenant root. Owns apps, projects, domains, builds,
 // deployments, secrets, env, API keys, billing customer identifiers,
-// dunning state, plan, and quotas (ADR-61 §Definitions).
+// dunning state, plan, and quotas (ADR-061 §Definitions).
 //
 // One personal org per account is immutable: it cannot accept
 // additional members, transfer ownership, or be deleted independently
@@ -7072,7 +7104,7 @@ type Org struct {
 // A "removed" member has RemovedAt != nil; the row stays for audit
 // purposes (who used to be in the org) but does not count.
 //
-// InvitedByAccountID is ON DELETE SET NULL per ADR-61 §D — the
+// InvitedByAccountID is ON DELETE SET NULL per ADR-061 §D — the
 // inviter attribution survives account deletion.
 type OrgMembership struct {
 	OrgID              string
@@ -7090,7 +7122,7 @@ type OrgMembership struct {
 // Email + Role are immutable once written; ExpiresAt is the only
 // timestamp the cleanup loop uses to retire pending invitations.
 // InvitedByAccountID and AcceptingAccountID both use ON DELETE SET
-// NULL per ADR-61 §D.
+// NULL per ADR-061 §D.
 type OrgInvitation struct {
 	ID                 string
 	OrgID              string
@@ -7107,7 +7139,7 @@ type OrgInvitation struct {
 
 // PersonalOrgNamespace is the UUID v5 namespace that derives the
 // deterministic personal-org slug from each account's id (issue #190
-// / ADR-61, PR 3). Frozen at PR 3 design time; any rotation
+// / ADR-061, PR 3). Frozen at PR 3 design time; any rotation
 // requires a new ADR.
 //
 // Generated via
@@ -7165,7 +7197,7 @@ type CreateAccountWithPersonalOrgResult struct {
 }
 
 // ----------------------------------------------------------------------------
-// Edge rules (ADR-89, planned)
+// Edge rules (ADR-089, planned)
 //
 // A customer-configurable resource that runs in pkg/gateway BEFORE
 // host→app resolution. One table + jsonb action + closed-kind
@@ -7216,7 +7248,7 @@ const (
 	EdgeRuleKindLimit EdgeRuleKind = "limit"
 	// EdgeRuleKindMaintenance short-circuits a matched
 	// (host, path, http_method) request with 503 + Retry-After
-	// before the wake gate. ADR-91 amendment (PR-A #??? / PR-B /
+	// before the wake gate. ADR-091 amendment (PR-A #??? / PR-B /
 	// PR-C). Per-rule RetryAfterSeconds overrides the platform
 	// default api.EdgeRuleMaintenanceRetryAfterSeconds (60 s); the
 	// hard upper bound api.MaxEdgeRuleMaintenanceRetryAfterSeconds
@@ -7226,14 +7258,14 @@ const (
 	// (no IsPaidOnly change). See migrations/00236_edge_rules_kind_maintenance.sql
 	// for the schema CHECK widening.
 	EdgeRuleKindMaintenance EdgeRuleKind = "maintenance"
-	// EdgeRuleKindGeo is the country allow/deny primitive (ADR-91 D21).
+	// EdgeRuleKindGeo is the country allow/deny primitive (ADR-091 D21).
 	// Migration 00229 widens the schema CHECK from 9 to 10 values
 	// (post-00219 'limit', post-00214 'validate'). Not in IsPaidOnly
 	// — Free customers get one rule under a tighter per-app quota
 	// (Limits.EdgeRulesGeoPerApp=1).
 	EdgeRuleKindGeo EdgeRuleKind = "geo"
 	// EdgeRuleKindThrottle is the per-route token-bucket rate limit
-	// (ADR-91 D20.5 amendment, issue #881). Customers tighten the
+	// (ADR-091 D20.5 amendment, issue #881). Customers tighten the
 	// per-route rps/burst below their plan's plan.RateLimitRPS — the
 	// apid validator enforces the sub-plan ceiling; the gateway
 	// compiler enforces it again at load time. Plan-gated
@@ -7243,7 +7275,7 @@ const (
 	// schema CHECK to admit the value.
 	EdgeRuleKindThrottle EdgeRuleKind = "throttle"
 	// EdgeRuleKindBudget pins a per-request wall-clock budget on
-	// the matched (host, path, method) tuple (ADR-93 §Decision).
+	// the matched (host, path, method) tuple (ADR-093 §Decision).
 	// The runtime is `pkg/reqbudget`: the gateway matcher resolves
 	// the matched rule and stamps the budget onto the inbound ctx
 	// via `reqbudget.WithRemaining`, then every downstream hop
@@ -7320,13 +7352,13 @@ func (k EdgeRuleKind) IsValid() bool {
 	return false
 }
 
-// IsPaidOnly reports whether the kind is Hobby+ gated (ADR-89 §7).
+// IsPaidOnly reports whether the kind is Hobby+ gated (ADR-089 §7).
 // The apid handler enforces this before insert; the gatewayd matcher
 // does NOT — a paid-only rule for a Free customer fails at create
 // time, never at request time.
 //
 // EdgeRuleKindGeo is NOT in this set — geo is available on Free
-// (ADR-91 D21 sub-decision hop). The tighter Free-tier guardrail is
+// (ADR-091 D21 sub-decision hop). The tighter Free-tier guardrail is
 // enforced via Limits.EdgeRulesGeoPerApp (Free=1, Hobby=5, Pro=25,
 // Scale=100) inside the CreateEdgeRuleIfUnderQuota FOR UPDATE lock,
 // not via a Hobby+ plan gate. Rationale: the abuse-desk customer
@@ -7415,7 +7447,7 @@ type EdgeRuleCORSAction struct {
 }
 
 // EdgeRuleJWTAction validates an inbound Bearer JWT against a JWKS
-// endpoint (ADR-89 §6). Issuer is required; Audience is optional
+// endpoint (ADR-089 §6). Issuer is required; Audience is optional
 // (empty = skip aud check); Algorithms is the closed set of allowed
 // algs. RequiredClaims enforces a key=value check on top of the
 // standard iss/aud/exp/nbf validation.
@@ -7446,7 +7478,7 @@ type EdgeRuleIPAction struct {
 //     validate any Content-Type. Closed set application/* (the
 //     spec runtime is JSON; non-JSON schemas are out of scope).
 //   - ApplyWhileStreaming decides whether validation fires on the
-//     streaming response path (issue / ADR-47). Default false
+//     streaming response path (issue / ADR-047). Default false
 //     mirrors the §4.1 Accept: application/json opt-out: a customer
 //     who emits SSE with `streaming_enabled=true` keeps validation
 //     off until they opt in per-rule.
@@ -7530,7 +7562,7 @@ type EdgeRuleGeoAction struct {
 }
 
 // EdgeRuleBudgetAction carries the per-rule wall-clock budget for
-// kind=budget (ADR-93 §Decision). BudgetMs is the per-request budget
+// kind=budget (ADR-093 §Decision). BudgetMs is the per-request budget
 // the gateway stamps onto the inbound ctx via
 // `reqbudget.WithRemaining`. The runtime range is [1 ms,
 // api.RequestBudgetMaxMs]; 0 / negative / > ceiling is rejected at
@@ -7609,7 +7641,7 @@ type EdgeRuleRespondAction struct {
 }
 
 // EdgeRuleThrottleAction is the per-rule token-bucket parameter set
-// for kind=throttle (ADR-91 D20.5 amendment, issue #881). The
+// for kind=throttle (ADR-091 D20.5 amendment, issue #881). The
 // runtime is pkg/gateway/ratelimit.go::Limiter — the gateway matcher
 // resolves the matched rule and consumes one token per request from a
 // bucket keyed by (appID, ruleID). The bucket is LRU-evicted (see
@@ -7633,11 +7665,11 @@ type EdgeRuleRespondAction struct {
 // Per-IP sub-keying is deliberately absent — a per-IP boolean
 // would multiply the limiter's map cardinality by unique-IP count
 // (unbounded, attacker-controlled). If a per-IP variant is wanted
-// later it gets its own bounded design (ADR-93-style cap + an
+// later it gets its own bounded design (ADR-093-style cap + an
 // `__ip_other__` overflow that still consumes the parent rule's
 // bucket). Shipping the field now and bounding it later is not safe.
 //
-// Phase 3 (ADR-91 D20.5 amendment 4, ADR-104, issue #881 Phase 3)
+// Phase 3 (ADR-091 D20.5 amendment 4, ADR-104, issue #881 Phase 3)
 // extends the wire shape with optional dimensional keying. Country
 // keying and strict missing-key behavior are the ADR-104 amendment 6
 // additions. The fields are
@@ -7997,7 +8029,7 @@ type UpdateEdgeRuleParams struct {
 // per-app (an account-wide variant is not a v1 surface).
 //
 // The Kind, PerKind, and PerAppOnly fields are populated only by
-// the per-kind quota branch (ADR-91 D22). When set, the apid
+// the per-kind quota branch (ADR-091 D22). When set, the apid
 // handler renders a distinct RFC 7807 code
 // (`plan_edge_rule_kind_quota_reached`) so the customer sees the
 // specific kind that tripped the cap ("kind=geo: 1/1 rules used
@@ -8029,7 +8061,7 @@ func (e *EdgeRuleQuotaError) Is(target error) bool {
 }
 
 // ----------------------------------------------------------------------------
-// ADR-98 connection-aware execution (§9.A). In-memory mirror of the
+// ADR-098 connection-aware execution (§9.A). In-memory mirror of the
 // data_upstreams + data_upstream_probes tables (migrations/
 // 00226_data_upstreams.sql). The Store interface exposes typed
 // DataUpstream / DataUpstreamProbe at the boundary so handlers don't
@@ -8043,8 +8075,8 @@ func (e *EdgeRuleQuotaError) Is(target error) bool {
 
 // DataUpstreamSource is the closed vocabulary for data_upstreams.source.
 // 'inferred' = apid env-classifier captured the host from a
-// customer env value (ADR-98 D1.a). 'explicit' = the customer
-// POSTed /v1/apps/{slug}/upstreams with the row (ADR-98 D4).
+// customer env value (ADR-098 D1.a). 'explicit' = the customer
+// POSTed /v1/apps/{slug}/upstreams with the row (ADR-098 D4).
 type DataUpstreamSource string
 
 const (
@@ -8053,7 +8085,7 @@ const (
 )
 
 // DataUpstreamKind is the closed vocabulary for data_upstreams.kind +
-// data_upstream_probes.kind. Fourteen values from ADR-98 D1. The
+// data_upstream_probes.kind. Fourteen values from ADR-098 D1. The
 // SQL CHECK mirrors this set (migrations/00226_data_upstreams.sql);
 // the Go side exposes the constants + IsValid() so callers fail fast
 // on a typo at the API boundary instead of surfacing a 23514 at
@@ -8096,7 +8128,7 @@ func (k DataUpstreamKind) IsValid() bool {
 }
 
 // DataUpstream is one row of data_upstreams. apid is the only writer
-// (ADR-98 D1.a / D4); schedd reads via the dashboard's
+// (ADR-098 D1.a / D4); schedd reads via the dashboard's
 // GET /v1/apps/{slug}/upstreams (PR-B). Source / Kind are typed enums
 // (DataUpstreamSource / DataUpstreamKind) so the wire shape matches
 // the schema CHECKs. LastRTTMs / LastProbedAt are nullable pointers so
@@ -8110,7 +8142,7 @@ type DataUpstream struct {
 	Source    DataUpstreamSource
 	Scope     string
 	// DeploymentScope is the deployment this upstream belongs to.
-	// ADR-98 amendment (issue #954, migration
+	// ADR-098 amendment (issue #954, migration
 	// 00281_data_upstreams_deployment_scope.sql) widens the dedupe
 	// key to (app_id, scope, deployment_scope, kind, host, port);
 	// default 'default' matches every pre-#954 row + every single-
@@ -8143,7 +8175,7 @@ type DataUpstream struct {
 	// Default false, and that is load-bearing rather than conservative: an
 	// open circuit REJECTS the tenant's connections to their own database.
 	// Enabling it implicitly for every captured upstream would let an
-	// ADR-98 inference — which fires on a DATABASE_URL-shaped env var —
+	// ADR-098 inference — which fires on a DATABASE_URL-shaped env var —
 	// silently cut an app off from its data store. The operator flips the
 	// node flag; the customer opts in per upstream.
 	CircuitBreakerEnabled bool

@@ -26,6 +26,10 @@
 // Postgres-backed queue behave like the external brokers: a scheduler crash
 // leaves a leased row for the expiry reaper, while a gateway failure is
 // redelivered without creating a second invocation.
+//
+// These triggers own production rows only. Environment-owned rows and owned
+// stage pins are excluded before batching and on every claim/callback. Stage
+// delayed tasks remain with the quota-aware generic drain.
 
 package sched
 

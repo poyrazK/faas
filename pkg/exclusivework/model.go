@@ -14,6 +14,7 @@ var (
 	ErrStaleOwner       = errors.New("exclusive operation ownership lost")
 	ErrIdentityConflict = errors.New("exclusive operation identity conflict")
 	NamePattern         = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+	EffectTypePattern   = regexp.MustCompile(`^[a-z][a-z0-9_.-]*$`)
 )
 
 type Policy struct {
@@ -44,6 +45,8 @@ type Claim struct {
 // Effect is a platform-controlled outbox insertion committed with the result.
 // External delivery remains at least once and needs a compatible adapter.
 type Effect struct {
-	Name    string          `json:"name"`
-	Payload json.RawMessage `json:"payload"`
+	Name      string          `json:"name"`
+	Payload   json.RawMessage `json:"payload"`
+	WebhookID string          `json:"webhook_id,omitempty"`
+	Type      string          `json:"type,omitempty"`
 }

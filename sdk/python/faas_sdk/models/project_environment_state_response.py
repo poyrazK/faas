@@ -35,6 +35,10 @@ class ProjectEnvironmentStateResponse:
     workloads: list[ProjectEnvironmentStateWorkloadResponse]
     shared_resources: list[ProjectEnvironmentSharedResourceResponse]
     generated_at: datetime.datetime
+    feature_flags_hash: str | Unset = UNSET
+    """Fingerprint of the environment identity, current flag version, and configuration observed before
+    qualification probes. Omitted only for the legacy identity with no published flags. Combine with each released
+    workload settings hash when submitting workload_config_hashes."""
     active_release_set: None | ProjectReleaseSetResponse | Unset = UNSET
     """Active graph, or null when no graph has been published. Its selected members may differ from the per-
     workload live deployments below."""
@@ -64,6 +68,8 @@ class ProjectEnvironmentStateResponse:
 
         generated_at = self.generated_at.isoformat()
 
+        feature_flags_hash = self.feature_flags_hash
+
         active_release_set: dict[str, Any] | None | Unset
         if isinstance(self.active_release_set, Unset):
             active_release_set = UNSET
@@ -89,6 +95,8 @@ class ProjectEnvironmentStateResponse:
                 "generated_at": generated_at,
             }
         )
+        if feature_flags_hash is not UNSET:
+            field_dict["feature_flags_hash"] = feature_flags_hash
         if active_release_set is not UNSET:
             field_dict["active_release_set"] = active_release_set
         if release_set_status is not UNSET:
@@ -128,6 +136,8 @@ class ProjectEnvironmentStateResponse:
 
         generated_at = datetime.datetime.fromisoformat(d.pop("generated_at"))
 
+        feature_flags_hash = d.pop("feature_flags_hash", UNSET)
+
         def _parse_active_release_set(data: object) -> None | ProjectReleaseSetResponse | Unset:
             if data is None:
                 return data
@@ -160,6 +170,7 @@ class ProjectEnvironmentStateResponse:
             workloads=workloads,
             shared_resources=shared_resources,
             generated_at=generated_at,
+            feature_flags_hash=feature_flags_hash,
             active_release_set=active_release_set,
             release_set_status=release_set_status,
         )

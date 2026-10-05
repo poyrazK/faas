@@ -325,11 +325,16 @@ export class AppsService {
    */
   public static getApp({
     slug,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Read or edit desired settings in this project environment. New deployments pin the revision; existing deployments keep their settings. Omit for legacy app settings.
+     */
+    environment?: string,
   }): CancelablePromise<AppResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -337,7 +342,11 @@ export class AppsService {
       path: {
         'slug': slug,
       },
+      query: {
+        'environment': environment,
+      },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -355,6 +364,8 @@ export class AppsService {
   public static updateApp({
     slug,
     requestBody,
+    environment,
+    ifWorkloadRevision,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -364,12 +375,26 @@ export class AppsService {
      * Patch payload — every field is optional; omitted fields are unchanged. See UpdateAppRequest.
      */
     requestBody: UpdateAppRequest,
+    /**
+     * Edit desired workload settings in a registered project environment; deploy again to test the revision. Omit to update legacy app settings.
+     */
+    environment?: string,
+    /**
+     * Optional expected desired revision when editing an environment; zero means no revision exists. Protected environments require an approved plan or promotion.
+     */
+    ifWorkloadRevision?: number,
   }): CancelablePromise<AppResponse> {
     return __request(OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}',
       path: {
         'slug': slug,
+      },
+      headers: {
+        'If-Workload-Revision': ifWorkloadRevision,
+      },
+      query: {
+        'environment': environment,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -378,6 +403,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
         404: `code: not_found`,
+        409: `code: conflict`,
         422: `code: invalid_min_instances — must be in [0, plan max_concurrency].`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -1296,7 +1322,7 @@ export class AppsService {
    * Both default to UTC midnight snaps; `until` defaults to
    * `now()` snapped down, `since` defaults to `until - 30d`. The
    * handler clamps `since` to `until - 90d` so a customer cannot
-   * unbounded-scan `usage_minutes` (ADR-48 retention is 30d; the
+   * unbounded-scan `usage_minutes` (ADR-048 retention is 30d; the
    * 90d ceiling is a forward-compatibility ceiling for when
    * `usage_daily` lands).
    *
@@ -1591,7 +1617,7 @@ export class AppsService {
     });
   }
   /**
-   * Per-route breakdown for opt-in apps (ADR-93).
+   * Per-route breakdown for opt-in apps (ADR-093).
    * Returns the `routes` array of the per-app metrics surface.
    * Production reads the fleet Prometheus aggregate; single-box
    * development may use the gatewayd-internal loopback listener.
@@ -1804,7 +1830,7 @@ export class AppsService {
    * Closed-set windowed SLO panel for one app — the
    * customer-facing equivalent of AWS CloudWatch
    * per-function / GCP Cloud Run per-service. Distinct from
-   * `GET /v1/apps/{slug}/metrics` (issue #273 / ADR-42) which
+   * `GET /v1/apps/{slug}/metrics` (issue #273 / ADR-042) which
    * is the 5m-window dashboard panel. The /slo surface is the
    * "yesterday's SLO" / "this week's SLO" summary, with the
    * customer-facing SLO signals co-located with the
@@ -2403,12 +2429,12 @@ export class AppsService {
     });
   }
   /**
-   * Per-app customer-facing automatic error grouping summary (ADR-96 / PR-B).
+   * Per-app customer-facing automatic error grouping summary (ADR-096 / PR-B).
    * Sentry-style grouped error view scoped to a customer's
    * app. One row per `(account_id, app_id, fingerprint)` over
    * the requested `[since, until]` window, sorted by `count
    * DESC, last_seen_at DESC, fingerprint ASC`. Distinct from
-   * `GET /v1/apps/{slug}/slo` (issue #696 / ADR-82) which is
+   * `GET /v1/apps/{slug}/slo` (issue #696 / ADR-082) which is
    * the closed-set SLO summary (`1h` / `24h` / `7d`) — the
    * errors summary uses a continuous `[since, until]` window
    * with an explicit RFC3339Nano stamp instead.
@@ -2488,7 +2514,7 @@ export class AppsService {
     });
   }
   /**
-   * Per-fingerprint drill-down rows (ADR-96 / PR-B).
+   * Per-fingerprint drill-down rows (ADR-096 / PR-B).
    * Cursor-paginated drill-down over the request rows that
    * landed on this fingerprint. Returns 404 when the
    * fingerprint has been purged by the retention cron or
@@ -2544,7 +2570,7 @@ export class AppsService {
     });
   }
   /**
-   * Single oldest sample row + redacted headers (ADR-96 / PR-B).
+   * Single oldest sample row + redacted headers (ADR-096 / PR-B).
    * Returns the OLDEST request row for the fingerprint plus
    * the redacted `headers_sample` (jsonb-decoded) and the
    * list of `redactions_applied` pattern names so the

@@ -2,14 +2,26 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AutomationResponse } from '../models/AutomationResponse.js';
 import type { CompleteWorkflowCallbackResponse } from '../models/CompleteWorkflowCallbackResponse.js';
 import type { CreateWorkflowCallbackWebhookBindingRequest } from '../models/CreateWorkflowCallbackWebhookBindingRequest.js';
 import type { InjectWorkflowEventRequest } from '../models/InjectWorkflowEventRequest.js';
 import type { InjectWorkflowEventResponse } from '../models/InjectWorkflowEventResponse.js';
+import type { ListAutomationsResponse } from '../models/ListAutomationsResponse.js';
 import type { ListWorkflowCallbacksResponse } from '../models/ListWorkflowCallbacksResponse.js';
+import type { ListWorkflowResumesResponse } from '../models/ListWorkflowResumesResponse.js';
 import type { ListWorkflowRunsResponse } from '../models/ListWorkflowRunsResponse.js';
+import type { ListWorkflowSchedulesResponse } from '../models/ListWorkflowSchedulesResponse.js';
 import type { ListWorkflowStepAttemptsResponse } from '../models/ListWorkflowStepAttemptsResponse.js';
 import type { ListWorkflowStepsResponse } from '../models/ListWorkflowStepsResponse.js';
+import type { PublishAutomationRequest } from '../models/PublishAutomationRequest.js';
+import type { ResumeWorkflowRunRequest } from '../models/ResumeWorkflowRunRequest.js';
+import type { SaveAutomationDraftRequest } from '../models/SaveAutomationDraftRequest.js';
+import type { SetAutomationEnabledRequest } from '../models/SetAutomationEnabledRequest.js';
+import type { SimulateAutomationRequest } from '../models/SimulateAutomationRequest.js';
+import type { SimulateAutomationResponse } from '../models/SimulateAutomationResponse.js';
+import type { ValidateAutomationRequest } from '../models/ValidateAutomationRequest.js';
+import type { ValidateAutomationResponse } from '../models/ValidateAutomationResponse.js';
 import type { WorkflowCallbackWebhookBindingResponse } from '../models/WorkflowCallbackWebhookBindingResponse.js';
 import type { WorkflowRunResponse } from '../models/WorkflowRunResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -17,9 +29,426 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class WorkflowsService {
   /**
+   * List drafts and published automations, including YAML definitions.
+   * @returns ListAutomationsResponse listAutomations result.
+   * @throws ApiError
+   */
+  public static listAutomations({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListAutomationsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/automations',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Simulate automation data flow with sample input and successful action mocks.
+   * Returns a deterministic hypothetical trace without saving a definition,
+   * creating runs, invoking handlers, publishing events or calling integrations.
+   * Requires ownership, MFA and read scope. Works without a live deployment
+   * or enabled workflow runtime. Definition validation uses the account plan
+   * and checks managed integration bindings without opening credentials.
+   * Missing action results block dependent steps. Waits remain unresolved;
+   * failure and timeout outcomes cannot be injected. Action mocks using the
+   * reserved exact {"timeout":true} output with an on_timeout route return
+   * 400. Loop mocks form a
+   * sequential prefix. A complete trace means all roots resolved or skipped
+   * under the supplied successful mocks, not that live execution will succeed.
+   * Limits: 3 MiB request, 1 MiB definition and each sample value, 128 roots,
+   * 1024 trace entries and 4 MiB response, plus existing loop bounds.
+   * Invalid definitions return 200 with definition_valid=false and no trace.
+   *
+   * @returns SimulateAutomationResponse Definition validation and the bounded hypothetical execution trace.
+   * @throws ApiError
+   */
+  public static simulateAutomation({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Candidate definition, workflow input and hypothetical successful action results.
+     */
+    requestBody: SimulateAutomationRequest,
+  }): CancelablePromise<SimulateAutomationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/automations:simulate',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Validate a definition without saving it or executing any steps.
+   * @returns ValidateAutomationResponse validateAutomation result.
+   * @throws ApiError
+   */
+  public static validateAutomation({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: ValidateAutomationRequest,
+  }): CancelablePromise<ValidateAutomationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/automations:validate',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read an automation draft and its published definition.
+   * @returns AutomationResponse getAutomation result.
+   * @throws ApiError
+   */
+  public static getAutomation({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Automation name, shared with workflow run endpoints.
+     */
+    name: string,
+  }): CancelablePromise<AutomationResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/automations/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Save a draft with optimistic version checking; running definitions stay unchanged.
+   * @returns AutomationResponse saveAutomationDraft result.
+   * @throws ApiError
+   */
+  public static saveAutomationDraft({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Automation name, shared with workflow run endpoints.
+     */
+    name: string,
+    requestBody: SaveAutomationDraftRequest,
+  }): CancelablePromise<AutomationResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/automations/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Remove a dashboard definition; restoring YAML ownership requires explicit confirmation.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteAutomation({
+    slug,
+    name,
+    expectedVersion,
+    restoreManifest = false,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Automation name, shared with workflow run endpoints.
+     */
+    name: string,
+    /**
+     * Revision returned by the most recent read or save.
+     */
+    expectedVersion: number,
+    /**
+     * Explicitly return ownership to the current YAML definition after deletion.
+     */
+    restoreManifest?: boolean,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/automations/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      query: {
+        'expected_version': expectedVersion,
+        'restore_manifest': restoreManifest,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Validate and publish the saved draft; taking over a YAML name requires explicit confirmation.
+   * Published definitions survive future YAML deployments. A live default deployment is required. Runtime execution also requires FAAS_WORKFLOWS_ENABLED on apid and schedd. Events accepted before publication retain their captured definition.
+   * @returns AutomationResponse publishAutomation result.
+   * @throws ApiError
+   */
+  public static publishAutomation({
+    slug,
+    name,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Automation whose saved draft will be published.
+     */
+    name: string,
+    requestBody: PublishAutomationRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AutomationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/automations/{name}/publish',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Pause or resume automatic starts without cancelling existing runs.
+   * @returns AutomationResponse setAutomationEnabled result.
+   * @throws ApiError
+   */
+  public static setAutomationEnabled({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Automation whose automatic starts will be paused or resumed.
+     */
+    name: string,
+    requestBody: SetAutomationEnabledRequest,
+  }): CancelablePromise<AutomationResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/automations/{name}/enabled',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: automation_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect deployed workflow schedules and their latest admission outcome.
+   * Returns schedules from the default-scope live deployment, their next
+   * nominal fire time and the most recent durable admission outcome.
+   * When scheduling is unavailable, unavailable_reason explains why and
+   * next_fire_at is omitted. Runtime availability reflects apid configuration;
+   * operators must enable the same workflow gate on schedd.
+   * Disabling or redeploying a schedule does not cancel existing runs.
+   * No live default deployment returns an empty schedules array.
+   *
+   * @returns ListWorkflowSchedulesResponse Deployed schedules and runtime availability.
+   * @throws ApiError
+   */
+  public static listWorkflowSchedules({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListWorkflowSchedulesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/schedules',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `Caller lacks the required read scope.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
    * Start a durable workflow run.
-   * Snapshots the named workflow definition from the app's current live
-   * deployment and creates a pending run. The optional request body is
+   * Snapshots the named effective workflow definition from the app's live
+   * default deployment and dashboard publications and creates a pending run. The optional request body is
    * retained as the workflow input and may be any valid JSON value.
    *
    * @returns WorkflowRunResponse The new pending workflow run.
@@ -35,7 +464,7 @@ export class WorkflowsService {
      */
     slug: string,
     /**
-     * Workflow name from the app's current live deployment.
+     * Workflow name from the app's effective published definitions.
      */
     name: string,
     requestBody?: any,
@@ -55,6 +484,229 @@ export class WorkflowsService {
         402: `code: plan_workflows_not_allowed — this plan does not include durable workflows.`,
         403: `code: plan_workflows_quota | forbidden — the concurrent-run cap is exhausted or the caller lacks scope.`,
         404: `code: workflow_definition_not_found | app_not_found — the app or named live workflow definition does not exist.`,
+        409: `code: workflow_tenant_identity_unavailable — tenant-required apps must use a tenant-scoped workflow run route.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Start a durable workflow run for an account-owned tenant.
+   * Account owners can start a run for a tenant linked to the app through an
+   * active API consumer or active tenant surface. The tenant ID is persisted
+   * and propagated through trusted internal step dispatch metadata. Managed
+   * operation steps may deliver effects only to an explicitly subscribed
+   * receiver owned by that same tenant. Outbound steps can use an existing
+   * app-bound customer-managed integration; the signed run identity and
+   * active tenant-to-app link are checked at dispatch and outbound
+   * authorization. Integration credentials and route policies remain
+   * app-scoped and shared across tenants. Event waits and callbacks remain
+   * unsupported for tenant-bound workflows.
+   *
+   * @returns WorkflowRunResponse The new pending tenant-scoped workflow run.
+   * @throws ApiError
+   */
+  public static createTenantWorkflowRun({
+    tenantId,
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * Customer record to bind to the new workflow execution.
+     */
+    tenantId: string,
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Name of the published workflow definition to run.
+     */
+    name: string,
+    requestBody?: any,
+  }): CancelablePromise<WorkflowRunResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/platform-tenants/{tenant_id}/apps/{slug}/workflows/{name}/runs',
+      path: {
+        'tenant_id': tenantId,
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `The account plan does not include tenant-scoped durable workflow runs.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The app is not configured to accept tenant-scoped workflow runs.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Start a durable workflow run as the authenticated platform tenant.
+   * Uses the tenant ID from the authenticated platform tenant access token.
+   * The tenant must be actively linked to the app. Requires the
+   * platform_tenant:invocations:manage scope. Managed operation effects are
+   * delivered only to an explicitly subscribed receiver owned by this
+   * tenant. Outbound steps can use an existing app-bound customer-managed
+   * integration; the signed run identity and active tenant-to-app link are
+   * checked at dispatch and outbound authorization. Integration credentials
+   * and route policies remain app-scoped and shared across tenants. Event
+   * waits and callbacks remain unsupported.
+   *
+   * @returns WorkflowRunResponse A pending workflow run created with the authenticated tenant identity.
+   * @throws ApiError
+   */
+  public static createPlatformTenantSelfWorkflowRun({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Identifier of the workflow definition to start for this tenant.
+     */
+    name: string,
+    requestBody?: any,
+  }): CancelablePromise<WorkflowRunResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/apps/{slug}/workflows/{name}/runs',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The app does not accept workflow runs for this authenticated tenant identity.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read this tenant's workflow run status and result.
+   * Requires a tenant-bound token with platform_tenant:invocations:read. Foreign, unbound, and missing runs return the same 404.
+   * @returns WorkflowRunResponse Workflow status and result for the authenticated tenant.
+   * @throws ApiError
+   */
+  public static getPlatformTenantSelfWorkflowRun({
+    id,
+  }: {
+    /**
+     * Tenant-owned workflow run returned when starting the workflow.
+     */
+    id: string,
+  }): CancelablePromise<WorkflowRunResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflows/runs/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Cancel this tenant's active workflow run.
+   * Requires a tenant-bound token with platform_tenant:invocations:manage. Repeating the request on a terminal run returns its current state.
+   * @returns WorkflowRunResponse Workflow status after the cancellation request.
+   * @throws ApiError
+   */
+  public static cancelPlatformTenantSelfWorkflowRun({
+    id,
+  }: {
+    /**
+     * Tenant-owned workflow run to cancel.
+     */
+    id: string,
+  }): CancelablePromise<WorkflowRunResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflows/runs/{id}/cancel',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Resume eligible failed actions in this tenant's workflow run.
+   * Requires a tenant-bound token with platform_tenant:invocations:manage.
+   * Send the current resume_count. The platform preserves completed work and
+   * only reopens actions accepted by the workflow's safe-resume rules.
+   * Foreign, unbound, and missing runs return the same 404.
+   *
+   * @returns WorkflowRunResponse The queued run with its incremented resume_count.
+   * @throws ApiError
+   */
+  public static resumePlatformTenantSelfWorkflowRun({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Failed or dead workflow run owned by the authenticated tenant.
+     */
+    id: string,
+    requestBody: ResumeWorkflowRunRequest,
+  }): CancelablePromise<WorkflowRunResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflows/runs/{id}/resume',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `The account plan does not include durable workflows.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        409: `The run is stale, unsafe to resume, or has reached its resume limit.`,
+        413: `Resume requests are limited to 4096 bytes.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -201,6 +853,53 @@ export class WorkflowsService {
       errors: {
         401: `code: unauthorized`,
         404: `The workflow run is absent or not owned by the caller, or code: workflow_step_not_found — the requested step is absent.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Retry one failed or dead HTTP step in its existing workflow run.
+   * Requeues the same run and preserves the failed step's persisted input
+   * and attempt history. Only terminal failed or dead HTTP steps are eligible. The
+   * request conflicts if another step is active, failed, or dead, a downstream
+   * step already succeeded, or the run was cancelled. Skipped dependent
+   * steps are reopened so ordinary DAG evaluation can continue. Each manual
+   * retry grants one new dispatch and does not reset the manifest's
+   * automatic retry budget.
+   *
+   * @returns WorkflowRunResponse The workflow run has been requeued at the requested step.
+   * @throws ApiError
+   */
+  public static retryWorkflowStep({
+    id,
+    step,
+  }: {
+    /**
+     * Workflow run whose failed step should be retried.
+     */
+    id: string,
+    /**
+     * Failed HTTP step to resume in the existing run.
+     */
+    step: string,
+  }): CancelablePromise<WorkflowRunResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/workflows/runs/{id}/steps/{step}/retry',
+      path: {
+        'id': id,
+        'step': step,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `The account plan does not include workflows.`,
+        403: `The account has reached its concurrent workflow run limit.`,
+        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        409: `The run or step is not in a state that can be safely retried.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -437,6 +1136,84 @@ export class WorkflowsService {
         401: `code: unauthorized`,
         404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
         409: `code: workflow_not_running — only running or awaiting_event runs accept events.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Resume eligible failed actions in a durable workflow run.
+   * Reopens eligible failed actions with a fresh retry budget while preserving
+   * the original definition, inputs, successful steps, batch results, guard
+   * decisions, action idempotency keys and attempt history. Requires the
+   * current resume_count and honors Idempotency-Key for request replay.
+   * Cancelled runs, active calls or waits, executed failure/timeout handlers,
+   * failed control steps and replay-unsafe integration mutations are rejected.
+   * A live default deployment and valid integration bindings are required.
+   * Each run permits at most 16 resumptions and counts against active-run quotas.
+   *
+   * @returns WorkflowRunResponse The queued workflow run with its incremented resume_count.
+   * @throws ApiError
+   */
+  public static resumeWorkflowRun({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Failed or dead workflow-run identifier to resume.
+     */
+    id: string,
+    requestBody: ResumeWorkflowRunRequest,
+  }): CancelablePromise<WorkflowRunResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/workflows/runs/{id}/resume',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_workflows_not_allowed — this plan does not include workflows.`,
+        403: `code: plan_workflows_quota | forbidden — active-run quota exhausted or required scope missing.`,
+        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
+        409: `code: workflow_resume_conflict, workflow_resume_unsafe, or workflow_resume_limit.`,
+        413: `code: request_body_too_large — resume requests are limited to 4096 bytes.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * List the recorded resumptions of a workflow run.
+   * @returns ListWorkflowResumesResponse Resume history in increasing resume_number order, bounded to 16 records.
+   * @throws ApiError
+   */
+  public static listWorkflowResumes({
+    id,
+  }: {
+    /**
+     * Workflow-run identifier whose continuation history is requested.
+     */
+    id: string,
+  }): CancelablePromise<ListWorkflowResumesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/workflows/runs/{id}/resumes',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: workflow_run_not_found — the run is absent or belongs to another account.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

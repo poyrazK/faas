@@ -9,16 +9,18 @@ import (
 	"regexp"
 	"time"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
 
 var (
-	ErrUnavailable   = errors.New("managed postgres unavailable")
-	ErrNotFound      = errors.New("managed postgres resource not found")
-	ErrConflict      = errors.New("managed postgres resource conflict")
-	ErrInvalid       = errors.New("invalid managed postgres request")
-	ErrUnsupported   = errors.New("managed postgres feature unsupported")
-	ErrQuotaExceeded = errors.New("managed postgres quota exceeded")
-	ErrUsageStale    = errors.New("managed postgres usage is stale")
+	ErrUnavailable   = pgerrors.ErrUnavailable
+	ErrNotFound      = pgerrors.ErrNotFound
+	ErrConflict      = pgerrors.ErrConflict
+	ErrInvalid       = pgerrors.ErrInvalid
+	ErrUnsupported   = pgerrors.ErrUnsupported
+	ErrQuotaExceeded = pgerrors.ErrQuotaExceeded
+	ErrUsageStale    = pgerrors.ErrUsageStale
 )
 
 type State string
@@ -112,9 +114,52 @@ type UpdateRequest struct {
 
 type ObservedDatabase struct {
 	ProviderResourceID string
-	Status             ProviderStatus
-	ComputeState       ComputeState
-	Spec               Spec
+	// DataResourceID identifies the exact observed dataset, never a mutable
+	// default selector. ProviderResourceID still owns lifecycle cleanup.
+	// Providers without this evidence leave it empty; they cannot supply a
+	// source for a complete stage clone.
+	DataResourceID string
+	Status         ProviderStatus
+	ComputeState   ComputeState
+	Spec           Spec
+	// RestoreLineage comes from the provider's actual target metadata, never
+	// from echoing a RestoreRequest. A missing observation cannot qualify an
+	// isolated stage database. SourceResourceID must identify the exact source
+	// (for example a Neon branch), not a mutable default selector.
+	RestoreLineage *RestoreLineage
+}
+
+type RestoreLineage struct {
+	SourceResourceID string
+	PointInTime      time.Time
+}
+
+// RestoreProof is a private receipt of a successful provider observation.
+// It contains no credential material and is tied to one target generation.
+type RestoreProof struct {
+	DatabaseID, AccountID, OperationID string
+	BackendID, BackendFingerprint      string
+	ProviderResourceID                 string
+	DataResourceID                     string
+	SourceDatabaseID                   string
+	Lineage                            RestoreLineage
+	Spec                               Spec
+	Generation                         int64
+	ObservedAt                         time.Time
+}
+
+// CloneRestoreProofStore atomically commits the receipt with readiness.
+// Separate stores cannot substitute a ready state for provider evidence.
+type CloneRestoreProofStore interface {
+	FinishCloneRestoreProvision(context.Context, Database, ObservedDatabase, time.Time) (Database, error)
+	GetCloneRestoreProof(context.Context, string, string) (RestoreProof, error)
+}
+
+// DataResourceProvisionStore commits the observed data identity and readiness
+// together under the same provisioning lease. A ready legacy row cannot be
+// pinned by simply resolving its current default selector.
+type DataResourceProvisionStore interface {
+	FinishProvisionWithDataResource(context.Context, Database, ObservedDatabase, time.Time) (Database, error)
 }
 
 // ScaleToZeroProbeResult is the non-sensitive evidence produced by an
@@ -142,7 +187,10 @@ type DeleteRequest struct {
 	// RestoreSourceResourceID lets an adapter recover a restore branch when
 	// the target provider ID was not persisted before a worker crashed.
 	RestoreSourceResourceID string
-	IdempotencyKey          string
+	// RestorePointInTime fences discovery-based cleanup of a restore whose
+	// target identity was never acknowledged. The name alone is insufficient.
+	RestorePointInTime time.Time
+	IdempotencyKey     string
 }
 
 // RestoreRequest creates a new logical database from a source provider
@@ -158,6 +206,20 @@ type RestoreRequest struct {
 
 type DeleteResult struct {
 	Done bool
+}
+
+// ResourceDiscoveryRequest identifies a possibly accepted creation by its
+// stable logical name. Discovery must never create or delete a resource.
+type ResourceDiscoveryRequest struct {
+	ResourceID              string
+	RestoreSourceResourceID string
+}
+
+// ResourceDiscoverer recovers an opaque identity without mutating the provider.
+// ErrNotFound means absent now, not that a previous attempt incurred no usage.
+// Providers without discovery cannot retire an uncertain creation safely.
+type ResourceDiscoverer interface {
+	Discover(context.Context, ResourceDiscoveryRequest) (string, error)
 }
 
 type CredentialAccess string
@@ -414,6 +476,9 @@ type UsageProgress struct {
 	// into an active-resource freshness requirement.
 	Terminal bool
 	EndedAt  time.Time
+	// Unresolved is snapshot metadata for an accounting obligation whose
+	// provider identity is still unknown. Ledger observations cannot settle it.
+	Unresolved bool
 }
 
 // UsageLineItem is a normalized, provider-neutral meter line. It is an
@@ -470,18 +535,7 @@ func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
 		return true
 	}
 	for _, progress := range s.Databases {
-		if progress.Window != policy.Window || progress.ObservedAt.IsZero() {
-			return true
-		}
-		if progress.Terminal {
-			end := usageEnd(progress.EndedAt, policy.Window)
-			if end.IsZero() || progress.CollectedUntil.Before(end) ||
-				progress.CorrectionObservedAt.Before(end.Add(recentUsageCorrectionWindows*policy.Window)) {
-				return true
-			}
-			continue
-		}
-		if now.Sub(progress.ObservedAt) > policy.StaleAfter || progress.CollectedUntil.Before(now.UTC().Truncate(policy.Window)) {
+		if progress.blockingIssues(policy, now) != 0 {
 			return true
 		}
 	}
@@ -628,6 +682,12 @@ type CredentialPrivilegeProber interface {
 	ProbeCredentialPrivileges(context.Context, string, CredentialMaterial) (CredentialPrivilegeEvidence, error)
 }
 
+// ReadOnlyCredentialProber proves the portable read-only access contract on
+// disposable resources. Advertising read_only requires this live evidence.
+type ReadOnlyCredentialProber interface {
+	ProbeReadOnlyCredentials(context.Context, string) (ReadOnlyCredentialEvidence, error)
+}
+
 // RestoreCredentialIsolationProber verifies that the source login cannot
 // authenticate against the restored target.
 type RestoreCredentialIsolationProber interface {
@@ -652,28 +712,33 @@ type RestoreDataProber interface {
 
 type Database struct {
 	// Health is a non-persistent read projection populated by Service.Get/List.
-	Health                  *HealthSummary
-	ID                      string
-	AccountID               string
-	Name                    string
-	Spec                    Spec
-	BackendID               string
-	BackendFingerprint      string
-	ProviderResourceID      string
-	RestoreSourceDatabaseID string
-	RestoreSourceResourceID string
-	RestorePointInTime      time.Time
-	State                   State
-	DesiredGeneration       int64
-	ObservedGeneration      int64
-	LastErrorCode           string
-	LeaseToken              string
-	LeaseUntil              time.Time
-	AttemptCount            int32
-	RetryAt                 time.Time
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
-	DeletedAt               *time.Time
+	Health             *HealthSummary
+	ID                 string
+	AccountID          string
+	Name               string
+	Spec               Spec
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	// AccountingRequired is persisted before the first provider mutation and
+	// survives failure, retries, and deletion. It must never be cleared.
+	AccountingRequired          bool
+	DataResourceID              string
+	RestoreSourceDatabaseID     string
+	RestoreSourceResourceID     string
+	RestorePointInTime          time.Time
+	EnvironmentCloneOperationID string
+	State                       State
+	DesiredGeneration           int64
+	ObservedGeneration          int64
+	LastErrorCode               string
+	LeaseToken                  string
+	LeaseUntil                  time.Time
+	AttemptCount                int32
+	RetryAt                     time.Time
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
+	DeletedAt                   *time.Time
 }
 
 type BindingState string
@@ -736,10 +801,19 @@ type Store interface {
 	// reservations. It must reject active bindings or restore descendants before
 	// returning so callers can safely perform irreversible provider deletion.
 	ClaimDelete(context.Context, string, string, string, time.Time, time.Time) (Database, error)
+	BeginAccounting(context.Context, string, string, time.Time) error
 	RecordProviderResource(context.Context, string, string, string, time.Time) error
 	FinishProvision(context.Context, string, string, time.Time) (Database, error)
 	Release(context.Context, string, string, State, string, time.Time, time.Time) error
 	FinishDelete(context.Context, string, string, time.Time) (Database, error)
+}
+
+// CustomerDatabaseStore excludes operation-owned targets until the owning
+// clone has published them. Internal lifecycle and accounting readers still
+// need the complete catalogue, including private pending targets.
+type CustomerDatabaseStore interface {
+	GetCustomerDatabase(context.Context, string, string) (Database, error)
+	ListCustomerDatabases(context.Context, string) ([]Database, error)
 }
 
 // UsageDatabaseCursor is the keyset position of the last database a usage
@@ -759,6 +833,9 @@ type UsageStore interface {
 	// (updated_at, id), strictly after the cursor. The zero cursor starts
 	// from the beginning; a sweep pages until a short page.
 	ListUsageDatabases(ctx context.Context, after UsageDatabaseCursor, limit int) ([]Database, error)
+	// RecordDiscoveredResource fences placement and active lifecycle leases.
+	// Legacy unknown tombstones require explicit reconciliation, not discovery.
+	RecordDiscoveredResource(context.Context, Database, string, time.Time) error
 	Get(context.Context, string, string) (Database, error)
 	UsageProgress(context.Context, string, string, time.Duration) (UsageProgress, error)
 	// RecordUsage atomically replaces one complete window and advances coverage

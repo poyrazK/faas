@@ -51,6 +51,10 @@ test-commit: ## Run strict PostgreSQL and Linux process acceptance for Gregale C
 test-commit-native: ## Run native x86 KVM Commit snapshot and cold-boot completion gates
 	@GO="$(GO)" sh scripts/test-commit-native.sh
 
+.PHONY: test-managed-operation-native
+test-managed-operation-native: ## Run native Firecracker managed workflow recovery and effect delivery acceptance
+	@GO="$(GO)" sh scripts/test-managed-operation-native.sh
+
 test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
 	@GO="$(GO)" sh scripts/test-customer-platform.sh
 
@@ -991,11 +995,11 @@ SQLC_URL     ?= https://github.com/sqlc-dev/sqlc/releases/download/$(SQLC_VER)/s
 
 .PHONY: sqlc
 sqlc: ## Install sqlc at the pinned version (idempotent)
-	@if command -v $(SQLC) >/dev/null 2>&1; then \
+	@set -e; if command -v $(SQLC) >/dev/null 2>&1; then \
 	  $(SQLC) version 2>&1 | grep -q $(SQLC_VER) && { echo "sqlc $(SQLC_VER) installed"; exit 0; }; \
-	fi
-	@mkdir -p "$(HOME)/.local/sqlc/bin"
-	@tar_path="$$(mktemp)"; \
+	fi; \
+	mkdir -p "$(HOME)/.local/sqlc/bin"; \
+	tar_path="$$(mktemp)"; \
 	if command -v curl >/dev/null 2>&1; then \
 	  curl --fail --silent --show-error --location --output "$$tar_path" "$(SQLC_URL)" || { \
 	    echo "make sqlc: curl download failed; falling back to go install" >&2; \
@@ -1007,23 +1011,31 @@ sqlc: ## Install sqlc at the pinned version (idempotent)
 	  exit 0; \
 	fi; \
 	tar --extract --gzip --file "$$tar_path" --directory "$$(dirname $$tar_path)"; \
-	cp "$$(dirname $$tar_path)/sqlc" "$(HOME)/.local/sqlc/bin/sqlc" && chmod +x "$(HOME)/.local/sqlc/bin/sqlc"; \
+	cp "$$(dirname $$tar_path)/sqlc" "$(HOME)/.local/sqlc/bin/sqlc"; \
+	chmod +x "$(HOME)/.local/sqlc/bin/sqlc"; \
 	echo "sqlc $(SQLC_VER) installed at $(HOME)/.local/sqlc/bin/sqlc"
 
 .PHONY: sqlc-generate
-sqlc-generate: sqlc ## (re)generate pkg/state/sqlc/*.go from queries.sql + schema.sql
+sqlc-generate: sqlc ## (re)generate every SQLC package from its queries and schema
 	$(SQLC) generate
 
 .PHONY: sqlc-check
 sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be regenerated
 	@set -e; tmp=$$(mktemp -d); \
 	  trap 'rm -rf "$$tmp"' EXIT; \
-	  mkdir -p "$$tmp/pkg/state"; \
+	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
 	  cp pkg/state/queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/managedpostgres/connectionfence/queries.sql pkg/managedpostgres/connectionfence/bootstrap.sql pkg/managedpostgres/connectionfence/schema.sql "$$tmp/pkg/managedpostgres/connectionfence/"; \
+	  cp pkg/managedpostgres/copyinventory/queries.sql pkg/managedpostgres/copyinventory/schema.sql "$$tmp/pkg/managedpostgres/copyinventory/"; \
+	  cp pkg/managedpostgres/copyroles/queries.sql pkg/managedpostgres/copyroles/memberships.sql pkg/managedpostgres/copyroles/schema.sql "$$tmp/pkg/managedpostgres/copyroles/"; \
+	  cp pkg/managedpostgres/copycontents/queries.sql pkg/managedpostgres/copycontents/schema.sql "$$tmp/pkg/managedpostgres/copycontents/"; \
+	  cp pkg/managedpostgres/copydatabases/queries.sql pkg/managedpostgres/copydatabases/maintenance.sql pkg/managedpostgres/copydatabases/verification.sql pkg/managedpostgres/copydatabases/verification_retries.sql pkg/managedpostgres/copydatabases/schema.sql "$$tmp/pkg/managedpostgres/copydatabases/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  diff -r pkg/state/sqlc "$$tmp/pkg/state/sqlc" || \
-	    { echo "sqlc-check: generated pkg/state/sqlc/*.go is out of sync with queries.sql or schema.sql; run 'make sqlc-generate' and commit the diff"; exit 1; }
+	  for package in pkg/state/sqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc; do \
+	    diff -r "$$package" "$$tmp/$$package" || \
+	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
+	  done
 	@echo "sqlc-check: OK"
 
 .PHONY: migrate-up
@@ -1454,3 +1466,10 @@ issues-smoke: ## Send controlled Gregale Issues failures to an explicitly confir
 .PHONY: test-commit-sdk
 test-commit-sdk:
 	sh scripts/test-commit-sdk.sh
+
+.PHONY: test-operation-sdk check-operation-sdk-schema
+test-operation-sdk:
+	sh scripts/test-operation-sdk.sh
+
+check-operation-sdk-schema:
+	python3 scripts/gen-operation-inbox-schema.py --check

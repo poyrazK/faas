@@ -321,6 +321,7 @@ func (s *Service) applyUpdate(
 	manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(a.Workload)
 	manifest.AllowedServiceCallers = a.Workload.AllowedServiceCallers
 	manifest.AllowedServiceCallScopes = a.Workload.AllowedServiceCallScopes
+	manifest.Ports = portsWithInternal(manifest.Ports, a.Workload.InternalPorts)
 	manifest.BuildDockerfile = a.Workload.Dockerfile
 	workloadClass := workloadClassFromScan(a.Workload)
 	params := state.UpdateAppParams{
@@ -397,6 +398,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 			PreviewServiceCallsPolicy: previewServiceCallsPolicyForWorkload(w),
 			AllowedServiceCallers:     w.AllowedServiceCallers,
 			AllowedServiceCallScopes:  w.AllowedServiceCallScopes,
+			Ports:                     portsWithInternal(nil, w.InternalPorts),
 
 			BuildDockerfile: w.Dockerfile,
 		},
@@ -427,6 +429,7 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	app.Manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(w)
 	app.Manifest.AllowedServiceCallers = w.AllowedServiceCallers
 	app.Manifest.AllowedServiceCallScopes = w.AllowedServiceCallScopes
+	app.Manifest.Ports = portsWithInternal(app.Manifest.Ports, w.InternalPorts)
 	app.Manifest.BuildDockerfile = w.Dockerfile
 	return app
 }

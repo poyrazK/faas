@@ -17,6 +17,15 @@ import (
 )
 
 func cmdRoutesHealth(args []string) int {
+	if len(args) > 0 && args[0] == "suggest" {
+		return cmdRoutesHealthSuggest(args[1:])
+	}
+	if len(args) > 0 && args[0] == "review" {
+		return cmdRoutesHealthReview(args[1:])
+	}
+	if len(args) > 0 && args[0] == "review-release" {
+		return cmdRoutesHealthReviewRelease(args[1:])
+	}
 	if len(args) > 0 && args[0] == "investigate" {
 		return cmdRoutesHealthInvestigate(args[1:])
 	}
@@ -24,7 +33,7 @@ func cmdRoutesHealth(args []string) int {
 		return cmdRoutesHealthExplain(args[1:])
 	}
 	if len(args) == 0 || args[0] != "get" && args[0] != "set" && args[0] != "report" {
-		return printErr("Invalid route health command", errors.New("usage: gregale routes health <get|set|report|explain|investigate> APP [flags]"))
+		return printErr("Invalid route health command", errors.New("usage: gregale routes health <get|set|suggest|review|review-release|report|explain|investigate> [APP] [flags]"))
 	}
 	action := args[0]
 	flags, positional := splitArgsForFlags(args[1:], "fail-on-unhealthy", "customers", "customer-details")

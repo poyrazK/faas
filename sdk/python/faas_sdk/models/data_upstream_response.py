@@ -40,8 +40,8 @@ class DataUpstreamResponse:
     """Compatibility field name. First 8 hex chars of host_redacted_hash; safe for operator correlation (8 chars =
     ~4B capacity)."""
     scope: str | Unset = UNSET
-    """ADR-090 deployment-scope filter (1..40 chars, lowercase alnum + dash). Echoes the value persisted on the
-    row; absent when the default scope applies."""
+    """ADR-090 deployment-scope filter (1..40 chars, lowercase alnum + dash). Echoes the value persisted on the row;
+    absent when the default scope applies."""
     deployment_scope: str | Unset = UNSET
     """ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod
     upstreams don't collide on the same app. Echoes the value persisted on the row; absent when the default scope

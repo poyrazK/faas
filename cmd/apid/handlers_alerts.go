@@ -1,5 +1,5 @@
 // handlers_alerts.go — apid handlers for customer-configurable alert
-// rules (issue #396, ADR-45 PR 3).
+// rules (issue #396, ADR-045 PR 3).
 //
 // Routes (registered in server.go::handler):
 //
@@ -44,6 +44,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/alerts"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -58,8 +59,9 @@ import (
 // namespaced (not the same footer the app-secrets path uses — a
 // rotated alert-rule secret and a rotated app secret must not be
 // interchangeable if a future migration ever refactors the on-disk
-// format). The label is never logged.
-const alertRuleSecretSealLabel = "alert_rule_secret"
+// format). The label is never logged. It is the evaluator's constant so the
+// seal and the open cannot drift apart again.
+const alertRuleSecretSealLabel = alerts.AlertSecretNamespace
 
 // alertRuleMetricFailedInvocations is the wire-level name of the
 // `failed_invocations` metric family (the only metric in the alert
@@ -233,7 +235,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		// every user-influenced attribute).
 		"metric", logsanitize.Field(string(row.Metric)),
 	)
-	// IAM-4 (ADR-35): audit the rule creation. Mirrors
+	// IAM-4 (ADR-035): audit the rule creation. Mirrors
 	// cron.created (handlers_ext.go:748). NEVER carry the plaintext
 	// secret or its sealed ciphertext — both would leak the same
 	// material (the sealed value is decryptable by anyone with the
@@ -461,7 +463,7 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"app", updated.AppID,
 		"account", acct.ID,
 	)
-	// IAM-4 (ADR-35): audit what the customer altered and to what.
+	// IAM-4 (ADR-035): audit what the customer altered and to what.
 	// Only the fields actually sent (req.X != nil) appear in the
 	// old/new maps so a name-only patch does not carry
 	// `threshold` on either side.
@@ -558,7 +560,7 @@ func (s *server) deleteAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"app", row.AppID,
 		"account", acct.ID,
 	)
-	// IAM-4 (ADR-35): record the rule deletion. Pair of
+	// IAM-4 (ADR-035): record the rule deletion. Pair of
 	// .created + .deleted, matching the cron family at
 	// handlers_ext.go:855.
 	s.audit.Emit(r.Context(), "alert_rule.deleted", &acct.ID, map[string]any{
@@ -641,7 +643,7 @@ func (s *server) rotateAlertRuleSecret(w http.ResponseWriter, r *http.Request, a
 		"app", row.AppID,
 		"account", acct.ID,
 	)
-	// IAM-4 (ADR-35): audit the rotation event. Mirror of
+	// IAM-4 (ADR-035): audit the rotation event. Mirror of
 	// secret.rotated — the audit row carries the rule id, the
 	// rotated_at timestamp, and the fact that a rotation occurred.
 	// NO plaintext, no secret_version (the column does not exist),

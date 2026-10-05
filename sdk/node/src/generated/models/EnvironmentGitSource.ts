@@ -13,6 +13,10 @@ export type EnvironmentGitSource = {
   environment_id: string;
   environment: string;
   source: EnvironmentGitSourceSpec;
+  /**
+   * Retired binding; excluded from current source lookup and controllers.
+   */
+  detached?: boolean;
   suspended: boolean;
   generation: number;
   intent_version: number;

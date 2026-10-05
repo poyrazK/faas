@@ -38,6 +38,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -312,7 +313,7 @@ func (s *server) applyProjectPreview(w http.ResponseWriter, r *http.Request, log
 	resp, _, added, changed, removedSlugs, _, prob := s.scanService(synthReq, acct, planToken, true)
 	if prob != nil {
 		log.Warn("dashboard project_preview apply: scan problem",
-			"account_id", acct.ID, "slug", slug, "code", prob.Code, "detail", prob.Detail)
+			"account_id", acct.ID, "slug", logsanitize.Field(slug), "code", logsanitize.Field(prob.Code), "detail", logsanitize.Field(prob.Detail))
 		view.PreScanProblem = prob.Detail
 		// Re-issue CSRF envelopes so the operator can fix + retry.
 		// The apply envelope binds the cookie so the form's

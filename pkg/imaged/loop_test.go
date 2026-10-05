@@ -770,6 +770,10 @@ func TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapKeys(t *testing.T) {
 		StorageKey: state.SnapMemKey(dep.ID),
 	})
 
+	// ADR-590: only a retired deployment may lose its cold-boot layer.
+	if err := store.MarkDeploymentSuperseded(context.Background(), dep.ID); err != nil {
+		t.Fatal(err)
+	}
 	appsRoot := t.TempDir()
 	be, err := storage.NewLocalStorageBackend(appsRoot)
 	if err != nil {
@@ -828,6 +832,10 @@ func TestLoopDeleteSnapshotsAndFiles_RetainsLayerUntilLastTier(t *testing.T) {
 		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100, FCVersion: "1.8.0",
 		StorageKey: state.WarmSnapMemKey(dep.ID), Tier: state.SnapshotTierWarm,
 	})
+	// ADR-590: only a retired deployment may lose its cold-boot layer.
+	if err := store.MarkDeploymentSuperseded(context.Background(), dep.ID); err != nil {
+		t.Fatal(err)
+	}
 	appsRoot := t.TempDir()
 	be, err := storage.NewLocalStorageBackend(appsRoot)
 	if err != nil {

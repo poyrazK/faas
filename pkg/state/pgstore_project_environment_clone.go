@@ -6,22 +6,125 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvironmentClone, limits api.Limits) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	return s.cloneProjectEnvironment(ctx, clone, limits, nil)
+}
+
+func (s *PgStore) cloneProjectEnvironment(ctx context.Context, clone ProjectEnvironmentClone, limits api.Limits, lease *ProjectEnvironmentCloneLease) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
+	// A source write or another clone can commit while this transaction waits
+	// for its locks. Retry the whole snapshot, including quota and owner checks.
+	for attempt := 0; ; attempt++ {
+		created, result, err := s.cloneProjectEnvironmentOnce(ctx, clone, limits, lease)
+		var pgErr *pgconn.PgError
+		if attempt >= 2 || !errors.As(err, &pgErr) || pgErr.Code != "40001" {
+			return created, result, err
+		}
+		if err := ctx.Err(); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+	}
+}
+
+func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone ProjectEnvironmentClone, limits api.Limits, lease *ProjectEnvironmentCloneLease) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, fmt.Errorf("state: begin project environment clone: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := lockProjectEnvironmentCloneReservationTx(ctx, tx, clone); err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, mapProjectCloneSnapshotErr(err)
+	}
+	if lease != nil {
+		op, err := lockCloneWorkloadOperationTx(ctx, tx, clone.AccountID, clone.ProjectID, clone.CloneOperationID)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		if err := authorizeCloneObjectMutationTx(ctx, tx, op, lease); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		if err := requireCloneMaterializationCaptureTx(ctx, tx, op); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		created, err := replayCloneMaterializationTx(ctx, tx, op)
+		if err == nil {
+			if err := authorizeCloneObjectMutationTx(ctx, tx, op, lease); err != nil {
+				return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+			}
+			return created, ProjectEnvironmentCloneResult{}, tx.Commit(ctx)
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+	}
 	if err := lockProjectEnvironmentCloneSource(ctx, tx, clone); err != nil {
-		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, mapProjectCloneSnapshotErr(err)
+	}
+	var flagSnapshot projectCloneFeatureFlags
+	if clone.CloneOperationID != "" {
+		records, err := cloneWorkloadRecordsDB(ctx, tx, clone.AccountID, clone.ProjectID, clone.CloneOperationID)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		config, err := capturedCloneProjectConfig(records)
+		if err != nil || config.FeatureFlags == nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+		}
+		flagSnapshot = *config.FeatureFlags
+		// Authenticate the original environment identity without rereading flags.
+		id, err := sqlc.New().ReadProjectEnvironmentCloneFlagScope(ctx, tx, sqlc.ReadProjectEnvironmentCloneFlagScopeParams{
+			AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), Environment: clone.SourceSlug,
+		})
+		if err != nil || uuidString(id) != flagSnapshot.SourceEnvironmentID {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+		}
+		clone.capturedValueScopes = map[string]string{}
+		for _, record := range records {
+			clone.capturedValueScopes[record.AppID] = record.SourceScope
+		}
+		clone.capturedValues, err = capturedCloneValues(records)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		clone.capturedPolicies, err = capturedCloneScopedPolicies(records)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+	} else {
+		source, err := readCloneFeatureFlagsTx(ctx, tx, clone.AccountID, clone.ProjectID, clone.SourceSlug)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		flagSnapshot, err = captureCloneFeatureFlags(source)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+	}
+	clone.sourceValueScopesJSON, err = projectCloneValueScopesTx(ctx, tx, clone)
+	if err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, mapProjectCloneSnapshotErr(err)
+	}
+	if clone.ExpectedSourceValuesHash != "" {
+		var hash string
+		if clone.capturedValues != nil {
+			hash, err = clone.capturedValuesHash(clone.capturedValueScopes)
+		} else {
+			hash, err = projectCloneValuesHashTx(ctx, tx, clone)
+		}
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		if hash != clone.ExpectedSourceValuesHash {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+		}
 	}
 	if clone.ManagedBindingsPrepared {
 		if err := checkPreparedProjectEnvironmentBindings(ctx, tx, clone); err != nil {
-			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, mapProjectCloneSnapshotErr(err)
 		}
 	}
 	if err := checkProjectEnvironmentCloneTargetScope(ctx, tx, clone); err != nil {
@@ -39,12 +142,27 @@ func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvi
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
+	if err := copyCloneFeatureFlagsTx(ctx, tx, created, flagSnapshot); err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
+	if err := copyProjectEnvironmentWorkloadSpecs(ctx, tx, clone, created); err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
 	result, err := copyProjectEnvironmentRows(ctx, tx, clone)
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
+	if lease != nil {
+		if err := saveCloneMaterializationTx(ctx, tx, lease.Operation, created); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		// Waiting on intent/resource locks cannot extend an expired worker.
+		if err := authorizeCloneObjectMutationTx(ctx, tx, lease.Operation, lease); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
-		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, fmt.Errorf("state: commit project environment clone: %w", err)
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, fmt.Errorf("state: commit project environment clone: %w", mapProjectCloneSnapshotErr(err))
 	}
 	return created, result, nil
 }
@@ -58,16 +176,33 @@ func checkPreparedProjectEnvironmentBindings(ctx context.Context, tx pgx.Tx, clo
 		return ErrConflict
 	}
 	var bindingCount int
-	if err := tx.QueryRow(ctx, `
+	if clone.capturedValues != nil {
+		bindings := map[string]bool{}
+		for _, values := range clone.capturedValues {
+			for _, secret := range values.Secrets {
+				if id := cloneSecretManagedID(secret); id != "" {
+					bindings[id] = true
+				}
+			}
+		}
+		bindingCount = len(bindings)
+	} else if err := tx.QueryRow(ctx, `
 		select count(distinct coalesce(s.managed_postgres_binding_id, s.managed_object_storage_credential_id))
 		  from apps a join app_secrets s on s.app_id = a.id
-		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and s.scope = $3
+		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and a.preview_of_slug is null
+		   and s.scope = ($3::jsonb ->> a.id::text)
 		   and (s.managed_postgres_binding_id is not null or s.managed_object_storage_credential_id is not null)
-	`, clone.AccountID, clone.ProjectID, clone.SourceSlug).Scan(&bindingCount); err != nil {
+	`, clone.AccountID, clone.ProjectID, clone.sourceValueScopesJSON).Scan(&bindingCount); err != nil {
 		return mapErr(err)
 	}
 	if bindingCount != len(unique) {
 		return ErrConflict
+	}
+	if clone.CloneOperationID != "" {
+		if err := checkCapturedClonePostgresPreparationsTx(ctx, tx, clone); err != nil {
+			return err
+		}
+		return checkCapturedCloneObjectPreparationsTx(ctx, tx, clone)
 	}
 	return nil
 }
@@ -86,21 +221,21 @@ func checkProjectEnvironmentCloneTargetScope(ctx context.Context, tx pgx.Tx, clo
 		if err := tx.QueryRow(ctx, `
 			select exists (
 				select 1 from apps a join app_envs e on e.app_id = a.id
-				 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and e.scope = $3
+				 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and a.preview_of_slug is null and e.scope = $3
 			) or exists (
 				select 1 from apps a join app_secrets s on s.app_id = a.id
-				 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and s.scope = $3
+				 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and a.preview_of_slug is null and s.scope = $3
 				   and ((s.managed_postgres_binding_id is null and s.managed_object_storage_credential_id is null)
 				        or (s.managed_postgres_binding_id is not null and s.managed_object_storage_credential_id is not null)
 				        or coalesce(s.managed_postgres_binding_id, s.managed_object_storage_credential_id)::text <> all($4::text[]))
 			), (
 				select count(*) from apps a join app_secrets s on s.app_id = a.id
-				 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and s.scope = $3
+				 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and a.preview_of_slug is null and s.scope = $3
 				   and coalesce(s.managed_postgres_binding_id, s.managed_object_storage_credential_id)::text = any($4::text[])
 			), (
 				select count(distinct coalesce(s.managed_postgres_binding_id, s.managed_object_storage_credential_id))
 				  from apps a join app_secrets s on s.app_id = a.id
-				 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and s.scope = $3
+				 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and a.preview_of_slug is null and s.scope = $3
 				   and coalesce(s.managed_postgres_binding_id, s.managed_object_storage_credential_id)::text = any($4::text[])
 			)
 		`, clone.AccountID, clone.ProjectID, clone.TargetSlug, clone.PreparedManagedBindingIDs).Scan(&hasUnmanagedScopeState, &preparedSecretCount, &preparedBindingCount); err != nil {
@@ -115,10 +250,10 @@ func checkProjectEnvironmentCloneTargetScope(ctx context.Context, tx pgx.Tx, clo
 	if err := tx.QueryRow(ctx, `
 		select exists (
 			select 1 from apps a join app_envs e on e.app_id = a.id
-			 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and e.scope = $3
+			 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and a.preview_of_slug is null and e.scope = $3
 		) or exists (
 			select 1 from apps a join app_secrets s on s.app_id = a.id
-			 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and s.scope = $3
+			 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and a.preview_of_slug is null and s.scope = $3
 		)
 	`, clone.AccountID, clone.ProjectID, clone.TargetSlug).Scan(&hasScopedState); err != nil {
 		return mapErr(err)
@@ -158,16 +293,30 @@ func lockProjectEnvironmentCloneSource(ctx context.Context, tx pgx.Tx, clone Pro
 }
 
 func checkProjectEnvironmentCloneManagedBindings(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) error {
+	if clone.capturedValues != nil {
+		count := 0
+		for _, values := range clone.capturedValues {
+			for _, secret := range values.Secrets {
+				if cloneSecretManagedID(secret) != "" {
+					count++
+				}
+			}
+		}
+		if count > 0 {
+			return &ProjectEnvironmentCloneManagedBindingsError{ManagedSecretCount: count}
+		}
+		return nil
+	}
 	var count int
 	err := tx.QueryRow(ctx, `
 		select count(*)
 		  from app_secrets s
 		  join apps a on a.id = s.app_id
-		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted'
-		   and s.scope = $3
+		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and a.preview_of_slug is null
+		   and s.scope = ($3::jsonb ->> a.id::text)
 		   and (s.managed_postgres_binding_id is not null
 		        or s.managed_object_storage_credential_id is not null)
-	`, clone.AccountID, clone.ProjectID, clone.SourceSlug).Scan(&count)
+	`, clone.AccountID, clone.ProjectID, clone.sourceValueScopesJSON).Scan(&count)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -178,8 +327,12 @@ func checkProjectEnvironmentCloneManagedBindings(ctx context.Context, tx pgx.Tx,
 }
 
 func checkProjectEnvironmentCloneQuota(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone, limits api.Limits) error {
+	if clone.capturedValues != nil {
+		return checkCapturedProjectEnvironmentCloneQuota(ctx, tx, clone, limits)
+	}
 	rows, err := sqlc.New().ProjectEnvironmentCloneQuota(ctx, tx, sqlc.ProjectEnvironmentCloneQuotaParams{
 		AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug,
+		SourceValueScopes: []byte(clone.sourceValueScopesJSON),
 	})
 	if err != nil {
 		return mapErr(err)
@@ -216,7 +369,7 @@ func insertClonedProjectEnvironment(ctx context.Context, tx pgx.Tx, clone Projec
 
 func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) (ProjectEnvironmentCloneResult, error) {
 	result := ProjectEnvironmentCloneResult{}
-	if err := tx.QueryRow(ctx, `select count(*) from apps where account_id = $1 and project_id = $2 and status <> 'deleted'`, clone.AccountID, clone.ProjectID).Scan(&result.WorkloadsCopied); err != nil {
+	if err := tx.QueryRow(ctx, `select count(*) from apps where account_id = $1 and project_id = $2 and status <> 'deleted' and preview_of_slug is null`, clone.AccountID, clone.ProjectID).Scan(&result.WorkloadsCopied); err != nil {
 		return result, mapErr(err)
 	}
 	configurationCopied, err := copyProjectEnvironmentConfig(ctx, tx, clone)
@@ -228,15 +381,27 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 	if err != nil {
 		return result, err
 	}
-	refsCopied, err := sqlc.New().CopyProjectEnvironmentSecretReferences(ctx, tx, sqlc.CopyProjectEnvironmentSecretReferencesParams{
-		AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug,
-	})
-	if err != nil {
-		return result, mapErr(err)
+	if clone.capturedPolicies != nil {
+		if err := copyCapturedProjectEnvironmentScopedPolicies(ctx, tx, clone, &result); err != nil {
+			return result, err
+		}
+		if result.RoutesCopied < result.WorkloadsCopied {
+			result.SharedResources = append(result.SharedResources, "routes")
+		}
+		result.SharedResources = append(result.SharedResources, "policies")
+		return result, nil
 	}
-	result.SecretReferencesCopied = int(refsCopied)
-	if err := sqlc.New().CopyProjectEnvironmentSecretSuppressions(ctx, tx, sqlc.CopyProjectEnvironmentSecretSuppressionsParams{AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug}); err != nil {
-		return result, mapErr(err)
+	if clone.capturedValues == nil {
+		refsCopied, err := sqlc.New().CopyProjectEnvironmentSecretReferences(ctx, tx, sqlc.CopyProjectEnvironmentSecretReferencesParams{
+			AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug,
+		})
+		if err != nil {
+			return result, mapErr(err)
+		}
+		result.SecretReferencesCopied = int(refsCopied)
+		if err := sqlc.New().CopyProjectEnvironmentSecretSuppressions(ctx, tx, sqlc.CopyProjectEnvironmentSecretSuppressionsParams{AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug}); err != nil {
+			return result, mapErr(err)
+		}
 	}
 	if err := tx.QueryRow(ctx, `
 		with copied as (
@@ -248,7 +413,7 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 			  from apps a
 			  left join project_environment_route_policies p
 			    on p.app_id = a.id and p.environment_slug = $3
-		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted'
+		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and a.preview_of_slug is null
 		   and not (coalesce(p.only_allow_declared_routes, a.only_declared_routes)
 		            and jsonb_array_length(coalesce(p.declared_routes, a.declared_routes, '[]'::jsonb)) = 0)
 			returning 1
@@ -268,7 +433,7 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 			  from project_environment_edge_policies p
 			  join apps a on a.id = p.app_id
 			 where p.account_id = $1 and p.project_id = $2 and p.environment_slug = $3
-			   and a.status <> 'deleted'
+			   and a.status <> 'deleted' and a.preview_of_slug is null
 			returning 1
 		)
 		select count(*) from copied
@@ -280,6 +445,23 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 }
 
 func copyProjectEnvironmentConfig(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) (bool, error) {
+	if clone.CloneOperationID != "" {
+		records, err := cloneWorkloadRecordsDB(ctx, tx, clone.AccountID, clone.ProjectID, clone.CloneOperationID)
+		if err != nil {
+			return false, err
+		}
+		if len(records) > 0 {
+			config, err := capturedCloneProjectConfig(records)
+			if err != nil {
+				return false, err
+			}
+			count, err := new(sqlc.Queries).InsertProjectEnvironmentCloneProjectConfiguration(ctx, tx, sqlc.InsertProjectEnvironmentCloneProjectConfigurationParams{
+				AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), Environment: clone.TargetSlug,
+				ConfigHash: config.Hash, ConfigJson: config.Values,
+			})
+			return count == 1, mapErr(err)
+		}
+	}
 	configTag, err := tx.Exec(ctx, `
 		insert into project_environment_config_versions
 			(account_id, project_id, environment_slug, version, config_hash, config_json)
@@ -295,22 +477,27 @@ func copyProjectEnvironmentConfig(ctx context.Context, tx pgx.Tx, clone ProjectE
 }
 
 func copyProjectEnvironmentScopedValues(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) (int, int, error) {
+	if clone.capturedValues != nil {
+		return copyCapturedProjectEnvironmentCloneValues(ctx, tx, clone)
+	}
 	envTag, err := tx.Exec(ctx, `
 		insert into app_envs (account_id, app_id, scope, key, value)
 		select e.account_id, e.app_id, $4, e.key, e.value
 		  from app_envs e join apps a on a.id = e.app_id
-		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and e.scope = $3
-	`, clone.AccountID, clone.ProjectID, clone.SourceSlug, clone.TargetSlug)
+		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and a.preview_of_slug is null
+		   and e.scope = ($3::jsonb ->> a.id::text)
+	`, clone.AccountID, clone.ProjectID, clone.sourceValueScopesJSON, clone.TargetSlug)
 	if err != nil {
 		return 0, 0, mapErr(err)
 	}
 	secretTag, err := tx.Exec(ctx, `
-		insert into app_secrets (account_id, app_id, scope, key, ciphertext, kid, value_hash, secret_version)
-		select s.account_id, s.app_id, $4, s.key, s.ciphertext, s.kid, s.value_hash, s.secret_version
+		insert into app_secrets (account_id, app_id, scope, key, ciphertext, kid, value_hash, secret_version, secret_class)
+		select s.account_id, s.app_id, $4, s.key, s.ciphertext, s.kid, s.value_hash, s.secret_version, s.secret_class
 		  from app_secrets s join apps a on a.id = s.app_id
-		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and s.scope = $3
+		 where a.account_id = $1 and a.project_id = $2 and a.status <> 'deleted' and a.preview_of_slug is null
+		   and s.scope = ($3::jsonb ->> a.id::text)
 		   and s.managed_postgres_binding_id is null and s.managed_object_storage_credential_id is null
-	`, clone.AccountID, clone.ProjectID, clone.SourceSlug, clone.TargetSlug)
+	`, clone.AccountID, clone.ProjectID, clone.sourceValueScopesJSON, clone.TargetSlug)
 	if err != nil {
 		return 0, 0, mapErr(err)
 	}

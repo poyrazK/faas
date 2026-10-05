@@ -62,8 +62,8 @@ class CreateDeploymentRequest:
     """Per-deployment traffic-split weight (issue #556 PR-A). nil = server default 100; explicit 0..100 = opt into
     canary (Pro/Scale only)."""
     scope: None | str | Unset = UNSET
-    """Top-level per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no
-    leading/trailing dash. nil/omitted = `default`."""
+    """Top-level per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing
+    dash. nil/omitted = `default`."""
     environment: str | Unset = UNSET
     """Registered project environment to resolve to the deployment scope. Requires the app to belong to the
     project; omitted preserves legacy scope behavior."""

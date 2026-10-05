@@ -28,7 +28,7 @@ class RollbackRequest:
     alert_rule_id: UUID | Unset = UNSET
     """SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): when set, the handler stamps the deployment_audit row's
     alert_rule_id column with this UUID so an operator can cross-link the audit timeline back to
-    /dashboard/alerts/{id}. Wire-additive per ADR-16; the field is ignored when nil/empty. Only privileged in-
+    /dashboard/alerts/{id}. Wire-additive per ADR-016; the field is ignored when nil/empty. Only privileged in-
     process callers (meterd ActionDispatcher) set this; the API does not enforce role because the endpoint already
     requires MFA + ScopesDeployWrite."""
     expected_current_deployment_id: UUID | Unset = UNSET

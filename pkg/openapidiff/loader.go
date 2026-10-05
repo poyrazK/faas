@@ -238,8 +238,9 @@ func Load() (*Spec, error) {
 }
 
 // LoadBytes parses a raw OpenAPI 3.x YAML document and returns a
-// normalised [Spec]. Exposed for tests; production callers should
-// use [Load] so the embedded spec is the source of truth.
+// normalised [Spec]. It is used for customer-supplied local documents
+// and tests; callers inspecting Gregale's served contract should use
+// [Load] so the embedded spec remains the source of truth.
 func LoadBytes(data []byte) (*Spec, error) {
 	var doc map[string]any
 	if err := yaml.Unmarshal(data, &doc); err != nil {

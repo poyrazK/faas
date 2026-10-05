@@ -420,7 +420,7 @@ export class DeploymentsService {
   }
   /**
    * Create a deployment from a Git source-ref (headless).
-   * Headless deploy path (issue #739 / DEPLOY-PROV-4 / ADR-92).
+   * Headless deploy path (issue #739 / DEPLOY-PROV-4 / ADR-092).
    * Resolves the GitHub install bound to the caller's account,
    * fetches the (repo, ref) tarball via the githubd bridge, spools
    * it under the per-plan SourceTarballMaxMB cap, validates shape,
@@ -505,7 +505,7 @@ export class DeploymentsService {
    * fetch.
    *
    * Distinct from the source-ref path
-   * (`POST /v1/apps/{slug}/deployments/source-ref`, ADR-92) which
+   * (`POST /v1/apps/{slug}/deployments/source-ref`, ADR-092) which
    * resolves the GitHub install and pins the tarball to a 40-char
    * SHA. The source-ref handler is unchanged; this is a parallel
    * trust path for first-deploy customers without the GitHub App
@@ -888,7 +888,7 @@ export class DeploymentsService {
   /**
    * Set the per-deployment cold-wake floor.
    * Update the deployment's min_instances (issue #557 closure /
-   * ADR-72). The only mutable field on a deployment post-create;
+   * ADR-072). The only mutable field on a deployment post-create;
    * image / digest / overrides / sidecars stay immutable (a new
    * deployment is the canonical way to change them). Pass
    * min_instances=0 to inherit from the parent app's floor.
@@ -1453,7 +1453,7 @@ export class DeploymentsService {
   /**
    * Get per-deploy grype scan.
    * Returns the per-deploy grype CVE scan payload (issue #464 /
-   * ADR-55). The scan runs on the per-app layer ext4 in imaged's
+   * ADR-055). The scan runs on the per-app layer ext4 in imaged's
    * deploy-complete path (after `SetDeploymentRootfs`, before the
    * pending→snapshotting transition) and lands on the
    * `deployments` row.
@@ -1753,7 +1753,7 @@ export class DeploymentsService {
    * on this page — server-emitted, round-tripped verbatim. The
    * id tiebreaker makes the keyset deterministic for queued
    * tails (started_at IS NULL) and for sub-second collisions
-   * on started_at. See ADR-91 §3.
+   * on started_at. See ADR-091 §3.
    *
    * BuildResponse.started_at (the per-row wire field) is
    * RFC3339 (whole-second) for backward compatibility with
@@ -1870,7 +1870,7 @@ export class DeploymentsService {
   }
   /**
    * Get build provenance.
-   * Returns the ADR-38 `build_provenance` row for a single build.
+   * Returns the ADR-038 `build_provenance` row for a single build.
    * Each successful build produces exactly one provenance row
    * (builderd's populator runs at the `markSucceeded` sites); the
    * row is the customer-visible "what ran?" record: buildkit /

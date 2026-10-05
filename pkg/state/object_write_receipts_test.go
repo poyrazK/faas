@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,11 @@ func writeReceiptsSuite(t *testing.T, st writeReceiptStore) {
 	var ids []string
 	for i := range 6 {
 		c := state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, SubjectID: "owner-private", Key: "same-key", Bytes: 1, Status: "pending"}
+		// Keep several independent pending receipts; sequential settled attempts
+		// still exercise overwritten-key history without replacing pending proof.
+		if i > 2 {
+			c.Key = "pending-key-" + strconv.Itoa(i)
+		}
 		var err error
 		if i == 1 {
 			c.SourceKey, c.SourceETag = "private-source", `"private-etag"`

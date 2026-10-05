@@ -1,6 +1,6 @@
 package api
 
-// Alert-rule DTOs (issue #396, ADR-45). Plaintext webhook_secret only
+// Alert-rule DTOs (issue #396, ADR-045). Plaintext webhook_secret only
 // appears in CreateAlertRuleRequest and UpdateAlertRuleRequest; the
 // response shape (AlertRuleResponse) carries a masked constant
 // (AlertRuleWebhookSecretMasked) — same posture as pkg/api/secrets.go

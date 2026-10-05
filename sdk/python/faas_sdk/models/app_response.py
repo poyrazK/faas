@@ -206,17 +206,16 @@ class AppResponse:
     """Per-app cosign signature-enforcement flag (issue #472 / ADR-054). When true, OCI image deploys must carry a
     valid signature from a publisher in the per-app trusted_signers list. Default false."""
     warm_snapshot_enabled: bool | Unset = UNSET
-    """Per-app two-tier snapshot flag (issue #470 / ADR-055). True on Pro/Scale by default; Free/Hobby always
-    false."""
+    """Per-app two-tier snapshot flag (issue #470 / ADR-055). True on Pro/Scale by default; Free/Hobby always false."""
     warm_snapshot_min_requests: int | Unset = UNSET
-    """Effective per-app request-count threshold for warm-tier capture on this app (issue #470 / ADR-055). Range
-    [1, 100]."""
+    """Effective per-app request-count threshold for warm-tier capture on this app (issue #470 / ADR-055). Range [1,
+    100]."""
     warm_snapshot_min_ms: int | Unset = UNSET
     """Per-app time-since-first-ready threshold for warm-tier capture, milliseconds (issue #470 / ADR-055). Range
     [100, 60000]."""
     warm_pool_size: int | Unset = UNSET
-    """Desired paused warm-pool size (issue #1056 / ADR-074). Zero disables the pool; bounded by max_concurrency
-    and available on Hobby+ plans."""
+    """Desired paused warm-pool size (issue #1056 / ADR-074). Zero disables the pool; bounded by max_concurrency and
+    available on Hobby+ plans."""
     eviction_priority: AppResponseEvictionPriority | Unset = UNSET
     """Per-app eviction tier (issue #475). 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper
     behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction."""
@@ -235,8 +234,8 @@ class AppResponse:
     reference surfaces the closed-set parking reason + timestamp on GET /v1/apps/{slug} so operators can answer 'why
     is my app evicted_cold?' without grepping the audit log."""
     overflow_node: None | Unset | UUID = UNSET
-    """Per-app preferred spill target for cross-node pressure rebalance (Tier A10 / ADR-088). Resolved UUID from
-    the customer's named compute_nodes.name preference (null when unset). Consulted by Engine.RebalancePressuredApps
+    """Per-app preferred spill target for cross-node pressure rebalance (Tier A10 / ADR-088). Resolved UUID from the
+    customer's named compute_nodes.name preference (null when unset). Consulted by Engine.RebalancePressuredApps
     before the A9 fallback; falls through to A9 when the target is inactive or full."""
     cors_default_enabled: bool | None | Unset = UNSET
     cors_default_origins: list[str] | Unset = UNSET

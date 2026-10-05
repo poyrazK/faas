@@ -114,7 +114,7 @@ func (m *MemStore) createCheckedRollbackLocked(acct, app, target, current, reaso
 	if r.Service {
 		d.RolloutState = "rolling_out"
 	}
-	m.deployments[target] = d
+	m.putDeploymentLocked(target, d)
 	if m.checkedRollbacks == nil {
 		m.checkedRollbacks = map[string]api.RollbackOperation{}
 	}
@@ -139,7 +139,7 @@ func (m *MemStore) markCheckedRollbackReadyLocked(ctx context.Context, d Deploym
 	if err := m.captureAndStoreDeploymentSnapshotsLocked(ctx, d, true); err != nil {
 		return err
 	}
-	m.deployments[d.ID] = d
+	m.putDeploymentLocked(d.ID, d)
 	r.Status = "ready"
 	r.UpdatedAt = time.Now().UTC()
 	m.checkedRollbacks[r.ID] = r
@@ -192,12 +192,12 @@ func (m *MemStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollb
 					other.Status = DeploySuperseded
 				}
 			}
-			m.deployments[id] = other
+			m.putDeploymentLocked(id, other)
 		}
 		d.TrafficPercent = 100
 		d.RolloutState = "complete"
 		d.RolloutCompletedAt = &now
-		m.deployments[d.ID] = d
+		m.putDeploymentLocked(d.ID, d)
 		r.Status = "complete"
 		r.CompletedAt = &now
 		r.AuditID = strconv.FormatInt(auditID, 10)
@@ -222,7 +222,7 @@ func (m *MemStore) UpdateCheckedRollback(_ context.Context, snapshot api.Rollbac
 	if status == "failed" && d.TrafficPercent == 0 {
 		d.Status = DeploySuperseded
 		d.RolloutState = "pending"
-		m.deployments[d.ID] = d
+		m.putDeploymentLocked(d.ID, d)
 	}
 	m.checkedRollbacks[r.ID] = blockedRollback(r, status, code, blockers)
 	return nil

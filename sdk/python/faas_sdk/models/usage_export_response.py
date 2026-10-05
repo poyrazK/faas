@@ -26,12 +26,12 @@ class UsageExportResponse:
     """Cumulative host cgroup CPU-µs consumed by the app in the export window (informational; not billed). issue
     #279 / PR-B."""
     tx_bytes: int | Unset = UNSET
-    """Per-(app, month) HTTP response bytes (informational; not billed). ADR-046. The gateway-side producer lands
-    in PR-2; until then this field stays 0."""
+    """Per-(app, month) HTTP response bytes (informational; not billed). ADR-046. The gateway-side producer lands in
+    PR-2; until then this field stays 0."""
     net_tx_bytes: int | Unset = UNSET
-    """Per-(app, month) byte delta on root-side vethHost.rx_bytes (informational; not billed). ADR-046. Sourced
-    from vmmd netstats.Cache via schedd ListInstanceStats. Includes Ethernet framing — same kernel counter the per-
-    plan tc tbf qdisc reads."""
+    """Per-(app, month) byte delta on root-side vethHost.rx_bytes (informational; not billed). ADR-046. Sourced from
+    vmmd netstats.Cache via schedd ListInstanceStats. Includes Ethernet framing — same kernel counter the per-plan
+    tc tbf qdisc reads."""
     net_rx_bytes: int | Unset = UNSET
     """Per-(app, month) byte delta on root-side vethHost.tx_bytes (root→guest = ingress; informational; not
     billed). ADR-048. Mirror of `net_tx_bytes` for the inbound direction."""

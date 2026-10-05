@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var _ ProjectPromotionDeploymentStore = (*PgStore)(nil)
@@ -28,6 +29,9 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 		}
 		return fmt.Errorf("state: mark dark deployment resolve app: %w", err)
 	}
+	if err := sqlc.New().LockWorkflowRunAdmission(ctx, tx, appID); err != nil {
+		return err
+	}
 	var found int
 	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, appID).Scan(&found); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -40,6 +44,9 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	if err := s.checkDeploymentAutomations(ctx, tx, dep); err != nil {
+		return err
+	}
 	if dep.Status == DeployLive && dep.TrafficPercent == 0 && dep.TrafficPercentExplicit {
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("state: mark dark deployment idempotent commit: %w", err)
@@ -49,6 +56,9 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 	if dep.Status != DeployPending || dep.CanaryTotalSteps > 0 || IsServiceRollout(dep) ||
 		dep.TrafficPercent != 0 || !dep.TrafficPercentExplicit {
 		return ErrInvalidStateTransition
+	}
+	if err := requireDeploymentLayerArtifactsTx(ctx, tx, dep.ID); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(ctx, `update crons set suspended_reason = '' where app_id = $1 and suspended_reason <> ''`, appID); err != nil {
 		return fmt.Errorf("state: reactivate dark deployment crons: %w", err)
@@ -76,6 +86,12 @@ func (m *MemStore) MarkDeploymentLiveDark(ctx context.Context, id string) (err e
 	dep, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(dep)); err != nil {
+		return err
+	}
+	if err := m.checkDeploymentAutomationsLocked(dep); err != nil {
+		return err
 	}
 	before := dep
 	previousStatus := dep.Status

@@ -16,6 +16,10 @@ func (s *server) writeDeploymentCreateError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, bindingReleaseRequiredProblem())
 		return
 	}
+	if problem := api.AsProblem(err); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if errors.Is(err, state.ErrNotFound) {
 		s.notFound(w, "app no longer accepts deployments")
 		return

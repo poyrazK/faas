@@ -134,6 +134,8 @@ func (r *PreviewEventRequest) UnmarshalJSON(data []byte) error {
 // EventPreviewSubscription describes an enabled subscription considered by a
 // read-only routing preview. Filter is the normalized manifest predicate.
 type EventPreviewSubscription struct {
+	WorkflowName   string          `json:"workflow_name,omitempty"`
+	DeploymentID   string          `json:"deployment_id,omitempty"`
 	AppSlug        string          `json:"app_slug"`
 	SubscriptionID string          `json:"subscription_id"`
 	Source         string          `json:"source"`
@@ -473,7 +475,7 @@ type CreateAppRequest struct {
 	// (a synchronous JSON API that wants Content-Length). Explicit
 	// true on Free = rejected by apid with 403 plan_streaming_not_allowed.
 	StreamingEnabled *bool `json:"streaming_enabled,omitempty"`
-	// WarmSnapshotEnabled (issue #470 / ADR-55) opts the brand-new
+	// WarmSnapshotEnabled (issue #470 / ADR-055) opts the brand-new
 	// app into the two-tier snapshot path (warm.snap on top of
 	// init.snap). nil → plan default (Free/Hobby off; Pro/Scale on).
 	// Explicit true on Free/Hobby = rejected by apid with 403
@@ -485,7 +487,7 @@ type CreateAppRequest struct {
 	// demands a valid Authorization: Bearer <token> header on every
 	// routed request (the token must belong to the app's owning
 	// account — cross-account tokens receive 403). nil → apid applies
-	// the per-plan default (issue #695 / ADR-80): Free=false/"open",
+	// the per-plan default (issue #695 / ADR-080): Free=false/"open",
 	// Hobby=true/"open", Pro=true/"bearer", Scale=true/"bearer".
 	// Explicit true on Free = rejected by apid with 403
 	// plan_require_authn_not_allowed (the per-plan gate). Pointer
@@ -510,7 +512,7 @@ type CreateAppRequest struct {
 	// default of zero; non-zero values require Hobby or higher and may
 	// not exceed the app's effective max_concurrency.
 	WarmPoolSize *int `json:"warm_pool_size,omitempty"`
-	// WebSocketEnabled (issue #676 / ADR-80) opts the brand-new
+	// WebSocketEnabled (issue #676 / ADR-080) opts the brand-new
 	// app into the raw-bytes Upgrade bridge (WebSocket / h2c /
 	// MQTT-over-WS / long-poll). nil → plan default (Free off;
 	// Hobby/Pro/Scale on). Explicit true on Free = rejected by
@@ -531,7 +533,7 @@ type CreateAppRequest struct {
 	// pkg/api/limits.go::Plan.AppProtocolAllowed for the gate and
 	// ADR-124 §Plan gating for the closed-set rationale.
 	AppProtocol *string `json:"app_protocol,omitempty"`
-	// RouteMetricsEnabled (ADR-93) opts the brand-new app into the
+	// RouteMetricsEnabled (ADR-093) opts the brand-new app into the
 	// per-route observability surface (gatewayd-internal emits
 	// `gateway_request_duration_seconds{app,route,class}` etc. plus
 	// the bounded in-memory reader at
@@ -544,7 +546,7 @@ type CreateAppRequest struct {
 	// pattern from issue #676 — same fail-closed contract, same
 	// Plan.RouteMetricsEnabled() accessor.
 	RouteMetricsEnabled *bool `json:"route_metrics_enabled,omitempty"`
-	// MaintenanceMode (ADR-91 amendment) opts the new app into
+	// MaintenanceMode (ADR-091 amendment) opts the new app into
 	// 503 + Retry-After mode at create time. The coarse sibling of
 	// the kind=maintenance edge rule — the customer wants "this
 	// whole app is in maintenance" without per-rule ceremony.
@@ -553,7 +555,7 @@ type CreateAppRequest struct {
 	// fires pg_notify('app_changed', NEW.id) on a flip so the
 	// gatewayd-internal apps LRU cache can be flushed.
 	MaintenanceMode *bool `json:"maintenance_mode,omitempty"`
-	// OverflowNode (Tier A10 / ADR-88) is the customer's per-app
+	// OverflowNode (Tier A10 / ADR-088) is the customer's per-app
 	// preferred spill target for cross-node pressure rebalance.
 	// Wire type is the human-readable compute_nodes.name; apid
 	// resolves the name to the UUID server-side via
@@ -812,7 +814,7 @@ type UpdateAppRequest struct {
 	// 403 plan_min_instances_not_allowed (apid gate). Must be <=
 	// plan MaxConcurrency (422 invalid_min_instances).
 	MinInstances *int `json:"min_instances,omitempty"`
-	// EgressAllowlist (ADR-31 + ADR-32, tier-2 of the network
+	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound IP allowlist. Each entry is
 	// a CIDR string ("1.2.3.0/24" for v4, "2001:db8::/32" for v6);
 	// the slice replaces the full list (atomic full-overwrite at the
@@ -857,7 +859,7 @@ type UpdateAppRequest struct {
 	// that wants Content-Length). Pointer distinguishes "don't
 	// touch" (nil) from "explicit false" (*bool=false).
 	StreamingEnabled *bool `json:"streaming_enabled,omitempty"`
-	// WebSocketEnabled (issue #676 / ADR-80) toggles the per-app
+	// WebSocketEnabled (issue #676 / ADR-080) toggles the per-app
 	// raw-bytes Upgrade bridge. When true (or unset on a plan
 	// where the default is true), gatewayd-internal detects
 	// Connection: Upgrade + Upgrade: <token> on inbound requests
@@ -880,7 +882,7 @@ type UpdateAppRequest struct {
 	// pkg/api/limits.go::Plan.AppProtocolAllowed for the gate and
 	// ADR-124 §Plan gating for the closed-set rationale.
 	AppProtocol *string `json:"app_protocol,omitempty"`
-	// RouteMetricsEnabled (ADR-93) toggles the per-app per-route
+	// RouteMetricsEnabled (ADR-093) toggles the per-app per-route
 	// observability surface. When true (or unset on a plan where
 	// the default is true), gatewayd-internal emits the per-route
 	// Prometheus series and serves the per-app reader at
@@ -898,14 +900,14 @@ type UpdateAppRequest struct {
 	// empty the imported per-app OpenAPI document is used.
 	OnlyAllowDeclaredRoutes *bool            `json:"only_allow_declared_routes,omitempty"`
 	DeclaredRoutes          *[]DeclaredRoute `json:"declared_routes,omitempty"`
-	// MaintenanceMode (ADR-91 amendment) opts the app into
+	// MaintenanceMode (ADR-091 amendment) opts the app into
 	// 503 + Retry-After mode via PATCH. Pointer distinguishes
 	// "don't touch" (nil) from "explicit false" (*bool=false).
 	// Free-tier allowed (no IsPaidOnly change); the
 	// apps_maintenance_mode_notify trigger fires pg_notify on
 	// flip so the gatewayd-internal apps LRU cache stays fresh.
 	MaintenanceMode *bool `json:"maintenance_mode,omitempty"`
-	// RequireSigned (issue #472 / ADR-54) gates OCI image deploys on
+	// RequireSigned (issue #472 / ADR-054) gates OCI image deploys on
 	// a valid cosign signature from a trusted publisher (mirrors AWS
 	// Lambda's Code Signing for Lambda). When true, imaged verifies
 	// the deploy image against the per-app trusted-publisher list
@@ -916,9 +918,9 @@ type UpdateAppRequest struct {
 	// /v1/apps/{slug}; not plan-gated (any plan may opt in).
 	// Source-tarball deploys (Railpack path) bypass the gate by
 	// design — builds run inside ephemeral builder microVMs
-	// (ADR-3) and the customer image is never shipped over the wire.
+	// (ADR-003) and the customer image is never shipped over the wire.
 	RequireSigned *bool `json:"require_signed,omitempty"`
-	// WarmSnapshotEnabled (issue #470 / ADR-55) toggles the
+	// WarmSnapshotEnabled (issue #470 / ADR-055) toggles the
 	// two-tier snapshot path on an existing app. Pointer
 	// distinguishes "don't touch" (nil) from "explicit false"
 	// (opt out of warm capture). Plan-gated upstream: Free/Hobby
@@ -946,7 +948,7 @@ type UpdateAppRequest struct {
 	ConsumerAuthMode *string `json:"consumer_auth_mode,omitempty"`
 	// PlatformTenantRequired rejects app traffic without verified tenant identity.
 	PlatformTenantRequired *bool `json:"platform_tenant_required,omitempty"`
-	// PublicAuth (issue #477 / ADR-79) toggles per-app
+	// PublicAuth (issue #477 / ADR-079) toggles per-app
 	// public-URL auth (open|bearer|basic). nil = don't
 	// touch the column (pre-#477 behaviour preserved).
 	// Non-nil with the SetPublicAuth bit set replaces the
@@ -991,7 +993,7 @@ type UpdateAppRequest struct {
 	// the reserved tier is unlocked) — the cap is over APPS, not
 	// instances, so flipping down always frees a slot.
 	EvictionPriority *string `json:"eviction_priority,omitempty"`
-	// OverflowNode (Tier A10 / ADR-88) is the customer's per-app
+	// OverflowNode (Tier A10 / ADR-088) is the customer's per-app
 	// preferred spill target for cross-node pressure rebalance.
 	// Tri-state: nil = no change, "" = clear (back to A9 default
 	// fallback), non-empty = resolve server-side (404 on unknown
@@ -1001,7 +1003,7 @@ type UpdateAppRequest struct {
 	// resolved UUID on the next pressured sweep; falls through to
 	// A9 if the peer has no headroom or is inactive.
 	OverflowNode *string `json:"overflow_node,omitempty"`
-	// CORSDefaultEnabled (CORS improvements D1 / ADR-91
+	// CORSDefaultEnabled (CORS improvements D1 / ADR-091
 	// appendix) opts the app into the soft default-CORS
 	// fallback. When true, every incoming response is
 	// stamped with a CORS header set derived from
@@ -1038,7 +1040,7 @@ type UpdateAppRequest struct {
 	WorkloadName *string `json:"-"`
 	StartCommand *string `json:""`
 	// ScalingPolicy is the per-app autoscaling configuration
-	// (issue #462 / ADR-58). nil pointer = "don't touch the
+	// (issue #462 / ADR-058). nil pointer = "don't touch the
 	// jsonb column"; non-nil with the Set bit set = "replace the
 	// jsonb column with this shape". The DTO uses value semantics
 	// (not pointer-to-int) so the wire form can omit fields
@@ -1270,7 +1272,7 @@ type RenameAppRequest struct {
 }
 
 // ScalingPolicy is the per-app autoscaling configuration wire shape
-// (issue #462 / ADR-58). Mirrors the on-disk jsonb column
+// (issue #462 / ADR-058). Mirrors the on-disk jsonb column
 // `apps.scaling_policy` and the in-memory `state.ScalingPolicy`.
 // Empty values map to the engine default (the apid gate is what
 // enforces the floor / ceiling, not the encoder).
@@ -1621,7 +1623,7 @@ type AppResponse struct {
 	// AllowedServiceCallScopes is the optional method/path policy for internal
 	// callers. When present, only callers with a matching scope are permitted.
 	AllowedServiceCallScopes *ServiceCallerScopes `json:"allowed_service_call_scopes,omitempty"`
-	// EgressAllowlist (ADR-31 + ADR-32, tier-2 of the network
+	// EgressAllowlist (ADR-031 + ADR-032, tier-2 of the network
 	// roadmap) is the per-app outbound CIDR allowlist. Each entry
 	// is the canonical CIDR string form: v4 ("1.2.3.0/24") or v6
 	// ("2001:db8::/32"). The v4-mapped v6 form ("::ffff:1.2.3.0/120")
@@ -1654,7 +1656,7 @@ type AppResponse struct {
 	// dashboards can show "streaming on / off" alongside the
 	// egress-allowlist flag.
 	StreamingEnabled bool `json:"streaming_enabled"`
-	// WebSocketEnabled (issue #676 / ADR-80) reflects the per-app
+	// WebSocketEnabled (issue #676 / ADR-080) reflects the per-app
 	// raw-bytes Upgrade bridge flag stored on the apps row. False
 	// on Free (the plan default and the only legal state — apid
 	// rejects PATCH true with 403 plan_websocket_not_allowed).
@@ -1677,7 +1679,7 @@ type AppResponse struct {
 	// DEFAULT 'http1' in schema.sql so the empty-string fallback
 	// is impossible.
 	AppProtocol string `json:"app_protocol"`
-	// RouteMetricsEnabled (ADR-93) reflects the per-app
+	// RouteMetricsEnabled (ADR-093) reflects the per-app
 	// route_metrics_enabled flag stored on the apps row. False
 	// on Free (the plan default and the only legal state — apid
 	// rejects PATCH true with 403 plan_route_metrics_not_allowed).
@@ -1689,7 +1691,7 @@ type AppResponse struct {
 	// OnlyAllowDeclaredRoutes reflects the opt-in gateway route contract.
 	OnlyAllowDeclaredRoutes bool            `json:"only_allow_declared_routes"`
 	DeclaredRoutes          []DeclaredRoute `json:"declared_routes,omitempty"`
-	// MaintenanceMode (ADR-91 amendment) is the coarse-grained
+	// MaintenanceMode (ADR-091 amendment) is the coarse-grained
 	// maintenance toggle for the whole app. When true the
 	// gatewayd applier (applyAppsMaintenanceMode, §4.1.2.0)
 	// short-circuits every request with 503 + Retry-After
@@ -1707,7 +1709,7 @@ type AppResponse struct {
 	// customers can verify their PATCH round-tripped.
 	EvictionPriority string `json:"eviction_priority"`
 	// ScalingPolicy is the per-app autoscaling configuration (issue
-	// #462 / ADR-58). The struct is the wire DTO for the on-disk
+	// #462 / ADR-058). The struct is the wire DTO for the on-disk
 	// jsonb column `apps.scaling_policy`; the in-memory state type
 	// (`state.ScalingPolicy`) is the canonical source. Materialised
 	// as `null` for legacy rows (applies the empty-policy
@@ -1734,14 +1736,14 @@ type AppResponse struct {
 	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	// LastScaleOutAt / LastScaleInAt are the wall-clock timestamps
 	// schedd stamps on the wake-gate admit / reaper park branches
-	// (issue #462 / ADR-58). Used by the cooldown helper to
+	// (issue #462 / ADR-058). Used by the cooldown helper to
 	// short-circuit requests inside the cooldown window. Surfaced
 	// on GET so dashboards can render "warm-up in progress" +
 	// "recently scaled" copy. RFC 3339 string form; nil on a
 	// never-scaled app.
 	LastScaleOutAt *time.Time `json:"last_scale_out_at,omitempty"`
 	LastScaleInAt  *time.Time `json:"last_scale_in_at,omitempty"`
-	// RequireSigned (issue #472 / ADR-54) reflects the per-app
+	// RequireSigned (issue #472 / ADR-054) reflects the per-app
 	// signature-enforcement flag. False by default; toggled true via
 	// PATCH /v1/apps/{slug}. When true, OCI image deploys are
 	// rejected at imaged's verify hook (403 deploy_signature_invalid)
@@ -1749,7 +1751,7 @@ type AppResponse struct {
 	// per-app trusted publishers (GET /v1/apps/{slug}/trusted_signers).
 	// Source-tarball deploys are unaffected.
 	RequireSigned bool `json:"require_signed"`
-	// WarmSnapshotEnabled (issue #470 / ADR-55) reflects the
+	// WarmSnapshotEnabled (issue #470 / ADR-055) reflects the
 	// per-app two-tier-snapshot flag. False on Free/Hobby (the
 	// plan default and the only legal state — apid rejects
 	// PATCH-true with 403 plan_warm_snapshot_not_allowed). True
@@ -1773,7 +1775,7 @@ type AppResponse struct {
 	// app owner wants every request attributed to a consumer identity.
 	ConsumerAuthMode       string `json:"consumer_auth_mode"`
 	PlatformTenantRequired bool   `json:"platform_tenant_required"`
-	// PublicAuth (issue #477 / ADR-79) reflects the
+	// PublicAuth (issue #477 / ADR-079) reflects the
 	// per-app public-URL auth mode. Three shapes:
 	//   {mode:"open"}    — pre-#477 default; every existing
 	//                      app stays public-by-default.
@@ -1790,9 +1792,9 @@ type AppResponse struct {
 	//                      know whether creds are currently
 	//                      configured (the plaintext is
 	//                      NEVER echoed — it lives in
-	//                      app_secrets, ADR-45).
+	//                      app_secrets, ADR-045).
 	PublicAuth PublicAuthStatus `json:"public_auth"`
-	// AuthDefaultFlippedAt (issue #695 / ADR-80) is the
+	// AuthDefaultFlippedAt (issue #695 / ADR-080) is the
 	// grand-father marker for the apps-auth-default flip. Set
 	// on apps that pre-date the global flip (migration 00155
 	// stamped every pre-flip row at migration time); null on
@@ -1802,7 +1804,7 @@ type AppResponse struct {
 	// Plan.RequireAuthnDefault() + Plan.PublicAuthModeDefault().
 	// Read-only — the PATCH side has no field to mutate this,
 	// and a future contributor adding one must refuse it with
-	// 422 unprocessable_entity per ADR-80 §9. Dashboards
+	// 422 unprocessable_entity per ADR-080 §9. Dashboards
 	// render the "AUTH: <mode>" annotation with the "since
 	// YYYY-MM-DD" suffix only when this is non-null.
 	AuthDefaultFlippedAt *time.Time `json:"auth_default_flipped_at,omitempty"`
@@ -1814,7 +1816,7 @@ type AppResponse struct {
 	WarmSnapshotMinMs       int `json:"warm_snapshot_min_ms"`
 	// WarmPoolSize is the persisted desired paused warm-pool size.
 	WarmPoolSize int `json:"warm_pool_size"`
-	// ParkedDeployment (issue #554 / ADR-79 follow-up) is the
+	// ParkedDeployment (issue #554 / ADR-079 follow-up) is the
 	// most-recently parked deployment for this app, or nil if the
 	// app has never been parked. Powers the "why is my app
 	// evicted_cold?" UX surface — operators see the closed-set
@@ -1825,7 +1827,7 @@ type AppResponse struct {
 	// deployment-state only at the explicit ref — mirrors the
 	// per-deployment override pattern at DeploymentResponse.
 	ParkedDeployment *ParkedDeploymentRef `json:"parked_deployment,omitempty"`
-	// OverflowNode (Tier A10 / ADR-88) echoes the resolved UUID
+	// OverflowNode (Tier A10 / ADR-088) echoes the resolved UUID
 	// of the customer's per-app preferred spill target. NULL
 	// when no preference is set (the default A9 fallback).
 	// Dashboards branch on `null` to render the "no spill
@@ -1885,7 +1887,7 @@ type AppWakeResponse struct {
 }
 
 // ParkedDeploymentRef is the reference shape returned in
-// AppResponse.ParkedDeployment (issue #554 / ADR-79 follow-up).
+// AppResponse.ParkedDeployment (issue #554 / ADR-079 follow-up).
 // Lives in pkg/api/dto.go per pkg-api-cannot-import-pkg-state so
 // the wire DTO does not pull in the state package. omitempty on
 // the pointer field handles the "app has never been parked"
@@ -1896,7 +1898,7 @@ type ParkedDeploymentRef struct {
 	ParkedAt     *time.Time `json:"parked_at"`
 }
 
-// PublicAuthBlock (issue #477 / ADR-79 + ADR-118 + ADR-119)
+// PublicAuthBlock (issue #477 / ADR-079 + ADR-118 + ADR-119)
 // is the per-app public-URL auth configuration on a PATCH body.
 // Mode is the canonical 'open'|'bearer'|'basic'|'ip_allowlist'|
 // 'internal_only' string (must match apps_public_auth_mode_chk).
@@ -1995,7 +1997,7 @@ func (b *PublicAuthBlock) Validate() *Problem {
 	return nil
 }
 
-// PublicAuthStatus (issue #477 / ADR-79 + ADR-118) is
+// PublicAuthStatus (issue #477 / ADR-079 + ADR-118) is
 // the read-only per-app public-URL auth surface on
 // AppResponse. Mode mirrors the apps.public_auth_mode
 // column; HasBasicCreds is true iff the row has a
@@ -2009,7 +2011,7 @@ func (b *PublicAuthBlock) Validate() *Problem {
 // raw value from the apid audit log instead (the audit
 // log records the count, not the entries — redaction
 // invariant). The plaintext basic-auth username/password
-// is NEVER echoed — it lives in app_secrets (ADR-45)
+// is NEVER echoed — it lives in app_secrets (ADR-045)
 // and is loopback-mounted to drive1 at boot.
 type PublicAuthStatus struct {
 	Mode                  string `json:"mode"`
@@ -2018,7 +2020,7 @@ type PublicAuthStatus struct {
 }
 
 // Sidecars is the array shape on `CreateDeploymentRequest.Sidecars`
-// (issue #463 / ADR-68). Defined as a named slice so callers can
+// (issue #463 / ADR-068). Defined as a named slice so callers can
 // pin the `Validate(limits)` method (Go does not allow defining
 // methods on `[]T` directly, but `type T []Foo` makes the method
 // attach to the named alias). See Sidecar / Sidecars.Validate
@@ -2037,14 +2039,14 @@ type Companions = Sidecars
 type CreateDeploymentRequest struct {
 	Image string `json:"image,omitempty"` // registry.gregale.dev/...@sha256:...
 	// Overrides is the Fargate-shaped deploy-time override object
-	// (issue #460 / ADR-53). Lets a customer redeploy the same
+	// (issue #460 / ADR-053). Lets a customer redeploy the same
 	// digest-pinned image with a different entrypoint/cmd/env/port
 	// without rebuilding the image. The field list is frozen by
-	// ADR-53 §Decision 1 — any new override field requires a new
+	// ADR-053 §Decision 1 — any new override field requires a new
 	// ADR; ADR-282 adds primary-workload startup dependencies.
 	// Nil/omitted means "no overrides; deploy the image as-is".
 	Overrides *CreateDeploymentOverrides `json:"overrides,omitempty"`
-	// RequireSigned (issue #472 / ADR-54) is the per-deploy opt-in
+	// RequireSigned (issue #472 / ADR-054) is the per-deploy opt-in
 	// to cosign signature verification. apid flips the row flag from
 	// the request body and imaged's buildImageLayer verifies before
 	// PullDigest. The operator policy on apps.require_signed is the
@@ -2058,7 +2060,7 @@ type CreateDeploymentRequest struct {
 	// The server normalizes it into Sidecars before validation and persistence.
 	// A request must not set both fields.
 	Companions Companions `json:"companions,omitempty"`
-	// Sidecars (issue #463 / ADR-68) attaches up to 2 stateless
+	// Sidecars (issue #463 / ADR-068) attaches up to 2 stateless
 	// sidecars (1 init + 1 sidecar) to the deployment. nil/empty
 	// = no sidecars. PR-A persists the field; PR-B wires the
 	// runtime effect (imaged + fcvm + guest-init + cgroup); PR-C
@@ -2068,7 +2070,7 @@ type CreateDeploymentRequest struct {
 	// silently dropped; the customer who set it expects it to
 	// apply).
 	Sidecars Sidecars `json:"sidecars,omitempty"`
-	// Workflows carries the ADR-81 declarative definitions alongside
+	// Workflows carries the ADR-081 declarative definitions alongside
 	// the deployment; apid validates and persists the definitions in
 	// the deployment snapshot used by workflow runs.
 	Workflows []WorkflowSpec `json:"workflows,omitempty"`
@@ -2085,7 +2087,7 @@ type CreateDeploymentRequest struct {
 	// canary share. Plan-gated at Pro+ via
 	// acct.Plan.TrafficSplitAllowed().
 	TrafficPercent *int `json:"traffic_percent,omitempty"`
-	// Scope (ADR-91 / PR-D) declares which named env scope this
+	// Scope (ADR-091 / PR-D) declares which named env scope this
 	// deployment reads at wake time. Empty / omitted → handler
 	// defaults to api.DefaultEnvScope. Migration 00213's CHECK
 	// constraint enforces EnvScopePattern; the handler runs
@@ -2182,14 +2184,14 @@ type CanaryPresetSpec struct {
 }
 
 // CreateDeploymentOverrides is the optional override object on
-// CreateDeploymentRequest (issue #460 / ADR-53). The override contract
+// CreateDeploymentRequest (issue #460 / ADR-053). The override contract
 // is extended only through an ADR. The handler calls Validate(limits) before
 // persisting — a failed validation 400s the whole request (the
 // override is never silently dropped; the customer who set it
 // expects it to apply).
 //
-// Env / env_secrets share Limits.EnvVarsMax (ADR-45 §Decision 1 +
-// ADR-53 §Decision 1): the total len(env) + len(env_secrets) is
+// Env / env_secrets share Limits.EnvVarsMax (ADR-045 §Decision 1 +
+// ADR-053 §Decision 1): the total len(env) + len(env_secrets) is
 // checked against the cap, so a customer cannot bypass the per-app
 // quota by mixing the two surfaces.
 //
@@ -2231,7 +2233,7 @@ type CreateDeploymentOverrides struct {
 	// the shape; PR-B stamps AppManifest.Healthz at deploy time;
 	// PR-D activates the runtime half — pkg/fcvm/vmm.go::waitReady
 	// issues an HTTP GET against <HostIP>:8080<Healthcheck.Path>
-	// and accepts 2xx (issue #460 / ADR-53 / ADR-57). Empty path
+	// and accepts 2xx (issue #460 / ADR-053 / ADR-057). Empty path
 	// preserves the legacy TCP-accept behaviour. IntervalS /
 	// TimeoutS / Retries are stored + validated here but remain
 	// dormant until a v2 contract lands them on the wire.
@@ -2241,7 +2243,7 @@ type CreateDeploymentOverrides struct {
 	// and restore it after recovery without restarting the VM.
 	ReadinessProbe *DeploymentReadinessProbe `json:"readiness_probe,omitempty"`
 	// LivenessProbe is the optional liveness probe override
-	// (issue #554 / ADR-78). Per-deployment override wins over
+	// (issue #554 / ADR-078). Per-deployment override wins over
 	// the parent app's per-plan defaults (Hobby/Pro/Scale → 5s /
 	// 3 consecutive / 60s cooldown / 3 in 300s). Free is gated
 	// off entirely (Plan.LivenessAllowed() returns false; the
@@ -2254,7 +2256,7 @@ type CreateDeploymentOverrides struct {
 	// (Engine.ParkDeployment) regardless of per-deployment probe
 	// tuning.
 	LivenessProbe *DeploymentLivenessProbe `json:"liveness_probe,omitempty"`
-	// Scope (ADR-91 / PR-D) declares which named env scope this
+	// Scope (ADR-091 / PR-D) declares which named env scope this
 	// deployment reads at wake time. Empty / omitted defaults to
 	// api.DefaultEnvScope at the handler. Migration 00213's
 	// partial unique index `deployments_app_scope_live_uniq`
@@ -2300,10 +2302,10 @@ type DeploymentReadinessProbe struct {
 }
 
 // DeploymentLivenessProbe is the liveness-probe shape on the
-// override object (issue #554 / ADR-78). The probe is the
+// override object (issue #554 / ADR-078). The probe is the
 // Cloud-Run-parity primitive that asks "is the VM still responding?"
 // after N consecutive failures the host (cmd/vmmd) destroys the VM
-// and schedd cold-boots it from rootfs (per ADR-5 — never
+// and schedd cold-boots it from rootfs (per ADR-005 — never
 // snapshot-restore). Defaults: path is required (must start with "/");
 // the period / timeout / consecutive fields are 0 = inherit from
 // the parent app's per-plan defaults (Hobby/Pro/Scale → 5s / 3 / 60s).
@@ -2346,7 +2348,7 @@ type DeploymentLivenessProbe struct {
 	// survives an intermittent 5xx across the consecutive window
 	// (AC #2 — flaky app does NOT oscillate).
 	ConsecutiveFailures int `json:"consecutive_failures,omitempty"`
-	// CooldownS (issue #554 / ADR-78) is the per-deployment
+	// CooldownS (issue #554 / ADR-078) is the per-deployment
 	// override of the vmmd-side cooldown gate. After a successful
 	// DestroyForLivenessFailure, the next liveness-failure fire on
 	// a fresh instance is skipped if it's within CooldownS seconds
@@ -2370,19 +2372,19 @@ type DeploymentGRPCLivenessProbe struct {
 
 // SecretRefPrefix is the wire prefix on env_secrets values that flags the
 // value as a sealed-secret ref rather than a plaintext fallback.
-// ADR-53 §Decision 1 — pkg/sched/engine.go's loadSealedEnvFor strips this
+// ADR-053 §Decision 1 — pkg/sched/engine.go's loadSealedEnvFor strips this
 // prefix and looks up the trailing name against app_secrets at wake time.
 // PR-A only validated the shape at apid time; the runtime resolver is PR-B.
 const SecretRefPrefix = "secret:"
 
 // SecretRefNameRe matches the NAME portion of a sealed-secret ref. Same
-// identifier grammar as env keys / secret keys (ADR-45 §Decision 1 mirror).
+// identifier grammar as env keys / secret keys (ADR-045 §Decision 1 mirror).
 // Exported so pkg/sched/engine.go::loadSealedEnvFor (PR-B) reuses it at
 // wake time — one regex, no drift between apid and schedd rejection logic.
 var SecretRefNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 // Validate enforces every override field's constraint from
-// ADR-53 §Decision 1. Returns nil on success or a *Problem with
+// ADR-053 §Decision 1. Returns nil on success or a *Problem with
 // RFC 7807 status 400 (or 413 for value-too-large, mirroring
 // ErrEnvVarValueTooLarge). The handler maps this directly to
 // api.WriteProblem; no further error wrapping needed.
@@ -2555,7 +2557,7 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 		}
 	}
 
-	// liveness_probe (issue #554 / ADR-78): exactly one HTTP path or
+	// liveness_probe (issue #554 / ADR-078): exactly one HTTP path or
 	// standard gRPC health check must be configured;
 	// interval_s ∈ [MinLivenessPeriodSeconds, MaxLivenessPeriodSeconds]
 	// when explicit; timeout_s ∈ [1, 5]; consecutive_failures ∈ [1, 10].
@@ -2623,7 +2625,7 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 				"Invalid override",
 				fmt.Sprintf("liveness_probe.consecutive_failures must be <= 10; got %d.", o.LivenessProbe.ConsecutiveFailures))
 		}
-		// CooldownS (issue #554 closure / ADR-78, code review
+		// CooldownS (issue #554 closure / ADR-078, code review
 		// #725 finding F2). 0 = "no cooldown gate" (Free-plan
 		// legacy behaviour, gate bypasses — see
 		// cmd/vmmd/liveness_recv.go::runOne). Positive values
@@ -2658,7 +2660,7 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 }
 
 // BuildProvenanceResponse is the public surface of build_provenance
-// (ADR-38, Tier 3 / issue #197 B3.10-read half). Field names mirror
+// (ADR-038, Tier 3 / issue #197 B3.10-read half). Field names mirror
 // the table columns with snake_case naming so the customer-visible
 // JSON stays self-documenting on a `curl`.
 //
@@ -2686,9 +2688,9 @@ type BuildProvenanceResponse struct {
 }
 
 // BuildResponse is the public surface of a builds row (DEPLOY-PROV-6 /
-// ADR-89, issue #741). Companion to BuildProvenanceResponse (post-
-// mortem export, ADR-38) and the /sbom route (post-mortem blob,
-// ADR-38 Phase 3): BuildResponse is the LIFECYCLE surface — status,
+// ADR-089, issue #741). Companion to BuildProvenanceResponse (post-
+// mortem export, ADR-038) and the /sbom route (post-mortem blob,
+// ADR-038 Phase 3): BuildResponse is the LIFECYCLE surface — status,
 // timestamps, failure_class, server-computed duration.
 //
 // Status mirrors builds.status, a 5-state enum (queued|running|
@@ -2700,21 +2702,21 @@ type BuildProvenanceResponse struct {
 // CHECK constraint is oom|timeout|user_error|infra (schema.sql:660).
 // error_message is NOT in this response — the detailed per-failure
 // string lives on deployments.error_message; clients that need it
-// should call GetDeployment(deployment_id). ADR-89 §4.
+// should call GetDeployment(deployment_id). ADR-089 §4.
 //
 // duration_seconds is server-computed (FinishedAt-StartedAt) only
 // when both timestamps are set; the field is omitted otherwise so a
 // queued/running build stays minimal. CI scripts shouldn't have to
 // parse RFC3339 to compute elapsed time.
 
-// Build status wire constants (ADR-91, DEPLOY-PROV-6 follow-up).
+// Build status wire constants (ADR-091, DEPLOY-PROV-6 follow-up).
 // The 4-value enum is enforced by builds_status_check in
 // schema.sql:651 — clients see exactly one of these strings on
 // BuildResponse.Status. Name-spaced (not the bare string) so
 // goconst stops flagging the literal at 3+ hits across the
 // build/deploy surface. Mirror state.BuildStatus* on the state
 // side (pkg/state/types.go:123) but with the `BuildStatus` prefix
-// here on the wire side, per ADR-91 §3 + the memory note
+// here on the wire side, per ADR-091 §3 + the memory note
 // goconst-status-literal-multi-resource.
 const (
 	BuildStatusQueued    = "queued"
@@ -2745,7 +2747,7 @@ type BuildResponse struct {
 }
 
 // BuildListResponse is the page shape for GET /v1/builds
-// (DEPLOY-PROV-6 follow-up / ADR-91, issue #741 close-out).
+// (DEPLOY-PROV-6 follow-up / ADR-091, issue #741 close-out).
 // Items is the page (started_at desc nulls last); NextBefore is
 // the cursor for the next page (empty = end of list). The cursor
 // is the started_at of the LAST row with a non-null started_at on
@@ -2801,7 +2803,7 @@ type DeploymentAuditResponse struct {
 	// for the deploy.alert_rule_fired + rollback/demote/promote
 	// paths. The /dashboard/alerts/{id} handler uses this to
 	// reverse-link from the audit timeline back to the firing
-	// rule. Wire-additive per ADR-16 (pre-PR consumers see no
+	// rule. Wire-additive per ADR-016 (pre-PR consumers see no
 	// field; post-PR consumers see "alert_rule_id": "<uuid>").
 	AlertRuleID *uuid.UUID `json:"alert_rule_id,omitempty"`
 }
@@ -2845,7 +2847,7 @@ type DeploymentResponse struct {
 	Kind             string `json:"kind"`
 	Status           string `json:"status"`
 	Error            string `json:"error,omitempty"`
-	// ErrorCode carries the RFC 7807 code ADR-21 lifted from the
+	// ErrorCode carries the RFC 7807 code ADR-021 lifted from the
 	// puller-side sentinels (image_not_found / image_egress_denied /
 	// image_manifest_invalid). Empty for every deployment created
 	// before migrations/00021 OR that is not in a failure state —
@@ -2886,20 +2888,20 @@ type DeploymentResponse struct {
 	// source spool has been cleaned up.
 	SourceSHA256 string `json:"source_sha256,omitempty"`
 	// HasOverrides is true when the deployment carries an
-	// override_* column set (issue #460 / ADR-53, extended by ADR-282).
+	// override_* column set (issue #460 / ADR-053, extended by ADR-282).
 	// Lets dashboards render "this deploy pinned overrides" without
 	// re-parsing the sibling fields.
 	HasOverrides bool `json:"has_overrides,omitempty"`
 	// OverrideEntrypoint is the argv override echoed verbatim; nil
-	// when the deployment carried no override. ADR-53 §Decision 4:
+	// when the deployment carried no override. ADR-053 §Decision 4:
 	// these fields are non-secret and safe to echo.
 	OverrideEntrypoint []string `json:"override_entrypoint,omitempty"`
 	// OverrideCmd is the cmd override echoed verbatim; nil when
 	// the deployment carried no override.
 	OverrideCmd []string `json:"override_cmd,omitempty"`
 	// OverrideEnvKeys is the set of env-var keys set by the env
-	// override. VALUES ARE NEVER ECHOED (ADR-53 §Decision 4 +
-	// ADR-45 §Decision 6 mirror). Empty when no env override.
+	// override. VALUES ARE NEVER ECHOED (ADR-053 §Decision 4 +
+	// ADR-045 §Decision 6 mirror). Empty when no env override.
 	OverrideEnvKeys []string `json:"override_env_keys,omitempty"`
 	// OverrideEnvSecretKeys is the set of env-var keys set by the
 	// env_secrets override. VALUES (the "secret:NAME" refs) are
@@ -2913,7 +2915,7 @@ type DeploymentResponse struct {
 	// are non-secret. nil when no env_secrets override.
 	OverrideEnvSecretRefs map[string]string `json:"override_env_secret_refs,omitempty"`
 	// OverridePort is the listen-port override (0 = absent /
-	// fall back to image default). ADR-53 §Decision 1.
+	// fall back to image default). ADR-053 §Decision 1.
 	OverridePort int `json:"override_port,omitempty"`
 	// OverrideHealthcheck is the startup readiness-probe override
 	// verbatim. Persisted; the actual HTTP probe is a follow-up.
@@ -2925,20 +2927,20 @@ type DeploymentResponse struct {
 	// dependencies for audit/debugging.
 	OverrideMainDependsOn []WorkloadDependency `json:"override_main_depends_on,omitempty"`
 	// OverrideLivenessProbe is the liveness-probe override
-	// verbatim (issue #554 / ADR-78). nil when the deployment
+	// verbatim (issue #554 / ADR-078). nil when the deployment
 	// used the per-plan default (Hobby/Pro/Scale → 5s / 3
 	// consecutive / 60s cooldown). Echoed on GET
 	// /v1/apps/{slug}/deployments/{id} so the customer can audit
 	// which probe the host is running against the VM.
 	OverrideLivenessProbe *DeploymentLivenessProbe `json:"override_liveness_probe,omitempty"`
 	// MinInstances is the per-deployment cold-wake floor override
-	// (issue #557 closure / ADR-72). 0 = "inherit from parent
+	// (issue #557 closure / ADR-072). 0 = "inherit from parent
 	// app" (the post-migration default); a positive value is the
 	// deployment's own floor. Effective per-instance floor =
 	// max(app.EffectiveMinInstances(), d.EffectiveMinInstances()).
 	MinInstances int `json:"min_instances"`
 	// Scan is the per-deploy grype CVE scan surface (issue #464
-	// / ADR-55, PR-1). nil for pre-feature rows (the migration
+	// / ADR-055, PR-1). nil for pre-feature rows (the migration
 	// backfilled scan_status='skipped' + scan_result={reason:
 	// 'pre-feature'} on those, but the apid read path returns
 	// nil so the dashboard / CLI see a clean absence — the
@@ -2957,7 +2959,7 @@ type DeploymentResponse struct {
 	// /v1/deployments/{id}/secret-scan route is the
 	// 404-on-missing drilldown.
 	SecretScan *SecretScanResult `json:"secret_scan,omitempty"`
-	// ParkedReason / ParkedAt (issue #554 / ADR-79 follow-up)
+	// ParkedReason / ParkedAt (issue #554 / ADR-079 follow-up)
 	// surface the per-deployment parking columns from migration
 	// 00157 on the GET /v1/deployments/{id} response. omitempty
 	// mirrors LastScaleOutAt — "never parked" → no field on the
@@ -2978,7 +2980,7 @@ type DeploymentResponse struct {
 	// pkg/state.UpdateDeploymentTraffic for the rebalance
 	// semantics.
 	TrafficPercent int `json:"traffic_percent"`
-	// Scope (ADR-91 / PR-D) echoes the deployment's
+	// Scope (ADR-091 / PR-D) echoes the deployment's
 	// env-targeting scope. Surfaces on GET /v1/deployments/{id}
 	// and the per-app live list (pkg/state.SerializeDeployment
 	// reads dep.Scope — already populated by the SELECT
@@ -3146,7 +3148,7 @@ type BuildPlan struct {
 }
 
 // UpdateDeploymentRequest is the body for PATCH /v1/deployments/{id}
-// (issue #557 closure / ADR-72). MinInstances is the only mutable
+// (issue #557 closure / ADR-072). MinInstances is the only mutable
 // field on a deployment — the image / digest / overrides / sidecars
 // are immutable post-create (a new deployment is the canonical way
 // to change them).
@@ -3500,7 +3502,7 @@ type RollbackRequest struct {
 	// alert_rule_id column with this UUID so an operator can click
 	// through from the audit timeline to /dashboard/alerts/{id} and
 	// see which alert rule triggered the auto-rollback. Wire-additive
-	// per ADR-16; the field is ignored when nil/empty (legacy
+	// per ADR-016; the field is ignored when nil/empty (legacy
 	// operator-driven rollbacks carry no rule attribution). Only
 	// privileged in-process callers (ActionDispatcher via meterd)
 	// set this; the API does not enforce role because the
@@ -3645,7 +3647,7 @@ type AccountDeployRateLimit struct {
 // POST /v1/orgs/{slug}/keys/{id}/rotate), never on GET — only the
 // prefix + label + scopes + last_used_at + id + status are returned
 // thereafter. Scopes is the explicit permission set attached to the key
-// (e.g. ["admin"], ["apps:read", "deploy:write"]); see ADR-34 rev2.
+// (e.g. ["admin"], ["apps:read", "deploy:write"]); see ADR-034 rev2.
 //
 // IAM-5 (issue #189): ExpiresAt is RFC3339; omitted when the key never
 // expires (admin keys default to nil expiry). Status is one of "active",
@@ -3766,7 +3768,7 @@ type GraceWindowResponse struct {
 // against the closed vocabulary (admin, apps:read, deploy:write,
 // secrets:read, secrets:write, usage:read) and defaults to
 // ["admin"] when omitted so existing callers keep full access. See
-// ADR-34 rev2.
+// ADR-034 rev2.
 type CreateKeyRequest struct {
 	Label  string   `json:"label,omitempty"`
 	Scopes []string `json:"scopes,omitempty"`
@@ -4066,7 +4068,7 @@ type InstanceResponse struct {
 	// the app against gateway logs and slog entries (which also
 	// carry this field).
 	WakeID string `json:"wake_id,omitempty"`
-	// MinInstancesTarget (issue #557 / ADR-71) is the parent app's
+	// MinInstancesTarget (issue #557 / ADR-071) is the parent app's
 	// effective min_instances at the time this instance was admitted.
 	// Populated by apid's list-instances handler via
 	// state.App.EffectiveMinInstances() (max of apps.min_instances
@@ -4109,31 +4111,31 @@ type UsageResponse struct {
 	// accumulated yet (boot, or the schedd reader has no row for
 	// this app).
 	CPUUsageUsec int64 `json:"cpu_usec"`
-	// TXBytes (ADR-46, step 10) is the per-app monthly
+	// TXBytes (ADR-046, step 10) is the per-app monthly
 	// HTTP-response byte delta — informational only. Source:
 	// gateway statusRecorder.Bytes → meterd SampleAndRoll →
-	// usage_minutes.tx_bytes. Not billed (ADR-46 §6); the
+	// usage_minutes.tx_bytes. Not billed (ADR-046 §6); the
 	// gateway-side producer. 0 when no meterd sample has
 	// accumulated yet.
 	TXBytes int64 `json:"tx_bytes"`
-	// NetTxBytes (ADR-46, step 10) is the per-app monthly
+	// NetTxBytes (ADR-046, step 10) is the per-app monthly
 	// byte delta on root-side vethHost.rx_bytes —
 	// informational only. Source: vmmd netstats.Cache →
 	// schedd instancestats.Poller → schedd
 	// ListInstanceStats → meterd SampleAndRoll →
-	// usage_minutes.net_tx_bytes. Not billed (ADR-46 §6).
+	// usage_minutes.net_tx_bytes. Not billed (ADR-046 §6).
 	// 0 when no meterd sample has accumulated yet.
 	NetTxBytes int64 `json:"net_tx_bytes"`
-	// NetRxBytes (ADR-48) is the per-app monthly byte
+	// NetRxBytes (ADR-048) is the per-app monthly byte
 	// delta on root-side vethHost.tx_bytes — mirror of
 	// NetTxBytes on the ingress direction (root → guest).
 	// Source: vmmd netstats.Cache TX path → schedd
 	// instancestats.Poller → meterd SampleAndRoll →
 	// usage_minutes.net_rx_bytes. Informational only —
-	// not billed (ADR-48 §5). 0 when no meterd sample has
+	// not billed (ADR-048 §5). 0 when no meterd sample has
 	// accumulated yet.
 	NetRxBytes int64 `json:"net_rx_bytes"`
-	// ColdBootCount (ADR-48) is the per-app monthly
+	// ColdBootCount (ADR-048) is the per-app monthly
 	// count of customer requests whose authoritative wake outcome
 	// was WAKE_COLD_BOOT. Source: gatewayd's minute-bucketed
 	// usage stream → meterd SampleAndRoll → usage_minutes.
@@ -4154,7 +4156,7 @@ func (u UsageResponse) CPUHours() float64 {
 // NetTxBytes and MUST NOT be added or the same response traffic is counted
 // twice.
 //
-// IMPORTANT (ADR-46, PR-414 I5): the value INCLUDES Ethernet
+// IMPORTANT (ADR-046, PR-414 I5): the value INCLUDES Ethernet
 // framing (~14 + 20 bytes per packet) because net_tx_bytes
 // reads the kernel `/sys/class/net/<vethHost>/statistics/rx_bytes`
 // counter — interface bytes, not IP-payload bytes. A 1 GB HTTP
@@ -4309,7 +4311,7 @@ type ConsumedCreditRow struct {
 	NewBalance int64  `json:"new_balance"`
 }
 
-// --- Dashboard auth (issue #165, ADR-32 PR #2) ----------------------------
+// --- Dashboard auth (issue #165, ADR-032 PR #2) ----------------------------
 
 // OAuthProvider is the issuer name used by the dashboard OAuth flows
 // (the email/identity brokers). The set is intentionally closed — adding
@@ -4323,7 +4325,7 @@ const (
 )
 
 // AuthCapabilities is the body of GET /v1/auth/capabilities
-// (issue #419 / ADR-46). The dashboard reads this on /login to
+// (issue #419 / ADR-046). The dashboard reads this on /login to
 // decide whether to render the "Sign in with Google" / "Sign in
 // with GitHub" buttons. Each per-provider entry reports whether
 // the consent route is wired (Enabled == true) or whether it would
@@ -4503,7 +4505,7 @@ type ExecutionUsageSummaryResponse struct {
 // second). The CPU dimension is a measurement the dashboard will
 // surface in a separate panel without affecting the billing total.
 //
-// ADR-46 (step 10): NetTxBytes is the canonical interface counter; TXBytes is
+// ADR-046 (step 10): NetTxBytes is the canonical interface counter; TXBytes is
 // its gateway-payload diagnostic subset and is never added to the total.
 // Egress remains informational unless EgressBillingMode is shadow or live.
 type UsageSummaryResponse struct {
@@ -4531,14 +4533,14 @@ type UsageSummaryResponse struct {
 	IncludedEgressGB      float64 `json:"included_egress_gb,omitempty"`
 	EgressOverageGB       float64 `json:"egress_overage_gb,omitempty"`
 	EgressMillicentsPerGB int64   `json:"egress_millicents_per_gb,omitempty"`
-	// UsedIngressGB (ADR-48) is the per-month ingress Σ
+	// UsedIngressGB (ADR-048) is the per-month ingress Σ
 	// NetRxBytes / 1024^3. Informational only — not billed
-	// (ADR-48 §5). Same Ethernet-framing caveat as
+	// (ADR-048 §5). Same Ethernet-framing caveat as
 	// UsageResponse.TotalEgressGB. The dashboard's "ingress
 	// this month" panel reads this single number; the
 	// per-app breakdown lives at UsageResponse.NetRxBytes.
 	UsedIngressGB float64 `json:"used_ingress_gb"`
-	// ColdBootTotal (ADR-48) is the per-month Σ of
+	// ColdBootTotal (ADR-048) is the per-month Σ of
 	// customer requests whose wake outcome was WAKE_COLD_BOOT
 	// across every app on this account. Informational only — not
 	// billed. The dashboard's "this customer's cold-boot
@@ -4608,13 +4610,13 @@ func ValidateAppCPUMillicores(cpuMillicores int) *Problem {
 		"Invalid CPU", "cpu_millicores must be one of: 250, 500, 1000")
 }
 
-// --- G6 account self-service (spec §17 G6, ADR-21) -------------------------
+// --- G6 account self-service (spec §17 G6, ADR-021) -------------------------
 
 // AccountExportResponse is the GET /v1/account/export bundle. A
 // single JSON document with one slice per resource type the customer
 // owns (apps, deployments, builds, instances, usage, domains, crons,
 // API keys, app_secrets). Ciphertext passthrough for the secrets
-// slice — the plaintext VALUE never lands in PG (ADR-20), so the
+// slice — the plaintext VALUE never lands in PG (ADR-020), so the
 // customer can rotate their host age key after a restore-from-export
 // without losing the per-secret envelope.
 type AccountExportResponse struct {
@@ -4679,14 +4681,14 @@ type UsageExportResponse struct {
 	MBSeconds    int64  `json:"mb_seconds"`
 	Requests     int64  `json:"requests"`
 	CPUUsageUsec int64  `json:"cpu_usec"`
-	// ADR-46 (step 10): per-app monthly egress bytes —
+	// ADR-046 (step 10): per-app monthly egress bytes —
 	// informational only, not billed. Mirrors the new
 	// UsageResponse.TXBytes / UsageResponse.NetTxBytes fields
 	// (the export bundle and the API shape stay in lockstep).
 	// The gateway-side tx_bytes producer lands in PR-2.
 	TXBytes    int64 `json:"tx_bytes"`
 	NetTxBytes int64 `json:"net_tx_bytes"`
-	// ADR-48: mirror of UsageResponse.NetRxBytes /
+	// ADR-048: mirror of UsageResponse.NetRxBytes /
 	// UsageResponse.ColdBootCount on the export surface.
 	// Informational only — not billed.
 	NetRxBytes    int64 `json:"net_rx_bytes"`
@@ -4699,7 +4701,7 @@ type UsageExportResponse struct {
 // Distinct from UsageResponse which is the per-app monthly
 // rollup (pkg/state.UsageByMonth); the daily route is for
 // yesterday / today / single-day queries where the monthly grain
-// is over-aggregated. ADR-48 §5.
+// is over-aggregated. ADR-048 §5.
 type DailyUsageResponse struct {
 	AppID          string `json:"app_id"`
 	Day            string `json:"day"` // YYYY-MM-DD
@@ -4723,7 +4725,7 @@ func (u UsageExportResponse) CPUHours() float64 {
 // DailyUsageListResponse is the page shape for GET /v1/usage/daily.
 // Mirrors the invoice / deployment list shapes — Items is always
 // non-nil so the JSON encodes an empty array, not null, when the
-// requested day has no rollup rows yet (ADR-48 §5).
+// requested day has no rollup rows yet (ADR-048 §5).
 type DailyUsageListResponse struct {
 	Items []DailyUsageResponse `json:"items"`
 }
@@ -4732,7 +4734,7 @@ type DailyUsageListResponse struct {
 // per-(account, app, day) storage rollup (migrations/
 // 00070_snapshot_storage_daily.sql). Mirrors the snapshot+layer
 // byte totals that the meterd storage rollup cron (pkg/meter/
-// storage.go) populates. ADR-49 §B.3.
+// storage.go) populates. ADR-049 §B.3.
 type StorageUsageResponse struct {
 	AppID         string `json:"app_id"`
 	Day           string `json:"day"` // YYYY-MM-DD
@@ -4827,7 +4829,7 @@ type BillingCancelResponse struct {
 // the create response, per §4.2). Only the prefix + label + scopes +
 // timestamps. Scopes is included so the customer's GDPR export carries
 // the full audit trail of which keys had which permissions at the
-// moment of export (ADR-34 rev2).
+// moment of export (ADR-034 rev2).
 type APIKeyExportResponse struct {
 	ID        string   `json:"id"`
 	Prefix    string   `json:"prefix"`
@@ -4845,7 +4847,7 @@ type APIKeyExportResponse struct {
 //     "restore"; CompletedAt is empty when the action is still in
 //     flight.
 //   - source="event"  — a security event from the events table (IAM-4,
-//     ADR-35). Kind is the namespaced event kind (e.g. "auth.login",
+//     ADR-035). Kind is the namespaced event kind (e.g. "auth.login",
 //     "key.created"); Data is the original jsonb payload.
 //
 // Rows from both sources are interleaved by timestamp descending in
@@ -4865,7 +4867,7 @@ type GdprAuditExportResponse struct {
 // lands here — the customer imports the envelope into another faas
 // install (or their own age tool) to unseal.
 //
-// ADR-92 PR-B: the export lists every scope per app (not just
+// ADR-092 PR-B: the export lists every scope per app (not just
 // default-scope). Scope is required so a customer's import into a
 // fresh install lands each row at the same scope it was sealed at;
 // pre-PR-B this field was missing and on import the row would have
@@ -4873,7 +4875,7 @@ type GdprAuditExportResponse struct {
 // rows on the destination.
 type AppSecretExportResponse struct {
 	AppID      string `json:"app_id"`
-	Scope      string `json:"scope"` // ADR-92 PR-B
+	Scope      string `json:"scope"` // ADR-092 PR-B
 	Key        string `json:"key"`
 	Ciphertext string `json:"ciphertext"` // base64
 	CreatedAt  string `json:"created_at"`
@@ -5493,7 +5495,7 @@ type ListCronRunsResponse struct {
 }
 
 // FireCronResponse is the 202 body for POST /v1/crons/{id}/run
-// (ADR-90 PR-C). The endpoint is asynchronous — apid inserts a
+// (ADR-090 PR-C). The endpoint is asynchronous — apid inserts a
 // pending row into cron_fire_now_requests and emits db.NotifyCronRunNow,
 // then returns 202 immediately. schedd's fire-now consumer
 // (pkg/sched/fire_now.go) processes the row in its own process and
@@ -5513,7 +5515,7 @@ type FireCronResponse struct {
 
 // FireCronRequestResponse is the read shape for the row that backs
 // `GET /v1/cron-fire-now-requests/{request_id}` (issue #791 PR-D /
-// ADR-90 §Sub-decision 7). Nullable fields are *string so a pending
+// ADR-090 §Sub-decision 7). Nullable fields are *string so a pending
 // row does NOT serialise a zero timestamp as a literal
 // "0001-01-01T00:00:00Z".
 //
@@ -5685,7 +5687,7 @@ type AccountDeadLetterPurgeResponse struct {
 	Purged int `json:"purged"`
 }
 
-// --- IAM-4 (ADR-35) — auth audit event surface -----------------------------
+// --- IAM-4 (ADR-035) — auth audit event surface -----------------------------
 //
 // AuditEventResponse is one row of the customer's own security event
 // timeline. The kind taxonomy is documented in
@@ -5695,13 +5697,13 @@ type AccountDeadLetterPurgeResponse struct {
 // "account.plan_changed",
 // "account.deletion_scheduled", "account.deletion_restored".
 //
-// ADR-89 PR-A: "secret.rotated" joins the kind vocabulary. It is
+// ADR-089 PR-A: "secret.rotated" joins the kind vocabulary. It is
 // emitted by the per-secret rotate handler (PR-B) when the row
 // already had a value (rotation, not first-time set) and by
 // pkg/rekey.Replayer when the background re-seal pass rewrites a
 // row's ciphertext. The two cases are distinguished by the
 // audit_log.actor column ("apid" for user-initiated, "rekey"
-// for background) — see ADR-89 D2.
+// for background) — see ADR-089 D2.
 //
 // Subject is the account_id the event was recorded against (string,
 // not the raw uuid UUID type — pkg/api stays string-typed for wire
@@ -5890,7 +5892,7 @@ type PreAuthPolicyObservation struct {
 }
 
 // AppMetricsResponse is the per-app metrics payload returned by
-// GET /v1/apps/{slug}/metrics?range= (issue #273 / ADR-42).
+// GET /v1/apps/{slug}/metrics?range= (issue #273 / ADR-042).
 //
 // Time-windowed via the `range` query param (closed vocabulary, see
 // server handler). When the underlying Prometheus client is
@@ -5921,7 +5923,7 @@ type AppMetricsResponse struct {
 	// 4xx responses remain diagnostic and do not consume availability budget.
 	ErrorRatePct float64 `json:"error_rate_pct"`
 	// ColdStartPct is the share of requests that triggered a cold
-	// boot (the WakeGate leader — see ADR-42 §cold semantics).
+	// boot (the WakeGate leader — see ADR-042 §cold semantics).
 	// Followers waiting on the gate show as zero cold contribution
 	// but their wait is visible via gateway_wake_queue_wait_seconds
 	// on the §12 dashboard.
@@ -5939,7 +5941,7 @@ type AppMetricsResponse struct {
 	// queue_depth metric branch; the public metrics endpoint
 	// surfaces it for dashboard parity.
 	QueueDepth int64 `json:"queue_depth"`
-	// EgressBytes (ADR-46, step 10) is the total
+	// EgressBytes (ADR-046, step 10) is the total
 	// per-app egress byte delta over the window,
 	// queried from vmmd_egress_net_tx_bytes_total{app}
 	// (the Prometheus mirror of usage_minutes.net_tx_bytes;
@@ -5951,7 +5953,7 @@ type AppMetricsResponse struct {
 	// billing unit is canonical interface bytes; this field reports the
 	// Prometheus counter verbatim.
 	EgressBytes int64 `json:"egress_bytes"`
-	// TxBytes (ADR-46 PR-2 / issue #415 PR-2) is the
+	// TxBytes (ADR-046 PR-2 / issue #415 PR-2) is the
 	// gateway-side mirror of EgressBytes. Source:
 	// gateway_egress_tx_bytes_total{app} (the byte
 	// counter drained from the per-instance ring by
@@ -5967,14 +5969,14 @@ type AppMetricsResponse struct {
 	// hasn't drained yet. Unit: interface bytes
 	// (includes framing).
 	TxBytes int64 `json:"tx_bytes"`
-	// Routes (ADR-93) is the per-route breakdown for opt-in apps
+	// Routes (ADR-093) is the per-route breakdown for opt-in apps
 	// (apps.route_metrics_enabled=true). nil when the app is not
 	// opt-in — the dashboard distinguishes "feature off" (Routes
 	// absent) from "feature on, no traffic" (Routes = []). Each
 	// row is the bounded detail from the gatewayd-internal
 	// in-memory reader: max 50 distinct routes + the
 	// __route_other__ overflow bucket. The route label is
-	// method + raw path (pre-rewrite, ADR-93 D6). The shape
+	// method + raw path (pre-rewrite, ADR-093 D6). The shape
 	// matches the existing field-level `x-since: "2026-08"`
 	// header convention so the SDK generator picks it up
 	// automatically.
@@ -6016,7 +6018,7 @@ type AppMetricsResponse struct {
 
 // RouteRow is the per-route detail row returned by the
 // gatewayd-internal control-listener reader at
-// GET /v1/internal/apps/{slug}/routes (ADR-93). The same
+// GET /v1/internal/apps/{slug}/routes (ADR-093). The same
 // structure is wrapped in AppMetricsResponse.Routes by the apid
 // handler. `Route` is the label exactly as emitted on the
 // Prometheus side (method + raw path, or __route_other__ for the
@@ -6037,7 +6039,7 @@ type RouteRow struct {
 	// included, not excluded, so the percentile is the
 	// latency-percentile the customer actually experiences).
 	// The histogram is gateway_request_duration_seconds{app,
-	// route, class} (ADR-93 D4), summed across all classes
+	// route, class} (ADR-093 D4), summed across all classes
 	// for the row.
 	P50MS float64 `json:"p50_ms"`
 	P95MS float64 `json:"p95_ms"`
@@ -6050,7 +6052,7 @@ type RouteRow struct {
 }
 
 // AppRoutesResponse is the fleet route snapshot returned by
-// GET /v1/apps/{slug}/routes (ADR-93 / issue #2416). Production reads a
+// GET /v1/apps/{slug}/routes (ADR-093 / issue #2416). Production reads a
 // bounded Prometheus union across all active compute collectors. Source and
 // collector counts distinguish healthy no traffic, partial telemetry, and a
 // total bridge failure. Single-box development retains the loopback gateway
@@ -6173,7 +6175,7 @@ type AppsMetricsResponse struct {
 	Apps   map[string]AppMetricsResponse `json:"apps"`
 }
 
-// --- Customer-facing SLO surface (issue #696 / ADR-82) -----------------
+// --- Customer-facing SLO surface (issue #696 / ADR-082) -----------------
 
 // SLODuration is the shared latency sub-shape used by AppSLOResponse
 // and AccountSLOResponse. Three percentiles over the SLO window (2xx
@@ -6219,7 +6221,7 @@ func IsValidSLORange(rng string) bool {
 }
 
 // AppSLOResponse is the per-app SLO panel returned by
-// GET /v1/apps/{slug}/slo?window= (issue #696 / ADR-82). Distinct
+// GET /v1/apps/{slug}/slo?window= (issue #696 / ADR-082). Distinct
 // from AppMetricsResponse (issue #273): the SLO surface is a
 // fixed-window (1h/24h/7d) summary of the customer-facing SLO
 // signals, not a 5m slice for the dashboard. The fields overlap
@@ -6419,7 +6421,7 @@ type WakeTimelineJSONRow struct {
 }
 
 // AccountSLOResponse is the flat account-wide SLO rollup returned by
-// GET /v1/account/slo?window= (issue #696 / ADR-82). Mirrors the
+// GET /v1/account/slo?window= (issue #696 / ADR-082). Mirrors the
 // per-app DTO field-for-field except for AppID/AppSlug (the rollup
 // is account-wide). The fields are scalar sums/rates across the
 // account; per-app drill-down is served by the existing
@@ -6502,7 +6504,7 @@ type ProjectApplyRequest struct {
 
 // SourceRefDeployRequest is the JSON body for
 // POST /v1/apps/{slug}/deployments/source-ref (DEPLOY-PROV-4 /
-// ADR-92, issue #739). The CLI never sees the GitHub install
+// ADR-092, issue #739). The CLI never sees the GitHub install
 // token; apid resolves it server-side from the durable
 // github_installations row (state.GitHubInstallForAccount),
 // then dials codeload.github.com via the githubd bridge
@@ -6846,7 +6848,7 @@ type AppliedBuild struct {
 	Error            string `json:"error,omitempty"`
 }
 
-// --- cosign trusted-publisher wire types (issue #472 / ADR-54) -------------
+// --- cosign trusted-publisher wire types (issue #472 / ADR-054) -------------
 //
 // TrustedSigner is one row of the per-app cosign trusted-publisher
 // list. Mirrors AWS Lambda's TrustedSigner's profileArn / profileVersionArn
@@ -7042,7 +7044,7 @@ type AppPrivateNetworkAttachmentRequest struct {
 }
 
 // AdminSetGithubWebhookSecretRequest is the body shape for
-// POST /v1/admin/github-webhook-secrets (PR-D / ADR-12 §7
+// POST /v1/admin/github-webhook-secrets (PR-D / ADR-012 §7
 // amendment). Per-tenant override of the platform-wide
 // FAAS_GITHUB_WEBHOOK_SECRET so a leaked tenant secret can
 // rotate without coordinating every GitHub App install.
@@ -7077,7 +7079,7 @@ type AdminSetGithubWebhookSecretResponse struct {
 }
 
 // SidecarType is the closed enum on Sidecar.Type (issue #463 /
-// ADR-68 §Decision 1). A deployment may have one init helper and up to
+// ADR-068 §Decision 1). A deployment may have one init helper and up to
 // SidecarLongRunningCapMax concurrent sidecars, subject to SidecarCapMax.
 type SidecarType string
 
@@ -7327,7 +7329,7 @@ type Sidecar struct {
 	DependsOn []WorkloadDependency `json:"depends_on,omitempty"`
 }
 
-// Validate enforces ADR-68 §Decisions 1, 2, 4, 5: name grammar,
+// Validate enforces ADR-068 §Decisions 1, 2, 4, 5: name grammar,
 // digest-pinning, type ∈ {init, sidecar}, cmd element non-empty,
 // env key grammar + per-value byte cap, port 0/absent or 1..65535,
 // ram_mb 0/inherit or 32..512, stateful denylist, and dependency
@@ -7365,7 +7367,7 @@ func (s *Sidecar) Validate(limits Limits) *Problem {
 		return ErrSidecarInvalidImage(s.Name,
 			fmt.Errorf("not a digest-pinned reference (got %q)", s.Image))
 	}
-	// Stateful denylist gate (ADR-68 §Decision 4). The image is
+	// Stateful denylist gate (ADR-068 §Decision 4). The image is
 	// already digest-pinned above, so the reference shape is
 	// `repo@sha256:...`; the statefuldenylist matcher strips the
 	// digest suffix + any registry hostname and probes every path
@@ -7809,24 +7811,24 @@ func appendUniqueDependencyName(names []string, name string) []string {
 	return append(names, name)
 }
 
-// --- per-account egress allowlist extra (issue #679 / PR-B / ADR-82) ---
+// --- per-account egress allowlist extra (issue #679 / PR-B / ADR-082) ---
 
 // MaxAccountEgressAllowlistExtra is the admin-set ceiling on the
 // per-account additive budget on top of the plan's
-// apps.egress_allowlist cap (issue #679 / PR-B / ADR-82). Flat
+// apps.egress_allowlist cap (issue #679 / PR-B / ADR-082). Flat
 // 1024 — comfortably above the largest realistic override a Pro
 // or Scale account needs (Pro 16 + 1008 = 1024 max, Scale 64 +
 // 960 = 1024 max). The cap is intentional: a single account's
 // effective allowlist approaching 1024 entries is a customer-
 // abuse signal (a misconfigured SDK would round-trip the entire
 // internet into the per-app set). Operators wanting more should
-// use the operator-bundle (PR-A / ADR-81) which is a separate
+// use the operator-bundle (PR-A / ADR-081) which is a separate
 // additive axis that doesn't consume per-account slot.
 const MaxAccountEgressAllowlistExtra = 1024
 
 // SetAccountEgressAllowlistExtraRequest is the body of
 // PATCH /v1/account/egress_allowlist_extra (issue #679 / PR-B /
-// ADR-82). Extra is the per-account additive budget on top of
+// ADR-082). Extra is the per-account additive budget on top of
 // the plan cap. Extra < 0 is rejected at the apid gate with
 // ErrAccountEgressAllowlistExtraOutOfRange; Extra > 1024 is the
 // admin-set ceiling (MaxAccountEgressAllowlistExtra). Extra ==
@@ -7837,7 +7839,7 @@ type SetAccountEgressAllowlistExtraRequest struct {
 
 // AccountEgressAllowlistExtraResponse is the body of GET
 // /v1/account/egress_allowlist_extra (issue #679 / PR-B /
-// ADR-82). Extra is the per-account additive budget; PlanCap
+// ADR-082). Extra is the per-account additive budget; PlanCap
 // is the plan-only cap (Pro 16 / Scale 64 / Free,Hobby 0); the
 // effective cap is PlanCap + Extra. MaxExtra is the admin-set
 // ceiling (1024) so the dashboard can render the range slider
@@ -7849,7 +7851,7 @@ type AccountEgressAllowlistExtraResponse struct {
 }
 
 // ----------------------------------------------------------------------------
-// Edge rules (ADR-89). Seven per-kind action shapes share one
+// Edge rules (ADR-089). Seven per-kind action shapes share one
 // EdgeRuleResponse; the action column is jsonb in the schema and
 // json.RawMessage on the wire so the SDK / Node / Python
 // generators don't need to model every kind. A typed SDK that
@@ -7967,7 +7969,7 @@ type EdgeRuleHeaderOp struct {
 }
 
 // edgeRuleHeaderForbidden is the hard-coded blacklist of header
-// names a kind=headers rule cannot mutate (ADR-91 §Decision).
+// names a kind=headers rule cannot mutate (ADR-091 §Decision).
 // Per-app configurability is deferred to v2; the closed list ships
 // in v1 as a wire-bypass backstop.
 var edgeRuleHeaderForbidden = map[string]struct{}{
@@ -8068,7 +8070,7 @@ type EdgeRuleCORSAction struct {
 // and simulator use MatchEdgeRuleCORSOrigin for the runtime predicates (so a
 // rule that bypasses the apid validator still matches consistently).
 //
-// Footgun guard (ADR-91 D12) only fires for the bare "*" entry
+// Footgun guard (ADR-091 D12) only fires for the bare "*" entry
 // combined with AllowCredentials: true. A pattern like
 // "https://*.example.com" expands to a concrete origin at
 // request time, so browsers permit credentials for it; the
@@ -8158,7 +8160,7 @@ func (a *EdgeRuleCORSAction) Validate() *Problem {
 	// Access-Control-Allow-Origin: * together with Access-Control-
 	// Allow-Credentials: true (RFC 6454 §7). Reject at create-time
 	// rather than shipping a rule that silently fails in production.
-	// (ADR-91 D12.) Only the bare "*" entry trips the guard — a
+	// (ADR-091 D12.) Only the bare "*" entry trips the guard — a
 	// subdomain/port wildcard expands to a concrete origin at
 	// request time and is credentials-safe.
 	if a.AllowCredentials {
@@ -8179,7 +8181,7 @@ func (a *EdgeRuleCORSAction) Validate() *Problem {
 // excluded: HS* over JWKS would mean a symmetric key served from a
 // public endpoint, where anyone with the URL can forge tokens.
 // Customers needing HMAC-signed JWTs should use a separate secret
-// reference action shape (deferred to a future ADR — ADR-91 D11).
+// reference action shape (deferred to a future ADR — ADR-091 D11).
 var edgeRuleJWTAllowedAlgs = map[string]struct{}{
 	"RS256": {}, "RS384": {}, "RS512": {},
 	"ES256": {}, "ES384": {}, "ES512": {},
@@ -8199,7 +8201,7 @@ type EdgeRuleJWTAction struct {
 // the validator rejects to prevent the gateway from being tricked
 // into fetching JWKS over a private/loopback/link-local address.
 // The firewall already denies egress to these ranges (CLAUDE.md
-// §11); this is the application-layer equivalent (ADR-91 D10).
+// §11); this is the application-layer equivalent (ADR-091 D10).
 // Future enhancement: promote to net.ParseIP + IsPrivate/IsLoopback
 // /IsLinkLocalUnicast for IPv6-multicast edges.
 var edgeRuleJWTAllowedJWKSURLPrefixes = []string{
@@ -8226,7 +8228,7 @@ func (a *EdgeRuleJWTAction) Validate() *Problem {
 		return ErrValidation("jwt action jwks_url must start with https://")
 	}
 	// Defense-in-depth: reject JWKS URLs that resolve to
-	// private/loopback/link-local addresses (ADR-91 D10). The
+	// private/loopback/link-local addresses (ADR-091 D10). The
 	// string-prefix check is cheap; a future enhancement can upgrade
 	// to net.ParseIP + IsPrivate/IsLoopback/IsLinkLocalUnicast.
 	lower := strings.ToLower(a.JWKSURL)
@@ -8283,7 +8285,7 @@ func (a *EdgeRuleIPAction) Validate() *Problem {
 // that we refuse to compile against. The capture group is the URL
 // substring (so the 422 detail can name it); an external reference is
 // any non-empty URL that does NOT resolve to a JSON Pointer (the
-// `#/foo/bar` form). The JWKS-URL defence-in-depth at ADR-91 D10
+// `#/foo/bar` form). The JWKS-URL defence-in-depth at ADR-091 D10
 // uses the same posture but a different regex shape; this is the
 // JSON Schema analogue.
 //
@@ -8322,7 +8324,7 @@ var edgeRuleValidateRefURLPattern = regexp.MustCompile(`"\s*(\$ref|\$id)\s*"\s*:
 //     spec runtime is JSON; non-JSON schemas are out of scope
 //     for v1). Empty = match any Content-Type.
 //   - ApplyWhileStreaming: per-rule opt-in for the streaming
-//     response path (ADR-47). Default false mirrors the §4.1
+//     response path (ADR-047). Default false mirrors the §4.1
 //     Accept: application/json opt-out (an SSE-enabled app keeps
 //     validation off until the customer opts the rule in).
 //   - RejectOnUnknownFields: toggles additionalProperties=false
@@ -8596,7 +8598,7 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 	if err := json.Unmarshal(a.Schema, &probe); err != nil {
 		return ErrValidation(fmt.Sprintf("validate action: schema is not valid JSON: %v", err))
 	}
-	// External-$ref/$id strip. The JWKS-URL guard at ADR-91 D10
+	// External-$ref/$id strip. The JWKS-URL guard at ADR-091 D10
 	// uses the same posture: refuse any URL-shaped value rather
 	// than try to enumerate safe hosts (a regex strip is cheaper
 	// to audit). The gateway side re-strips at compile time as
@@ -8650,7 +8652,7 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 }
 
 // EdgeRuleLimitAction is the wire shape for a kind=limit edge rule
-// (ADR-91 D24). The standalone body-size primitive: a customer
+// (ADR-091 D24). The standalone body-size primitive: a customer
 // who only wants per-route body-size protection ("POST /upload
 // ≤ 5 MB, POST /users ≤ 1 MB, POST /webhooks ≤ 2 MB") declares
 // this kind without shipping a JSON Schema. The hot-path applier
@@ -8671,7 +8673,7 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 //     the cap on a specific path they're using the wrong
 //     primitive (this kind is strictly a tightening primitive).
 //   - MaxBodyBytesStreaming: optional streaming opt-in cap (≤
-//     MaxEdgeRuleLimitBodyBytesStreaming = 100 MiB, ADR-80
+//     MaxEdgeRuleLimitBodyBytesStreaming = 100 MiB, ADR-080
 //     raw-bridge parity). 0 = no streaming carve-out, the
 //     buffered MaxBodyBytes is the cap on both paths. Must be
 //     ≥ MaxBodyBytes when set — a streaming cap that is
@@ -8679,7 +8681,7 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 //     request for a body that was already accepted as buffered,
 //     which is a wire-shape footgun. Runtime enforcement of
 //     this field is deferred to a follow-up PR (stated in
-//     ADR-91 D24 §6); the field is declared, clamped here, and
+//     ADR-091 D24 §6); the field is declared, clamped here, and
 //     clamped again at cmd-side compileLimitRules so a future
 //     runbook can wire enforcement without schema churn.
 type EdgeRuleLimitAction struct {
@@ -8862,7 +8864,7 @@ func validateGeoCountryCode(code string) error {
 }
 
 // EdgeRuleMaintenanceAction is the wire shape for a kind=maintenance
-// edge rule (ADR-91 amendment, PR-A #???). The customer-facing
+// edge rule (ADR-091 amendment, PR-A #???). The customer-facing
 // primitive for "this route is in maintenance mode" — the hot-path
 // applier (pkg/gateway.(*Handler).applyEdgeRuleMaintenance,
 // §4.1.2.13) short-circuits a matched (host, path, http_method)
@@ -8915,7 +8917,7 @@ func (a *EdgeRuleMaintenanceAction) Validate() *Problem {
 }
 
 // EdgeRuleThrottleAction is the wire shape for a kind=throttle edge
-// rule (ADR-91 D20.5 amendment, issue #881). The per-route
+// rule (ADR-091 D20.5 amendment, issue #881). The per-route
 // token-bucket primitive: customers tighten the per-route rps/burst
 // below their plan's plan.RateLimitRPS — the apid validator enforces
 // the sub-plan ceiling; the gateway compiler enforces it again at
@@ -8947,7 +8949,7 @@ func (a *EdgeRuleMaintenanceAction) Validate() *Problem {
 // Per-IP sub-keying is deliberately absent — see
 // pkg/state/types.go::EdgeRuleThrottleAction for the design rationale.
 //
-// Phase 3 (ADR-91 D20.5 amendment 4, ADR-104, issue #881 Phase 3)
+// Phase 3 (ADR-091 D20.5 amendment 4, ADR-104, issue #881 Phase 3)
 // extends the wire shape with optional dimensional keying. The new
 // fields default to zero-values that produce bit-identical behaviour
 // to PR #887's bucket key (appID+"\x00"+ruleID):
@@ -9188,7 +9190,7 @@ func validateThrottleMaxKeys(maxKeys, planMax int) *Problem {
 }
 
 // EdgeRuleBudgetAction is the wire shape for a kind=budget edge rule
-// (ADR-93 §Decision). The per-request wall-clock budget primitive:
+// (ADR-093 §Decision). The per-request wall-clock budget primitive:
 // a customer pins a hard wall-clock deadline on `POST /payment` →
 // 3 s the same way they already pin JWT / IP / geo edge rules. The
 // platform then propagates the remaining time to every downstream
@@ -9603,7 +9605,7 @@ func isEdgeRuleMatchHeaderName(name string) bool {
 }
 
 // RekeyProgress is the response body of
-// GET /v1/admin/secrets/rekey-progress (ADR-89 PR-C). It mirrors
+// GET /v1/admin/secrets/rekey-progress (ADR-089 PR-C). It mirrors
 // pkg/rekey.RekeyProgress exactly — same field names, same JSON tags,
 // same int64 widths — so the on-disk FAAS_REKEY_PROGRESS_FILE and
 // the admin response can share a decoder without a parallel type.
@@ -9766,14 +9768,14 @@ type GithubRecoveryRetryResponse struct {
 
 // ThrottleSuggestionRow is one (route → suggested rate) row in the
 // payload returned by GET /v1/apps/{slug}/throttle-suggestions
-// (ADR-91 D20.5 amendment, issue #881 / PR-E). The recommender is
+// (ADR-091 D20.5 amendment, issue #881 / PR-E). The recommender is
 // read-only — it never auto-applies — and the suggestion is always
 // ≤ the customer's plan ceiling (pkg/api.Limits.RateLimitRPS) so a
 // customer can act on it without a 422 from apid's sub-plan
 // validator.
 //
 // `Route` is the bounded label exactly as emitted on the Prometheus
-// side: method + raw path (the same shape RouteRow.Route uses, ADR-93
+// side: method + raw path (the same shape RouteRow.Route uses, ADR-093
 // D6). The recommender never sees the reserved __route_other__
 // overflow bucket — it is dropped from the suggestions slice and
 // the count surfaces as RoutesCollapsed so the customer can tell
@@ -9802,7 +9804,7 @@ type ThrottleSuggestionRow struct {
 // render the upsell rather than a misleading zero.
 //
 // RoutesCollapsed reports the count of routes that collapsed into
-// __route_other__ during the window (ADR-93 cap = 50). It's a
+// __route_other__ during the window (ADR-093 cap = 50). It's a
 // coverage signal, not a recommendation signal — a non-zero value
 // tells the customer their throttle will be partial-coverage
 // regardless of what limit they set.
@@ -9857,7 +9859,7 @@ type ThrottlePreviewRow struct {
 }
 
 // AppErrorsSummaryResponse is the wire body for
-// GET /v1/apps/{slug}/errors/summary (ADR-96 PR-B). Items is the
+// GET /v1/apps/{slug}/errors/summary (ADR-096 PR-B). Items is the
 // grouped top-N view: one row per (account_id, app_id, fingerprint)
 // that fired within (since, until), sorted by count DESC, then
 // last_seen_at DESC, then fingerprint ASC (mirrors the SQL ORDER BY
@@ -9909,7 +9911,7 @@ type AppErrorSummaryItem struct {
 }
 
 // AppErrorRequestsResponse is the body of
-// GET /v1/apps/{slug}/errors/{fingerprint} (ADR-96 PR-B). The four
+// GET /v1/apps/{slug}/errors/{fingerprint} (ADR-096 PR-B). The four
 // header fields (Fingerprint, ErrorClass, Route, HTTPStatus) are
 // denormalised here so the drill-down page header renders without a
 // second round-trip. Requests is the cursor-paginated window over
@@ -9948,7 +9950,7 @@ type AppErrorRequestItem struct {
 }
 
 // AppErrorSampleResponse is the body of
-// GET /v1/apps/{slug}/errors/{fingerprint}/first (ADR-96 PR-B).
+// GET /v1/apps/{slug}/errors/{fingerprint}/first (ADR-096 PR-B).
 // Embeds AppErrorRequestItem so the wire shape is uniform across the
 // drill-down list and the /first endpoint; HeadersSample is the
 // jsonb-decoded header subset the writer stored (max 8 keys,
@@ -11173,7 +11175,7 @@ type RolloutTransitionResponse struct {
 	Recovery        *RolloutRecoveryReceipt        `json:"recovery,omitempty"`
 }
 
-// --- Jobs (issue #1184 Workstream A / ADR-99) ----------------------
+// --- Jobs (issue #1184 Workstream A / ADR-099) ----------------------
 //
 // JobTemplate is the customer-facing stored definition (the
 // equivalent of an app's static config). Each JobTemplate owns

@@ -1055,6 +1055,9 @@ func TestHandleNotification_AppChanged_Deleted_CarriesAppID(t *testing.T) {
 	}
 	notif := &fakeNotifier{}
 	h := New(store, notif, fakePuller{digest: "sha256:abc"}, &fakeBuilder{bytesOut: 4096}, "./init", appsRoot, silentLogger()).WithStorage(be)
+	if err := store.DeleteApp(context.Background(), app.ID); err != nil {
+		t.Fatal(err)
+	}
 	// New payload: carries app_id. F-04.
 	n := db.Notification{
 		Channel: db.NotifyAppChanged,

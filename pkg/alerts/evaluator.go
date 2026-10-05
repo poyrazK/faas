@@ -1,5 +1,5 @@
 // Package alerts is the meterd-side evaluator that fires customer-
-// configured alert rules (issue #396 / ADR-45). The package is
+// configured alert rules (issue #396 / ADR-045). The package is
 // deliberately split off pkg/meter so pkg/meter stays a pure tick
 // scheduler and the alert logic can be unit-tested without spinning
 // the full daemon timer set.
@@ -16,7 +16,7 @@
 // Single meterd process today → no two evaluators race on
 // ClaimAlertFire per rule. A future meterd-replica deploy relies on
 // the `alert_deliveries.idempotency_key` UNIQUE constraint as the
-// load-bearing dedupe (migrations/00062). Documented in ADR-45.
+// load-bearing dedupe (migrations/00062). Documented in ADR-045.
 //
 // pkg/webhookout.Dispatcher is concurrency-unsafe (see the type's
 // doc comment); the evaluator serialises calls via a sync.Mutex
@@ -47,11 +47,22 @@ import (
 )
 
 // AlertSecretNamespace is the secretbox namespace stamped onto every
-// alert-rule webhook secret (PR 3). The evaluator asserts this on
-// open so a stale seal from a previous namespace tag (defensive
-// future-proofing — only one namespace ships today) fails closed
-// instead of being silently treated as a live alert secret.
-const AlertSecretNamespace = "alert_rule"
+// alert-rule webhook secret. apid seals with it (cmd/apid
+// alertRuleSecretSealLabel references this constant) and the evaluator
+// asserts it on open, so a seal from another namespace fails closed instead
+// of being treated as a live alert secret.
+//
+// apid sealed with "alert_rule_secret" while this constant said "alert_rule",
+// and every test sealed with this constant directly, never through apid. As a
+// result every customer alert webhook failed "namespace mismatch:
+// alert_rule_secret" on production-us. The value now matches what apid has
+// always written, so existing rules deliver without being re-created.
+const AlertSecretNamespace = "alert_rule_secret"
+
+// legacyAlertSecretNamespace is the namespace the evaluator used to expect.
+// Only tests and fixtures sealed with it; it stays accepted so those seals
+// still open.
+const legacyAlertSecretNamespace = "alert_rule"
 
 // Store is the narrow Store surface Evaluator depends on. Defined
 // here so pkg/alerts does not import pkg/state's full 200+ method
@@ -209,7 +220,7 @@ type EvaluatorOptions struct {
 	Audit    *audit.Auditor
 	Identity func() *age.X25519Identity
 	// Identities is the rotation-overlap accessor (issue #316 /
-	// ADR-57): multi-identity slice from secretbox.LoadHostKeys(dir).
+	// ADR-057): multi-identity slice from secretbox.LoadHostKeys(dir).
 	// Pre-rotation: length 1 (just the current). During the 30-day
 	// overlap window: length 2 ([current, previous]). nil means
 	// "not wired" — the evaluator falls back to Identity for
@@ -508,7 +519,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// signature, and we never re-open a future-namespace blob.
 	//
 	// Prefer the rotation-aware identities slice (issue #316 /
-	// ADR-57) over the single identity accessor when both are
+	// ADR-057) over the single identity accessor when both are
 	// wired. The fallback to identity preserves the pre-rotation
 	// contract for callers that haven't migrated to LoadHostKeys.
 	if e.identity == nil && e.identities == nil {
@@ -544,7 +555,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		e.recordFailure(ctx, rule, deliveryID, 0, "secret open failed: "+err.Error())
 		return
 	}
-	if ns != AlertSecretNamespace {
+	if ns != AlertSecretNamespace && ns != legacyAlertSecretNamespace {
 		e.log.Warn("alerts: webhook secret namespace mismatch; skipping dispatch",
 			"rule", rule.ID, "got_namespace", ns, "want", AlertSecretNamespace)
 		e.recordFailure(ctx, rule, deliveryID, 0, "namespace mismatch: "+ns)

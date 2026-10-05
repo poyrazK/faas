@@ -1,3 +1,4 @@
+// adr: 409
 package udpd
 
 import (
@@ -45,14 +46,14 @@ func TestUDPTargetResolverValidatesIntentBeforeWake(t *testing.T) {
 	resolver := &StoreTargetResolver{Store: store, Admitter: admit}
 	route := Route{ListenerID: intent.ID, PublicPort: intent.PublicPort, AppID: app.ID, AccountID: acct.ID, ListenerName: "dns", GuestPort: 5353}
 	maintenance := true
-	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{MaintenanceMode: &maintenance}); err != nil {
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{SetMaintenanceMode: true, MaintenanceMode: &maintenance}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := resolver.ResolveTarget(ctx, route); err == nil || admit.calls != 0 {
 		t.Fatalf("maintenance app admitted a wake: err=%v calls=%d", err, admit.calls)
 	}
 	maintenance = false
-	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{MaintenanceMode: &maintenance}); err != nil {
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{SetMaintenanceMode: true, MaintenanceMode: &maintenance}); err != nil {
 		t.Fatal(err)
 	}
 	target, err := resolver.ResolveTarget(ctx, route)
@@ -112,7 +113,7 @@ func TestUDPTargetResolverValidatesIntentBeforeWake(t *testing.T) {
 		t.Fatalf("running target=%+v calls=%d", target, admit.calls)
 	}
 	maintenance = true
-	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{MaintenanceMode: &maintenance}); err != nil {
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{SetMaintenanceMode: true, MaintenanceMode: &maintenance}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := resolver.ResolveTarget(ctx, route); err == nil {
@@ -122,7 +123,7 @@ func TestUDPTargetResolverValidatesIntentBeforeWake(t *testing.T) {
 		t.Fatal("maintenance app caused admission")
 	}
 	maintenance = false
-	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{MaintenanceMode: &maintenance}); err != nil {
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{SetMaintenanceMode: true, MaintenanceMode: &maintenance}); err != nil {
 		t.Fatal(err)
 	}
 	if target, err := resolver.ResolveTarget(ctx, route); err != nil || target.InstanceID != instance.ID {

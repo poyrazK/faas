@@ -72,3 +72,35 @@ func TestDeploymentAdvanceRouteGateCLI(t *testing.T) {
 		})
 	}
 }
+
+// TestDeploymentAdvanceAcceptsRevisionWithApp — production-us rejected
+// `deployment advance v5 --app h3-rollout --expected-step 1`, although
+// summary and wait take the same form. The revision now resolves through
+// the app's deployment list before the advance.
+func TestDeploymentAdvanceAcceptsRevisionWithApp(t *testing.T) {
+	resetJSONOut(t)
+	setPreviewTestAuth(t)
+	id := "11111111-1111-4111-8111-111111111111"
+	advanced := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/h3-rollout/deployments":
+			writeJSONTest(w, map[string]any{"items": []api.DeploymentResponse{{ID: id, Revision: 5}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments/"+id+"/canary/advance":
+			advanced = true
+			writeJSONTest(w, api.CanaryAdvanceResponse{Deployment: api.DeploymentResponse{ID: id, CanaryStep: 2, TrafficPercent: 50}, AuditID: "7"})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	var out bytes.Buffer
+	oldOut := osStdout
+	osStdout = &out
+	t.Cleanup(func() { osStdout = oldOut })
+	if code := run([]string{"deployment", "advance", "v5", "--app", "h3-rollout", "--expected-step", "1"}); code != 0 || !advanced {
+		t.Fatalf("exit %d advanced=%v: %s", code, advanced, out.String())
+	}
+}

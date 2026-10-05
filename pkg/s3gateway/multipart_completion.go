@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -154,9 +155,11 @@ func (h *Handler) executeMultipartCompletion(w http.ResponseWriter, r *http.Requ
 	}
 	callCtx, cancel := context.WithTimeout(r.Context(), api.ObjectMultipartOperationTimeout)
 	defer cancel()
-	err := objectstorage.CompleteMultipart(callCtx, req.provider, req.bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
-		SessionID: u.ID, Key: u.Key, ProviderUploadID: u.ProviderUploadID, SizeBytes: u.SizeBytes, Parts: toProviderParts(u.Parts),
-	}, u.CompletionConditions)
+	err := objectstorageactivity.Run(callCtx, h.store, req.bucket, func(mutationCtx context.Context) error {
+		return objectstorage.CompleteMultipart(mutationCtx, req.provider, req.bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
+			SessionID: u.ID, Key: u.Key, ProviderUploadID: u.ProviderUploadID, SizeBytes: u.SizeBytes, Parts: toProviderParts(u.Parts),
+		}, u.CompletionConditions)
+	})
 	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(r.Context()), api.ObjectUploadSettlementTimeout)
 	defer finishCancel()
 	if err != nil {

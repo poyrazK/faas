@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,8 @@ type qualificationProvider struct {
 	privilegeErr      error
 	privilegeEvidence *CredentialPrivilegeEvidence
 	isolationErr      error
+	readOnlyErr       error
+	readOnlyEvidence  *ReadOnlyCredentialEvidence
 }
 
 func (p *qualificationProvider) Capabilities() Capabilities { return p.capabilities }
@@ -99,6 +102,13 @@ func (p *qualificationProvider) VerifyRestoreCredentialIsolation(context.Context
 	return p.isolationErr
 }
 
+func (p *qualificationProvider) ProbeReadOnlyCredentials(context.Context, string) (ReadOnlyCredentialEvidence, error) {
+	if p.readOnlyEvidence != nil {
+		return *p.readOnlyEvidence, p.readOnlyErr
+	}
+	return ReadOnlyCredentialEvidence{Restricted: true, PasswordRecovered: true, RotationPreservesData: true, Revoked: true}, p.readOnlyErr
+}
+
 func (p *qualificationProvider) Usage(_ context.Context, _ string, window UsageWindow) (Usage, error) {
 	p.usage++
 	return Usage{Window: window, Readings: []MeterReading{{Meter: MeterComputeUnitSeconds, Quantity: 1}}}, nil
@@ -151,7 +161,7 @@ func TestQualifyProviderExercisesLifecycleAndCleansUp(t *testing.T) {
 	if !provider.deleted || provider.provision != 2 || provider.inspect != 2 || provider.usage != 1 || provider.restore != 1 || provider.issue != 3 || provider.revoke != 2 || provider.delete != 3 {
 		t.Fatalf("provider calls = %+v", provider)
 	}
-	if len(report.Checks) != 35 {
+	if len(report.Checks) != 36 {
 		t.Fatalf("checks = %d (%+v)", len(report.Checks), report.Checks)
 	}
 	if report.ScaleToZero == nil || !report.ScaleToZero.Suspended || !report.ScaleToZero.Resumed || report.ScaleToZero.WakeLatencyMS != 250 {
@@ -191,7 +201,7 @@ func TestNewStagingProvisioningGateRequiresExactQualification(t *testing.T) {
 	values := map[string]string{
 		EnvironmentEnv:              "staging",
 		QualificationEnv:            "true",
-		QualificationVersionEnv:     "3",
+		QualificationVersionEnv:     strconv.Itoa(QualificationArtifactVersion),
 		QualificationBackendEnv:     backend.ID,
 		QualificationFingerprintEnv: backend.Fingerprint,
 		QualificationUntilEnv:       now.Add(time.Hour).Format(time.RFC3339),
@@ -383,7 +393,7 @@ func TestBuildAndEvaluateQualificationApproval(t *testing.T) {
 		Approval:           &approval,
 		ApprovalEnv: map[string]string{
 			QualificationEnv:            "true",
-			QualificationVersionEnv:     "3",
+			QualificationVersionEnv:     strconv.Itoa(QualificationArtifactVersion),
 			QualificationBackendEnv:     approval.BackendID,
 			QualificationFingerprintEnv: approval.BackendFingerprint,
 			QualificationUntilEnv:       approval.ExpiresAt.UTC().Format(time.RFC3339),

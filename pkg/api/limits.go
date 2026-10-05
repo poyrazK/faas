@@ -84,6 +84,10 @@ const EnvironmentGitOpsReportCheckInterval = time.Minute
 const EnvironmentGitOpsReportRetryInterval = 30 * time.Second
 const EnvironmentGitOpsReportIdleInterval = 5 * time.Second
 
+// Bound completed report history while retaining recent diagnostic evidence.
+const EnvironmentGitOpsReportRetention = 7 * 24 * time.Hour
+const EnvironmentGitOpsReportRunsMaxPerSource = 1000
+
 // Qualification is separately leased from intent reconciliation. An expired
 // executor cannot publish evidence for a later attempt.
 const EnvironmentGitOpsQualificationLeaseDuration = 5 * time.Minute
@@ -181,27 +185,32 @@ const (
 	OperationArtifactTransfersPerAccount       = 4
 	OperationArtifactTransfersPerNode          = 8
 	OperationArtifactTransferTimeout           = 30 * time.Second
+	OperationArtifactStagingLifetime           = 2 * time.Minute
+	OperationArtifactCleanupLease              = time.Minute
+	OperationArtifactCleanupRetry              = 5 * time.Minute
 )
 
 // OperationPlanLimits bounds durable control-plane state independently from
 // VM admission. Existing asynchronous execution quotas continue to apply.
 type OperationPlanLimits struct {
-	Allowed                     bool
-	DefinitionsPerApp           int
-	PendingPerAccount           int
-	ReportsPerOperation         int
-	RecoveriesPerOperation      int
-	ReportBytes                 int
-	SchemaBytes                 int
-	ProgressStages              int
-	SubscriptionsPerAccount     int
-	ReportMinIntervalMS         int
-	ResultRetentionSeconds      int
-	EventRetentionSeconds       int
-	IdempotencyRetentionSeconds int
-	ArtifactsPerOperation       int
-	ArtifactMaxBytes            int64
-	ArtifactTotalMaxBytes       int64
+	Allowed                         bool
+	DefinitionsPerApp               int
+	PendingPerAccount               int
+	ReportsPerOperation             int
+	RecoveriesPerOperation          int
+	ReportBytes                     int
+	SchemaBytes                     int
+	ProgressStages                  int
+	SubscriptionsPerAccount         int
+	ReportMinIntervalMS             int
+	ResultRetentionSeconds          int
+	EventRetentionSeconds           int
+	IdempotencyRetentionSeconds     int
+	ArtifactsPerOperation           int
+	ArtifactMaxBytes                int64
+	ArtifactTotalMaxBytes           int64
+	RetainedArtifactBytesPerAccount int64
+	RetainedArtifactsPerAccount     int
 }
 
 // A restore hook is on the wake critical path. Keep its customer timeout
@@ -280,6 +289,75 @@ const (
 	RealtimeResumeBearerTokenMaxBytes        = 3072
 )
 
+// Private PostgreSQL copy bounds, independent from data/storage entitlements.
+// An oversized inventory or archive fails capture; it is never truncated.
+const (
+	// Dedicated APID copy-worker service bounds include the process and its
+	// subprocesses. Provider PostgreSQL compute is admitted separately.
+	PostgresCopyWorkerMemoryMaxBytes   int64 = 1 << 30
+	PostgresCopyWorkerCPUMillicoresMax       = 1000
+	PostgresCopyWorkerTasksMax               = 64
+	// Selected source databases per private checkpoint admission barrier.
+	// Oversize sets fail before provider or SQL IO; they are never truncated.
+	PostgresCheckpointDatabasesMax = 1024
+	PostgresCopyInventoryMaxBytes  = 4 << 20
+	PostgresCopyEnvelopeMaxBytes   = PostgresCopyInventoryMaxBytes + (16 << 10)
+	PostgresCopyCiphertextMaxBytes = PostgresCopyEnvelopeMaxBytes + (64 << 10)
+	// PostgresCopyReaderMaxOperations bounds a private reader's retained
+	// provider operation chain. Oversize chains cannot retire ownership.
+	PostgresCopyReaderMaxOperations = 128
+	// Temporary reader ownership has its own structural account ceiling;
+	// reservations also retain the native capture's database quota charge.
+	PostgresCopyReadersPerAccountMax = 64
+	// Private archive transfer bounds are structural, not storage entitlements.
+	PostgresCopyArchiveMaxBytes           int64 = 1 << 40
+	PostgresCopyArchiveCiphertextMaxBytes int64 = 2 * PostgresCopyArchiveMaxBytes
+	PostgresCopyArchiveBytesPerAccountMax int64 = 64 * PostgresCopyArchiveCiphertextMaxBytes
+	PostgresCopyArchivesPerAccountMax           = 4096
+	PostgresCopyToolOutputMaxBytes              = 64 << 10
+	PostgresCopyConnectTimeoutSeconds           = 10
+	// Private import and verification windows share the admission ceiling: one
+	// identity-checking connection and one serial data worker connection.
+	PostgresCopyMaintenanceConnections    = 2
+	PostgresCopyMaintenanceCleanupTimeout = 10 * time.Second
+	// Independent contents verification bounds private worker work, not a storage
+	// entitlement. Row payloads stream; only keyed row digests enter private spools.
+	PostgresCopyContentsRelationsMax          = 65536
+	PostgresCopyContentsTypesMax              = 65536
+	PostgresCopyContentsColumnsMax            = 1 << 20
+	PostgresCopyContentsLargeObjectsMax       = 65536
+	PostgresCopyContentsTypeDepthMax          = 64
+	PostgresCopyContentsSortMemoryMax         = 8 << 20
+	PostgresCopyContentsSortDiskMax     int64 = 64 << 30
+	PostgresCopyContentsSortLevelsMax         = 32
+	PostgresCopyContentsReadBlockBytes        = 1 << 20
+	PostgresCopyContentsCleanupTimeout        = 10 * time.Second
+	// A single private worker owns a node-local contents spool. These bound
+	// simultaneous sort work; they are not VM CPU/RSS or billing allowances.
+	PostgresCopyContentsReadersPerWorkerMax          = 2
+	PostgresCopyContentsSortMemoryPerWorkerMax       = PostgresCopyContentsReadersPerWorkerMax * PostgresCopyContentsSortMemoryMax
+	PostgresCopyContentsSortDiskPerWorkerMax         = PostgresCopyContentsReadersPerWorkerMax * PostgresCopyContentsSortDiskMax
+	PostgresCopyContentsSpoolFreeReserveMin    int64 = 1 << 30
+	// Original manifests retain these account reservations until an explicit
+	// qualified retirement protocol exists; reader cleanup does not release them.
+	PostgresCopyContentsManifestsPerAccountMax       = 4096
+	PostgresCopyContentsBytesPerAccountMax     int64 = 1 << 30
+	// One retained verification result per charged contents owner; aggregate
+	// ciphertext is bounded by the contents owner count (64 MiB per account).
+	PostgresCopyVerificationEnvelopeMaxBytes   = 8 << 10
+	PostgresCopyVerificationCiphertextMaxBytes = 16 << 10
+	// Total native verification attempts per original database, including the
+	// first window. Retries keep closed history and need separate worker admission.
+	PostgresCopyVerificationAttemptsMax = 3
+	// Structural planned read-credit ceilings. Separate from measured resource
+	// usage, worker placement, storage entitlements and monetary billing.
+	PostgresCopyVerificationReadBytesPerDatabaseMax int64 = PostgresCopyVerificationAttemptsMax * PostgresCopyArchiveMaxBytes
+	PostgresCopyVerificationReadBytesPerAccountMax  int64 = PostgresCopyArchiveBytesPerAccountMax
+	// Includes the original proof and two subordinate retry holds. Parent FKs
+	// retain the charged contents owner until all attempt evidence is retired.
+	PostgresCopyVerificationBytesPerAccountMax = PostgresCopyContentsManifestsPerAccountMax * PostgresCopyVerificationAttemptsMax * PostgresCopyVerificationCiphertextMaxBytes
+)
+
 // Operator-configurable object-storage preview safeguards, not plan allowances
 // or billable storage entitlements. Metering/pricing need a separate decision.
 // Native inventory pages are durably staged between bounded worker sweeps.
@@ -293,6 +371,14 @@ const (
 const MaxObjectCopyDateHeaderBytes = 128
 
 // A version page plus its private paired continuation identity.
+// ObjectOwnedCleanupBatchSize bounds each sealed recursive cleanup pass,
+// including exact-version protection reads. Further batches use durable retries.
+const ObjectOwnedCleanupBatchSize = 100
+
+// ObjectOwnedCleanupBucketBatch bounds the account grace sweep, including
+// buckets attached to app tombstones.
+const ObjectOwnedCleanupBucketBatch = 20
+
 const ObjectVersionReferenceBatchMax = ObjectVersionInventoryPageSize + 1
 
 // Permanent immutable deletion is a single bounded provider attempt. Its
@@ -307,7 +393,9 @@ const (
 	MaxPlatformTenantRequestsPerDay    int64 = 100_000_000
 	// RevisionPinMaxTTLSeconds bounds how long a superseded deployment can
 	// remain addressable by clients after a stable cutover.
-	RevisionPinMaxTTLSeconds     = 7 * 24 * 60 * 60
+	RevisionPinMaxTTLSeconds = 7 * 24 * 60 * 60
+	// RevisionPinCleanupPageMax bounds one expiry transaction and excludes active operation references.
+	RevisionPinCleanupPageMax    = 500
 	ProjectReleaseSetMaxMembers  = 100
 	ProjectReleaseSetPageDefault = 50
 	ProjectReleaseSetPageMax     = 100
@@ -336,6 +424,7 @@ const (
 	MaxObjectUploadSpoolBytes           int64 = 5 << 30
 	ObjectUploadSpoolMinFreeBytes       int64 = 1 << 30
 	ObjectTransferTimeout                     = 30 * time.Minute
+	ObjectMutationObservationTimeout          = 5 * time.Second
 	MaxObjectTransferTimeout                  = 24 * time.Hour
 	DefaultObjectConcurrentUploads            = 4
 	MaxObjectConcurrentUploads                = 64
@@ -355,6 +444,8 @@ const (
 	ObjectProviderVersionIDMaxBytes           = 1024
 	ObjectUploadSettlementTimeout             = 5 * time.Second
 	ObjectMultipartOperationTimeout           = 90 * time.Second
+	ObjectMultipartInitiationMaxPages         = 100
+	ObjectProviderUploadIDMaxBytes            = 4096
 	ObjectWriteReceiptPageDefault             = 50
 	ObjectWriteReceiptPageMax                 = 100
 	ObjectWriteReceiptCursorMaxBytes          = 512
@@ -372,6 +463,11 @@ const (
 	MaxActiveMultipartUploadsPerBucket        = 100
 	ObjectMultipartUploadTTL                  = 24 * time.Hour
 
+	// Admission bounds for brokered upload URLs. Expiry never drains active IO.
+	DefaultObjectSignedURLExpiresSeconds = 300
+	MaxObjectSignedURLExpiresSeconds     = 900
+	ObjectUploadGrantMaxHeaderBytes      = 16 << 10
+	ObjectUploadGrantPruneBatch          = 1000
 	// Fixed-size multipart provider URLs share the same bounds across adapters
 	// and durable signing admission.
 	ObjectMultipartPartURLDefaultTTLSeconds = 300
@@ -418,23 +514,26 @@ const (
 	MaxFOCUSExportBytes = 3 << 20
 	// Managed operations bound durable configuration, queue growth, and leases.
 	// MaxExclusivePoliciesPerAccount counts non-retired policies (ADR-427).
-	MaxExclusivePoliciesPerAccount = 64
-	MaxExclusivePendingPerAccount  = 10000
-	MinExclusiveLeaseSeconds       = 5
-	MaxExclusiveLeaseSeconds       = 300
-	DefaultExclusiveLeaseSeconds   = 30
-	MaxExclusiveAttemptSeconds     = 86400
-	MaxExclusiveMembers            = 100
-	MaxExclusiveIdentityBytes      = 128
-	MaxExclusiveEffectsPerCommit   = 32
-	DefaultExclusiveAttempts       = 5
-	MaxExclusiveAttempts           = 100
-	DefaultExclusiveRetrySeconds   = 5
-	MaxExclusiveRetrySeconds       = 3600
-	MaxExclusiveResultBytes        = 1 << 20
-	MaxExclusiveRequestBytes       = 2 << 20
-	MaxExclusiveErrorBytes         = 1024
-	MaxExclusiveInspectionRows     = 100
+	MaxExclusivePoliciesPerAccount   = 64
+	MaxExclusivePendingPerAccount    = 10000
+	MinExclusiveLeaseSeconds         = 5
+	MaxExclusiveLeaseSeconds         = 300
+	DefaultExclusiveLeaseSeconds     = 30
+	MaxExclusiveAttemptSeconds       = 86400
+	MaxExclusiveMembers              = 100
+	MaxExclusiveIdentityBytes        = 128
+	MaxExclusiveEffectsPerCommit     = 32
+	MaxExclusiveEffectPayloadBytes   = 64 << 10
+	MaxExclusiveEffectTypeBytes      = 256
+	DefaultExclusiveAttempts         = 5
+	MaxExclusiveAttempts             = 100
+	DefaultExclusiveRetrySeconds     = 5
+	MaxExclusiveRetrySeconds         = 3600
+	MaxExclusiveResultBytes          = 1 << 20
+	MaxExclusiveGatewayResponseBytes = MaxExclusiveResultBytes + 4096
+	MaxExclusiveRequestBytes         = 2 << 20
+	MaxExclusiveErrorBytes           = 1024
+	MaxExclusiveInspectionRows       = 100
 
 	OperationStreamLease           = 30 * time.Second
 	OperationStreamRenewInterval   = 10 * time.Second
@@ -506,7 +605,7 @@ func CustomDomainLimitsFor(p Plan) (perApp, perAccount int, ok bool) {
 }
 
 // PlanResourceShape is the canonical RAM/vCPU pair advertised for a plan.
-// Guest vCPU topology is plan-derived in v1 (ADR-14 and ADR-152); it is not
+// Guest vCPU topology is plan-derived in v1 (ADR-014 and ADR-152); it is not
 // a persisted per-app override. RAM can still be selected below the plan cap
 // through the existing resource-profile contract. The shape is therefore the
 // pair used when a caller explicitly supplies both values, while omitted vCPU
@@ -752,7 +851,7 @@ type Limits struct {
 	// WorkerReplicasMax / ServiceReplicasMax / JobMaxRuntimeS
 	// (issue #1186 §D / ADR-137) bound the per-execution-mode
 	// capacity for each plan. Free has all three at zero — Free
-	// stays request-mode only (ADR-137 §Decision 3 / ADR-69
+	// stays request-mode only (ADR-137 §Decision 3 / ADR-069
 	// precedent: sidecars are paid-only, so is every non-request
 	// execution mode). apid's updateApp + createApp handlers
 	// gate on these via the corresponding
@@ -774,7 +873,7 @@ type Limits struct {
 	// in Plan.LimitsFor via CertExpiryWarningDaysDefault.
 	CertExpiryWarningDays int
 
-	// End-to-end request budget (ADR-93). Per-plan overrides for
+	// End-to-end request budget (ADR-093). Per-plan overrides for
 	// the platform's wall-clock deadline on every customer-facing
 	// request. 0 falls back to the type-aware defaults
 	// (RequestBudgetAppDefault for Apps, RequestBudgetDefault for
@@ -784,7 +883,7 @@ type Limits struct {
 	RequestBudgetMs    int // 0 → type-aware default; non-zero plan override
 	RequestBudgetMaxMs int // 0 → RequestBudgetMax; non-zero must be ≥ RequestBudgetMs
 
-	// CPU fairness (issue #301 / ADR-44). The 3-level cgroup hierarchy
+	// CPU fairness (issue #301 / ADR-044). The 3-level cgroup hierarchy
 	// (faas-tenant.slice/tenant-<plan>.slice/<instance>) enforces these
 	// per-plan via two complementary channels:
 	//
@@ -812,7 +911,7 @@ type Limits struct {
 	RateLimitRPS   int // token-bucket refill rate
 	RateLimitBurst int // token-bucket burst
 	// RateLimitPerAccountRPM is the per-account requests/minute cap
-	// (ADR-40 / issue #292). Distinct from RateLimitRPS/Burst which are
+	// (ADR-040 / issue #292). Distinct from RateLimitRPS/Burst which are
 	// per-app. Bucket parameters consumed by pkg/gateway.Limiter.AllowAccount.
 	// Bounds the cross-app botnet signature — a customer rotating across
 	// many apps stays under per-app rps individually but cannot exceed
@@ -845,7 +944,7 @@ type Limits struct {
 	// requests at the gateway edge — these cap the downstream
 	// consequence (one wake per cold-boot, one wake per warm fan-out,
 	// N wakes per cron tick). Consumed by
-	// pkg/sched.WakeRateLimiter (ADR-99 PR-0 / ADR-80 Risk #1).
+	// pkg/sched.WakeRateLimiter (ADR-099 PR-0 / ADR-080 Risk #1).
 	//
 	// Units: per-minute refill, with `WakeBurstPerApp` as the bucket
 	// ceiling. The minute-scale (vs second-scale at the gateway) is
@@ -890,11 +989,18 @@ type Limits struct {
 	// declare on top of TenantEgressBasePorts (ADR-361). 0 = the plan
 	// cannot declare any (Free/Hobby).
 	EgressExtraPortsMax int
+	// ServiceTCPSessionsPerAccount caps concurrent private TCP sessions an
+	// account's workloads may hold to its own services through the
+	// node-local service TCP proxy (ADR-576). It is enforced per compute
+	// node, like the public raw-TCP account cap, and is independent of
+	// EgressExtraPortsMax: reaching a same-account service is not tenant
+	// egress.
+	ServiceTCPSessionsPerAccount int
 
 	// Secrets (spec §11/G2). Ciphertext quota per app; per-value byte cap.
 	// SecretCountMax bounds the (app_id, scope, key) row count across every
-	// scope the customer has minted — ADR-90 D6 parallel posture for the
-	// secret surface (ADR-92). A Free-tier customer with 4 prod secrets +
+	// scope the customer has minted — ADR-090 D6 parallel posture for the
+	// secret surface (ADR-092). A Free-tier customer with 4 prod secrets +
 	// 4 staging secrets = 8 total reaches the cap; the next PUT gets 403
 	// CodePlanLimitSecrets on the next PUT. SecretValueMaxBytes bounds the
 	// plaintext value the customer may PUT — apid rejects larger values
@@ -902,19 +1008,19 @@ type Limits struct {
 	SecretCountMax      int // max secrets per app across all scopes (Free 8, Hobby 25, Pro 50, Scale 100)
 	SecretValueMaxBytes int // per-secret value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
 
-	// Customer env vars (issue #395 / ADR-45). Plaintext per-app store
+	// Customer env vars (issue #395 / ADR-045). Plaintext per-app store
 	// for non-sensitive runtime config (LOG_LEVEL, FEATURE_X, etc.). The
 	// quota shape mirrors secrets minus the per-secret seal cost — values
 	// are stored as-is, no ciphertext. EnvVarsMax bounds the (app_id,
 	// scope, key) row count across every scope the customer has minted
-	// (ADR-90 D6). EnvValueMaxBytes bounds the per-value byte cap.
+	// (ADR-090 D6). EnvValueMaxBytes bounds the per-value byte cap.
 	// Per-plan values are tuned to cover typical 12-factor config
 	// surface without letting one app monopolise the table.
 	EnvVarsMax       int // max env vars per app across all scopes (Free 16, Hobby 32, Pro 64, Scale 256)
 	EnvValueMaxBytes int // per-value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
 
 	// TrustedSignerCountMax bounds the (app_id, signer_name) row count
-	// in app_trusted_signers (issue #472 / ADR-54). Mirrors
+	// in app_trusted_signers (issue #472 / ADR-054). Mirrors
 	// EnvVarsMax's posture — a config cap, not a credential one.
 	// Per-plan values are tuned to cover the typical CI rotation
 	// surface (3-5 publishers: GitHub Actions, GitLab CI, Jenkins,
@@ -926,7 +1032,7 @@ type Limits struct {
 	// Free tier keeps its "ship any image" path.
 	TrustedSignerCountMax int // Free 0, Hobby 4, Pro 8, Scale 16
 
-	// RegistryCredentialMax (issue #461 / ADR-62) bounds the per-app
+	// RegistryCredentialMax (issue #461 / ADR-062) bounds the per-app
 	// count of sealed Basic Auth credentials, one row per (app, host).
 	// Free = 0 — Free cannot pull from private registries (the abuse
 	// path of credentialed pulls on a single-concurrency plan is not
@@ -945,7 +1051,7 @@ type Limits struct {
 	// §6.5). Free keeps the default scale-to-zero behaviour because
 	// `min_instances = N` keeps N × RAMMB resident at all times, which
 	// is the cost shape of the always-on tier. Hobby + Pro + Scale opt
-	// in (issue #462 / ADR-58 PR-A tier-up: Hobby unlocked at PR-A
+	// in (issue #462 / ADR-058 PR-A tier-up: Hobby unlocked at PR-A
 	// because the bill auto-counts via pkg/meter/sampler.go:238-239 and
 	// the max_concurrency cap is bounded). apid's updateApp handler
 	// gates the PATCH body on this flag.
@@ -956,7 +1062,7 @@ type Limits struct {
 	// abuse surface.
 	CustomMetricsAllowed bool
 
-	// MaxInstancesAllowed (issue #462 / ADR-58) toggles the per-app
+	// MaxInstancesAllowed (issue #462 / ADR-058) toggles the per-app
 	// ceiling on live instances. Mirrors MinInstancesAllowed: Hobby+
 	// unlock, Free stays off. The customer-authored `max_instances`
 	// is bounded above by the plan's MaxConcurrency (already a
@@ -965,8 +1071,8 @@ type Limits struct {
 	// `Plan.MaxInstancesAllowed()` reads this field.
 	MaxInstancesAllowed bool
 
-	// MaxMinInstances (issue #557 / ADR-71) bounds the per-app
-	// cold-wake floor independent of MaxConcurrency. ADR-71
+	// MaxMinInstances (issue #557 / ADR-071) bounds the per-app
+	// cold-wake floor independent of MaxConcurrency. ADR-071
 	// §Decision 5: Hobby 1, Pro 3, Scale 10, Free 0. The cap is
 	// tighter than today's implicit MaxConcurrency clamp (1/2/5/20)
 	// because the floor is resident RAM against the §6.2-2
@@ -1145,7 +1251,7 @@ type Limits struct {
 	// apps-row FOR UPDATE lock (mirrors CreateCronIfUnderQuota).
 	ReservedConcurrencyPerAccount int
 
-	// PublicAuthBearerAllowed (issue #477 / ADR-79) gates whether
+	// PublicAuthBearerAllowed (issue #477 / ADR-079) gates whether
 	// the plan may opt apps into public_auth_mode='bearer'. Free =
 	// false (Free apps stay public-by-default — no-signup friction);
 	// Hobby+ = true. Enforced at the apid PATCH validator with 402
@@ -1153,7 +1259,7 @@ type Limits struct {
 	// allowed regardless of plan (default), and the 'basic' mode is
 	// gated by PublicAuthBasicAllowed below.
 	PublicAuthBearerAllowed bool
-	// PublicAuthBasicAllowed (issue #477 / ADR-79) gates whether
+	// PublicAuthBasicAllowed (issue #477 / ADR-079) gates whether
 	// the plan may opt apps into public_auth_mode='basic'. Free +
 	// Hobby = false (basic adds a sealed-credential storage cost
 	// and the Hobby customer shape doesn't typically need HTTP Basic
@@ -1163,7 +1269,7 @@ type Limits struct {
 	// (return false) — same contract as the other accessors above.
 	PublicAuthBasicAllowed bool
 
-	// RequireAuthnDefault (issue #695 / ADR-80) is the default
+	// RequireAuthnDefault (issue #695 / ADR-080) is the default
 	// value stamped onto a freshly created app's `require_authn`
 	// column when the customer omitted `require_authn` from the
 	// POST body. Per-plan truth table (Free/Hobby/Pro/Scale):
@@ -1174,7 +1280,7 @@ type Limits struct {
 	// behaviour change. Unknown plans fail closed (return false on
 	// the accessor — the column default reverts to false).
 	RequireAuthnDefault bool
-	// PublicAuthModeDefault (issue #695 / ADR-80) is the default
+	// PublicAuthModeDefault (issue #695 / ADR-080) is the default
 	// mode stamped onto a freshly created app's `public_auth_mode`
 	// column when the customer omitted `public_auth` from the POST
 	// body. Closed enum: "open" / "bearer" / "basic". Per-plan
@@ -1198,7 +1304,7 @@ type Limits struct {
 	// handful per team).
 	KeysMax int
 
-	// Organization limits (issue #190 / IAM-6 / ADR-61). Two
+	// Organization limits (issue #190 / IAM-6 / ADR-061). Two
 	// per-org caps; both populated for every plan, currently 0
 	// until the financial model authorizes the per-plan values.
 	// The same fail-closed contract as CronLimitPerApp applies:
@@ -1222,7 +1328,7 @@ type Limits struct {
 	OrgPendingInvitationsMax int
 
 	// AlertRuleLimitPerApp caps how many alert rules an account may pin
-	// to a single app. Account-wide rules (Issue #396 / ADR-45,
+	// to a single app. Account-wide rules (Issue #396 / ADR-045,
 	// AppID == "") count toward the per-app cap only when the rule pins
 	// an app — they do not count against any per-app cap because they
 	// have no app to bind against. The cap defends against a noisy
@@ -1248,7 +1354,7 @@ type Limits struct {
 	// accessor.
 	AlertPresetCatalogLimitPerAccount int
 
-	// EdgeRulesPerApp caps how many edge rules (ADR-89) an app may
+	// EdgeRulesPerApp caps how many edge rules (ADR-089) an app may
 	// hold. Per-app scope only — there is no account-wide edge rule
 	// flavour. The cap defends against a noisy customer pinning
 	// hundreds of rules on a hot app (the gateway's compiled-rules
@@ -1271,14 +1377,14 @@ type Limits struct {
 	// UPDATE lock in CreateEdgeRuleIfUnderQuota.
 	//
 	// Per-plan: Free 1, Hobby 5, Pro 25, Scale 100. Geo is available
-	// on ALL plans including Free (ADR-91 D21 sub-decision hop —
+	// on ALL plans including Free (ADR-091 D21 sub-decision hop —
 	// the abuse-desk customer can't convert if they can't size geo
 	// first). Plan gate is enforced via the EdgeRulesQuotaError.Kind
 	// field; apid-Validate throws CodePlanEdgeRuleKindQuotaReached
 	// when this trips.
 	EdgeRulesGeoPerApp int
 	// EdgeRulesThrottlePerApp caps how many kind='throttle' rules
-	// one app may hold. ADR-91 D20.5 amendment (issue #881):
+	// one app may hold. ADR-091 D20.5 amendment (issue #881):
 	// per-route per-method token-bucket rate limiting customers
 	// attach to one (host, path, http_method) triple. Cardinality
 	// is bounded by configured rules (bucket key is appID+"\x00"+
@@ -1296,7 +1402,7 @@ type Limits struct {
 	// write that bypassed apid).
 	//
 	// Per-plan: Free 1, Hobby 5, Pro 25, Scale 100. Throttle is
-	// available on ALL plans including Free (ADR-91 D20.5
+	// available on ALL plans including Free (ADR-091 D20.5
 	// sub-decision — same posture as Geo: a customer can size a
 	// throttle on Free before upgrading). Plan gate is enforced
 	// via the EdgeRulesQuotaError.Kind field; apid-Validate
@@ -1350,7 +1456,7 @@ type Limits struct {
 	// app may opt into egress breaking for (ADR-201 §3). Per-plan:
 	// Free 0, Hobby 3, Pro 10, Scale 50 — deliberately mirroring
 	// DataPlacementHintsPerApp, since a breaker can only exist for an
-	// upstream the ADR-98 capture path already recorded and Free
+	// upstream the ADR-098 capture path already recorded and Free
 	// captures none.
 	EgressCircuitBreakersPerApp int
 
@@ -1386,7 +1492,7 @@ type Limits struct {
 	// cors_presets.allow_methods may hold. Smaller ceiling
 	// than MaxOrigins because the set is a closed enum
 	// (CORS_ALLOWED_METHODS — GET/POST/PUT/PATCH/DELETE/HEAD/
-	// OPTIONS in current ADR-91 D12). Per-plan: Free 0,
+	// OPTIONS in current ADR-091 D12). Per-plan: Free 0,
 	// Hobby 8, Pro 8, Scale 8 (the closed-set ceiling is
 	// constant across plans; the per-plan knob here is the
 	// read-side cap a preset can ship, not the closed-set
@@ -1470,7 +1576,7 @@ type Limits struct {
 	OpenAPIImportsPerAccount int
 
 	// TenantSurfacesPerAccount caps how many `tenant_surfaces` rows
-	// (ADR-99 / issue #879) a single account may own. The cap
+	// (ADR-099 / issue #879) a single account may own. The cap
 	// defends against a SaaS customer pinning one surface per
 	// end-customer and inflating the per-account cert inventory.
 	// Per-plan: Free 0, Hobby 1, Pro 5, Scale 25. Surfacing tenant
@@ -1492,7 +1598,7 @@ type Limits struct {
 	// TenantSurfacesAllowed=true (Hobby/Pro/Scale).
 	TenantHostnamesPerSurface int
 	// TenantSurfacesAllowed toggles the `tenant_surfaces` feature
-	// (ADR-99 / issue #879) on the plan. Free stays off — the
+	// (ADR-099 / issue #879) on the plan. Free stays off — the
 	// legacy `custom_domains` path (one FQDN, one cert) carries the
 	// single-tenant use case; the surface route is the upsell.
 	// Hobby/Pro/Scale = true. apid's createTenantSurface handler
@@ -1504,7 +1610,7 @@ type Limits struct {
 	// DNS-01 issuance and suffix routing are reserved for Pro and Scale.
 	WildcardDomainsAllowed bool
 
-	// DataPlacementHintsPerApp (ADR-98 §D5) caps how many
+	// DataPlacementHintsPerApp (ADR-098 §D5) caps how many
 	// inferred/explicit data_upstreams rows one app may hold. The
 	// per-app cap defends against a noisy customer pinning hundreds
 	// of DB/cache hints on a hot app (the schedd wake-time chooser
@@ -1516,7 +1622,7 @@ type Limits struct {
 	DataPlacementHintsPerApp int
 
 	// WebhookPerApp caps how many outbound webhook subscriptions a
-	// single app may register (issue #476 / ADR-76). The plan gate
+	// single app may register (issue #476 / ADR-076). The plan gate
 	// is enforced in pkg/state.CreateAppWebhookIfUnderQuota under an
 	// apps-row FOR UPDATE lock — same TOCTOU-defence pattern as
 	// CreateCronIfUnderQuota. The cap defends against a noisy
@@ -1639,7 +1745,7 @@ type Limits struct {
 	TriggerPayloadMaxBytes int
 
 	// EgressAllowlistAllowed toggles the per-app outbound IP allowlist
-	// (ADR-31, tier-2 of the network roadmap). Free stays off; Hobby
+	// (ADR-031, tier-2 of the network roadmap). Free stays off; Hobby
 	// gets a deliberately small destination budget for authenticated
 	// SMTP submission (ports 465/587), while Pro/Scale retain their
 	// larger general egress-hygiene budgets. apid's updateApp handler
@@ -1679,7 +1785,7 @@ type Limits struct {
 	PrivateNetworkCIDRsMax int
 
 	// PublicAuthIPAllowlistAllowed toggles the per-app ingress IP
-	// allowlist (ADR-118; extends ADR-79's reserved 'ip_allowlist'
+	// allowlist (ADR-118; extends ADR-079's reserved 'ip_allowlist'
 	// enum value). Pro/Scale only — Free/Hobby use edge rules
 	// (kind='ip') for the abuse-floor posture; the per-app
 	// allowlist is the Pro+ feature for SaaS-scale ingress
@@ -1695,7 +1801,7 @@ type Limits struct {
 	// body has more entries.
 	PublicAuthIPAllowlistMaxEntries int
 
-	// WarmSnapshotEnabled (issue #470 / ADR-55) is the plan-gated
+	// WarmSnapshotEnabled (issue #470 / ADR-055) is the plan-gated
 	// default for the per-app two-tier snapshot flag. Free/Hobby =
 	// false (warm-tier apps keep both warm.snap + init.snap, which
 	// is +130 MB per app on the parked disk budget — Hobby's pricing
@@ -1706,7 +1812,7 @@ type Limits struct {
 	// at CreateApp time so a Pro customer's brand-new app gets a
 	// warm.snap without an extra PATCH.
 	WarmSnapshotEnabled bool
-	// WarmPoolAllowed (issue #1056 / ADR-74) permits a customer to
+	// WarmPoolAllowed (issue #1056 / ADR-074) permits a customer to
 	// retain paused warm-pool VMs. Free is disabled; Hobby and above
 	// may opt in with an app-level warm_pool_size setting.
 	WarmPoolAllowed bool
@@ -1825,7 +1931,7 @@ type Limits struct {
 
 	// StreamingEnabled (issue #471) gates the per-app streaming
 	// response path through gatewayd-internal (Flusher + periodic 200 ms /
-	// 256 KiB tx_bytes flush; ADR-47). Free defaults off — the
+	// 256 KiB tx_bytes flush; ADR-047). Free defaults off — the
 	// buffered path is the v1 contract and Free is the abuse-floor
 	// tier where an unbounded stream would let one app monopolise
 	// the gatewayd-internal process. Hobby/Pro/Scale default on; apid's updateApp handler
@@ -1834,7 +1940,7 @@ type Limits struct {
 	// time via buildApp so a Hobby customer's brand-new app is
 	// streaming-ready without an extra PATCH round-trip.
 	StreamingEnabled bool
-	// WebSocketEnabled (issue #676 / ADR-80) gates the per-app
+	// WebSocketEnabled (issue #676 / ADR-080) gates the per-app
 	// raw-bytes bridge path: when true, gatewayd-internal's Upgrade
 	// detector routes inbound Connection: Upgrade + Upgrade: <token>
 	// requests to the new rawStreamReverseProxy (which opens the
@@ -1848,7 +1954,7 @@ type Limits struct {
 	// flag via PATCH (gated by Plan.WebSocketResponseAllowed so
 	// Free stays off even when an admin backfills the column).
 	WebSocketEnabled bool
-	// RouteMetricsEnabled (ADR-93) gates the per-app per-route
+	// RouteMetricsEnabled (ADR-093) gates the per-app per-route
 	// observability surface: when true, gatewayd-internal emits three
 	// additional Prometheus series keyed by an enumerated `route`
 	// label (method + raw path, bounded per-app at 50 distinct entries
@@ -1882,7 +1988,7 @@ type Limits struct {
 	// 0 means "fall back to api.ResponseWriteTimeoutDefault".
 	ResponseWriteTimeoutSeconds int
 
-	// TailEnabled (issue #667 / ADR-78) is the per-plan toggle for
+	// TailEnabled (issue #667 / ADR-078) is the per-plan toggle for
 	// the waitUntil(post-response tail) primitive. Free defaults ON
 	// at the 5 s floor (spec §13 hard-limits table; the primitive
 	// is the most-asked-for addition to the function surface, so we
@@ -1928,7 +2034,7 @@ type Limits struct {
 	// outpace MaxConcurrency=20. 0 means "feature disabled".
 	ConcurrentTailsPerInstance int
 
-	// LivenessPeriodSeconds (issue #554 / ADR-78) is the per-VM
+	// LivenessPeriodSeconds (issue #554 / ADR-078) is the per-VM
 	// liveness-probe interval (vmmd polls the guest every N seconds
 	// via the new VsockLivenessPort=1028 STREAM channel). 0 means
 	// "liveness is disabled for this plan" (Free defaults here). For
@@ -1940,7 +2046,7 @@ type Limits struct {
 	// not via tap0 DNAT, so a wedged customer code can't drown the
 	// probe in its own back-pressure.
 	LivenessPeriodSeconds int
-	// LivenessConsecutiveFailures (issue #554 / ADR-78) is N — the
+	// LivenessConsecutiveFailures (issue #554 / ADR-078) is N — the
 	// number of consecutive failed probes that triggers
 	// Engine.DestroyForLivenessFailure. After the destroy, the next
 	// wake cold-boots (MarkSnapshotStale is called eagerly) and the
@@ -1948,19 +2054,19 @@ type Limits struct {
 	// Hobby/Pro/Scale (Free = 0 / disabled). Clamped to
 	// [1, 10] at create-deployment.
 	LivenessConsecutiveFailures int
-	// LivenessCooldownSeconds (issue #554 / ADR-78) is the minimum
+	// LivenessCooldownSeconds (issue #554 / ADR-078) is the minimum
 	// spacing between liveness-driven destroys on the same instance.
 	// vmmd's poll goroutine refuses to fire onFail within this
 	// window so a transient network blip doesn't cascade into a
 	// tight restart loop. Default 60 s. Floor 10 s, ceiling 600 s.
 	LivenessCooldownSeconds int
-	// LivenessMaxRestarts (issue #554 / ADR-78) is the cap on the
+	// LivenessMaxRestarts (issue #554 / ADR-078) is the cap on the
 	// number of liveness-driven restarts the system will tolerate
 	// within LivenessWindowSeconds before parking the deployment
 	// with parked_reason='liveness_exhausted'. Default 3. Clamped
 	// to [1, 10].
 	LivenessMaxRestarts int
-	// LivenessWindowSeconds (issue #554 / ADR-78) is the sliding
+	// LivenessWindowSeconds (issue #554 / ADR-078) is the sliding
 	// window in which LivenessMaxRestarts restarts trigger the
 	// deployment-park branch. Default 300 s (5 min). Floor 60 s,
 	// ceiling 3600 s.
@@ -1983,7 +2089,7 @@ type Limits struct {
 	// "last week", Pro's "this month", Scale's "this quarter").
 	LogArchiveRetentionDaysMax int
 
-	// AppErrorsRetentionDays (ADR-96 / customer-facing automatic
+	// AppErrorsRetentionDays (ADR-096 / customer-facing automatic
 	// error grouping) is the per-plan retention cap on
 	// app_errors / app_error_requests rows. The nightly purge
 	// cron in cmd/apid/app_errors_purge.go deletes rows older
@@ -1993,7 +2099,7 @@ type Limits struct {
 	// future release, the errors retention widens with it but
 	// not faster. Free=1, Hobby=7, Pro=30, Scale=90.
 	AppErrorsRetentionDays int
-	// AppErrorsMaxFingerprintsPerApp (ADR-96) is the per-plan
+	// AppErrorsMaxFingerprintsPerApp (ADR-096) is the per-plan
 	// ceiling on the number of distinct fingerprints the
 	// gatewayd-internal recorder retains in its LRU for one
 	// (account_id, app_id). Past the cap the recorder silently
@@ -2001,7 +2107,7 @@ type Limits struct {
 	// outcome="rate_limited"}. Free=50, Hobby=200, Pro=1000,
 	// Scale=5000.
 	AppErrorsMaxFingerprintsPerApp int
-	// AppErrorsMaxRequestRowsPerFingerprint (ADR-96) is the
+	// AppErrorsMaxRequestRowsPerFingerprint (ADR-096) is the
 	// per-plan ceiling on the number of app_error_requests rows
 	// retained per fingerprint for the drill-down view. Older
 	// rows beyond the cap are deleted first on the retention
@@ -2082,7 +2188,7 @@ type Limits struct {
 	// api.ErrPlanAppErrorsNotAllowed.
 	AppErrorsAllowed bool
 
-	// JobsAllowed (issue #1184 / ADR-99 supplement) toggles whether the
+	// JobsAllowed (issue #1184 / ADR-099 supplement) toggles whether the
 	// plan may create run-to-completion jobs at all. Free=false; the
 	// per-plan caps (JobMaxPerAccount, JobRAMMB, etc.) are zero on Free
 	// anyway as defence-in-depth, but this is the load-bearing gate the
@@ -2095,7 +2201,7 @@ type Limits struct {
 	// are read directly by the apid validators + schedd dispatch tick.
 	JobsAllowed bool
 
-	// WorkflowsAllowed (ADR-81) toggles whether the plan may declare
+	// WorkflowsAllowed (ADR-081) toggles whether the plan may declare
 	// and execute multi-step durable workflows. Free=false, Hobby+Pro+Scale=true.
 	WorkflowsAllowed bool
 	// WorkflowMaxPerApp is the maximum number of workflow definitions an
@@ -2132,23 +2238,23 @@ func (l Limits) EphemeralDiskMaxBytes() int64 {
 	return int64(l.EphemeralDiskMaxMB()) * 1024 * 1024
 }
 
-// UpstreamProbeMaxConcurrent (ADR-98 §D2) is the global worker-pool
+// UpstreamProbeMaxConcurrent (ADR-098 §D2) is the global worker-pool
 // cap on meterd's upstream-probe loop. Read by cmd/meterd at boot
 // time and by pkg/meter/upstream_probe.go on each loop tick. NOT a
 // per-plan field — the probe runs on the meterd daemon, not on the
 // customer app, and the global cap defends the meterd node's fd /
 // goroutine budget under burst. Lives as a top-level constant (not
-// on the Limits struct) per ADR-98 §263.
+// on the Limits struct) per ADR-098 §263.
 const UpstreamProbeMaxConcurrent = 64
 
-// UpstreamFitMinDeltaMs (ADR-98 §D3) is the global threshold below
+// UpstreamFitMinDeltaMs (ADR-098 §D3) is the global threshold below
 // which schedd's chooser bias is suppressed (the legacy
 // RAM/vCPU/region tie-break wins). Defends against flapping: a
 // probe-sample delta of <5 ms is noise, not a signal. Lives as a
-// top-level constant (not on the Limits struct) per ADR-98 §263.
+// top-level constant (not on the Limits struct) per ADR-098 §263.
 const UpstreamFitMinDeltaMs = 5
 
-// UpstreamAffinityTTL (ADR-98 §D2) is the staleness budget on
+// UpstreamAffinityTTL (ADR-098 §D2) is the staleness budget on
 // schedd's in-process upstream-affinity cache. Matches the
 // meterd probe cadence (pkg/meter/upstream_probe.go
 // DefaultUpstreamProbeInterval = 30 s) so the cached preferred
@@ -2156,7 +2262,7 @@ const UpstreamFitMinDeltaMs = 5
 // via FAAS_UPSTREAM_AFFINITY_TTL on schedd startup; the engine
 // constructor takes a duration so callers can stub it in tests.
 // Lives as a top-level constant (not on the Limits struct) per
-// ADR-98 §263.
+// ADR-098 §263.
 const UpstreamAffinityTTL = 30 * time.Second
 
 // planLimits is the authoritative table. Values: spec §1 quota row, §4.1 rate
@@ -2205,13 +2311,14 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerDestBurst:      20,
 		EgressFloodDropsPerMinute:      120,
 		EgressExtraPortsMax:            0,
+		ServiceTCPSessionsPerAccount:   16,
 		SecretCountMax:                 8,
 		SecretValueMaxBytes:            4 * 1024,
 		EnvVarsMax:                     16,
 		EnvValueMaxBytes:               4 * 1024,
 		// TrustedSignerCountMax: Free keeps the open-deploy posture;
 		// signature enforcement is a regulated-workload feature that
-		// Free never needs (issue #472 / ADR-54).
+		// Free never needs (issue #472 / ADR-054).
 		TrustedSignerCountMax: 0,
 		// Issue #461: Free has no private-registry credential surface.
 		// Handler returns 403 plan_registry_credentials_not_allowed.
@@ -2247,7 +2354,7 @@ var planLimits = map[Plan]Limits{
 		CronLimitPerApp:     0,
 		CronLimitPerAccount: 0,
 		// M-2 / ADR-137+138: Free stays request-only — same
-		// posture as sidecars (ADR-69). Defaults are tight so
+		// posture as sidecars (ADR-069). Defaults are tight so
 		// a stray async deploy stays bounded; per-mode replica
 		// caps are zero so the gate is enforced by ValidatePlan
 		// before the store is touched.
@@ -2271,13 +2378,13 @@ var planLimits = map[Plan]Limits{
 		// cap is 0 so the gate fails closed.
 		EvictionPriorityReservedAllowed: false,
 		ReservedConcurrencyPerAccount:   0,
-		// Issue #477 / ADR-79: Free stays on the no-signup-friction
+		// Issue #477 / ADR-079: Free stays on the no-signup-friction
 		// path — public-by-default, no bearer/basic opt-in. The 'open'
 		// default mode is always available regardless of plan, so
 		// existing Free apps keep working with no migration work.
 		PublicAuthBearerAllowed: false,
 		PublicAuthBasicAllowed:  false,
-		// Issue #695 / ADR-80: Free stays public-by-default. The
+		// Issue #695 / ADR-080: Free stays public-by-default. The
 		// token gate isn't unlocked on Free (RequireAuthn=false above);
 		// matching the default literal avoids customers creating a
 		// Free app and immediately seeing 401 from the gateway.
@@ -2288,7 +2395,7 @@ var planLimits = map[Plan]Limits{
 		// break-glass. The abuse-vector (scripted key rotation under
 		// 1-concurrency) is bounded by the per-account rate limit.
 		KeysMax: 3,
-		// IAM-6 / ADR-61 PR-2 (issue #190): Free is the abuse-floor
+		// IAM-6 / ADR-061 PR-2 (issue #190): Free is the abuse-floor
 		// tier and cannot host shared orgs — 0/0 stays by plan
 		// policy, mirroring CronLimitPerApp and
 		// EvictionPriorityReservedAllowed on Free. Personal orgs are
@@ -2297,24 +2404,24 @@ var planLimits = map[Plan]Limits{
 		// the workbook diverges from this fail-closed value.
 		OrgMembersMax:            0,
 		OrgPendingInvitationsMax: 0,
-		// Alert rules (issue #396 / ADR-45): Free stays at 0/0.
+		// Alert rules (issue #396 / ADR-045): Free stays at 0/0.
 		// Gates via CodePlanAlertRulesNotAllowed at the handler level
 		// — the value is informational here for fail-closed accessors.
 		AlertRuleLimitPerApp:              0,
 		AlertRuleLimitPerAccount:          0,
 		AlertPresetCatalogLimitPerAccount: 16,
-		// Edge rules (ADR-89): Free gets 5/app — the 5 cheap
+		// Edge rules (ADR-089): Free gets 5/app — the 5 cheap
 		// kinds (route, rewrite, redirect, headers, cors). JWT and
 		// IP stay Hobby+ only (paid-only security primitives).
 		EdgeRulesPerApp:     5,
 		EdgeRulesJWTAllowed: false,
 		EdgeRulesIPAllowed:  false,
-		// Per-kind geo quota (ADR-91 D21/D22). Free gets exactly 1
+		// Per-kind geo quota (ADR-091 D21/D22). Free gets exactly 1
 		// geo rule — the abuse-desk customer ("block everything
 		// except DE") is one rule. The upgrade path raises the cap
 		// to 5/25/100.
 		EdgeRulesGeoPerApp: 1,
-		// kind='throttle' per-route rate limit cap (ADR-91 D20.5
+		// kind='throttle' per-route rate limit cap (ADR-091 D20.5
 		// amendment, issue #881). Mirrors EdgeRulesGeoPerApp so the
 		// upgrade curve from Free → Scale is a single double/triple
 		// progression a customer can predict.
@@ -2327,7 +2434,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-201 traffic primitives. Retry and breaker TUNING are
 		// paid; the breaker itself runs on every plan. Egress
 		// breaking mirrors DataPlacementHintsPerApp because it can
-		// only apply to an upstream ADR-98 already captured.
+		// only apply to an upstream ADR-098 already captured.
 		EdgeRulesRetryPerApp:          0,
 		EdgeRulesCircuitBreakerPerApp: 0,
 		EgressCircuitBreakersPerApp:   0,
@@ -2366,7 +2473,7 @@ var planLimits = map[Plan]Limits{
 		// of their key space; large-cardinality per-key limits
 		// require a paid plan.
 		ThrottleMaxKeysPerRule: 100,
-		// Tenant surfaces (ADR-99 / issue #879): Free is the
+		// Tenant surfaces (ADR-099 / issue #879): Free is the
 		// abuse-floor tier. The `tenant_surfaces` feature is the
 		// upsell — Free customers carry the single-tenant case via
 		// the legacy `custom_domains` path. apid's createTenantSurface
@@ -2376,12 +2483,12 @@ var planLimits = map[Plan]Limits{
 		TenantHostnamesPerSurface: 0,
 		TenantSurfacesAllowed:     false,
 		WildcardDomainsAllowed:    false,
-		// Data-placement hints (ADR-98 §D5): Free is gated off —
+		// Data-placement hints (ADR-098 §D5): Free is gated off —
 		// the handler returns 402 CodePlanLimitDataUpstreams before
 		// any regex match. The 0 here is a defence-in-depth value
 		// the handler still reads.
 		DataPlacementHintsPerApp: 0,
-		// Outbound webhook subscription caps (issue #476 / ADR-76).
+		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Free has no webhooks — the handler returns 402
 		// CodePlanWebhooksNotAllowed before the store is touched.
 		WebhookPerApp:            0,
@@ -2410,10 +2517,10 @@ var planLimits = map[Plan]Limits{
 		MaxESMRecordsPerSecond: 0,
 		BrokerEgressMbit:       0,
 		TLSSkipVerifyAllowed:   false,
-		// Per-account rate limit (ADR-40, amended by issue #1680): the
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
 		// account can sustain one Free app at its advertised 5 rps.
 		RateLimitPerAccountRPM: 300,
-		// Wake-side admission throttle (ADR-99 PR-0). Free caps
+		// Wake-side admission throttle (ADR-099 PR-0). Free caps
 		// wake admissions at 1/min per app + 1/min per account — the
 		// abuse-floor tier should never burst-wake. The apid-side
 		// Free-plan gate is the primary block; this is the schedd
@@ -2426,7 +2533,7 @@ var planLimits = map[Plan]Limits{
 		// before the store is touched; the 0 here is a
 		// defence-in-depth value the handler still reads.
 		LogDeploymentFilterMax: 0,
-		// CPU fairness (issue #301 / ADR-44): Free gets the smallest
+		// CPU fairness (issue #301 / ADR-044): Free gets the smallest
 		// slice weight=2 and the tightest quota (100ms/100ms). 100 ms
 		// is enough headroom for a Free-tier app to handle a handful of
 		// requests without a throttle trip but stops a tight loop from
@@ -2434,26 +2541,26 @@ var planLimits = map[Plan]Limits{
 		CPUWeight:   2,
 		CPUQuotaUS:  100_000,
 		CPUPeriodUS: 100_000,
-		// Streaming (issue #471 / ADR-47): Free is the abuse-floor
+		// Streaming (issue #471 / ADR-047): Free is the abuse-floor
 		// tier — buffered path stays the contract, default off, no
 		// cap lift (spec §4.1 baseline 25 MB / 300 s).
 		StreamingEnabled:            false,
 		MaxResponseBodyBytes:        MaxResponseBodyBytesDefault,
 		RequestBodyMaxBytes:         10 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: ResponseWriteTimeoutDefault,
-		// WebSocket / Upgrade bridge (issue #676 / ADR-80): Free
+		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Free
 		// is the abuse-floor tier — a long-lived WS would pin a
 		// wake past wake_idle_timeout (the 30 s Free idle window).
 		// Default off; apid PATCH rejects with 403
 		// plan_websocket_not_allowed.
 		WebSocketEnabled: false,
-		// Per-route metrics (ADR-93): Free is the abuse-floor tier
+		// Per-route metrics (ADR-093): Free is the abuse-floor tier
 		// — per-route cardinality would not have a budget (Free
 		// apps share the §12 dashboard series set with paid apps).
 		// Default off; apid PATCH rejects with 403
 		// plan_route_metrics_not_allowed. Hobby+ customers opt in.
 		RouteMetricsEnabled: false,
-		// Warm-snapshot (issue #470 / ADR-55): Free is off by
+		// Warm-snapshot (issue #470 / ADR-055): Free is off by
 		// plan. Warm-tier apps keep warm.snap + init.snap on the
 		// parked disk budget; doubling the per-app snapshot
 		// footprint is incompatible with the Free pricing tier.
@@ -2504,7 +2611,7 @@ var planLimits = map[Plan]Limits{
 		// is what CreateMirrorRuleIfUnderQuota compares against).
 		MirrorRuleAllowed:   false,
 		MirrorTargetsPerApp: 0,
-		// Tail primitive (issue #667 / ADR-78): Free enables with
+		// Tail primitive (issue #667 / ADR-078): Free enables with
 		// the floor timeout (5 s) and the floor concurrency cap (4).
 		// Customers on Free get the primitive, just tightly bounded —
 		// the structural TailCapMax = 16 still applies, but the
@@ -2516,7 +2623,7 @@ var planLimits = map[Plan]Limits{
 		TailTimeoutS:               TailTimeoutFloorSeconds,
 		TailCapMax:                 TailCapMax,
 		ConcurrentTailsPerInstance: 4,
-		// Liveness (issue #554 / ADR-78): Free is gated off — a
+		// Liveness (issue #554 / ADR-078): Free is gated off — a
 		// wedged Free VM is already bounded by the §13 M7
 		// free-stop path at 5 GB-h, so the liveness probe adds no
 		// safety on the abuse-floor tier. The zero-valued fields
@@ -2529,7 +2636,7 @@ var planLimits = map[Plan]Limits{
 		// wake. The wider incident windows remain paid-tier benefits.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 1,
-		// ADR-96 error grouping. Free = 1-day retention, 50
+		// ADR-096 error grouping. Free = 1-day retention, 50
 		// fingerprints, 25 request rows per fingerprint. Retention
 		// MUST be <= the one-day log-archive retention above.
 		AppErrorsRetentionDays:                1,
@@ -2589,6 +2696,7 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerDestBurst:      40,
 		EgressFloodDropsPerMinute:      240,
 		EgressExtraPortsMax:            0,
+		ServiceTCPSessionsPerAccount:   64,
 		SecretCountMax:                 25,
 		SecretValueMaxBytes:            8 * 1024,
 		EnvVarsMax:                     32,
@@ -2608,7 +2716,7 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       5,
 		MaxSourceBytesPerInvocation: 64 * 1024,
 		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 604800, EventRetentionSeconds: 86400, IdempotencyRetentionSeconds: 2592000, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20},
+		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 604800, EventRetentionSeconds: 86400, IdempotencyRetentionSeconds: 2592000, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20, RetainedArtifactBytesPerAccount: 256 << 20, RetainedArtifactsPerAccount: 256},
 		// Hobby: 3 attempts. Tight on the cheap tier — a worker that
 		// keeps re-trying a bad payload would otherwise burn the
 		// per-app rps budget and starve the rest of the queue.
@@ -2618,20 +2726,20 @@ var planLimits = map[Plan]Limits{
 		MaxAsyncInvocationsPerAccount:     1000,
 		MaxAsyncInvocationDeadlineSeconds: 3600,
 		MaxAsyncResultRetentionSeconds:    604800,
-		// SMTP submission (ADR-31 amendment): Hobby may explicitly
+		// SMTP submission (ADR-031 amendment): Hobby may explicitly
 		// allow a small set of provider CIDRs for ports 465/587.
 		// Port 25 remains blocked universally; the per-netns and host
 		// firewalls enforce the port distinction.
 		EgressAllowlistAllowed: true,
 		EgressAllowlistMaxSize: 8,
 		// Autoscale: Hobby is gated on Pro+ for both RPS and CPU
-		// (2026-07-28: ADR-37 amendment — Hobby→Pro re-tier on
+		// (2026-07-28: ADR-037 amendment — Hobby→Pro re-tier on
 		// ScaleUpTargetRPSAllowed). CPU-driven scaling is gated
 		// on Pro+ because the cost shape of "scale on CPU without
 		// a min_instances floor" is unbounded on Hobby.
 		ScaleUpTargetRPSAllowed: false,
 		ScaleUpTargetCPUAllowed: false,
-		// Scaling policy (issue #462 / ADR-58, PR-A tier-up):
+		// Scaling policy (issue #462 / ADR-058, PR-A tier-up):
 		// Hobby now unlocks `MinInstancesAllowed` (warm-floor
 		// charge is bounded — Hobby's MaxConcurrency is 2 and
 		// the bill auto-counts via pkg/meter/sampler.go:238-239).
@@ -2645,7 +2753,7 @@ var planLimits = map[Plan]Limits{
 		MinInstancesAllowed:  true,
 		CustomMetricsAllowed: true,
 		MaxInstancesAllowed:  true,
-		// MaxMinInstances (ADR-71): Hobby gets 1 — one warm
+		// MaxMinInstances (ADR-071): Hobby gets 1 — one warm
 		// instance is the minimum the floor feature exists to
 		// deliver (the customer's "first request never pays the
 		// §6.3 wake budget" expectation).
@@ -2681,14 +2789,14 @@ var planLimits = map[Plan]Limits{
 		// comfortable headroom for the tier's economics.
 		EvictionPriorityReservedAllowed: true,
 		ReservedConcurrencyPerAccount:   1,
-		// Issue #477 / ADR-79: Hobby unlocks bearer (API-key-protected
+		// Issue #477 / ADR-079: Hobby unlocks bearer (API-key-protected
 		// private webhook receivers, dashboard admin endpoints) but
 		// basic stays gated — basic adds sealed-credential storage cost
 		// the Hobby customer shape doesn't typically need. The
 		// 'open' mode is always available.
 		PublicAuthBearerAllowed: true,
 		PublicAuthBasicAllowed:  false,
-		// Issue #695 / ADR-80: Hobby unlocks the token gate as a
+		// Issue #695 / ADR-080: Hobby unlocks the token gate as a
 		// default (RequireAuthnAllowed is gated above so customers
 		// can't PATCH-true, but defaults can stamp true). The mode
 		// stays "open" because Hobby doesn't unlock the bearer scope
@@ -2703,7 +2811,7 @@ var planLimits = map[Plan]Limits{
 		// (CI / staging / prod / personal / monitoring) with a
 		// dedicated key.
 		KeysMax: 10,
-		// IAM-6 / ADR-61 PR-2 (issue #190): Hobby gets 10 members /
+		// IAM-6 / ADR-061 PR-2 (issue #190): Hobby gets 10 members /
 		// 5 pending invitations — tracks the KeysMax ratio (IAM-5
 		// shapes team headroom as 2× the per-account app budget).
 		// Pending invitations stay at 1/2 of members because the
@@ -2721,13 +2829,13 @@ var planLimits = map[Plan]Limits{
 		AlertRuleLimitPerApp:              3,
 		AlertRuleLimitPerAccount:          10,
 		AlertPresetCatalogLimitPerAccount: 16,
-		// Edge rules (ADR-89): Hobby gets 25/app and unlocks the
+		// Edge rules (ADR-089): Hobby gets 25/app and unlocks the
 		// JWT + IP kinds.
 		EdgeRulesPerApp:     25,
 		EdgeRulesJWTAllowed: true,
 		EdgeRulesIPAllowed:  true,
 		EdgeRulesGeoPerApp:  5,
-		// kind='throttle' per-route rate limit cap (ADR-91 D20.5
+		// kind='throttle' per-route rate limit cap (ADR-091 D20.5
 		// amendment, issue #881). Mirrors EdgeRulesGeoPerApp.
 		EdgeRulesThrottlePerApp: 5,
 		// kind='cache' per-app quota (ADR-122 §Decision). Hobby=1
@@ -2738,7 +2846,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-201 traffic primitives. Retry and breaker TUNING are
 		// paid; the breaker itself runs on every plan. Egress
 		// breaking mirrors DataPlacementHintsPerApp because it can
-		// only apply to an upstream ADR-98 already captured.
+		// only apply to an upstream ADR-098 already captured.
 		EdgeRulesRetryPerApp:          3,
 		EdgeRulesCircuitBreakerPerApp: 3,
 		EgressCircuitBreakersPerApp:   3,
@@ -2768,7 +2876,7 @@ var planLimits = map[Plan]Limits{
 		OpenAPIImportsPerAccount: 1000,
 		// Per-consumer throttle key cap (ADR-104, issue #881 Phase 3).
 		ThrottleMaxKeysPerRule: 1000,
-		// Tenant surfaces (ADR-99 / issue #879): Hobby is the
+		// Tenant surfaces (ADR-099 / issue #879): Hobby is the
 		// entry paid tier — 1 surface with up to 10 verified
 		// hostnames. The "single SaaS customer, a handful of
 		// end-customer subdomains" use case is the hobby use case.
@@ -2776,10 +2884,10 @@ var planLimits = map[Plan]Limits{
 		TenantHostnamesPerSurface: 10,
 		TenantSurfacesAllowed:     true,
 		WildcardDomainsAllowed:    false,
-		// Data-placement hints (ADR-98 §D5): Hobby unlocks the
+		// Data-placement hints (ADR-098 §D5): Hobby unlocks the
 		// capture path with a 3-hint cap per app.
 		DataPlacementHintsPerApp: 3,
-		// Outbound webhook subscription caps (issue #476 / ADR-76).
+		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Hobby gets 3/app, 10/account — mirrors the alert-rule ratio.
 		WebhookPerApp:            3,
 		WebhookPerAccount:        10,
@@ -2815,10 +2923,10 @@ var planLimits = map[Plan]Limits{
 		// The migration-00274 SQL ceiling is 64 MiB so there's
 		// headroom for Pro+ below the hard limit.
 		TriggerPayloadMaxBytes: 1048576,
-		// Per-account rate limit (ADR-40, amended by issue #1680): the
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
 		// account can sustain one Hobby app at its advertised 20 rps.
 		RateLimitPerAccountRPM: 1200,
-		// Wake-side admission throttle (ADR-99 PR-0). Hobby
+		// Wake-side admission throttle (ADR-099 PR-0). Hobby
 		// permits a small wake burst — a cron tick on a Hobby
 		// customer's job can legitimately want 5 wakes/min across
 		// their apps. The per-account cap (10/min) is the ceiling
@@ -2837,7 +2945,7 @@ var planLimits = map[Plan]Limits{
 		CPUWeight:   4,
 		CPUQuotaUS:  200_000,
 		CPUPeriodUS: 200_000,
-		// Streaming (issue #471 / ADR-47): Hobby is the first paid
+		// Streaming (issue #471 / ADR-047): Hobby is the first paid
 		// tier — streaming is opt-in by default (the LLM use case is
 		// the Hobby customer's entry point). Cap lifts to 100 MB / 900 s
 		// to cover a 30–120 s chat completion plus headroom.
@@ -2845,20 +2953,20 @@ var planLimits = map[Plan]Limits{
 		MaxResponseBodyBytes:        100 * 1024 * 1024,
 		RequestBodyMaxBytes:         25 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: 900,
-		// WebSocket / Upgrade bridge (issue #676 / ADR-80): Hobby
+		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Hobby
 		// is the first paid tier — opt-in by default (the LLM/agent
 		// use case is the Hobby customer's entry point, and many
 		// agent SDKs speak WS over a thin HTTP boundary). The
 		// 100 MB / 900 s caps above cover a long-poll or chat WS
 		// session comfortably.
 		WebSocketEnabled: true,
-		// Per-route metrics (ADR-93): Hobby is the first paid tier
+		// Per-route metrics (ADR-093): Hobby is the first paid tier
 		// — opt-in by default (Hobby customers hosting APIs are the
 		// core "which endpoint is slow?" use case). The per-app
 		// route cap (50) + __route_other__ overflow bound the
 		// cardinality regardless of the customer's traffic shape.
 		RouteMetricsEnabled: true,
-		// Warm-snapshot (issue #470 / ADR-55): Hobby is gated off
+		// Warm-snapshot (issue #470 / ADR-055): Hobby is gated off
 		// for the same cost-shape reason as Free — doubling the
 		// parked per-app snapshot footprint doesn't fit the
 		// €9/month Hobby price point. Pro/Scale customers pay
@@ -2904,7 +3012,7 @@ var planLimits = map[Plan]Limits{
 		// is what CreateMirrorRuleIfUnderQuota compares against).
 		MirrorRuleAllowed:   false,
 		MirrorTargetsPerApp: 0,
-		// Tail primitive (issue #667 / ADR-78): Hobby unlocks
+		// Tail primitive (issue #667 / ADR-078): Hobby unlocks
 		// the 15 s timeout + 16 per-instance concurrent tails.
 		// Matches the issue's "send a confirmation email"
 		// latency budget comfortably; over-cap attempts emit
@@ -2913,7 +3021,7 @@ var planLimits = map[Plan]Limits{
 		TailTimeoutS:               15,
 		TailCapMax:                 TailCapMax,
 		ConcurrentTailsPerInstance: 16,
-		// Liveness (issue #554 / ADR-78): Hobby unlocks at the
+		// Liveness (issue #554 / ADR-078): Hobby unlocks at the
 		// first paid tier. Default §13 values: 5 s probe period,
 		// 3 consecutive failures, 60 s cooldown, 3 restarts in 300 s
 		// window before the deployment is parked. The customer can
@@ -2936,7 +3044,7 @@ var planLimits = map[Plan]Limits{
 		// S3 within the spec §4.1 latency budget.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 7,
-		// ADR-96 — Hobby = "last week" retention, 200 fingerprints,
+		// ADR-096 — Hobby = "last week" retention, 200 fingerprints,
 		// 100 request rows per fingerprint. Retention equals the
 		// log-archive retention.
 		AppErrorsRetentionDays:                7,
@@ -2999,6 +3107,7 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerDestBurst:      100,
 		EgressFloodDropsPerMinute:      600,
 		EgressExtraPortsMax:            8,
+		ServiceTCPSessionsPerAccount:   256,
 		SecretCountMax:                 50,
 		SecretValueMaxBytes:            16 * 1024,
 		EnvVarsMax:                     64,
@@ -3008,7 +3117,7 @@ var planLimits = map[Plan]Limits{
 		MinInstancesAllowed:   true,
 		CustomMetricsAllowed:  true,
 		MaxInstancesAllowed:   true,
-		// MaxMinInstances (ADR-71): Pro = 3 — covers a small
+		// MaxMinInstances (ADR-071): Pro = 3 — covers a small
 		// "always-warm fan-out for a customer-facing API" pattern
 		// without letting one Pro app reserve a quarter of the
 		// box's RAM ceiling.
@@ -3022,7 +3131,7 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       50,
 		MaxSourceBytesPerInvocation: 256 * 1024,
 		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 2592000, EventRetentionSeconds: 604800, IdempotencyRetentionSeconds: 7776000, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20},
+		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 2592000, EventRetentionSeconds: 604800, IdempotencyRetentionSeconds: 7776000, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20, RetainedArtifactBytesPerAccount: 1024 << 20, RetainedArtifactsPerAccount: 1024},
 		// Pro: 10 attempts. Trades tolerance against "a poisoned row
 		// churns indefinitely". At 10 retries a transient downstream
 		// flap has plenty of room, while a permanently-bad payload
@@ -3034,7 +3143,7 @@ var planLimits = map[Plan]Limits{
 		MaxAsyncInvocationsPerAccount:     10000,
 		MaxAsyncInvocationDeadlineSeconds: 21600,
 		MaxAsyncResultRetentionSeconds:    2592000,
-		// ADR-31: Pro gets 16 CIDR entries — enough for "1 SaaS +
+		// ADR-031: Pro gets 16 CIDR entries — enough for "1 SaaS +
 		// 1 webhook + 1 monitoring + ~10 partner integrations" which
 		// is the typical Pro-tier reachability graph.
 		EgressAllowlistAllowed: true,
@@ -3087,14 +3196,14 @@ var planLimits = map[Plan]Limits{
 		// is ~5.2 GB resident — well inside the 47.6 GB ceiling.
 		EvictionPriorityReservedAllowed: true,
 		ReservedConcurrencyPerAccount:   2,
-		// Issue #477 / ADR-79: Pro unlocks both bearer and basic. Basic
+		// Issue #477 / ADR-079: Pro unlocks both bearer and basic. Basic
 		// is the right shape for Pro's typical webhook-receiver /
 		// admin-endpoint use cases where HTTP Basic is the customer's
 		// existing primitive. Sealed-credential storage cost is
 		// negligible at Pro scale (~50 apps).
 		PublicAuthBearerAllowed: true,
 		PublicAuthBasicAllowed:  true,
-		// Issue #695 / ADR-80: Pro unlocks both the token gate
+		// Issue #695 / ADR-080: Pro unlocks both the token gate
 		// (RequireAuthn above) AND the bearer scope (PublicAuthBearerAllowed
 		// above). Default new apps to (true, "bearer") so the customer
 		// inherits secure-by-default. The CLI's --no-require-authn opt-out
@@ -3105,7 +3214,7 @@ var planLimits = map[Plan]Limits{
 		// Pro app budget (25) plus a per-team allowance (CI / staging
 		// / prod / personal / monitoring / break-glass).
 		KeysMax: 50,
-		// IAM-6 / ADR-61 PR-2 (issue #190): Pro gets 50 members /
+		// IAM-6 / ADR-061 PR-2 (issue #190): Pro gets 50 members /
 		// 25 pending invitations — tracks KeysMax (50) one-to-one so
 		// every team member can hold a key for their own deploy
 		// target. Financial model is authoritative — derived value,
@@ -3118,12 +3227,12 @@ var planLimits = map[Plan]Limits{
 		AlertRuleLimitPerApp:              10,
 		AlertRuleLimitPerAccount:          30,
 		AlertPresetCatalogLimitPerAccount: 16,
-		// Edge rules (ADR-89): Pro gets 100/app with JWT + IP.
+		// Edge rules (ADR-089): Pro gets 100/app with JWT + IP.
 		EdgeRulesPerApp:     100,
 		EdgeRulesJWTAllowed: true,
 		EdgeRulesIPAllowed:  true,
 		EdgeRulesGeoPerApp:  25,
-		// kind='throttle' per-route rate limit cap (ADR-91 D20.5
+		// kind='throttle' per-route rate limit cap (ADR-091 D20.5
 		// amendment, issue #881). Mirrors EdgeRulesGeoPerApp.
 		EdgeRulesThrottlePerApp: 25,
 		// kind='cache' per-app quota (ADR-122 §Decision). Pro=5 —
@@ -3134,7 +3243,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-201 traffic primitives. Retry and breaker TUNING are
 		// paid; the breaker itself runs on every plan. Egress
 		// breaking mirrors DataPlacementHintsPerApp because it can
-		// only apply to an upstream ADR-98 already captured.
+		// only apply to an upstream ADR-098 already captured.
 		EdgeRulesRetryPerApp:          10,
 		EdgeRulesCircuitBreakerPerApp: 10,
 		EgressCircuitBreakersPerApp:   10,
@@ -3161,7 +3270,7 @@ var planLimits = map[Plan]Limits{
 		OpenAPIImportsPerAccount: 10000,
 		// Per-consumer throttle key cap (ADR-104, issue #881 Phase 3).
 		ThrottleMaxKeysPerRule: 5000,
-		// Tenant surfaces (ADR-99 / issue #879): Pro gets 5 surfaces
+		// Tenant surfaces (ADR-099 / issue #879): Pro gets 5 surfaces
 		// with up to 50 verified hostnames each — the growing-SaaS
 		// tier. Each surface still binds to one app, so 5 surfaces
 		// means 5 distinct customer-facing apps behind the same
@@ -3170,10 +3279,10 @@ var planLimits = map[Plan]Limits{
 		TenantHostnamesPerSurface: 50,
 		TenantSurfacesAllowed:     true,
 		WildcardDomainsAllowed:    true,
-		// Data-placement hints (ADR-98 §D5): Pro unlocks the
+		// Data-placement hints (ADR-098 §D5): Pro unlocks the
 		// capture path with a 10-hint cap per app.
 		DataPlacementHintsPerApp: 10,
-		// Outbound webhook subscription caps (issue #476 / ADR-76).
+		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Pro gets 10/app, 30/account — mirrors the alert-rule ratio.
 		WebhookPerApp:            10,
 		WebhookPerAccount:        30,
@@ -3183,7 +3292,7 @@ var planLimits = map[Plan]Limits{
 		LogDrainPerAccount:       30,
 		// Trigger primitive (issue #757 / ADR-0NN): Pro is the first
 		// tier where the external-broker kinds unlock (Kafka, NATS,
-		// Redis-streams) — the egress-allowlist tier (ADR-31) is
+		// Redis-streams) — the egress-allowlist tier (ADR-031) is
 		// Pro+ and broker pulls require the allowlist. Batch caps
 		// jump to 500 / 5 min / 10 attempts so a Pro customer's
 		// 1k-msg/s Kafka consumer can be drained with one trigger.
@@ -3203,10 +3312,10 @@ var planLimits = map[Plan]Limits{
 		// hardcoded closeBatch byte cap so Pro customers behave
 		// identically pre/post migration 00274.
 		TriggerPayloadMaxBytes: 6291456,
-		// Per-account rate limit (ADR-40, amended by issue #1680): the
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
 		// account can sustain one Pro app at its advertised 100 rps.
 		RateLimitPerAccountRPM: 6000,
-		// Wake-side admission throttle (ADR-99 PR-0). Pro is the
+		// Wake-side admission throttle (ADR-099 PR-0). Pro is the
 		// production tier — the per-app burst ceiling of 20/min is
 		// calibrated against a customer running a cron fleet
 		// (~1 cron tick per minute per app, plus a burst on
@@ -3226,7 +3335,7 @@ var planLimits = map[Plan]Limits{
 		CPUWeight:   8,
 		CPUQuotaUS:  500_000,
 		CPUPeriodUS: 500_000,
-		// Streaming (issue #471 / ADR-47): Pro is paid-tier streaming
+		// Streaming (issue #471 / ADR-047): Pro is paid-tier streaming
 		// — same cap as Hobby. 100 MB / 900 s covers LLM chat
 		// completions and JSON/CSV exports; SaaS-scale apps don't
 		// need a higher cap because gatewayd-internal's per-instance egress
@@ -3236,16 +3345,16 @@ var planLimits = map[Plan]Limits{
 		MaxResponseBodyBytes:        100 * 1024 * 1024,
 		RequestBodyMaxBytes:         100 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: 900,
-		// WebSocket / Upgrade bridge (issue #676 / ADR-80): Pro is
+		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Pro is
 		// the first tier where production workloads sit — opt-in by
 		// default for the same reason as Hobby (LLM / agent SDKs).
 		WebSocketEnabled: true,
-		// Per-route metrics (ADR-93): Pro is the first tier where
+		// Per-route metrics (ADR-093): Pro is the first tier where
 		// production workloads sit — opt-in by default for the same
 		// reason as Hobby (production APIs want the per-route
 		// breakdown by default).
 		RouteMetricsEnabled: true,
-		// Warm-snapshot (issue #470 / ADR-55): Pro is the first
+		// Warm-snapshot (issue #470 / ADR-055): Pro is the first
 		// tier where warm-snapshot is on by default. Per the issue
 		// body's acceptance: "for a Pro+ app that has served ≥5
 		// successful requests ≥2 s after first-ready, restore
@@ -3284,7 +3393,7 @@ var planLimits = map[Plan]Limits{
 		// via QuotaErrorKindMirror.
 		MirrorRuleAllowed:   true,
 		MirrorTargetsPerApp: 1,
-		// Tail primitive (issue #667 / ADR-78): Pro unlocks
+		// Tail primitive (issue #667 / ADR-078): Pro unlocks
 		// the 30 s timeout + 64 per-instance concurrent tails.
 		// Matches the issue's per-plan matrix value; covers
 		// SaaS workloads where the webhook fan-out can take
@@ -3293,7 +3402,7 @@ var planLimits = map[Plan]Limits{
 		TailTimeoutS:               30,
 		TailCapMax:                 TailCapMax,
 		ConcurrentTailsPerInstance: 64,
-		// Liveness (issue #554 / ADR-78): same defaults as Hobby —
+		// Liveness (issue #554 / ADR-078): same defaults as Hobby —
 		// the §13 baseline is plan-tier-independent (5 s / 3 /
 		// 60 s / 3 / 300 s). gRPC liveness is Pro/Scale-only
 		// (Plan.GRPCLivenessAllowed); Hobby remains HTTP-only.
@@ -3309,7 +3418,7 @@ var planLimits = map[Plan]Limits{
 		// rather than being a single shared cap.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 30,
-		// ADR-96 — Pro = "this month" retention, 1000 fingerprints,
+		// ADR-096 — Pro = "this month" retention, 1000 fingerprints,
 		// 500 request rows per fingerprint.
 		AppErrorsRetentionDays:                30,
 		AppErrorsMaxFingerprintsPerApp:        1000,
@@ -3371,6 +3480,7 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerDestBurst:      200,
 		EgressFloodDropsPerMinute:      1200,
 		EgressExtraPortsMax:            32,
+		ServiceTCPSessionsPerAccount:   1024,
 		SecretCountMax:                 100,
 		SecretValueMaxBytes:            32 * 1024,
 		EnvVarsMax:                     256,
@@ -3380,7 +3490,7 @@ var planLimits = map[Plan]Limits{
 		MinInstancesAllowed:   true,
 		CustomMetricsAllowed:  true,
 		MaxInstancesAllowed:   true,
-		// MaxMinInstances (ADR-71): Scale = 10 — half of
+		// MaxMinInstances (ADR-071): Scale = 10 — half of
 		// MaxConcurrency (20). At Scale's 1024 MB instance RAM
 		// and 8 MB overhead, 10 instances resident = 10,320 MB
 		// (~22% of the §6.2-2 47,600 MB ceiling), leaving
@@ -3401,7 +3511,7 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       1_000_000,
 		MaxSourceBytesPerInvocation: 1024 * 1024,
 		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7776000, EventRetentionSeconds: 2592000, IdempotencyRetentionSeconds: 15552000, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20},
+		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7776000, EventRetentionSeconds: 2592000, IdempotencyRetentionSeconds: 15552000, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20, RetainedArtifactBytesPerAccount: 4096 << 20, RetainedArtifactsPerAccount: 4096},
 		// Scale: 25 attempts. The highest tier gets the most
 		// tolerance so an upstream outage lasting a few minutes
 		// doesn't dump the queue into dead_letter on a single bad
@@ -3415,7 +3525,7 @@ var planLimits = map[Plan]Limits{
 		MaxAsyncInvocationsPerAccount:     100000,
 		MaxAsyncInvocationDeadlineSeconds: 86400,
 		MaxAsyncResultRetentionSeconds:    7776000,
-		// ADR-31: Scale gets 64 CIDR entries — broad enough for
+		// ADR-031: Scale gets 64 CIDR entries — broad enough for
 		// SaaS-scale apps with many upstream integrations; doubling
 		// the Pro budget tracks the doubling in DeployedApps (25 -> 100).
 		EgressAllowlistAllowed: true,
@@ -3468,13 +3578,13 @@ var planLimits = map[Plan]Limits{
 		// headroom for live wakes.
 		EvictionPriorityReservedAllowed: true,
 		ReservedConcurrencyPerAccount:   4,
-		// Issue #477 / ADR-79: Scale unlocks both bearer and basic —
+		// Issue #477 / ADR-079: Scale unlocks both bearer and basic —
 		// the SaaS-scale customer shape has rotating-CI keys and
 		// per-environment admin endpoints that benefit from both
 		// auth modes.
 		PublicAuthBearerAllowed: true,
 		PublicAuthBasicAllowed:  true,
-		// Issue #695 / ADR-80: Scale mirrors Pro on the auth default
+		// Issue #695 / ADR-080: Scale mirrors Pro on the auth default
 		// — the gate unlocks AND the bearer scope unlocks, so the
 		// secure-by-default literal (true, "bearer") applies. A future
 		// tier between Pro and Scale that unlocks mTLS would move
@@ -3485,7 +3595,7 @@ var planLimits = map[Plan]Limits{
 		// the Scale app budget (100) plus a per-team allowance, with
 		// headroom for the rotating-CI shape of a SaaS-scale customer.
 		KeysMax: 200,
-		// IAM-6 / ADR-61 PR-2 (issue #190): Scale gets 200 members
+		// IAM-6 / ADR-061 PR-2 (issue #190): Scale gets 200 members
 		// / 100 pending invitations — tracks KeysMax (200) so a
 		// SaaS-scale customer can run the typical multi-team +
 		// rotating-CI shape. Financial model is authoritative —
@@ -3499,12 +3609,12 @@ var planLimits = map[Plan]Limits{
 		AlertRuleLimitPerApp:              25,
 		AlertRuleLimitPerAccount:          100,
 		AlertPresetCatalogLimitPerAccount: 16,
-		// Edge rules (ADR-89): Scale gets 500/app with JWT + IP.
+		// Edge rules (ADR-089): Scale gets 500/app with JWT + IP.
 		EdgeRulesPerApp:     500,
 		EdgeRulesJWTAllowed: true,
 		EdgeRulesIPAllowed:  true,
 		EdgeRulesGeoPerApp:  100,
-		// kind='throttle' per-route rate limit cap (ADR-91 D20.5
+		// kind='throttle' per-route rate limit cap (ADR-091 D20.5
 		// amendment, issue #881). Mirrors EdgeRulesGeoPerApp.
 		EdgeRulesThrottlePerApp: 100,
 		// kind='cache' per-app quota (ADR-122 §Decision). Scale=20
@@ -3516,7 +3626,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-201 traffic primitives. Retry and breaker TUNING are
 		// paid; the breaker itself runs on every plan. Egress
 		// breaking mirrors DataPlacementHintsPerApp because it can
-		// only apply to an upstream ADR-98 already captured.
+		// only apply to an upstream ADR-098 already captured.
 		EdgeRulesRetryPerApp:          25,
 		EdgeRulesCircuitBreakerPerApp: 25,
 		EgressCircuitBreakersPerApp:   50,
@@ -3549,7 +3659,7 @@ var planLimits = map[Plan]Limits{
 		OpenAPIImportsPerAccount: 10000,
 		// Per-consumer throttle key cap (ADR-104, issue #881 Phase 3).
 		ThrottleMaxKeysPerRule: 10000,
-		// Tenant surfaces (ADR-99 / issue #879): Scale gets 25
+		// Tenant surfaces (ADR-099 / issue #879): Scale gets 25
 		// surfaces with up to 250 verified hostnames each — the
 		// established-SaaS tier. The 250 cap is bounded by LE's
 		// 100-SAN-per-cert limit (`per_host_san` falls back to
@@ -3559,12 +3669,12 @@ var planLimits = map[Plan]Limits{
 		TenantHostnamesPerSurface: 250,
 		TenantSurfacesAllowed:     true,
 		WildcardDomainsAllowed:    true,
-		// Data-placement hints (ADR-98 §D5): Scale unlocks the
+		// Data-placement hints (ADR-098 §D5): Scale unlocks the
 		// capture path with a 50-hint cap per app — large enough
 		// for a multi-DB SaaS (primary + replicas + read-only +
 		// analytics + cache + queue).
 		DataPlacementHintsPerApp: 50,
-		// Outbound webhook subscription caps (issue #476 / ADR-76).
+		// Outbound webhook subscription caps (issue #476 / ADR-076).
 		// Scale gets 25/app, 100/account — mirrors the alert-rule ratio.
 		WebhookPerApp:            25,
 		WebhookPerAccount:        100,
@@ -3599,13 +3709,13 @@ var planLimits = map[Plan]Limits{
 		// column CHECK remains a safety net, not a binding
 		// constraint.
 		TriggerPayloadMaxBytes: 16777216,
-		// Per-account rate limit (ADR-40, amended by issue #1680): the
+		// Per-account rate limit (ADR-040, amended by issue #1680): the
 		// account can sustain one Scale app at its advertised 500 rps.
 		RateLimitPerAccountRPM: 30000,
-		// Wake-side admission throttle (ADR-99 PR-0). Scale is
+		// Wake-side admission throttle (ADR-099 PR-0). Scale is
 		// the upper tier — 100 wakes/min per app is enough to drain
 		// a 1000-task parallel job run in 10 min wall-clock, which
-		// matches ADR-99 §Acceptance. The per-account cap of
+		// matches ADR-099 §Acceptance. The per-account cap of
 		// 150/min allows a customer to fan out across several apps
 		// without exhausting the throttle.
 		WakeBurstPerApp:     100,
@@ -3624,7 +3734,7 @@ var planLimits = map[Plan]Limits{
 		CPUWeight:   16,
 		CPUQuotaUS:  1_000_000,
 		CPUPeriodUS: 1_000_000,
-		// Streaming (issue #471 / ADR-47): Scale is paid-tier
+		// Streaming (issue #471 / ADR-047): Scale is paid-tier
 		// streaming — same cap as Hobby/Pro. 100 MB / 900 s is
 		// already the LLM-token-stream ceiling; Scale customers who
 		// need >100 MB are rare (large JSON exports are dwarfed by
@@ -3635,15 +3745,15 @@ var planLimits = map[Plan]Limits{
 		MaxResponseBodyBytes:        100 * 1024 * 1024,
 		RequestBodyMaxBytes:         250 * 1024 * 1024,
 		ResponseWriteTimeoutSeconds: 900,
-		// WebSocket / Upgrade bridge (issue #676 / ADR-80): Scale
+		// WebSocket / Upgrade bridge (issue #676 / ADR-080): Scale
 		// stays on by default — production workloads at this tier
 		// are expected to run agent / WS-backed services.
 		WebSocketEnabled: true,
-		// Per-route metrics (ADR-93): Scale stays on by default
+		// Per-route metrics (ADR-093): Scale stays on by default
 		// for the same reason as Pro — production workloads want
 		// the per-route breakdown without a PATCH round-trip.
 		RouteMetricsEnabled: true,
-		// Warm-snapshot (issue #470 / ADR-55): Scale stays on
+		// Warm-snapshot (issue #470 / ADR-055): Scale stays on
 		// by default — the per-app parked footprint cost fits
 		// inside the 452 GB budget, and the customer's wake-p50
 		// win is the largest dollar lever for SaaS workloads.
@@ -3677,7 +3787,7 @@ var planLimits = map[Plan]Limits{
 		// via QuotaErrorKindMirror.
 		MirrorRuleAllowed:   true,
 		MirrorTargetsPerApp: 3,
-		// Tail primitive (issue #667 / ADR-78): Scale unlocks
+		// Tail primitive (issue #667 / ADR-078): Scale unlocks
 		// the 60 s timeout + 256 per-instance concurrent tails —
 		// the ceiling per the issue's per-plan matrix. The 60 s
 		// timeout is the longest the issue pins; longer timeouts
@@ -3688,7 +3798,7 @@ var planLimits = map[Plan]Limits{
 		TailTimeoutS:               60,
 		TailCapMax:                 TailCapMax,
 		ConcurrentTailsPerInstance: 256,
-		// Liveness (issue #554 / ADR-78): Scale inherits the
+		// Liveness (issue #554 / ADR-078): Scale inherits the
 		// same defaults as Pro (5s / 3 consecutive / 60s cooldown
 		// / 3 in 300s). The per-deployment sliding window is the
 		// source of truth for the park-on-exhaustion path; the
@@ -3710,7 +3820,7 @@ var planLimits = map[Plan]Limits{
 		// generous at the top tier.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 90,
-		// ADR-96 — Scale = "this quarter" retention, 5000
+		// ADR-096 — Scale = "this quarter" retention, 5000
 		// fingerprints, 1000 request rows per fingerprint.
 		AppErrorsRetentionDays:                90,
 		AppErrorsMaxFingerprintsPerApp:        5000,
@@ -3792,7 +3902,7 @@ const (
 	// refuse any other, and the rollout simply holds at its current stage.
 	RolloutConcurrencyGrant = 1
 
-	// FloorDecisionIntervalSeconds (issue #557 / ADR-71 §Decision 1)
+	// FloorDecisionIntervalSeconds (issue #557 / ADR-071 §Decision 1)
 	// is the cadence at which the proactive floor trigger in
 	// pkg/sched/floor wakes instances up to the per-app floor. 1 s
 	// is the customer-facing promise: a Hobby customer who PATCHes
@@ -3800,7 +3910,7 @@ const (
 	// second. Tunable via FAAS_FLOOR_INTERVAL_SECONDS at schedd.
 	FloorDecisionIntervalSeconds = 1
 
-	// MaxFloorBackoffSeconds (ADR-71 §Decision 4) caps the per-app
+	// MaxFloorBackoffSeconds (ADR-071 §Decision 4) caps the per-app
 	// exponential backoff the floor trigger applies on a non-nil
 	// AdmitInstance error. 60 s bounds the FAILED-row hazard on a
 	// RAM-saturated box: a stuck ceiling produces at most ~6 FAILED
@@ -3844,7 +3954,7 @@ const (
 	BuildTimeoutSeconds    = 900 // 15 min build; cold rootless Railpack export needs headroom
 	BuildE2ETimeoutSeconds = 900 // 15 min end-to-end
 
-	// Jobs (issue #1184 Workstream A / ADR-99 supplement). Run-to-completion
+	// Jobs (issue #1184 Workstream A / ADR-099 supplement). Run-to-completion
 	// workloads: stored image + command + env, Firecracker boots, guest runs
 	// to completion, exit code reported via vsock. Distinct from build VMs
 	// in that jobs ride the tenant RAM ceiling (not the scarce builder slot
@@ -3854,7 +3964,7 @@ const (
 	// matrix (one entry per Plan: 0=Free 1=Hobby 2=Pro 3=Scale) lives as
 	// a package-level var below because Go forbids array literals in
 	// const declarations. The per-plan caps are PR #916 as-built,
-	// supersedes ADR-99 §Decision 5 numerics.
+	// supersedes ADR-099 §Decision 5 numerics.
 	//
 	// Backoff (capped exponential) for failed/timeout/oom retry.
 	// JobBackoffBaseSeconds × 2^(attempt-1), capped at JobBackoffMaxSeconds.
@@ -3885,18 +3995,18 @@ const (
 	SnapshotBudgetAlarmPct = 90.0
 	// SnapshotStaleRetention is how long a snapshot lives in stale state
 	// after the F2 FC-version sweep marks it before imaged evicts it
-	// (F-07). Spec §4.4 + ADR-5: stale snapshots must remain
+	// (F-07). Spec §4.4 + ADR-005: stale snapshots must remain
 	// restore-able for a brief window so an operator rollback across a
 	// firecracker upgrade doesn't pay an extra cold boot. 7 days is the
 	// v1 box's typical reset cycle.
 	SnapshotStaleRetention = 7 * 24 * time.Hour
-	// LvFcName is the LVM logical volume apps + snapshots live on (spec §8).
-	// Schedd's dashboard gauge shells out to `lvs -o data_percent <LvFcName>`
-	// to populate `fcvm_lv_fc_used_pct`. Empty on dev/macOS — the
-	// DefaultLvFcUsedPct closure returns 0 and the gauge degrades to "no data".
-	LvFcName = "lv-fc"
+	// FcVolumeRoot is where the spec §8 lv-fc volume (app layers +
+	// snapshots) is mounted. Schedd statfs-es it to populate
+	// `fcvm_lv_fc_used_pct`; the gauge reports no data where the path is
+	// missing (dev/macOS).
+	FcVolumeRoot = "/srv/fc"
 
-	// Characterization boot (ADR-51 §"Characterization window"). On the
+	// Characterization boot (ADR-051 §"Characterization window"). On the
 	// first cold boot of a new deployment, guest-init observes what the
 	// app binds, runs L7 probes, and ships a report over AF_VSOCK
 	// STREAM (port 1026 / msgtype 3). Both bounds live here so a single
@@ -3917,7 +4027,7 @@ const (
 	CharacterizationHostDeadline = CharacterizationDeadline + 5*time.Second
 
 	// LogRingBufferBytes is the capacity of the Supervisor's
-	// stdout/stderr ring buffer (ADR-51 Phase 4 Slice A PR-B).
+	// stdout/stderr ring buffer (ADR-051 Phase 4 Slice A PR-B).
 	// 64 KiB covers the boot-time tail of any realistic customer
 	// app (a Node cold start, a Python import chain) without
 	// forcing a multi-page journal capture on every cold boot.
@@ -4117,12 +4227,12 @@ const (
 	GatewaydInternalControlWriteTimeoutSecondsDefault = 30 // control + unix-socket
 	GatewaydInternalControlIdleTimeoutSecondsDefault  = 60 // control + unix-socket keep-alive
 
-	// MaxEdgeRuleLimitBodyBytesStreaming (ADR-91 D24 / kind=limit
+	// MaxEdgeRuleLimitBodyBytesStreaming (ADR-091 D24 / kind=limit
 	// streaming carve-out) is the upper bound on the optional
 	// `max_body_bytes_streaming` field of a kind=limit edge rule.
 	// The buffered-path field (`max_body_bytes`) is capped by
 	// MaxRequestBodyBytes (25 MiB) above; the streaming opt-in
-	// raises the cap to RawStreamMaxRequestBytes (100 MiB, ADR-80
+	// raises the cap to RawStreamMaxRequestBytes (100 MiB, ADR-080
 	// raw-bridge parity) so an LLM-style streaming POST against a
 	// /v1/chat/completions endpoint has the same headroom the
 	// raw-bridge ForwardStream has. Runtime enforcement ships
@@ -4155,7 +4265,7 @@ const (
 	// Postgres jsonb rows and the gateway host-rule cache.
 	MaxEdgeRuleRespondBodyBytes = 64 * 1024 // 64 KiB
 
-	// EdgeRuleMaintenanceRetryAfterSeconds (ADR-91 amendment,
+	// EdgeRuleMaintenanceRetryAfterSeconds (ADR-091 amendment,
 	// PR-A #??? / kind=maintenance) is the platform default
 	// Retry-After for both the kind=maintenance edge rule and the
 	// apps.maintenance_mode coarse gate. Override via
@@ -4291,7 +4401,7 @@ const (
 	// validation.
 	WorkloadDependencyCapMax = SidecarCapMax + 1
 
-	// Edge-rule JWT verify deadline (ADR-91 hardening PR-A). Caps
+	// Edge-rule JWT verify deadline (ADR-091 hardening PR-A). Caps
 	// the wall-clock spent inside pkg/gateway.(*Handler).applyEdgeRuleJWT
 	// on a single request — signature verify + claim parse + any
 	// JWKS refresh that the verifier triggers mid-call. Sizing
@@ -4303,7 +4413,7 @@ const (
 	// ReadTimeout), the tighter deadline wins.
 	EdgeRuleJWTVerifyTimeoutDefault = 5 * time.Second
 
-	// Streaming response caps (issue #471 / ADR-47). Free stays on the
+	// Streaming response caps (issue #471 / ADR-047). Free stays on the
 	// 25 MB / 300 s envelope (spec §4.1 baseline) so the abuse-floor
 	// tier can't pin a long stream against the box. Hobby/Pro/Scale
 	// raise the cap to 100 MB / 900 s so LLM token streams (typical
@@ -4330,7 +4440,7 @@ const (
 	// outlive the 3/30-second request budget, but a silent session must not
 	// pin gateway resources forever.
 	StreamingIdleTimeoutDefault   = 60 * time.Minute
-	StreamingFlushBytesDefault    = 256 * 1024 // 256 KiB flush window (ADR-47)
+	StreamingFlushBytesDefault    = 256 * 1024 // 256 KiB flush window (ADR-047)
 	StreamingFlushIntervalDefault = 200 * time.Millisecond
 
 	// MaxAppManifestStopGracePeriod is the gross upper bound on the
@@ -4417,7 +4527,7 @@ const (
 	// "would-buffer-pre-D3" finds exactly the call site.
 	StreamingStatusAcceptHintValue = "would-buffer-pre-D3"
 
-	// Raw-bridge (issue #676 / ADR-80) inbound cap. The raw-bytes
+	// Raw-bridge (issue #676 / ADR-080) inbound cap. The raw-bytes
 	// bridge carries Upgrade / WebSocket / long-poll traffic from
 	// gatewayd-internal into the guest's netns TCP socket. The cap
 	// is per-request (the inbound body of one Upgrade handshake),
@@ -4431,7 +4541,7 @@ const (
 	// the same headroom.
 	RawStreamMaxRequestBytes int64 = 100 * 1024 * 1024
 
-	// RawStreamMaxResponseBytes (issue #676 / ADR-80 follow-up,
+	// RawStreamMaxResponseBytes (issue #676 / ADR-080 follow-up,
 	// PR-C) bounds the per-session egress bytes on the raw-bytes
 	// Upgrade bridge. Mirrors RawStreamMaxRequestBytes in shape
 	// but is sized for a long-lived WS session — a 100 MiB cap on
@@ -4452,7 +4562,7 @@ const (
 	// runaway connection rather than an HTTP request-body limit.
 	RawTCPStreamMaxBytes int64 = 1 * 1024 * 1024 * 1024
 
-	// Post-response tail (issue #667 / ADR-78).
+	// Post-response tail (issue #667 / ADR-078).
 	//
 	// TailCapMax is a structural constant applied uniformly across
 	// plans — the issue pins TailCapMax = 16 as a single source of
@@ -4476,7 +4586,7 @@ const (
 
 	// ParkTailDrainTimeoutSeconds is the watchdog ceiling for
 	// snapshotAndPark when an instance's tail_count > 0 at park time
-	// (ADR-78 §"Park gate"). The engine waits up to this many seconds
+	// (ADR-078 §"Park gate"). The engine waits up to this many seconds
 	// for the runner to drain its in-process tail host before
 	// force-parking and emitting wake.tail_failed{reason=forced_at_park}
 	// for any unfinished tails. Set to TailTimeoutFloorSeconds so the
@@ -4485,7 +4595,7 @@ const (
 	// graceful-drain contract would be a lie.
 	ParkTailDrainTimeoutSeconds = 5
 
-	// OCI puller (spec §17 G1, ADR-21). Per-pull HTTP timeout for the
+	// OCI puller (spec §17 G1, ADR-021). Per-pull HTTP timeout for the
 	// registry client. cmd/imaged passes this to oci.WithTimeout; the
 	// daemon may override at boot via FAAS_OCI_PULL_TIMEOUT_SECONDS but
 	// there is no per-deployment knob — every plan shares the same
@@ -4500,11 +4610,11 @@ const (
 	IdleTimeoutFloorSeconds = 10
 	IdleTimeoutMaxMultiple  = 2
 
-	// Liveness probe (issue #554 / ADR-78). The host (cmd/vmmd) polls
+	// Liveness probe (issue #554 / ADR-078). The host (cmd/vmmd) polls
 	// the guest's vsock 1028 STREAM on every Period; after N
 	// consecutive non-2xx (or timeout/conn-refused) responses the
 	// guest-init hasn't ACKed, vmmd destroys the VM and schedd
-	// cold-boots it from rootfs per ADR-5 (no snapshot restore).
+	// cold-boots it from rootfs per ADR-005 (no snapshot restore).
 	// 3 restarts within a sliding Window trigger ParkDeployment
 	// with reason='liveness_exhausted' (pkg/sched/liveness_window.go).
 	//
@@ -4560,12 +4670,12 @@ const (
 	DefaultLivenessWindowSeconds       = 300
 	// MinLivenessCooldownSeconds / MaxLivenessCooldownSeconds
 	// bound the per-deployment CooldownS override (issue #554 /
-	// ADR-78). The window must be wide enough that a noisy
+	// ADR-078). The window must be wide enough that a noisy
 	// cold-boot doesn't get torn down (≥10s) and narrow enough
 	// that a wedged app doesn't sit in grace forever (≤600s).
 	MinLivenessCooldownSeconds = 10
 	MaxLivenessCooldownSeconds = 600
-	// ColdBootBudgetSeconds (issue #554 / ADR-79 follow-up, AC
+	// ColdBootBudgetSeconds (issue #554 / ADR-079 follow-up, AC
 	// #1) is the wall-clock budget the §14 metal acceptance
 	// gate evaluates against when validating the liveness
 	// cycle on a real Firecracker VM. The envelope is:
@@ -4678,7 +4788,7 @@ const (
 	// other signals instead of holding the fleet at a frozen backlog.
 	CustomMetricFreshnessSeconds = 300
 
-	// Scaling policy cooldowns (issue #462 / ADR-58). The
+	// Scaling policy cooldowns (issue #462 / ADR-058). The
 	// customer-facing knobs are `scale_out_cooldown_s` /
 	// `scale_in_cooldown_s` on the wire; the floor / ceiling
 	// constants below are the admission time clamp apid uses to
@@ -4711,8 +4821,8 @@ const (
 	MinScaleInCooldownS  = 5
 	MaxScaleInCooldownS  = 86400
 
-	// Tier A4 (cross-node app rebalance, ADR-64 follow-up to
-	// ADR-62): pacing + per-tick cap on pkg/sched/rebalancer.go.
+	// Tier A4 (cross-node app rebalance, ADR-064 follow-up to
+	// ADR-062): pacing + per-tick cap on pkg/sched/rebalancer.go.
 	//
 	// RebalanceCooldownSeconds is the minimum gap between two
 	// successful reassignments of the same app. A flap-loop
@@ -4736,8 +4846,8 @@ const (
 	OwnershipRecoveryTimeoutSeconds      = 30
 	OwnershipRecoveryStoreTimeoutSeconds = 5
 
-	// Tier A5 (cross-node live-instance migration, ADR-70
-	// follow-up to ADR-64): pacing + lease window on
+	// Tier A5 (cross-node live-instance migration, ADR-070
+	// follow-up to ADR-064): pacing + lease window on
 	// pkg/sched/migration_handoff.go.
 	//
 	// MigrateLiveMaxPerTick caps the per-drain-event batch so a
@@ -4785,8 +4895,8 @@ const (
 	// unresolved database operation keeps the lease and VMs for later recovery.
 	MigrateLiveCommitRecoveryTimeout = 5 * time.Second
 
-	// Tier A6 (migrating-instance watchdog, ADR-67 follow-up to
-	// ADR-70): self-heal stuck state='migrating' rows that
+	// Tier A6 (migrating-instance watchdog, ADR-067 follow-up to
+	// ADR-070): self-heal stuck state='migrating' rows that
 	// never committed (the new owner vmmd died mid-handoff, the
 	// network partition dropped the gRPC, the operator killed
 	// the new owner before the commit). The watchdog is the
@@ -4872,7 +4982,7 @@ const (
 	InstanceDivergenceTickLimit = 50
 
 	// Tier A9 (capacity-pressure-triggered cross-node app rebalance,
-	// ADR-87 — sibling to the dead-node rebalancer of ADR-64).
+	// ADR-087 — sibling to the dead-node rebalancer of ADR-064).
 	// Today apps are durably pinned to a single compute_node via
 	// apps.node_id (NOT NULL post-migration 00090). When the owner
 	// node is at capacity but still healthy (active=true), the wake
@@ -4899,7 +5009,7 @@ const (
 	// FAAS_PRESSURE_REASSESSMENT_SECONDS.
 	//
 	// PressureMigrationPolicy is the closed-set string that gates
-	// the four-phase live-instance migration (ADR-66) on the
+	// the four-phase live-instance migration (ADR-066) on the
 	// pressure path. Closed set ∈ {skip_live, migrate_after_1,
 	// migrate_after_2}. Default migrate_after_2: cheap parked-only
 	// reassign on the first sustained sweep, expensive live
@@ -4919,7 +5029,7 @@ const (
 	PressureMigrationPolicy             = "migrate_after_2"
 
 	// Tier A7 (edge split — gatewayd-public / gatewayd-internal,
-	// ADR-70): drain + replica registry + warm-hint-cache tunables.
+	// ADR-070): drain + replica registry + warm-hint-cache tunables.
 	//
 	// GatewayDrainGraceSeconds is the upper bound on graceful server and
 	// in-flight request shutdown after SIGTERM. The 25s shared deadline leaves
@@ -5051,7 +5161,7 @@ const (
 	OnDemandTLSAskNegativeCacheSeconds = 30
 	OnDemandTLSAskNegativeCacheEntries = 10000
 
-	// Tier A8 (active-passive HA topology, ADR-83 — closes the
+	// Tier A8 (active-passive HA topology, ADR-083 — closes the
 	// §14 M8 "Gate-A runbook (2nd box active-passive)" gap left
 	// by Tier A4 + A5 + A7). Lex-min leader election lives in
 	// pkg/gateway/leader; standby warm-up + drain handoff lives
@@ -5066,7 +5176,7 @@ const (
 	// `gatewayd-public` → `gatewayd-internal` → cache write —
 	// much shorter than the existing wake-quiesce window. On
 	// timeout the scraper logs Warn and skips the app; the
-	// ADR-5 cold-boot safety net still serves the request.
+	// ADR-005 cold-boot safety net still serves the request.
 	// Tunable via FAAS_HA_FAILOVER_PROBE_TIMEOUT_MS.
 	//
 	// HADNSRecordStaleSeconds bounds the drain protocol in
@@ -5093,7 +5203,7 @@ const (
 	HADNSRecordStaleSeconds   = 30
 	HAStandbyWarmupIntervalMS = 500
 
-	// Tier A9 (standby write-redirect, ADR-84 — closes ADR-83
+	// Tier A9 (standby write-redirect, ADR-084 — closes ADR-083
 	// §Open follow-up #2). The redirect lives in
 	// cmd/gatewayd-internal/proxy.go (PR-B); the constants below
 	// bound every timer that PR-B's writeGate consults so the
@@ -5229,13 +5339,13 @@ const (
 	DefaultDiskDriftInterval = 1 * time.Hour
 
 	// WarmAffinityTTL is how long pkg/sched.WarmAffinity remembers the
-	// last-warm compute node for an app (placement scheduler, ADR-25).
+	// last-warm compute node for an app (placement scheduler, ADR-025).
 	// The chooser biases a wake toward the remembered node so a hot
-	// app's snapshot + page cache stay warm (ADR-9). 30 minutes
+	// app's snapshot + page cache stay warm (ADR-009). 30 minutes
 	// matches the Pro plan idle-timeout default — a hot app on a
 	// 30-minute TTL keeps the snapshot warm across one reaper cycle.
 	// Overridable via FAAS_WARM_AFFINITY_TTL at the schedd daemon.
-	// Sticky-warm is bias, never a gate (ADR-5: cold boot must
+	// Sticky-warm is bias, never a gate (ADR-005: cold boot must
 	// always work); an expired or missing hint falls through to
 	// least-loaded RAM headroom.
 	WarmAffinityTTL = 30 * time.Minute
@@ -5244,7 +5354,7 @@ const (
 	// (docs/faas_implementation_spec.md:344). One platform-wide number;
 	// not per-plan tiered — every tenant sees the same cap because the
 	// failure mode (host conntrack exhaustion) is a single shared
-	// resource. ADR-18 deferred the enforcement to this PR; the value
+	// resource. ADR-018 deferred the enforcement to this PR; the value
 	// is the spec literal. vmmd wires it into netns.Config at every
 	// Wake (pkg/fcvm/manager.go:236) and the nft rule that consumes
 	// it lives in pkg/netns/config.go::NftCommands.
@@ -5291,7 +5401,7 @@ func EffectiveRetryMaxAttempts(requested, planLimit int) int {
 
 // Per-plan job caps. Indexed by Plan: 0=Free 1=Hobby 2=Pro 3=Scale.
 // Lives as a var (not const) because Go does not permit array literals
-// in const declarations. PR #916 as-built table, supersedes ADR-99
+// in const declarations. PR #916 as-built table, supersedes ADR-099
 // §Decision 5 numerics.
 //
 // Free returns 0 across the board; the engine gates jobs on
@@ -5369,7 +5479,31 @@ var (
 )
 
 const (
-	WorkflowRunInputMaxBytes int64 = 1 << 20
+	AutomationSimulationRequestMaxBytes  int64 = 3 << 20
+	AutomationSimulationResponseMaxBytes int64 = 4 << 20
+	AutomationSimulationMaxSteps               = 128
+	AutomationSimulationMaxTraceEntries        = 1024
+	AutomationDefinitionMaxBytes         int64 = 1 << 20
+	AutomationNameMaxBytes                     = 128
+	WorkflowRunInputMaxBytes             int64 = 1 << 20
+	WorkflowWebhookBindingMaxBytes       int64 = 64 << 10
+	WorkflowWebhookFilterMaxBytes              = 32 << 10
+	WorkflowWebhookNameMaxBytes                = 128
+	WorkflowWebhookEventMaxBytes               = 256
+	WorkflowOutboundBodyMaxBytes         int64 = 1 << 20
+	WorkflowOutboundStepNameMaxBytes           = 128
+	WorkflowResumeRequestMaxBytes        int64 = 4096
+	WorkflowRunMaxResumes                      = 16
+	WorkflowForEachMaxItems                    = 128
+	WorkflowForEachNameMaxBytes                = 64
+	WorkflowForEachMaxInputBytes         int64 = 1 << 20
+	WorkflowForEachMaxOutputBytes        int64 = 1 << 20
+	WorkflowJoinMaxDependencies                = 128
+	WorkflowGuardMaxBytes                      = 16 << 10
+	WorkflowGuardMaxDepth                      = 8
+	WorkflowGuardMaxNodes                      = 32
+	WorkflowGuardNumberMaxBytes                = 4096
+	WorkflowGuardNumberMaxExponent             = 4096
 
 	// One-shot execution defaults and hard bounds. Per-plan maxima live in the
 	// arrays above or reuse the plan's existing RAM/disk source of truth.
@@ -5697,7 +5831,7 @@ func (p Plan) RequiresStripeUpgradeTo(next Plan) bool {
 // cold-wake floor (ux_spec §6.5). Hobby + Pro + Scale opt in; Free
 // stays scale-to-zero by default. apid's updateApp handler gates
 // `req.MinInstances` on this; the CLI surfaces the rejection with
-// CodePlanMinInstancesNotAllowed. PR-A history (issue #462 / ADR-58):
+// CodePlanMinInstancesNotAllowed. PR-A history (issue #462 / ADR-058):
 // Hobby unlocked at PR-A. The pre-#462 contract was Pro + Scale only;
 // the tier-up landed because the bill auto-counts via
 // pkg/meter/sampler.go:238-239 and Hobby's MaxConcurrency is bounded
@@ -5735,7 +5869,7 @@ func (p Plan) QueueControlsAllowed() bool {
 	return l.QueueControlsAllowed
 }
 
-// MaxInstancesAllowed (issue #462 / ADR-58) reports whether the
+// MaxInstancesAllowed (issue #462 / ADR-058) reports whether the
 // plan may set a per-app live-instances ceiling. Mirrors the
 // MinInstancesAllowed tier-up: Hobby + Pro + Scale opt in; Free
 // stays off. The value the customer passes is bounded above by
@@ -5752,7 +5886,7 @@ func (p Plan) MaxInstancesAllowed() bool {
 	return l.MaxInstancesAllowed
 }
 
-// SidecarAllowed (issue #463 / ADR-70 §Decision 1) reports whether
+// SidecarAllowed (issue #463 / ADR-070 §Decision 1) reports whether
 // the plan may attach sidecars to a deployment. PR-A's accessor
 // returns true for every plan — the load-bearing gate is the GLOBAL
 // `SidecarCapMax` constant, not a per-plan matrix. A future PR
@@ -5767,7 +5901,7 @@ func (p Plan) SidecarAllowed() bool {
 }
 
 // EgressAllowlistAllowed reports whether the plan may set a per-app
-// outbound IP allowlist (ADR-31). Hobby, Pro, and Scale opt in;
+// outbound IP allowlist (ADR-031). Hobby, Pro, and Scale opt in;
 // Free stays off. Hobby's cap is intentionally small for explicit
 // SMTP submission destinations. apid's updateApp handler gates `req.EgressAllowlist` on
 // this; the CLI surfaces the rejection with
@@ -5783,7 +5917,7 @@ func (p Plan) EgressAllowlistAllowed() bool {
 }
 
 // EgressAllowlistMaxSize returns the per-plan CIDR-entry cap for an
-// allowlist (ADR-31). 0 for Free; 8 for Hobby; 16 for Pro; 64 for
+// allowlist (ADR-031). 0 for Free; 8 for Hobby; 16 for Pro; 64 for
 // Scale. apid rejects a
 // PATCH whose `req.EgressAllowlist` has more entries with 400
 // egress_allowlist_too_long. Returning 0 on unknown plans makes a
@@ -5862,7 +5996,7 @@ func ValidExecutionEphemeralDiskMB(diskMB int) bool {
 	}
 }
 
-// JobsAllowed (issue #1184 / ADR-99 supplement) reports whether the
+// JobsAllowed (issue #1184 / ADR-099 supplement) reports whether the
 // plan may create run-to-completion jobs at all. Hobby+Pro+Scale opt
 // in; Free stays off (JobsAllowed=false on the Free row, plus
 // JobMaxPerAccount[0]=0 etc. as defence-in-depth). apid's createJob +
@@ -5881,7 +6015,7 @@ func (p Plan) JobsAllowed() bool {
 	return l.JobsAllowed
 }
 
-// WorkflowsAllowed (ADR-81) reports whether the plan may create and
+// WorkflowsAllowed (ADR-081) reports whether the plan may create and
 // execute multi-step durable workflows. Free=false, Hobby+Pro+Scale=true.
 func (p Plan) WorkflowsAllowed() bool {
 	l, ok := LimitsFor(p)
@@ -6036,7 +6170,7 @@ func (p Plan) PublicAuthIPAllowlistMaxEntries() int {
 	return l.PublicAuthIPAllowlistMaxEntries
 }
 
-// LivenessAllowed (issue #554 / ADR-78) reports whether the plan
+// LivenessAllowed (issue #554 / ADR-078) reports whether the plan
 // may opt-in to per-deployment liveness probes. Free stays off —
 // the §13 M7 free-stop budget already handles abuse-floor paths,
 // and Hobby/Pro/Scale need parity with Cloud Run's primitive.
@@ -6084,7 +6218,7 @@ func (p Plan) LogArchiveRetentionDaysMax() int {
 	return l.LogArchiveRetentionDaysMax
 }
 
-// AppErrorsRetentionDays (ADR-96) returns the per-plan
+// AppErrorsRetentionDays (ADR-096) returns the per-plan
 // retention cap on app_errors / app_error_requests rows. The
 // nightly purge cron in cmd/apid/app_errors_purge.go reads this
 // to decide which rows to DELETE. Returns 1 on unknown plans
@@ -6098,7 +6232,7 @@ func (p Plan) AppErrorsRetentionDays() int {
 	return l.AppErrorsRetentionDays
 }
 
-// AppErrorsMaxFingerprintsPerApp (ADR-96) returns the per-plan
+// AppErrorsMaxFingerprintsPerApp (ADR-096) returns the per-plan
 // ceiling on distinct fingerprints the gatewayd-internal recorder
 // retains in its LRU. The recorder uses this as the
 // CardinalityLimit backstop; past the cap, new fingerprints are
@@ -6112,7 +6246,7 @@ func (p Plan) AppErrorsMaxFingerprintsPerApp() int {
 	return l.AppErrorsMaxFingerprintsPerApp
 }
 
-// AppErrorsMaxRequestRowsPerFingerprint (ADR-96) returns the
+// AppErrorsMaxRequestRowsPerFingerprint (ADR-096) returns the
 // per-plan ceiling on app_error_requests rows retained per
 // fingerprint. The retention purge deletes oldest rows beyond
 // the cap first. Returns 25 on unknown plans (Free-tier floor).
@@ -6304,7 +6438,7 @@ func (p Plan) LivenessWindowSeconds() int {
 	return l.LivenessWindowSeconds
 }
 
-// GRPCLivenessAllowed (issue #554 / ADR-78 §"gRPC liveness") reports
+// GRPCLivenessAllowed (issue #554 / ADR-078 §"gRPC liveness") reports
 // whether the plan may opt in to standard gRPC health.v1 Check liveness
 // probes. Pro and Scale are enabled; Free and Hobby remain HTTP-only.
 func (p Plan) GRPCLivenessAllowed() bool {
@@ -6312,7 +6446,7 @@ func (p Plan) GRPCLivenessAllowed() bool {
 }
 
 // StreamingEnabled reports whether the plan defaults the per-app
-// streaming_enabled column to true (issue #471 / ADR-47). Hobby/Pro/
+// streaming_enabled column to true (issue #471 / ADR-047). Hobby/Pro/
 // Scale opt in; Free stays off (spec §4.1 baseline; Free is the
 // abuse-floor tier where an unbounded stream would let one app pin
 // gatewayd-internal). The plan-level default is applied at CreateApp time in
@@ -6343,7 +6477,7 @@ func (p Plan) StreamingResponseAllowed() bool {
 }
 
 // WebSocketEnabled reports whether the plan defaults the per-app
-// apps.websocket_enabled column to true (issue #676 / ADR-80).
+// apps.websocket_enabled column to true (issue #676 / ADR-080).
 // Hobby/Pro/Scale opt in; Free stays off (the abuse-floor tier where a
 // long-lived WS would pin a wake past wake_idle_timeout). The plan-level
 // default is applied at CreateApp time in cmd/apid/handlers.go::buildApp
@@ -6360,7 +6494,7 @@ func (p Plan) WebSocketEnabled() bool {
 // WebSocketResponseAllowed reports whether the plan permits a customer
 // to set apps.websocket_enabled=true via PATCH. Hobby+ opt in; Free
 // returns false so apid's updateApp handler can surface 403
-// plan_websocket_not_allowed (issue #676 / ADR-80 AC #3). Same
+// plan_websocket_not_allowed (issue #676 / ADR-080 AC #3). Same
 // fail-closed contract as WebSocketEnabled above.
 func (p Plan) WebSocketResponseAllowed() bool {
 	l, ok := LimitsFor(p)
@@ -6371,7 +6505,7 @@ func (p Plan) WebSocketResponseAllowed() bool {
 }
 
 // RouteMetricsEnabled reports whether the plan defaults the per-app
-// apps.route_metrics_enabled column to true (ADR-93). Hobby/Pro/Scale
+// apps.route_metrics_enabled column to true (ADR-093). Hobby/Pro/Scale
 // opt in; Free stays off (the abuse-floor tier where per-route
 // cardinality would not have a budget). The plan-level default is
 // applied at CreateApp time in cmd/apid/handlers.go::buildApp using
@@ -6388,7 +6522,7 @@ func (p Plan) RouteMetricsEnabled() bool {
 // RouteMetricsResponseAllowed reports whether the plan permits a customer
 // to set apps.route_metrics_enabled=true via PATCH. Hobby+ opt in; Free
 // returns false so apid's updateApp handler can surface 403
-// plan_route_metrics_not_allowed (ADR-93 AC #2). Same fail-closed
+// plan_route_metrics_not_allowed (ADR-093 AC #2). Same fail-closed
 // contract as RouteMetricsEnabled above.
 func (p Plan) RouteMetricsResponseAllowed() bool {
 	l, ok := LimitsFor(p)
@@ -6406,7 +6540,7 @@ func (p Plan) HealthPathWakesAllowed() bool {
 }
 
 // RouteMetricsPerAppCap is the per-app hard cap on the number of
-// distinct routes admitted into the routeLabelSet (ADR-93 D2). When
+// distinct routes admitted into the routeLabelSet (ADR-093 D2). When
 // exceeded, all new routes collapse into the reserved __route_other__
 // bucket. The cap is a constant — not per-plan — because the
 // cardinality bound is the same regardless of plan: any single app
@@ -6468,7 +6602,7 @@ const (
 // reads as false, matching the Free default. Used by buildApp in
 // cmd/apid/handlers.go to populate a brand-new app's flag.
 //
-// Issue #470 / ADR-55: the equivalent gate ("can the customer opt in
+// Issue #470 / ADR-055: the equivalent gate ("can the customer opt in
 // to warm-snapshot?") lives on WarmSnapshotAllowed (separate method
 // below) so Free + Hobby PATCH-true can be rejected cleanly without
 // conflating the default and the gate.
@@ -6618,7 +6752,7 @@ func (p Plan) MirrorRuleAllowed() bool {
 	return l.MirrorRuleAllowed
 }
 
-// RequireAuthnDefault (issue #695 / ADR-80) returns the default
+// RequireAuthnDefault (issue #695 / ADR-080) returns the default
 // value that apid's buildApp path stamps onto a freshly created app's
 // `require_authn` column when the POST body omitted the field. Per-plan
 // truth table: Free=false, Hobby=true, Pro=true, Scale=true. The field
@@ -6635,7 +6769,7 @@ func (p Plan) RequireAuthnDefault() bool {
 	return l.RequireAuthnDefault
 }
 
-// PublicAuthModeDefault (issue #695 / ADR-80) returns the default mode
+// PublicAuthModeDefault (issue #695 / ADR-080) returns the default mode
 // apid stamps onto a freshly created app's `public_auth_mode` column.
 // Closed enum: "open" / "bearer" / "basic". Per-plan truth table:
 // Free="open", Hobby="open", Pro="bearer", Scale="bearer". Hobby unlocks
@@ -6722,7 +6856,7 @@ func (p Plan) ResponseWriteTimeout() time.Duration {
 }
 
 // TailEnabled reports whether the plan defaults the per-app
-// apps.tail_enabled column to true (issue #667 / ADR-78). Every
+// apps.tail_enabled column to true (issue #667 / ADR-078). Every
 // plan (Free/Hobby/Pro/Scale) ships with tail_enabled=true by default;
 // the per-plan TailTimeoutS + ConcurrentTailsPerInstance bounds make
 // the primitive safe on the abuse-floor tier. The plan-level default
@@ -6755,7 +6889,7 @@ func (p Plan) TailAllowed() bool {
 // TailTimeoutSeconds returns the per-task wall-clock ceiling in
 // seconds for this plan, clamped up to TailTimeoutFloorSeconds (5 s)
 // when the plan row's field is unset, non-positive, or below the
-// floor (issue #667 / ADR-78). The clamp guarantees the reaper's
+// floor (issue #667 / ADR-078). The clamp guarantees the reaper's
 // 5 s park-watchdog (ParkTailDrainTimeoutSeconds) can never be
 // shorter than the per-plan tail timeout — otherwise the watchdog
 // would fire mid-task and the graceful-drain contract would be a
@@ -6876,7 +7010,7 @@ func (p Plan) CorsPresetMaxOrigins() int {
 
 // CorsPresetMaxAllowMethods returns the per-preset cap on
 // cors_presets.allow_methods entries. The closed-set ceiling is
-// constant across plans (8 in the current ADR-91 D12 enum);
+// constant across plans (8 in the current ADR-091 D12 enum);
 // the value here is the read-side cap a preset can ship, not
 // the closed-set size. apid-Validate reads this in PR-B.
 func (p Plan) CorsPresetMaxAllowMethods() int {
@@ -7015,7 +7149,7 @@ func (p Plan) EvictionPriorityReservedAllowed() bool {
 	return l.EvictionPriorityReservedAllowed
 }
 
-// PublicAuthBearerAllowed (issue #477 / ADR-79) returns true if the
+// PublicAuthBearerAllowed (issue #477 / ADR-079) returns true if the
 // plan may opt apps into public_auth_mode='bearer'. Free = false
 // (Free apps stay public-by-default — no-signup friction); Hobby+ =
 // true. apid's updateApp handler rejects a 'bearer' PATCH on a Free
@@ -7031,7 +7165,7 @@ func (p Plan) PublicAuthBearerAllowed() bool {
 	return l.PublicAuthBearerAllowed
 }
 
-// PublicAuthBasicAllowed (issue #477 / ADR-79) returns true if the
+// PublicAuthBasicAllowed (issue #477 / ADR-079) returns true if the
 // plan may opt apps into public_auth_mode='basic'. Free + Hobby =
 // false (basic adds sealed-credential storage cost the lower tiers
 // don't need; bearer covers the Hobby admin-endpoint use case);
@@ -7077,7 +7211,7 @@ func (p Plan) KeysMax() int {
 }
 
 // AlertRuleLimitPerApp returns the per-app alert-rule cap for the
-// plan (issue #396 / ADR-45). 0 for Free (handler returns 402
+// plan (issue #396 / ADR-045). 0 for Free (handler returns 402
 // CodePlanAlertRulesNotAllowed before the store is touched);
 // positive for Hobby/Pro/Scale. Account-wide rules (AppID == "")
 // bypass this; only the per-account cap applies. Same fail-closed
@@ -7119,7 +7253,7 @@ func (p Plan) AlertPresetCatalogLimitPerAccount() int {
 }
 
 // WebhookPerApp returns the per-app outbound-webhook subscription cap
-// for the plan (issue #476 / ADR-76). 0 for Free (the handler
+// for the plan (issue #476 / ADR-076). 0 for Free (the handler
 // returns 402 CodePlanWebhooksNotAllowed before the store is touched);
 // positive for Hobby/Pro/Scale. Same fail-closed contract as
 // AlertRuleLimitPerApp.
@@ -7350,7 +7484,7 @@ func (p Plan) TLSSkipVerifyAllowed() bool {
 }
 
 // TrustedSignerCountMax returns the per-app cosign trusted-publisher
-// cap for the plan (issue #472 / ADR-54). 0 for Free (the open-deploy
+// cap for the plan (issue #472 / ADR-054). 0 for Free (the open-deploy
 // posture for Free means customers on Free never need require_signed=true
 // and so never need signers either); positive for Hobby/Pro/Scale.
 // Unknown plans fail closed (return 0) — same contract as the cron +
@@ -7364,7 +7498,7 @@ func (p Plan) TrustedSignerCountMax() int {
 }
 
 // MaxMinInstances returns the per-plan cap on the per-app
-// cold-wake floor (issue #557 / ADR-71). Free 0, Hobby 1, Pro 3,
+// cold-wake floor (issue #557 / ADR-071). Free 0, Hobby 1, Pro 3,
 // Scale 10. The apid updateApp handler rejects values above this
 // with CodeMaxMinInstancesExceeded (422) carrying the limit + the
 // observed value + a docs URL — the CLI renders the rejection
@@ -7407,7 +7541,7 @@ func (p Plan) LogDeploymentFilterMax() int {
 }
 
 // OrgMembersMax returns the per-non-personal-org member cap for the
-// plan (issue #190 / IAM-6 / ADR-61). 0 for unknown plans — the
+// plan (issue #190 / IAM-6 / ADR-061). 0 for unknown plans — the
 // fail-closed contract mirrors CronLimitPerApp above. The handler
 // gates membership creation on this accessor and surfaces 403
 // org_member_cap_exceeded once the cap is reached; the store still
@@ -7423,7 +7557,7 @@ func (p Plan) OrgMembersMax() int {
 }
 
 // OrgPendingInvitationsMax returns the per-non-personal-org pending
-// invitation cap for the plan (issue #190 / IAM-6 / ADR-61).
+// invitation cap for the plan (issue #190 / IAM-6 / ADR-061).
 // Independent of OrgMembersMax — defends against the N-invites ×
 // fast-accept botnet signature. Same fail-closed contract as
 // OrgMembersMax above.
@@ -7436,7 +7570,7 @@ func (p Plan) OrgPendingInvitationsMax() int {
 }
 
 // RateLimitPerAccountRPM returns the per-account requests/minute cap for
-// the plan (ADR-40 / issue #292). Independent of RateLimitRPS/Burst
+// the plan (ADR-040 / issue #292). Independent of RateLimitRPS/Burst
 // which are per-app — defends against the N-apps-times-cap-per-app
 // botnet signature. 0 for unknown plans (fail closed; the limiter math
 // then returns zero rps and zero burst, refusing all traffic) — same
@@ -7487,7 +7621,7 @@ func (p Plan) ScaleUpTargetCPUAllowed() bool {
 }
 
 // SliceName returns the systemd sub-slice name for this plan. The
-// 3-level cgroup hierarchy (issue #301 / ADR-44) is
+// 3-level cgroup hierarchy (issue #301 / ADR-044) is
 //
 //	/sys/fs/cgroup/faas-tenant.slice/<sliceName>/<instance>
 //
@@ -7516,7 +7650,7 @@ func (p Plan) SliceName() string {
 }
 
 // CPUWeight returns the kernel cpu.weight value for the plan, used as
-// the jailer `--cgroup cpu.weight=N` argv (issue #301 / ADR-44). The
+// the jailer `--cgroup cpu.weight=N` argv (issue #301 / ADR-044). The
 // ratio 2:4:8:16 (Free:Hobby:Pro:Scale) ensures a Scale-customer
 // burst can preempt a Free-customer burst but never starves them out of
 // their weight. Unknown plans fail closed (return 100 — the kernel
@@ -7597,7 +7731,7 @@ func BuilderSnapshotMemoryMaxMB(ramMB int) int {
 }
 
 // BillableRAMMBWithSidecars is the sidecar-shape variant of
-// BillableRAMMB (issue #463 / ADR-70 §Decision 6). The billable
+// BillableRAMMB (issue #463 / ADR-070 §Decision 6). The billable
 // shutter is `plan.RAMMB + Σ(sidecar.ram_mb) + PerVMOverheadMB`:
 // sidecars share the per-VM overhead (one netns, one cgroup
 // scope per instance), but each sidecar contributes its own
@@ -7628,7 +7762,7 @@ func (l Limits) IdleTimeoutBounds() (floor, ceiling int) {
 	return IdleTimeoutFloorSeconds, l.IdleTimeoutS * IdleTimeoutMaxMultiple
 }
 
-// Obs admin pagination (issue #777 / ADR-91). The operator surface
+// Obs admin pagination (issue #777 / ADR-091). The operator surface
 // differs from the customer surface (pkg/api/paging.go defaults to
 // 25/100) because the operator UI is fleet-wide and a single page
 // often renders a region of the table at a glance. 200 is the
@@ -7655,11 +7789,11 @@ const (
 	// operator queries. 168h = 7d is the longest the operator can scan
 	// without breaking the read-amplification budget; longer windows
 	// are a deliberate future concern (anomaly detection moves to
-	// PromQL when the control plane goes multi-node, ADR-91 §6).
+	// PromQL when the control plane goes multi-node, ADR-091 §6).
 	ObsAdminWindowMaxHours = 168
 
 	// ObsAdminAnomalyLimitDefault / ObsAdminAnomalyLimitMax bound the
-	// top-N size of /v1/admin/obs/anomalies (ADR-91 §3.6 / PR #2).
+	// top-N size of /v1/admin/obs/anomalies (ADR-091 §3.6 / PR #2).
 	// Default 50 keeps the dashboard tile to one screen; cap 200
 	// matches the upper bound the underlying CTE handles without
 	// spilling to disk.
@@ -7667,14 +7801,14 @@ const (
 	ObsAdminAnomalyLimitMax     = 200
 
 	// ObsAdminRateLimitLimitDefault / ObsAdminRateLimitLimitMax bound
-	// the top-N size of /v1/admin/obs/rate-limits (ADR-91 §3.5 /
+	// the top-N size of /v1/admin/obs/rate-limits (ADR-091 §3.5 /
 	// PR #2). Default 100 covers the "show me everyone over budget"
 	// tile; cap 500 = ObsAdminPaginationMax for parity with the rest
 	// of the operator surface.
 	ObsAdminRateLimitLimitDefault = 100
 	ObsAdminRateLimitLimitMax     = ObsAdminPaginationMax
 
-	// AppErrorsWindowMaxHours (ADR-96) bounds the ?since= window
+	// AppErrorsWindowMaxHours (ADR-096) bounds the ?since= window
 	// on /v1/apps/{slug}/errors/summary. Mirrors ObsAdminWindowMaxHours
 	// (168h = 7d) — the customer view is narrower in the dashboard
 	// UI but the storage backend can serve the same window. The
@@ -7709,7 +7843,7 @@ const (
 	// call, including a cold wake and all retries. The default remains unset.
 	MaxServiceReliabilityTimeoutMS = 300_000
 
-	// AppErrorsDedupeWindowSeconds (ADR-96) is the platform-wide
+	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a
 	// per-plan constant — it is a system-wide setting
 	// (FAAS_APP_ERRORS_DEDUPE_WINDOW_SECONDS env var). 3600s = 1h
@@ -7718,7 +7852,7 @@ const (
 	// here so the limits-lint gate accepts the constant.
 	AppErrorsDedupeWindowSeconds = 3600
 
-	// AppErrorsSampleMessageCapBytes (ADR-96) is the hard cap on
+	// AppErrorsSampleMessageCapBytes (ADR-096) is the hard cap on
 	// the sample_message column at the writer. The
 	// redact.Redactor truncates at this bound BEFORE INSERT; the
 	// pg_column_size CHECK on the column is the backstop. 512 bytes
@@ -7728,7 +7862,7 @@ const (
 	// narrow.
 	AppErrorsSampleMessageCapBytes = 512
 
-	// AppErrorsCardinalityBackstopMultiplier (ADR-96) is the
+	// AppErrorsCardinalityBackstopMultiplier (ADR-096) is the
 	// multiplier applied to AppErrorsMaxFingerprintsPerApp() when
 	// computing the recorder's LRU cache cap. The recorder uses
 	// this so the cache can absorb a brief burst above the plan
@@ -7738,7 +7872,7 @@ const (
 	AppErrorsCardinalityBackstopMultiplier = 2
 
 	// ObsAdminAuditLogLimitDefault / ObsAdminAuditLogLimitMax bound
-	// the top-N size of /v1/admin/obs/audit-log/search (ADR-91 §3.7 /
+	// the top-N size of /v1/admin/obs/audit-log/search (ADR-091 §3.7 /
 	// PR #3). Default 200 covers the operator's "what happened in
 	// the last hour" drill-down; cap 500 = ObsAdminPaginationMax
 	// for parity with the rest of the operator surface. The underlying
@@ -7748,7 +7882,7 @@ const (
 	ObsAdminAuditLogLimitMax     = ObsAdminPaginationMax
 
 	// ObsAdminEventsLimitDefault / ObsAdminEventsLimitMax bound the
-	// top-N size of /v1/admin/obs/events (ADR-91 §3.7 / PR #3).
+	// top-N size of /v1/admin/obs/events (ADR-091 §3.7 / PR #3).
 	// Same shape as the audit-log search: default 200, cap 500. The
 	// events table is append-only with no retention pruning today
 	// so the over-read budget is also bounded by the
@@ -7757,7 +7891,7 @@ const (
 	ObsAdminEventsLimitMax     = ObsAdminPaginationMax
 )
 
-// End-to-end request budgets (ADR-93). The platform enforces a
+// End-to-end request budgets (ADR-093). The platform enforces a
 // wall-clock budget on every customer-facing request and propagates
 // the remaining time to every downstream call (DB, gRPC, outbound
 // HTTP). The values here are the *defaults* — per-route overrides
@@ -7874,7 +8008,7 @@ func RequestUploadTimeoutForBytes(bodyBytes int64) time.Duration {
 // kind=budget overrides still take precedence at request time —
 // this accessor is the *baseline* the middleware starts from.
 //
-// ADR-93.
+// ADR-093.
 func (l Limits) RequestBudget() time.Duration {
 	d := time.Duration(l.RequestBudgetMs) * time.Millisecond
 	if d <= 0 {
@@ -7920,7 +8054,7 @@ func (l Limits) RequestBudgetForType(appType string) time.Duration {
 // cannot accidentally configure a 100 ms max (which would force the
 // default down to 100 ms).
 //
-// ADR-93.
+// ADR-093.
 func (l Limits) RequestBudgetMaxDuration() time.Duration {
 	d := time.Duration(l.RequestBudgetMaxMs) * time.Millisecond
 	if d <= 0 {
@@ -8097,6 +8231,17 @@ func (p Plan) EgressExtraPortsMax() int {
 	return l.EgressExtraPortsMax
 }
 
+// ServiceTCPSessionsPerAccount returns the per-node concurrent private TCP
+// session cap for an account on this plan (ADR-576). Unknown plans get 0
+// (fail closed).
+func (p Plan) ServiceTCPSessionsPerAccount() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.ServiceTCPSessionsPerAccount
+}
+
 // tenantEgressForbiddenPorts are TCP ports an app may never add to its
 // egress (ADR-361), with the reason returned to the caller. SMTP stays
 // blocked for spam (spec §11); remote administration and SMB are the
@@ -8239,6 +8384,47 @@ const NamespaceBridgeReadinessMaxBytes = 4096
 // Listeners are a local workload contract, not an unbounded service registry.
 const WorkloadPortCapMax = 16
 
+// ADR-576: private TCP addressing between services.
+const (
+	// ServiceTCPProxyPort is the reserved tenant-bridge port of the node-local
+	// service TCP proxy. No netns rule admits it: guests reach it only through
+	// the host DNAT of a service address.
+	ServiceTCPProxyPort = 10082
+	// ServiceAddressIndexMin and ServiceAddressIndexMax bound an app's
+	// account-scoped index into ServiceAddressCIDR. The block's network and
+	// broadcast addresses are never allocated.
+	ServiceAddressIndexMin = 1
+	ServiceAddressIndexMax = 65534
+	// ServiceAddressReuseQuarantine keeps a deleted app's index out of
+	// allocation far longer than a cached service DNS answer (5 s TTL) or a
+	// lingering client, so a successor app never receives its traffic.
+	ServiceAddressReuseQuarantine = 24 * time.Hour
+	// ServiceTCPWakeTimeout bounds how long the service TCP proxy holds an
+	// accepted connection while a parked target is restored. It matches the
+	// gateway's 30 s wake hold so internal and public cold calls agree.
+	ServiceTCPWakeTimeout = 30 * time.Second
+	// ServiceTCPSessionsPerNodeMax caps concurrent private TCP sessions
+	// through one node's proxy across all accounts, independent of the
+	// per-account plan cap.
+	ServiceTCPSessionsPerNodeMax = 8192
+)
+
+// ServiceTCPReservedPorts belong to the HTTP service mesh on every service
+// address (ADR-576). The TCP proxy refuses them even when a target declares
+// one, so a raw session can never bypass HTTP-layer caller policy.
+func ServiceTCPReservedPorts() []int {
+	return []int{443, ServiceBindingLegacyPort, ServiceBindingPort}
+}
+
+// ServiceAddressCIDR is the block holding every app's service address
+// (ADR-576). It is a platform constant rather than an operator setting
+// because an address must not move when configuration changes. It sits in
+// the RFC 2544 benchmarking range, which is never a legitimate public
+// destination; the OCI puller's egress denylist already refuses it.
+func ServiceAddressCIDR() netip.Prefix {
+	return netip.MustParsePrefix("198.19.0.0/16")
+}
+
 // UDPListenerReservationsPerAppMax bounds all durable reservations, including
 // disabled ones and reservations retained across manifest changes.
 const UDPListenerReservationsPerAppMax = WorkloadPortCapMax
@@ -8263,6 +8449,8 @@ const ServiceCapacityMinimumHosts = 2
 const (
 	RouteImpactMaxPaths           = 20000
 	RouteImpactMaxPythonFiles     = 1000
+	RouteImpactMaxGoFiles         = 1000
+	RouteImpactMaxJavaScriptFiles = 1000
 	RouteImpactFileMaxBytes       = 1 << 20
 	RouteImpactSourceMaxBytes     = 16 << 20
 	RouteImpactGitOutputMaxBytes  = 32 << 20
@@ -8328,6 +8516,10 @@ const (
 	MaxObjectS3UploadMarkerBytes = 128
 )
 
+// Allows a maximum-size native listing (including escaped 4096-byte upload IDs)
+// while bounding SDK metadata decoding. Object GET payloads stream separately.
+const MaxObjectProviderMetadataResponseBytes int64 = 32 << 20
+
 // Versioning transitions fence writes through provider propagation and inventory.
 const (
 	ObjectBucketVersioningPropagation        = 15 * time.Minute
@@ -8366,6 +8558,10 @@ const (
 	ObjectBucketObjectLockRetry             = 30 * time.Second
 	ObjectBucketObjectLockTimeout           = time.Minute
 	ObjectBucketObjectLockBatch       int32 = 50
+	ObjectVersionProtectionLease            = 2 * time.Minute
+	ObjectVersionProtectionRetry            = 30 * time.Second
+	ObjectVersionProtectionTimeout          = 45 * time.Second
+	ObjectVersionProtectionBatch      int32 = 50
 	MaxObjectBucketObjectLockRevision int64 = 1<<53 - 1
 )
 
@@ -8512,3 +8708,6 @@ const (
 	RouteMonitorRecoveryCustomersPerRoute       = 100
 	RouteMonitorRecoveryStateMaxBytes           = 256 << 10
 )
+
+// EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
+const EnvironmentFieldOwnershipMaxPaths = 1024
