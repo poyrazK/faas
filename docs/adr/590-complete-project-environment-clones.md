@@ -6767,3 +6767,53 @@ point. Targeted managed PostgreSQL lint passed with zero issues. Local build
 storage pressure required task-owned RAM build/cache storage; the passing APID
 run used unmodified production/test source files. No new PR is opened for this
 increment; PR #4251 is closed and the branch retains the work.
+
+### Composed source barrier preparation (2026-10-05)
+
+A private driver now derives the complete PostgreSQL and object source roster
+from the authenticated frozen configuration. It reserves every PostgreSQL hold
+and acquires every owned object write fence before provider maintenance,
+discovery or closure IO. Independent roster reads reject omissions, duplicates,
+changed owners, changed placement and invalid writer counts. Shared PostgreSQL
+bindings produce one source plan. Each database consumes its original encrypted
+selection and the existing independently observed native closure protocol.
+
+Control-plane validation compares the current source with the original root in
+a repeatable-read transaction before hold acquisition and after remote IO. It
+reads the current release selection, artifacts, values, secrets, flags, workload
+settings, policies, bindings and workload membership. Drift returns a conflict
+without recapturing or replacing the frozen root. Final lease authorization and
+worker admission checks bound which worker can consume the observations.
+
+Lost replies, cancellation, partial acquisition and worker handoff retain all
+committed holds and original native selection. Tracked requests remain busy
+until their completion is acknowledged. Native grants remain outstanding;
+the request-completion API cannot clear them, and an authenticated provider
+revocation/drain protocol remains unfinished. Elapsed time does not erase
+either kind of writer. Error paths return no usable barrier observation. The
+existing compensating protocols remain responsible for abandonment.
+
+The driver returns transient instrumented-writer observations only. Sequential
+database observations and a matching configuration snapshot do not prove a
+shared capture point, configuration stability after that snapshot, complete
+provider/background writer coverage, or immutable data retention. It selects no
+capture timestamp, records no capture resources, creates no target and releases
+no source. The driver is private and is not called by the active coordinator;
+data-bearing capture and public full-clone admission remain gated. Next work
+must qualify those remaining contracts and successful source release before
+connecting this driver to capture dispatch.
+
+Qualification uses actual migrated PostgreSQL 16.15 with UTF-8 encoding and the
+CI template-database harness. The normal state and APID production/test packages
+compiled without source overlays. Eighteen focused top-level tests passed (58
+including subtests), with no failed or skipped cases. Coverage includes eight
+configuration drift categories, partial acquisition with a lost reply, original
+selection recovery after handoff, complete shared-database/two-bucket rosters,
+request/native-grant accounting, zero-count capture gating, and authority or
+roster changes during provider IO. Provider replies remain synthetic; these
+tests do not qualify a live provider common point.
+
+State and APID lint passed separately with zero issues using the repository's
+pinned golangci-lint v2.4.0, built with Go 1.25.13. The newer system linter is
+not used for this qualification. This increment remains local; no new PR is
+opened and PR #4251 remains closed.

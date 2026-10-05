@@ -28,6 +28,13 @@ type ProjectEnvironmentCloneConfigurationCaptureStore interface {
 	ProjectEnvironmentCloneConfigurationForLease(context.Context, ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneConfigurationCapture, error)
 }
 
+// Validation reads today's source in one control-plane snapshot and compares
+// it with the immutable root. It is not a persistent configuration write fence
+// or a common data checkpoint: later source edits still require coordination.
+type ProjectEnvironmentCloneConfigurationValidationStore interface {
+	ValidateProjectEnvironmentCloneSourceConfigurationForLease(context.Context, ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneConfigurationCapture, error)
+}
+
 type projectCloneConfigurationRoot struct {
 	Version                 int                                 `json:"version"`
 	AccountID               string                              `json:"account_id"`
@@ -95,3 +102,4 @@ func cloneConfigurationRoot(op ProjectEnvironmentCloneOperation, records []proje
 }
 
 var _ ProjectEnvironmentCloneConfigurationCaptureStore = (*PgStore)(nil)
+var _ ProjectEnvironmentCloneConfigurationValidationStore = (*PgStore)(nil)
