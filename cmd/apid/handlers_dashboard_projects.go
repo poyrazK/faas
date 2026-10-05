@@ -93,6 +93,15 @@ func (s *server) renderProjectDetail(w http.ResponseWriter, r *http.Request, log
 		return
 	}
 	setDashboardCSRFCookie(w, s, token)
+	environments, err := s.store.ListProjectEnvironments(r.Context(), acct.ID, project.ID)
+	if err != nil {
+		renderProblem(w, log, err)
+		return
+	}
+	environmentSlugs := make([]string, 0, len(environments))
+	for _, environment := range environments {
+		environmentSlugs = append(environmentSlugs, environment.Slug)
+	}
 	view, _ := AccountFrom(r.Context())
 	page := dashboard.Page{
 		Title:   "Project " + slug,
@@ -101,6 +110,7 @@ func (s *server) renderProjectDetail(w http.ResponseWriter, r *http.Request, log
 		Data: dashboard.ProjectsData{
 			Project:       &response,
 			DeletePreview: &preview,
+			Environments:  environmentSlugs,
 			CSRFToken:     token,
 			Flash:         projectDashboardFlash(r),
 		},

@@ -1,0 +1,5 @@
+Result=oom-kill
+ExecMainStatus=15
+ActiveState=failed
+SubState=failed
+InvocationID=7039da583cd94dc394258e4dd43117cd

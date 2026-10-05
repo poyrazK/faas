@@ -140,6 +140,72 @@ func (b *PGRateLimitBackend) ConsumeToken(ctx context.Context, scope, subjectID,
 	return int(remaining), true, nil
 }
 
+// ConsumeTokens grants min(n, available) tokens from one counter in a single
+// statement. It implements gateway.CentralBatchBackend: the gateway charges
+// the requests that queued behind an in-flight consult together, so a hot
+// counter costs one statement per round trip instead of one per request.
+//
+// Refill and last_refill follow ConsumeToken exactly. The row lock taken by
+// the FOR UPDATE CTE serialises replicas; under READ COMMITTED a waiter
+// re-reads the committed row, so concurrent batches never double-spend.
+// An empty bucket is left unwritten, like ConsumeToken. A missing row is
+// created with the grant already taken.
+func (b *PGRateLimitBackend) ConsumeTokens(ctx context.Context, scope, subjectID, plan string, rps, burst float64, n int) (int, int, error) {
+	if rps <= 0 || burst < 1 || n <= 0 {
+		return 0, 0, nil
+	}
+	const consume = `
+		WITH cur AS (
+			SELECT LEAST(FLOOR($4)::bigint, tokens + FLOOR(EXTRACT(EPOCH FROM (now() - last_refill)) * $5)::bigint) AS avail,
+			       tokens + FLOOR(EXTRACT(EPOCH FROM (now() - last_refill)) * $5)::bigint AS refilled,
+			       FLOOR(EXTRACT(EPOCH FROM (now() - last_refill)) * $5) AS whole
+			  FROM pg_ratelimit_counters
+			 WHERE scope = $1 AND subject_id = $2 AND plan = $3
+			 FOR UPDATE
+		), upd AS (
+			UPDATE pg_ratelimit_counters c
+			   SET tokens = cur.avail - LEAST($6::bigint, cur.avail),
+			       last_refill = CASE
+			         WHEN cur.refilled >= FLOOR($4)::bigint THEN now()
+			         ELSE c.last_refill + (cur.whole / $5) * interval '1 second'
+			       END
+			  FROM cur
+			 WHERE c.scope = $1 AND c.subject_id = $2 AND c.plan = $3 AND cur.avail >= 1
+			RETURNING LEAST($6::bigint, cur.avail) AS granted, c.tokens AS remaining
+		)
+		SELECT EXISTS (SELECT 1 FROM cur),
+		       COALESCE((SELECT granted FROM upd), 0),
+		       COALESCE((SELECT remaining FROM upd), (SELECT GREATEST(avail, 0) FROM cur), 0)`
+	const insert = `
+		INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
+		VALUES ($1, $2, $3, FLOOR($4)::bigint - LEAST($5::bigint, FLOOR($4)::bigint), now())
+		ON CONFLICT (scope, subject_id, plan) DO NOTHING
+		RETURNING tokens`
+	// Two attempts: a concurrent first consume can insert the row between
+	// this statement's existence check and its insert.
+	for attempt := 0; attempt < 2; attempt++ {
+		var (
+			found     bool
+			granted   int64
+			remaining int64
+		)
+		if err := b.pool.QueryRow(ctx, consume, scope, subjectID, plan, burst, rps, int64(n)).Scan(&found, &granted, &remaining); err != nil {
+			return 0, 0, fmt.Errorf("ratelimit central ConsumeTokens: %w", err)
+		}
+		if found {
+			return int(granted), int(remaining), nil
+		}
+		err := b.pool.QueryRow(ctx, insert, scope, subjectID, plan, burst, int64(n)).Scan(&remaining)
+		if err == nil {
+			return int(min(int64(n), int64(burst))), int(remaining), nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return 0, 0, fmt.Errorf("ratelimit central ConsumeTokens insert: %w", err)
+		}
+	}
+	return 0, 0, fmt.Errorf("ratelimit central ConsumeTokens: counter row for %s/%s raced its creation twice", scope, plan)
+}
+
 // PeekToken returns the central counter's current tokens WITHOUT
 // decrementing. Implements gateway.CentralBackend.
 //

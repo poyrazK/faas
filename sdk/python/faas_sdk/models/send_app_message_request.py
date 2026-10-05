@@ -31,6 +31,9 @@ class SendAppMessageRequest:
     type_: str
     data: Any
     """Any valid JSON value delivered inside the CloudEvents envelope."""
+    environment: str | Unset = UNSET
+    """Registered project environment. Requires an enabled environment-owned queue binding; omitted uses the
+    default environment and legacy shared queues."""
     id: str | Unset = UNSET
     """Generated when omitted."""
     source: str | Unset = "gregale.send"
@@ -58,6 +61,8 @@ class SendAppMessageRequest:
         type_ = self.type_
 
         data = self.data
+
+        environment = self.environment
 
         id = self.id
 
@@ -95,6 +100,8 @@ class SendAppMessageRequest:
                 "data": data,
             }
         )
+        if environment is not UNSET:
+            field_dict["environment"] = environment
         if id is not UNSET:
             field_dict["id"] = id
         if source is not UNSET:
@@ -125,6 +132,8 @@ class SendAppMessageRequest:
         type_ = d.pop("type")
 
         data = d.pop("data")
+
+        environment = d.pop("environment", UNSET)
 
         id = d.pop("id", UNSET)
 
@@ -172,6 +181,7 @@ class SendAppMessageRequest:
         send_app_message_request = cls(
             type_=type_,
             data=data,
+            environment=environment,
             id=id,
             source=source,
             time=time,

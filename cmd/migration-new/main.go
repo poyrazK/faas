@@ -27,6 +27,7 @@ func run(args []string, now func() time.Time) error {
 	flags.SetOutput(os.Stderr)
 	name := flags.String("name", "", "lower_snake_case migration name")
 	dir := flags.String("dir", "migrations", "migration directory")
+	after := flags.String("after", "", "timestamped prerequisite version; keep the generated version later despite clock skew")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -37,7 +38,15 @@ func run(args []string, now func() time.Time) error {
 		return fmt.Errorf("invalid name %q: use lower_snake_case beginning with a letter", *name)
 	}
 
-	version := migrations.TimestampMigrationVersion(now())
+	generatedAt := now()
+	if *after != "" {
+		var err error
+		generatedAt, err = afterDependency(*dir, *after, generatedAt)
+		if err != nil {
+			return err
+		}
+	}
+	version := migrations.TimestampMigrationVersion(generatedAt)
 	if !migrations.IsTimestampMigrationVersion(version) {
 		return fmt.Errorf("system UTC clock produced version %d before timestamp cutover %d", version, migrations.TimestampMigrationMinVersion)
 	}
@@ -72,4 +81,41 @@ func run(args []string, now func() time.Time) error {
 	}
 	fmt.Println(path)
 	return nil
+}
+
+func afterDependency(dir, version string, now time.Time) (time.Time, error) {
+	if len(version) != migrations.TimestampMigrationVersionDigits {
+		return time.Time{}, errors.New("-after requires a 17-digit timestamped prerequisite version")
+	}
+	dependencyAt, err := time.Parse("20060102150405.000", version[:14]+"."+version[14:])
+	if err != nil || !migrations.IsTimestampMigrationVersion(migrations.TimestampMigrationVersion(dependencyAt)) {
+		return time.Time{}, errors.New("-after requires a valid UTC timestamped prerequisite version")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read migration dependencies: %w", err)
+	}
+	used := map[string]bool{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.IsDir() && len(name) > 18 && name[17] == '_' && filepath.Ext(name) == ".sql" {
+			used[name[:17]] = true
+		}
+	}
+	if !used[version] {
+		return time.Time{}, fmt.Errorf("prerequisite version %s is absent from %s", version, dir)
+	}
+	generatedAt := now
+	if migrations.TimestampMigrationVersion(now) <= migrations.TimestampMigrationVersion(dependencyAt) {
+		generatedAt = dependencyAt.Add(time.Millisecond)
+	}
+	// Advancing logical UTC time keeps a dependent migration after its
+	// prerequisite on fresh databases too. Avoid versions already allocated
+	// in this checkout, independently of their migration names.
+	for ; ; generatedAt = generatedAt.Add(time.Millisecond) {
+		candidate := fmt.Sprintf("%017d", migrations.TimestampMigrationVersion(generatedAt))
+		if !used[candidate] && candidate[14:] != "000" {
+			return generatedAt, nil
+		}
+	}
 }

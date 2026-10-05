@@ -1,0 +1,5 @@
+bash scripts/ci/check_spec_cited_tests.sh
+spec-cited-tests-check: OK — cited core-path tests:
+  pkg/fcvm/failure_outbox_metal_test.go
+  pkg/fcvm/failure_report_ownership_test.go
+  pkg/sched/failure_source_test.go

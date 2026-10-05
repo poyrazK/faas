@@ -16,12 +16,16 @@ type ObjectBucket struct {
 }
 
 type ObjectBucketList struct {
-	Items            []ObjectBucket `json:"items"`
-	Enabled          bool           `json:"enabled"`
-	Regions          []string       `json:"regions"`
-	DefaultRegion    string         `json:"default_region"`
-	MaxUploadBytes   int64          `json:"max_upload_bytes"`
-	MaxBucketsPerApp int            `json:"max_buckets_per_app"`
+	Items                  []ObjectBucket `json:"items"`
+	Enabled                bool           `json:"enabled"`
+	Regions                []string       `json:"regions"`
+	DefaultRegion          string         `json:"default_region"`
+	MaxUploadBytes         int64          `json:"max_upload_bytes"`
+	MaxBucketsPerApp       int            `json:"max_buckets_per_app"`
+	MaxSinglePutBytes      int64          `json:"max_single_put_bytes,omitempty"`
+	MaxPartBytes           int64          `json:"max_part_bytes,omitempty"`
+	TransferTimeoutSeconds int64          `json:"transfer_timeout_seconds,omitempty"`
+	UploadProfile          string         `json:"upload_profile,omitempty"`
 }
 
 type ObjectSignRequest struct {
@@ -36,6 +40,7 @@ type ObjectSignRequest struct {
 	ContentLanguage    string            `json:"content_language,omitempty"`
 	Metadata           map[string]string `json:"metadata,omitempty"`
 	Tags               map[string]string `json:"tags,omitempty"`
+	Encryption         *ObjectEncryption `json:"encryption,omitempty"`
 }
 
 type ObjectSignedRequest struct {
@@ -43,20 +48,25 @@ type ObjectSignedRequest struct {
 	Method    string            `json:"method"`
 	Headers   map[string]string `json:"headers"`
 	ExpiresAt time.Time         `json:"expires_at"`
+	UploadID  string            `json:"upload_id,omitempty"`
 }
 
 // ObjectMultipartUpload is Gregale's durable upload session. The upstream S3
 // upload ID is intentionally never exposed.
 type ObjectMultipartUpload struct {
-	ID            string    `json:"id"`
-	Key           string    `json:"key"`
-	SizeBytes     int64     `json:"size_bytes"`
-	PartSizeBytes int64     `json:"part_size_bytes"`
-	PartCount     int32     `json:"part_count"`
-	ContentType   string    `json:"content_type"`
-	State         string    `json:"state"`
-	ExpiresAt     time.Time `json:"expires_at"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID                  string            `json:"id"`
+	Key                 string            `json:"key"`
+	SizeBytes           int64             `json:"size_bytes"`
+	PartSizeBytes       int64             `json:"part_size_bytes"`
+	PartCount           int32             `json:"part_count"`
+	ContentType         string            `json:"content_type"`
+	State               string            `json:"state"`
+	CompletionErrorCode string            `json:"completion_error_code,omitempty"`
+	ETag                string            `json:"etag,omitempty"`
+	VersionID           string            `json:"version_id,omitempty"`
+	Encryption          *ObjectEncryption `json:"encryption,omitempty"`
+	ExpiresAt           time.Time         `json:"expires_at"`
+	CreatedAt           time.Time         `json:"created_at"`
 }
 
 type ObjectMultipartUploadList struct {
@@ -65,9 +75,10 @@ type ObjectMultipartUploadList struct {
 }
 
 type CreateObjectMultipartUploadRequest struct {
-	Key         string `json:"key"`
-	SizeBytes   int64  `json:"size_bytes"`
-	ContentType string `json:"content_type,omitempty"`
+	Key         string            `json:"key"`
+	SizeBytes   int64             `json:"size_bytes"`
+	ContentType string            `json:"content_type,omitempty"`
+	Encryption  *ObjectEncryption `json:"encryption,omitempty"`
 }
 
 type ObjectMultipartPartSignRequest struct {
@@ -123,15 +134,16 @@ type ObjectBucketAccessGrantList struct {
 // upload endpoint. The route is served by Gregale's edge and never wakes the
 // application deployment.
 type ObjectUploadRoute struct {
-	ID                  string    `json:"id"`
-	Name                string    `json:"name"`
-	BucketID            string    `json:"bucket_id"`
-	KeyPrefix           string    `json:"key_prefix,omitempty"`
-	MaxBytes            int64     `json:"max_bytes"`
-	AllowedContentTypes []string  `json:"allowed_content_types,omitempty"`
-	Enabled             bool      `json:"enabled"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	ID                  string            `json:"id"`
+	Name                string            `json:"name"`
+	BucketID            string            `json:"bucket_id"`
+	KeyPrefix           string            `json:"key_prefix,omitempty"`
+	MaxBytes            int64             `json:"max_bytes"`
+	AllowedContentTypes []string          `json:"allowed_content_types,omitempty"`
+	Enabled             bool              `json:"enabled"`
+	Encryption          *ObjectEncryption `json:"encryption,omitempty"`
+	CreatedAt           time.Time         `json:"created_at"`
+	UpdatedAt           time.Time         `json:"updated_at"`
 }
 
 type ObjectUploadRouteList struct {
@@ -139,12 +151,13 @@ type ObjectUploadRouteList struct {
 }
 
 type CreateObjectUploadRouteRequest struct {
-	Name                string   `json:"name"`
-	BucketID            string   `json:"bucket_id"`
-	KeyPrefix           string   `json:"key_prefix,omitempty"`
-	MaxBytes            int64    `json:"max_bytes"`
-	AllowedContentTypes []string `json:"allowed_content_types,omitempty"`
-	Enabled             *bool    `json:"enabled,omitempty"`
+	Name                string            `json:"name"`
+	BucketID            string            `json:"bucket_id"`
+	KeyPrefix           string            `json:"key_prefix,omitempty"`
+	MaxBytes            int64             `json:"max_bytes"`
+	AllowedContentTypes []string          `json:"allowed_content_types,omitempty"`
+	Enabled             *bool             `json:"enabled,omitempty"`
+	Encryption          *ObjectEncryption `json:"encryption,omitempty"`
 }
 
 type SetObjectBucketAccessGrantRequest struct {
@@ -224,4 +237,24 @@ type ObjectS3CredentialSecret struct {
 	Endpoint        string `json:"endpoint"`
 	Region          string `json:"region"`
 	AddressingStyle string `json:"addressing_style"`
+}
+
+// ObjectWriteConditions are atomic destination-write preconditions.
+type ObjectWriteConditions struct {
+	IfMatch     string
+	IfNoneMatch string
+}
+
+func (c ObjectWriteConditions) Empty() bool { return c.IfMatch == "" && c.IfNoneMatch == "" }
+
+func (c ObjectWriteConditions) Valid() bool {
+	if len(c.IfMatch) > MaxObjectWriteETagBytes || c.IfMatch != "" && c.IfNoneMatch != "" || c.IfNoneMatch != "" && c.IfNoneMatch != "*" {
+		return false
+	}
+	for _, b := range []byte(c.IfMatch) {
+		if b < 32 || b == 127 {
+			return false
+		}
+	}
+	return true
 }

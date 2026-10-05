@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var _ ProjectPromotionDeploymentStore = (*PgStore)(nil)
@@ -28,6 +29,9 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 		}
 		return fmt.Errorf("state: mark dark deployment resolve app: %w", err)
 	}
+	if err := sqlc.New().LockWorkflowRunAdmission(ctx, tx, appID); err != nil {
+		return err
+	}
 	var found int
 	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, appID).Scan(&found); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -38,6 +42,9 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 	dep, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+` from deployments where id = $1 for update`, id))
 	if err != nil {
+		return err
+	}
+	if err := s.checkDeploymentAutomations(ctx, tx, dep); err != nil {
 		return err
 	}
 	if dep.Status == DeployLive && dep.TrafficPercent == 0 && dep.TrafficPercentExplicit {
@@ -57,14 +64,12 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 		rollout_completed_at = coalesce(rollout_completed_at, now()) where id = $1`, id); err != nil {
 		return fmt.Errorf("state: mark dark deployment live update: %w", err)
 	}
-	snap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
+	snap, policySnap, err := s.captureDeploymentOpenAPISnapshotTx(ctx, tx, dep)
 	if err != nil {
 		return err
 	}
-	if snap.DeploymentID != "" {
-		if err := upsertDeploymentOpenAPISnapshotDBTX(ctx, tx, snap); err != nil {
-			return fmt.Errorf("state: upsert dark deployment snapshot: %w", err)
-		}
+	if err := persistDeploymentSnapshotsDBTX(ctx, tx, snap, policySnap, dep.Status != DeployLive); err != nil {
+		return fmt.Errorf("state: persist dark deployment snapshots: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: mark dark deployment live commit: %w", err)
@@ -78,6 +83,9 @@ func (m *MemStore) MarkDeploymentLiveDark(ctx context.Context, id string) (err e
 	dep, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if err := m.checkDeploymentAutomationsLocked(dep); err != nil {
+		return err
 	}
 	before := dep
 	previousStatus := dep.Status
@@ -106,11 +114,7 @@ func (m *MemStore) MarkDeploymentLiveDark(ctx context.Context, id string) (err e
 		now := time.Now().UTC()
 		dep.RolloutCompletedAt = &now
 	}
-	snap, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, dep)
-	if err != nil {
-		return err
-	}
-	if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
+	if err := m.captureAndStoreDeploymentSnapshotsLocked(ctx, dep, previousStatus != DeployLive); err != nil {
 		return err
 	}
 	m.reactivateCronsForAppLocked(dep.AppID)

@@ -6,6 +6,14 @@
  * Read-only queue binding consumer projection and queue counters.
  */
 export type QueueBindingStatusResponse = {
+  /**
+   * Captured environment slug of the observed consumer; absent for legacy shared consumers.
+   */
+  environment?: string;
+  /**
+   * Original environment catalog UUID of this consumer status; absent for a shared legacy consumer.
+   */
+  environment_id?: string;
   binding_id: string;
   name: string;
   queue_name: string;

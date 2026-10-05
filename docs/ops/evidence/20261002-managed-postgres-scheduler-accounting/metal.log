@@ -1,0 +1,273 @@
+=== RUN   TestMetalAppAdmissionFence
+--- PASS: TestMetalAppAdmissionFence (1.81s)
+=== RUN   TestMetalDestroyJoinsLateResume
+--- PASS: TestMetalDestroyJoinsLateResume (0.99s)
+=== RUN   TestMetalTeardownRetainsOwnershipUntilConfirmed
+--- PASS: TestMetalTeardownRetainsOwnershipUntilConfirmed (1.00s)
+=== RUN   TestMetalParkWakeCycle
+2026/10/02 07:24:59 INFO resume hook timing instance=cycle connect_ms=17 write_ms=0 ack_ms=25 attempts=1
+2026/10/02 07:25:00 INFO resume hook timing instance=cycle connect_ms=20 write_ms=0 ack_ms=21 attempts=1
+2026/10/02 07:25:01 INFO resume hook timing instance=cycle connect_ms=23 write_ms=0 ack_ms=20 attempts=1
+2026/10/02 07:25:01 INFO resume hook timing instance=cycle connect_ms=12 write_ms=0 ack_ms=27 attempts=1
+2026/10/02 07:25:02 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=26 attempts=1
+2026/10/02 07:25:03 INFO resume hook timing instance=cycle connect_ms=12 write_ms=0 ack_ms=37 attempts=1
+2026/10/02 07:25:04 INFO resume hook timing instance=cycle connect_ms=12 write_ms=0 ack_ms=28 attempts=1
+2026/10/02 07:25:05 INFO resume hook timing instance=cycle connect_ms=11 write_ms=0 ack_ms=27 attempts=1
+2026/10/02 07:25:06 INFO resume hook timing instance=cycle connect_ms=25 write_ms=0 ack_ms=28 attempts=1
+2026/10/02 07:25:07 INFO resume hook timing instance=cycle connect_ms=16 write_ms=0 ack_ms=23 attempts=1
+2026/10/02 07:25:07 INFO resume hook timing instance=cycle connect_ms=25 write_ms=0 ack_ms=21 attempts=1
+2026/10/02 07:25:08 INFO resume hook timing instance=cycle connect_ms=19 write_ms=0 ack_ms=26 attempts=1
+2026/10/02 07:25:09 INFO resume hook timing instance=cycle connect_ms=9 write_ms=0 ack_ms=29 attempts=1
+2026/10/02 07:25:10 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=31 attempts=1
+2026/10/02 07:25:11 INFO resume hook timing instance=cycle connect_ms=11 write_ms=0 ack_ms=32 attempts=1
+2026/10/02 07:25:12 INFO resume hook timing instance=cycle connect_ms=9 write_ms=0 ack_ms=31 attempts=1
+2026/10/02 07:25:13 INFO resume hook timing instance=cycle connect_ms=13 write_ms=0 ack_ms=29 attempts=1
+2026/10/02 07:25:14 INFO resume hook timing instance=cycle connect_ms=31 write_ms=0 ack_ms=23 attempts=1
+2026/10/02 07:25:14 INFO resume hook timing instance=cycle connect_ms=16 write_ms=0 ack_ms=24 attempts=1
+2026/10/02 07:25:15 INFO resume hook timing instance=cycle connect_ms=11 write_ms=0 ack_ms=37 attempts=1
+2026/10/02 07:25:16 INFO resume hook timing instance=cycle connect_ms=16 write_ms=0 ack_ms=20 attempts=1
+2026/10/02 07:25:17 INFO resume hook timing instance=cycle connect_ms=20 write_ms=0 ack_ms=21 attempts=1
+2026/10/02 07:25:18 INFO resume hook timing instance=cycle connect_ms=8 write_ms=0 ack_ms=32 attempts=1
+2026/10/02 07:25:18 INFO resume hook timing instance=cycle connect_ms=16 write_ms=0 ack_ms=25 attempts=1
+2026/10/02 07:25:19 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=36 attempts=1
+2026/10/02 07:25:20 INFO resume hook timing instance=cycle connect_ms=13 write_ms=0 ack_ms=26 attempts=1
+2026/10/02 07:25:21 INFO resume hook timing instance=cycle connect_ms=9 write_ms=0 ack_ms=31 attempts=1
+2026/10/02 07:25:22 INFO resume hook timing instance=cycle connect_ms=8 write_ms=0 ack_ms=33 attempts=1
+2026/10/02 07:25:23 INFO resume hook timing instance=cycle connect_ms=7 write_ms=0 ack_ms=35 attempts=1
+2026/10/02 07:25:24 INFO resume hook timing instance=cycle connect_ms=8 write_ms=0 ack_ms=28 attempts=1
+2026/10/02 07:25:24 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=30 attempts=1
+2026/10/02 07:25:25 INFO resume hook timing instance=cycle connect_ms=14 write_ms=0 ack_ms=25 attempts=1
+2026/10/02 07:25:26 INFO resume hook timing instance=cycle connect_ms=19 write_ms=0 ack_ms=21 attempts=1
+2026/10/02 07:25:27 INFO resume hook timing instance=cycle connect_ms=16 write_ms=0 ack_ms=19 attempts=1
+2026/10/02 07:25:28 INFO resume hook timing instance=cycle connect_ms=17 write_ms=0 ack_ms=22 attempts=1
+2026/10/02 07:25:29 INFO resume hook timing instance=cycle connect_ms=31 write_ms=0 ack_ms=19 attempts=1
+2026/10/02 07:25:29 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=27 attempts=1
+2026/10/02 07:25:30 INFO resume hook timing instance=cycle connect_ms=16 write_ms=0 ack_ms=26 attempts=1
+2026/10/02 07:25:31 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=30 attempts=1
+2026/10/02 07:25:32 INFO resume hook timing instance=cycle connect_ms=23 write_ms=0 ack_ms=20 attempts=1
+2026/10/02 07:25:33 INFO resume hook timing instance=cycle connect_ms=14 write_ms=0 ack_ms=24 attempts=1
+2026/10/02 07:25:34 INFO resume hook timing instance=cycle connect_ms=23 write_ms=0 ack_ms=27 attempts=1
+2026/10/02 07:25:34 INFO resume hook timing instance=cycle connect_ms=17 write_ms=0 ack_ms=21 attempts=1
+2026/10/02 07:25:35 INFO resume hook timing instance=cycle connect_ms=22 write_ms=0 ack_ms=17 attempts=1
+2026/10/02 07:25:36 INFO resume hook timing instance=cycle connect_ms=19 write_ms=0 ack_ms=19 attempts=1
+2026/10/02 07:25:37 INFO resume hook timing instance=cycle connect_ms=18 write_ms=0 ack_ms=23 attempts=1
+2026/10/02 07:25:38 INFO resume hook timing instance=cycle connect_ms=14 write_ms=0 ack_ms=26 attempts=1
+2026/10/02 07:25:39 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=33 attempts=1
+2026/10/02 07:25:40 INFO resume hook timing instance=cycle connect_ms=15 write_ms=0 ack_ms=25 attempts=1
+2026/10/02 07:25:40 INFO resume hook timing instance=cycle connect_ms=12 write_ms=0 ack_ms=33 attempts=1
+2026/10/02 07:25:41 INFO resume hook timing instance=cycle connect_ms=18 write_ms=0 ack_ms=22 attempts=1
+2026/10/02 07:25:42 INFO resume hook timing instance=cycle connect_ms=11 write_ms=0 ack_ms=31 attempts=1
+2026/10/02 07:25:43 INFO resume hook timing instance=cycle connect_ms=18 write_ms=0 ack_ms=18 attempts=1
+2026/10/02 07:25:44 INFO resume hook timing instance=cycle connect_ms=20 write_ms=0 ack_ms=51 attempts=1
+2026/10/02 07:25:45 INFO resume hook timing instance=cycle connect_ms=15 write_ms=0 ack_ms=30 attempts=1
+2026/10/02 07:25:46 INFO resume hook timing instance=cycle connect_ms=15 write_ms=0 ack_ms=27 attempts=1
+2026/10/02 07:25:46 INFO resume hook timing instance=cycle connect_ms=25 write_ms=0 ack_ms=21 attempts=1
+2026/10/02 07:25:47 INFO resume hook timing instance=cycle connect_ms=17 write_ms=0 ack_ms=22 attempts=1
+2026/10/02 07:25:48 INFO resume hook timing instance=cycle connect_ms=14 write_ms=0 ack_ms=24 attempts=1
+2026/10/02 07:25:49 INFO resume hook timing instance=cycle connect_ms=9 write_ms=0 ack_ms=29 attempts=1
+2026/10/02 07:25:50 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=29 attempts=1
+2026/10/02 07:25:51 INFO resume hook timing instance=cycle connect_ms=8 write_ms=0 ack_ms=31 attempts=1
+2026/10/02 07:25:51 INFO resume hook timing instance=cycle connect_ms=9 write_ms=0 ack_ms=31 attempts=1
+2026/10/02 07:25:52 INFO resume hook timing instance=cycle connect_ms=11 write_ms=0 ack_ms=30 attempts=1
+2026/10/02 07:25:53 INFO resume hook timing instance=cycle connect_ms=23 write_ms=0 ack_ms=21 attempts=1
+2026/10/02 07:25:54 INFO resume hook timing instance=cycle connect_ms=21 write_ms=0 ack_ms=20 attempts=1
+2026/10/02 07:25:55 INFO resume hook timing instance=cycle connect_ms=26 write_ms=0 ack_ms=19 attempts=1
+2026/10/02 07:25:56 INFO resume hook timing instance=cycle connect_ms=17 write_ms=0 ack_ms=22 attempts=1
+2026/10/02 07:25:57 INFO resume hook timing instance=cycle connect_ms=26 write_ms=0 ack_ms=18 attempts=1
+2026/10/02 07:25:58 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=33 attempts=1
+2026/10/02 07:25:59 INFO resume hook timing instance=cycle connect_ms=24 write_ms=0 ack_ms=27 attempts=1
+2026/10/02 07:25:59 INFO resume hook timing instance=cycle connect_ms=20 write_ms=0 ack_ms=21 attempts=1
+2026/10/02 07:26:00 INFO resume hook timing instance=cycle connect_ms=13 write_ms=0 ack_ms=19 attempts=1
+2026/10/02 07:26:01 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=24 attempts=1
+2026/10/02 07:26:02 INFO resume hook timing instance=cycle connect_ms=21 write_ms=0 ack_ms=22 attempts=1
+2026/10/02 07:26:03 INFO resume hook timing instance=cycle connect_ms=18 write_ms=0 ack_ms=24 attempts=1
+2026/10/02 07:26:04 INFO resume hook timing instance=cycle connect_ms=9 write_ms=0 ack_ms=28 attempts=1
+2026/10/02 07:26:05 INFO resume hook timing instance=cycle connect_ms=8 write_ms=1 ack_ms=30 attempts=1
+2026/10/02 07:26:05 INFO resume hook timing instance=cycle connect_ms=12 write_ms=0 ack_ms=25 attempts=1
+2026/10/02 07:26:06 INFO resume hook timing instance=cycle connect_ms=21 write_ms=0 ack_ms=26 attempts=1
+2026/10/02 07:26:07 INFO resume hook timing instance=cycle connect_ms=15 write_ms=0 ack_ms=26 attempts=1
+2026/10/02 07:26:08 INFO resume hook timing instance=cycle connect_ms=25 write_ms=0 ack_ms=19 attempts=1
+2026/10/02 07:26:09 INFO resume hook timing instance=cycle connect_ms=12 write_ms=0 ack_ms=38 attempts=1
+2026/10/02 07:26:10 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=31 attempts=1
+2026/10/02 07:26:11 INFO resume hook timing instance=cycle connect_ms=21 write_ms=0 ack_ms=19 attempts=1
+2026/10/02 07:26:11 INFO resume hook timing instance=cycle connect_ms=15 write_ms=0 ack_ms=24 attempts=1
+2026/10/02 07:26:12 INFO resume hook timing instance=cycle connect_ms=9 write_ms=0 ack_ms=32 attempts=1
+2026/10/02 07:26:13 INFO resume hook timing instance=cycle connect_ms=11 write_ms=0 ack_ms=31 attempts=1
+2026/10/02 07:26:14 INFO resume hook timing instance=cycle connect_ms=17 write_ms=0 ack_ms=29 attempts=1
+2026/10/02 07:26:15 INFO resume hook timing instance=cycle connect_ms=16 write_ms=0 ack_ms=32 attempts=1
+2026/10/02 07:26:16 INFO resume hook timing instance=cycle connect_ms=19 write_ms=0 ack_ms=30 attempts=1
+2026/10/02 07:26:17 INFO resume hook timing instance=cycle connect_ms=11 write_ms=0 ack_ms=30 attempts=1
+2026/10/02 07:26:18 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=29 attempts=1
+2026/10/02 07:26:18 INFO resume hook timing instance=cycle connect_ms=18 write_ms=0 ack_ms=32 attempts=1
+2026/10/02 07:26:19 INFO resume hook timing instance=cycle connect_ms=20 write_ms=0 ack_ms=21 attempts=1
+2026/10/02 07:26:20 INFO resume hook timing instance=cycle connect_ms=15 write_ms=0 ack_ms=22 attempts=1
+2026/10/02 07:26:21 INFO resume hook timing instance=cycle connect_ms=21 write_ms=0 ack_ms=23 attempts=1
+2026/10/02 07:26:22 INFO resume hook timing instance=cycle connect_ms=7 write_ms=0 ack_ms=31 attempts=1
+2026/10/02 07:26:23 INFO resume hook timing instance=cycle connect_ms=9 write_ms=0 ack_ms=34 attempts=1
+2026/10/02 07:26:24 INFO resume hook timing instance=cycle connect_ms=19 write_ms=0 ack_ms=18 attempts=1
+    manager_metal_test.go:217: platform snapshot wake over 100 cycles: p50=432.7874ms p95=466.263198ms max=549.291804ms
+    manager_metal_test.go:221: platform snapshot wake is diagnostic on this host; set FAAS_TEST_REFERENCE_SSD=1 only on the reference SSD node to enforce p95 < 350 ms
+--- PASS: TestMetalParkWakeCycle (86.92s)
+=== RUN   TestMetalHelloBoot
+--- PASS: TestMetalHelloBoot (0.88s)
+=== RUN   TestMetalLifecycle_StartupFail
+mke2fs 1.47.0 (5-Feb-2023)
+--- PASS: TestMetalLifecycle_StartupFail (10.52s)
+=== RUN   TestMetalLifecycle_OOM
+mke2fs 1.47.0 (5-Feb-2023)
+--- PASS: TestMetalLifecycle_OOM (30.50s)
+=== RUN   TestMetalLifecycle_CleanExit_Job
+mke2fs 1.47.0 (5-Feb-2023)
+--- PASS: TestMetalLifecycle_CleanExit_Job (30.55s)
+=== RUN   TestMetalSchedulerRetainsAccountingUntilConfirmedTeardown
+=== RUN   TestMetalSchedulerRetainsAccountingUntilConfirmedTeardown/liveness
+=== RUN   TestMetalSchedulerRetainsAccountingUntilConfirmedTeardown/workload_oom
+=== RUN   TestMetalSchedulerRetainsAccountingUntilConfirmedTeardown/force_restart
+=== RUN   TestMetalSchedulerRetainsAccountingUntilConfirmedTeardown/cold_boot_timeout
+--- PASS: TestMetalSchedulerRetainsAccountingUntilConfirmedTeardown (3.86s)
+    --- PASS: TestMetalSchedulerRetainsAccountingUntilConfirmedTeardown/liveness (0.99s)
+    --- PASS: TestMetalSchedulerRetainsAccountingUntilConfirmedTeardown/workload_oom (0.96s)
+    --- PASS: TestMetalSchedulerRetainsAccountingUntilConfirmedTeardown/force_restart (0.96s)
+    --- PASS: TestMetalSchedulerRetainsAccountingUntilConfirmedTeardown/cold_boot_timeout (0.95s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/fcvm	168.150s
+=== RUN   TestForceRestart_HappyPath
+--- PASS: TestForceRestart_HappyPath (0.00s)
+=== RUN   TestForceRestart_RaceLoser
+--- PASS: TestForceRestart_RaceLoser (0.00s)
+=== RUN   TestForceRestart_NonExistent
+--- PASS: TestForceRestart_NonExistent (0.00s)
+=== RUN   TestForceRestart_DestroyFailure
+--- PASS: TestForceRestart_DestroyFailure (0.00s)
+=== RUN   TestLiveness_DestroyTimeoutDoesNotAdvanceBudget
+--- PASS: TestLiveness_DestroyTimeoutDoesNotAdvanceBudget (0.00s)
+=== RUN   TestEngineTeardownRetainsAccountingUntilConfirmed
+=== RUN   TestEngineTeardownRetainsAccountingUntilConfirmed/liveness
+=== RUN   TestEngineTeardownRetainsAccountingUntilConfirmed/workload_oom
+=== RUN   TestEngineTeardownRetainsAccountingUntilConfirmed/force_restart
+=== RUN   TestEngineTeardownRetainsAccountingUntilConfirmed/disk_pressure
+=== RUN   TestEngineTeardownRetainsAccountingUntilConfirmed/egress_abuse
+=== RUN   TestEngineTeardownRetainsAccountingUntilConfirmed/waking_timeout
+=== RUN   TestEngineTeardownRetainsAccountingUntilConfirmed/cold_boot_timeout
+=== RUN   TestEngineTeardownRetainsAccountingUntilConfirmed/snapshot_timeout
+--- PASS: TestEngineTeardownRetainsAccountingUntilConfirmed (0.13s)
+    --- PASS: TestEngineTeardownRetainsAccountingUntilConfirmed/liveness (0.02s)
+    --- PASS: TestEngineTeardownRetainsAccountingUntilConfirmed/workload_oom (0.02s)
+    --- PASS: TestEngineTeardownRetainsAccountingUntilConfirmed/force_restart (0.02s)
+    --- PASS: TestEngineTeardownRetainsAccountingUntilConfirmed/disk_pressure (0.02s)
+    --- PASS: TestEngineTeardownRetainsAccountingUntilConfirmed/egress_abuse (0.01s)
+    --- PASS: TestEngineTeardownRetainsAccountingUntilConfirmed/waking_timeout (0.02s)
+    --- PASS: TestEngineTeardownRetainsAccountingUntilConfirmed/cold_boot_timeout (0.01s)
+    --- PASS: TestEngineTeardownRetainsAccountingUntilConfirmed/snapshot_timeout (0.02s)
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/liveness/state:_not_found/1
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/liveness/database_unavailable/1
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/liveness/state:_not_found/2
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/liveness/database_unavailable/2
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/workload_oom/state:_not_found/1
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/workload_oom/database_unavailable/1
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/workload_oom/state:_not_found/2
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/workload_oom/database_unavailable/2
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/force_restart/state:_not_found/1
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/force_restart/database_unavailable/1
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/force_restart/state:_not_found/2
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/force_restart/database_unavailable/2
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/disk_pressure/state:_not_found/1
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/disk_pressure/database_unavailable/1
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/disk_pressure/state:_not_found/2
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/disk_pressure/database_unavailable/2
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/egress_abuse/state:_not_found/1
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/egress_abuse/database_unavailable/1
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/egress_abuse/state:_not_found/2
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/egress_abuse/database_unavailable/2
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/waking_timeout/state:_not_found/1
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/waking_timeout/database_unavailable/1
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/cold_boot_timeout/state:_not_found/1
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/cold_boot_timeout/database_unavailable/1
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/snapshot_timeout/state:_not_found/1
+=== RUN   TestEngineTeardownReadFailureRetainsAccounting/snapshot_timeout/database_unavailable/1
+--- PASS: TestEngineTeardownReadFailureRetainsAccounting (0.01s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/liveness/state:_not_found/1 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/liveness/database_unavailable/1 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/liveness/state:_not_found/2 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/liveness/database_unavailable/2 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/workload_oom/state:_not_found/1 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/workload_oom/database_unavailable/1 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/workload_oom/state:_not_found/2 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/workload_oom/database_unavailable/2 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/force_restart/state:_not_found/1 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/force_restart/database_unavailable/1 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/force_restart/state:_not_found/2 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/force_restart/database_unavailable/2 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/disk_pressure/state:_not_found/1 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/disk_pressure/database_unavailable/1 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/disk_pressure/state:_not_found/2 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/disk_pressure/database_unavailable/2 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/egress_abuse/state:_not_found/1 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/egress_abuse/database_unavailable/1 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/egress_abuse/state:_not_found/2 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/egress_abuse/database_unavailable/2 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/waking_timeout/state:_not_found/1 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/waking_timeout/database_unavailable/1 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/cold_boot_timeout/state:_not_found/1 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/cold_boot_timeout/database_unavailable/1 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/snapshot_timeout/state:_not_found/1 (0.00s)
+    --- PASS: TestEngineTeardownReadFailureRetainsAccounting/snapshot_timeout/database_unavailable/1 (0.00s)
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/liveness/waking
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/liveness/snapshotting
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/liveness/draining
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/workload_oom/waking
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/workload_oom/snapshotting
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/workload_oom/draining
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/force_restart/waking
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/force_restart/snapshotting
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/force_restart/draining
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/disk_pressure/waking
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/disk_pressure/snapshotting
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/disk_pressure/draining
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/egress_abuse/waking
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/egress_abuse/snapshotting
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/egress_abuse/draining
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/waking_timeout/running
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/waking_timeout/snapshotting
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/waking_timeout/draining
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/cold_boot_timeout/running
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/cold_boot_timeout/waking
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/cold_boot_timeout/snapshotting
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/cold_boot_timeout/draining
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/snapshot_timeout/running
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/snapshot_timeout/waking
+=== RUN   TestEngineTeardownStateRaceRetainsAccounting/snapshot_timeout/draining
+--- PASS: TestEngineTeardownStateRaceRetainsAccounting (0.01s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/liveness/waking (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/liveness/snapshotting (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/liveness/draining (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/workload_oom/waking (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/workload_oom/snapshotting (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/workload_oom/draining (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/force_restart/waking (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/force_restart/snapshotting (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/force_restart/draining (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/disk_pressure/waking (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/disk_pressure/snapshotting (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/disk_pressure/draining (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/egress_abuse/waking (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/egress_abuse/snapshotting (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/egress_abuse/draining (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/waking_timeout/running (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/waking_timeout/snapshotting (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/waking_timeout/draining (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/cold_boot_timeout/running (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/cold_boot_timeout/waking (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/cold_boot_timeout/snapshotting (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/cold_boot_timeout/draining (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/snapshot_timeout/running (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/snapshot_timeout/waking (0.00s)
+    --- PASS: TestEngineTeardownStateRaceRetainsAccounting/snapshot_timeout/draining (0.00s)
+=== RUN   TestForceRestart_InsertClaimMark_Lifecycle
+--- PASS: TestForceRestart_InsertClaimMark_Lifecycle (0.00s)
+=== RUN   TestForceRestart_FIFOOrderingWithExistingKinds
+--- PASS: TestForceRestart_FIFOOrderingWithExistingKinds (0.00s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/sched	1.272s

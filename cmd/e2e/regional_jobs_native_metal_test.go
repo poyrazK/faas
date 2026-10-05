@@ -1,6 +1,6 @@
 //go:build metal
 
-// adr: 468
+// adr: 594
 package e2e_test
 
 import (
@@ -23,7 +23,7 @@ import (
 // it; an explicit regional gate requires every subtest to execute and pass.
 func TestNativeRegionalJobsAcceptance(t *testing.T) {
 	if os.Getenv("FAAS_REGION_ACCEPTANCE_CONFIRM") != "native-x86" {
-		t.Skip("requires a dedicated native regional fleet; see ADR-468")
+		t.Skip("requires a dedicated native regional fleet; see ADR-594")
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Fatal("regional acceptance controller must run Linux x86_64")

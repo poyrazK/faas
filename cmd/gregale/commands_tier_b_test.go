@@ -30,6 +30,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -219,8 +220,8 @@ func TestTierB_SecretsAuditPaginatesAndRedactsCiphertext(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/secrets" {
 			t.Errorf("request = %s %s, want GET /v1/secrets", r.Method, r.URL.Path)
 		}
-		if got := r.URL.Query().Get("limit"); got != "200" {
-			t.Errorf("limit = %q, want 200", got)
+		if got, want := r.URL.Query().Get("limit"), strconv.Itoa(api.SecretsListPageMax); got != want {
+			t.Errorf("limit = %q, want %s (the server page cap)", got, want)
 		}
 		before := r.URL.Query().Get("before")
 		cursors = append(cursors, before)
@@ -292,6 +293,22 @@ func TestCollectSecretAuditRejectsRepeatedCursor(t *testing.T) {
 	_, err := collectSecretAudit(context.Background(), NewClient(srv.URL, "test-token"), time.Hour, time.Now().UTC())
 	if err == nil || requests != 2 {
 		t.Fatalf("collectSecretAudit() = %v after %d requests; want repeated-cursor error after 2 requests", err, requests)
+	}
+}
+
+// The audit pages through GET /v1/secrets; a page size above the server cap
+// is rejected with 400 "Bad limit", so every audit failed in production.
+func TestCollectSecretAuditRequestsWithinServerPageCap(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if prob, _ := api.ParseLimit(r.URL.Query().Get("limit"), 25, api.SecretsListPageMax, "secrets"); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(api.ListSecretsForAccountResponse{})
+	}))
+	defer srv.Close()
+	if _, err := collectSecretAudit(context.Background(), NewClient(srv.URL, "test-token"), time.Hour, time.Now().UTC()); err != nil {
+		t.Fatalf("collectSecretAudit() = %v; want the page size accepted by the server cap", err)
 	}
 }
 

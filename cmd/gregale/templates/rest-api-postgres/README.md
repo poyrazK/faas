@@ -1,81 +1,73 @@
 # rest-api-postgres
 
-A minimal port-8080 Node.js REST API (`GET /notes`, `POST /notes`)
-backed by a managed PostgreSQL provider. **This is a scaffold, not a
-production API** — it auto-creates a `notes` table on first boot so
-the customer can `curl` it without running migrations, and uses a
-small connection pool sized for cold-boot wake latency.
+A Node.js REST API (`GET /notes`, `POST /notes`) using separate runtime and
+migration connections. The Procfile release command creates the notes schema
+before activation; serving instances use a small connection pool and perform
+no schema changes on startup.
 
-## Managed service
+## Deploy with Gregale managed PostgreSQL
 
-Plug in any managed PostgreSQL:
-
-- **Neon** — serverless, free tier. URL looks like
-  `postgres://user:pass@ep-xxx.us-east-1.aws.neon.tech/db?sslmode=require`.
-- **Supabase** — `postgres://postgres:pass@db.xxx.supabase.co:5432/postgres?sslmode=require`.
-- **PlanetScale (Postgres beta)** — provider-supplied URL.
-- **CockroachDB Cloud** — `postgres://user:pass@free-tier.gcp-us-central1.cockroachlabs.cloud:26257/db?sslmode=require`.
-
-**Don't** run `postgres:16` as your base image — the platform's
-deny-list rejects it at accept time (Wave 0 PR-A).
-
-## First deploy with secrets
-
-Create the file outside this directory, restrict it to your user, and
-deploy. Gregale creates the app, seals the database URL, and only then
-starts the runtime:
-
-```sh
-cat > ../rest-api-postgres.secrets <<'EOF'
-DATABASE_URL=postgres://user:pass@host:port/db?sslmode=require
-EOF
-chmod 600 ../rest-api-postgres.secrets
-gregale deploy --secrets-file ../rest-api-postgres.secrets
-```
-
-## Reserve then configure separately
-
-If you prefer to set secrets through the app API, reserve the app first:
+Use an existing database from Gregale's qualified Neon-backed preview, or create
+one with `gregale postgres create notes --region <region>`. Reserve the app and
+attach both bindings before deploying:
 
 ```sh
 gregale deploy --create-only --template rest-api-postgres --name <slug>
-gregale secrets set --app <slug> DATABASE_URL='postgres://user:pass@host:port/db?sslmode=require'
-cd <this-directory> && gregale deploy
+gregale postgres attach notes <slug> --access read_write --env DATABASE_URL
+gregale postgres attach notes <slug> --access migration --env MIGRATION_DATABASE_URL
+# Pro/Scale: permit PostgreSQL on TCP 5432 when required by your egress policy.
+gregale app <slug> egress-ports add 5432
+gregale deploy --name <slug>
 ```
 
-## Rotate or update secrets
+`DATABASE_URL` provides public-schema data access. The managed
+`MIGRATION_DATABASE_URL` binding uses a direct connection and reaches only the
+release task. Serving processes, companions, and ordinary manual/cron tasks
+cannot request that binding, even through an explicit secret reference.
+The release task uses a database advisory lock to serialize overlapping schema
+changes, a 30-second lock timeout, and a 120-second statement timeout. A failed
+release keeps the previous deployment serving. Application rollback does not
+undo committed schema changes; use migrations compatible with the previous app.
+
+## External PostgreSQL
+
+An ordinary secret named `MIGRATION_DATABASE_URL` does not acquire the managed
+binding's delivery restrictions. Keep an external schema-owner connection on
+your operator machine. Run `MIGRATION_DATABASE_URL=... npm run migrate` locally,
+then remove the `release:` line from the Procfile. Grant your runtime login
+SELECT/INSERT/UPDATE/DELETE on notes and USAGE/SELECT on its sequence. Deploy
+only the runtime connection:
 
 ```sh
-gregale secrets set --app <slug> DATABASE_URL='postgres://user:pass@host:port/db?sslmode=require'
+# Create this 0600 file outside the source directory.
+# File contents: DATABASE_URL=postgres://runtime:password@host/db?sslmode=require
+gregale deploy --secrets-file ../rest-api-postgres.secrets
+# After app creation, update it with:
+gregale secrets set --app <slug> DATABASE_URL='postgres://runtime:password@host/db?sslmode=require'
 ```
 
-If `DATABASE_URL` is missing, the handler exits at startup with the
-exact `gregale secrets set` command.
+For an already reserved app, use `gregale deploy --name <slug> --secrets-file ...`.
+Use TLS with certificate verification for remote PostgreSQL. This scaffold does
+not run a PostgreSQL server inside the application VM.
 
-> **SSL — keep `?sslmode=require` (or `verify-full`) on the URL.**
-> The pool reads the query string and sets `rejectUnauthorized: true`
-> only when one of those is present; without it, the pool silently
-> falls back to an unencrypted connection. Every managed Postgres
-> provider above ships TLS by default — keep the suffix on your URL.
-
-## Deploy
-
-From this directory:
+## Run and test locally
 
 ```sh
-gregale deploy
+npm install --ignore-scripts
+# Set MIGRATION_DATABASE_URL to the direct schema-owner connection.
+npm run migrate
+# Set DATABASE_URL to the restricted runtime connection.
+npm start
+npm test
 ```
 
 ## Try it
 
 ```sh
-curl https://<slug>.gregale.dev/healthz       # → {"ok":true,"db":"ok"}
-curl -X POST -H 'content-type: application/json' \
-     -d '{"body":"hello from gregale"}' \
-     https://<slug>.gregale.dev/notes          # → {"ok":true,"note":{...}}
-curl https://<slug>.gregale.dev/notes          # → {"ok":true,"notes":[{...}]}
+curl https://<slug>.gregale.dev/healthz
+curl -X POST -H 'content-type: application/json' -d '{"body":"hello"}' \
+  https://<slug>.gregale.dev/notes
+curl https://<slug>.gregale.dev/notes
 ```
 
-## Re-deploy after edits
-
-Edit `handler.js`, then `gregale deploy` from this directory.
+After edits, deploy from this directory with `gregale deploy --name <slug>`.

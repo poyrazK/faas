@@ -33,9 +33,13 @@ export type AppManifest = {
    */
   stop_signal?: string | null;
   /**
-   * Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. For the main image this remains limited to single-workload deployments; long-running sidecar images are opted in independently. Must differ from stop_signal (ADR-222).
+   * Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Main and long-running sidecar images opt in independently, including deployments with companions; each workload reloads only its own granted secrets. Must differ from stop_signal (ADR-222).
    */
   secret_reload_signal?: 'SIGHUP' | 'SIGUSR1' | 'SIGUSR2';
+  /**
+   * Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal. Requires secret_reload_signal. Main and sidecar workloads opt in independently (ADR-506).
+   */
+  secret_reload_readiness?: boolean;
   /**
    * OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s) enforced by Validate() — ADR-138 §Decision 4.
    */

@@ -119,7 +119,7 @@ func (s *server) batchMinInstancesTargets(rctx context.Context, rows []state.Ins
 // "<slug>|<key>". The pgstore splits it back via split_part. Sort
 // order is (app_slug ASC, key ASC) so the cursor walk is monotonic.
 func (s *server) listSecretsForAccount(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	prob, limit := api.ParseLimit(r.URL.Query().Get("limit"), 25, 100, "secrets")
+	prob, limit := api.ParseLimit(r.URL.Query().Get("limit"), 25, api.SecretsListPageMax, "secrets")
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return

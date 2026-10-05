@@ -49,7 +49,7 @@ func TestPreviewValidationCompatibilityGates(t *testing.T) {
 				t.Fatal(err)
 			}
 			row := findPreviewReportRoute(t, report, "POST /checkout")
-			if report.Version != 4 || report.Outcome != test.outcome || report.Requests.Status != "available" || row.RequestCompatibility == nil || row.RequestCompatibility.Status != test.status || len(row.Breaks) != 0 || reads.Load() != 6 {
+			if report.Version != 7 || report.Outcome != test.outcome || report.Requests.Status != "available" || row.RequestCompatibility == nil || row.RequestCompatibility.Status != test.status || len(row.Breaks) != 0 || reads.Load() != 9 {
 				t.Fatalf("report = %+v, route = %+v", report, row)
 			}
 			found := test.finding == ""

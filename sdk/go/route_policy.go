@@ -71,3 +71,60 @@ type RouteHealthHistoryEntry = api.RouteHealthHistoryEntry
 type RouteHealthHistoryPage = api.RouteHealthHistoryPage
 
 type RouteHealthTransitionWebhookPayload = api.RouteHealthTransitionWebhookPayload
+
+// Customer comparisons are optional, advisory live route-health evidence.
+type RouteHealthReportOptions = api.RouteHealthReportOptions
+type RouteCustomerHealthAttribution = api.RouteCustomerHealthAttribution
+type RouteCustomerHealthCohort = api.RouteCustomerHealthCohort
+type RouteCustomerHealthRoute = api.RouteCustomerHealthRoute
+type RouteCustomerHealthReport = api.RouteCustomerHealthReport
+
+type RouteHealthStatusCounts = api.RouteHealthStatusCounts
+type RouteHealthClientErrorWindow = api.RouteHealthClientErrorWindow
+type RouteHealthClientErrorFinding = api.RouteHealthClientErrorFinding
+type RouteHealthClientErrorReport = api.RouteHealthClientErrorReport
+
+type RouteHealthInvestigationOptions = api.RouteHealthInvestigationOptions
+type RouteHealthInvestigationSelection = api.RouteHealthInvestigationSelection
+type RouteHealthInvestigationExample = api.RouteHealthInvestigationExample
+type RouteHealthInvestigationSide = api.RouteHealthInvestigationSide
+type RouteHealthInvestigationWindow = api.RouteHealthInvestigationWindow
+type RouteHealthInvestigation = api.RouteHealthInvestigation
+type RouteHealthLatencyDiagnostics = api.RouteHealthLatencyDiagnostics
+type RouteHealthLatencySample = api.RouteHealthLatencySample
+type RouteHealthDependencyTiming = api.RouteHealthDependencyTiming
+type RouteHealthDependencyComparison = api.RouteHealthDependencyComparison
+
+type RouteMonitorRoute = api.RouteMonitorRoute
+
+type RouteMonitorConfig = api.RouteMonitorConfig
+
+type SetRouteMonitorRequest = api.SetRouteMonitorRequest
+
+type RouteMonitorWindow = api.RouteMonitorWindow
+
+type RouteMonitorFinding = api.RouteMonitorFinding
+
+type RouteMonitorReport = api.RouteMonitorReport
+
+type RouteMonitorEvidenceWindow = api.RouteMonitorEvidenceWindow
+
+type RouteMonitorEvidence = api.RouteMonitorEvidence
+
+type RouteMonitorIncident = api.RouteMonitorIncident
+
+type RouteMonitorIncidentPage = api.RouteMonitorIncidentPage
+
+type RouteMonitorWebhookPayload = api.RouteMonitorWebhookPayload
+
+type RouteMonitorReadOptions = api.RouteMonitorReadOptions
+
+type RouteMonitorCustomerImpact = api.RouteMonitorCustomerImpact
+
+type RouteMonitorCustomerWindow = api.RouteMonitorCustomerWindow
+
+type RouteMonitorCustomerCohort = api.RouteMonitorCustomerCohort
+
+type RouteMonitorCustomerRoute = api.RouteMonitorCustomerRoute
+
+type RouteMonitorCustomerReport = api.RouteMonitorCustomerReport

@@ -5,7 +5,9 @@
   "type": "module",
   "main": "handler.js",
   "scripts": {
-    "start": "node handler.js"
+    "start": "node handler.js",
+    "migrate": "node migrate.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "express": "^4.19.2",

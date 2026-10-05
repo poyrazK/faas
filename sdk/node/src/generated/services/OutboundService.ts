@@ -5,10 +5,12 @@
 import type { CreateOutboundIntegrationRequest } from '../models/CreateOutboundIntegrationRequest.js';
 import type { OutboundAppBinding } from '../models/OutboundAppBinding.js';
 import type { OutboundAppBindingList } from '../models/OutboundAppBindingList.js';
+import type { OutboundBindingProbePolicy } from '../models/OutboundBindingProbePolicy.js';
 import type { OutboundBindingUsageResponse } from '../models/OutboundBindingUsageResponse.js';
 import type { OutboundIntegrationOffer } from '../models/OutboundIntegrationOffer.js';
 import type { OutboundIntegrationOfferList } from '../models/OutboundIntegrationOfferList.js';
 import type { OutboundIntegrationUsageResponse } from '../models/OutboundIntegrationUsageResponse.js';
+import type { Problem } from '../models/Problem.js';
 import type { PutOutboundBindingDailyRequestBudgetRequest } from '../models/PutOutboundBindingDailyRequestBudgetRequest.js';
 import type { PutOutboundCredentialRequest } from '../models/PutOutboundCredentialRequest.js';
 import type { PutOutboundDailyRequestBudgetRequest } from '../models/PutOutboundDailyRequestBudgetRequest.js';
@@ -19,6 +21,78 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class OutboundService {
+  /**
+   * Read an explicitly configured outbound probe policy
+   * Read a customer-owned integration's safe-method probe configuration. This does not send traffic to a provider.
+   * @returns OutboundBindingProbePolicy Probe policy
+   * @returns Problem Probe policy lookup was rejected or the catalog is unavailable
+   * @throws ApiError
+   */
+  public static getOutboundBindingProbePolicy({
+    integration,
+  }: {
+    /**
+     * Customer-owned outbound integration identifier.
+     */
+    integration: string,
+  }): CancelablePromise<OutboundBindingProbePolicy | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/probe-policy',
+      path: {
+        'integration': integration,
+      },
+    });
+  }
+  /**
+   * Configure an outbound binding probe
+   * Declare a GET or HEAD path safe to probe and its expected 2xx status. The path must fit the customer-owned integration's route policy. Configuration sends no provider requests. Requires deploy-write access and MFA.
+   * @returns OutboundBindingProbePolicy Confirmed probe policy
+   * @returns Problem Probe policy update was rejected or could not be persisted
+   * @throws ApiError
+   */
+  public static setOutboundBindingProbePolicy({
+    integration,
+    requestBody,
+  }: {
+    /**
+     * Customer-owned outbound integration identifier.
+     */
+    integration: string,
+    requestBody: OutboundBindingProbePolicy,
+  }): CancelablePromise<OutboundBindingProbePolicy | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/outbound/integrations/{integration}/probe-policy',
+      path: {
+        'integration': integration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Remove an outbound binding probe configuration
+   * Remove a customer-owned integration's probe policy, invalidating prior evidence. Requires deploy-write access and MFA. This does not revoke provider credentials.
+   * @returns Problem Probe policy removal was rejected or could not be persisted
+   * @throws ApiError
+   */
+  public static deleteOutboundBindingProbePolicy({
+    integration,
+  }: {
+    /**
+     * Customer-owned outbound integration identifier.
+     */
+    integration: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/outbound/integrations/{integration}/probe-policy',
+      path: {
+        'integration': integration,
+      },
+    });
+  }
   /**
    * List managed outbound integrations available to this account.
    * Provider credentials and gateway tokens are never returned.

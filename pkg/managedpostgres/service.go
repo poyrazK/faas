@@ -223,10 +223,8 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 	if source.State != StateReady || source.ProviderResourceID == "" {
 		return Database{}, ErrConflict
 	}
-	now := s.now()
-	if !request.PointInTime.Before(now) || source.Spec.RestoreWindowSeconds <= 0 || now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
-		return Database{}, ErrInvalid
-	}
+	// Returning an existing restore does not require its original point to
+	// remain in retention: the durable target has already been reserved.
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
 		if existing.RestoreSourceDatabaseID != request.SourceDatabaseID || !existing.RestorePointInTime.Equal(request.PointInTime) {
@@ -239,6 +237,10 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return Database{}, err
+	}
+	now := s.now()
+	if !request.PointInTime.Before(now) || source.Spec.RestoreWindowSeconds <= 0 || now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
+		return Database{}, ErrInvalid
 	}
 	if s.admit != nil {
 		if err := s.admit(ctx, request.AccountID); err != nil {
@@ -323,6 +325,13 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	defer cancel()
 	var observed ObservedDatabase
 	if database.ProviderResourceID == "" {
+		if err := s.store.BeginAccounting(ctx, database.ID, leaseToken, s.now()); err != nil {
+			return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
+		}
+		database.AccountingRequired = true
+		if err := providerContext.Err(); err != nil {
+			return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
+		}
 		if database.RestoreSourceResourceID != "" {
 			observed, err = backend.Provider.Restore(providerContext, RestoreRequest{
 				ResourceID:       database.ID,
@@ -392,12 +401,35 @@ func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Dat
 	if err != nil {
 		return Database{}, err
 	}
+	if database.ProviderResourceID == "" && !database.AccountingRequired {
+		// New reservations that never reached provider I/O have nothing to
+		// destroy. Legacy reservations are conservatively backfilled instead.
+		return s.finishDelete(ctx, database.ID, leaseToken)
+	}
 	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
 	if err != nil {
 		return Database{}, s.releaseKnownError(ctx, database, StateDeleting, "backend_unavailable", ErrUnavailable, time.Hour)
 	}
 	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	defer cancel()
+	if database.ProviderResourceID == "" {
+		identity, discoverErr := discoverResource(providerContext, backend.Provider, database)
+		if errors.Is(discoverErr, ErrNotFound) {
+			// A timed-out creation may still appear later. Absence now does
+			// not prove either final shutdown or zero historical consumption.
+			discoverErr = ErrUnavailable
+		}
+		if discoverErr != nil {
+			return Database{}, s.releaseProviderError(ctx, database, StateDeleting, discoverErr)
+		}
+		if err := s.recordProviderResource(ctx, database.ID, leaseToken, identity); err != nil {
+			return Database{}, s.releaseProviderError(ctx, database, StateDeleting, err)
+		}
+		database.ProviderResourceID = identity
+	}
+	if err := providerContext.Err(); err != nil {
+		return Database{}, s.releaseProviderError(ctx, database, StateDeleting, err)
+	}
 	result, err := backend.Provider.Delete(providerContext, DeleteRequest{
 		ResourceID:              database.ID,
 		ProviderResourceID:      database.ProviderResourceID,
@@ -421,14 +453,26 @@ func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Dat
 }
 
 func (s *Service) Get(ctx context.Context, accountID, databaseID string) (Database, error) {
-	return s.store.Get(ctx, accountID, databaseID)
+	database, err := s.store.Get(ctx, accountID, databaseID)
+	if err != nil {
+		return Database{}, err
+	}
+	rows, err := s.withHealth(ctx, accountID, []Database{database})
+	if err != nil {
+		return Database{}, err
+	}
+	return rows[0], nil
 }
 
 func (s *Service) List(ctx context.Context, accountID string) ([]Database, error) {
 	if accountID == "" {
 		return nil, ErrInvalid
 	}
-	return s.store.List(ctx, accountID)
+	databases, err := s.store.List(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	return s.withHealth(ctx, accountID, databases)
 }
 
 func (s *Service) releaseProviderError(ctx context.Context, database Database, next State, providerErr error) error {

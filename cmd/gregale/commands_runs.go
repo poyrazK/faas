@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -276,20 +277,28 @@ func cmdRunsWorkflow(args []string) int {
 	counts := resp.StatusCounts
 	usage := resp.Usage
 	PrintOK(osStdout, "Workflow %s: runs=%d queued=%d restoring=%d running=%d succeeded=%d failed=%d timed_out=%d out_of_memory=%d cancelled=%d", resp.WorkflowID, resp.RunCount, counts.Queued, counts.Restoring, counts.Running, counts.Succeeded, counts.Failed, counts.TimedOut, counts.OutOfMemory, counts.Cancelled)
+	for _, managed := range resp.Managed {
+		PrintProgress(osStdout, "Managed continuation: status=%s steps=%d admitted_steps=%d plan=%s.", managed.Status, managed.StepCount, managed.NextStep, managed.PlanID)
+		if managed.Error != "" {
+			PrintProgress(osStdout, "Managed workflow detail: %s", managed.Error)
+		}
+	}
 	PrintProgress(osStdout, "Terminal usage: wall=%dms cpu=%dms peak-memory=%dMB output=%d bytes.", usage.WallTimeMS, usage.CPUTimeMS, usage.PeakMemoryMB, usage.OutputBytes)
 	return 0
 }
 
 func cmdRunsWorkflowRun(args []string) int {
 	fs := newFlagSet("runs workflow run", flag.ContinueOnError)
-	manifestPath := fs.String("manifest", "", "JSON file describing sequential Run steps")
+	manifestPath := fs.String("manifest", "", "JSON file describing Run workflow steps")
 	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval")
 	waitTimeout := fs.Duration("wait-timeout", 30*time.Minute, "maximum client wait duration")
+	dryRun := fs.Bool("dry-run", false, "validate and preview the workflow without creating Runs")
+	managed := fs.Bool("managed", false, "let the control plane continue a bounded Run DAG after this client exits")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if *manifestPath == "" || len(fs.Args()) != 0 || *pollInterval <= 0 || *waitTimeout <= 0 {
-		PrintUsage(osStderr, "usage: gregale runs workflow run --manifest PLAN.json [--poll-interval D] [--wait-timeout D]", "runs")
+		PrintUsage(osStderr, "usage: gregale runs workflow run --manifest PLAN.json [--managed] [--dry-run] [--poll-interval D] [--wait-timeout D]", "runs")
 		return 1
 	}
 	plan, err := loadExecutionWorkflowPlan(*manifestPath)
@@ -304,6 +313,50 @@ func cmdRunsWorkflowRun(args []string) int {
 	defer stop()
 	ctx, cancel := context.WithTimeout(waitContext, *waitTimeout)
 	defer cancel()
+	if *dryRun {
+		preview, previewErr := previewExecutionWorkflow(ctx, client, plan)
+		if jsonOutput {
+			if code := jsonOut(writeJSON(preview)); code != 0 {
+				return code
+			}
+		} else {
+			if len(preview.Steps) != 0 {
+				PrintOK(osStdout, "Workflow %s preview (plan %s, policy=%s, parallel=%d/%d, available slots=%d).", preview.WorkflowID, preview.PlanID, preview.FailurePolicy, preview.EffectiveMaxParallelSteps, preview.RequestedMaxParallelSteps, preview.AvailableParallelSlots)
+				for _, step := range preview.Steps {
+					if step.RunID != "" {
+						PrintProgress(osStdout, "Step %q: %s (Run %s, status=%s).", step.Label, step.State, step.RunID, step.RunStatus)
+					} else {
+						PrintProgress(osStdout, "Step %q: %s (runtime=%s, profile=%s).", step.Label, step.State, step.Runtime, step.Profile)
+					}
+					if step.Detail != "" {
+						PrintProgress(osStdout, "Step %q detail: %s", step.Label, step.Detail)
+					}
+				}
+			}
+			if len(preview.Steps) != 0 {
+				PrintProgress(osStdout, "Dry run only: no Runs were created. Admission or quota can change before execution.")
+			}
+		}
+		if previewErr != nil {
+			return printErr("Workflow preview failed", previewErr)
+		}
+		return 0
+	}
+	if *managed {
+		request, err := managedExecutionWorkflowRequest(plan)
+		if err != nil {
+			return printErr("Managed workflow is not supported for this manifest", err)
+		}
+		managedResult, err := client.CreateManagedExecutionWorkflow(ctx, request)
+		if err != nil {
+			return printErr("Managed workflow submission failed", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(managedResult))
+		}
+		PrintOK(osStdout, "Managed workflow %s accepted (plan %s, status=%s, steps=%d). The control plane continues after this client exits.", managedResult.WorkflowID, managedResult.PlanID, managedResult.Status, managedResult.StepCount)
+		return 0
+	}
 	result, runErr := runExecutionWorkflow(ctx, client, plan, *pollInterval)
 	if jsonOutput {
 		if code := jsonOut(writeJSON(result)); code != 0 {
@@ -312,6 +365,12 @@ func cmdRunsWorkflowRun(args []string) int {
 	} else {
 		for _, step := range result.Steps {
 			PrintOK(osStdout, "Step %q: Run %s (status=%s).", step.Label, step.Run.ID, step.Run.Status)
+		}
+		for _, label := range result.BlockedSteps {
+			PrintProgress(osStdout, "Step %q was blocked because a dependency did not succeed.", label)
+		}
+		for _, failure := range result.ResultContractFailures {
+			PrintProgress(osStdout, "Step %q result contract failed: %s", failure.Label, failure.Detail)
 		}
 	}
 	if runErr != nil {
@@ -330,6 +389,43 @@ func cmdRunsWorkflowRun(args []string) int {
 		PrintOK(osStdout, "Workflow %s completed (%d steps).", result.WorkflowID, len(result.Steps))
 	}
 	return 0
+}
+
+func managedExecutionWorkflowRequest(plan executionWorkflowPlan) (api.CreateManagedExecutionWorkflowRequest, error) {
+	if _, _, err := executionWorkflowPlanID(plan); err != nil {
+		return api.CreateManagedExecutionWorkflowRequest{}, err
+	}
+	if _, err := compileExecutionWorkflowResultSchemas(plan); err != nil {
+		return api.CreateManagedExecutionWorkflowRequest{}, err
+	}
+	request := api.CreateManagedExecutionWorkflowRequest{
+		WorkflowID: plan.WorkflowID, Version: plan.Version,
+		MaxParallelSteps: plan.MaxParallelSteps, FailurePolicy: plan.FailurePolicy,
+	}
+	for _, step := range plan.Steps {
+		if len(step.Request.ArtifactInputs) != 0 {
+			return api.CreateManagedExecutionWorkflowRequest{}, fmt.Errorf("step %q uses external artifact inputs, which are not available in managed mode yet", step.Label)
+		}
+		stepRequest := prepareExecutionWorkflowRequest(plan, "", step)
+		stepRequest.WorkflowID = ""
+		stepRequest.StepLabel = ""
+		artifactInputs := make([]api.ManagedExecutionWorkflowArtifactInput, len(step.ArtifactInputs))
+		for i, input := range step.ArtifactInputs {
+			artifactInputs[i] = api.ManagedExecutionWorkflowArtifactInput{FromStep: input.FromStep, Name: input.Name, Path: input.Path}
+		}
+		request.Steps = append(request.Steps, api.CreateManagedExecutionWorkflowStep{
+			Label: step.Label, DependsOn: append([]string(nil), step.DependsOn...),
+			InputFromPreviousResult:  step.InputFromPreviousResult,
+			IncludeDependencyResults: step.IncludeDependencyResults,
+			ArtifactInputs:           artifactInputs,
+			ResultSchema:             append(json.RawMessage(nil), step.ResultSchema...),
+			Request:                  stepRequest,
+		})
+	}
+	if err := api.ValidateCreateManagedExecutionWorkflow(request); err != nil {
+		return api.CreateManagedExecutionWorkflowRequest{}, err
+	}
+	return request, nil
 }
 
 func cmdRunsCapabilities(args []string) int {

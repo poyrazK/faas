@@ -77,7 +77,13 @@ func Normalize(in api.IssueEvent, now time.Time, limits api.IssueLimits) (api.Is
 	in.Message = sanitize(in.Message, api.IssueMessageMaxBytes)
 	in.StackTrace = sanitize(in.StackTrace, api.IssueStackMaxBytes)
 	in.Route = sanitize(in.Route, api.IssueMaxTypeBytes)
-	in.RequestID = sanitize(in.RequestID, api.IssueMaxTypeBytes)
+	// A canonical UUID is structured request identity. Its numeric segments
+	// can match the card scrubber, which would break request-audit attribution.
+	// Other opaque request context still passes through the PII scrubber.
+	requestUUID, requestUUIDErr := uuid.Parse(in.RequestID)
+	if requestUUIDErr != nil || !strings.EqualFold(requestUUID.String(), in.RequestID) {
+		in.RequestID = sanitize(in.RequestID, api.IssueMaxTypeBytes)
+	}
 	in.FingerprintOverride = sanitize(in.FingerprintOverride, api.IssueMaxTypeBytes)
 	in.Frames = append([]api.IssueFrame(nil), in.Frames...)
 	if len(in.Frames) == 0 {

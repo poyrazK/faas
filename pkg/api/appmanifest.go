@@ -196,6 +196,8 @@ type AppManifest struct {
 	// replacement followed by this signal. The application must handle the
 	// signal, reread FAAS_SECRETS_FILE, and apply the new values itself.
 	SecretReloadSignal string `json:"secret_reload_signal,omitempty"`
+	// SecretReloadReadiness waits for a per-process ready marker before signaling.
+	SecretReloadReadiness bool `json:"secret_reload_readiness,omitempty"`
 	// StopGracePeriod mirrors OCI StopGracePeriod (the OCI image
 	// spec doesn't carry it; M-2 will populate from operator
 	// override or per-plan cap). Currently always zero.
@@ -447,6 +449,11 @@ type WorkloadPort struct {
 	Name     string               `json:"name,omitempty"`
 	Port     int                  `json:"port"`
 	Protocol WorkloadPortProtocol `json:"protocol"`
+	// Internal keeps a listener off every public surface (the --port-<name>
+	// selector and raw TCP listeners) while same-account services still
+	// reach it at the app's private service address (ADR-576). Compose
+	// `expose:` declares internal listeners.
+	Internal bool `json:"internal,omitempty"`
 }
 
 var workloadPortNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,30}$`)
@@ -705,6 +712,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	}
 	if m.Healthcheck != nil && m.Healthcheck.GRPC != nil {
 		return fmt.Errorf("app manifest: grpc health checks are supported only for companion probes")
+	}
+	if m.SecretReloadReadiness && m.SecretReloadSignal == "" {
+		return fmt.Errorf("app manifest: secret_reload_readiness requires secret_reload_signal")
 	}
 	if m.SecretReloadSignal != "" {
 		switch m.SecretReloadSignal {

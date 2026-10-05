@@ -1,0 +1,4 @@
+Result=exit-code
+ExecMainStatus=2
+ActiveState=failed
+SubState=failed

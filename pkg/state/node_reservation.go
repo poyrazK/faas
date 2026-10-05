@@ -122,7 +122,16 @@ func (s *PgStore) insertInstanceWithNodeReservation(
 	ramMB int,
 	insert func(instanceInserter) (Instance, error),
 ) (Instance, error) {
-	if !nodeUsageCounts(State(newState)) {
+	return s.insertInstanceWithReservations(ctx, nodeID, newState, ramMB, nil, insert)
+}
+
+// Additional admission checks share the node reservation's transaction and
+// retain their locks until the instance row publishes the reservation.
+func (s *PgStore) insertInstanceWithReservations(
+	ctx context.Context, nodeID, newState string, ramMB int,
+	reserve func(pgx.Tx) error, insert func(instanceInserter) (Instance, error),
+) (Instance, error) {
+	if !nodeUsageCounts(State(newState)) && reserve == nil {
 		return insert(s.pool)
 	}
 
@@ -132,22 +141,23 @@ func (s *PgStore) insertInstanceWithNodeReservation(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Taken before the sum so a peer admitting to the same node blocks here
-	// rather than reading the same pre-insert total we are about to act on.
-	// pg_advisory_xact_lock releases on COMMIT or ROLLBACK, so every return
-	// path below — including the deferred Rollback — drops it.
-	if _, err := tx.Exec(ctx,
-		`select pg_advisory_xact_lock($1, hashtext($2))`,
-		nodeReservationLockClass, nodeID,
-	); err != nil {
-		return Instance{}, fmt.Errorf("state: node reservation: lock node %s: %w", nodeID, err)
-	}
+	if nodeUsageCounts(State(newState)) {
+		// Taken before the sum so a peer admitting to the same node blocks here
+		// rather than reading the same pre-insert total we are about to act on.
+		// pg_advisory_xact_lock releases on COMMIT or ROLLBACK, so every return
+		// path below — including the deferred Rollback — drops it.
+		if _, err := tx.Exec(ctx,
+			`select pg_advisory_xact_lock($1, hashtext($2))`,
+			nodeReservationLockClass, nodeID,
+		); err != nil {
+			return Instance{}, fmt.Errorf("state: node reservation: lock node %s: %w", nodeID, err)
+		}
 
-	// One round trip for both halves: the ceiling is on compute_nodes and the
-	// sum is an instances aggregate over instances_live_node_id_idx, whose
-	// partial predicate is the same four states listed here.
-	var ceilingMB, usedMB int64
-	err = tx.QueryRow(ctx, `
+		// One round trip for both halves: the ceiling is on compute_nodes and the
+		// sum is an instances aggregate over instances_live_node_id_idx, whose
+		// partial predicate is the same four states listed here.
+		var ceilingMB, usedMB int64
+		err = tx.QueryRow(ctx, `
 		select n.admission_ceiling_mb::bigint,
 		       coalesce((select sum(i.ram_mb + $2)
 		                   from instances i
@@ -155,20 +165,26 @@ func (s *PgStore) insertInstanceWithNodeReservation(
 		                    and i.state in ('waking','cold_booting','running','draining','warm')), 0)::bigint
 		  from compute_nodes n
 		 where n.id = $1`,
-		nodeID, api.PerVMOverheadMB,
-	).Scan(&ceilingMB, &usedMB)
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		// No such node. Fall through to the insert and let the FK speak.
-	case err != nil:
-		return Instance{}, fmt.Errorf("state: node reservation: read headroom (node=%s): %w", nodeID, err)
-	default:
-		admitMB := int64(ramMB) + int64(api.PerVMOverheadMB)
-		if ceilingMB > 0 && usedMB+admitMB > ceilingMB {
-			return Instance{}, fmt.Errorf(
-				"state: %w: node=%s used_mb=%d admit_mb=%d ceiling_mb=%d",
-				ErrNodeCapacity, nodeID, usedMB, admitMB, ceilingMB,
-			)
+			nodeID, api.PerVMOverheadMB,
+		).Scan(&ceilingMB, &usedMB)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			// No such node. Fall through to the insert and let the FK speak.
+		case err != nil:
+			return Instance{}, fmt.Errorf("state: node reservation: read headroom (node=%s): %w", nodeID, err)
+		default:
+			admitMB := int64(ramMB) + int64(api.PerVMOverheadMB)
+			if ceilingMB > 0 && usedMB+admitMB > ceilingMB {
+				return Instance{}, fmt.Errorf(
+					"state: %w: node=%s used_mb=%d admit_mb=%d ceiling_mb=%d",
+					ErrNodeCapacity, nodeID, usedMB, admitMB, ceilingMB,
+				)
+			}
+		}
+	}
+	if reserve != nil {
+		if err := reserve(tx); err != nil {
+			return Instance{}, err
 		}
 	}
 

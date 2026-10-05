@@ -42,7 +42,7 @@ func TestRegionalArtifactPublicationAndCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := New(store, harness.notif, fakePuller{digest: "sha256:abc", cfg: oci.ImageConfig{Cmd: []string{"./app"}}}, harness.bld, "./init", t.TempDir(), silentLogger()).WithStorage(router)
+	h := New(store, harness.notif, fakePuller{digest: "sha256:abc", cfg: oci.ImageConfig{Cmd: []string{"./app"}}}, harness.bld, "./init", t.TempDir(), silentLogger()).WithStorage(router).WithNodeName("regional-artifact-worker")
 	if err := h.HandleNotification(ctx, db.Notification{Channel: db.NotifyDeploymentChanged, Payload: `{"app_id":"` + app.ID + `","to":"` + dep.ID + `","kind":"image","image_digest":"sha256:abc"}`}); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestRegionalArtifactPublicationAndCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	puller := &jobMaterializationPuller{digest: "sha256:" + strings.Repeat("a", 64), manifest: oci.Manifest{Layers: []oci.Descriptor{{Digest: "sha256:" + strings.Repeat("b", 64)}}}, blob: []byte("placeholder")}
-	h = New(store, harness.notif, puller, harness.bld, "./init", t.TempDir(), silentLogger()).WithStorage(router)
+	h = New(store, harness.notif, puller, harness.bld, "./init", t.TempDir(), silentLogger()).WithStorage(router).WithNodeName("regional-artifact-worker")
 	if err := h.MaterializeJob(ctx, job.ID); err != nil {
 		t.Fatal(err)
 	}

@@ -106,3 +106,27 @@ func TestHasApidPrefix(t *testing.T) {
 		})
 	}
 }
+
+func TestIsPlatformHost(t *testing.T) {
+	for _, tc := range []struct {
+		host, domain string
+		want         bool
+	}{
+		{"gregale.dev", "gregale.dev", true},
+		{"API.gregale.dev:443", "gregale.dev", true},
+		{"operations.gregale.dev.", "gregale.dev", true},
+		{"127.0.0.1:8080", "gregale.dev", true},
+		{"[::1]:8080", "gregale.dev", true},
+		{"localhost", "gregale.dev", true},
+		{"shop.gregale.dev", "gregale.dev", false},
+		{"api.shop.gregale.dev", "gregale.dev", false},
+		{"gregale.dev.attacker.example", "gregale.dev", false},
+		{"customer.example", "gregale.dev", false},
+		// No apps domain: cannot tell an app host from a platform host.
+		{"shop.gregale.dev", "", true},
+	} {
+		if got := IsPlatformHost(tc.host, tc.domain); got != tc.want {
+			t.Errorf("IsPlatformHost(%q, %q) = %v, want %v", tc.host, tc.domain, got, tc.want)
+		}
+	}
+}

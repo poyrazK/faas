@@ -7,7 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestLinkedContextDefaultsAcrossAppScopedReads(t *testing.T) {
@@ -69,7 +72,7 @@ func TestLinkedContextDefaultsAcrossAppScopedReads(t *testing.T) {
 		{"openapi get", func() int { return cmdOpenapiGet(nil) }, "/v1/apps/demo/openapi"},
 		{"openapi preview", func() int { return cmdOpenapiPreview(nil) }, "/v1/apps/demo/openapi/diff"},
 		{"openapi dry-run", func() int { return cmdOpenapiDryRun([]string{documentPath}) }, "/v1/apps/demo/openapi/dry-run"},
-		{"tail", func() int { return cmdTail(nil) }, "/v1/events"},
+		// tail reconnects until Ctrl-C: TestLinkedContextScopesTail.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -100,4 +103,65 @@ func TestLinkedContextRequiredCommandExplainsHowToRecover(t *testing.T) {
 	if stderr := readStderr(); !strings.Contains(stderr, "gregale link <project-slug>") {
 		t.Fatalf("stderr missing recovery hint: %s", stderr)
 	}
+}
+
+// `gregale tail` in a linked checkout resolves the linked app before it
+// attaches, then streams until Ctrl-C.
+func TestLinkedContextScopesTail(t *testing.T) {
+	resetJSONOut(t)
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saveProjectContext(root, localProjectContext{Version: projectContextVersion, Project: "shop", App: "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	var resolved, attached atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/apps":
+			_, _ = w.Write([]byte(`[]`))
+		case "/v1/apps/demo":
+			resolved.Store(true)
+			_, _ = w.Write([]byte(`{"id":"app-demo","slug":"demo"}`))
+		case "/v1/events":
+			attached.Store(true)
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	oldOut := osStdout
+	osStdout = &bytes.Buffer{}
+	t.Cleanup(func() { osStdout = oldOut })
+
+	done := make(chan int, 1)
+	go func() { done <- cmdTail(nil) }()
+	deadline := time.Now().Add(3 * time.Second)
+	for !attached.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !resolved.Load() || !attached.Load() {
+		t.Fatalf("resolved linked app = %t, attached = %t", resolved.Load(), attached.Load())
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := syscall.Kill(syscall.Getpid(), syscall.SIGINT); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case code := <-done:
+			if code != 130 {
+				t.Fatalf("cmdTail exit = %d, want 130", code)
+			}
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	t.Fatal("cmdTail did not exit on SIGINT")
 }

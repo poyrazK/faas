@@ -1,7 +1,12 @@
 # FaasLvFcUsageHighWarn / FaasLvFcUsageHighPage
 
 Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
-Metric: `fcvm_lv_fc_used_pct` (schedd `/metrics/fcvm`).
+Metric: `fcvm_lv_fc_used_pct` (schedd `/metrics/fcvm`): how full the
+filesystem mounted at `/srv/fc` is, read with statfs, so it works on LVM,
+partitions and bare cloud disks alike. Before the statfs probe the gauge
+read `lvs -o data_percent`, which is empty for non-thin volumes and absent
+on hosts without LVM, and stayed at 0. The same reading drives imaged's
+budget-pressure snapshot eviction.
 Spec: §12 (lv_fc_used_pct > 80 warn, > 90 page).
 
 ## Symptom
@@ -19,9 +24,14 @@ issue, not a rule-level decision.
 ## Verify
 
 ```bash
-curl -fsS http://127.0.0.1:9103/metrics/fcvm | grep fcvm_lv_fc_used_pct
-lvs /dev/vg0/lv-fc 2>/dev/null || pvs; df -h /srv/fc
+curl -fsS http://<schedd-metrics-addr>:9103/metrics/fcvm | grep fcvm_lv_fc_used_pct
+df -h /srv/fc
+journalctl -u faas-imaged --since '-1h' --no-pager | grep 'gc tick' | tail -1
 ```
+
+`lv_fc_pct_known=false` in the gc tick means imaged cannot read the
+volume, so budget-pressure eviction is off until it can; check that
+`FAAS_STORAGE_ROOT` (default `/srv/fc`) exists on that host.
 
 ## Check
 
@@ -44,8 +54,9 @@ amtool silence add \
 
 ## Recover
 
-Resizing lv-fc requires the LV-resize playbook (in `docs/ops/`).
-Briefly: extend the LV, xfs_growfs the filesystem, restart imaged
-so the gauge re-reads the new size. The fleet snapshot fleet average
+Grow the volume, then the filesystem: extend the LV (`lvextend`) on LVM
+hosts, or resize the provider disk on cloud hosts, then
+`xfs_growfs /srv/fc`. The gauge re-reads the filesystem within one scrape;
+no restart is needed. The fleet snapshot fleet average
 (`fcvm_snapshot_fleet_avg_bytes`) typically improves 5-10% after a
 resize as orphaned snapshots get GC'd by imaged's reclaim loop.

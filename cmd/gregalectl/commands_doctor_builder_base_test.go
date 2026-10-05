@@ -220,6 +220,43 @@ func TestCheckBuilderBaseExt4_FileAbsent(t *testing.T) {
 	}
 }
 
+// Production: the read-through cache evicted fsn-3's builder base, and the
+// rc.236 roll ran this doctor after stopping imaged (which would have staged
+// it again). The warning failed the roll and left every compute daemon
+// stopped. When the roll names the ref imaged stages, an empty cache is
+// expected; without a ref it stays a warning.
+func TestCheckBuilderBaseExt4_EvictedCacheWithStagingRef(t *testing.T) {
+	for _, tc := range []struct {
+		ref  string
+		want string
+	}{
+		{ref: "ghcr.io/gregale/runner-builder@sha256:abc", want: doctorSeverityOK},
+		{ref: "", want: doctorSeverityWarn},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("FAAS_STORAGE_ROOT", root)
+			t.Setenv("FAAS_STORAGE_CACHE_DIR", t.TempDir())
+			t.Setenv("FAAS_BOX_ROLE", "compute-only")
+			t.Setenv("FAAS_BUILDER_BASE_PATH", "")
+			t.Setenv("FAAS_BUILDER_BASE_REF", tc.ref)
+			withBuilderBaseHooks(t, builderBaseHooks{
+				Path: filepath.Join(root, "base", "runner-builder-"+runtime.GOARCH+".ext4"),
+				Stat: func(p string) (os.FileInfo, error) {
+					return nil, &os.PathError{Op: "stat", Path: p, Err: os.ErrNotExist}
+				},
+			})
+			findings, err := checkBuilderBaseExt4(context.Background(), &doctorDeps{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(findings) != 1 || findings[0].Severity != tc.want {
+				t.Fatalf("findings = %+v, want one %s finding", findings, tc.want)
+			}
+		})
+	}
+}
+
 // TestCheckBuilderBaseExt4_PathOverride verifies the FAAS_BUILDER_BASE_PATH
 // env var drives locateBuilderBasePathHook — covered implicitly by
 // the production wiring, but pinned here so a future refactor that

@@ -837,3 +837,40 @@ func TestApidPathReservations_Documented(t *testing.T) {
 		}
 	}
 }
+
+// ADR-480: platform paths are reserved on platform hosts only. On a compute
+// node this proxy dials apid on loopback, where nothing listens, so an app's
+// own /v1 or /status route must reach the app instead.
+func TestApidProxy_ScopesReservationsToPlatformHosts(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("apid"))
+	}))
+	t.Cleanup(upstream.Close)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("app")) })
+	scoped := newApidProxyWithGate(upstream.URL, next, nil, nil, "gregale.dev", log)
+	legacy := newApidProxyWithGate(upstream.URL, next, nil, nil, "", log)
+	for _, tc := range []struct {
+		handler http.Handler
+		host    string
+		want    string
+	}{
+		{scoped, "api.gregale.dev", "apid"},
+		{scoped, "gregale.dev", "apid"},
+		{scoped, "operations.gregale.dev", "apid"},
+		{scoped, "127.0.0.1:8080", "apid"},
+		{scoped, "shop.gregale.dev", "app"},
+		{scoped, "pr-3-shop.gregale.dev", "app"},
+		{scoped, "api.customer.example", "app"},
+		// No apps domain (dev single-box, e2e harness): every host reserved.
+		{legacy, "shop.gregale.dev", "apid"},
+	} {
+		for _, path := range []string{"/v1/users", "/status", "/docs", "/login", "/oauth/callback"} {
+			rec := httptest.NewRecorder()
+			tc.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://"+tc.host+path, nil))
+			if got := rec.Body.String(); got != tc.want {
+				t.Errorf("GET %s%s served by %q, want %q", tc.host, path, got, tc.want)
+			}
+		}
+	}
+}

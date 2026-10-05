@@ -1,6 +1,6 @@
 # Initialize independent regional control-plane cells
 
-ADR-475 adds a database identity and placement boundary for a fresh regional
+ADR-601 adds a database identity and placement boundary for a fresh regional
 fleet. It is an internal foundation for independent control planes. It does
 not migrate customer resources between cells or provide a global application
 endpoint. Regional VM recovery qualification remains pending on native KVM.

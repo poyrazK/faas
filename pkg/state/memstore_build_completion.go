@@ -56,6 +56,9 @@ func (m *MemStore) ListBuildsAwaitingImage(_ context.Context, nodeID string, lim
 		if !ok || b.Status != BuildSucceeded {
 			continue
 		}
+		if _, started := m.imagePreparations[dep.ID]; started {
+			continue
+		}
 		prov, ok := m.buildProvenance[b.ID]
 		if !ok {
 			continue

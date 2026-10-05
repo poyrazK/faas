@@ -12,6 +12,166 @@ Usage is measured in GB-RAM-hours for running app instances. The plan also sets 
 
 Free accounts have a zero monthly charge and are subject to the published limits. Paid plans are billed monthly through the account billing portal. Treat the portal as the source of truth for invoices, tax, payment methods, credits, and failed-payment recovery.
 
+## Retained usage costs and forecasts
+
+This financial visibility preview reports supported usage costs and budget
+drafts. Budget enforcement is unavailable: drafts do not stop workloads or
+send spending notifications. Coverage and unavailable bill components are
+reported explicitly.
+
+```bash
+gregale billing costs --month 2026-10 --json
+gregale billing forecast --json
+```
+
+`GET /v1/billing/costs` and `GET /v1/billing/forecast` provide read-only,
+account-scoped access with `usage:read` and the invoice-history session MFA gate.
+The optional `month=YYYY-MM` selects a UTC calendar usage month and defaults to
+the current month. Unknown and repeated parameters are rejected.
+
+Compute and interface egress evidence retain application/job, project,
+environment, and deployment identity at first observation. Names remain those
+of the observed workload after rename or deletion. Usage replay preserves source
+identity; compute and cumulative network observations cannot duplicate charges.
+Historical prices are recorded before sampling and linked by version. Evidence
+from before price capture is marked unpriced rather than priced with today's rate.
+Recorded price activations define the retained plan for each sampled interval;
+closing the previous minute after a plan change keeps that minute's earlier
+contract. Completed and deleted jobs retain their final resident seconds.
+
+Retained corrections append a negative quantity linked to the original source.
+They preserve its price, period and workload identity, record an actor and reason,
+and cannot subtract more than the original usage, including concurrent corrections.
+Replay cannot add a second correction. Original evidence and price terms cannot
+be rewritten; account deletion can remove its financial history. Provider delivery
+continues to use its existing source until correction reconciliation is accepted.
+
+All amounts use integer millicents (1,000 millicents per cent). One shared
+account allowance applies to each usage meter for the month. When plans change,
+the largest recorded grant remains available for that month; its quantities are
+shared proportionally across price versions. Within each version, net cost and
+allowance value are allocated by workload quantity using stable largest-remainder
+rounding. Allocated amounts sum exactly to the meter totals. Shadow and disabled
+egress contracts are reported as nonbillable quantities. The existing provider
+delivery remains unchanged while ledger reconciliation is validated.
+
+Coverage reports the retention start, complete sampling minutes, freshness, and
+unpriced quantities. A missing sample does not establish zero usage. Quantity
+run-rate forecasts need one full day of complete, fresh evidence and unchanged
+price terms; unavailable projections omit amounts and explain why. Interface
+egress observations currently have delayed source coverage, so they do not claim
+complete transfer forecasts. Forecasts do not control admission.
+
+The current cost surface covers retained compute and interface egress. It reports
+subscription/add-ons, credits/adjustments, tax, and external/managed resource
+meters as missing bill components. `known_usage_millicents` is the priced usage
+subtotal, not an invoice total. Provider invoices retain their own periods and
+are returned separately; `invoice_reconciliation` is `not_reconciled` until the
+full reconciliation gate passes. The total-bill estimate remains unavailable.
+Reports exceeding 10,000 allocation groups fail with 422 instead of returning
+truncated totals. Financial history is retained independently of minute-level
+usage cleanup and is erased with the owning account's final deletion.
+
+## Budget previews
+
+```bash
+gregale billing budget-preview --file budget.json --json
+```
+
+`POST /v1/billing/budgets/preview` accepts a proposed budget spec and performs
+no writes. It uses the current UTC usage month, validates account-owned scope,
+and reports known attributed spending, coverage, affected workloads, and
+workloads that can continue spending. The API uses the same `usage:read` and
+session MFA gates as cost reports. The CLI file contains the spec directly;
+the REST request wraps it in `{"spec": ...}`.
+
+For example, this spec would select previews while production continues:
+
+```json
+{
+  "name": "Preview spending",
+  "scope": {"kind": "account"},
+  "currency": "EUR",
+  "meters": ["compute"],
+  "basis": "net_usage",
+  "limit_millicents": 1000000,
+  "notify_millicents": [800000],
+  "mode": "monitored",
+  "action": "stop_previews",
+  "drain_seconds": 30,
+  "resume_rule": "manual",
+  "enabled": true
+}
+```
+
+The limit above is EUR 10.00. Available scopes are account, project,
+environment, application, and job; resource scopes use their stable UUID.
+Preview identity comes from Gregale's persisted preview metadata. Environment
+membership currently comes from live deployment scopes. Historical costs retain
+older identities even when the current target list changes.
+
+Responses explain the difference between notifying, rejecting new traffic,
+stopping previews, suspending background work, and suspending every workload in
+a scope. Rejecting traffic leaves running compute able to spend. Broad selective
+responses leave other workloads able to spend. Net usage applies the shared
+account allowance once; gross usage measures cost before that allowance.
+Strict resource scopes require gross compute, and a broad strict policy must
+stop every covered workload.
+
+Enforcement currently reports `enforcement_ready: false`. Policy activation,
+durable decisions, independent holds, stopping acknowledgements, and strict
+compute reservations are still under implementation. A successful preview does
+not activate a spending limit. Monitored responses can exceed a threshold while
+usage arrives or workloads drain. Full-invoice hard limits are not implied by
+compute controls.
+
+## Budget policy drafts and audit
+
+The console's Usage page can preview responses and save disabled budget drafts.
+It uses live account-owned project, environment, app and job lists. The editor
+parses EUR text to exact millicents and shows affected and continuing workloads;
+a partial cost observation remains labelled partial. Saved drafts do not stop
+usage or send threshold notifications.
+
+```bash
+# budget-draft.json contains the spec above with enabled set to false.
+gregale billing budgets create --file budget-draft.json --key previews-october --json
+gregale billing budgets list --json
+gregale billing budgets get --json POLICY_ID
+gregale billing budgets update --file budget-draft.json --expected-revision 1 --key previews-update --json POLICY_ID
+gregale billing budgets history --after-revision 0 --limit 100 --json POLICY_ID
+gregale billing budgets delete --expected-revision 2 --key previews-delete --json POLICY_ID
+```
+
+Read operations require `usage:read`; mutations require `admin`. Session MFA
+applies to both. REST mutations require an `Idempotency-Key` (1..255 bytes).
+The Go client supplies one automatically, and CLI `--key` supplies a stable
+key for retries across processes. Reusing a creation key retains one identity
+even after HTTP replay-cache retention; it cannot overwrite a changed or deleted
+policy. HTTP policy bodies are bounded to 16 KiB.
+
+`GET`/`POST /v1/billing/budgets` list and create policies. `GET`/`PUT`/`DELETE
+`/v1/billing/budgets/{id}` read, replace and tombstone a policy. Replacement and
+deletion require its `expected_revision`, returning 409 for a stale edit.
+Every mutation and its immutable actor/revision audit commit together. Policy
+deletion retains that history, accessible through
+`GET /v1/billing/budgets/{id}/revisions?after_revision=0&limit=100`; use
+`next_revision` as the next cursor. A final full page can be followed by an empty
+page. At most 128 nondeleted policies are allowed per account.
+
+Activation currently returns 422 `financial_budget_activation_unavailable`
+without writing policy intent. Save `enabled=false` to retain a draft. A policy
+response separately reports `status`, `enforcement_ready` and readiness reasons.
+An internal enabled intent whose integrations are unavailable reports
+`unavailable`, never active protection. Cost reads, policy reads, updates and
+deletion remain reachable while an account is suspended for billing recovery;
+they do not change payment/security/deletion status or resume its workloads.
+
+The Node and Python generated Billing clients expose the same operations,
+revision conditions, retry headers and readiness fields. Revision history is
+intent history; target stopping acknowledgements and action history are still
+under implementation.
+
 ## FOCUS invoice export
 
 Gregale provides a **partial FOCUS 1.4 Invoice Detail projection** for financial

@@ -13,10 +13,10 @@ import (
 // captureDeploymentOpenAPISnapshotLocked mirrors the Postgres capture path:
 // enabled edge rules are ordered like ListEdgeRulesForApp and projected by
 // the registered callback. The caller must hold m.mu.
-func (m *MemStore) captureDeploymentOpenAPISnapshotLocked(ctx context.Context, d Deployment) (OpenAPISnapshot, error) {
+func (m *MemStore) captureDeploymentOpenAPISnapshotLocked(ctx context.Context, d Deployment) (OpenAPISnapshot, DeploymentRoutePolicySnapshot, error) {
 	rules := make([]EdgeRule, 0)
 	for _, rule := range m.edgeRules {
-		if rule.AppID == d.AppID && rule.Enabled {
+		if rule.AppID == d.AppID {
 			rules = append(rules, rule)
 		}
 	}
@@ -27,12 +27,21 @@ func (m *MemStore) captureDeploymentOpenAPISnapshotLocked(ctx context.Context, d
 		return rules[i].CreatedAt.After(rules[j].CreatedAt)
 	})
 	pending := make([]api.CreateEdgeRuleRequest, 0, len(rules))
+	policyRules := make([]EdgeRule, 0, len(rules))
 	for _, rule := range rules {
+		policyRules = append(policyRules, rule)
+		if !rule.Enabled {
+			continue
+		}
 		request, err := edgeRuleToCreateEdgeRuleRequest(rule)
 		if err != nil {
-			return OpenAPISnapshot{}, fmt.Errorf("memstore: encode edge rule %s for snapshot: %w", rule.ID, err)
+			return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("memstore: encode edge rule %s for snapshot: %w", rule.ID, err)
 		}
 		pending = append(pending, request)
+	}
+	policySnapshot, err := marshalDeploymentRoutePolicySnapshot(d.ID, d.AppID, normalizedDeploymentScope(d.Scope), policyRules)
+	if err != nil {
+		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("memstore: capture route policy for %s: %w", d.ID, err)
 	}
 	var importedDoc []byte
 	if imported, ok := m.openAPIImports[d.AppID]; ok {
@@ -40,9 +49,25 @@ func (m *MemStore) captureDeploymentOpenAPISnapshotLocked(ctx context.Context, d
 	}
 	snap, err := getOpenAPICapture()(ctx, nil, d.ID, d.AppID, normalizedDeploymentScope(d.Scope), pending, importedDoc)
 	if err != nil {
-		return OpenAPISnapshot{}, fmt.Errorf("memstore: capture snapshot for %s: %w", d.ID, err)
+		return OpenAPISnapshot{}, DeploymentRoutePolicySnapshot{}, fmt.Errorf("memstore: capture snapshot for %s: %w", d.ID, err)
 	}
-	return snap, nil
+	return snap, policySnapshot, nil
+}
+
+func (m *MemStore) captureAndStoreDeploymentSnapshotsLocked(ctx context.Context, d Deployment, capturePolicy bool) error {
+	openAPISnapshot, routePolicySnapshot, err := m.captureDeploymentOpenAPISnapshotLocked(ctx, d)
+	if err != nil {
+		return err
+	}
+	if !capturePolicy {
+		routePolicySnapshot = DeploymentRoutePolicySnapshot{}
+	} else if err := validateDeploymentRoutePolicySnapshot(routePolicySnapshot); err != nil {
+		return fmt.Errorf("memstore: route policy snapshot: %w", err)
+	}
+	if err := m.storeOpenAPISnapshotLocked(openAPISnapshot); err != nil {
+		return err
+	}
+	return m.storeRoutePolicySnapshotLocked(routePolicySnapshot)
 }
 
 // storeOpenAPISnapshotLocked stores a callback result. A zero snapshot is the
@@ -122,5 +147,34 @@ func (m *MemStore) OpenAPISnapshotByDeployment(_ context.Context, deploymentID s
 	if !ok {
 		return OpenAPISnapshot{}, ErrNotFound
 	}
+	return snap, nil
+}
+
+func (m *MemStore) storeRoutePolicySnapshotLocked(snap DeploymentRoutePolicySnapshot) error {
+	if snap.DeploymentID == "" && len(snap.Snapshot) == 0 && snap.SHA256 == "" {
+		return nil
+	}
+	if err := validateDeploymentRoutePolicySnapshot(snap); err != nil {
+		return fmt.Errorf("memstore: route policy snapshot: %w", err)
+	}
+	if _, exists := m.routePolicySnapshots[snap.DeploymentID]; exists {
+		return nil
+	}
+	if snap.CapturedAt.IsZero() {
+		snap.CapturedAt = time.Now().UTC()
+	}
+	snap.Snapshot = append([]byte(nil), snap.Snapshot...)
+	m.routePolicySnapshots[snap.DeploymentID] = snap
+	return nil
+}
+
+func (m *MemStore) DeploymentRoutePolicySnapshotByDeployment(_ context.Context, deploymentID string) (DeploymentRoutePolicySnapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	snap, ok := m.routePolicySnapshots[deploymentID]
+	if !ok {
+		return DeploymentRoutePolicySnapshot{}, ErrNotFound
+	}
+	snap.Snapshot = append([]byte(nil), snap.Snapshot...)
 	return snap, nil
 }

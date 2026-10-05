@@ -77,6 +77,8 @@ type Params struct {
 	Artifacts   storage.StorageBackend
 	LogArchives ArchiveDeleter
 	Registry    prometheus.Registerer
+	// BeforeAccountDelete completes external cleanup before metadata cascades.
+	BeforeAccountDelete func(context.Context, state.Account) error
 }
 
 // Grace is the 30-day deletion-grace timer. Owns the ticker + the
@@ -171,6 +173,12 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 		}
 		if acct.DeletionRequestedAt.After(cutoff) {
 			continue
+		}
+		if g.p.BeforeAccountDelete != nil {
+			if err := g.p.BeforeAccountDelete(ctx, acct); err != nil {
+				g.p.Log.Warn("grace: external cleanup deferred", "account", acct.ID, "err", err)
+				continue
+			}
 		}
 		// Past grace — hard delete. The next tick will skip this row
 		// because DeleteAccount removed it; we still guard on the

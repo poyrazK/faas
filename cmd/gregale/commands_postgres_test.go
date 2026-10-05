@@ -11,6 +11,43 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// adr: 463 — customer health survives safe CLI decoding in both formats.
+func TestCmdPostgresGetHealth(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/postgres/databases/db-1" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"id":"db-1","name":"orders","state":"ready","provider_resource_id":"private-upstream","connection_url":"private-password","health":{"enabled":true,"status":"degraded","fresh":true,"provider_status":"missing","compute_state":"unknown","checked_at":"2026-10-01T12:00:00Z","last_success_at":"2026-10-01T11:00:00Z","last_error_code":"resource_missing","stale_after_seconds":300}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	previousOut, previousJSON := osStdout, jsonOutput
+	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	for _, asJSON := range []bool{true, false} {
+		var out bytes.Buffer
+		osStdout, jsonOutput = &out, asJSON
+		if code := cmdPostgresGet([]string{"db-1"}); code != 0 {
+			t.Fatalf("exit = %d", code)
+		}
+		if strings.Contains(out.String(), "private-") {
+			t.Fatal("CLI exposed private provider material")
+		}
+		if asJSON {
+			var database api.ManagedPostgresDatabase
+			if err := json.Unmarshal(out.Bytes(), &database); err != nil || database.Health == nil || database.Health.Status != "degraded" || database.Health.LastErrorCode != "resource_missing" {
+				t.Fatalf("health JSON: %s %v", out.String(), err)
+			}
+		} else {
+			for _, value := range []string{"provider_health:", "degraded", "compute_state:", "unknown", "health_checked:", "health_success:", "resource_missing"} {
+				if !strings.Contains(out.String(), value) {
+					t.Fatalf("human health output missing %q: %s", value, out.String())
+				}
+			}
+		}
+	}
+}
+
 func TestCmdPostgresListJSONUsesSafeEnvelope(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/postgres/databases" {
@@ -296,5 +333,40 @@ func TestCmdPostgresAttachResolvesSlugAndDatabaseName(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Attached orders to app api as DATABASE_URL") {
 		t.Fatalf("output = %s", out.String())
+	}
+}
+
+func TestCmdPostgresAttachMigrationMode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api":
+			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases":
+			_, _ = w.Write([]byte(`{"items":[{"id":"db-1","name":"orders","state":"ready"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/postgres/databases/db-1/bindings":
+			var req api.CreateManagedPostgresBindingRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if req.Access != "migration" || req.EnvironmentKey != "MIGRATION_DATABASE_URL" {
+				t.Errorf("migration request=%+v", req)
+			}
+			_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"MIGRATION_DATABASE_URL","access":"migration","state":"ready"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	var out bytes.Buffer
+	previousOut, previousJSON := osStdout, jsonOutput
+	osStdout, jsonOutput = &out, false
+	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	if code := cmdPostgresAttach([]string{"orders", "api", "--scope", "production", "--access", "migration", "--env", "MIGRATION_DATABASE_URL"}); code != 0 {
+		t.Fatalf("migration attach exit=%d output=%s", code, out.String())
 	}
 }

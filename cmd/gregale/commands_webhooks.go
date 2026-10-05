@@ -413,7 +413,7 @@ func cmdWebhookRotateSecret(args []string) int {
 	slug := fs.String("app", "", "app slug (required)")
 	secret := fs.String("secret", "", "replacement HMAC-SHA256 secret")
 	fromStdin := fs.Bool("from-stdin", false, "read the replacement secret from stdin (one line)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || len(fs.Args()) != 1 {

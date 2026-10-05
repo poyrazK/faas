@@ -1,0 +1,13 @@
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+removed /var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-4d700a71 state=completed
+owned stages absent and unmounted; owned failed unit states reset
+Id=gregale-managed-pg-restart-quarantine-4d700a71-bounded.service
+LoadState=not-found
+ActiveState=inactive
+SubState=dead
+Fri Oct  2 17:20:10 UTC 2026

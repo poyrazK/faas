@@ -48,6 +48,10 @@
         </dl>
       </section>
 
+      {{if .Data.Environments}}<section class="card"><h2>Environment GitOps</h2><p>Review Git definitions, adopt existing fields, and inspect drift:</p>
+        {{range .Data.Environments}}<a href="/dashboard/projects/{{$project.Slug}}/environments/{{.}}/gitops"><code>{{.}}</code></a> {{end}}
+      </section>{{end}}
+
       <h2>Workloads</h2>
       {{if $project.Workloads}}
         <table><thead><tr><th>App</th><th>Workload</th><th>Lifecycle</th><th>Deployment</th><th>Build</th></tr></thead><tbody>

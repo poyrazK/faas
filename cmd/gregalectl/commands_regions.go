@@ -12,7 +12,7 @@ import (
 
 func cmdRegionsDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(osStderr, "usage: gregalectl regions list | set --region ID --display-name NAME --accepting-new-apps=true|false")
+		_, _ = fmt.Fprintln(osStderr, "usage: gregalectl regions list | set --region ID --display-name NAME --accepting-new-apps=true|false")
 		return 2
 	}
 	if args[0] == "list" {
@@ -31,12 +31,12 @@ func cmdRegionsDispatch(args []string) int {
 			return emitOperatorJSON(regions)
 		}
 		for _, r := range regions {
-			fmt.Fprintf(osStdout, "%s\t%s\t%s\tnew apps=%t\t%d eligible node(s)\thealth=%s\n", r.ID, r.DisplayName, r.Availability, r.AcceptingNewApps, r.EligibleNodes, r.ObservedHealth)
+			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\tnew apps=%t\t%d eligible node(s)\thealth=%s\n", r.ID, r.DisplayName, r.Availability, r.AcceptingNewApps, r.EligibleNodes, r.ObservedHealth)
 		}
 		return 0
 	}
 	if args[0] != "set" {
-		fmt.Fprintf(osStderr, "unknown regions command %q\n", args[0])
+		_, _ = fmt.Fprintf(osStderr, "unknown regions command %q\n", args[0])
 		return 2
 	}
 	fs := flag.NewFlagSet("regions set", flag.ContinueOnError)
@@ -54,7 +54,7 @@ func cmdRegionsDispatch(args []string) int {
 		}
 	})
 	if fs.NArg() != 0 || *id == "" || !api.ValidComputeRegion(*id) || !api.ValidComputeRegionDisplayName(*name) || !explicit {
-		fmt.Fprintln(osStderr, "region, display-name and an explicit accepting-new-apps boolean are required")
+		_, _ = fmt.Fprintln(osStderr, "region, display-name and an explicit accepting-new-apps boolean are required")
 		return 2
 	}
 	client, err := statusOperatorClient()
@@ -69,6 +69,6 @@ func cmdRegionsDispatch(args []string) int {
 	if jsonEnabled() {
 		return emitOperatorJSON(region)
 	}
-	fmt.Fprintf(osStdout, "%s: accepting new apps=%t\n", region.ID, region.AcceptingNewApps)
+	_, _ = fmt.Fprintf(osStdout, "%s: accepting new apps=%t\n", region.ID, region.AcceptingNewApps)
 	return 0
 }

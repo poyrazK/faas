@@ -1,0 +1,13 @@
+/var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/source-hashes.sha256: OK
+510fbfef1f699eb464756e36d6edda399d4a2f2626b33d1863ab4e141112a182  /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/results.tar.gz
+Result=success
+ExecMainStatus=0
+LoadState=not-found
+ActiveState=inactive
+SubState=dead
+InvocationID=
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth

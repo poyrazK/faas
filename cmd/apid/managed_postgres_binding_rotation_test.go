@@ -70,3 +70,28 @@ func TestRotateManagedPostgresBindingQueuesRuntimeRefresh(t *testing.T) {
 		t.Fatalf("stored rotation = %+v err=%v", current, err)
 	}
 }
+
+func TestRotateMigrationBindingDoesNotRestartServingInstances(t *testing.T) {
+	env := newSourceRefTestServer(t, api.PlanPro, "migration-rotate", 9002)
+	_, _, databaseID := configureSourceRefManagedPostgres(t, env)
+	binding, err := env.srv.managedPostgresBindings.Create(context.Background(), managedpostgres.CreateBindingRequest{AccountID: env.acctID, DatabaseID: databaseID, AppID: env.appID, Scope: "default", EnvironmentKey: "SCHEMA_DSN", Access: managedpostgres.CredentialMigration})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notifier := &runtimeConfigRestartNotifier{}
+	env.srv.notif = notifier
+	req := httptest.NewRequest(http.MethodPost, "/v1/postgres/bindings/"+binding.ID+"/rotate", nil)
+	req.SetPathValue("id", binding.ID)
+	acct, err := env.store.AccountByID(context.Background(), env.acctID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	env.srv.rotateManagedPostgresBinding(response, req, acct)
+	if response.Code != http.StatusOK {
+		t.Fatalf("rotate = %d: %s", response.Code, response.Body.String())
+	}
+	if notifier.channel != "" {
+		t.Fatal("migration rotation restarted the serving application")
+	}
+}

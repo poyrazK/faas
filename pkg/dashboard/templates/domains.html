@@ -60,7 +60,17 @@
               <td>
                 <code>{{.Domain}}</code>
                 {{if .VerifiedAt}}<br><small class="muted">verified {{.VerifiedAt}}</small>{{end}}
-                {{if and (not .Verified) .TXTRecord}}<br><small>Publish <code class="sample">{{.TXTRecord}}</code></small>{{end}}
+                {{if .DNSRecords}}
+                  <details{{if or (not .Verified) (ne .CertStatus "issued")}} open{{end}}>
+                    <summary>DNS records</summary>
+                    <ul class="dns-records">
+                      {{range .DNSRecords}}
+                        <li><code class="sample">{{.Name}}  {{.Type}}  {{.Value}}</code>{{if .Alternative}} <small class="muted">at a zone apex, instead of the CNAME</small>{{end}}</li>
+                      {{end}}
+                    </ul>
+                    <small class="muted">Point the name straight at Gregale; a CDN proxy in front of it blocks the certificate.</small>
+                  </details>
+                {{else if and (not .Verified) .TXTRecord}}<br><small>Publish <code class="sample">{{.TXTRecord}}</code></small>{{end}}
               </td>
               <td>{{if .Verified}}<span class="badge ok">verified</span>{{else}}<span class="badge pending">pending</span>{{end}}</td>
               <td>

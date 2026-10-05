@@ -98,79 +98,47 @@ type Supervisor struct {
 	// supervisor checks it after Start returns so an intentional SIGTERM does
 	// not get mistaken for a crash and restarted under an `always` policy.
 	stopRequested atomic.Bool
-	// startSignalMu and pendingStartSignals close the fork window for the
-	// opt-in runtime secret reload signal. A secret rotation can race with
-	// command construction; when no signalable process is published yet, the
-	// signal is delivered immediately after the next successful cmd.Start.
-	startSignalMu       sync.Mutex
-	pendingStartSignals []syscall.Signal
-	startedOnce         sync.Once //nolint:unused // guards Linux lifecycle callbacks.
-	healthyOnce         sync.Once //nolint:unused // guards Linux lifecycle callbacks.
+	// Runtime secret delivery is fenced to the command generation. Process is
+	// published only after cmd.Start, never read concurrently with it.
+	startSignalMu      sync.Mutex
+	runtimeSecretStart *runtimeSecretProcessStart
+	startedOnce        sync.Once //nolint:unused // Linux lifecycle callbacks.
+	healthyOnce        sync.Once //nolint:unused // Linux lifecycle callbacks.
 }
 
-func (s *Supervisor) markStarted() { //nolint:unused // called by Linux workload supervision.
-	if s != nil {
-		s.flushPendingStartSignals()
-		s.startedOnce.Do(func() {
-			if s.onStart != nil {
-				s.onStart()
-			}
-		})
-	}
+type runtimeSecretProcessStart struct {
+	cmd       *exec.Cmd
+	process   *os.Process
+	secrets   map[string]string
+	revision  string
+	readyPath string
+	healthy   bool
+	notified  bool
 }
 
-func (s *Supervisor) flushPendingStartSignals() {
-	s.startSignalMu.Lock()
-	defer s.startSignalMu.Unlock()
-	cmd := s.lastCmd.Load()
-	if cmd == nil || cmd.Process == nil || len(s.pendingStartSignals) == 0 {
+func (s *Supervisor) markStarted() { //nolint:unused // Linux lifecycle callbacks.
+	if s == nil {
 		return
 	}
-	pending := s.pendingStartSignals
-	s.pendingStartSignals = nil
-	for _, sig := range pending {
-		if err := cmd.Process.Signal(sig); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
-			// A failure to deliver a best-effort application reload signal must
-			// not fail process startup. A later secret change can signal again.
-			continue
-		}
-	}
-}
-
-// ForwardSignalOnStart forwards a signal to the current workload. If command
-// construction/startup has not reached a signalable process yet, it queues the
-// signal and markStarted delivers it once the child is running.
-func (s *Supervisor) ForwardSignalOnStart(sig syscall.Signal) error {
-	_, err := s.ForwardSignalOnStartWithStatus(sig)
-	return err
-}
-
-// ForwardSignalOnStartWithStatus reports whether the signal was queued because
-// the workload did not yet have a signalable process. A queued signal is
-// delivered when the next child starts.
-func (s *Supervisor) ForwardSignalOnStartWithStatus(sig syscall.Signal) (queued bool, err error) {
-	if s == nil {
-		return false, nil
-	}
 	s.startSignalMu.Lock()
-	defer s.startSignalMu.Unlock()
-	cmd := s.lastCmd.Load()
-	if cmd == nil || cmd.Process == nil {
-		s.pendingStartSignals = append(s.pendingStartSignals, sig)
-		return true, nil
+	if start := s.runtimeSecretStart; start != nil {
+		start.process = start.cmd.Process
 	}
-	if err := cmd.Process.Signal(sig); err != nil {
-		if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
-			s.pendingStartSignals = append(s.pendingStartSignals, sig)
-			return true, nil
+	s.startSignalMu.Unlock()
+	s.startedOnce.Do(func() {
+		if s.onStart != nil {
+			s.onStart()
 		}
-		return false, err
-	}
-	return false, nil
+	})
 }
 
 func (s *Supervisor) markHealthy() { //nolint:unused // called by Linux workload supervision.
 	if s != nil {
+		s.startSignalMu.Lock()
+		if start := s.runtimeSecretStart; start != nil {
+			start.healthy = true
+		}
+		s.startSignalMu.Unlock()
 		s.healthyOnce.Do(func() {
 			if s.onHealthy != nil {
 				s.onHealthy()
@@ -223,7 +191,10 @@ func (s *Supervisor) LastExitStatus() (int, bool) {
 // safer pairing for operators reading the LogTail audit.
 func (s *Supervisor) TrackCommand(cmd *exec.Cmd) {
 	s.resetLog() // fresh window per restart (Slice A PR-B contract)
+	s.startSignalMu.Lock()
+	s.runtimeSecretStart = nil
 	s.lastCmd.Store(cmd)
+	s.startSignalMu.Unlock()
 }
 
 // LastAppPID returns the PID of the most-recently-forked customer

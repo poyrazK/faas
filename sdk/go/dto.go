@@ -17,6 +17,10 @@ import "github.com/poyrazK/faas/sdk/go/internal/api"
 // (dto.go, build.go, appmanifest.go, cliauth.go, secrets.go). New
 // DTOs in internal/api should be added here on the next PR.
 type (
+	RouteCustomerUsageOptions  = api.RouteCustomerUsageOptions
+	RouteCustomerUsageResponse = api.RouteCustomerUsageResponse
+	RouteCustomerUsage         = api.RouteCustomerUsage
+	RouteCustomerObservation   = api.RouteCustomerObservation
 	// App lifecycle.
 	ComputeRegionResponse     = api.ComputeRegionResponse
 	CreateAppRequest          = api.CreateAppRequest
@@ -110,6 +114,7 @@ type (
 
 	// Custom domains.
 	CustomDomainResponse      = api.CustomDomainResponse
+	DNSRecordInstruction      = api.DNSRecordInstruction
 	CreateCustomDomainRequest = api.CreateCustomDomainRequest
 
 	// Crons.
@@ -389,6 +394,14 @@ type (
 	ServiceCallerScopes         = api.ServiceCallerScopes
 )
 
+// Queue bindings preserve their immutable project environment identity.
+type (
+	QueueBindingResponse       = api.QueueBindingResponse
+	QueueBindingStatusResponse = api.QueueBindingStatusResponse
+	CreateQueueBindingRequest  = api.CreateQueueBindingRequest
+	UpdateQueueBindingRequest  = api.UpdateQueueBindingRequest
+	InvokeWork                 = api.InvokeWork
+)
 type CommitSourceResponse = api.CommitSourceResponse
 type CommitReceiptResponse = api.CommitReceiptResponse
 type CommitOperationResponse = api.CommitOperationResponse

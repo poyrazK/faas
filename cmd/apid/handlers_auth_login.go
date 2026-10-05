@@ -1033,6 +1033,7 @@ func (s *server) mintAndWriteV1AuthJSON(w http.ResponseWriter, r *http.Request, 
 			"internal_error", "Internal Error", "could not create api key"))
 		return
 	}
+	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
 	writeV1AuthJSON(w, acct, requestEmail, plaintext, k)
 }
 

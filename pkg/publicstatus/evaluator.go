@@ -162,6 +162,22 @@ type DailyObservation struct {
 	Up          int
 }
 
+// CountsAsAvailable reports whether an observed state counts toward uptime.
+// Degraded means the capability remained available with reduced quality: it
+// stays the day's visible state but is not downtime. Every uptime rollup (the
+// public page and the account status history) uses this one rule; they used
+// to disagree, and `gregale status` showed 0% for a day the public page
+// showed as fully up.
+func CountsAsAvailable(state State) bool {
+	return state == StateOperational || state == StateMaintenance || state == StateDegraded
+}
+
+// AvailableStates lists the states CountsAsAvailable accepts, for stores that
+// evaluate the rule in SQL.
+func AvailableStates() []string {
+	return []string{string(StateOperational), string(StateMaintenance), string(StateDegraded)}
+}
+
 func SummarizeDay(day time.Time, buckets []Bucket, expectedBuckets int) DailyObservation {
 	obs := DailyObservation{Date: day.UTC(), State: StateUnknown, Expected: expectedBuckets}
 	if expectedBuckets <= 0 {
@@ -175,10 +191,7 @@ func SummarizeDay(day time.Time, buckets []Bucket, expectedBuckets int) DailyObs
 			continue
 		}
 		available++
-		// Degraded means the capability remained available with reduced
-		// quality. Preserve it as the day's visible state, but do not count it
-		// as downtime in the availability percentage.
-		if bucket.State == StateOperational || bucket.State == StateMaintenance || bucket.State == StateDegraded {
+		if CountsAsAvailable(bucket.State) {
 			up++
 		}
 		worst = Worse(worst, bucket.State)

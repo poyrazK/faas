@@ -128,9 +128,16 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 			if err := s.store.UpdateCustomDomainCertStatus(ctx, d.Domain, state.CustomDomainCertPending, time.Time{}, "", checkedAt); err != nil && !errors.Is(err, state.ErrNotFound) {
 				log.Warn("dns_poller: stamp domain DNS check failed", "domain", d.Domain, "err", err)
 			}
-			// gatewayd-internal listens for this event to eagerly mint a
-			// customer-owned wildcard certificate with DNS-01.
-			_ = s.notif.Notify(ctx, db.NotifyDomainVerify, `{"domain":"`+d.Domain+`"}`)
+			if api.CustomDomainTLSOnDemand() {
+				// ADR-520: the edge issues on the first TLS handshake. Probe
+				// now so issuance starts without waiting for the doctor batch;
+				// the probe also records the resulting certificate status.
+				s.startOnDemandTLSProbe(ctx, log, d.Domain)
+			} else {
+				// gatewayd-internal listens for this event to eagerly mint a
+				// customer-owned wildcard certificate with DNS-01.
+				_ = s.notif.Notify(ctx, db.NotifyDomainVerify, `{"domain":"`+d.Domain+`"}`)
+			}
 			log.Info("domain verified", "domain", d.Domain)
 		} else if d.CertStatus != state.CustomDomainCertDNSDrifted {
 			if s.domainVerificationMetrics != nil {
@@ -504,6 +511,11 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		} else {
 			obs.CertState, obs.LastError, obs.CertNotAfter = dialCertForDoctor(ctx, probeDomain)
 			obs.CertCheckedAt = time.Now().UTC()
+			if obs.CertState == certStatusDialFailed && legacyLoaded && withinOnDemandIssuanceGrace(legacy, obs.CertCheckedAt) {
+				// ADR-520: the edge obtains the certificate during this
+				// handshake and ACME validation can outlast the probe.
+				obs.CertState, obs.LastError = certStatusPending, ""
+			}
 		}
 
 		// F3: a verified custom domain is revoked when the periodic doctor

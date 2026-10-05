@@ -22,6 +22,7 @@ func cmdSend(args []string) int {
 	id := fs.String("id", "", "stable event id (generated when omitted)")
 	source := fs.String("source", "", "event source (defaults to gregale.send)")
 	eventTime := fs.String("time", "", "event time (RFC3339; defaults to server time)")
+	environment := fs.String("environment", "", "registered project environment with an enabled queue binding")
 	queueName := fs.String("queue-name", "", "target logical queue name")
 	workPolicy := fs.String("work-policy", "", "named app work policy (requires --work-key and an unnamed queue)")
 	workKey := fs.String("work-key", "", "JSON scalar identifying related work")
@@ -31,7 +32,7 @@ func cmdSend(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || strings.TrimSpace(*typ) == "" || strings.TrimSpace(*data) == "" {
-		PrintUsage(os.Stderr, "usage: gregale send <target-app> --type TYPE --data <json|@file|-> [--source SOURCE] [--id ID] [--time RFC3339] [--queue-name QUEUE] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--idempotency-key KEY]", "send")
+		PrintUsage(os.Stderr, "usage: gregale send <target-app> --type TYPE --data <json|@file|-> [--source SOURCE] [--id ID] [--time RFC3339] [--queue-name QUEUE] [--environment ENV] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--idempotency-key KEY]", "send")
 		return 1
 	}
 	work, err := queueWorkFromFlags(*workPolicy, *workKey, *workFairnessKey)
@@ -65,13 +66,14 @@ func cmdSend(args []string) int {
 		ctx = api.ContextWithIdempotencyKey(ctx, key)
 	}
 	resp, err := client.SendAppMessage(ctx, positional[0], api.SendAppMessageRequest{
-		ID:        strings.TrimSpace(*id),
-		Source:    strings.TrimSpace(*source),
-		Type:      strings.TrimSpace(*typ),
-		Time:      occurredAt,
-		Data:      json.RawMessage(body),
-		QueueName: strings.TrimSpace(*queueName),
-		Work:      work,
+		Environment: strings.TrimSpace(*environment),
+		ID:          strings.TrimSpace(*id),
+		Source:      strings.TrimSpace(*source),
+		Type:        strings.TrimSpace(*typ),
+		Time:        occurredAt,
+		Data:        json.RawMessage(body),
+		QueueName:   strings.TrimSpace(*queueName),
+		Work:        work,
 	})
 	if err != nil {
 		return printErr("Application send failed", err)

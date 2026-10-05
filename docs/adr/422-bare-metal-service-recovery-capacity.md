@@ -145,3 +145,17 @@ even when ordinary placement prefers its remaining physical headroom.
 Native x86_64 KVM host-loss/routing acceptance, admission-throughput measurement,
 `test-metal` and `leakcheck` are required before enabling on a fleet. Portable
 fake-VMM tests do not constitute that qualification.
+
+## Amendment (2026-10-04): the capacity snapshot runs without JIT
+
+`service_capacity_snapshot()` plans above PostgreSQL's `jit_above_cost`, so a
+JIT-enabled server compiled it with LLVM on every call: 6.0–7.9 s on the
+production control plane (PostgreSQL 16, `jit=on`) against 10–11 ms
+interpreted. Protected writes call it twice inside the statement triggers while
+holding the policy row lock, so JIT turned each admission into a fleet-wide
+multi-second stall; in CI the twelve PostgreSQL capacity tests took 472 s with
+JIT and 16 s without. Migration `20261004191632612` sets `jit = off` on the
+function. Any later `CREATE OR REPLACE` of the function must restate it; a
+migration test fails if the complete migration set leaves JIT enabled. The
+admission-throughput measurement required above must run against a JIT-enabled
+server, because that is the PostgreSQL default.

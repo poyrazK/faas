@@ -249,6 +249,9 @@ type ExecutionUsageStore interface {
 // in storage before returning data.
 type ExecutionWorkflowStore interface {
 	ListExecutionsByWorkflow(ctx context.Context, accountID, workflowID string, principalID *string, status api.ExecutionStatus, limit, offset int) ([]Execution, error)
+	// ExecutionWorkflowStepByLabel requires a concrete principal so managed
+	// continuation can recover a receipt without crossing key-family boundaries.
+	ExecutionWorkflowStepByLabel(ctx context.Context, accountID, workflowID string, principalID *string, stepLabel string) (Execution, error)
 	ExecutionWorkflowSummary(ctx context.Context, accountID, workflowID string, principalID *string) (ExecutionWorkflowResponse, error)
 }
 

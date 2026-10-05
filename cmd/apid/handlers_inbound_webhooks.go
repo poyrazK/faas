@@ -312,6 +312,13 @@ func (s *server) receiveInboundWebhook(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, problem)
 		return
 	}
+	s.receiveVerifiedInboundWebhook(w, r, endpoint, providerEventID, body)
+}
+
+func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, providerEventID string, body []byte) {
+	if s.receiveWebhookAutomation(w, r, endpoint, body) {
+		return
+	}
 	if s.receiveBoundWorkflowCallback(w, r, endpoint, body) {
 		return
 	}

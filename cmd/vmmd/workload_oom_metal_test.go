@@ -106,7 +106,7 @@ func TestMetalWorkloadOOMDetection(t *testing.T) {
 		t.Skipf("/dev/kvm not available: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	_, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	// 1. Pick a tenant plan. Hobby = 256 MB RAM cap.

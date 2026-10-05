@@ -332,3 +332,56 @@ func TestWake_StageErr_FailsWakeAndCleansUp(t *testing.T) {
 		t.Errorf("half-staged instance is registered — cleanup did not run")
 	}
 }
+
+func TestWakeSecretAliasStagesOnlyDeclaredDestination(t *testing.T) {
+	id := newIdentity(t)
+	blob := sealEnv(t, id, secretbox.Envelope{"DATABASE_B": "selected-value"})
+	vmm := &fakeVMM{}
+	manager := newTestManager(&fakeRunner{}, vmm)
+	manager.SetHostIdentity(id)
+	boot := req("secret-alias")
+	boot.SealedEnvEntries = []SealedEnvEntry{{Key: "DATABASE_URL", SourceKey: "DATABASE_B", Ciphertext: blob}, {Key: "SECOND_ALIAS", SourceKey: "DATABASE_B", Ciphertext: blob}}
+	if _, err := manager.ColdBoot(t.Context(), boot); err != nil {
+		t.Fatal(err)
+	}
+	if len(vmm.stagedSecrets) != 1 {
+		t.Fatalf("staged files: %d", len(vmm.stagedSecrets))
+	}
+	var staged map[string]string
+	if err := json.Unmarshal(vmm.stagedSecrets[0].blob, &staged); err != nil {
+		t.Fatal(err)
+	}
+	if len(staged) != 2 || staged["DATABASE_URL"] != "selected-value" || staged["SECOND_ALIAS"] != "selected-value" {
+		t.Fatal("decrypted staging did not retain alias destinations")
+	}
+	if _, extra := staged["DATABASE_B"]; extra {
+		t.Fatal("source name escaped the explicit destination selection")
+	}
+}
+
+func TestWakeSecretAliasRejectsWrongOrExtraSealedSources(t *testing.T) {
+	for _, test := range []struct {
+		name                string
+		source, destination string
+		inner               secretbox.Envelope
+	}{
+		{"wrong source", "DATABASE_B", "DATABASE_URL", secretbox.Envelope{"DATABASE_A": "hidden"}},
+		{"extra source", "DATABASE_B", "DATABASE_URL", secretbox.Envelope{"DATABASE_B": "hidden", "EXTRA": "hidden"}},
+		{"invalid destination", "DATABASE_B", "bad-key", secretbox.Envelope{"DATABASE_B": "hidden"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			id := newIdentity(t)
+			vmm := &fakeVMM{}
+			manager := newTestManager(&fakeRunner{}, vmm)
+			manager.SetHostIdentity(id)
+			boot := req("rejected-alias")
+			boot.SealedEnvEntries = []SealedEnvEntry{{Key: test.destination, SourceKey: test.source, Ciphertext: sealEnv(t, id, test.inner)}}
+			if _, err := manager.ColdBoot(t.Context(), boot); err == nil || strings.Contains(err.Error(), "hidden") {
+				t.Fatalf("invalid alias accepted or disclosed: %v", err)
+			}
+			if len(vmm.stagedSecrets) != 0 {
+				t.Fatal("rejected alias staged any decrypted value")
+			}
+		})
+	}
+}

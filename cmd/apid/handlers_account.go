@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -435,7 +436,23 @@ func (s *server) dpaTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
+	_, _ = w.Write(customerDPAMarkdown(body))
+}
+
+// dpaOperatorNote matches the HTML comments the DPA template carries for the
+// operator who customises /etc/faas/dpa.md (rendering rules, placeholder
+// syntax). They are not part of the agreement and must not reach customers;
+// `gregale account dpa` used to print them verbatim.
+var (
+	dpaOperatorNote = regexp.MustCompile(`(?s)<!--.*?-->[ \t]*\n?`)
+	dpaBlankRun     = regexp.MustCompile(`\n{3,}`)
+)
+
+// customerDPAMarkdown returns the DPA as customers read it: the operator's
+// template notes removed and the blank lines they leave collapsed.
+func customerDPAMarkdown(body []byte) []byte {
+	out := dpaOperatorNote.ReplaceAll(body, nil)
+	return dpaBlankRun.ReplaceAll(out, []byte("\n\n"))
 }
 
 // writeDeletionEnvelope emits the 200 body for both the initial
@@ -734,8 +751,11 @@ func listOrgResourcesForAccountExport(ctx context.Context, s *server, orgs []sta
 		if err != nil {
 			return out, fmt.Errorf("list API keys for org %s: %w", org.ID, err)
 		}
+		prefixes := s.listedKeyPrefixes(ctx, keys)
 		for _, key := range keys {
-			out.keys = append(out.keys, orgAPIKeyResponse(key))
+			resp := orgAPIKeyResponse(key)
+			resp.Prefix = prefixes[key.ID]
+			out.keys = append(out.keys, resp)
 		}
 	}
 	return out, nil

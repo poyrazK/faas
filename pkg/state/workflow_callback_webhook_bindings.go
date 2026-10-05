@@ -64,6 +64,9 @@ func (m *MemStore) CreateWorkflowCallbackWebhookBinding(_ context.Context, bindi
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, exists := m.webhookAutomationBindings[binding.EndpointID]; exists {
+		return WorkflowCallbackWebhookBinding{}, ErrConflict
+	}
 	if existing, ok := m.workflowCallbackWebhookBindings[binding.ID]; ok {
 		if sameWorkflowCallbackWebhookBinding(existing, binding) {
 			return existing, nil

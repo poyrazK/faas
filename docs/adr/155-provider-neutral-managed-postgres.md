@@ -134,6 +134,11 @@ instant-restore/snapshot storage to `history_byte_seconds` after summing each
 complete provider window. The conversion is overflow-checked and remains an
 internal canonical meter until commercial rates and caps are approved.
 
+**Correction (2026-10-03):** The byte-hour interpretation above was incorrect
+for Neon's v2 endpoint. [ADR-492](492-managed-postgres-consumption-contract.md)
+supersedes that conversion with the provider's fixed 744-hour byte-month unit
+and requires complete returned time coverage before advancing accounting.
+
 `apid` loads the registry and recovery worker when
 `FAAS_MANAGED_POSTGRES_CONFIG` is present. The config-level
 `provisioning_enabled` switch defaults false; deletion recovery runs regardless.
@@ -262,3 +267,18 @@ operator, or a future in-house provisioner without changing the logical API or
 catalog shape. Provider capabilities remain explicit, and unsupported product
 promises fail before creating cost. The design deliberately postpones public
 availability until credentials, billing, recovery, and operations are complete.
+
+## Accounting and restore qualification reliability follow-up
+
+Completed usage windows now commit a contiguous coverage checkpoint with the
+meter ledger. Recovery replays gaps in bounded batches from creation, and
+account admission requires current coverage for every ready database. Shared
+restore descendants resolve coverage to the root source; historical monthly
+consumption survives resource deletion. Collection-window changes fail closed
+once consumption exists, preserving non-overlapping accounting periods.
+
+Qualification version 2 uses committed SQL marker data and a source-generated
+timestamp to verify point-in-time recovery on a ready disposable target. The
+probe removes its fixture before credential revocation. Asynchronous branch
+deletions remain pending until their operations complete. These checks strengthen
+the existing preview gates; they do not authorize production provisioning.

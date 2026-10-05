@@ -1,0 +1,12 @@
+/var/tmp/faas-metal-smoke-managed-pg-prepared-handoff-6ac4ffcb/complete-runner.sh: OK
+MemoryMax=10737418240
+ActiveState=active
+SubState=running
+InvocationID=b0240f38dfa8470782ac88b1b5e506c4
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+Running as unit: gregale-managed-pg-prepared-handoff-6ac4ffcb-complete.service; invocation ID: b0240f38dfa8470782ac88b1b5e506c4

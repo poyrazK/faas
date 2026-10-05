@@ -1,0 +1,20 @@
+ok  	github.com/onebox-faas/faas/pkg/vmmd/failureoutbox	2.493s
+# github.com/onebox-faas/faas/pkg/scheddgrpc.test
+ld: warning: '/private/var/folders/yj/bt9b1gbs363dgg7xm615r9v80000gn/T/go-link-499198273/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+# github.com/onebox-faas/faas/cmd/vmmd.test
+ld: warning: '/private/var/folders/yj/bt9b1gbs363dgg7xm615r9v80000gn/T/go-link-189067514/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+ok  	github.com/onebox-faas/faas/cmd/vmmd	12.314s
+ok  	github.com/onebox-faas/faas/pkg/scheddgrpc	9.215s
+# github.com/onebox-faas/faas/pkg/fcvm.test
+ld: warning: '/private/var/folders/yj/bt9b1gbs363dgg7xm615r9v80000gn/T/go-link-1082046182/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+# github.com/onebox-faas/faas/pkg/daemonunitspec.test
+ld: warning: '/private/var/folders/yj/bt9b1gbs363dgg7xm615r9v80000gn/T/go-link-809764135/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+ok  	github.com/onebox-faas/faas/pkg/fcvm	20.696s
+ok  	github.com/onebox-faas/faas/pkg/daemonunit	3.176s
+--- FAIL: TestEnvContract_Sorted (0.00s)
+    envcontract_test.go:140: EnvContract not sorted at "FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND" (after "FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION")
+--- FAIL: TestEnvContract_DocInSync (0.00s)
+    envcontract_test.go:341: /Users/poyrazk/dev/Cloud/gregale/managed-postgres-reliability-20261001/docs/ops/env-contract.md is out of date — run: UPDATE_ENV_CONTRACT=1 go test ./pkg/daemonunitspec -run DocInSync
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/daemonunitspec	22.289s
+FAIL

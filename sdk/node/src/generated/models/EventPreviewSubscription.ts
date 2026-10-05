@@ -3,10 +3,18 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A bounded sample of an enabled subscription considered by the event router.
+ * A bounded sample of an enabled subscription or workflow considered by the event router.
  */
 export type EventPreviewSubscription = {
   app_slug: string;
+  /**
+   * Present for workflow recipients.
+   */
+  workflow_name?: string;
+  /**
+   * Acceptance candidate deployment for workflow recipients.
+   */
+  deployment_id?: string;
   subscription_id: string;
   source: string;
   type: string;

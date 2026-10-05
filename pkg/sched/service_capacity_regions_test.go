@@ -1,4 +1,4 @@
-// adr: 463
+// adr: 589
 package sched
 
 import (
@@ -100,7 +100,7 @@ func exerciseRegionalServiceCapacityPlacement(t *testing.T, store state.Store) {
 			t.Fatalf("placement snapshot lost owner affinity: %+v %v", placement, err)
 		}
 		request := Request{AppID: apps[region].ID, RAMMB: 512, VCPU: 2, CPUMillicores: 1000, PreferredNodeID: owner.ID, PrioritizeSnapshotLocality: true}
-		// ADR-464: ordinary service wakes also use the safe survivor hints.
+		// ADR-590: ordinary service wakes also use the safe survivor hints.
 		if placement, err := engine.choosePlacementLocked(ctx, request); err != nil || placement.NodeID == owner.ID || placement.Region != "eu-fsn" {
 			t.Fatalf("service placement without convergence context selected unsafe owner: %+v %v", placement, err)
 		}

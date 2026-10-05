@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.dns_record_instruction import DNSRecordInstruction
+
 
 T = TypeVar("T", bound="CustomDomainResponse")
 
@@ -47,6 +51,9 @@ class CustomDomainResponse:
     """Most recent certificate issuance/renewal error, when cert_status is failed."""
     dns_last_checked_at: datetime.datetime | None | Unset = UNSET
     """Timestamp of the most recent DNS verification/doctor probe."""
+    dns_records: list[DNSRecordInstruction] | Unset = UNSET
+    """DNS records to publish (ADR-520): the TXT ownership proof and the routing CNAME, plus A/AAAA alternatives
+    for a zone apex when the platform publishes edge addresses."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -120,6 +127,13 @@ class CustomDomainResponse:
         else:
             dns_last_checked_at = self.dns_last_checked_at
 
+        dns_records: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.dns_records, Unset):
+            dns_records = []
+            for dns_records_item_data in self.dns_records:
+                dns_records_item = dns_records_item_data.to_dict()
+                dns_records.append(dns_records_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -151,11 +165,15 @@ class CustomDomainResponse:
             field_dict["cert_last_error"] = cert_last_error
         if dns_last_checked_at is not UNSET:
             field_dict["dns_last_checked_at"] = dns_last_checked_at
+        if dns_records is not UNSET:
+            field_dict["dns_records"] = dns_records
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.dns_record_instruction import DNSRecordInstruction
+
         d = dict(src_dict)
         domain = d.pop("domain")
 
@@ -273,6 +291,15 @@ class CustomDomainResponse:
 
         dns_last_checked_at = _parse_dns_last_checked_at(d.pop("dns_last_checked_at", UNSET))
 
+        _dns_records = d.pop("dns_records", UNSET)
+        dns_records: list[DNSRecordInstruction] | Unset = UNSET
+        if _dns_records is not UNSET:
+            dns_records = []
+            for dns_records_item_data in _dns_records:
+                dns_records_item = DNSRecordInstruction.from_dict(dns_records_item_data)
+
+                dns_records.append(dns_records_item)
+
         custom_domain_response = cls(
             domain=domain,
             app_id=app_id,
@@ -288,6 +315,7 @@ class CustomDomainResponse:
             cert_expires_at=cert_expires_at,
             cert_last_error=cert_last_error,
             dns_last_checked_at=dns_last_checked_at,
+            dns_records=dns_records,
         )
 
         custom_domain_response.additional_properties = d

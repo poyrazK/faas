@@ -21,11 +21,11 @@ export type PutDataUpstreamRequest = {
   host: string;
   port: number;
   /**
-   * ADR-090 deployment-scope filter (3..40 chars, lowercase alnum + dash). Omitted = default scope.
+   * ADR-090 deployment-scope filter (1..40 chars, lowercase alnum + dash). Omitted = default scope.
    */
   scope?: string;
   /**
-   * ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same app. Same shape as `scope` (3..40 chars, lowercase alnum + dash). Omitted = default scope, the migration's SQL DEFAULT stamp.
+   * ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same app. Same shape as `scope` (1..40 chars, lowercase alnum + dash). Omitted = default scope, the migration's SQL DEFAULT stamp.
    */
   deployment_scope?: string;
 };

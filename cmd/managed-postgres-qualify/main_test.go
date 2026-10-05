@@ -106,16 +106,17 @@ func TestQualificationApprovalTTLIsBounded(t *testing.T) {
 
 func TestApprovalEnvironmentContainsOnlyGateValues(t *testing.T) {
 	approval := managedpostgres.QualificationApproval{
+		Version:            managedpostgres.QualificationArtifactVersion,
 		BackendID:          "backend-a",
 		BackendFingerprint: "fingerprint-a",
 		ExpiresAt:          time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC),
 		CanaryAccounts:     []string{"account-a", "account-b"},
 	}
 	values := approvalEnvironment(approval)
-	if values[managedpostgres.QualificationEnv] != "true" || values[managedpostgres.QualificationBackendEnv] != "backend-a" || values[managedpostgres.QualificationFingerprintEnv] != "fingerprint-a" || values[managedpostgres.QualificationUntilEnv] != "2026-09-09T12:00:00Z" || values[managedpostgres.CanaryAccountsEnv] != "account-a,account-b" {
+	if values[managedpostgres.QualificationEnv] != "true" || values[managedpostgres.QualificationVersionEnv] != "3" || values[managedpostgres.QualificationBackendEnv] != "backend-a" || values[managedpostgres.QualificationFingerprintEnv] != "fingerprint-a" || values[managedpostgres.QualificationUntilEnv] != "2026-09-09T12:00:00Z" || values[managedpostgres.CanaryAccountsEnv] != "account-a,account-b" {
 		t.Fatalf("approval environment = %v", values)
 	}
-	if len(values) != 5 {
+	if len(values) != 6 {
 		t.Fatalf("approval environment has unexpected values: %v", values)
 	}
 }

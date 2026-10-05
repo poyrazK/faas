@@ -13,7 +13,7 @@ import (
 
 // Goose uses a separate database/sql connection while the migration advisory
 // lock stays pinned to the pgx pool. Carry its identity hooks across that
-// boundary; registering ConnConfig alone loses the pool's checks (ADR-475).
+// boundary; registering ConnConfig alone loses the pool's checks (ADR-601).
 func migrationSQLDB(cfg *pgxpool.Config) *sql.DB {
 	var opts []stdlib.OptionOpenDB
 	if cfg.AfterConnect != nil {

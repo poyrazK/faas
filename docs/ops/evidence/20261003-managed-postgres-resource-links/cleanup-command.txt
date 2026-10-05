@@ -1,0 +1,15 @@
+set -eu
+test "$(sudo systemctl show gregale-managed-pg-resource-links-f8b10c6a-complete -p ActiveState --value)" = inactive
+sudo systemctl reset-failed gregale-managed-pg-resource-links-f8b10c6a
+test "$(sudo systemctl show gregale-managed-pg-resource-links-f8b10c6a -p ActiveState --value)" = inactive
+sudo systemctl reset-failed gregale-managed-pg-resource-links-f8b10c6a-bounded
+test "$(sudo systemctl show gregale-managed-pg-resource-links-f8b10c6a-bounded -p ActiveState --value)" = inactive
+sudo systemctl reset-failed gregale-managed-pg-resource-links-f8b10c6a-final
+test "$(sudo systemctl show gregale-managed-pg-resource-links-f8b10c6a-final -p ActiveState --value)" = inactive
+sudo systemctl reset-failed gregale-managed-pg-resource-links-f8b10c6a-verified
+test "$(sudo systemctl show gregale-managed-pg-resource-links-f8b10c6a-verified -p ActiveState --value)" = inactive
+sudo /usr/local/sbin/faas-canary-artifacts finish --path /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a --state success
+test ! -e /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a
+if findmnt -rn -M /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a; then exit 1; fi
+sudo systemctl show gregale-managed-pg-resource-links-f8b10c6a-complete -p LoadState -p ActiveState -p SubState
+df -h /

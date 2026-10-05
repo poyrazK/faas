@@ -1,6 +1,6 @@
 package fcvm
 
-// adr: 498
+// adr: 624
 import (
 	"context"
 	"fmt"
@@ -17,11 +17,13 @@ func (m *Manager) ResumeRegionalRuntime(ctx context.Context, instance string, p 
 		return runtimequotahost.ErrStorage
 	}
 	p = p.Clone()
-	m.mu.Lock()
-	inst := m.live[instance]
-	m.mu.Unlock()
-	if inst == nil {
-		return runtimequotahost.ErrBinding
+	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
+	if err != nil {
+		return err
+	}
+	defer m.finishInstanceFlight(instance, flight)
+	if err := m.checkLiveAdmission(ctx, inst); err != nil {
+		return err
 	}
 	admission := admissionForInstance(inst)
 	if admission.RegionalRuntime == nil || admission.RegionalRuntime.Permit != p.Permit || p.Seat == nil {

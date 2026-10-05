@@ -248,12 +248,19 @@ func TestBuildEnv_FourLayerPrecedence(t *testing.T) {
 }
 
 func TestStampSecretsFileEnvPlatformOwnsOptInPath(t *testing.T) {
-	got := StampSecretsFileEnv([]string{"A=1", SecretsFileEnv + "=/attacker", SecretsRevisionEnv + "=/attacker", SecretsReloadAckEnv + "=https://attacker"}, true)
+	got := StampSecretsFileEnv([]string{"A=1", SecretsFileEnv + "=/attacker", SecretsRevisionEnv + "=/attacker", SecretsSnapshotEnv + "=/attacker", SecretsReloadAckEnv + "=https://attacker", SecretsReloadReadyEnv + "=/attacker", SecretsReloadGenerationEnv + "=attacker"}, true)
 	want := map[string]string{
 		SecretsFileEnv: secretReloadFilePath, SecretsRevisionEnv: secretReloadRevisionFilePath,
 		SecretsReloadAckEnv: metadataSecretReloadAckEndpoint,
+		SecretsSnapshotEnv:  "/tmp/gregale-secret-reload/snapshot.json",
 	}
-	for _, key := range []string{SecretsFileEnv, SecretsRevisionEnv, SecretsReloadAckEnv} {
+	if strings.Contains(strings.Join(got, "\n"), SecretsReloadGenerationEnv+"=") {
+		t.Fatal("image shadowed execution generation")
+	}
+	if strings.Contains(strings.Join(got, "\n"), SecretsReloadReadyEnv+"=") {
+		t.Fatal("image shadowed reload readiness")
+	}
+	for _, key := range []string{SecretsFileEnv, SecretsRevisionEnv, SecretsSnapshotEnv, SecretsReloadAckEnv} {
 		found := false
 		for _, entry := range got {
 			if strings.HasPrefix(entry, key+"=") {
@@ -281,6 +288,7 @@ func TestStampSecretsFileEnvAtPathsScopesSidecarProjection(t *testing.T) {
 	want := map[string]string{
 		SecretsFileEnv:      "/tmp/gregale-secret-reload/proxy/secrets.json",
 		SecretsRevisionEnv:  "/tmp/gregale-secret-reload/proxy/revision",
+		SecretsSnapshotEnv:  "/tmp/gregale-secret-reload/proxy/snapshot.json",
 		SecretsReloadAckEnv: metadataSecretReloadAckEndpoint + "?workload=proxy",
 	}
 	for key, value := range want {

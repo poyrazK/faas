@@ -1,0 +1,24 @@
+{
+  "top_level": {
+    "PASS": 34,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "including_subtests": {
+    "PASS": 127,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "leakcheck_passes": 3,
+  "package_results": [
+    "ok  \tgithub.com/onebox-faas/faas/pkg/fcvm\t10.995s",
+    "ok  \tgithub.com/onebox-faas/faas/pkg/sched\t1.270s",
+    "ok  \tgithub.com/onebox-faas/faas/pkg/vmmd/failureoutbox\t2.102s",
+    "ok  \tgithub.com/onebox-faas/faas/pkg/scheddgrpc\t1.723s",
+    "ok  \tgithub.com/onebox-faas/faas/cmd/vmmd\t1.133s"
+  ],
+  "metal_exit": "0",
+  "real_guest": [
+    "--- PASS: TestMetalFailureOutboxRetriesConfirmedTeardown (5.03s)"
+  ]
+}

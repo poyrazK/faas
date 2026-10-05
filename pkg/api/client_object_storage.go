@@ -219,3 +219,33 @@ func (c *Client) AbortObjectMultipartUpload(ctx context.Context, slug, bucket, u
 	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/multipart-uploads/" + url.PathEscape(upload)
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
+
+func objectCapacityPath(slug, bucket string) string {
+	return "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/capacity-reconciliations"
+}
+func (c *Client) CreateObjectCapacityReconciliation(ctx context.Context, slug, bucket string) (ObjectCapacityReconciliation, error) {
+	var out ObjectCapacityReconciliation
+	err := c.do(ctx, http.MethodPost, objectCapacityPath(slug, bucket), nil, &out)
+	return out, err
+}
+func (c *Client) GetObjectCapacityReconciliation(ctx context.Context, slug, bucket, id string) (ObjectCapacityReconciliation, error) {
+	var out ObjectCapacityReconciliation
+	err := c.do(ctx, http.MethodGet, objectCapacityPath(slug, bucket)+"/"+url.PathEscape(id), nil, &out)
+	return out, err
+}
+func (c *Client) CancelObjectCapacityReconciliation(ctx context.Context, slug, bucket, id string) (ObjectCapacityReconciliation, error) {
+	var out ObjectCapacityReconciliation
+	err := c.do(ctx, http.MethodDelete, objectCapacityPath(slug, bucket)+"/"+url.PathEscape(id), nil, &out)
+	return out, err
+}
+
+func (c *Client) GetObjectBucketVersioning(ctx context.Context, slug, bucket string) (ObjectBucketVersioning, error) {
+	var out ObjectBucketVersioning
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/versioning", nil, &out)
+	return out, err
+}
+func (c *Client) PutObjectBucketVersioning(ctx context.Context, slug, bucket, status string) (ObjectBucketVersioning, error) {
+	var out ObjectBucketVersioning
+	err := c.do(ctx, http.MethodPut, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/versioning", ObjectBucketVersioningRequest{Status: status}, &out)
+	return out, err
+}

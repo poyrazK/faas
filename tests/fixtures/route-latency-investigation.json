@@ -1,0 +1,391 @@
+{
+  "version": 1,
+  "selection": {
+    "method": "POST",
+    "path": "/checkout",
+    "status_code": 0,
+    "customer_group_by": "consumer",
+    "customer_id": "00000000-0000-4000-8000-000000000004",
+    "signal": "latency"
+  },
+  "report": {
+    "app_id": "00000000-0000-4000-8000-000000000001",
+    "deployment_id": "00000000-0000-4000-8000-000000000002",
+    "candidate_commit_sha": "candidate",
+    "stable_deployment_id": "00000000-0000-4000-8000-000000000003",
+    "stable_commit_sha": "stable",
+    "canary_step": 0,
+    "mode": "report",
+    "revision": 1,
+    "checked_at": "2026-10-03T00:03:00+00:00",
+    "observation_anchor": "2026-10-02T00:00:00+00:00",
+    "coverage": "observed_only",
+    "status": "regressed",
+    "reason": "consecutive_latency_violation",
+    "minimum_requests": 20,
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/checkout",
+        "status": "regressed",
+        "reason": "consecutive_latency_violation",
+        "error_status": "healthy",
+        "error_reason": "comparisons_healthy",
+        "windows": [
+          {
+            "start": "2026-10-03T00:00:00+00:00",
+            "end": "2026-10-03T00:01:00+00:00",
+            "candidate": {
+              "requests": 132,
+              "server_errors": 0,
+              "error_rate": 0.0,
+              "p95_latency_ms": 600
+            },
+            "stable": {
+              "requests": 132,
+              "server_errors": 0,
+              "error_rate": 0.0,
+              "p95_latency_ms": 100
+            },
+            "status": "regressed",
+            "reason": "p95_latency_increased",
+            "error_status": "healthy",
+            "error_reason": "comparison_healthy",
+            "latency_status": "regressed",
+            "latency_reason": "p95_latency_increased",
+            "latency_delta_ms": 500,
+            "latency_factor": 6
+          },
+          {
+            "start": "2026-10-03T00:01:00+00:00",
+            "end": "2026-10-03T00:02:00+00:00",
+            "candidate": {
+              "requests": 132,
+              "server_errors": 0,
+              "error_rate": 0.0,
+              "p95_latency_ms": 600
+            },
+            "stable": {
+              "requests": 132,
+              "server_errors": 0,
+              "error_rate": 0.0,
+              "p95_latency_ms": 100
+            },
+            "status": "regressed",
+            "reason": "p95_latency_increased",
+            "error_status": "healthy",
+            "error_reason": "comparison_healthy",
+            "latency_status": "regressed",
+            "latency_reason": "p95_latency_increased",
+            "latency_delta_ms": 500,
+            "latency_factor": 6
+          }
+        ],
+        "check_latency": true,
+        "latency_status": "regressed",
+        "latency_reason": "consecutive_latency_violation"
+      }
+    ],
+    "minimum_latency_requests": 100
+  },
+  "finding": {
+    "method": "POST",
+    "path": "/checkout",
+    "status": "regressed",
+    "reason": "consecutive_latency_violation",
+    "error_status": "healthy",
+    "error_reason": "comparisons_healthy",
+    "windows": [
+      {
+        "start": "2026-10-03T00:00:00+00:00",
+        "end": "2026-10-03T00:01:00+00:00",
+        "candidate": {
+          "requests": 132,
+          "server_errors": 0,
+          "error_rate": 0.0,
+          "p95_latency_ms": 600
+        },
+        "stable": {
+          "requests": 132,
+          "server_errors": 0,
+          "error_rate": 0.0,
+          "p95_latency_ms": 100
+        },
+        "status": "regressed",
+        "reason": "p95_latency_increased",
+        "error_status": "healthy",
+        "error_reason": "comparison_healthy",
+        "latency_status": "regressed",
+        "latency_reason": "p95_latency_increased",
+        "latency_delta_ms": 500,
+        "latency_factor": 6
+      },
+      {
+        "start": "2026-10-03T00:01:00+00:00",
+        "end": "2026-10-03T00:02:00+00:00",
+        "candidate": {
+          "requests": 132,
+          "server_errors": 0,
+          "error_rate": 0.0,
+          "p95_latency_ms": 600
+        },
+        "stable": {
+          "requests": 132,
+          "server_errors": 0,
+          "error_rate": 0.0,
+          "p95_latency_ms": 100
+        },
+        "status": "regressed",
+        "reason": "p95_latency_increased",
+        "error_status": "healthy",
+        "error_reason": "comparison_healthy",
+        "latency_status": "regressed",
+        "latency_reason": "p95_latency_increased",
+        "latency_delta_ms": 500,
+        "latency_factor": 6
+      }
+    ],
+    "check_latency": true,
+    "latency_status": "regressed",
+    "latency_reason": "consecutive_latency_violation"
+  },
+  "status": "regressed",
+  "reason": "consecutive_latency_violation",
+  "coverage": "observed_only",
+  "evidence_status": "observed",
+  "examples_limit": 3,
+  "windows": [
+    {
+      "start": "2026-10-03T00:00:00+00:00",
+      "end": "2026-10-03T00:01:00+00:00",
+      "candidate": {
+        "matching_requests": 132,
+        "observed_rows": 1,
+        "examples_truncated": false,
+        "examples": [
+          {
+            "telemetry_id": "00000000-0000-4000-8000-000000000010",
+            "received_at": "2026-10-03T00:00:00+00:00",
+            "status": 200,
+            "latency_ms": 600,
+            "represented_requests": 132,
+            "evidence_path": "/v1/apps/demo/debug/requests/00000000-0000-4000-8000-000000000010/evidence",
+            "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736"
+          }
+        ]
+      },
+      "stable": {
+        "matching_requests": 132,
+        "observed_rows": 1,
+        "examples_truncated": false,
+        "examples": [
+          {
+            "telemetry_id": "00000000-0000-4000-8000-000000000011",
+            "received_at": "2026-10-03T00:00:00+00:00",
+            "status": 200,
+            "latency_ms": 100,
+            "represented_requests": 132,
+            "evidence_path": "/v1/apps/demo/debug/requests/00000000-0000-4000-8000-000000000011/evidence"
+          }
+        ]
+      },
+      "diagnostics": {
+        "coverage": "retained_samples",
+        "rows_limit": 32,
+        "dependencies_truncated": false,
+        "candidate": {
+          "sampled_rows": 1,
+          "sampled_requests": 132,
+          "samples_truncated": false,
+          "span_rows": 1,
+          "missing_span_rows": 0,
+          "span_samples": 1,
+          "spans_truncated": false,
+          "timing_incomplete": false,
+          "guest_rows": 1,
+          "guest_requests": 132,
+          "guest_p95_ms": 0,
+          "cold_boot_requests": 132,
+          "wake_samples": 1,
+          "wake_boot_p95_ms": 250
+        },
+        "stable": {
+          "sampled_rows": 1,
+          "sampled_requests": 132,
+          "samples_truncated": false,
+          "span_rows": 1,
+          "missing_span_rows": 0,
+          "span_samples": 1,
+          "spans_truncated": false,
+          "timing_incomplete": false,
+          "guest_rows": 1,
+          "guest_requests": 132,
+          "guest_p95_ms": 30,
+          "cold_boot_requests": 132,
+          "wake_samples": 1,
+          "wake_boot_p95_ms": 50
+        },
+        "dependencies": [
+          {
+            "type": "managed_binding",
+            "kind": "postgres",
+            "status": "compared",
+            "candidate": {
+              "span_samples": 1,
+              "represented_calls": 132,
+              "error_calls": 0,
+              "p95_ms": 500,
+              "exclusive_p95_ms": 500,
+              "examples": [
+                {
+                  "telemetry_id": "00000000-0000-4000-8000-000000000010",
+                  "received_at": "2026-10-03T00:00:00+00:00",
+                  "status": 200,
+                  "latency_ms": 600,
+                  "represented_requests": 132,
+                  "evidence_path": "/v1/apps/demo/debug/requests/00000000-0000-4000-8000-000000000010/evidence",
+                  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736"
+                }
+              ]
+            },
+            "stable": {
+              "span_samples": 1,
+              "represented_calls": 132,
+              "error_calls": 0,
+              "p95_ms": 40,
+              "exclusive_p95_ms": 40,
+              "examples": [
+                {
+                  "telemetry_id": "00000000-0000-4000-8000-000000000011",
+                  "received_at": "2026-10-03T00:00:00+00:00",
+                  "status": 200,
+                  "latency_ms": 100,
+                  "represented_requests": 132,
+                  "evidence_path": "/v1/apps/demo/debug/requests/00000000-0000-4000-8000-000000000011/evidence"
+                }
+              ]
+            },
+            "p95_delta_ms": 460,
+            "exclusive_p95_delta_ms": 460
+          }
+        ]
+      }
+    },
+    {
+      "start": "2026-10-03T00:01:00+00:00",
+      "end": "2026-10-03T00:02:00+00:00",
+      "candidate": {
+        "matching_requests": 132,
+        "observed_rows": 1,
+        "examples_truncated": false,
+        "examples": [
+          {
+            "telemetry_id": "00000000-0000-4000-8000-000000000012",
+            "received_at": "2026-10-03T00:01:00+00:00",
+            "status": 200,
+            "latency_ms": 600,
+            "represented_requests": 132,
+            "evidence_path": "/v1/apps/demo/debug/requests/00000000-0000-4000-8000-000000000012/evidence",
+            "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736"
+          }
+        ]
+      },
+      "stable": {
+        "matching_requests": 132,
+        "observed_rows": 1,
+        "examples_truncated": false,
+        "examples": [
+          {
+            "telemetry_id": "00000000-0000-4000-8000-000000000013",
+            "received_at": "2026-10-03T00:01:00+00:00",
+            "status": 200,
+            "latency_ms": 100,
+            "represented_requests": 132,
+            "evidence_path": "/v1/apps/demo/debug/requests/00000000-0000-4000-8000-000000000013/evidence"
+          }
+        ]
+      },
+      "diagnostics": {
+        "coverage": "retained_samples",
+        "rows_limit": 32,
+        "dependencies_truncated": false,
+        "candidate": {
+          "sampled_rows": 1,
+          "sampled_requests": 132,
+          "samples_truncated": false,
+          "span_rows": 1,
+          "missing_span_rows": 0,
+          "span_samples": 1,
+          "spans_truncated": false,
+          "timing_incomplete": false,
+          "guest_rows": 1,
+          "guest_requests": 132,
+          "guest_p95_ms": 0,
+          "cold_boot_requests": 132,
+          "wake_samples": 1,
+          "wake_boot_p95_ms": 250
+        },
+        "stable": {
+          "sampled_rows": 1,
+          "sampled_requests": 132,
+          "samples_truncated": false,
+          "span_rows": 1,
+          "missing_span_rows": 0,
+          "span_samples": 1,
+          "spans_truncated": false,
+          "timing_incomplete": false,
+          "guest_rows": 1,
+          "guest_requests": 132,
+          "guest_p95_ms": 30,
+          "cold_boot_requests": 132,
+          "wake_samples": 1,
+          "wake_boot_p95_ms": 50
+        },
+        "dependencies": [
+          {
+            "type": "managed_binding",
+            "kind": "postgres",
+            "status": "compared",
+            "candidate": {
+              "span_samples": 1,
+              "represented_calls": 132,
+              "error_calls": 0,
+              "p95_ms": 500,
+              "exclusive_p95_ms": 500,
+              "examples": [
+                {
+                  "telemetry_id": "00000000-0000-4000-8000-000000000012",
+                  "received_at": "2026-10-03T00:01:00+00:00",
+                  "status": 200,
+                  "latency_ms": 600,
+                  "represented_requests": 132,
+                  "evidence_path": "/v1/apps/demo/debug/requests/00000000-0000-4000-8000-000000000012/evidence",
+                  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736"
+                }
+              ]
+            },
+            "stable": {
+              "span_samples": 1,
+              "represented_calls": 132,
+              "error_calls": 0,
+              "p95_ms": 40,
+              "exclusive_p95_ms": 40,
+              "examples": [
+                {
+                  "telemetry_id": "00000000-0000-4000-8000-000000000013",
+                  "received_at": "2026-10-03T00:01:00+00:00",
+                  "status": 200,
+                  "latency_ms": 100,
+                  "represented_requests": 132,
+                  "evidence_path": "/v1/apps/demo/debug/requests/00000000-0000-4000-8000-000000000013/evidence"
+                }
+              ]
+            },
+            "p95_delta_ms": 460,
+            "exclusive_p95_delta_ms": 460
+          }
+        ]
+      }
+    }
+  ]
+}

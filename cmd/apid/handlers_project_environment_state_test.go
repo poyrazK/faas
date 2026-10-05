@@ -55,7 +55,7 @@ func TestProjectEnvironmentStateAndUnifiedDiff(t *testing.T) {
 	if err := store.PutManagedPostgresSecret(ctx, state.AppSecret{
 		AccountID: acct.ID, AppID: app.ID, Scope: "staging", Key: "DATABASE_URL",
 		Ciphertext: []byte("sealed-database"), ValueHash: "3333333333333333",
-		ManagedPostgresBindingID: "binding-staging", ManagedCredentialRef: "credential-staging",
+		ManagedPostgresBindingID: "binding-staging", ManagedPostgresAccess: "read_write", ManagedCredentialRef: "credential-staging",
 		ManagedCredentialGeneration: 7,
 	}); err != nil {
 		t.Fatal(err)

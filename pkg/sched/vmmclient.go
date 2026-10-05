@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/overlay"
 	"github.com/onebox-faas/faas/pkg/runtimequota"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -429,12 +430,15 @@ type AppSpec struct {
 	RegionalRuntime *runtimequota.Placement `json:"-"` // host-only, omitted from guest AppSpec
 	// ComputeRegion is scheduler-only intent used to fence live handoff destinations.
 	ComputeRegion string
-	BaseKey       string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
-	LayerKey      string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
-	VCPUCount     int32  // 2, or 4 for Scale
-	MemSizeMiB    int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
-	CPUMillicores int32  // sustained cgroup CPU allowance; 250, 500, or 1000
-	EgressMbit    int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	// Migration evidence stays in schedd; no receipt values enter the protobuf
+	// envelope. The flat APIEnv/sealed inputs already carry the boot payload.
+	migrationRuntime *migrationRuntimeInputs
+	BaseKey          string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
+	LayerKey         string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
+	VCPUCount        int32  // 2, or 4 for Scale
+	MemSizeMiB       int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
+	CPUMillicores    int32  // sustained cgroup CPU allowance; 250, 500, or 1000
+	EgressMbit       int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
 	// StartupDeadlineS is the plan-resolved readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int32
@@ -682,6 +686,9 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	if placementErr != nil {
 		return nil, placementErr
 	}
+	if err := c.requireSecretAliasSupport(ctx, app); err != nil {
+		return nil, err
+	}
 	// issue #517: lift correlation fields (wake_id, app_id, etc.)
 	// from the engine's bootCtx onto both the gRPC outbound
 	// metadata (for vmmd's slog correlation) and the proto
@@ -705,6 +712,9 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	})
 	if err != nil {
 		return nil, liftErr(err)
+	}
+	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
+		return nil, err
 	}
 	return outcomeFromProto(resp), nil
 }
@@ -1013,6 +1023,9 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 	if placementErr != nil {
 		return nil, placementErr
 	}
+	if err := c.requireSecretAliasSupport(ctx, app); err != nil {
+		return nil, err
+	}
 	// issue #517: see CreateColdBoot above for the rationale.
 	fields, _ := wire.FromContext(ctx)
 	fields, placementErr = regionalRuntimeCorrelation(fields, app)
@@ -1039,6 +1052,9 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 	})
 	if err != nil {
 		return nil, liftErr(err)
+	}
+	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
+		return nil, err
 	}
 	return outcomeFromProto(resp), nil
 }
@@ -1428,6 +1444,14 @@ func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID str
 	if placementErr != nil {
 		return LiveMigrationAdopt{}, placementErr
 	}
+	if err := c.requireSecretAliasSupport(ctx, app); err != nil {
+		return LiveMigrationAdopt{}, err
+	}
+	fields, _ := wire.FromContext(ctx)
+	if app.migrationRuntime != nil {
+		fields.WakeID = app.migrationRuntime.WakeID
+	}
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.AdoptMigratedInstance(ctx, &vmmdpb.AdoptMigratedInstanceRequest{
 		RegionalRuntime:   placement,
 		InstanceId:        instanceID,
@@ -1439,14 +1463,20 @@ func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID str
 		AccountId:         app.AccountID,
 		DeploymentId:      app.DeploymentID,
 		FcVersion:         app.FCVersion,
+		WakeId:            fields.WakeID,
 	})
 	if err != nil {
 		return LiveMigrationAdopt{}, liftErr(err)
+	}
+	if err := c.confirmSecretAliasSupport(ctx, app, instanceID, resp.GetSupportsSecretAliases()); err != nil {
+		return LiveMigrationAdopt{}, err
 	}
 	return LiveMigrationAdopt{
 		HostIP:   resp.GetHostIp(),
 		Netns:    resp.GetNetns(),
 		GuestUID: int(resp.GetGuestUid()),
+		Method:   resp.GetMethod(),
+		WakeID:   resp.GetWakeId(),
 	}, nil
 }
 
@@ -1602,6 +1632,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		sealed = append(sealed, &vmmdpb.SealedSecret{
 			Key:        e.Key,
 			Ciphertext: e.Ciphertext,
+			SourceKey:  e.SourceKey,
 		})
 	}
 	// Issue #395 / ADR-045: plaintext api_env mirror.
@@ -1625,6 +1656,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			sealedSidecarEnv = append(sealedSidecarEnv, &vmmdpb.SealedSecret{
 				Key:        entry.Key,
 				Ciphertext: entry.Ciphertext,
+				SourceKey:  entry.SourceKey,
 			})
 		}
 		sealedSidecarSecrets := make([]*vmmdpb.SealedSecret, 0, len(sc.SealedSecrets))
@@ -1632,6 +1664,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 			sealedSidecarSecrets = append(sealedSidecarSecrets, &vmmdpb.SealedSecret{
 				Key:        entry.Key,
 				Ciphertext: entry.Ciphertext,
+				SourceKey:  entry.SourceKey,
 			})
 		}
 		dependsOn := make([]*vmmdpb.WorkloadDependency, 0, len(sc.DependsOn))
@@ -1849,6 +1882,9 @@ func characterizationFromStruct(s *structpb.Struct) api.CharacterizationReport {
 // status-shaped (e.g. a dial failure) pass through unchanged.
 func liftErr(err error) error {
 	if p, ok := grpcerr.FromStatus(err); ok && p != nil {
+		if p.Code == api.CodeDatabaseCutoverFenced {
+			return errors.Join(p, state.ErrManagedPostgresAdmissionFenced)
+		}
 		return p
 	}
 	return err
@@ -1873,4 +1909,48 @@ func executionFilesToProto(files []api.ExecutionFile) []*vmmdpb.ExecutionSourceF
 		result = append(result, &vmmdpb.ExecutionSourceFile{Path: file.Path, Content: append([]byte{}, file.Content...)})
 	}
 	return result
+}
+
+// Older vmmd processes ignore additive fields. Refuse alias boots before an
+// RPC can report readiness while staging only the envelope's original name.
+func appNeedsSecretAliasSupport(app AppSpec) bool {
+	for _, entry := range app.SealedEnv {
+		if entry.SourceKey != "" {
+			return true
+		}
+	}
+	for _, sc := range app.Sidecars {
+		for _, entry := range sc.SealedSecrets {
+			if entry.SourceKey != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (c *VMMClient) requireSecretAliasSupport(ctx context.Context, app AppSpec) error {
+	if !appNeedsSecretAliasSupport(app) {
+		return nil
+	}
+	response, err := c.cli.Ping(ctx, &vmmdpb.PingRequest{})
+	if err != nil {
+		return fmt.Errorf("sched: verify vmmd secret alias support: %w", liftErr(err))
+	}
+	if !response.GetSupportsSecretAliases() {
+		return errors.New("sched: vmmd does not support secret aliases")
+	}
+	return nil
+}
+
+// Fence a process replacement between Ping and boot. An older serving handler
+// cannot acknowledge the additive response field; its VM is never published.
+func (c *VMMClient) confirmSecretAliasSupport(ctx context.Context, app AppSpec, instance string, supported bool) error {
+	if !appNeedsSecretAliasSupport(app) || supported {
+		return nil
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.VMMSecretAliasCleanupTimeout)
+	defer cancel()
+	_, cleanupErr := c.cli.Destroy(cleanupCtx, &vmmdpb.DestroyRequest{Instance: instance})
+	return errors.Join(errors.New("sched: vmmd boot did not acknowledge secret alias support"), cleanupErr)
 }

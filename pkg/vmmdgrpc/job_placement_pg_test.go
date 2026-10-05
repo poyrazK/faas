@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// ADR-468: the receiving vmmd corroborates real PostgreSQL job claims and
+// ADR-594: the receiving vmmd corroborates real PostgreSQL job claims and
 // rejects a cancelled claim without allocating a second VM.
 package vmmdgrpc_test
 

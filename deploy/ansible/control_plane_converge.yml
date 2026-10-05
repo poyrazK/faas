@@ -1,0 +1,76 @@
+---
+# ADR-580: converge the control-plane bootstrap roles from CD.
+#
+# Run by `gregalectl deploy converge-control-plane --limit control_plane`,
+# which renders the manifest inventory, seeds peer private addresses from
+# DNS, and passes faas_cp_bootstrap_contract_sha256: a hash of every input
+# the control-plane play reads (plays, roles, shared task libraries,
+# ansible.cfg, collection pins, rendered inventory, operator vars).
+#
+# An unchanged contract ends the host before any role runs, through the
+# same faas_join_bootstrap_contract_current fast path bootstrap.yml already
+# honors. The hash is recorded only after the whole play succeeds, so a
+# failed convergence is retried by the next rollout.
+- name: Probe the control-plane bootstrap contract
+  hosts: control_plane
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Require the contract hash from the converge command
+      ansible.builtin.assert:
+        that:
+          - faas_cp_bootstrap_contract_sha256 is defined
+          - faas_cp_bootstrap_contract_sha256 is match('^sha256:[0-9a-f]{64}$')
+        fail_msg: >-
+          Run this playbook through `gregalectl deploy converge-control-plane`;
+          it computes faas_cp_bootstrap_contract_sha256 from every input.
+
+    - name: Read the recorded control-plane bootstrap contract
+      ansible.builtin.command:
+        argv:
+          - cat
+          - /var/lib/faas/bootstrap/control-plane-bootstrap-contract.sha256
+      register: faas_cp_contract_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Select convergence or the unchanged fast path
+      ansible.builtin.set_fact:
+        faas_join_bootstrap_contract_current: >-
+          {{ faas_cp_contract_probe.rc == 0
+             and (faas_cp_contract_probe.stdout | trim) == faas_cp_bootstrap_contract_sha256 }}
+
+    - name: Report the control-plane convergence decision
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Control-plane bootstrap contract is current; skipping role convergence.'
+             if faas_join_bootstrap_contract_current | bool
+             else 'Control-plane bootstrap contract changed; converging the control-plane roles.' }}
+
+- name: Converge the control-plane roles
+  ansible.builtin.import_playbook: bootstrap.yml
+
+- name: Record the converged control-plane bootstrap contract
+  hosts: control_plane
+  gather_facts: false
+  become: true
+  tasks:
+    - name: End when the contract was already current
+      ansible.builtin.meta: end_host
+      when: faas_join_bootstrap_contract_current | bool
+
+    - name: Ensure the bootstrap contract directory exists
+      ansible.builtin.file:
+        path: /var/lib/faas/bootstrap
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Persist the converged control-plane bootstrap contract
+      ansible.builtin.copy:
+        dest: /var/lib/faas/bootstrap/control-plane-bootstrap-contract.sha256
+        owner: root
+        group: root
+        mode: "0600"
+        content: "{{ faas_cp_bootstrap_contract_sha256 }}\n"

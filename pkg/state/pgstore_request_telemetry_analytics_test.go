@@ -45,25 +45,39 @@ func newTelemetryFixture(t *testing.T) telemetryFixture {
 }
 
 type telemetryRow struct {
-	at      time.Time
-	route   string
-	method  string
-	status  int32
-	latency int32
-	count   int32
-	cold    bool
-	country string
+	at         time.Time
+	route      string
+	method     string
+	status     int32
+	latency    int32
+	count      int32
+	cold       bool
+	country    string
+	consumer   string
+	tenant     string
+	deployment string
 }
 
 func (f telemetryFixture) insert(t *testing.T, rows ...telemetryRow) {
 	t.Helper()
 	for _, r := range rows {
+		var consumer, tenant pgtype.UUID
+		deployment := f.dep
+		if r.consumer != "" {
+			consumer = mustPgUUID(t, r.consumer)
+		}
+		if r.tenant != "" {
+			tenant = mustPgUUID(t, r.tenant)
+		}
+		if r.deployment != "" {
+			deployment = mustPgUUID(t, r.deployment)
+		}
 		country := r.country
 		if country == "" {
 			country = "__unknown__"
 		}
 		if err := f.s.InsertRequestTelemetry(f.ctx, sqlc.InsertRequestTelemetryParams{
-			AccountID: f.account, AppID: f.app, DeploymentID: f.dep,
+			AccountID: f.account, AppID: f.app, DeploymentID: deployment, ConsumerID: consumer, PlatformTenantID: tenant,
 			Route: r.route, Method: r.method, Status: r.status, LatencyMs: r.latency,
 			ColdBoot: r.cold, Count: r.count,
 			ReceivedAt: pgtype.Timestamptz{Time: r.at, Valid: true},

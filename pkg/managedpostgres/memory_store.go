@@ -10,21 +10,27 @@ import (
 // MemoryStore is useful for unit tests and local wiring. Production adapters
 // should enforce the same transitions transactionally in PostgreSQL.
 type MemoryStore struct {
-	mu        sync.Mutex
-	databases map[string]Database
-	names     map[string]string
-	bindings  map[string]Binding
-	targets   map[string]string
-	usage     map[usageKey]UsageRecord
+	cutovers      map[string]Cutover
+	health        map[string]memoryHealthEntry
+	mu            sync.Mutex
+	databases     map[string]Database
+	names         map[string]string
+	bindings      map[string]Binding
+	targets       map[string]string
+	usage         map[usageKey]UsageRecord
+	usageProgress map[usageProgressKey]UsageProgress
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		databases: map[string]Database{},
-		names:     map[string]string{},
-		bindings:  map[string]Binding{},
-		targets:   map[string]string{},
-		usage:     map[usageKey]UsageRecord{},
+		cutovers:      map[string]Cutover{},
+		health:        map[string]memoryHealthEntry{},
+		databases:     map[string]Database{},
+		names:         map[string]string{},
+		bindings:      map[string]Binding{},
+		targets:       map[string]string{},
+		usage:         map[usageKey]UsageRecord{},
+		usageProgress: map[usageProgressKey]UsageProgress{},
 	}
 }
 
@@ -185,7 +191,7 @@ func (s *MemoryStore) ClaimDelete(_ context.Context, accountID, databaseID, leas
 	if !ok || database.AccountID != accountID {
 		return Database{}, ErrNotFound
 	}
-	if database.State == StateDeleted || (!database.LeaseUntil.IsZero() && database.LeaseUntil.After(now)) {
+	if s.databaseCutoverPinned(databaseID) || database.State == StateDeleted || (!database.LeaseUntil.IsZero() && database.LeaseUntil.After(now)) {
 		return Database{}, ErrConflict
 	}
 	for _, candidate := range s.databases {
@@ -214,20 +220,43 @@ func (s *MemoryStore) ClaimDelete(_ context.Context, accountID, databaseID, leas
 	return cloneDatabase(database), nil
 }
 
+func (s *MemoryStore) BeginAccounting(ctx context.Context, databaseID, leaseToken string, now time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if databaseID == "" || leaseToken == "" || now.IsZero() {
+		return ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	database, ok := s.databases[databaseID]
+	if !ok || database.State != StateProvisioning || database.LeaseToken != leaseToken || !database.LeaseUntil.After(now) {
+		return ErrConflict
+	}
+	database.AccountingRequired = true
+	database.UpdatedAt = now
+	s.databases[databaseID] = database
+	return nil
+}
+
 func (s *MemoryStore) RecordProviderResource(_ context.Context, databaseID, leaseToken, providerResourceID string, now time.Time) error {
+	if databaseID == "" || leaseToken == "" || providerResourceID == "" || now.IsZero() {
+		return ErrInvalid
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	database, ok := s.databases[databaseID]
 	if !ok {
 		return ErrNotFound
 	}
-	if database.State != StateProvisioning || database.LeaseToken != leaseToken || !database.LeaseUntil.After(now) || providerResourceID == "" {
+	if (database.State != StateProvisioning && database.State != StateDeleting) || database.LeaseToken != leaseToken || !database.LeaseUntil.After(now) {
 		return ErrConflict
 	}
 	if database.ProviderResourceID != "" && database.ProviderResourceID != providerResourceID {
 		return ErrConflict
 	}
 	database.ProviderResourceID = providerResourceID
+	database.AccountingRequired = true
 	database.UpdatedAt = now
 	s.databases[databaseID] = database
 	return nil

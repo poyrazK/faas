@@ -170,6 +170,10 @@ func (r *Runner) runWorkTick(ctx context.Context) {
 			if markErr := r.markReplicaFailed(ctx, job, err); markErr != nil {
 				r.log.Warn("snapshothipd: mark failed", "snapshot_id", job.SnapshotID, "node_id", job.NodeID, "err", markErr)
 			}
+			if errors.Is(err, errReplicaEvicted) {
+				r.log.Info("snapshothipd: snapshot replica evicted from the local cache; no longer advertised", "snapshot_id", job.SnapshotID, "deployment_id", job.DeploymentID, "node_id", job.NodeID)
+				continue
+			}
 			r.log.Warn("snapshothipd: snapshot preposition failed", "snapshot_id", job.SnapshotID, "deployment_id", job.DeploymentID, "node_id", job.NodeID, "attempt", job.Attempts, "err", err)
 			continue
 		}
@@ -265,6 +269,34 @@ func (r *Runner) metricsObserveLatency(region string, latency time.Duration) {
 	}
 }
 
+// errReplicaEvicted marks a ready replica the node's bounded cache has since
+// evicted.
+var errReplicaEvicted = errors.New("snapshothipd: replica evicted from the local cache")
+
+// revalidateWithoutFetch checks that a ready replica is still on this node
+// without downloading it again. ADR-063 bounds snapshot disk by the cache
+// budget: once the fleet's snapshots outgrow it, re-fetching an evicted
+// replica evicts another one, and on production-us that loop rewrote 1-2 GiB
+// snapshot files every few seconds and kept vmmd at ~1 CPU on idle nodes. An
+// evicted replica is therefore retired (no longer advertised as local); a
+// later capture fans out as a new snapshot. done is false when the backend
+// has no local notion, in which case the read-through path below applies.
+func revalidateWithoutFetch(backend storage.StorageBackend, keys []string) (done bool, err error) {
+	for _, key := range keys {
+		cached, known, err := storage.CachedLocally(backend, key)
+		if err != nil {
+			return true, fmt.Errorf("check %q: %w", key, err)
+		}
+		if !known {
+			return false, nil
+		}
+		if !cached {
+			return true, state.PermanentSnapshotReplicaError(fmt.Errorf("%w: %s", errReplicaEvicted, key))
+		}
+	}
+	return true, nil
+}
+
 func syncJob(ctx context.Context, backend storage.StorageBackend, job state.SnapshotReplicaJob) error {
 	if job.StorageKey == "" || job.VMStateStorageKey == "" {
 		return errors.New("snapshothipd: snapshot replica has incomplete storage keys")
@@ -275,6 +307,16 @@ func syncJob(ctx context.Context, backend storage.StorageBackend, job state.Snap
 		keys = append(keys, driveKey)
 	}
 	keys = append(keys, job.LayerStorageKeys...)
+	for _, key := range keys {
+		if key == "" {
+			return errors.New("snapshothipd: snapshot replica has an empty dependency key")
+		}
+	}
+	if job.Revalidation {
+		if done, err := revalidateWithoutFetch(backend, keys); done {
+			return err
+		}
+	}
 	for _, key := range keys {
 		if key == "" {
 			return errors.New("snapshothipd: snapshot replica has an empty dependency key")

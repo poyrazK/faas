@@ -53,8 +53,14 @@ func servePreviewRequestReport(t *testing.T, before, after string, captured bool
 			writePreviewReportDoc(t, w, "baseline", before)
 		case "/v1/apps/pr-42-api/deployments/candidate/openapi":
 			writePreviewReportDoc(t, w, "candidate", after)
+		case "/v1/apps/api/deployments/baseline/route-policy":
+			writePreviewPolicySnapshotTest(w, "baseline", "parent-id", []api.EdgeRuleResponse{})
+		case "/v1/apps/pr-42-api/deployments/candidate/route-policy":
+			writePreviewPolicySnapshotTest(w, "candidate", "preview-id", []api.EdgeRuleResponse{})
 		case "/v1/apps/pr-42-api/openapi/preview":
 			writeJSONTest(w, api.AppOpenAPIPolicyPreviewResponse{Routes: []api.AppOpenAPIPolicyPreviewRoute{{Path: "/checkout", Method: "post", Rules: []api.AppOpenAPIPolicyPreviewRule{}}}})
+		case "/v1/apps/api/edge-rules", "/v1/apps/pr-42-api/edge-rules":
+			writeJSONTest(w, []api.EdgeRuleResponse{})
 		case "/v1/apps/api/analytics", "/v1/apps/pr-42-api/analytics":
 			id := "baseline"
 			if strings.Contains(r.URL.Path, "pr-42-api") {
@@ -124,11 +130,11 @@ func TestPreviewRequestCompatibilityCommandGates(t *testing.T) {
 				t.Fatal(err)
 			}
 			row := findPreviewReportRoute(t, report, "POST /checkout")
-			if report.Version != 4 || report.SourceImpact != nil || report.Outcome != test.outcome || report.Requests.Status != "available" || row.RequestCompatibility == nil || row.RequestCompatibility.Status != test.status || len(row.Breaks) != 0 || !row.RequestContractChanged {
+			if report.Version != 7 || report.SourceImpact != nil || report.Outcome != test.outcome || report.Requests.Status != "available" || row.RequestCompatibility == nil || row.RequestCompatibility.Status != test.status || len(row.Breaks) != 0 || !row.RequestContractChanged {
 				t.Fatalf("report = %+v; route = %+v", report, row)
 			}
-			if reads.Load() != 6 {
-				t.Fatalf("reads = %d, want 6", reads.Load())
+			if reads.Load() != 9 {
+				t.Fatalf("reads = %d, want 9", reads.Load())
 			}
 			if strings.Contains(out.String(), "private-") {
 				t.Fatalf("request values, examples, or queries leaked: %s", out.String())

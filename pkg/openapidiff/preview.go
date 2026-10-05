@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -128,9 +129,13 @@ func splitObservedRoute(label string) (method, path string, ok bool) {
 
 func matchingPreviewRules(path, method string, rules []state.EdgeRule) []RoutePolicyPreviewRule {
 	matching := make([]RoutePolicyPreviewRule, 0)
+	requestPath := previewRouteSamplePath(path)
 	for _, rule := range rules {
-		if rule.MatchPath != "/" && rule.MatchPath != path {
-			continue
+		if rule.MatchPath != "" && rule.MatchPath != "*" {
+			matched, err := api.MatchEdgeRulePath(rule.MatchPath, requestPath)
+			if err != nil || !matched {
+				continue
+			}
 		}
 		if len(rule.MatchMethods) > 0 {
 			methodMatches := false
@@ -159,4 +164,17 @@ func matchingPreviewRules(path, method string, rules []state.EdgeRule) []RoutePo
 		return matching[i].ID < matching[j].ID
 	})
 	return matching
+}
+
+// previewRouteSamplePath replaces OpenAPI path parameters with a stable
+// non-empty segment so route-family globs are compared using the gateway's
+// path matcher. The sample is never sent to the application.
+func previewRouteSamplePath(route string) string {
+	segments := strings.Split(route, "/")
+	for index, segment := range segments {
+		if len(segment) > 2 && strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") {
+			segments[index] = "route-parameter"
+		}
+	}
+	return strings.Join(segments, "/")
 }

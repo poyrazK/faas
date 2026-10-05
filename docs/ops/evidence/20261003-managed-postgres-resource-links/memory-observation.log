@@ -1,0 +1,11 @@
+MemTotal:       16369984 kB
+MemAvailable:    9514772 kB
+SwapTotal:             0 kB
+SwapFree:              0 kB
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+bash: line 2: rg: command not found

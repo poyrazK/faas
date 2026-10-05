@@ -81,6 +81,42 @@ func TestWarmIdleWithEnv(t *testing.T) {
 	}
 }
 
+// TestWarmBuildersOffUnlessOptedIn keeps warm-builder restores off by default:
+// they failed production builds by resuming a guest whose drive was edited
+// offline. Only an explicit boolean environment value overrides the TOML.
+func TestWarmBuildersOffUnlessOptedIn(t *testing.T) {
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.WarmBuilders {
+		t.Fatal("WarmBuilders defaults to true, want off")
+	}
+	cases := []struct {
+		configured bool
+		env        string
+		want       bool
+	}{
+		{configured: false, env: "", want: false},
+		{configured: false, env: "true", want: true},
+		{configured: false, env: "1", want: true},
+		{configured: true, env: "false", want: false},
+		{configured: true, env: "", want: true},
+		{configured: false, env: "yes-please", want: false},
+	}
+	for _, tc := range cases {
+		getenv := func(key string) string {
+			if key == "FAAS_BUILDER_WARM_BUILDERS" {
+				return tc.env
+			}
+			return ""
+		}
+		if got := warmBuildersWithEnv(tc.configured, getenv); got != tc.want {
+			t.Errorf("warmBuildersWithEnv(%v, %q) = %v, want %v", tc.configured, tc.env, got, tc.want)
+		}
+	}
+}
+
 func TestWarmIdleWithEnvInvalidKeepsConfiguredOrDefault(t *testing.T) {
 	for _, value := range []string{"", "0", "-1", "not-a-number", "9223372036854775807"} {
 		getenv := func(string) string { return value }

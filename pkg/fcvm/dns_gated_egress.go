@@ -63,6 +63,10 @@ func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, ad
 	if len(add) == 0 {
 		return nil
 	}
+	ctx, err := m.nativeInstanceNetworkContext(ctx, id, inst.nativeGeneration)
+	if err != nil {
+		return err
+	}
 	if err := m.runNftCommands(ctx, nc.Netns, nc.ResolvedEgressAddCommands(add, ttl)); err != nil {
 		return fmt.Errorf("fcvm: allow resolved egress for %s: %w", id, err)
 	}
@@ -129,6 +133,13 @@ func (m *Manager) seedResolvedEgress(ctx context.Context, instance string) {
 	nc := inst.Net
 	m.mu.Unlock()
 	if len(addrs) == 0 {
+		return
+	}
+	ctx, err := m.nativeInstanceNetworkContext(ctx, instance, inst.nativeGeneration)
+	if err != nil {
+		if m.log != nil {
+			m.log.Warn("fcvm: seed resolved egress ownership failed", "instance", instance, "err", err)
+		}
 		return
 	}
 	ttl := time.Duration(api.DNSGatedEgressMinTTLSeconds) * time.Second

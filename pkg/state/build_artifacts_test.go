@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -41,6 +42,27 @@ func testRegionalBuildExports(t *testing.T, s state.Store) {
 	dep, err := s.CreateDeployment(fx.Ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball, Status: state.DeployBuilding})
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Legacy conversion and durable preparation must serialize against the
+	// same activation lock even when workers expose different store interfaces.
+	activation := s.(state.DeploymentActivationLocker).AcquireDeploymentActivationLock
+	materialization := s.(state.BuildImageMaterializationLocker).AcquireBuildImageMaterializationLock
+	locks := []func(context.Context, string) (func(context.Context), error){activation, materialization}
+	for i, acquire := range locks {
+		release, err := acquire(fx.Ctx, dep.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		probeCtx, cancel := context.WithTimeout(fx.Ctx, 100*time.Millisecond)
+		contender, err := locks[1-i](probeCtx, dep.ID)
+		cancel()
+		if contender != nil {
+			contender(fx.Ctx)
+		}
+		release(fx.Ctx)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("image and activation locks allowed overlap: %v", err)
+		}
 	}
 	b, err := s.CreateBuild(fx.Ctx, dep.ID, dep.Kind, 1, "")
 	if err != nil {
@@ -129,6 +151,36 @@ func testRegionalBuildExports(t *testing.T, s state.Store) {
 	}
 	if work, err := s.ListBuildsAwaitingImage(fx.Ctx, peer.Name, 16); err != nil || len(work) != 0 {
 		t.Fatalf("inactive recovery: %+v %v", work, err)
+	}
+
+	images := s.(state.DeploymentImagePreparationStore)
+	if err := s.UpdateDeploymentStatus(fx.Ctx, dep.ID, state.DeployBuilding, ""); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := images.BeginImagePreparation(fx.Ctx, dep.ID, "")
+	if err != nil || checkpoint.InputPath != "sha256:"+ref.SHA256 || checkpoint.InputKey != ref.Key || checkpoint.InputBytes != ref.Bytes || checkpoint.NodeName != "" {
+		t.Fatalf("regional preparation lost immutable export: %+v %v", checkpoint, err)
+	}
+	for _, name := range []string{peer.Name, "unknown-worker", state.DefaultLocalNodeName} {
+		if work, err := images.ListResumableImagePreparations(fx.Ctx, name, 16); err != nil || len(work) != 0 {
+			t.Fatalf("inactive/foreign preparation recovery %q: %+v %v", name, work, err)
+		}
+	}
+	if err := s.SetComputeNodeActive(fx.Ctx, peer.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if work, err := images.ListResumableImagePreparations(fx.Ctx, peer.Name, 16); err != nil || len(work) != 1 || work[0].DeploymentID != dep.ID {
+		t.Fatalf("eligible regional preparation recovery: %+v %v", work, err)
+	}
+	if err := images.TransitionImagePreparation(fx.Ctx, dep.ID, checkpoint.ClaimToken, state.DeployImaging); err != nil {
+		t.Fatal(err)
+	}
+	if err := images.PublishImagePreparationLayer(fx.Ctx, dep.ID, checkpoint.ClaimToken, "/consumer/final.ext4", region.ArtifactKey(id, "apps/final.ext4"), 7); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := images.BeginImagePreparation(fx.Ctx, dep.ID, "")
+	if err != nil || resumed.Phase != state.ImageLayerPublished || resumed.InputPath != checkpoint.InputPath || resumed.InputKey != checkpoint.InputKey || resumed.InputBytes != checkpoint.InputBytes || resumed.ClaimToken == checkpoint.ClaimToken {
+		t.Fatalf("regional checkpoint lost published layer or input: %+v %v", resumed, err)
 	}
 	if err := s.UpdateDeploymentStatus(fx.Ctx, dep.ID, state.DeployCancelled, ""); err != nil {
 		t.Fatal(err)

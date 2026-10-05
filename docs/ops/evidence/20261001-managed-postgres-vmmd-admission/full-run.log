@@ -1,0 +1,2546 @@
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+native metal smoke: build exact-commit guest fixture
+e2fsck 1.47.0 (5-Feb-2023)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+faas-metal-smoke: 28/16384 files (3.6% non-contiguous), 8074/16384 blocks
+e2fsck 1.47.0 (5-Feb-2023)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+faas-metal-layer: 16/4096 files (0.0% non-contiguous), 272/4096 blocks
+native metal smoke: run the pkg/fcvm metal package
+=== RUN   TestAcquireRejectsEmptyInstance
+--- PASS: TestAcquireRejectsEmptyInstance (0.00s)
+=== RUN   TestSetHostIPBaseOverridesBridgeBase
+--- PASS: TestSetHostIPBaseOverridesBridgeBase (0.00s)
+=== RUN   TestRecycledSlotReusesSameUIDIP
+--- PASS: TestRecycledSlotReusesSameUIDIP (0.00s)
+=== RUN   TestNewAllocatorStartsEmpty
+--- PASS: TestNewAllocatorStartsEmpty (0.00s)
+=== RUN   TestInUseTracksLiveCountAfterMixedOps
+--- PASS: TestInUseTracksLiveCountAfterMixedOps (0.00s)
+=== RUN   TestLeaseForSlotUIDRange
+--- PASS: TestLeaseForSlotUIDRange (0.00s)
+=== RUN   TestSetHostIPBase_ReservesBridgeAddress
+--- PASS: TestSetHostIPBase_ReservesBridgeAddress (0.00s)
+=== RUN   TestSetHostIPBase_ConsecutiveAcquire
+--- PASS: TestSetHostIPBase_ConsecutiveAcquire (0.00s)
+=== RUN   TestSetHostIPBase_BridgeAddrIsReserved
+--- PASS: TestSetHostIPBase_BridgeAddrIsReserved (0.00s)
+=== RUN   TestLeaseDerivationIsUnique
+--- PASS: TestLeaseDerivationIsUnique (0.08s)
+=== RUN   TestHostIPRangeAndReservations
+--- PASS: TestHostIPRangeAndReservations (0.00s)
+=== RUN   TestIfaceNamesWithinKernelLimit
+--- PASS: TestIfaceNamesWithinKernelLimit (0.00s)
+=== RUN   TestAcquireReleaseRecyclesWithoutLiveDuplicates
+--- PASS: TestAcquireReleaseRecyclesWithoutLiveDuplicates (0.01s)
+=== RUN   TestAcquireRejectsDuplicateInstance
+--- PASS: TestAcquireRejectsDuplicateInstance (0.00s)
+=== RUN   TestReleaseUnknownErrors
+--- PASS: TestReleaseUnknownErrors (0.00s)
+=== RUN   TestAcquireExhaustion
+--- PASS: TestAcquireExhaustion (0.06s)
+=== RUN   TestConcurrentAcquireNoCollision
+--- PASS: TestConcurrentAcquireNoCollision (0.06s)
+=== RUN   TestWake_EmptyAPIEnv_NoStageCall
+--- PASS: TestWake_EmptyAPIEnv_NoStageCall (0.00s)
+=== RUN   TestWake_APIEnv_StageRoundTrip_MergedToJSONMap
+--- PASS: TestWake_APIEnv_StageRoundTrip_MergedToJSONMap (0.00s)
+=== RUN   TestWake_APIEnv_MultipleEntries_MergedIntoMap
+--- PASS: TestWake_APIEnv_MultipleEntries_MergedIntoMap (0.00s)
+=== RUN   TestWake_APIEnv_StageErr_FailsWakeAndCleansUp
+--- PASS: TestWake_APIEnv_StageErr_FailsWakeAndCleansUp (0.00s)
+=== RUN   TestWake_SealedAndAPIEnv_BothStage
+--- PASS: TestWake_SealedAndAPIEnv_BothStage (0.01s)
+=== RUN   TestMetalAppAdmissionFence
+--- PASS: TestMetalAppAdmissionFence (1.93s)
+=== RUN   TestMetalDestroyJoinsLateResume
+--- PASS: TestMetalDestroyJoinsLateResume (1.04s)
+=== RUN   TestAppAdmissionRejectsBootBeforeResources
+=== RUN   TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_fenced_for_database_cutover/cold
+=== RUN   TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_fenced_for_database_cutover/restore
+=== RUN   TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_fenced_for_database_cutover/warm
+=== RUN   TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_fenced_for_database_cutover/app_task
+=== RUN   TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_fenced_for_database_cutover/builder
+=== RUN   TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_check_unavailable/cold
+=== RUN   TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_check_unavailable/restore
+=== RUN   TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_check_unavailable/warm
+=== RUN   TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_check_unavailable/app_task
+=== RUN   TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_check_unavailable/builder
+--- PASS: TestAppAdmissionRejectsBootBeforeResources (0.01s)
+    --- PASS: TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_fenced_for_database_cutover/cold (0.00s)
+    --- PASS: TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_fenced_for_database_cutover/restore (0.00s)
+    --- PASS: TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_fenced_for_database_cutover/warm (0.00s)
+    --- PASS: TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_fenced_for_database_cutover/app_task (0.00s)
+    --- PASS: TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_fenced_for_database_cutover/builder (0.00s)
+    --- PASS: TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_check_unavailable/cold (0.00s)
+    --- PASS: TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_check_unavailable/restore (0.00s)
+    --- PASS: TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_check_unavailable/warm (0.00s)
+    --- PASS: TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_check_unavailable/app_task (0.00s)
+    --- PASS: TestAppAdmissionRejectsBootBeforeResources/fcvm:_app_admission_check_unavailable/builder (0.00s)
+=== RUN   TestAppAdmissionSurvivesDestroyAndManagerRestart
+--- PASS: TestAppAdmissionSurvivesDestroyAndManagerRestart (0.01s)
+=== RUN   TestAppAdmissionRejectsLiveResumeAndCapture
+=== RUN   TestAppAdmissionRejectsLiveResumeAndCapture/resume/fcvm:_app_admission_fenced_for_database_cutover
+=== RUN   TestAppAdmissionRejectsLiveResumeAndCapture/resume/fcvm:_app_admission_check_unavailable
+=== RUN   TestAppAdmissionRejectsLiveResumeAndCapture/warm_snapshot/fcvm:_app_admission_fenced_for_database_cutover
+=== RUN   TestAppAdmissionRejectsLiveResumeAndCapture/warm_snapshot/fcvm:_app_admission_check_unavailable
+=== RUN   TestAppAdmissionRejectsLiveResumeAndCapture/migration_snapshot/fcvm:_app_admission_fenced_for_database_cutover
+=== RUN   TestAppAdmissionRejectsLiveResumeAndCapture/migration_snapshot/fcvm:_app_admission_check_unavailable
+--- PASS: TestAppAdmissionRejectsLiveResumeAndCapture (0.01s)
+    --- PASS: TestAppAdmissionRejectsLiveResumeAndCapture/resume/fcvm:_app_admission_fenced_for_database_cutover (0.00s)
+    --- PASS: TestAppAdmissionRejectsLiveResumeAndCapture/resume/fcvm:_app_admission_check_unavailable (0.00s)
+    --- PASS: TestAppAdmissionRejectsLiveResumeAndCapture/warm_snapshot/fcvm:_app_admission_fenced_for_database_cutover (0.00s)
+    --- PASS: TestAppAdmissionRejectsLiveResumeAndCapture/warm_snapshot/fcvm:_app_admission_check_unavailable (0.00s)
+    --- PASS: TestAppAdmissionRejectsLiveResumeAndCapture/migration_snapshot/fcvm:_app_admission_fenced_for_database_cutover (0.00s)
+    --- PASS: TestAppAdmissionRejectsLiveResumeAndCapture/migration_snapshot/fcvm:_app_admission_check_unavailable (0.00s)
+=== RUN   TestAppAdmissionReadIsInsideDestructionJoin
+=== RUN   TestAppAdmissionReadIsInsideDestructionJoin/boot/destroy
+=== RUN   TestAppAdmissionReadIsInsideDestructionJoin/boot/signal
+=== RUN   TestAppAdmissionReadIsInsideDestructionJoin/resume/destroy
+=== RUN   TestAppAdmissionReadIsInsideDestructionJoin/resume/signal
+=== RUN   TestAppAdmissionReadIsInsideDestructionJoin/warm_snapshot/destroy
+=== RUN   TestAppAdmissionReadIsInsideDestructionJoin/warm_snapshot/signal
+=== RUN   TestAppAdmissionReadIsInsideDestructionJoin/migration_snapshot/destroy
+=== RUN   TestAppAdmissionReadIsInsideDestructionJoin/migration_snapshot/signal
+--- PASS: TestAppAdmissionReadIsInsideDestructionJoin (0.02s)
+    --- PASS: TestAppAdmissionReadIsInsideDestructionJoin/boot/destroy (0.00s)
+    --- PASS: TestAppAdmissionReadIsInsideDestructionJoin/boot/signal (0.00s)
+    --- PASS: TestAppAdmissionReadIsInsideDestructionJoin/resume/destroy (0.00s)
+    --- PASS: TestAppAdmissionReadIsInsideDestructionJoin/resume/signal (0.00s)
+    --- PASS: TestAppAdmissionReadIsInsideDestructionJoin/warm_snapshot/destroy (0.00s)
+    --- PASS: TestAppAdmissionReadIsInsideDestructionJoin/warm_snapshot/signal (0.00s)
+    --- PASS: TestAppAdmissionReadIsInsideDestructionJoin/migration_snapshot/destroy (0.00s)
+    --- PASS: TestAppAdmissionReadIsInsideDestructionJoin/migration_snapshot/signal (0.00s)
+=== RUN   TestStopJoinsLateResumeAndSnapshotFailure
+=== RUN   TestStopJoinsLateResumeAndSnapshotFailure/resume
+=== RUN   TestStopJoinsLateResumeAndSnapshotFailure/warm_snapshot
+=== RUN   TestStopJoinsLateResumeAndSnapshotFailure/warm_snapshot_resume
+=== RUN   TestStopJoinsLateResumeAndSnapshotFailure/migration_snapshot
+--- PASS: TestStopJoinsLateResumeAndSnapshotFailure (0.09s)
+    --- PASS: TestStopJoinsLateResumeAndSnapshotFailure/resume (0.02s)
+    --- PASS: TestStopJoinsLateResumeAndSnapshotFailure/warm_snapshot (0.02s)
+    --- PASS: TestStopJoinsLateResumeAndSnapshotFailure/warm_snapshot_resume (0.02s)
+    --- PASS: TestStopJoinsLateResumeAndSnapshotFailure/migration_snapshot (0.02s)
+=== RUN   TestMigrationSnapshotRecoversAfterCallerCancellation
+--- PASS: TestMigrationSnapshotRecoversAfterCallerCancellation (0.00s)
+=== RUN   TestAppAdmissionRequiresAppIdentityOnConfiguredNode
+--- PASS: TestAppAdmissionRequiresAppIdentityOnConfiguredNode (0.00s)
+=== RUN   TestManagerExecuteAppTaskRejectsOrdinaryAppInstance
+--- PASS: TestManagerExecuteAppTaskRejectsOrdinaryAppInstance (0.00s)
+=== RUN   TestManagerExecuteAppTaskDestroysInstance
+--- PASS: TestManagerExecuteAppTaskDestroysInstance (0.00s)
+=== RUN   TestManagerExecuteAppTaskDestroysWhenDialerIsUnavailable
+--- PASS: TestManagerExecuteAppTaskDestroysWhenDialerIsUnavailable (0.00s)
+=== RUN   TestManagerWakeAppTaskKeepsAppNetworkAndStagesMarker
+--- PASS: TestManagerWakeAppTaskKeepsAppNetworkAndStagesMarker (0.00s)
+=== RUN   TestManagerWakeAppTaskRejectsSnapshot
+--- PASS: TestManagerWakeAppTaskRejectsSnapshot (0.00s)
+=== RUN   TestDialAppTaskCompletesHandshakeAndRunsOneExchange
+--- PASS: TestDialAppTaskCompletesHandshakeAndRunsOneExchange (0.00s)
+=== RUN   TestTriggerBeforeCheckpointWire
+=== RUN   TestTriggerBeforeCheckpointWire/success
+=== RUN   TestTriggerBeforeCheckpointWire/callback_failed
+--- PASS: TestTriggerBeforeCheckpointWire (0.00s)
+    --- PASS: TestTriggerBeforeCheckpointWire/success (0.00s)
+    --- PASS: TestTriggerBeforeCheckpointWire/callback_failed (0.00s)
+=== RUN   TestBuilderGuestHaltWatcherReapsWithoutDestroyRPC
+--- PASS: TestBuilderGuestHaltWatcherReapsWithoutDestroyRPC (0.00s)
+=== RUN   TestBuilderStopAfterDestroyRemovedLiveEntry
+--- PASS: TestBuilderStopAfterDestroyRemovedLiveEntry (0.00s)
+=== RUN   TestDestroyCancelledContextKillsChildAndCleansUp
+--- PASS: TestDestroyCancelledContextKillsChildAndCleansUp (0.00s)
+=== RUN   TestAppDestroyDoesNotWaitForBuilderTimeout
+--- PASS: TestAppDestroyDoesNotWaitForBuilderTimeout (0.00s)
+=== RUN   TestWaitBuilderReadyAcceptsGuestMarker
+--- PASS: TestWaitBuilderReadyAcceptsGuestMarker (0.00s)
+=== RUN   TestWaitBuilderReadyReturnsFailedBuildExitCode
+--- PASS: TestWaitBuilderReadyReturnsFailedBuildExitCode (0.00s)
+=== RUN   TestEnsureSubtreeControllers_EnablesMissingControllers
+--- PASS: TestEnsureSubtreeControllers_EnablesMissingControllers (0.00s)
+=== RUN   TestEnsureSubtreeControllers_SkipsUnavailableAndAlreadyEnabled
+--- PASS: TestEnsureSubtreeControllers_SkipsUnavailableAndAlreadyEnabled (0.00s)
+=== RUN   TestEnsureSubtreeControllers_NonCgroupParentIsNotAnError
+--- PASS: TestEnsureSubtreeControllers_NonCgroupParentIsNotAnError (0.00s)
+=== RUN   TestWriteMemoryMaxWritesBytesPlusOverhead
+--- PASS: TestWriteMemoryMaxWritesBytesPlusOverhead (0.00s)
+=== RUN   TestWriteMemoryMaxMissingScopeFailsClean
+--- PASS: TestWriteMemoryMaxMissingScopeFailsClean (0.00s)
+=== RUN   TestWriteMemoryMaxRejectsNonPositivePlan
+--- PASS: TestWriteMemoryMaxRejectsNonPositivePlan (0.00s)
+=== RUN   TestWriteMemoryMaxAppendsNewline
+--- PASS: TestWriteMemoryMaxAppendsNewline (0.00s)
+=== RUN   TestWriteAppCgroupUsesConfiguredCPU
+--- PASS: TestWriteAppCgroupUsesConfiguredCPU (0.00s)
+=== RUN   TestJailerVMMUpdateCPULimitCancelsStaleStartupBoostTail
+--- PASS: TestJailerVMMUpdateCPULimitCancelsStaleStartupBoostTail (0.00s)
+=== RUN   TestJailerVMMUpdateCPULimitKeepsStartupTailWhenWriteFails
+--- PASS: TestJailerVMMUpdateCPULimitKeepsStartupTailWhenWriteFails (0.00s)
+=== RUN   TestStartupCPUProfileBoostsThenRestoresConfiguredQuota
+--- PASS: TestStartupCPUProfileBoostsThenRestoresConfiguredQuota (0.00s)
+=== RUN   TestStartupCPUBoostTailRestoresConfiguredQuotaAsynchronously
+2026/10/01 20:59:51 INFO vmm: startup CPU boost tail complete instance=startup-cpu-tail startup_millicores=1000 configured_millicores=250 tail_ms=10 quota_restore_ms=0 additional_cpu_quota_millicore_ms=7500 restore_error=""
+--- PASS: TestStartupCPUBoostTailRestoresConfiguredQuotaAsynchronously (0.01s)
+=== RUN   TestCancelStartupCPUBoostTailStopsPendingRestore
+--- PASS: TestCancelStartupCPUBoostTailStopsPendingRestore (0.04s)
+=== RUN   TestStartupCPUProfileResolvesLegacyZeroToPlanCeiling
+--- PASS: TestStartupCPUProfileResolvesLegacyZeroToPlanCeiling (0.00s)
+=== RUN   TestShouldApplyStartupCPUBoost
+=== RUN   TestShouldApplyStartupCPUBoost/default_remains_enabled
+=== RUN   TestShouldApplyStartupCPUBoost/deployment_opt-out
+=== RUN   TestShouldApplyStartupCPUBoost/builder_is_ineligible
+=== RUN   TestShouldApplyStartupCPUBoost/caller_skips_readiness
+=== RUN   TestShouldApplyStartupCPUBoost/unknown_plan_is_ineligible
+--- PASS: TestShouldApplyStartupCPUBoost (0.00s)
+    --- PASS: TestShouldApplyStartupCPUBoost/default_remains_enabled (0.00s)
+    --- PASS: TestShouldApplyStartupCPUBoost/deployment_opt-out (0.00s)
+    --- PASS: TestShouldApplyStartupCPUBoost/builder_is_ineligible (0.00s)
+    --- PASS: TestShouldApplyStartupCPUBoost/caller_skips_readiness (0.00s)
+    --- PASS: TestShouldApplyStartupCPUBoost/unknown_plan_is_ineligible (0.00s)
+=== RUN   TestWidenSnapshotMemoryCgroupRestoresOrdinaryFence
+--- PASS: TestWidenSnapshotMemoryCgroupRestoresOrdinaryFence (0.00s)
+=== RUN   TestWidenSnapshotMemoryCgroupRestoresBuilderFence
+--- PASS: TestWidenSnapshotMemoryCgroupRestoresBuilderFence (0.00s)
+=== RUN   TestWriteWorkloadCgroup
+--- PASS: TestWriteWorkloadCgroup (0.00s)
+=== RUN   TestWriteWorkloadCgroupMultiSidecars
+--- PASS: TestWriteWorkloadCgroupMultiSidecars (0.00s)
+=== RUN   TestWriteWorkloadCgroupCPUOnly
+--- PASS: TestWriteWorkloadCgroupCPUOnly (0.00s)
+=== RUN   TestWriteWorkloadCgroupRejectsPathTraversal
+--- PASS: TestWriteWorkloadCgroupRejectsPathTraversal (0.00s)
+=== RUN   TestWriteWorkloadCgroupRejectsEmpty
+--- PASS: TestWriteWorkloadCgroupRejectsEmpty (0.00s)
+=== RUN   TestWriteWorkloadCgroupRejectsNonPositiveRAM
+--- PASS: TestWriteWorkloadCgroupRejectsNonPositiveRAM (0.00s)
+=== RUN   TestRemoveWorkloadCgroupsMirrorsWrite
+--- PASS: TestRemoveWorkloadCgroupsMirrorsWrite (0.00s)
+=== RUN   TestWaitCharacterizationReportAcceptsGuestInitiatedStream
+--- PASS: TestWaitCharacterizationReportAcceptsGuestInitiatedStream (0.00s)
+=== RUN   TestWaitCharacterizationReportRetriesAfterInvalidFrame
+--- PASS: TestWaitCharacterizationReportRetriesAfterInvalidFrame (0.00s)
+=== RUN   TestReadCharacterizationEnvelopeRejectsTrailingJSON
+--- PASS: TestReadCharacterizationEnvelopeRejectsTrailingJSON (0.00s)
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/bound_defaults_http
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/bound_graphql_refinement
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/clean_no-bind_is_job
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/running_no-bind_is_worker
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/request_keeps_waiting_for_server
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/service_keeps_waiting_for_server
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/request_server_still_waits_for_probe
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/worker_accepts_running_no-bind
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/worker_rejects_clean_exit
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/worker_rejects_bound_server
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/job_accepts_running_no-bind
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/job_rejects_bound_server
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/failed_no-bind_has_no_class
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/invalid_port
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/invalid_port_normalization_mode
+=== RUN   TestNormalizeCharacterizationReportDerivesAuthoritativeClass/invalid_execution_mode
+--- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/bound_defaults_http (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/bound_graphql_refinement (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/clean_no-bind_is_job (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/running_no-bind_is_worker (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/request_keeps_waiting_for_server (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/service_keeps_waiting_for_server (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/request_server_still_waits_for_probe (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/worker_accepts_running_no-bind (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/worker_rejects_clean_exit (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/worker_rejects_bound_server (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/job_accepts_running_no-bind (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/job_rejects_bound_server (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/failed_no-bind_has_no_class (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/invalid_port (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/invalid_port_normalization_mode (0.00s)
+    --- PASS: TestNormalizeCharacterizationReportDerivesAuthoritativeClass/invalid_execution_mode (0.00s)
+=== RUN   TestCharacterizationReadinessMismatchExplainsNoBindServerMode
+--- PASS: TestCharacterizationReadinessMismatchExplainsNoBindServerMode (0.00s)
+=== RUN   TestReadCharacterizationEnvelopeRejectsNonObject
+--- PASS: TestReadCharacterizationEnvelopeRejectsNonObject (0.00s)
+=== RUN   TestColdBootConfigTwoDrives
+--- PASS: TestColdBootConfigTwoDrives (0.00s)
+=== RUN   TestColdBootConfigNetworklessOmitsInterfaces
+--- PASS: TestColdBootConfigNetworklessOmitsInterfaces (0.00s)
+=== RUN   TestJailerCommandNetworklessOmitsNetns
+--- PASS: TestJailerCommandNetworklessOmitsNetns (0.00s)
+=== RUN   TestColdBootConfig_SidecarTopology
+--- PASS: TestColdBootConfig_SidecarTopology (0.00s)
+=== RUN   TestColdBootConfig_OneSidecarTopology
+--- PASS: TestColdBootConfig_OneSidecarTopology (0.00s)
+=== RUN   TestColdBootConfigVirtioRngAlwaysOn
+--- PASS: TestColdBootConfigVirtioRngAlwaysOn (0.00s)
+=== RUN   TestColdBootConfigMarshalsToFirecrackerSchema
+--- PASS: TestColdBootConfigMarshalsToFirecrackerSchema (0.00s)
+=== RUN   TestColdBootBootArgsDisableConsole
+--- PASS: TestColdBootBootArgsDisableConsole (0.00s)
+=== RUN   TestBootArgsKeepConsoleButSuppressRoutineKernelLog
+--- PASS: TestBootArgsKeepConsoleButSuppressRoutineKernelLog (0.00s)
+=== RUN   TestColdBootBootArgsConfigureIdenticalInnerWorld
+--- PASS: TestColdBootBootArgsConfigureIdenticalInnerWorld (0.00s)
+=== RUN   TestColdSpecValidate
+=== RUN   TestColdSpecValidate/no_tap
+=== RUN   TestColdSpecValidate/no_kernel
+=== RUN   TestColdSpecValidate/no_base
+=== RUN   TestColdSpecValidate/no_layer
+=== RUN   TestColdSpecValidate/zero_vcpu
+=== RUN   TestColdSpecValidate/zero_mem
+--- PASS: TestColdSpecValidate (0.00s)
+    --- PASS: TestColdSpecValidate/no_tap (0.00s)
+    --- PASS: TestColdSpecValidate/no_kernel (0.00s)
+    --- PASS: TestColdSpecValidate/no_base (0.00s)
+    --- PASS: TestColdSpecValidate/no_layer (0.00s)
+    --- PASS: TestColdSpecValidate/zero_vcpu (0.00s)
+    --- PASS: TestColdSpecValidate/zero_mem (0.00s)
+=== RUN   TestJailerCommandMatchesSpec
+--- PASS: TestJailerCommandMatchesSpec (0.00s)
+=== RUN   TestJailerCommandIncludesMemoryFenceAtCreation
+--- PASS: TestJailerCommandIncludesMemoryFenceAtCreation (0.00s)
+=== RUN   TestBuildColdBootConfig_LegacyPath_Mega4
+=== PAUSE TestBuildColdBootConfig_LegacyPath_Mega4
+=== RUN   TestBuildColdBootConfig_WorkloadsPath_Mega4
+=== PAUSE TestBuildColdBootConfig_WorkloadsPath_Mega4
+=== RUN   TestBuildColdBootConfig_WorkloadHasExplicitDriveID_Mega4
+=== PAUSE TestBuildColdBootConfig_WorkloadHasExplicitDriveID_Mega4
+=== RUN   TestNewVsockDevice_Mega4
+=== PAUSE TestNewVsockDevice_Mega4
+=== RUN   TestColdBootSpecValidate_Mega4
+=== PAUSE TestColdBootSpecValidate_Mega4
+=== RUN   TestParentCgroupFor_Mega4
+=== PAUSE TestParentCgroupFor_Mega4
+=== RUN   TestGuestVsockCID_Mega4
+=== PAUSE TestGuestVsockCID_Mega4
+=== RUN   TestPerInstanceScope_Mega4
+=== PAUSE TestPerInstanceScope_Mega4
+=== RUN   TestJailerCommand_Mega4
+=== PAUSE TestJailerCommand_Mega4
+=== RUN   TestResolveFCChrootName_Fallback_Mega4
+=== PAUSE TestResolveFCChrootName_Fallback_Mega4
+=== RUN   TestJailerVMM_PathBuilders_Mega4
+=== PAUSE TestJailerVMM_PathBuilders_Mega4
+=== RUN   TestNewJailerVMM_Defaults_Mega4
+=== PAUSE TestNewJailerVMM_Defaults_Mega4
+=== RUN   TestNewJailerVMM_ExplicitTimeout_Mega4
+=== PAUSE TestNewJailerVMM_ExplicitTimeout_Mega4
+=== RUN   TestJailerVMM_Setters_Mega4
+=== PAUSE TestJailerVMM_Setters_Mega4
+=== RUN   TestJailerVMM_RingLifecycle_Mega4
+=== PAUSE TestJailerVMM_RingLifecycle_Mega4
+=== RUN   TestJailerVMM_ExportAndDestroyWait_Mega4
+=== PAUSE TestJailerVMM_ExportAndDestroyWait_Mega4
+=== RUN   TestCustomerConsoleWriterExcludesFirecrackerControlLogs
+--- PASS: TestCustomerConsoleWriterExcludesFirecrackerControlLogs (0.00s)
+=== RUN   TestFirecrackerControlLineRecognizesRestoreDiagnostics
+--- PASS: TestFirecrackerControlLineRecognizesRestoreDiagnostics (0.00s)
+=== RUN   TestFirecrackerControlLineDoesNotFilterKernelOrArbitraryAppPrefixes
+--- PASS: TestFirecrackerControlLineDoesNotFilterKernelOrArbitraryAppPrefixes (0.00s)
+=== RUN   TestFirecrackerControlLineRecognizesTimestampedProductionLines
+--- PASS: TestFirecrackerControlLineRecognizesTimestampedProductionLines (0.00s)
+=== RUN   TestDiskPressureThresholds
+=== RUN   TestDiskPressureThresholds/normal
+=== RUN   TestDiskPressureThresholds/near_full
+=== RUN   TestDiskPressureThresholds/full
+=== RUN   TestDiskPressureThresholds/invalid
+--- PASS: TestDiskPressureThresholds (0.00s)
+    --- PASS: TestDiskPressureThresholds/normal (0.00s)
+    --- PASS: TestDiskPressureThresholds/near_full (0.00s)
+    --- PASS: TestDiskPressureThresholds/full (0.00s)
+    --- PASS: TestDiskPressureThresholds/invalid (0.00s)
+=== RUN   TestManagerReportDiskUsageTransitions
+--- PASS: TestManagerReportDiskUsageTransitions (0.00s)
+=== RUN   TestAllowResolvedEgressAddsOncePerTTL
+--- PASS: TestAllowResolvedEgressAddsOncePerTTL (0.00s)
+=== RUN   TestResolvedEgressSeedsNextInstance
+--- PASS: TestResolvedEgressSeedsNextInstance (0.00s)
+=== RUN   TestClampResolvedTTL
+--- PASS: TestClampResolvedTTL (0.00s)
+=== RUN   TestDNSGatedEgressOffSwitch
+--- PASS: TestDNSGatedEgressOffSwitch (0.00s)
+=== RUN   TestMetalEphemeralDiskCapacity
+mke2fs 1.47.0 (5-Feb-2023)
+mke2fs 1.47.0 (5-Feb-2023)
+2026/10/01 20:59:56 INFO resume hook timing instance=disk-capacity connect_ms=11 write_ms=0 ack_ms=35 attempts=1
+2026/10/01 20:59:58 INFO resume hook timing instance=disk-capacity connect_ms=12 write_ms=0 ack_ms=35 attempts=1
+--- PASS: TestMetalEphemeralDiskCapacity (8.51s)
+=== RUN   TestManagerExecuteExecutionRejectsOrdinaryAppInstance
+--- PASS: TestManagerExecuteExecutionRejectsOrdinaryAppInstance (0.00s)
+=== RUN   TestManagerExecuteExecutionDestroysExecutionOnlyInstance
+--- PASS: TestManagerExecuteExecutionDestroysExecutionOnlyInstance (0.00s)
+=== RUN   TestManagerExecuteExecutionBoundsDirectCallToRequestTimeout
+--- PASS: TestManagerExecuteExecutionBoundsDirectCallToRequestTimeout (0.10s)
+=== RUN   TestManagerWakeExecutionIsNetworkless
+--- PASS: TestManagerWakeExecutionIsNetworkless (0.00s)
+=== RUN   TestManagerWakeExecutionRestoreSkipsAppReadiness
+--- PASS: TestManagerWakeExecutionRestoreSkipsAppReadiness (0.00s)
+=== RUN   TestDialExecutionCompletesHandshakeAndRunsOneExchange
+--- PASS: TestDialExecutionCompletesHandshakeAndRunsOneExchange (0.00s)
+=== RUN   TestHandoffBuildExportOwnershipUsesParentContract
+--- PASS: TestHandoffBuildExportOwnershipUsesParentContract (0.00s)
+=== RUN   TestTriggerExtensionHookWire
+    extension_hook_test.go:28: listen /var/tmp/faas-metal-smoke-managed-pg20261001-bbd416e9/tmp/fcvmt-240390-extension/f/i-extension/root/vsock.sock: listen unix /var/tmp/faas-metal-smoke-managed-pg20261001-bbd416e9/tmp/fcvmt-240390-extension/f/i-extension/root/vsock.sock: bind: invalid argument
+--- FAIL: TestTriggerExtensionHookWire (0.00s)
+=== RUN   TestUpdateAppWorkloadCPULimitWire
+--- PASS: TestUpdateAppWorkloadCPULimitWire (0.00s)
+=== RUN   TestMetalFrameworkReadyAcrossSnapshots
+    framework_ready_metal_test.go:23: requires isolated current guest-init and framework-ready fixture
+--- SKIP: TestMetalFrameworkReadyAcrossSnapshots (0.00s)
+=== RUN   TestFrameworkReadyBridgeRoundTripAndCancellation
+--- PASS: TestFrameworkReadyBridgeRoundTripAndCancellation (0.00s)
+=== RUN   TestFrameworkReadyLoopSurvivesWakeAndStopsOnDestroy
+--- PASS: TestFrameworkReadyLoopSurvivesWakeAndStopsOnDestroy (0.02s)
+=== RUN   TestFrameworkReadyLoopRetriesPersistence
+--- PASS: TestFrameworkReadyLoopRetriesPersistence (0.50s)
+=== RUN   TestGRPCHealthcheckProbe
+=== RUN   TestGRPCHealthcheckProbe/empty_service_checks_overall_status
+=== RUN   TestGRPCHealthcheckProbe/named_service_status
+=== RUN   TestGRPCHealthcheckProbe/unknown_service_is_an_RPC_failure
+--- PASS: TestGRPCHealthcheckProbe (0.01s)
+    --- PASS: TestGRPCHealthcheckProbe/empty_service_checks_overall_status (0.00s)
+    --- PASS: TestGRPCHealthcheckProbe/named_service_status (0.00s)
+    --- PASS: TestGRPCHealthcheckProbe/unknown_service_is_an_RPC_failure (0.00s)
+=== RUN   TestGuestVsockPlatformReceiversUsePerInstanceUnixSockets
+--- PASS: TestGuestVsockPlatformReceiversUsePerInstanceUnixSockets (0.00s)
+=== RUN   TestGuestVsockReceiverRegistrationRejectsDuplicatePort
+--- PASS: TestGuestVsockReceiverRegistrationRejectsDuplicatePort (0.00s)
+=== RUN   TestMetalImageBindMount
+    image_mount_metal_test.go:19: requires an isolated mount namespace
+--- SKIP: TestMetalImageBindMount (0.00s)
+=== RUN   TestMetalInitialBurstConcurrentRestores
+    initial_wake_burst_metal_test.go:26: set FAAS_TEST_VMMD_HELPER with isolated network, jail and current guest fixtures
+--- SKIP: TestMetalInitialBurstConcurrentRestores (0.00s)
+=== RUN   TestWakeStopJoinsBootAndFencesLateSuccess
+=== RUN   TestWakeStopJoinsBootAndFencesLateSuccess/cold/destroy
+=== RUN   TestWakeStopJoinsBootAndFencesLateSuccess/cold/signal
+=== RUN   TestWakeStopJoinsBootAndFencesLateSuccess/restore/destroy
+=== RUN   TestWakeStopJoinsBootAndFencesLateSuccess/restore/signal
+=== RUN   TestWakeStopJoinsBootAndFencesLateSuccess/warm/destroy
+=== RUN   TestWakeStopJoinsBootAndFencesLateSuccess/warm/signal
+=== RUN   TestWakeStopJoinsBootAndFencesLateSuccess/app_task/destroy
+=== RUN   TestWakeStopJoinsBootAndFencesLateSuccess/app_task/signal
+=== RUN   TestWakeStopJoinsBootAndFencesLateSuccess/execution/destroy
+=== RUN   TestWakeStopJoinsBootAndFencesLateSuccess/execution/signal
+=== RUN   TestWakeStopJoinsBootAndFencesLateSuccess/builder/destroy
+=== RUN   TestWakeStopJoinsBootAndFencesLateSuccess/builder/signal
+--- PASS: TestWakeStopJoinsBootAndFencesLateSuccess (0.03s)
+    --- PASS: TestWakeStopJoinsBootAndFencesLateSuccess/cold/destroy (0.00s)
+    --- PASS: TestWakeStopJoinsBootAndFencesLateSuccess/cold/signal (0.00s)
+    --- PASS: TestWakeStopJoinsBootAndFencesLateSuccess/restore/destroy (0.00s)
+    --- PASS: TestWakeStopJoinsBootAndFencesLateSuccess/restore/signal (0.00s)
+    --- PASS: TestWakeStopJoinsBootAndFencesLateSuccess/warm/destroy (0.00s)
+    --- PASS: TestWakeStopJoinsBootAndFencesLateSuccess/warm/signal (0.00s)
+    --- PASS: TestWakeStopJoinsBootAndFencesLateSuccess/app_task/destroy (0.00s)
+    --- PASS: TestWakeStopJoinsBootAndFencesLateSuccess/app_task/signal (0.00s)
+    --- PASS: TestWakeStopJoinsBootAndFencesLateSuccess/execution/destroy (0.00s)
+    --- PASS: TestWakeStopJoinsBootAndFencesLateSuccess/execution/signal (0.00s)
+    --- PASS: TestWakeStopJoinsBootAndFencesLateSuccess/builder/destroy (0.00s)
+    --- PASS: TestWakeStopJoinsBootAndFencesLateSuccess/builder/signal (0.00s)
+=== RUN   TestWakeStopTimeoutRetainsBootBarrier
+--- PASS: TestWakeStopTimeoutRetainsBootBarrier (0.02s)
+=== RUN   TestBootJobStopCancelsInFlightAndFencesLateSuccess
+=== RUN   TestBootJobStopCancelsInFlightAndFencesLateSuccess/destroy
+=== RUN   TestBootJobStopCancelsInFlightAndFencesLateSuccess/signal_and_kill
+--- PASS: TestBootJobStopCancelsInFlightAndFencesLateSuccess (0.00s)
+    --- PASS: TestBootJobStopCancelsInFlightAndFencesLateSuccess/destroy (0.00s)
+    --- PASS: TestBootJobStopCancelsInFlightAndFencesLateSuccess/signal_and_kill (0.00s)
+=== RUN   TestValidateJobExitPayloadAllowsOutcomeOnFailureButNoArtifacts
+--- PASS: TestValidateJobExitPayloadAllowsOutcomeOnFailureButNoArtifacts (0.00s)
+=== RUN   TestBuildJobColdBootConfigUsesPrivateWritableDrive
+--- PASS: TestBuildJobColdBootConfigUsesPrivateWritableDrive (0.00s)
+=== RUN   TestEffectiveDestroyWaitCoversEveryAcceptedJobTimeout
+=== RUN   TestEffectiveDestroyWaitCoversEveryAcceptedJobTimeout/hobby
+=== RUN   TestEffectiveDestroyWaitCoversEveryAcceptedJobTimeout/pro
+=== RUN   TestEffectiveDestroyWaitCoversEveryAcceptedJobTimeout/scale
+=== RUN   TestEffectiveDestroyWaitCoversEveryAcceptedJobTimeout/host_ceiling
+=== RUN   TestEffectiveDestroyWaitCoversEveryAcceptedJobTimeout/invalid_oversized_timeout
+--- PASS: TestEffectiveDestroyWaitCoversEveryAcceptedJobTimeout (0.00s)
+    --- PASS: TestEffectiveDestroyWaitCoversEveryAcceptedJobTimeout/hobby (0.00s)
+    --- PASS: TestEffectiveDestroyWaitCoversEveryAcceptedJobTimeout/pro (0.00s)
+    --- PASS: TestEffectiveDestroyWaitCoversEveryAcceptedJobTimeout/scale (0.00s)
+    --- PASS: TestEffectiveDestroyWaitCoversEveryAcceptedJobTimeout/host_ceiling (0.00s)
+    --- PASS: TestEffectiveDestroyWaitCoversEveryAcceptedJobTimeout/invalid_oversized_timeout (0.00s)
+=== RUN   TestWaitJobExitAcceptsGuestInitiatedStream
+--- PASS: TestWaitJobExitAcceptsGuestInitiatedStream (0.00s)
+=== RUN   TestReadJobExitEnvelopeRejectsUnknownFields
+--- PASS: TestReadJobExitEnvelopeRejectsUnknownFields (0.00s)
+=== RUN   TestEnsureJobManifestDirectoryRejectsImageSymlink
+--- PASS: TestEnsureJobManifestDirectoryRejectsImageSymlink (0.00s)
+=== RUN   TestJobManifestStorageRootUsesOptimizedUpper
+--- PASS: TestJobManifestStorageRootUsesOptimizedUpper (0.00s)
+=== RUN   TestJobManifestStorageRootUsesFullRoot
+--- PASS: TestJobManifestStorageRootUsesFullRoot (0.00s)
+=== RUN   TestJobManifestStorageRootRejectsMalformedLayouts
+=== RUN   TestJobManifestStorageRootRejectsMalformedLayouts/missing_optimized_upper
+=== RUN   TestJobManifestStorageRootRejectsMalformedLayouts/symlinked_optimized_upper
+=== RUN   TestJobManifestStorageRootRejectsMalformedLayouts/invalid_full-rootfs_marker
+--- PASS: TestJobManifestStorageRootRejectsMalformedLayouts (0.00s)
+    --- PASS: TestJobManifestStorageRootRejectsMalformedLayouts/missing_optimized_upper (0.00s)
+    --- PASS: TestJobManifestStorageRootRejectsMalformedLayouts/symlinked_optimized_upper (0.00s)
+    --- PASS: TestJobManifestStorageRootRejectsMalformedLayouts/invalid_full-rootfs_marker (0.00s)
+=== RUN   TestSignalJobGuestUsesHostInitiatedConnect
+--- PASS: TestSignalJobGuestUsesHostInitiatedConnect (0.00s)
+=== RUN   TestProcessExitedDoesNotRelayExpectedJobShutdown
+--- PASS: TestProcessExitedDoesNotRelayExpectedJobShutdown (0.00s)
+=== RUN   TestManagerUpdateAppCPULimitFansOutOnlyToAppVMs
+--- PASS: TestManagerUpdateAppCPULimitFansOutOnlyToAppVMs (0.00s)
+=== RUN   TestManagerWakeAppliesLatestAppCPULimitBeforePublication
+--- PASS: TestManagerWakeAppliesLatestAppCPULimitBeforePublication (0.00s)
+=== RUN   TestManagerUpdateAppCPULimitRejectsStaleAndConflictingRevisions
+--- PASS: TestManagerUpdateAppCPULimitRejectsStaleAndConflictingRevisions (0.00s)
+=== RUN   TestPerAppAllowlistCache_PreservesOriginalUnderBundleSwap
+--- PASS: TestPerAppAllowlistCache_PreservesOriginalUnderBundleSwap (0.00s)
+=== RUN   TestPerAppAllowlistCache_WriteThenOverwrite
+--- PASS: TestPerAppAllowlistCache_WriteThenOverwrite (0.00s)
+=== RUN   TestPerAppAllowlistCache_UnknownAppIDReturnsNil
+--- PASS: TestPerAppAllowlistCache_UnknownAppIDReturnsNil (0.00s)
+=== RUN   TestMergeOperatorBundle_EmptyIsNoop
+--- PASS: TestMergeOperatorBundle_EmptyIsNoop (0.00s)
+=== RUN   TestMergeOperatorBundle_AppendsAndDedups
+--- PASS: TestMergeOperatorBundle_AppendsAndDedups (0.00s)
+=== RUN   TestMergeOperatorBundle_EmptyAppEmptyOperator
+--- PASS: TestMergeOperatorBundle_EmptyAppEmptyOperator (0.00s)
+=== RUN   TestMergeOperatorBundle_DropsZeroMaskFromWire
+--- PASS: TestMergeOperatorBundle_DropsZeroMaskFromWire (0.00s)
+=== RUN   TestDedupSortedPrefixes_PreservesFirstSeen
+--- PASS: TestDedupSortedPrefixes_PreservesFirstSeen (0.00s)
+=== RUN   TestDedupSortedPrefixes_DropsZeroMask
+--- PASS: TestDedupSortedPrefixes_DropsZeroMask (0.00s)
+=== RUN   TestMetalFunctionWakeP95
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:01.372Z level=INFO msg="wake: characterization report" instance=m7-func observed_class=http observed_port=8080 exit=-1 port_norm_mode=none
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:01.373Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=cold_boot uid=20000 host_ip=10.100.0.2 setup_network_ms=99 scan_check_ms=0 restore_ms=0 cold_boot_ms=766 restore_prefetch_bytes=0 total_ms=917 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=99 bring_up_ms=766 post_bring_up_ms=51 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:01.788Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:02 INFO resume hook timing instance=m7-func connect_ms=18 write_ms=1 ack_ms=24 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:02.227Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=84 scan_check_ms=0 restore_ms=354 cold_boot_ms=0 restore_prefetch_bytes=0 total_ms=439 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=84 bring_up_ms=354 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:02.663Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:03 INFO resume hook timing instance=m7-func connect_ms=20 write_ms=0 ack_ms=20 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:03.101Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=79 scan_check_ms=0 restore_ms=357 cold_boot_ms=0 restore_prefetch_bytes=30265344 total_ms=438 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=80 bring_up_ms=357 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:03.522Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:03 INFO resume hook timing instance=m7-func connect_ms=25 write_ms=0 ack_ms=19 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:03.958Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=77 scan_check_ms=0 restore_ms=357 cold_boot_ms=0 restore_prefetch_bytes=29450240 total_ms=435 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=77 bring_up_ms=357 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:04.386Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:04 INFO resume hook timing instance=m7-func connect_ms=12 write_ms=0 ack_ms=30 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:04.828Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=78 scan_check_ms=0 restore_ms=362 cold_boot_ms=0 restore_prefetch_bytes=32563200 total_ms=441 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=78 bring_up_ms=362 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:05.263Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:05 INFO resume hook timing instance=m7-func connect_ms=8 write_ms=0 ack_ms=31 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:05.684Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=80 scan_check_ms=0 restore_ms=339 cold_boot_ms=0 restore_prefetch_bytes=29851648 total_ms=420 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=80 bring_up_ms=339 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:06.122Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:06 INFO resume hook timing instance=m7-func connect_ms=9 write_ms=0 ack_ms=28 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:06.544Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=85 scan_check_ms=0 restore_ms=334 cold_boot_ms=0 restore_prefetch_bytes=29335552 total_ms=421 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=85 bring_up_ms=334 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:06.980Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:07 INFO resume hook timing instance=m7-func connect_ms=27 write_ms=0 ack_ms=18 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:07.427Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=90 scan_check_ms=0 restore_ms=353 cold_boot_ms=0 restore_prefetch_bytes=29245440 total_ms=446 lease_acquire_ms=1 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=90 bring_up_ms=353 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:07.864Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:08 INFO resume hook timing instance=m7-func connect_ms=11 write_ms=0 ack_ms=29 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:08.300Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=78 scan_check_ms=0 restore_ms=356 cold_boot_ms=0 restore_prefetch_bytes=31961088 total_ms=435 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=78 bring_up_ms=356 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:08.710Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:09 INFO resume hook timing instance=m7-func connect_ms=13 write_ms=0 ack_ms=35 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:09.153Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=80 scan_check_ms=0 restore_ms=360 cold_boot_ms=0 restore_prefetch_bytes=28995584 total_ms=442 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=80 bring_up_ms=360 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:09.584Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:10 INFO resume hook timing instance=m7-func connect_ms=17 write_ms=0 ack_ms=22 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:10.011Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=66 scan_check_ms=0 restore_ms=359 cold_boot_ms=0 restore_prefetch_bytes=31948800 total_ms=426 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=66 bring_up_ms=359 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:10.436Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:10 INFO resume hook timing instance=m7-func connect_ms=21 write_ms=0 ack_ms=20 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:10.876Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=90 scan_check_ms=0 restore_ms=349 cold_boot_ms=0 restore_prefetch_bytes=30498816 total_ms=440 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=90 bring_up_ms=349 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:11.325Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:11 INFO resume hook timing instance=m7-func connect_ms=17 write_ms=0 ack_ms=23 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:11.762Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=88 scan_check_ms=0 restore_ms=344 cold_boot_ms=0 restore_prefetch_bytes=31739904 total_ms=436 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=88 bring_up_ms=344 post_bring_up_ms=2 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:12.201Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:12 INFO resume hook timing instance=m7-func connect_ms=15 write_ms=0 ack_ms=27 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:12.650Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=82 scan_check_ms=0 restore_ms=364 cold_boot_ms=0 restore_prefetch_bytes=28983296 total_ms=447 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=82 bring_up_ms=364 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:13.085Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:13 INFO resume hook timing instance=m7-func connect_ms=22 write_ms=0 ack_ms=27 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:13.535Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=92 scan_check_ms=0 restore_ms=356 cold_boot_ms=0 restore_prefetch_bytes=27594752 total_ms=450 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=92 bring_up_ms=356 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:13.955Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:14 INFO resume hook timing instance=m7-func connect_ms=15 write_ms=0 ack_ms=22 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:14.399Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=105 scan_check_ms=0 restore_ms=336 cold_boot_ms=0 restore_prefetch_bytes=31789056 total_ms=443 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=105 bring_up_ms=336 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:14.816Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:15 INFO resume hook timing instance=m7-func connect_ms=19 write_ms=0 ack_ms=23 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:15.247Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=75 scan_check_ms=0 restore_ms=353 cold_boot_ms=0 restore_prefetch_bytes=29585408 total_ms=430 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=75 bring_up_ms=353 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:15.653Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:16 INFO resume hook timing instance=m7-func connect_ms=13 write_ms=0 ack_ms=25 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:16.092Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=74 scan_check_ms=0 restore_ms=362 cold_boot_ms=0 restore_prefetch_bytes=30617600 total_ms=439 lease_acquire_ms=2 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=74 bring_up_ms=362 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:16.527Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:16 INFO resume hook timing instance=m7-func connect_ms=19 write_ms=0 ack_ms=23 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:16.957Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=76 scan_check_ms=0 restore_ms=351 cold_boot_ms=0 restore_prefetch_bytes=29990912 total_ms=429 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=76 bring_up_ms=351 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:17.378Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:17 INFO resume hook timing instance=m7-func connect_ms=17 write_ms=0 ack_ms=25 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:17.817Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=80 scan_check_ms=0 restore_ms=356 cold_boot_ms=0 restore_prefetch_bytes=30584832 total_ms=438 lease_acquire_ms=1 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=80 bring_up_ms=356 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:18.250Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:18 INFO resume hook timing instance=m7-func connect_ms=19 write_ms=0 ack_ms=24 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:18.683Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=81 scan_check_ms=0 restore_ms=349 cold_boot_ms=0 restore_prefetch_bytes=28876800 total_ms=432 lease_acquire_ms=1 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=81 bring_up_ms=349 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:19.113Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:19 INFO resume hook timing instance=m7-func connect_ms=12 write_ms=0 ack_ms=30 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:19.559Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=90 scan_check_ms=0 restore_ms=353 cold_boot_ms=0 restore_prefetch_bytes=30433280 total_ms=445 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=90 bring_up_ms=353 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:20.001Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:20 INFO resume hook timing instance=m7-func connect_ms=10 write_ms=0 ack_ms=37 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:20.455Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=91 scan_check_ms=0 restore_ms=360 cold_boot_ms=0 restore_prefetch_bytes=30711808 total_ms=453 lease_acquire_ms=1 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=91 bring_up_ms=360 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:20.885Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:21 INFO resume hook timing instance=m7-func connect_ms=10 write_ms=0 ack_ms=32 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:21.327Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=86 scan_check_ms=0 restore_ms=353 cold_boot_ms=0 restore_prefetch_bytes=32018432 total_ms=441 lease_acquire_ms=1 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=86 bring_up_ms=353 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:21.754Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:22 INFO resume hook timing instance=m7-func connect_ms=21 write_ms=0 ack_ms=21 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:22.203Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=88 scan_check_ms=0 restore_ms=358 cold_boot_ms=0 restore_prefetch_bytes=28811264 total_ms=448 lease_acquire_ms=0 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=88 bring_up_ms=358 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:22.640Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:23 INFO resume hook timing instance=m7-func connect_ms=10 write_ms=0 ack_ms=32 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:23.075Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=79 scan_check_ms=0 restore_ms=353 cold_boot_ms=0 restore_prefetch_bytes=30482432 total_ms=435 lease_acquire_ms=1 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=79 bring_up_ms=353 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:23.514Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:23 INFO resume hook timing instance=m7-func connect_ms=8 write_ms=0 ack_ms=30 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:23.951Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=79 scan_check_ms=0 restore_ms=355 cold_boot_ms=0 restore_prefetch_bytes=30511104 total_ms=436 lease_acquire_ms=1 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=79 bring_up_ms=355 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:24.390Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:24 INFO resume hook timing instance=m7-func connect_ms=23 write_ms=1 ack_ms=21 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:24.834Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=87 scan_check_ms=0 restore_ms=355 cold_boot_ms=0 restore_prefetch_bytes=30064640 total_ms=444 lease_acquire_ms=1 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=87 bring_up_ms=355 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:25.286Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:25 INFO resume hook timing instance=m7-func connect_ms=10 write_ms=0 ack_ms=30 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:25.725Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=78 scan_check_ms=0 restore_ms=359 cold_boot_ms=0 restore_prefetch_bytes=30183424 total_ms=439 lease_acquire_ms=1 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=78 bring_up_ms=359 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:26.161Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:26 INFO resume hook timing instance=m7-func connect_ms=10 write_ms=0 ack_ms=30 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:26.601Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=85 scan_check_ms=0 restore_ms=350 cold_boot_ms=0 restore_prefetch_bytes=29540352 total_ms=440 lease_acquire_ms=3 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=85 bring_up_ms=350 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:27.035Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+2026/10/01 21:00:27 INFO resume hook timing instance=m7-func connect_ms=8 write_ms=0 ack_ms=33 attempts=1
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:27.482Z level=INFO msg="wake ok" wake_id="" instance=m7-func method=restore uid=20000 host_ip=10.100.0.2 setup_network_ms=88 scan_check_ms=0 restore_ms=355 cold_boot_ms=0 restore_prefetch_bytes=28368896 total_ms=446 lease_acquire_ms=1 env_prepare_ms=0 pre_network_ms=0 setup_network_ms=88 bring_up_ms=355 post_bring_up_ms=0 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:00:27.919Z level=INFO msg=parked instance=m7-func mem_bytes=134217728
+
+    manager_function_wake_metal_test.go:139: function wake latency over 30 cycles: p50=440.79039ms p95=450.57283ms max=454.099297ms
+    manager_function_wake_metal_test.go:146: function wake latency is diagnostic on this host; the release gate runs on the reference SSD node
+--- PASS: TestMetalFunctionWakeP95 (27.48s)
+=== RUN   TestHostSMTPWakeConditionalAndRepairForced
+--- PASS: TestHostSMTPWakeConditionalAndRepairForced (0.00s)
+=== RUN   TestManagerInstanceIdentity
+--- PASS: TestManagerInstanceIdentity (0.00s)
+=== RUN   TestProcessExitedRelaysWithoutDroppingManagerEntry
+--- PASS: TestProcessExitedRelaysWithoutDroppingManagerEntry (0.00s)
+=== RUN   TestReportLivenessFailedDetachesRelayContext
+--- PASS: TestReportLivenessFailedDetachesRelayContext (0.00s)
+=== RUN   TestProcessExitedDuringWakeHandoffIsRemembered
+--- PASS: TestProcessExitedDuringWakeHandoffIsRemembered (0.00s)
+=== RUN   TestProcessExitedAfterTeardownDoesNotCreatePendingExit
+--- PASS: TestProcessExitedAfterTeardownDoesNotCreatePendingExit (0.00s)
+=== RUN   TestProcessExitedIgnoresBuilder
+--- PASS: TestProcessExitedIgnoresBuilder (0.00s)
+=== RUN   TestLivenessLoopUsesManagerLifecycleContext
+--- PASS: TestLivenessLoopUsesManagerLifecycleContext (0.00s)
+=== RUN   TestManagerFinishLivenessLoopDoesNotRemoveReplacement
+--- PASS: TestManagerFinishLivenessLoopDoesNotRemoveReplacement (0.00s)
+=== RUN   TestLivenessRegistryFinishDoesNotRemoveReplacement
+--- PASS: TestLivenessRegistryFinishDoesNotRemoveReplacement (0.00s)
+=== RUN   TestMetalBoot50Concurrent
+2026/10/01 21:00:37 WARN slow cold boot timing breakdown wake_id="" instance=m1-0 resolve_images_ms=0 resolve_artifacts="[{Artifact:kernel Source:direct DurationMs:0 Bytes:29892944} {Artifact:base Source:direct DurationMs:0 Bytes:67108864} {Artifact:main Source:direct DurationMs:0 Bytes:16777216}]" chroot_ms=2 provision_ms=164 stage_runtime_ms=28 prepare_config_ms=0 helper_ms=4915 start_jailer_ms=166 bind_tun_ms=428 cgroup_ms=0 write_config_ms=1 wait_ready_ms=3223 quota_restore_ms=0 total_ms=8932
+2026/10/01 21:00:49 WARN slow cold boot timing breakdown wake_id="" instance=m1-20 resolve_images_ms=0 resolve_artifacts="[{Artifact:kernel Source:direct DurationMs:0 Bytes:29892944} {Artifact:base Source:direct DurationMs:0 Bytes:67108864} {Artifact:main Source:direct DurationMs:0 Bytes:16777216}]" chroot_ms=0 provision_ms=1074 stage_runtime_ms=752 prepare_config_ms=0 helper_ms=4879 start_jailer_ms=1 bind_tun_ms=420 cgroup_ms=0 write_config_ms=6 wait_ready_ms=12622 quota_restore_ms=0 total_ms=19758
+2026/10/01 21:00:51 WARN slow cold boot timing breakdown wake_id="" instance=m1-18 resolve_images_ms=21 resolve_artifacts="[{Artifact:kernel Source:direct DurationMs:21 Bytes:29892944} {Artifact:base Source:direct DurationMs:0 Bytes:67108864} {Artifact:main Source:direct DurationMs:0 Bytes:16777216}]" chroot_ms=0 provision_ms=355 stage_runtime_ms=102 prepare_config_ms=9 helper_ms=6801 start_jailer_ms=1 bind_tun_ms=334 cgroup_ms=0 write_config_ms=202 wait_ready_ms=14968 quota_restore_ms=0 total_ms=22797
+    manager_metal_test.go:111: boot m1-6: wake m1-6: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-3: wake m1-3: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-8: wake m1-8: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-15: wake m1-15: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-14: wake m1-14: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-24: wake m1-24: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-7: wake m1-7: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-23: wake m1-23: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-21: wake m1-21: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-27: wake m1-27: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-19: wake m1-19: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-17: wake m1-17: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-9: wake m1-9: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-2: wake m1-2: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-28: wake m1-28: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-1: wake m1-1: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-11: wake m1-11: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-29: wake m1-29: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-13: wake m1-13: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-12: wake m1-12: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-25: wake m1-25: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-10: wake m1-10: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-16: wake m1-16: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-22: wake m1-22: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-26: wake m1-26: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-4: wake m1-4: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-5: wake m1-5: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:119: live=3, want 30
+    helper_metal_test.go:68: guest m1-29: 2026-10-01T21:00:41.063518324 [m1-29:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-14: 2026-10-01T21:00:40.733676070 [m1-14:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-14: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-14: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-14: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-14: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-3: 2026-10-01T21:00:40.725522880 [m1-3:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-3: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-3: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-3: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-3: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-7: 2026-10-01T21:00:40.562584067 [m1-7:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-7: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-7: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-7: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-7: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-7: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-19: 2026-10-01T21:00:38.464275215 [m1-19:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-19: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-19: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-19: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-19: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-19: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-21: 2026-10-01T21:00:40.823087805 [m1-21:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-11: 2026-10-01T21:00:41.100241852 [m1-11:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-11: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-11: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-11: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-11: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-11: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-11: 2026/10/01 21:00:55 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-11: 2026/10/01 21:00:55 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-11: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-11: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-11: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-10: 2026-10-01T21:00:41.086894052 [m1-10:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-10: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-10: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-10: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-10: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-20: 2026-10-01T21:00:36.881472604 [m1-20:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-20: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-20: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-20: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-20: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-20: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:46 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:46 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/redis err="invalid argument"
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mysql err="invalid argument"
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongodb err="invalid argument"
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongo err="invalid argument"
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cockroach err="invalid argument"
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cassandra err="invalid argument"
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/clickhouse err="invalid argument"
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:46 WARN stateless advisory unavailable err="vsock socket: no such device"
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:47 INFO tail_events proxy started socket=/run/guest-init/tail-events.sock vsock_port=1027
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:47 INFO sidecar events proxy started vsock_port=1027 transport=stream
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:47 INFO framework_ready stream proxy started vsock_port=1027
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:48 INFO healthcheck: NONE shape; no poll goroutine
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:00:49 INFO characterization complete mode=none port=8080 class=http exit=-1 shipped=true reason=ok duration=1.771724343s pid=142 owned_sockets=2 listen_rows_tcp=2 listen_rows_tcp6=-1
+    helper_metal_test.go:68: guest m1-2: 2026-10-01T21:00:40.550565905 [m1-2:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-2: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-2: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-2: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-9: 2026-10-01T21:00:40.971927084 [m1-9:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-9: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-9: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-9: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-4: 2026-10-01T21:00:39.843566163 [m1-4:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-4: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-4: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-4: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-4: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-4: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-4: 2026/10/01 21:00:55 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-4: 2026/10/01 21:00:55 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-15: 2026-10-01T21:00:38.885310823 [m1-15:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-15: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-15: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-15: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-15: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-15: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-15: 2026/10/01 21:00:54 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-15: 2026/10/01 21:00:54 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-15: 2026/10/01 21:00:54 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-15: 2026/10/01 21:00:54 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-15: 2026/10/01 21:00:54 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-15: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/redis err="invalid argument"
+    helper_metal_test.go:68: guest m1-15: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mysql err="invalid argument"
+    helper_metal_test.go:68: guest m1-15: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongodb err="invalid argument"
+    helper_metal_test.go:68: guest m1-15: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongo err="invalid argument"
+    helper_metal_test.go:68: guest m1-15: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cockroach err="invalid argument"
+    helper_metal_test.go:68: guest m1-15: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cassandra err="invalid argument"
+    helper_metal_test.go:68: guest m1-15: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/clickhouse err="invalid argument"
+    helper_metal_test.go:68: guest m1-15: 2026/10/01 21:00:55 WARN stateless advisory unavailable err="vsock socket: no such device"
+    helper_metal_test.go:68: guest m1-18: 2026-10-01T21:00:36.782526258 [m1-18:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-18: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-18: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-18: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-18: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-18: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:45 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:46 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/redis err="invalid argument"
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mysql err="invalid argument"
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongodb err="invalid argument"
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongo err="invalid argument"
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cockroach err="invalid argument"
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cassandra err="invalid argument"
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:46 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/clickhouse err="invalid argument"
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:46 WARN stateless advisory unavailable err="vsock socket: no such device"
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:49 INFO tail_events proxy started socket=/run/guest-init/tail-events.sock vsock_port=1027
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:49 INFO sidecar events proxy started vsock_port=1027 transport=stream
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:49 INFO framework_ready stream proxy started vsock_port=1027
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:49 INFO healthcheck: NONE shape; no poll goroutine
+    helper_metal_test.go:68: guest m1-18: 2026/10/01 21:00:53 INFO characterization complete mode=none port=8080 class=http exit=-1 shipped=false reason=ack_timeout duration=3.231606481s pid=141 owned_sockets=2 listen_rows_tcp=2 listen_rows_tcp6=-1
+    helper_metal_test.go:68: guest m1-6: 2026-10-01T21:00:40.469499308 [m1-6:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-6: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-6: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-25: 2026-10-01T21:00:39.341495668 [m1-25:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-25: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-25: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-25: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-25: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-25: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-25: 2026/10/01 21:00:55 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-25: 2026/10/01 21:00:56 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-16: 2026-10-01T21:00:39.145722933 [m1-16:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-16: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-16: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-16: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-16: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-16: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-16: 2026/10/01 21:00:54 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-16: 2026/10/01 21:00:55 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-16: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-16: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-16: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-16: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/redis err="invalid argument"
+    helper_metal_test.go:68: guest m1-16: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mysql err="invalid argument"
+    helper_metal_test.go:68: guest m1-16: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongodb err="invalid argument"
+    helper_metal_test.go:68: guest m1-28: 2026-10-01T21:00:40.861515494 [m1-28:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-5: 2026-10-01T21:00:38.866563190 [m1-5:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-5: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-5: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-5: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-5: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-5: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:00:55 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-8: 2026-10-01T21:00:39.052847796 [m1-8:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-8: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-8: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-8: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-8: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-8: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-8: 2026/10/01 21:00:54 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-8: 2026/10/01 21:00:55 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-12: 2026-10-01T21:00:41.042639110 [m1-12:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-12: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-12: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-23: 2026-10-01T21:00:40.352571864 [m1-23:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-23: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-23: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-23: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-23: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-23: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-23: 2026/10/01 21:00:55 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-17: 2026-10-01T21:00:40.461033701 [m1-17:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-17: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-17: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-17: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-17: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-17: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-26: 2026-10-01T21:00:39.180614122 [m1-26:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-26: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-26: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-26: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-26: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-26: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-26: 2026/10/01 21:00:54 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-26: 2026/10/01 21:00:55 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-26: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-26: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026-10-01T21:00:34.200788074 [m1-0:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-0: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-0: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-0: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-0: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-0: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/redis err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mysql err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongodb err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongo err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cockroach err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cassandra err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/clickhouse err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 WARN stateless advisory unavailable err="vsock socket: no such device"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 INFO tail_events proxy started socket=/run/guest-init/tail-events.sock vsock_port=1027
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 INFO sidecar events proxy started vsock_port=1027 transport=stream
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 INFO framework_ready stream proxy started vsock_port=1027
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 INFO healthcheck: NONE shape; no poll goroutine
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:00:35 INFO characterization complete mode=none port=8080 class=http exit=-1 shipped=true reason=ok duration=467.772379ms pid=142 owned_sockets=2 listen_rows_tcp=2 listen_rows_tcp6=-1
+    helper_metal_test.go:68: guest m1-24: 2026-10-01T21:00:39.185446774 [m1-24:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-24: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-24: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-24: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-24: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-24: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:00:55 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:00:55 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-1: 2026-10-01T21:00:40.559743016 [m1-1:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-1: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-1: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-1: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-1: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-1: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-1: 2026/10/01 21:00:54 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-1: 2026/10/01 21:00:54 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-1: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-1: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-1: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-1: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/redis err="invalid argument"
+    helper_metal_test.go:68: guest m1-1: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mysql err="invalid argument"
+    helper_metal_test.go:68: guest m1-1: 2026/10/01 21:00:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongodb err="invalid argument"
+    helper_metal_test.go:68: guest m1-22: 2026-10-01T21:00:40.849560710 [m1-22:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-22: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-22: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-22: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-13: 2026-10-01T21:00:40.596533986 [m1-13:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-13: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-13: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-13: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-13: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-27: 2026-10-01T21:00:40.806290036 [m1-27:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-27: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-27: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-27: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-27: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-27: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-27: 2026/10/01 21:00:56 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+--- FAIL: TestMetalBoot50Concurrent (31.23s)
+=== RUN   TestMetalParkWakeCycle
+2026/10/01 21:01:01 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=32 attempts=1
+2026/10/01 21:01:02 INFO resume hook timing instance=cycle connect_ms=11 write_ms=0 ack_ms=33 attempts=1
+2026/10/01 21:01:03 INFO resume hook timing instance=cycle connect_ms=13 write_ms=0 ack_ms=34 attempts=1
+2026/10/01 21:01:03 INFO resume hook timing instance=cycle connect_ms=13 write_ms=0 ack_ms=29 attempts=1
+2026/10/01 21:01:04 INFO resume hook timing instance=cycle connect_ms=9 write_ms=0 ack_ms=30 attempts=1
+2026/10/01 21:01:05 INFO resume hook timing instance=cycle connect_ms=17 write_ms=0 ack_ms=23 attempts=1
+2026/10/01 21:01:06 INFO resume hook timing instance=cycle connect_ms=14 write_ms=0 ack_ms=31 attempts=1
+2026/10/01 21:01:07 INFO resume hook timing instance=cycle connect_ms=12 write_ms=1 ack_ms=37 attempts=1
+2026/10/01 21:01:08 INFO resume hook timing instance=cycle connect_ms=8 write_ms=0 ack_ms=32 attempts=1
+2026/10/01 21:01:09 INFO resume hook timing instance=cycle connect_ms=16 write_ms=0 ack_ms=25 attempts=1
+2026/10/01 21:01:10 INFO resume hook timing instance=cycle connect_ms=11 write_ms=0 ack_ms=28 attempts=1
+2026/10/01 21:01:11 INFO resume hook timing instance=cycle connect_ms=12 write_ms=0 ack_ms=31 attempts=1
+2026/10/01 21:01:12 INFO resume hook timing instance=cycle connect_ms=11 write_ms=0 ack_ms=28 attempts=1
+2026/10/01 21:01:12 INFO resume hook timing instance=cycle connect_ms=22 write_ms=0 ack_ms=22 attempts=1
+2026/10/01 21:01:13 INFO resume hook timing instance=cycle connect_ms=16 write_ms=0 ack_ms=21 attempts=1
+2026/10/01 21:01:14 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=35 attempts=1
+2026/10/01 21:01:15 INFO resume hook timing instance=cycle connect_ms=12 write_ms=0 ack_ms=32 attempts=1
+2026/10/01 21:01:16 INFO resume hook timing instance=cycle connect_ms=15 write_ms=0 ack_ms=32 attempts=1
+2026/10/01 21:01:17 INFO resume hook timing instance=cycle connect_ms=12 write_ms=1 ack_ms=38 attempts=1
+2026/10/01 21:01:18 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=42 attempts=1
+2026/10/01 21:01:19 INFO resume hook timing instance=cycle connect_ms=12 write_ms=0 ack_ms=33 attempts=1
+2026/10/01 21:01:20 INFO resume hook timing instance=cycle connect_ms=31 write_ms=0 ack_ms=19 attempts=1
+2026/10/01 21:01:21 INFO resume hook timing instance=cycle connect_ms=15 write_ms=0 ack_ms=27 attempts=1
+2026/10/01 21:01:22 INFO resume hook timing instance=cycle connect_ms=12 write_ms=0 ack_ms=40 attempts=1
+2026/10/01 21:01:23 INFO resume hook timing instance=cycle connect_ms=23 write_ms=0 ack_ms=25 attempts=1
+2026/10/01 21:01:23 INFO resume hook timing instance=cycle connect_ms=9 write_ms=0 ack_ms=30 attempts=1
+2026/10/01 21:01:24 INFO resume hook timing instance=cycle connect_ms=25 write_ms=0 ack_ms=22 attempts=1
+2026/10/01 21:01:25 INFO resume hook timing instance=cycle connect_ms=14 write_ms=0 ack_ms=30 attempts=1
+2026/10/01 21:01:26 INFO resume hook timing instance=cycle connect_ms=9 write_ms=0 ack_ms=37 attempts=1
+2026/10/01 21:01:27 INFO resume hook timing instance=cycle connect_ms=18 write_ms=0 ack_ms=23 attempts=1
+2026/10/01 21:01:28 INFO resume hook timing instance=cycle connect_ms=23 write_ms=0 ack_ms=19 attempts=1
+2026/10/01 21:01:29 INFO resume hook timing instance=cycle connect_ms=15 write_ms=0 ack_ms=30 attempts=1
+2026/10/01 21:01:30 INFO resume hook timing instance=cycle connect_ms=26 write_ms=0 ack_ms=21 attempts=1
+2026/10/01 21:01:31 INFO resume hook timing instance=cycle connect_ms=11 write_ms=0 ack_ms=29 attempts=1
+2026/10/01 21:01:32 INFO resume hook timing instance=cycle connect_ms=17 write_ms=0 ack_ms=28 attempts=1
+2026/10/01 21:01:33 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=31 attempts=1
+2026/10/01 21:01:34 INFO resume hook timing instance=cycle connect_ms=20 write_ms=0 ack_ms=22 attempts=1
+2026/10/01 21:01:35 INFO resume hook timing instance=cycle connect_ms=16 write_ms=0 ack_ms=26 attempts=1
+2026/10/01 21:01:36 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=32 attempts=1
+2026/10/01 21:01:37 INFO resume hook timing instance=cycle connect_ms=22 write_ms=0 ack_ms=22 attempts=1
+2026/10/01 21:01:37 INFO resume hook timing instance=cycle connect_ms=20 write_ms=0 ack_ms=20 attempts=1
+2026/10/01 21:01:38 INFO resume hook timing instance=cycle connect_ms=18 write_ms=0 ack_ms=25 attempts=1
+2026/10/01 21:01:39 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=32 attempts=1
+2026/10/01 21:01:40 INFO resume hook timing instance=cycle connect_ms=12 write_ms=0 ack_ms=34 attempts=1
+2026/10/01 21:01:41 INFO resume hook timing instance=cycle connect_ms=16 write_ms=0 ack_ms=28 attempts=1
+2026/10/01 21:01:42 INFO resume hook timing instance=cycle connect_ms=10 write_ms=1 ack_ms=30 attempts=1
+2026/10/01 21:01:43 INFO resume hook timing instance=cycle connect_ms=12 write_ms=0 ack_ms=32 attempts=1
+2026/10/01 21:01:44 INFO resume hook timing instance=cycle connect_ms=20 write_ms=0 ack_ms=22 attempts=1
+2026/10/01 21:01:45 INFO resume hook timing instance=cycle connect_ms=16 write_ms=0 ack_ms=24 attempts=1
+2026/10/01 21:01:46 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=37 attempts=1
+2026/10/01 21:01:47 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=34 attempts=1
+2026/10/01 21:01:48 INFO resume hook timing instance=cycle connect_ms=20 write_ms=0 ack_ms=31 attempts=1
+2026/10/01 21:01:49 INFO resume hook timing instance=cycle connect_ms=12 write_ms=0 ack_ms=29 attempts=1
+2026/10/01 21:01:50 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=34 attempts=1
+2026/10/01 21:01:51 INFO resume hook timing instance=cycle connect_ms=13 write_ms=0 ack_ms=32 attempts=1
+2026/10/01 21:01:52 INFO resume hook timing instance=cycle connect_ms=20 write_ms=0 ack_ms=25 attempts=1
+2026/10/01 21:01:53 INFO resume hook timing instance=cycle connect_ms=19 write_ms=1 ack_ms=22 attempts=1
+2026/10/01 21:01:54 INFO resume hook timing instance=cycle connect_ms=22 write_ms=0 ack_ms=22 attempts=1
+2026/10/01 21:01:54 INFO resume hook timing instance=cycle connect_ms=23 write_ms=0 ack_ms=21 attempts=1
+2026/10/01 21:01:55 INFO resume hook timing instance=cycle connect_ms=11 write_ms=0 ack_ms=35 attempts=1
+2026/10/01 21:01:56 INFO resume hook timing instance=cycle connect_ms=9 write_ms=0 ack_ms=29 attempts=1
+2026/10/01 21:01:57 INFO resume hook timing instance=cycle connect_ms=22 write_ms=0 ack_ms=32 attempts=1
+2026/10/01 21:01:58 INFO resume hook timing instance=cycle connect_ms=15 write_ms=0 ack_ms=32 attempts=1
+2026/10/01 21:01:59 INFO resume hook timing instance=cycle connect_ms=11 write_ms=0 ack_ms=28 attempts=1
+2026/10/01 21:02:00 INFO resume hook timing instance=cycle connect_ms=27 write_ms=0 ack_ms=26 attempts=1
+2026/10/01 21:02:01 INFO resume hook timing instance=cycle connect_ms=16 write_ms=0 ack_ms=25 attempts=1
+2026/10/01 21:02:02 INFO resume hook timing instance=cycle connect_ms=22 write_ms=0 ack_ms=31 attempts=1
+2026/10/01 21:02:03 INFO resume hook timing instance=cycle connect_ms=16 write_ms=0 ack_ms=40 attempts=1
+2026/10/01 21:02:04 INFO resume hook timing instance=cycle connect_ms=8 write_ms=0 ack_ms=33 attempts=1
+2026/10/01 21:02:05 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=41 attempts=1
+2026/10/01 21:02:06 INFO resume hook timing instance=cycle connect_ms=11 write_ms=0 ack_ms=31 attempts=1
+2026/10/01 21:02:07 INFO resume hook timing instance=cycle connect_ms=18 write_ms=0 ack_ms=31 attempts=1
+2026/10/01 21:02:08 INFO resume hook timing instance=cycle connect_ms=24 write_ms=0 ack_ms=21 attempts=1
+2026/10/01 21:02:09 INFO resume hook timing instance=cycle connect_ms=24 write_ms=0 ack_ms=23 attempts=1
+2026/10/01 21:02:10 INFO resume hook timing instance=cycle connect_ms=16 write_ms=0 ack_ms=25 attempts=1
+2026/10/01 21:02:11 INFO resume hook timing instance=cycle connect_ms=15 write_ms=0 ack_ms=28 attempts=1
+2026/10/01 21:02:12 INFO resume hook timing instance=cycle connect_ms=17 write_ms=0 ack_ms=23 attempts=1
+2026/10/01 21:02:12 INFO resume hook timing instance=cycle connect_ms=17 write_ms=0 ack_ms=23 attempts=1
+2026/10/01 21:02:13 INFO resume hook timing instance=cycle connect_ms=21 write_ms=0 ack_ms=23 attempts=1
+2026/10/01 21:02:14 INFO resume hook timing instance=cycle connect_ms=21 write_ms=0 ack_ms=22 attempts=1
+2026/10/01 21:02:15 INFO resume hook timing instance=cycle connect_ms=30 write_ms=0 ack_ms=19 attempts=1
+2026/10/01 21:02:16 INFO resume hook timing instance=cycle connect_ms=18 write_ms=0 ack_ms=23 attempts=1
+2026/10/01 21:02:17 INFO resume hook timing instance=cycle connect_ms=21 write_ms=0 ack_ms=26 attempts=1
+2026/10/01 21:02:18 INFO resume hook timing instance=cycle connect_ms=13 write_ms=0 ack_ms=27 attempts=1
+2026/10/01 21:02:19 INFO resume hook timing instance=cycle connect_ms=19 write_ms=0 ack_ms=23 attempts=1
+2026/10/01 21:02:20 INFO resume hook timing instance=cycle connect_ms=22 write_ms=0 ack_ms=21 attempts=1
+2026/10/01 21:02:21 INFO resume hook timing instance=cycle connect_ms=18 write_ms=0 ack_ms=22 attempts=1
+2026/10/01 21:02:22 INFO resume hook timing instance=cycle connect_ms=18 write_ms=0 ack_ms=24 attempts=1
+2026/10/01 21:02:23 INFO resume hook timing instance=cycle connect_ms=20 write_ms=0 ack_ms=20 attempts=1
+2026/10/01 21:02:24 INFO resume hook timing instance=cycle connect_ms=19 write_ms=0 ack_ms=26 attempts=1
+2026/10/01 21:02:25 INFO resume hook timing instance=cycle connect_ms=14 write_ms=0 ack_ms=30 attempts=1
+2026/10/01 21:02:26 INFO resume hook timing instance=cycle connect_ms=10 write_ms=1 ack_ms=38 attempts=1
+2026/10/01 21:02:27 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=32 attempts=1
+2026/10/01 21:02:28 INFO resume hook timing instance=cycle connect_ms=8 write_ms=0 ack_ms=33 attempts=1
+2026/10/01 21:02:29 INFO resume hook timing instance=cycle connect_ms=20 write_ms=0 ack_ms=22 attempts=1
+2026/10/01 21:02:30 INFO resume hook timing instance=cycle connect_ms=7 write_ms=0 ack_ms=30 attempts=1
+2026/10/01 21:02:31 INFO resume hook timing instance=cycle connect_ms=8 write_ms=0 ack_ms=36 attempts=1
+2026/10/01 21:02:32 INFO resume hook timing instance=cycle connect_ms=27 write_ms=0 ack_ms=20 attempts=1
+2026/10/01 21:02:33 INFO resume hook timing instance=cycle connect_ms=10 write_ms=0 ack_ms=32 attempts=1
+2026/10/01 21:02:34 INFO resume hook timing instance=cycle connect_ms=9 write_ms=0 ack_ms=32 attempts=1
+    manager_metal_test.go:217: platform snapshot wake over 100 cycles: p50=477.447347ms p95=510.936586ms max=526.538464ms
+    manager_metal_test.go:221: platform snapshot wake is diagnostic on this host; set FAAS_TEST_REFERENCE_SSD=1 only on the reference SSD node to enforce p95 < 350 ms
+--- PASS: TestMetalParkWakeCycle (95.31s)
+=== RUN   TestMetalHelloBoot
+--- PASS: TestMetalHelloBoot (0.93s)
+=== RUN   TestMetalDNATPublishedToGuestPort
+--- PASS: TestMetalDNATPublishedToGuestPort (0.98s)
+=== RUN   TestMetalMemoryMaxFenceEnforced
+--- PASS: TestMetalMemoryMaxFenceEnforced (0.99s)
+=== RUN   TestMetalEgressCapEnforced
+--- PASS: TestMetalEgressCapEnforced (1.00s)
+=== RUN   TestMetalTwoRestoresDistinctUUID
+mke2fs 1.47.0 (5-Feb-2023)
+mke2fs 1.47.0 (5-Feb-2023)
+    manager_metal_test.go:552: V6 prime cold boot OK @ 10.100.0.2
+2026/10/01 21:02:42 INFO resume hook timing instance=v6b connect_ms=6 write_ms=0 ack_ms=58 attempts=1
+2026/10/01 21:02:42 INFO resume hook timing instance=v6a connect_ms=20 write_ms=0 ack_ms=83 attempts=1
+    manager_metal_test.go:619: V6 restore A uuid: c3285c31-a5be-4521-b673-4530891a9eee @ 10.100.0.2 (method=restore)
+    manager_metal_test.go:620: V6 restore B uuid: 778ff659-a9f4-4248-9790-0373a94cc8dc @ 10.100.0.3 (method=restore)
+    manager_metal_test.go:629: V6 restore A resume.log:
+        (resume.log unavailable from 10.100.0.2 — hook may not have run, or busybox httpd returned non-200)
+    manager_metal_test.go:630: V6 restore B resume.log:
+        (resume.log unavailable from 10.100.0.3 — hook may not have run, or busybox httpd returned non-200)
+--- PASS: TestMetalTwoRestoresDistinctUUID (4.56s)
+=== RUN   TestMetalGuestEgressToPublicViaMASQUERADE
+mke2fs 1.47.0 (5-Feb-2023)
+    manager_metal_test.go:849: FAAS_TEST_EGRESS_URL unset — skipping public egress probe (runbook smoke only). Set to a stable plain-text HTTP URL for full coverage.
+--- PASS: TestMetalGuestEgressToPublicViaMASQUERADE (15.50s)
+=== RUN   TestManager_Setters_ChainAndReturnReceiver
+--- PASS: TestManager_Setters_ChainAndReturnReceiver (0.00s)
+=== RUN   TestManager_SetHostIdentity_NilSafe
+--- PASS: TestManager_SetHostIdentity_NilSafe (0.00s)
+=== RUN   TestManager_SetHostIdentities_EmptyClears
+--- PASS: TestManager_SetHostIdentities_EmptyClears (0.00s)
+=== RUN   TestManager_WithStorage_NilSafe
+--- PASS: TestManager_WithStorage_NilSafe (0.00s)
+=== RUN   TestManager_VMM_ReturnsUnderlying
+--- PASS: TestManager_VMM_ReturnsUnderlying (0.00s)
+=== RUN   TestManager_SetImageScanMetrics_NilSafe
+--- PASS: TestManager_SetImageScanMetrics_NilSafe (0.00s)
+=== RUN   TestManager_SetAdvisoryClient_NilSafe
+--- PASS: TestManager_SetAdvisoryClient_NilSafe (0.00s)
+=== RUN   TestManager_SetParentMountRegistry_NilSafe
+--- PASS: TestManager_SetParentMountRegistry_NilSafe (0.00s)
+=== RUN   TestManager_ObserveLivenessProbe_DelegatesToMetrics
+--- PASS: TestManager_ObserveLivenessProbe_DelegatesToMetrics (0.00s)
+=== RUN   TestManager_SetLivenessConsecutiveFailures_Delegates
+--- PASS: TestManager_SetLivenessConsecutiveFailures_Delegates (0.00s)
+=== RUN   TestManager_DeleteLivenessConsecutiveFailures_Delegates
+--- PASS: TestManager_DeleteLivenessConsecutiveFailures_Delegates (0.00s)
+=== RUN   TestManager_ReportLivenessFailed_NilRelayDoesNotPanic
+--- PASS: TestManager_ReportLivenessFailed_NilRelayDoesNotPanic (0.00s)
+=== RUN   TestManager_ReportLivenessFailed_StampsCooldown
+--- PASS: TestManager_ReportLivenessFailed_StampsCooldown (0.00s)
+=== RUN   TestManager_ReportLivenessFailed_UnknownInstanceSkipsStamp
+--- PASS: TestManager_ReportLivenessFailed_UnknownInstanceSkipsStamp (0.00s)
+=== RUN   TestManager_ReportLivenessFailed_EmptyDeploymentIDSkipsStamp
+--- PASS: TestManager_ReportLivenessFailed_EmptyDeploymentIDSkipsStamp (0.00s)
+=== RUN   TestManager_ReportWorkloadOOM_Pure_NilRelayNoOp
+--- PASS: TestManager_ReportWorkloadOOM_Pure_NilRelayNoOp (0.00s)
+=== RUN   TestManager_ReportWorkloadOOM_Pure_RelayCalled
+--- PASS: TestManager_ReportWorkloadOOM_Pure_RelayCalled (0.00s)
+=== RUN   TestManager_InstanceByCID_Hit
+--- PASS: TestManager_InstanceByCID_Hit (0.00s)
+=== RUN   TestManager_InstanceByCID_Miss
+--- PASS: TestManager_InstanceByCID_Miss (0.00s)
+=== RUN   TestManager_InstanceAppID_Hit
+--- PASS: TestManager_InstanceAppID_Hit (0.00s)
+=== RUN   TestManager_InstanceAppID_Miss
+--- PASS: TestManager_InstanceAppID_Miss (0.00s)
+=== RUN   TestManager_InstanceDeploymentIDAndAppID_Hit
+--- PASS: TestManager_InstanceDeploymentIDAndAppID_Hit (0.00s)
+=== RUN   TestManager_InstanceDeploymentIDAndAppID_Miss
+--- PASS: TestManager_InstanceDeploymentIDAndAppID_Miss (0.00s)
+=== RUN   TestManager_ReadAndResetTailSeconds_Hit
+--- PASS: TestManager_ReadAndResetTailSeconds_Hit (0.00s)
+=== RUN   TestManager_ReadAndResetTailSeconds_Miss
+--- PASS: TestManager_ReadAndResetTailSeconds_Miss (0.00s)
+=== RUN   TestManager_ForwardStatelessAdvisory_EmptyBatchNoOp
+--- PASS: TestManager_ForwardStatelessAdvisory_EmptyBatchNoOp (0.00s)
+=== RUN   TestManager_ForwardStatelessAdvisory_NilClientNoOp
+--- PASS: TestManager_ForwardStatelessAdvisory_NilClientNoOp (0.00s)
+=== RUN   TestManager_ForwardStatelessAdvisory_FailingClientSwallowed
+--- PASS: TestManager_ForwardStatelessAdvisory_FailingClientSwallowed (0.00s)
+=== RUN   TestManager_HostIdentity_NilByDefault
+--- PASS: TestManager_HostIdentity_NilByDefault (0.00s)
+=== RUN   TestBringUpScanCheck
+=== RUN   TestBringUpScanCheck/missing_sidecar_returns_CodeScanCritical
+=== RUN   TestBringUpScanCheck/malformed_JSON_returns_CodeScanCritical
+=== RUN   TestBringUpScanCheck/missing_findings_returns_CodeScanCritical
+=== RUN   TestBringUpScanCheck/incomplete_fix-available_findings_returns_CodeScanCritical
+=== RUN   TestBringUpScanCheck/fail-closed_placeholder_(CRITICAL=9999)_returns_CodeScanCritical
+=== RUN   TestBringUpScanCheck/CRITICAL=1_returns_CodeScanCritical
+=== RUN   TestBringUpScanCheck/unfixed_CRITICAL_findings_are_admitted
+=== RUN   TestBringUpScanCheck/fix-available_CRITICAL=1_returns_CodeScanCritical
+=== RUN   TestBringUpScanCheck/all-zero_findings_is_admitted
+=== RUN   TestBringUpScanCheck/high-severity_only_is_admitted_(CRITICAL==0)
+--- PASS: TestBringUpScanCheck (0.00s)
+    --- PASS: TestBringUpScanCheck/missing_sidecar_returns_CodeScanCritical (0.00s)
+    --- PASS: TestBringUpScanCheck/malformed_JSON_returns_CodeScanCritical (0.00s)
+    --- PASS: TestBringUpScanCheck/missing_findings_returns_CodeScanCritical (0.00s)
+    --- PASS: TestBringUpScanCheck/incomplete_fix-available_findings_returns_CodeScanCritical (0.00s)
+    --- PASS: TestBringUpScanCheck/fail-closed_placeholder_(CRITICAL=9999)_returns_CodeScanCritical (0.00s)
+    --- PASS: TestBringUpScanCheck/CRITICAL=1_returns_CodeScanCritical (0.00s)
+    --- PASS: TestBringUpScanCheck/unfixed_CRITICAL_findings_are_admitted (0.00s)
+    --- PASS: TestBringUpScanCheck/fix-available_CRITICAL=1_returns_CodeScanCritical (0.00s)
+    --- PASS: TestBringUpScanCheck/all-zero_findings_is_admitted (0.00s)
+    --- PASS: TestBringUpScanCheck/high-severity_only_is_admitted_(CRITICAL==0) (0.00s)
+=== RUN   TestBringUpScanCheck_NilStorageIsNoop
+--- PASS: TestBringUpScanCheck_NilStorageIsNoop (0.00s)
+=== RUN   TestBringUpScanCheck_GetErrorSurfacesAsProblem
+--- PASS: TestBringUpScanCheck_GetErrorSurfacesAsProblem (0.00s)
+=== RUN   TestBringUpScanCheck_RefreshesStaleRuntimeBaseGeneration
+--- PASS: TestBringUpScanCheck_RefreshesStaleRuntimeBaseGeneration (0.00s)
+=== RUN   TestBringUpScanCheck_RejectsMismatchedScanGeneration
+--- PASS: TestBringUpScanCheck_RejectsMismatchedScanGeneration (0.00s)
+=== RUN   TestBringUpScanCheck_WaitsForGenerationCommitBeforeRefreshingBase
+--- PASS: TestBringUpScanCheck_WaitsForGenerationCommitBeforeRefreshingBase (0.00s)
+=== RUN   TestScanKeyForBaseKeyFormat
+--- PASS: TestScanKeyForBaseKeyFormat (0.00s)
+=== RUN   TestCoverageSliceManagerSetters
+--- PASS: TestCoverageSliceManagerSetters (0.00s)
+=== RUN   TestCoverageSliceLivenessRegistry
+--- PASS: TestCoverageSliceLivenessRegistry (0.00s)
+=== RUN   TestCoverageSliceManagerGetters
+--- PASS: TestCoverageSliceManagerGetters (0.00s)
+=== RUN   TestWakeBuilderRestoreSkipsAppReadiness
+--- PASS: TestWakeBuilderRestoreSkipsAppReadiness (0.00s)
+=== RUN   TestWakeKeepPausedLeavesWarmRestorePaused
+--- PASS: TestWakeKeepPausedLeavesWarmRestorePaused (0.00s)
+=== RUN   TestWakeColdBoot_DoesNotInvokeResumeHook
+--- PASS: TestWakeColdBoot_DoesNotInvokeResumeHook (0.00s)
+=== RUN   TestWakeRejectsEmptyPlan
+--- PASS: TestWakeRejectsEmptyPlan (0.00s)
+=== RUN   TestWakeRejectsUnknownPlan
+--- PASS: TestWakeRejectsUnknownPlan (0.00s)
+=== RUN   TestWakeRestore_InvokesResumeHook
+--- PASS: TestWakeRestore_InvokesResumeHook (0.00s)
+=== RUN   TestWakeRestore_ResumeHookErrorFallsBackToColdBoot
+--- PASS: TestWakeRestore_ResumeHookErrorFallsBackToColdBoot (0.00s)
+=== RUN   TestColdBootSuccessTracksInstance
+--- PASS: TestColdBootSuccessTracksInstance (0.00s)
+=== RUN   TestWakeWithNetworkReadyRunsHookBeforeRestore
+--- PASS: TestWakeWithNetworkReadyRunsHookBeforeRestore (0.00s)
+=== RUN   TestColdBootSuccessStampsInstancePort
+--- PASS: TestColdBootSuccessStampsInstancePort (0.00s)
+=== RUN   TestColdBootSuccessStampsInstanceHealthcheckPath
+--- PASS: TestColdBootSuccessStampsInstanceHealthcheckPath (0.00s)
+=== RUN   TestColdBootForwardsGRPCHealthcheckToVMM
+--- PASS: TestColdBootForwardsGRPCHealthcheckToVMM (0.00s)
+=== RUN   TestColdBootSuccessStampsInstanceDeploymentID
+--- PASS: TestColdBootSuccessStampsInstanceDeploymentID (0.00s)
+=== RUN   TestColdBootEmptyHealthcheckPathIsEmpty
+--- PASS: TestColdBootEmptyHealthcheckPathIsEmpty (0.00s)
+=== RUN   TestColdBootNetworkFailureLeaksNothing
+--- PASS: TestColdBootNetworkFailureLeaksNothing (0.00s)
+=== RUN   TestColdBootVMFailureLeaksNothing
+--- PASS: TestColdBootVMFailureLeaksNothing (0.00s)
+=== RUN   TestDestroyReleasesResources
+--- PASS: TestDestroyReleasesResources (0.00s)
+=== RUN   TestDestroyCancelsLivenessLoop
+--- PASS: TestDestroyCancelsLivenessLoop (0.00s)
+=== RUN   TestLivenessLoopUsesInstanceRuntimePort
+--- PASS: TestLivenessLoopUsesInstanceRuntimePort (0.00s)
+=== RUN   TestLivenessLoopMergesGRPCProbeOverride
+--- PASS: TestLivenessLoopMergesGRPCProbeOverride (0.00s)
+=== RUN   TestParkCancelsLivenessLoop
+--- PASS: TestParkCancelsLivenessLoop (0.00s)
+=== RUN   TestDestroyUnknownIsNoop
+--- PASS: TestDestroyUnknownIsNoop (0.00s)
+=== RUN   TestConcurrentBootAndDestroyNoLeak
+--- PASS: TestConcurrentBootAndDestroyNoLeak (0.07s)
+=== RUN   TestRestoreFailsThenColdBootSucceeds
+--- PASS: TestRestoreFailsThenColdBootSucceeds (0.00s)
+=== RUN   TestWakeRejectsEgressAllowlist_v6Accepted
+--- PASS: TestWakeRejectsEgressAllowlist_v6Accepted (0.00s)
+=== RUN   TestWakeRejectsEgressAllowlist_ZeroBitsClosed
+--- PASS: TestWakeRejectsEgressAllowlist_ZeroBitsClosed (0.00s)
+=== RUN   TestWakeRejectsEgressAllowlist_V6SlashZeroClosed
+--- PASS: TestWakeRejectsEgressAllowlist_V6SlashZeroClosed (0.00s)
+=== RUN   TestRestoreSucceedsUsesFastPath
+--- PASS: TestRestoreSucceedsUsesFastPath (0.00s)
+=== RUN   TestColdBootConfigInvalid
+=== RUN   TestColdBootConfigInvalid/missing_base
+=== RUN   TestColdBootConfigInvalid/missing_layer
+=== RUN   TestColdBootConfigInvalid/zero_vcpu
+=== RUN   TestColdBootConfigInvalid/zero_mem
+--- PASS: TestColdBootConfigInvalid (0.00s)
+    --- PASS: TestColdBootConfigInvalid/missing_base (0.00s)
+    --- PASS: TestColdBootConfigInvalid/missing_layer (0.00s)
+    --- PASS: TestColdBootConfigInvalid/zero_vcpu (0.00s)
+    --- PASS: TestColdBootConfigInvalid/zero_mem (0.00s)
+=== RUN   TestColdBootVMFailureExhaustsCleanup
+--- PASS: TestColdBootVMFailureExhaustsCleanup (0.00s)
+=== RUN   TestParkUnknownInstanceReturnsError
+--- PASS: TestParkUnknownInstanceReturnsError (0.00s)
+=== RUN   TestInstanceDeploymentIDAndAppID_KnownInstanceReturnsBoth
+--- PASS: TestInstanceDeploymentIDAndAppID_KnownInstanceReturnsBoth (0.00s)
+=== RUN   TestInstanceDeploymentIDAndAppID_EmptyDeploymentIDForLegacy
+--- PASS: TestInstanceDeploymentIDAndAppID_EmptyDeploymentIDForLegacy (0.00s)
+=== RUN   TestInstanceDeploymentIDAndAppID_UnknownReturnsError
+--- PASS: TestInstanceDeploymentIDAndAppID_UnknownReturnsError (0.00s)
+=== RUN   TestParkSnapshotFailureDestroysInstance
+--- PASS: TestParkSnapshotFailureDestroysInstance (0.00s)
+=== RUN   TestSetupNetworkPropagatesFirstError
+--- PASS: TestSetupNetworkPropagatesFirstError (0.00s)
+=== RUN   TestAcquireFailureShortCircuitsWake
+--- PASS: TestAcquireFailureShortCircuitsWake (0.06s)
+=== RUN   TestLiveCountAndLeasedCountEmptyManager
+--- PASS: TestLiveCountAndLeasedCountEmptyManager (0.00s)
+=== RUN   TestCleanupKillErrorIsLogged
+--- PASS: TestCleanupKillErrorIsLogged (0.00s)
+=== RUN   TestCleanupTeardownCommandFailureIsDebug
+--- PASS: TestCleanupTeardownCommandFailureIsDebug (0.00s)
+=== RUN   TestCleanupReleaseErrorIsLogged
+--- PASS: TestCleanupReleaseErrorIsLogged (0.00s)
+=== RUN   TestDiscardWrite
+--- PASS: TestDiscardWrite (0.00s)
+=== RUN   TestSetupNetworkRunsNftBeforeVMBoot
+--- PASS: TestSetupNetworkRunsNftBeforeVMBoot (0.00s)
+=== RUN   TestSetupNetworkDNATsStableHostPortToDeploymentPort
+--- PASS: TestSetupNetworkDNATsStableHostPortToDeploymentPort (0.00s)
+=== RUN   TestRunNftCommandsUsesSingleAtomicBatch
+--- PASS: TestRunNftCommandsUsesSingleAtomicBatch (0.00s)
+=== RUN   TestSetupNetworkNftFailureLeaksNothing
+--- PASS: TestSetupNetworkNftFailureLeaksNothing (0.00s)
+=== RUN   TestSetupNetworkRecreatesObjectsBeforePolicy
+--- PASS: TestSetupNetworkRecreatesObjectsBeforePolicy (0.00s)
+=== RUN   TestSetupNetworkEmitsConntrackCapRule
+--- PASS: TestSetupNetworkEmitsConntrackCapRule (0.00s)
+=== RUN   TestSetupNetworkTcRateEqualsPlan
+--- PASS: TestSetupNetworkTcRateEqualsPlan (0.00s)
+=== RUN   TestSetupNetworkEgressZeroDisablesTc
+--- PASS: TestSetupNetworkEgressZeroDisablesTc (0.00s)
+=== RUN   TestWakeWritesMemoryMaxAfterBringUp
+=== RUN   TestWakeWritesMemoryMaxAfterBringUp/128MB
+=== RUN   TestWakeWritesMemoryMaxAfterBringUp/256MB
+=== RUN   TestWakeWritesMemoryMaxAfterBringUp/512MB
+=== RUN   TestWakeWritesMemoryMaxAfterBringUp/1024MB
+--- PASS: TestWakeWritesMemoryMaxAfterBringUp (0.01s)
+    --- PASS: TestWakeWritesMemoryMaxAfterBringUp/128MB (0.00s)
+    --- PASS: TestWakeWritesMemoryMaxAfterBringUp/256MB (0.00s)
+    --- PASS: TestWakeWritesMemoryMaxAfterBringUp/512MB (0.00s)
+    --- PASS: TestWakeWritesMemoryMaxAfterBringUp/1024MB (0.00s)
+=== RUN   TestWakeCgroupWriteFailureUnwindsNetns
+--- PASS: TestWakeCgroupWriteFailureUnwindsNetns (0.00s)
+=== RUN   TestWakePostBootCgroupFenceFailsClosed
+--- PASS: TestWakePostBootCgroupFenceFailsClosed (0.00s)
+=== RUN   TestUpdateEgressAllowlist_NoLiveInstancesIsNoop
+--- PASS: TestUpdateEgressAllowlist_NoLiveInstancesIsNoop (0.00s)
+=== RUN   TestUpdateEgressAllowlist_AppliesV4Patch
+--- PASS: TestUpdateEgressAllowlist_AppliesV4Patch (0.00s)
+=== RUN   TestUpdateEgressAllowlistRebuildsHostSMTPException
+--- PASS: TestUpdateEgressAllowlistRebuildsHostSMTPException (0.00s)
+=== RUN   TestUpdateEgressAllowlist_SameAllowlistNoOp
+--- PASS: TestUpdateEgressAllowlist_SameAllowlistNoOp (0.00s)
+=== RUN   TestUpdateEgressAllowlist_NftErrorReverts
+--- PASS: TestUpdateEgressAllowlist_NftErrorReverts (0.00s)
+=== RUN   TestUpdateEgressAllowlist_FansOutAcrossLiveInstances
+--- PASS: TestUpdateEgressAllowlist_FansOutAcrossLiveInstances (0.00s)
+=== RUN   TestUpdateEgressAllowlist_RejectsEmptyAppID
+--- PASS: TestUpdateEgressAllowlist_RejectsEmptyAppID (0.00s)
+=== RUN   TestCaptureAllowlistHandles
+--- PASS: TestCaptureAllowlistHandles (0.00s)
+=== RUN   TestCaptureAllowlistHandles_NilRunnerLeavesHandlesZero
+--- PASS: TestCaptureAllowlistHandles_NilRunnerLeavesHandlesZero (0.00s)
+=== RUN   TestCaptureAllowlistHandlesForWake_SkipsEmptyAllowlist
+--- PASS: TestCaptureAllowlistHandlesForWake_SkipsEmptyAllowlist (0.00s)
+=== RUN   TestCaptureAllowlistHandlesForWake_CapturesConfiguredAllowlist
+--- PASS: TestCaptureAllowlistHandlesForWake_CapturesConfiguredAllowlist (0.00s)
+=== RUN   TestCaptureAllowlistHandlesForWake_SkipsUnrepresentedFamily
+--- PASS: TestCaptureAllowlistHandlesForWake_SkipsUnrepresentedFamily (0.00s)
+=== RUN   TestUpdateEgressAllowlist_TwoPatchesInRow
+--- PASS: TestUpdateEgressAllowlist_TwoPatchesInRow (0.00s)
+=== RUN   TestUpdateEgressAllowlist_TwoPatchesInRow_WithCaptureRunner
+    manager_test.go:2751: patch 2 delete argv: ip netns exec fc-i-2pc nft delete rule ip faas forward handle 9
+    manager_test.go:2751: patch 2 delete argv: ip netns exec fc-i-2pc nft delete rule ip faas forward handle 100
+--- PASS: TestUpdateEgressAllowlist_TwoPatchesInRow_WithCaptureRunner (0.00s)
+=== RUN   TestUpdateEgressAllowlist_V6FailureLeavesV4Untouched
+--- PASS: TestUpdateEgressAllowlist_V6FailureLeavesV4Untouched (0.00s)
+=== RUN   TestManagerRestoreFallbackLogIncludesFCVersions
+--- PASS: TestManagerRestoreFallbackLogIncludesFCVersions (0.00s)
+=== RUN   TestManagerVersionMismatchSkipsFallbackLog
+--- PASS: TestManagerVersionMismatchSkipsFallbackLog (0.00s)
+=== RUN   TestMarkInstanceFrameworkReady
+--- PASS: TestMarkInstanceFrameworkReady (0.00s)
+=== RUN   TestMarkInstanceFrameworkReady_UnknownInstance
+--- PASS: TestMarkInstanceFrameworkReady_UnknownInstance (0.00s)
+=== RUN   TestMarkInstanceTailTerminal
+--- PASS: TestMarkInstanceTailTerminal (0.00s)
+=== RUN   TestMarkInstanceTailTerminal_FloorsAtZero
+--- PASS: TestMarkInstanceTailTerminal_FloorsAtZero (0.00s)
+=== RUN   TestMarkInstanceTailTerminal_UnknownInstance
+--- PASS: TestMarkInstanceTailTerminal_UnknownInstance (0.00s)
+=== RUN   TestMarkInstanceTailTerminal_NilStamperDoesNotPanic
+--- PASS: TestMarkInstanceTailTerminal_NilStamperDoesNotPanic (0.00s)
+=== RUN   TestInstanceByCID
+--- PASS: TestInstanceByCID (0.00s)
+=== RUN   TestInstanceByCID_UnknownCID
+--- PASS: TestInstanceByCID_UnknownCID (0.00s)
+=== RUN   TestWakeRejectsStaticEgressIP_NotV4
+--- PASS: TestWakeRejectsStaticEgressIP_NotV4 (0.00s)
+=== RUN   TestWakeRejectsStaticEgressIP_Reserved
+--- PASS: TestWakeRejectsStaticEgressIP_Reserved (0.00s)
+=== RUN   TestWakeRejectsStaticEgressIP_Malformed
+--- PASS: TestWakeRejectsStaticEgressIP_Malformed (0.00s)
+=== RUN   TestUpdateStaticEgressIP_NoLiveInstancesIsNoop
+--- PASS: TestUpdateStaticEgressIP_NoLiveInstancesIsNoop (0.00s)
+=== RUN   TestUpdateStaticEgressIP_RejectsEmptyAppID
+--- PASS: TestUpdateStaticEgressIP_RejectsEmptyAppID (0.00s)
+=== RUN   TestUpdateStaticEgressIP_RejectsReservedIP
+--- PASS: TestUpdateStaticEgressIP_RejectsReservedIP (0.00s)
+=== RUN   TestUpdateStaticEgressIP_BuildsHostPolicy
+--- PASS: TestUpdateStaticEgressIP_BuildsHostPolicy (0.00s)
+=== RUN   TestUpdateStaticEgressIP_ClearPathRemovesHostRule
+--- PASS: TestUpdateStaticEgressIP_ClearPathRemovesHostRule (0.00s)
+=== RUN   TestUpdateStaticEgressIP_SameIPNoOp
+--- PASS: TestUpdateStaticEgressIP_SameIPNoOp (0.00s)
+=== RUN   TestManager_ReportWorkloadOOM_CallsRelay
+--- PASS: TestManager_ReportWorkloadOOM_CallsRelay (0.00s)
+=== RUN   TestManager_ReportWorkloadOOM_NilRelayNoOp
+--- PASS: TestManager_ReportWorkloadOOM_NilRelayNoOp (0.00s)
+=== RUN   TestNewDashboardGaugesRegistersAllFour
+--- PASS: TestNewDashboardGaugesRegistersAllFour (0.00s)
+=== RUN   TestDashboardGaugesFleetAvgAndP95
+--- PASS: TestDashboardGaugesFleetAvgAndP95 (0.00s)
+=== RUN   TestDashboardGaugesResidentPct
+--- PASS: TestDashboardGaugesResidentPct (0.00s)
+=== RUN   TestDashboardGaugesSourceErrorKeepsPriorValue
+--- PASS: TestDashboardGaugesSourceErrorKeepsPriorValue (0.00s)
+=== RUN   TestDashboardGaugesCacheTTSuppressesRefreshes
+--- PASS: TestDashboardGaugesCacheTTSuppressesRefreshes (0.00s)
+=== RUN   TestDefaultLvFcUsedPctEmptyName
+--- PASS: TestDefaultLvFcUsedPctEmptyName (0.00s)
+=== RUN   TestColdBootMetricsRegistersAndIncrements
+--- PASS: TestColdBootMetricsRegistersAndIncrements (0.00s)
+=== RUN   TestColdBootMetricsNilSafe
+--- PASS: TestColdBootMetricsNilSafe (0.00s)
+=== RUN   TestPrepareJailHelperStagesSharedCopyBeforeFirstWake
+--- PASS: TestPrepareJailHelperStagesSharedCopyBeforeFirstWake (0.06s)
+=== RUN   TestResolveMountHelperReleaseCompatibility
+=== RUN   TestResolveMountHelperReleaseCompatibility/older_bundle
+=== RUN   TestResolveMountHelperReleaseCompatibility/bundled_helper
+=== RUN   TestResolveMountHelperReleaseCompatibility/broken_helper_permissions
+=== RUN   TestResolveMountHelperReleaseCompatibility/directory_is_not_a_helper
+--- PASS: TestResolveMountHelperReleaseCompatibility (0.00s)
+    --- PASS: TestResolveMountHelperReleaseCompatibility/older_bundle (0.00s)
+    --- PASS: TestResolveMountHelperReleaseCompatibility/bundled_helper (0.00s)
+    --- PASS: TestResolveMountHelperReleaseCompatibility/broken_helper_permissions (0.00s)
+    --- PASS: TestResolveMountHelperReleaseCompatibility/directory_is_not_a_helper (0.00s)
+=== RUN   TestMetalIPSetupBatch
+    network_batch_metal_test.go:25: set FAAS_TEST_NETWORK_BATCH=1 in an isolated network/mount namespace
+--- SKIP: TestMetalIPSetupBatch (0.00s)
+=== RUN   TestIPSetupBatchPreservesNamespaceAndOrder
+--- PASS: TestIPSetupBatchPreservesNamespaceAndOrder (0.00s)
+=== RUN   TestIPSetupBatchFailureRollsBackWake
+--- PASS: TestIPSetupBatchFailureRollsBackWake (0.00s)
+=== RUN   TestIPSetupBatchKeepsUnusualArgumentsLiteral
+=== RUN   TestIPSetupBatchKeepsUnusualArgumentsLiteral/vh_link_del_br-tenants
+=== RUN   TestIPSetupBatchKeepsUnusualArgumentsLiteral/vh_name
+=== RUN   TestIPSetupBatchKeepsUnusualArgumentsLiteral/vh#comment
+=== RUN   TestIPSetupBatchKeepsUnusualArgumentsLiteral/vh\name
+=== RUN   TestIPSetupBatchKeepsUnusualArgumentsLiteral/vh"name
+=== RUN   TestIPSetupBatchKeepsUnusualArgumentsLiteral/vh'name
+=== RUN   TestIPSetupBatchKeepsUnusualArgumentsLiteral/vh\x00name
+--- PASS: TestIPSetupBatchKeepsUnusualArgumentsLiteral (0.00s)
+    --- PASS: TestIPSetupBatchKeepsUnusualArgumentsLiteral/vh_link_del_br-tenants (0.00s)
+    --- PASS: TestIPSetupBatchKeepsUnusualArgumentsLiteral/vh_name (0.00s)
+    --- PASS: TestIPSetupBatchKeepsUnusualArgumentsLiteral/vh#comment (0.00s)
+    --- PASS: TestIPSetupBatchKeepsUnusualArgumentsLiteral/vh\name (0.00s)
+    --- PASS: TestIPSetupBatchKeepsUnusualArgumentsLiteral/vh"name (0.00s)
+    --- PASS: TestIPSetupBatchKeepsUnusualArgumentsLiteral/vh'name (0.00s)
+    --- PASS: TestIPSetupBatchKeepsUnusualArgumentsLiteral/vh\x00name (0.00s)
+=== RUN   TestMetalFreshNetworkPolicy
+    network_fresh_metal_test.go:46: requires private mount/network namespaces and /run/netns
+--- SKIP: TestMetalFreshNetworkPolicy (0.00s)
+=== RUN   TestMetalReusedLeaseNeighbor
+    network_neighbor_metal_test.go:22: requires private mount/network namespaces and /run/netns
+--- SKIP: TestMetalReusedLeaseNeighbor (0.00s)
+=== RUN   TestLifecycleChildDoesNotInheritSystemdNotifyEnvironment
+--- PASS: TestLifecycleChildDoesNotInheritSystemdNotifyEnvironment (0.00s)
+=== RUN   TestMetalParkDeadlineReleasesPausedVM
+    park_cleanup_metal_test.go:35: set FAAS_TEST_VMMD_HELPER with isolated network and jail mounts
+--- SKIP: TestMetalParkDeadlineReleasesPausedVM (0.00s)
+=== RUN   TestParkDeadlineKillsPausedVMWithoutWaitingForExport
+--- PASS: TestParkDeadlineKillsPausedVMWithoutWaitingForExport (0.00s)
+=== RUN   TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures
+=== RUN   TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures/same_capture,_same_inputs
+=== RUN   TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures/rotated_secret
+=== RUN   TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures/changed_env
+=== RUN   TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures/different_resolver
+=== RUN   TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures/capture_this_vmmd_never_saw
+=== RUN   TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures/cold_boot_path
+--- PASS: TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures (0.01s)
+    --- PASS: TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures/same_capture,_same_inputs (0.00s)
+    --- PASS: TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures/rotated_secret (0.00s)
+    --- PASS: TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures/changed_env (0.00s)
+    --- PASS: TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures/different_resolver (0.00s)
+    --- PASS: TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures/capture_this_vmmd_never_saw (0.00s)
+    --- PASS: TestStagePreBootFilesUnless_SkipsOnlyKnownIdenticalCaptures/cold_boot_path (0.00s)
+=== RUN   TestPreBootLedger_ChainsThroughSkippedRestores
+--- PASS: TestPreBootLedger_ChainsThroughSkippedRestores (0.00s)
+=== RUN   TestPreBootLedger_OnlyV2CapturesOfKnownInstances
+--- PASS: TestPreBootLedger_OnlyV2CapturesOfKnownInstances (0.00s)
+=== RUN   TestPreBootLedger_Bounded
+--- PASS: TestPreBootLedger_Bounded (0.01s)
+=== RUN   TestPreBootFileWriters_DigestCoversEveryInput
+--- PASS: TestPreBootFileWriters_DigestCoversEveryInput (0.00s)
+=== RUN   TestStagePreBootFilesUnless_LearnsCaptureAfterRestart
+--- PASS: TestStagePreBootFilesUnless_LearnsCaptureAfterRestart (0.00s)
+=== RUN   TestStagePreBootFilesUnless_DoesNotLearnFromADriveWithoutTheFiles
+--- PASS: TestStagePreBootFilesUnless_DoesNotLearnFromADriveWithoutTheFiles (0.00s)
+=== RUN   TestStagePreBootFilesUnless_NonV2RestoresAlwaysWrite
+=== RUN   TestStagePreBootFilesUnless_NonV2RestoresAlwaysWrite/key=
+=== RUN   TestStagePreBootFilesUnless_NonV2RestoresAlwaysWrite/key=snap/dep-1/mem
+--- PASS: TestStagePreBootFilesUnless_NonV2RestoresAlwaysWrite (0.00s)
+    --- PASS: TestStagePreBootFilesUnless_NonV2RestoresAlwaysWrite/key= (0.00s)
+    --- PASS: TestStagePreBootFilesUnless_NonV2RestoresAlwaysWrite/key=snap/dep-1/mem (0.00s)
+=== RUN   TestPreBootLedger_LearnsOnlyV2Captures
+--- PASS: TestPreBootLedger_LearnsOnlyV2Captures (0.00s)
+=== RUN   TestPreBootFilesPresent_OnlyExactFiles
+=== RUN   TestPreBootFilesPresent_OnlyExactFiles/exactly_as_written
+=== RUN   TestPreBootFilesPresent_OnlyExactFiles/tenant_edited_a_file
+=== RUN   TestPreBootFilesPresent_OnlyExactFiles/same_length,_different_bytes
+=== RUN   TestPreBootFilesPresent_OnlyExactFiles/file_missing
+=== RUN   TestPreBootFilesPresent_OnlyExactFiles/loosened_mode
+=== RUN   TestPreBootFilesPresent_OnlyExactFiles/resolver_not_world-readable
+=== RUN   TestPreBootFilesPresent_OnlyExactFiles/file_is_a_directory
+=== RUN   TestPreBootFilesPresent_OnlyExactFiles/file_is_a_link_to_an_identical_file
+=== RUN   TestPreBootFilesPresent_OnlyExactFiles/directory_is_a_link_inside_the_mount
+=== RUN   TestPreBootFilesPresent_OnlyExactFiles/directory_is_a_link_out_of_the_mount
+--- PASS: TestPreBootFilesPresent_OnlyExactFiles (0.01s)
+    --- PASS: TestPreBootFilesPresent_OnlyExactFiles/exactly_as_written (0.00s)
+    --- PASS: TestPreBootFilesPresent_OnlyExactFiles/tenant_edited_a_file (0.00s)
+    --- PASS: TestPreBootFilesPresent_OnlyExactFiles/same_length,_different_bytes (0.00s)
+    --- PASS: TestPreBootFilesPresent_OnlyExactFiles/file_missing (0.00s)
+    --- PASS: TestPreBootFilesPresent_OnlyExactFiles/loosened_mode (0.00s)
+    --- PASS: TestPreBootFilesPresent_OnlyExactFiles/resolver_not_world-readable (0.00s)
+    --- PASS: TestPreBootFilesPresent_OnlyExactFiles/file_is_a_directory (0.00s)
+    --- PASS: TestPreBootFilesPresent_OnlyExactFiles/file_is_a_link_to_an_identical_file (0.00s)
+    --- PASS: TestPreBootFilesPresent_OnlyExactFiles/directory_is_a_link_inside_the_mount (0.00s)
+    --- PASS: TestPreBootFilesPresent_OnlyExactFiles/directory_is_a_link_out_of_the_mount (0.00s)
+=== RUN   TestPreBootFileWriters_WhatTheyWriteIsPresent
+=== RUN   TestPreBootFileWriters_WhatTheyWriteIsPresent/full_rootfs=false
+=== RUN   TestPreBootFileWriters_WhatTheyWriteIsPresent/full_rootfs=true
+--- PASS: TestPreBootFileWriters_WhatTheyWriteIsPresent (0.00s)
+    --- PASS: TestPreBootFileWriters_WhatTheyWriteIsPresent/full_rootfs=false (0.00s)
+    --- PASS: TestPreBootFileWriters_WhatTheyWriteIsPresent/full_rootfs=true (0.00s)
+=== RUN   TestStagePreBootFiles_SingleMountSession
+--- PASS: TestStagePreBootFiles_SingleMountSession (0.00s)
+=== RUN   TestStagePreBootFiles_NothingToWrite_NoMount
+--- PASS: TestStagePreBootFiles_NothingToWrite_NoMount (0.00s)
+=== RUN   TestStagePreBootFiles_ValidationBeforeMount
+=== RUN   TestStagePreBootFiles_ValidationBeforeMount/public_resolver_ip_rejected
+=== RUN   TestStagePreBootFiles_ValidationBeforeMount/invalid_sidecar_name_rejected
+--- PASS: TestStagePreBootFiles_ValidationBeforeMount (0.00s)
+    --- PASS: TestStagePreBootFiles_ValidationBeforeMount/public_resolver_ip_rejected (0.00s)
+    --- PASS: TestStagePreBootFiles_ValidationBeforeMount/invalid_sidecar_name_rejected (0.00s)
+=== RUN   TestStagePreBootFiles_WriteErrorNamesOperation
+--- PASS: TestStagePreBootFiles_WriteErrorNamesOperation (0.00s)
+=== RUN   TestPublicStageMethods_StillMountIndividually
+--- PASS: TestPublicStageMethods_StillMountIndividually (0.00s)
+=== RUN   TestPreBootWritesNeverLeaveTheDrive
+=== RUN   TestPreBootWritesNeverLeaveTheDrive/env.json_is_a_symlink_to_a_host_file
+=== RUN   TestPreBootWritesNeverLeaveTheDrive/secrets.env_is_a_symlink_to_a_host_file
+=== RUN   TestPreBootWritesNeverLeaveTheDrive/etc/faas_is_a_symlink_to_a_host_directory
+=== RUN   TestPreBootWritesNeverLeaveTheDrive/workload_env_directory_is_a_symlink_to_a_host_directory
+=== RUN   TestPreBootWritesNeverLeaveTheDrive/etc_is_a_symlink_to_a_host_directory_for_the_resolver
+=== RUN   TestPreBootWritesNeverLeaveTheDrive/full-rootfs_marker_is_reached_through_a_symlinked_etc
+--- PASS: TestPreBootWritesNeverLeaveTheDrive (0.00s)
+    --- PASS: TestPreBootWritesNeverLeaveTheDrive/env.json_is_a_symlink_to_a_host_file (0.00s)
+    --- PASS: TestPreBootWritesNeverLeaveTheDrive/secrets.env_is_a_symlink_to_a_host_file (0.00s)
+    --- PASS: TestPreBootWritesNeverLeaveTheDrive/etc/faas_is_a_symlink_to_a_host_directory (0.00s)
+    --- PASS: TestPreBootWritesNeverLeaveTheDrive/workload_env_directory_is_a_symlink_to_a_host_directory (0.00s)
+    --- PASS: TestPreBootWritesNeverLeaveTheDrive/etc_is_a_symlink_to_a_host_directory_for_the_resolver (0.00s)
+    --- PASS: TestPreBootWritesNeverLeaveTheDrive/full-rootfs_marker_is_reached_through_a_symlinked_etc (0.00s)
+=== RUN   TestPreBootWriteReplacesInDriveSymlink
+--- PASS: TestPreBootWriteReplacesInDriveSymlink (0.00s)
+=== RUN   TestReadBuildDoneRefusesLinksAndOversize
+=== RUN   TestReadBuildDoneRefusesLinksAndOversize/regular_manifest
+=== RUN   TestReadBuildDoneRefusesLinksAndOversize/symlink_to_a_host_file
+=== RUN   TestReadBuildDoneRefusesLinksAndOversize/symlink_to_an_endless_device
+=== RUN   TestReadBuildDoneRefusesLinksAndOversize/parent_directory_links_to_the_host
+=== RUN   TestReadBuildDoneRefusesLinksAndOversize/oversize_manifest
+--- PASS: TestReadBuildDoneRefusesLinksAndOversize (0.01s)
+    --- PASS: TestReadBuildDoneRefusesLinksAndOversize/regular_manifest (0.00s)
+    --- PASS: TestReadBuildDoneRefusesLinksAndOversize/symlink_to_a_host_file (0.00s)
+    --- PASS: TestReadBuildDoneRefusesLinksAndOversize/symlink_to_an_endless_device (0.00s)
+    --- PASS: TestReadBuildDoneRefusesLinksAndOversize/parent_directory_links_to_the_host (0.00s)
+    --- PASS: TestReadBuildDoneRefusesLinksAndOversize/oversize_manifest (0.01s)
+=== RUN   TestBuildOutDirRefusesSymlinkedComponents
+--- PASS: TestBuildOutDirRefusesSymlinkedComponents (0.00s)
+=== RUN   TestCopyTreeDropsLinksAndSpecialFiles
+--- PASS: TestCopyTreeDropsLinksAndSpecialFiles (0.00s)
+=== RUN   TestMetalPreparedBridgeMAC
+    prepared_network_metal_test.go:19: requires private network namespace
+--- SKIP: TestMetalPreparedBridgeMAC (0.00s)
+=== RUN   TestMetalPreparedNetworkOwnership
+    prepared_network_metal_test.go:50: requires private mount and network namespaces
+--- SKIP: TestMetalPreparedNetworkOwnership (0.00s)
+=== RUN   TestMetalPreparedNetworkRestoreTiming
+    prepared_network_restore_metal_test.go:29: requires isolated mount/network namespaces and jail
+--- SKIP: TestMetalPreparedNetworkRestoreTiming (0.00s)
+=== RUN   TestMetalPreparedNetworkServesCustomGuestPort
+mke2fs 1.47.0 (5-Feb-2023)
+mke2fs 1.47.0 (5-Feb-2023)
+2026/10/01 21:03:02 INFO resume hook timing instance=prefetch-metal connect_ms=9 write_ms=0 ack_ms=35 attempts=1
+    prepared_network_restore_metal_test.go:165: prepared restore 0 on guest port 3000: setup_network_ms=11
+2026/10/01 21:03:03 INFO resume hook timing instance=prefetch-metal connect_ms=8 write_ms=0 ack_ms=38 attempts=1
+    prepared_network_restore_metal_test.go:165: prepared restore 1 on guest port 3000: setup_network_ms=19
+2026/10/01 21:03:03 INFO resume hook timing instance=prefetch-metal connect_ms=8 write_ms=0 ack_ms=34 attempts=1
+    prepared_network_restore_metal_test.go:165: prepared restore 2 on guest port 3000: setup_network_ms=10
+2026/10/01 21:03:03 INFO resume hook timing instance=prefetch-metal connect_ms=10 write_ms=0 ack_ms=35 attempts=1
+    prepared_network_restore_metal_test.go:165: rebuilt restore 0 on guest port 3000: setup_network_ms=84
+2026/10/01 21:03:04 INFO resume hook timing instance=prefetch-metal connect_ms=16 write_ms=0 ack_ms=35 attempts=1
+    prepared_network_restore_metal_test.go:165: rebuilt restore 1 on guest port 3000: setup_network_ms=70
+2026/10/01 21:03:04 INFO resume hook timing instance=prefetch-metal connect_ms=16 write_ms=0 ack_ms=29 attempts=1
+    prepared_network_restore_metal_test.go:165: rebuilt restore 2 on guest port 3000: setup_network_ms=71
+--- PASS: TestMetalPreparedNetworkServesCustomGuestPort (5.89s)
+=== RUN   TestPreparedNetworkClaimsAreUniqueAndNotAdmission
+--- PASS: TestPreparedNetworkClaimsAreUniqueAndNotAdmission (0.00s)
+=== RUN   TestPreparedNetworkDuplicateInstanceKeepsOriginalLease
+--- PASS: TestPreparedNetworkDuplicateInstanceKeepsOriginalLease (0.00s)
+=== RUN   TestPreparedNetworkPolicyAndExpiry
+--- PASS: TestPreparedNetworkPolicyAndExpiry (0.01s)
+=== RUN   TestPreparedNetworkRefreshesOldSpareBeforeHardExpiry
+--- PASS: TestPreparedNetworkRefreshesOldSpareBeforeHardExpiry (0.01s)
+=== RUN   TestPreparedNetworkChangedConfigRebuildsPolicy
+--- PASS: TestPreparedNetworkChangedConfigRebuildsPolicy (0.00s)
+=== RUN   TestPreparedNetworkDefaultPortMatches
+=== RUN   TestPreparedNetworkDefaultPortMatches/0-to-0
+=== RUN   TestPreparedNetworkDefaultPortMatches/0-to-8080
+=== RUN   TestPreparedNetworkDefaultPortMatches/8080-to-0
+=== RUN   TestPreparedNetworkDefaultPortMatches/8080-to-8080
+--- PASS: TestPreparedNetworkDefaultPortMatches (0.01s)
+    --- PASS: TestPreparedNetworkDefaultPortMatches/0-to-0 (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortMatches/0-to-8080 (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortMatches/8080-to-0 (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortMatches/8080-to-8080 (0.00s)
+=== RUN   TestPreparedNetworkWakeKeepsNetworkForAnyPort
+=== RUN   TestPreparedNetworkWakeKeepsNetworkForAnyPort/0
+=== RUN   TestPreparedNetworkWakeKeepsNetworkForAnyPort/8080
+=== RUN   TestPreparedNetworkWakeKeepsNetworkForAnyPort/3000
+=== RUN   TestPreparedNetworkWakeKeepsNetworkForAnyPort/8000
+--- PASS: TestPreparedNetworkWakeKeepsNetworkForAnyPort (0.01s)
+    --- PASS: TestPreparedNetworkWakeKeepsNetworkForAnyPort/0 (0.00s)
+    --- PASS: TestPreparedNetworkWakeKeepsNetworkForAnyPort/8080 (0.00s)
+    --- PASS: TestPreparedNetworkWakeKeepsNetworkForAnyPort/3000 (0.00s)
+    --- PASS: TestPreparedNetworkWakeKeepsNetworkForAnyPort/8000 (0.00s)
+=== RUN   TestPreparedNetworkRetargetsGuestPortInOneTransaction
+--- PASS: TestPreparedNetworkRetargetsGuestPortInOneTransaction (0.00s)
+=== RUN   TestPreparedNetworkRetargetFailureRebuilds
+--- PASS: TestPreparedNetworkRetargetFailureRebuilds (0.00s)
+=== RUN   TestPreparedNetworkRetargetOnlyForPort
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/custom_port
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/max_port
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/negative_port
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/overflow_port
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/port_and_instance
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/port_and_tap_owner
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/port_and_egress_rate
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/port_and_conntrack_cap
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/port_and_allowlist
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/port_and_private_network
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/port_and_egress_circuit
+--- PASS: TestPreparedNetworkRetargetOnlyForPort (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/custom_port (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/max_port (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/negative_port (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/overflow_port (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/port_and_instance (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/port_and_tap_owner (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/port_and_egress_rate (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/port_and_conntrack_cap (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/port_and_allowlist (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/port_and_private_network (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/port_and_egress_circuit (0.00s)
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/custom_port
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/negative_port
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/overflow_port
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/instance
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/namespace
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/tap_owner
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/host_ip
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/bridge
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/egress_rate
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/conntrack_cap
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/egress_allowlist
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/private_network
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/operator_exceptions
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/egress_circuit
+--- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/custom_port (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/negative_port (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/overflow_port (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/instance (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/namespace (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/tap_owner (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/host_ip (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/bridge (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/egress_rate (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/conntrack_cap (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/egress_allowlist (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/private_network (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/operator_exceptions (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/egress_circuit (0.00s)
+=== RUN   TestPreparedNetworkClaimFailureFallsBack
+--- PASS: TestPreparedNetworkClaimFailureFallsBack (0.00s)
+=== RUN   TestPreparedNetworkTeardownFailureRetainsSlot
+--- PASS: TestPreparedNetworkTeardownFailureRetainsSlot (0.00s)
+=== RUN   TestPreparedNetworkShutdownDrainsWorker
+--- PASS: TestPreparedNetworkShutdownDrainsWorker (0.00s)
+=== RUN   TestReconcilePrivateNetworkFabricIsIdempotent
+--- PASS: TestReconcilePrivateNetworkFabricIsIdempotent (0.00s)
+=== RUN   TestReconcilePrivateNetworkFabricAddsTransportOnceAndTearsItDownFirst
+--- PASS: TestReconcilePrivateNetworkFabricAddsTransportOnceAndTearsItDownFirst (0.00s)
+=== RUN   TestReconcilePrivateNetworkFabricWithPeersRefreshesFDB
+--- PASS: TestReconcilePrivateNetworkFabricWithPeersRefreshesFDB (0.00s)
+=== RUN   TestReconcilePrivateNetworkFabricWithEmptyPeersFlushesAfterRestart
+--- PASS: TestReconcilePrivateNetworkFabricWithEmptyPeersFlushesAfterRestart (0.00s)
+=== RUN   TestRemovePrivateNetworkFabricIsReplaySafeWithCaptureRunner
+--- PASS: TestRemovePrivateNetworkFabricIsReplaySafeWithCaptureRunner (0.00s)
+=== RUN   TestCheckPrivateNetworkFabricReportsReadyTransport
+--- PASS: TestCheckPrivateNetworkFabricReportsReadyTransport (0.00s)
+=== RUN   TestCheckPrivateNetworkFabricReportsFDBDrift
+--- PASS: TestCheckPrivateNetworkFabricReportsFDBDrift (0.00s)
+=== RUN   TestReadinessProbeConfigDefaultsAndOverrides
+--- PASS: TestReadinessProbeConfigDefaultsAndOverrides (0.00s)
+=== RUN   TestManagerOwnsReadinessLoopLifecycle
+--- PASS: TestManagerOwnsReadinessLoopLifecycle (0.00s)
+=== RUN   TestReadinessProbeConfigRejectsMalformedPolicy
+--- PASS: TestReadinessProbeConfigRejectsMalformedPolicy (0.00s)
+=== RUN   TestReapOrphanedJails_SparesInstancesTheSchedulerCallsLive
+--- PASS: TestReapOrphanedJails_SparesInstancesTheSchedulerCallsLive (0.01s)
+=== RUN   TestReapOrphanedJails_LivenessErrorSkips
+--- PASS: TestReapOrphanedJails_LivenessErrorSkips (0.01s)
+=== RUN   TestReapOrphanedJails_NilIsLiveRefuses
+--- PASS: TestReapOrphanedJails_NilIsLiveRefuses (0.00s)
+=== RUN   TestReapOrphanedJails_SkipsYoungChroots
+--- PASS: TestReapOrphanedJails_SkipsYoungChroots (0.01s)
+=== RUN   TestReapOrphanedJails_IgnoresNonInstanceEntries
+--- PASS: TestReapOrphanedJails_IgnoresNonInstanceEntries (0.01s)
+=== RUN   TestReapOrphanedJails_MissingJailRootIsNotAnError
+--- PASS: TestReapOrphanedJails_MissingJailRootIsNotAnError (0.00s)
+=== RUN   TestReapOrphanedJails_ReapsProcessWithoutChroot
+--- PASS: TestReapOrphanedJails_ReapsProcessWithoutChroot (0.00s)
+=== RUN   TestReapOrphanedJails_SparesLiveProcessWithoutChroot
+--- PASS: TestReapOrphanedJails_SparesLiveProcessWithoutChroot (0.00s)
+=== RUN   TestReapOrphanedJails_SkipsYoungProcessWithoutChroot
+--- PASS: TestReapOrphanedJails_SkipsYoungProcessWithoutChroot (0.00s)
+=== RUN   TestReapOrphanedLayerClones_UsesDurableLivenessGate
+--- PASS: TestReapOrphanedLayerClones_UsesDurableLivenessGate (0.00s)
+=== RUN   TestReapOrphanedLayerClones_RefusesUngatedSweep
+--- PASS: TestReapOrphanedLayerClones_RefusesUngatedSweep (0.00s)
+=== RUN   TestFindFirecrackerPID_MatchesArgumentPairNotSubstring
+--- PASS: TestFindFirecrackerPID_MatchesArgumentPairNotSubstring (0.00s)
+=== RUN   TestFindFirecrackerPID_AbsentProcess
+--- PASS: TestFindFirecrackerPID_AbsentProcess (0.00s)
+=== RUN   TestSlotFromUIDArg_RejectsOutOfRange
+--- PASS: TestSlotFromUIDArg_RejectsOutOfRange (0.00s)
+=== RUN   TestLooksLikeInstanceID
+--- PASS: TestLooksLikeInstanceID (0.00s)
+=== RUN   TestRestoreConcurrencyBlocksUntilSlotReleased
+--- PASS: TestRestoreConcurrencyBlocksUntilSlotReleased (0.03s)
+=== RUN   TestRestoreConcurrencyWaitHonorsContext
+--- PASS: TestRestoreConcurrencyWaitHonorsContext (0.00s)
+=== RUN   TestRestoreConcurrencyCanBeDisabled
+--- PASS: TestRestoreConcurrencyCanBeDisabled (0.00s)
+=== RUN   TestMetalOptimizedRestore
+    restore_optimization_metal_test.go:25: set FAAS_TEST_VMMD_HELPER with isolated network, jail and current guest fixtures
+--- SKIP: TestMetalOptimizedRestore (0.00s)
+=== RUN   TestMetalRestoreSkipsUnchangedPreBootFiles
+mke2fs 1.47.0 (5-Feb-2023)
+mke2fs 1.47.0 (5-Feb-2023)
+--- PASS: TestMetalRestoreSkipsUnchangedPreBootFiles (5.06s)
+=== RUN   TestMetalRestoreLearnsReusedCaptureAfterRestart
+mke2fs 1.47.0 (5-Feb-2023)
+mke2fs 1.47.0 (5-Feb-2023)
+--- PASS: TestMetalRestoreLearnsReusedCaptureAfterRestart (4.11s)
+=== RUN   TestMetalPreBootSkipBench
+    restore_preboot_metal_test.go:94: set FAAS_PREBOOT_SKIP_BENCH_CYCLES to run the pre-boot skip A/B
+--- SKIP: TestMetalPreBootSkipBench (0.00s)
+=== RUN   TestParseMapsLine
+--- PASS: TestParseMapsLine (0.00s)
+=== RUN   TestTouchedPages
+--- PASS: TestTouchedPages (0.00s)
+=== RUN   TestTouchedFileRangesOwnMapping
+--- PASS: TestTouchedFileRangesOwnMapping (0.02s)
+=== RUN   TestAdviseWillNeedCoversWholeRanges
+--- PASS: TestAdviseWillNeedCoversWholeRanges (0.07s)
+=== RUN   TestRecordRestoreWorkingSet
+--- PASS: TestRecordRestoreWorkingSet (0.01s)
+=== RUN   TestMetalRestorePrefetchRecordsAndWarms
+mke2fs 1.47.0 (5-Feb-2023)
+mke2fs 1.47.0 (5-Feb-2023)
+--- PASS: TestMetalRestorePrefetchRecordsAndWarms (5.13s)
+=== RUN   TestMetalRestorePrefetchBench
+    restore_prefetch_metal_test.go:264: set FAAS_RESTORE_PREFETCH_BENCH_CYCLES to run the prefetch A/B
+--- SKIP: TestMetalRestorePrefetchBench (0.00s)
+=== RUN   TestSnapshotPrefetchFamily
+--- PASS: TestSnapshotPrefetchFamily (0.00s)
+=== RUN   TestCoalesceFileRanges
+=== RUN   TestCoalesceFileRanges/adjacent_and_overlapping_merge,_unsorted_input
+=== RUN   TestCoalesceFileRanges/gap_below_threshold_merges
+=== RUN   TestCoalesceFileRanges/range_cap_widens_the_gap
+=== RUN   TestCoalesceFileRanges/byte_cap_truncates
+=== RUN   TestCoalesceFileRanges/empty_and_zero-length_input
+--- PASS: TestCoalesceFileRanges (0.00s)
+    --- PASS: TestCoalesceFileRanges/adjacent_and_overlapping_merge,_unsorted_input (0.00s)
+    --- PASS: TestCoalesceFileRanges/gap_below_threshold_merges (0.00s)
+    --- PASS: TestCoalesceFileRanges/range_cap_widens_the_gap (0.00s)
+    --- PASS: TestCoalesceFileRanges/byte_cap_truncates (0.00s)
+    --- PASS: TestCoalesceFileRanges/empty_and_zero-length_input (0.00s)
+=== RUN   TestRestorePrefetchStoreBounded
+--- PASS: TestRestorePrefetchStoreBounded (0.01s)
+=== RUN   TestPrefetchRestoreNoopWithoutSet
+--- PASS: TestPrefetchRestoreNoopWithoutSet (0.00s)
+=== RUN   TestManagerWakePrefetchesSnapshot
+--- PASS: TestManagerWakePrefetchesSnapshot (0.00s)
+=== RUN   TestPrefetchRestoreLocalSnapshot
+--- PASS: TestPrefetchRestoreLocalSnapshot (0.00s)
+=== RUN   TestResolveRestoreArtifactsParallelizesLocalMetadata
+--- PASS: TestResolveRestoreArtifactsParallelizesLocalMetadata (0.10s)
+=== RUN   TestResolveRestoreArtifactsKeepsRemoteMaterializationSequential
+--- PASS: TestResolveRestoreArtifactsKeepsRemoteMaterializationSequential (0.12s)
+=== RUN   TestResolveColdBootArtifactAttributesMaterializedBytes
+--- PASS: TestResolveColdBootArtifactAttributesMaterializedBytes (0.01s)
+=== RUN   TestResolveRestoreBlobAttributesMaterializedFetch
+--- PASS: TestResolveRestoreBlobAttributesMaterializedFetch (0.06s)
+=== RUN   TestResolveRestoreBlobUsesHostPathWithoutStorageKey
+--- PASS: TestResolveRestoreBlobUsesHostPathWithoutStorageKey (0.00s)
+=== RUN   TestObserveRestoreArtifactsRecordsPerSourceSeries
+--- PASS: TestObserveRestoreArtifactsRecordsPerSourceSeries (0.00s)
+=== RUN   TestMetalRestoreTimingBench
+    restore_timing_bench_metal_test.go:51: set FAAS_RESTORE_BENCH_CYCLES=N to run the restore timing harness
+--- SKIP: TestMetalRestoreTimingBench (0.00s)
+=== RUN   TestResumeTransportRetry
+=== RUN   TestResumeTransportRetry/eof_then_ack
+=== RUN   TestResumeTransportRetry/reset_then_ack
+=== RUN   TestResumeTransportRetry/persistent_reset_fails_closed
+=== RUN   TestResumeTransportRetry/nack_stays_terminal
+--- PASS: TestResumeTransportRetry (0.04s)
+    --- PASS: TestResumeTransportRetry/eof_then_ack (0.01s)
+    --- PASS: TestResumeTransportRetry/reset_then_ack (0.01s)
+    --- PASS: TestResumeTransportRetry/persistent_reset_fails_closed (0.02s)
+    --- PASS: TestResumeTransportRetry/nack_stays_terminal (0.00s)
+=== RUN   TestTriggerResumeHookReconnectsAfterLostAck
+--- PASS: TestTriggerResumeHookReconnectsAfterLostAck (0.01s)
+=== RUN   TestMetalSecretsEnvReachesGuest
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:03:20.680Z level=INFO msg="wake: characterization report" instance=m5-secrets observed_class=http observed_port=8080 exit=-1 port_norm_mode=none
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:03:20.680Z level=INFO msg="wake ok" wake_id="" instance=m5-secrets method=cold_boot uid=20000 host_ip=10.100.0.2 setup_network_ms=72 scan_check_ms=0 restore_ms=0 cold_boot_ms=856 restore_prefetch_bytes=0 total_ms=984 lease_acquire_ms=0 env_prepare_ms=3 pre_network_ms=0 setup_network_ms=72 bring_up_ms=856 post_bring_up_ms=51 host_policy_ms=0
+
+    manager_function_wake_metal_test.go:162: time=2026-10-01T21:03:20.747Z level=INFO msg=destroyed instance=m5-secrets exit_code=0
+
+--- PASS: TestMetalSecretsEnvReachesGuest (1.06s)
+=== RUN   TestWake_EmptySealedEnv_NoStageCall
+--- PASS: TestWake_EmptySealedEnv_NoStageCall (0.00s)
+=== RUN   TestWake_StageRoundTrip_UnsealsBeforeWrite
+--- PASS: TestWake_StageRoundTrip_UnsealsBeforeWrite (0.01s)
+=== RUN   TestWake_SidecarEnv_UnsealsIntoInstanceLayer
+--- PASS: TestWake_SidecarEnv_UnsealsIntoInstanceLayer (0.01s)
+=== RUN   TestWake_SidecarEnv_NoHostIdentity
+--- PASS: TestWake_SidecarEnv_NoHostIdentity (0.00s)
+=== RUN   TestWake_SidecarAppSecrets_NoHostIdentity
+--- PASS: TestWake_SidecarAppSecrets_NoHostIdentity (0.00s)
+=== RUN   TestWake_MultipleEntries_MergedIntoEnvelope
+--- PASS: TestWake_MultipleEntries_MergedIntoEnvelope (0.01s)
+=== RUN   TestWake_NoHostIdentity_RefusesSealedEnv
+--- PASS: TestWake_NoHostIdentity_RefusesSealedEnv (0.00s)
+=== RUN   TestWake_TamperedCiphertext_FailsOpen
+--- PASS: TestWake_TamperedCiphertext_FailsOpen (0.01s)
+=== RUN   TestUnsealRuntimeSecretsBindsCiphertextToAuthorizedKey
+--- PASS: TestUnsealRuntimeSecretsBindsCiphertextToAuthorizedKey (0.01s)
+=== RUN   TestWake_StageErr_FailsWakeAndCleansUp
+--- PASS: TestWake_StageErr_FailsWakeAndCleansUp (0.01s)
+=== RUN   TestPreBootStagesServiceProxyCAOnlyForNetworkedGuests
+--- PASS: TestPreBootStagesServiceProxyCAOnlyForNetworkedGuests (0.00s)
+=== RUN   TestWriteServiceProxyCAConfinedAndGuestReadable
+--- PASS: TestWriteServiceProxyCAConfinedAndGuestReadable (0.00s)
+=== RUN   TestMetalSidecarBoot
+mke2fs 1.47.0 (5-Feb-2023)
+--- PASS: TestMetalSidecarBoot (1.04s)
+=== RUN   TestMetalSidecarPortReachable
+mke2fs 1.47.0 (5-Feb-2023)
+--- PASS: TestMetalSidecarPortReachable (1.11s)
+=== RUN   TestMetalTwoSidecarsColdBoot
+mke2fs 1.47.0 (5-Feb-2023)
+mke2fs 1.47.0 (5-Feb-2023)
+--- PASS: TestMetalTwoSidecarsColdBoot (1.16s)
+=== RUN   TestMetalSidecarOOMIsolation
+mke2fs 1.47.0 (5-Feb-2023)
+    sidecar_metal_test.go:518: sidecar response completed (no OOM triggered; check fixture size > cgroup)
+--- PASS: TestMetalSidecarOOMIsolation (1.76s)
+=== RUN   TestFreezeSnapshotDriveUsesPrivateBackingAtPauseBoundary
+--- PASS: TestFreezeSnapshotDriveUsesPrivateBackingAtPauseBoundary (0.00s)
+=== RUN   TestMetalSnapshotMemoryHeadroom
+    snapshot_memory_headroom_metal_test.go:38: set FAAS_TEST_RESTORE_ACCEPTANCE_DIR and current guest fixtures for memory acceptance
+--- SKIP: TestMetalSnapshotMemoryHeadroom (0.00s)
+=== RUN   TestMetalSnapshotPublicationFailurePreservesPrevious
+    snapshot_publication_metal_test.go:38: requires isolated metal fixture and helper
+--- SKIP: TestMetalSnapshotPublicationFailurePreservesPrevious (0.00s)
+=== RUN   TestFailedCaptureCleanupSurvivesCancellationAndPreservesLegacy
+=== RUN   TestFailedCaptureCleanupSurvivesCancellationAndPreservesLegacy/snap/dep/mem
+=== RUN   TestFailedCaptureCleanupSurvivesCancellationAndPreservesLegacy/snap/dep/captures/failed/v2/mem
+--- PASS: TestFailedCaptureCleanupSurvivesCancellationAndPreservesLegacy (0.00s)
+    --- PASS: TestFailedCaptureCleanupSurvivesCancellationAndPreservesLegacy/snap/dep/mem (0.00s)
+    --- PASS: TestFailedCaptureCleanupSurvivesCancellationAndPreservesLegacy/snap/dep/captures/failed/v2/mem (0.00s)
+=== RUN   TestAllocatedBytesOrLogicalCountsSparseBlocks
+--- PASS: TestAllocatedBytesOrLogicalCountsSparseBlocks (0.00s)
+=== RUN   TestAllocatedBytesOrLogicalFallsBackWhenPathMissing
+--- PASS: TestAllocatedBytesOrLogicalFallsBackWhenPathMissing (0.00s)
+=== RUN   TestSnapshotUsable
+=== RUN   TestSnapshotUsable/nil_is_never_usable
+=== RUN   TestSnapshotUsable/match
+=== RUN   TestSnapshotUsable/version_mismatch_(ADR-005)
+=== RUN   TestSnapshotUsable/stale
+=== RUN   TestSnapshotUsable/missing_storage_key
+=== RUN   TestSnapshotUsable/missing_vmstate
+=== RUN   TestSnapshotUsable/vmstate_via_storage_key
+=== RUN   TestSnapshotUsable/vmstate_via_both_locators
+--- PASS: TestSnapshotUsable (0.00s)
+    --- PASS: TestSnapshotUsable/nil_is_never_usable (0.00s)
+    --- PASS: TestSnapshotUsable/match (0.00s)
+    --- PASS: TestSnapshotUsable/version_mismatch_(ADR-005) (0.00s)
+    --- PASS: TestSnapshotUsable/stale (0.00s)
+    --- PASS: TestSnapshotUsable/missing_storage_key (0.00s)
+    --- PASS: TestSnapshotUsable/missing_vmstate (0.00s)
+    --- PASS: TestSnapshotUsable/vmstate_via_storage_key (0.00s)
+    --- PASS: TestSnapshotUsable/vmstate_via_both_locators (0.00s)
+=== RUN   TestPlanWake
+--- PASS: TestPlanWake (0.00s)
+=== RUN   TestWakeMethodString
+--- PASS: TestWakeMethodString (0.00s)
+=== RUN   TestFAASBaseImageVersion_Pinned
+--- PASS: TestFAASBaseImageVersion_Pinned (0.00s)
+=== RUN   TestFAASBaseImageVersion_NotEqualToFCVersion
+--- PASS: TestFAASBaseImageVersion_NotEqualToFCVersion (0.00s)
+=== RUN   TestStagedDrivePath_OptimizedArtifactUsesUpper
+--- PASS: TestStagedDrivePath_OptimizedArtifactUsesUpper (0.00s)
+=== RUN   TestStagedDrivePath_FullRootfsUsesRoot
+--- PASS: TestStagedDrivePath_FullRootfsUsesRoot (0.00s)
+=== RUN   TestStagedDrivePath_RejectsInvalidMarker
+--- PASS: TestStagedDrivePath_RejectsInvalidMarker (0.00s)
+=== RUN   TestStagedDrivePath_RejectsMarkerSymlink
+--- PASS: TestStagedDrivePath_RejectsMarkerSymlink (0.00s)
+=== RUN   TestMetal_StatelessAdvisory_EndToEnd
+    stateless_advisory_metal_test.go:100: requires the cmd/vmmd stateless-advisory DGRAM receiver acceptance harness
+--- SKIP: TestMetal_StatelessAdvisory_EndToEnd (0.00s)
+=== RUN   TestForwardStatelessAdvisory_AppendsRow
+--- PASS: TestForwardStatelessAdvisory_AppendsRow (0.00s)
+=== RUN   TestForwardStatelessAdvisory_NilClientNoPanic
+--- PASS: TestForwardStatelessAdvisory_NilClientNoPanic (0.00s)
+=== RUN   TestForwardStatelessAdvisory_EmptyBatchNoEmit
+--- PASS: TestForwardStatelessAdvisory_EmptyBatchNoEmit (0.00s)
+=== RUN   TestForwardStatelessAdvisory_ClientErrorSwallowed
+--- PASS: TestForwardStatelessAdvisory_ClientErrorSwallowed (0.00s)
+=== RUN   TestMetal_TailEndToEnd
+--- PASS: TestMetal_TailEndToEnd (1.03s)
+=== RUN   TestMetalTail_KeepsWakeRunning
+--- PASS: TestMetalTail_KeepsWakeRunning (2.03s)
+=== RUN   TestMetal_TailFullEndToEnd
+    tail_metal_linux_test.go:438: 0x04 DGRAM wire-format validated: type=0x04 outcome=1 elapsed_ms=1500 (16 bytes); vsock send to VMADDR_CID_HOST:1027 succeeded
+--- PASS: TestMetal_TailFullEndToEnd (0.00s)
+=== RUN   TestApplyTenantEgressPolicyPerPlan
+--- PASS: TestApplyTenantEgressPolicyPerPlan (0.00s)
+=== RUN   TestWakeRendersTenantEgressPolicy
+--- PASS: TestWakeRendersTenantEgressPolicy (0.00s)
+=== RUN   TestTenantEgressPortsFiltersForbidden
+--- PASS: TestTenantEgressPortsFiltersForbidden (0.00s)
+=== RUN   TestTenantEgressPortsCappedByPlan
+--- PASS: TestTenantEgressPortsCappedByPlan (0.00s)
+=== RUN   TestWakeRendersDeclaredEgressPorts
+--- PASS: TestWakeRendersDeclaredEgressPorts (0.00s)
+=== RUN   TestUpdateEgressPortsPatchesLiveInstances
+--- PASS: TestUpdateEgressPortsPatchesLiveInstances (0.00s)
+=== RUN   TestPreparedNetworkRetargetCoversEgressPorts
+=== RUN   TestPreparedNetworkRetargetCoversEgressPorts/ports_only
+=== RUN   TestPreparedNetworkRetargetCoversEgressPorts/ports_and_app_port
+=== RUN   TestPreparedNetworkRetargetCoversEgressPorts/app_port_only
+=== RUN   TestPreparedNetworkRetargetCoversEgressPorts/ports_and_rate_differ
+--- PASS: TestPreparedNetworkRetargetCoversEgressPorts (0.00s)
+    --- PASS: TestPreparedNetworkRetargetCoversEgressPorts/ports_only (0.00s)
+    --- PASS: TestPreparedNetworkRetargetCoversEgressPorts/ports_and_app_port (0.00s)
+    --- PASS: TestPreparedNetworkRetargetCoversEgressPorts/app_port_only (0.00s)
+    --- PASS: TestPreparedNetworkRetargetCoversEgressPorts/ports_and_rate_differ (0.00s)
+=== RUN   TestManagerEgressFanoutCarriesPlanCeiling
+--- PASS: TestManagerEgressFanoutCarriesPlanCeiling (0.00s)
+=== RUN   TestBootJobAppliesTenantEgressPolicy
+--- PASS: TestBootJobAppliesTenantEgressPolicy (0.00s)
+=== RUN   TestMetalLifecycle_StartupFail
+mke2fs 1.47.0 (5-Feb-2023)
+--- PASS: TestMetalLifecycle_StartupFail (10.56s)
+=== RUN   TestMetalLifecycle_OOM
+mke2fs 1.47.0 (5-Feb-2023)
+--- PASS: TestMetalLifecycle_OOM (30.59s)
+=== RUN   TestMetalLifecycle_CleanExit_Job
+mke2fs 1.47.0 (5-Feb-2023)
+--- PASS: TestMetalLifecycle_CleanExit_Job (30.64s)
+=== RUN   TestTraceparentFromContext_EmptyOnNoSpan
+--- PASS: TestTraceparentFromContext_EmptyOnNoSpan (0.00s)
+=== RUN   TestTraceparentFromContext_OnValidSpan
+--- PASS: TestTraceparentFromContext_OnValidSpan (0.00s)
+=== RUN   TestJailerVMM_ChrootPathHelpers
+--- PASS: TestJailerVMM_ChrootPathHelpers (0.00s)
+=== RUN   TestJailerVMM_RingRegister_LogRing_RoundTrip
+--- PASS: TestJailerVMM_RingRegister_LogRing_RoundTrip (0.00s)
+=== RUN   TestJailerVMM_RegisterRing_WiresSlowSubscriberCallback
+--- PASS: TestJailerVMM_RegisterRing_WiresSlowSubscriberCallback (0.00s)
+=== RUN   TestJailerVMM_RegisterRing_WiresLogEvictionCallback
+--- PASS: TestJailerVMM_RegisterRing_WiresLogEvictionCallback (0.00s)
+=== RUN   TestJailerVMM_UnregisterRing_Idempotent
+--- PASS: TestJailerVMM_UnregisterRing_Idempotent (0.00s)
+=== RUN   TestNewJailerVMM_DefaultReadyTimeout
+--- PASS: TestNewJailerVMM_DefaultReadyTimeout (0.00s)
+=== RUN   TestNewJailerVMM_ExplicitReadyTimeout
+--- PASS: TestNewJailerVMM_ExplicitReadyTimeout (0.00s)
+=== RUN   TestProjectedWorkloadManifestBytes_NilShape
+--- PASS: TestProjectedWorkloadManifestBytes_NilShape (0.00s)
+=== RUN   TestProjectedWorkloadManifestBytes_NameMultiplier
+--- PASS: TestProjectedWorkloadManifestBytes_NameMultiplier (0.00s)
+=== RUN   TestProjectedWorkloadManifestBytes_CmdAndEntrypoint
+--- PASS: TestProjectedWorkloadManifestBytes_CmdAndEntrypoint (0.00s)
+=== RUN   TestProjectedWorkloadRosterBytes_Empty
+--- PASS: TestProjectedWorkloadRosterBytes_Empty (0.00s)
+=== RUN   TestProjectedWorkloadRosterBytes_WithSidecars
+--- PASS: TestProjectedWorkloadRosterBytes_WithSidecars (0.00s)
+=== RUN   TestStableReadOnlyName_FaasSnapReturnsFallback
+--- PASS: TestStableReadOnlyName_FaasSnapReturnsFallback (0.00s)
+=== RUN   TestStableReadOnlyName_RegularReturnsBasename
+--- PASS: TestStableReadOnlyName_RegularReturnsBasename (0.00s)
+=== RUN   TestStableReadOnlyName_CacheObjectReturnsFallback
+--- PASS: TestStableReadOnlyName_CacheObjectReturnsFallback (0.00s)
+=== RUN   TestStableReadOnlyName_SimilarNonCachePathReturnsBasename
+--- PASS: TestStableReadOnlyName_SimilarNonCachePathReturnsBasename (0.00s)
+=== RUN   TestSidecarDriveImageName
+--- PASS: TestSidecarDriveImageName (0.00s)
+=== RUN   TestJailerVMM_ExportMax_ZeroUsesApiDefault
+--- PASS: TestJailerVMM_ExportMax_ZeroUsesApiDefault (0.00s)
+=== RUN   TestJailerVMM_ExportMax_ExplicitOverride
+--- PASS: TestJailerVMM_ExportMax_ExplicitOverride (0.00s)
+=== RUN   TestJailerVMM_DestroyWaitFor_NoExportDir
+--- PASS: TestJailerVMM_DestroyWaitFor_NoExportDir (0.00s)
+=== RUN   TestJailerVMM_DestroyWaitFor_WithExportAppliesBuilderMinimum
+--- PASS: TestJailerVMM_DestroyWaitFor_WithExportAppliesBuilderMinimum (0.00s)
+=== RUN   TestJailerVMM_DestroyWaitFor_ExplicitTimeoutBelowMinimumRaises
+--- PASS: TestJailerVMM_DestroyWaitFor_ExplicitTimeoutBelowMinimumRaises (0.00s)
+=== RUN   TestJailerVMM_DestroyWaitFor_HigherWaitPreserved
+--- PASS: TestJailerVMM_DestroyWaitFor_HigherWaitPreserved (0.00s)
+=== RUN   TestWaitReady_HealthcheckEmitsReadiness200
+--- PASS: TestWaitReady_HealthcheckEmitsReadiness200 (0.04s)
+=== RUN   TestEmitRestoreBreakdown_EmitsTimelineRow
+--- PASS: TestEmitRestoreBreakdown_EmitsTimelineRow (0.02s)
+=== RUN   TestEmitRestoreBreakdown_WithoutWakeIDDoesNotEmit
+--- PASS: TestEmitRestoreBreakdown_WithoutWakeIDDoesNotEmit (0.02s)
+=== RUN   TestEmitColdBootBreakdown_EmitsPreGuestAttribution
+--- PASS: TestEmitColdBootBreakdown_EmitsPreGuestAttribution (0.02s)
+=== RUN   TestEmitColdBootCPU_EmitsTimelineRow
+--- PASS: TestEmitColdBootCPU_EmitsTimelineRow (0.02s)
+=== RUN   TestMetalServiceReplicas_ConvergeAfterKill
+--- PASS: TestMetalServiceReplicas_ConvergeAfterKill (1.96s)
+=== RUN   TestSignalAndKillRace_CleanExit
+--- PASS: TestSignalAndKillRace_CleanExit (0.02s)
+=== RUN   TestSignalAndKillRace_GraceExpiresEscalates
+--- PASS: TestSignalAndKillRace_GraceExpiresEscalates (0.52s)
+=== RUN   TestSignalAndKillRace_ZeroSignalDefaultsToSIGTERM
+--- PASS: TestSignalAndKillRace_ZeroSignalDefaultsToSIGTERM (0.32s)
+=== RUN   TestSignalAndKillRace_CustomStopSignalUSR1
+--- PASS: TestSignalAndKillRace_CustomStopSignalUSR1 (0.02s)
+=== RUN   TestSignalAndKillRace_GraceZeroEscalatesImmediately
+--- PASS: TestSignalAndKillRace_GraceZeroEscalatesImmediately (0.10s)
+=== RUN   TestSignalAndKillRace_AlreadyExitedIsClean
+--- PASS: TestSignalAndKillRace_AlreadyExitedIsClean (0.10s)
+=== RUN   TestSignalAndKillRace_NoWatchdogEscalatesImmediately
+--- PASS: TestSignalAndKillRace_NoWatchdogEscalatesImmediately (0.00s)
+=== RUN   TestSignalAndKillRace_DestroyWaitBoundsPostKillWait
+--- PASS: TestSignalAndKillRace_DestroyWaitBoundsPostKillWait (0.12s)
+=== RUN   TestConsoleShowsGuestHaltedReadsTail
+--- PASS: TestConsoleShowsGuestHaltedReadsTail (0.00s)
+=== RUN   TestWriteConfigFIFOUsesCallerBurstDeadline
+--- PASS: TestWriteConfigFIFOUsesCallerBurstDeadline (0.08s)
+=== RUN   TestWriteConfigFIFOBoundsBackgroundCaller
+--- PASS: TestWriteConfigFIFOBoundsBackgroundCaller (0.03s)
+=== RUN   TestDestroyWaitForUsesConfiguredBuilderTimeout
+--- PASS: TestDestroyWaitForUsesConfiguredBuilderTimeout (0.00s)
+=== RUN   TestReadyTimeoutForUsesPerAppOverride
+=== RUN   TestReadyTimeoutForUsesPerAppOverride/legacy_default
+=== RUN   TestReadyTimeoutForUsesPerAppOverride/zero_preserves_default
+=== RUN   TestReadyTimeoutForUsesPerAppOverride/negative_preserves_default
+=== RUN   TestReadyTimeoutForUsesPerAppOverride/override
+--- PASS: TestReadyTimeoutForUsesPerAppOverride (0.00s)
+    --- PASS: TestReadyTimeoutForUsesPerAppOverride/legacy_default (0.00s)
+    --- PASS: TestReadyTimeoutForUsesPerAppOverride/zero_preserves_default (0.00s)
+    --- PASS: TestReadyTimeoutForUsesPerAppOverride/negative_preserves_default (0.00s)
+    --- PASS: TestReadyTimeoutForUsesPerAppOverride/override (0.00s)
+=== RUN   TestLayerCloneTempPatternCarriesDurableInstanceID
+--- PASS: TestLayerCloneTempPatternCarriesDurableInstanceID (0.00s)
+=== RUN   TestNotReadyProblemUsesPerAppTimeout
+--- PASS: TestNotReadyProblemUsesPerAppTimeout (0.00s)
+=== RUN   TestProvisionRewritesPathsIntoChroot
+--- PASS: TestProvisionRewritesPathsIntoChroot (0.00s)
+=== RUN   TestProvisionUsesStableNamesForCachedReadOnlyArtifacts
+--- PASS: TestProvisionUsesStableNamesForCachedReadOnlyArtifacts (0.00s)
+=== RUN   TestStageReadOnly_HardlinksAndWidensRead
+--- PASS: TestStageReadOnly_HardlinksAndWidensRead (0.00s)
+=== RUN   TestStageWritable_CopiesPrivateAndUnlinksFromSource
+--- PASS: TestStageWritable_CopiesPrivateAndUnlinksFromSource (0.00s)
+=== RUN   TestStageEphemeralWritableHardLinksSource
+--- PASS: TestStageEphemeralWritableHardLinksSource (0.00s)
+=== RUN   TestStageWritable_ReplacesHardlinkedSibling
+--- PASS: TestStageWritable_ReplacesHardlinkedSibling (0.00s)
+=== RUN   TestCopyFile
+--- PASS: TestCopyFile (0.00s)
+=== RUN   TestCopyTreeCopiesRealTreeAndDropsSymlinks
+--- PASS: TestCopyTreeCopiesRealTreeAndDropsSymlinks (0.00s)
+=== RUN   TestLinkInto_Hardlink
+--- PASS: TestLinkInto_Hardlink (0.00s)
+=== RUN   TestLinkInto_OverwritesExisting
+--- PASS: TestLinkInto_OverwritesExisting (0.00s)
+=== RUN   TestMoveOut_Rename
+--- PASS: TestMoveOut_Rename (0.00s)
+=== RUN   TestMoveOut_CrossDeviceFallback
+--- PASS: TestMoveOut_CrossDeviceFallback (0.00s)
+=== RUN   TestPrepareLocalSnapshotPathMakesNestedDirsGroupWritable
+--- PASS: TestPrepareLocalSnapshotPathMakesNestedDirsGroupWritable (0.00s)
+=== RUN   TestChrootRoot_AndSocketPath
+--- PASS: TestChrootRoot_AndSocketPath (0.00s)
+=== RUN   TestDetectFirecrackerVersion_MissingBinary
+--- PASS: TestDetectFirecrackerVersion_MissingBinary (0.00s)
+=== RUN   TestDetectFirecrackerVersion_WithStub
+    vmm_test.go:552: real firecracker present; stub test not needed
+--- SKIP: TestDetectFirecrackerVersion_WithStub (0.00s)
+=== RUN   TestAPICall_Success
+--- PASS: TestAPICall_Success (0.00s)
+=== RUN   TestAPICall_Non2xxReturnsFormattedError
+--- PASS: TestAPICall_Non2xxReturnsFormattedError (0.00s)
+=== RUN   TestAPICall_BadJSON
+--- PASS: TestAPICall_BadJSON (0.00s)
+=== RUN   TestAPICall_ConnectionFailure
+--- PASS: TestAPICall_ConnectionFailure (0.50s)
+=== RUN   TestAPICall_ContextCancellation
+--- PASS: TestAPICall_ContextCancellation (0.00s)
+=== RUN   TestFcClient_Caches
+--- PASS: TestFcClient_Caches (0.00s)
+=== RUN   TestCloseClient_DropsCached
+--- PASS: TestCloseClient_DropsCached (0.00s)
+=== RUN   TestAPICall_ResponseBodyCloseIsBestEffort
+--- PASS: TestAPICall_ResponseBodyCloseIsBestEffort (0.02s)
+=== RUN   TestAPICall_ErrorBodyTruncatedAt4KiB
+--- PASS: TestAPICall_ErrorBodyTruncatedAt4KiB (0.00s)
+=== RUN   TestKill_IdempotentWithoutProcess
+--- PASS: TestKill_IdempotentWithoutProcess (0.00s)
+=== RUN   TestKill_RemovesCachedClient
+--- PASS: TestKill_RemovesCachedClient (0.00s)
+=== RUN   TestMkChroot_CreatesDirectory
+--- PASS: TestMkChroot_CreatesDirectory (0.00s)
+=== RUN   TestMkChroot_BadBaseReturnsError
+--- PASS: TestMkChroot_BadBaseReturnsError (0.00s)
+=== RUN   TestWaitReady_SucceedsOnListener
+--- PASS: TestWaitReady_SucceedsOnListener (0.00s)
+=== RUN   TestWaitReady_TimesOut
+--- PASS: TestWaitReady_TimesOut (0.20s)
+=== RUN   TestWaitReady_ContextCanceled
+--- PASS: TestWaitReady_ContextCanceled (0.00s)
+=== RUN   TestHealthcheckProbe
+=== RUN   TestHealthcheckProbe/200_is_ready
+=== RUN   TestHealthcheckProbe/201_is_ready_(any_2xx)
+=== RUN   TestHealthcheckProbe/299_is_ready_(boundary)
+=== RUN   TestHealthcheckProbe/204_is_ready_(no_body)
+=== RUN   TestHealthcheckProbe/301_redirects_and_is_NOT_ready_(3xx_not_in_2xx)
+=== RUN   TestHealthcheckProbe/404_is_NOT_ready
+=== RUN   TestHealthcheckProbe/500_retries_(ADR-005:_transient_customer_error_must_not_wedge_wake)
+--- PASS: TestHealthcheckProbe (0.01s)
+    --- PASS: TestHealthcheckProbe/200_is_ready (0.00s)
+    --- PASS: TestHealthcheckProbe/201_is_ready_(any_2xx) (0.00s)
+    --- PASS: TestHealthcheckProbe/299_is_ready_(boundary) (0.00s)
+    --- PASS: TestHealthcheckProbe/204_is_ready_(no_body) (0.00s)
+    --- PASS: TestHealthcheckProbe/301_redirects_and_is_NOT_ready_(3xx_not_in_2xx) (0.00s)
+    --- PASS: TestHealthcheckProbe/404_is_NOT_ready (0.00s)
+    --- PASS: TestHealthcheckProbe/500_retries_(ADR-005:_transient_customer_error_must_not_wedge_wake) (0.00s)
+=== RUN   TestHealthcheckProbe_ContextCanceled
+--- PASS: TestHealthcheckProbe_ContextCanceled (0.00s)
+=== RUN   TestHealthcheckProbe_TransportError
+--- PASS: TestHealthcheckProbe_TransportError (0.10s)
+=== RUN   TestHealthcheckProbe_RequestShape
+=== RUN   TestHealthcheckProbe_RequestShape/plain_path
+=== RUN   TestHealthcheckProbe_RequestShape/nested_path
+=== RUN   TestHealthcheckProbe_RequestShape/path_with_query
+=== RUN   TestHealthcheckProbe_RequestShape/path_with_fragment_(stdlib_strips_fragment_before_send)
+--- PASS: TestHealthcheckProbe_RequestShape (0.01s)
+    --- PASS: TestHealthcheckProbe_RequestShape/plain_path (0.00s)
+    --- PASS: TestHealthcheckProbe_RequestShape/nested_path (0.00s)
+    --- PASS: TestHealthcheckProbe_RequestShape/path_with_query (0.00s)
+    --- PASS: TestHealthcheckProbe_RequestShape/path_with_fragment_(stdlib_strips_fragment_before_send) (0.00s)
+=== RUN   TestHealthcheckProbe_BodyDrained
+--- PASS: TestHealthcheckProbe_BodyDrained (0.00s)
+=== RUN   TestHealthcheckProbe_MalformedPath
+    vmm_test.go:1221: malformed path returned err=parse "http://127.0.0.1:42349healthz": invalid port ":42349healthz" after host (acceptable — caller treats as not-ready)
+--- PASS: TestHealthcheckProbe_MalformedPath (0.00s)
+=== RUN   TestWaitReadyHTTP_SucceedsRetriesAndTimesOut
+=== RUN   TestWaitReadyHTTP_SucceedsRetriesAndTimesOut/succeeds_on_200_within_budget
+=== RUN   TestWaitReadyHTTP_SucceedsRetriesAndTimesOut/retries_on_500_until_deadline
+=== RUN   TestWaitReadyHTTP_SucceedsRetriesAndTimesOut/ctx_cancel_short-circuits
+--- PASS: TestWaitReadyHTTP_SucceedsRetriesAndTimesOut (0.41s)
+    --- PASS: TestWaitReadyHTTP_SucceedsRetriesAndTimesOut/succeeds_on_200_within_budget (0.00s)
+    --- PASS: TestWaitReadyHTTP_SucceedsRetriesAndTimesOut/retries_on_500_until_deadline (0.40s)
+    --- PASS: TestWaitReadyHTTP_SucceedsRetriesAndTimesOut/ctx_cancel_short-circuits (0.00s)
+=== RUN   TestBoot_MkChrootFailure
+--- PASS: TestBoot_MkChrootFailure (0.00s)
+=== RUN   TestRestore_MkChrootFailure
+--- PASS: TestRestore_MkChrootFailure (0.00s)
+=== RUN   TestKill_ChrootRemoveErrorFailsWhenBaseIsFile
+--- PASS: TestKill_ChrootRemoveErrorFailsWhenBaseIsFile (0.00s)
+=== RUN   TestGuestVsockCIDSkipsReserved
+--- PASS: TestGuestVsockCIDSkipsReserved (0.00s)
+=== RUN   TestBuildColdBootConfigIncludesVsockDevice
+--- PASS: TestBuildColdBootConfigIncludesVsockDevice (0.00s)
+=== RUN   TestTriggerResumeHookDialSuccess
+--- PASS: TestTriggerResumeHookDialSuccess (0.00s)
+=== RUN   TestResumeHookBodyCapCoversEntropy
+--- PASS: TestResumeHookBodyCapCoversEntropy (0.00s)
+=== RUN   TestTriggerResumeHookDialTimeout
+--- PASS: TestTriggerResumeHookDialTimeout (5.00s)
+=== RUN   TestTriggerResumeHookAckPropagatesError
+--- PASS: TestTriggerResumeHookAckPropagatesError (0.00s)
+=== RUN   TestTriggerResumeHookAfterRestoreFailure
+--- PASS: TestTriggerResumeHookAfterRestoreFailure (0.00s)
+=== RUN   TestTriggerResumeHookContextCancel
+--- PASS: TestTriggerResumeHookContextCancel (0.00s)
+=== RUN   TestTriggerResumeHookGuardsRejectsBadInput
+=== RUN   TestTriggerResumeHookGuardsRejectsBadInput/nil_receiver
+=== RUN   TestTriggerResumeHookGuardsRejectsBadInput/empty_instance
+=== RUN   TestTriggerResumeHookGuardsRejectsBadInput/empty_chroot_base
+--- PASS: TestTriggerResumeHookGuardsRejectsBadInput (0.00s)
+    --- PASS: TestTriggerResumeHookGuardsRejectsBadInput/nil_receiver (0.00s)
+    --- PASS: TestTriggerResumeHookGuardsRejectsBadInput/empty_instance (0.00s)
+    --- PASS: TestTriggerResumeHookGuardsRejectsBadInput/empty_chroot_base (0.00s)
+=== RUN   TestBootAttachesVsockDeviceViaConfigFile
+--- PASS: TestBootAttachesVsockDeviceViaConfigFile (0.00s)
+=== RUN   TestRestore_MaterializesBaseViaStorage
+--- PASS: TestRestore_MaterializesBaseViaStorage (0.00s)
+=== RUN   TestRestore_MaterializesLayerViaStorage
+--- PASS: TestRestore_MaterializesLayerViaStorage (0.00s)
+=== RUN   TestRestoreMemSource_OCIUsesStorageKey
+--- PASS: TestRestoreMemSource_OCIUsesStorageKey (0.00s)
+=== RUN   TestBoot_MaterializesKernelViaStorage
+--- PASS: TestBoot_MaterializesKernelViaStorage (0.00s)
+=== RUN   TestIsConnRefusedErr
+=== RUN   TestIsConnRefusedErr/nil_is_not_refused
+=== RUN   TestIsConnRefusedErr/plain_refused_string
+=== RUN   TestIsConnRefusedErr/timeout_is_not_refused
+=== RUN   TestIsConnRefusedErr/host_unreachable_is_not_refused
+=== RUN   TestIsConnRefusedErr/network_unreachable_is_not_refused
+=== RUN   TestIsConnRefusedErr/unrelated_error_is_not_refused
+--- PASS: TestIsConnRefusedErr (0.00s)
+    --- PASS: TestIsConnRefusedErr/nil_is_not_refused (0.00s)
+    --- PASS: TestIsConnRefusedErr/plain_refused_string (0.00s)
+    --- PASS: TestIsConnRefusedErr/timeout_is_not_refused (0.00s)
+    --- PASS: TestIsConnRefusedErr/host_unreachable_is_not_refused (0.00s)
+    --- PASS: TestIsConnRefusedErr/network_unreachable_is_not_refused (0.00s)
+    --- PASS: TestIsConnRefusedErr/unrelated_error_is_not_refused (0.00s)
+=== RUN   TestNotReadyProblem_ConnRefusedLocksAppNotListening
+--- PASS: TestNotReadyProblem_ConnRefusedLocksAppNotListening (0.00s)
+=== RUN   TestHealthcheckNotReadyProblemDistinguishesGuestAndHandler
+--- PASS: TestHealthcheckNotReadyProblemDistinguishesGuestAndHandler (0.00s)
+=== RUN   TestWaitReady_AllConnRefusedReturnsAppNotListening
+--- PASS: TestWaitReady_AllConnRefusedReturnsAppNotListening (0.26s)
+=== RUN   TestMetalWorker_NotReapedAfterIdleWindow
+    vmm_worker_idle_metal_test.go:102: worker idle window: 1m30s (instance=worker-idle hostIP=10.100.0.2)
+--- PASS: TestMetalWorker_NotReapedAfterIdleWindow (90.98s)
+=== RUN   TestClassifyWakeError_Table
+=== RUN   TestClassifyWakeError_Table/direct_disk_full
+=== RUN   TestClassifyWakeError_Table/wrapped_disk_full
+=== RUN   TestClassifyWakeError_Table/wrapped_jailer_fail
+=== RUN   TestClassifyWakeError_Table/wrapped_netns_fail
+=== RUN   TestClassifyWakeError_Table/wrapped_cgroup_fail
+=== RUN   TestClassifyWakeError_Table/wrapped_vsock_fail
+=== RUN   TestClassifyWakeError_Table/wrapped_after_restore_failed
+=== RUN   TestClassifyWakeError_Table/after_restore_text_without_sentinel
+=== RUN   TestClassifyWakeError_Table/raw_ENOSPC
+=== RUN   TestClassifyWakeError_Table/raw_no_space_left
+=== RUN   TestClassifyWakeError_Table/wrapped_ENOSPC
+=== RUN   TestClassifyWakeError_Table/snapshot_fc_version_mismatch
+=== RUN   TestClassifyWakeError_Table/snapshot_fc_version_match
+=== RUN   TestClassifyWakeError_Table/snapshot_nil
+=== RUN   TestClassifyWakeError_Table/nil_err_default
+=== RUN   TestClassifyWakeError_Table/bare_bare_restore_failure
+=== RUN   TestClassifyWakeError_Table/bare_cold_boot_kernel
+--- PASS: TestClassifyWakeError_Table (0.00s)
+    --- PASS: TestClassifyWakeError_Table/direct_disk_full (0.00s)
+    --- PASS: TestClassifyWakeError_Table/wrapped_disk_full (0.00s)
+    --- PASS: TestClassifyWakeError_Table/wrapped_jailer_fail (0.00s)
+    --- PASS: TestClassifyWakeError_Table/wrapped_netns_fail (0.00s)
+    --- PASS: TestClassifyWakeError_Table/wrapped_cgroup_fail (0.00s)
+    --- PASS: TestClassifyWakeError_Table/wrapped_vsock_fail (0.00s)
+    --- PASS: TestClassifyWakeError_Table/wrapped_after_restore_failed (0.00s)
+    --- PASS: TestClassifyWakeError_Table/after_restore_text_without_sentinel (0.00s)
+    --- PASS: TestClassifyWakeError_Table/raw_ENOSPC (0.00s)
+    --- PASS: TestClassifyWakeError_Table/raw_no_space_left (0.00s)
+    --- PASS: TestClassifyWakeError_Table/wrapped_ENOSPC (0.00s)
+    --- PASS: TestClassifyWakeError_Table/snapshot_fc_version_mismatch (0.00s)
+    --- PASS: TestClassifyWakeError_Table/snapshot_fc_version_match (0.00s)
+    --- PASS: TestClassifyWakeError_Table/snapshot_nil (0.00s)
+    --- PASS: TestClassifyWakeError_Table/nil_err_default (0.00s)
+    --- PASS: TestClassifyWakeError_Table/bare_bare_restore_failure (0.00s)
+    --- PASS: TestClassifyWakeError_Table/bare_cold_boot_kernel (0.00s)
+=== RUN   TestClassifyWakeError_ClosedVocabulary
+--- PASS: TestClassifyWakeError_ClosedVocabulary (0.00s)
+=== RUN   TestClassifyWakeError_NeverEmpty
+--- PASS: TestClassifyWakeError_NeverEmpty (0.00s)
+=== RUN   TestWakePhases_PrepareTimings
+--- PASS: TestWakePhases_PrepareTimings (0.00s)
+=== RUN   TestWakePhases_PrepareTimings_NilSafe
+--- PASS: TestWakePhases_PrepareTimings_NilSafe (0.00s)
+=== RUN   TestRestoreBreakdown_SplitsPreBootFilesFromSnapshotStage
+--- PASS: TestRestoreBreakdown_SplitsPreBootFilesFromSnapshotStage (0.00s)
+=== RUN   TestWakeFailure_LogsPhaseBreakdown
+--- PASS: TestWakeFailure_LogsPhaseBreakdown (0.00s)
+=== RUN   TestWakeFast_DoesNotLogPhaseBreakdown
+--- PASS: TestWakeFast_DoesNotLogPhaseBreakdown (0.00s)
+=== RUN   TestSlowWakeThresholdBelowColdBootBudget
+--- PASS: TestSlowWakeThresholdBelowColdBootBudget (0.00s)
+=== RUN   TestWakePhases_AttrsShape
+--- PASS: TestWakePhases_AttrsShape (0.00s)
+=== RUN   TestWakePhases_NilSafe
+--- PASS: TestWakePhases_NilSafe (0.00s)
+=== RUN   TestCleanup_ReportsSurvivingNetnsAsLeak
+--- PASS: TestCleanup_ReportsSurvivingNetnsAsLeak (0.00s)
+=== RUN   TestWakeRestoresUsableSnapshot
+--- PASS: TestWakeRestoresUsableSnapshot (0.00s)
+=== RUN   TestWakeStaleSnapshotColdBoots
+--- PASS: TestWakeStaleSnapshotColdBoots (0.00s)
+=== RUN   TestWakeVersionMismatchColdBoots
+--- PASS: TestWakeVersionMismatchColdBoots (0.00s)
+=== RUN   TestWakeRestoreFailureFallsBackToColdBoot
+--- PASS: TestWakeRestoreFailureFallsBackToColdBoot (0.00s)
+=== RUN   TestWakeRestoreFallbackReasonOnlyForApplicationHook
+=== RUN   TestWakeRestoreFallbackReasonOnlyForApplicationHook/hook_failure
+=== RUN   TestWakeRestoreFallbackReasonOnlyForApplicationHook/other_restore_failure
+=== RUN   TestWakeRestoreFallbackReasonOnlyForApplicationHook/successful_restore
+=== RUN   TestWakeRestoreFallbackReasonOnlyForApplicationHook/planned_cold_boot
+--- PASS: TestWakeRestoreFallbackReasonOnlyForApplicationHook (0.02s)
+    --- PASS: TestWakeRestoreFallbackReasonOnlyForApplicationHook/hook_failure (0.00s)
+    --- PASS: TestWakeRestoreFallbackReasonOnlyForApplicationHook/other_restore_failure (0.01s)
+    --- PASS: TestWakeRestoreFallbackReasonOnlyForApplicationHook/successful_restore (0.00s)
+    --- PASS: TestWakeRestoreFallbackReasonOnlyForApplicationHook/planned_cold_boot (0.00s)
+=== RUN   TestWakeTotalFailureNoLeak
+--- PASS: TestWakeTotalFailureNoLeak (0.28s)
+=== RUN   TestParkSnapshotsAndReleases
+--- PASS: TestParkSnapshotsAndReleases (0.00s)
+=== RUN   TestParkSnapshotFailureDestroysAndReleases
+--- PASS: TestParkSnapshotFailureDestroysAndReleases (0.00s)
+=== RUN   TestParkUnknownInstanceErrors
+--- PASS: TestParkUnknownInstanceErrors (0.00s)
+=== RUN   TestWake_NoSidecars_NoManifestStage
+--- PASS: TestWake_NoSidecars_NoManifestStage (0.00s)
+=== RUN   TestWake_OneSidecar_StagesMainAndSidecar
+--- PASS: TestWake_OneSidecar_StagesMainAndSidecar (0.00s)
+=== RUN   TestWake_FiveHelpers_StagesInStabilityOrder
+--- PASS: TestWake_FiveHelpers_StagesInStabilityOrder (0.00s)
+=== RUN   TestWake_StageWorkloadErr_FailsWake
+--- PASS: TestWake_StageWorkloadErr_FailsWake (0.00s)
+=== RUN   TestWake_StageWorkload_WritesPerWorkloadCgroup
+--- PASS: TestWake_StageWorkload_WritesPerWorkloadCgroup (0.00s)
+=== RUN   TestWorkloadManifest_RoundTripsCmdEntry
+=== RUN   TestWorkloadManifest_RoundTripsCmdEntry/no_overrides
+=== RUN   TestWorkloadManifest_RoundTripsCmdEntry/cmd_only
+=== RUN   TestWorkloadManifest_RoundTripsCmdEntry/cpu_quota
+=== RUN   TestWorkloadManifest_RoundTripsCmdEntry/scratch_and_io_policy
+=== RUN   TestWorkloadManifest_RoundTripsCmdEntry/entrypoint_and_cmd
+=== RUN   TestWorkloadManifest_RoundTripsCmdEntry/explicit_secret_key_names
+--- PASS: TestWorkloadManifest_RoundTripsCmdEntry (0.00s)
+    --- PASS: TestWorkloadManifest_RoundTripsCmdEntry/no_overrides (0.00s)
+    --- PASS: TestWorkloadManifest_RoundTripsCmdEntry/cmd_only (0.00s)
+    --- PASS: TestWorkloadManifest_RoundTripsCmdEntry/cpu_quota (0.00s)
+    --- PASS: TestWorkloadManifest_RoundTripsCmdEntry/scratch_and_io_policy (0.00s)
+    --- PASS: TestWorkloadManifest_RoundTripsCmdEntry/entrypoint_and_cmd (0.00s)
+    --- PASS: TestWorkloadManifest_RoundTripsCmdEntry/explicit_secret_key_names (0.00s)
+=== RUN   TestProjectedWorkloadManifestBytes_AccountsForCmdEntry
+--- PASS: TestProjectedWorkloadManifestBytes_AccountsForCmdEntry (0.00s)
+=== RUN   TestMetalBuilderAcceptance
+    builder_acceptance_metal_test.go:52: run make test-metal-builder on the native KVM acceptance host
+--- SKIP: TestMetalBuilderAcceptance (0.00s)
+=== RUN   TestAcceptanceScanPolicyFromEnv
+=== RUN   TestAcceptanceScanPolicyFromEnv/defaults_to_fixed_high_findings
+=== RUN   TestAcceptanceScanPolicyFromEnv/accepts_explicit_policy
+=== RUN   TestAcceptanceScanPolicyFromEnv/invalid_severity
+=== RUN   TestAcceptanceScanPolicyFromEnv/invalid_boolean
+--- PASS: TestAcceptanceScanPolicyFromEnv (0.00s)
+    --- PASS: TestAcceptanceScanPolicyFromEnv/defaults_to_fixed_high_findings (0.00s)
+    --- PASS: TestAcceptanceScanPolicyFromEnv/accepts_explicit_policy (0.00s)
+    --- PASS: TestAcceptanceScanPolicyFromEnv/invalid_severity (0.00s)
+    --- PASS: TestAcceptanceScanPolicyFromEnv/invalid_boolean (0.00s)
+=== RUN   TestAcceptanceScanPolicyViolations
+=== RUN   TestAcceptanceScanPolicyViolations/fixed_high_matches_image_publishing_policy
+=== RUN   TestAcceptanceScanPolicyViolations/critical_threshold_excludes_high
+=== RUN   TestAcceptanceScanPolicyViolations/all_findings_includes_unfixed
+--- PASS: TestAcceptanceScanPolicyViolations (0.00s)
+    --- PASS: TestAcceptanceScanPolicyViolations/fixed_high_matches_image_publishing_policy (0.00s)
+    --- PASS: TestAcceptanceScanPolicyViolations/critical_threshold_excludes_high (0.00s)
+    --- PASS: TestAcceptanceScanPolicyViolations/all_findings_includes_unfixed (0.00s)
+=== RUN   TestWakeFailure_HookSites_AppSplit
+--- PASS: TestWakeFailure_HookSites_AppSplit (0.27s)
+=== RUN   TestWakeFailure_HookSites_OverflowCollapsesPerApp
+--- PASS: TestWakeFailure_HookSites_OverflowCollapsesPerApp (0.32s)
+=== RUN   TestWakeFailure_HookSites_AllReasonsPresent
+--- PASS: TestWakeFailure_HookSites_AllReasonsPresent (0.26s)
+=== CONT  TestBuildColdBootConfig_LegacyPath_Mega4
+=== CONT  TestPerInstanceScope_Mega4
+--- PASS: TestBuildColdBootConfig_LegacyPath_Mega4 (0.00s)
+=== CONT  TestJailerVMM_ExportAndDestroyWait_Mega4
+--- PASS: TestPerInstanceScope_Mega4 (0.00s)
+=== CONT  TestJailerVMM_RingLifecycle_Mega4
+--- PASS: TestJailerVMM_ExportAndDestroyWait_Mega4 (0.00s)
+=== CONT  TestJailerVMM_Setters_Mega4
+=== CONT  TestNewJailerVMM_Defaults_Mega4
+=== CONT  TestNewJailerVMM_ExplicitTimeout_Mega4
+--- PASS: TestJailerVMM_RingLifecycle_Mega4 (0.00s)
+--- PASS: TestJailerVMM_Setters_Mega4 (0.00s)
+--- PASS: TestNewJailerVMM_Defaults_Mega4 (0.00s)
+--- PASS: TestNewJailerVMM_ExplicitTimeout_Mega4 (0.00s)
+=== CONT  TestResolveFCChrootName_Fallback_Mega4
+=== CONT  TestJailerVMM_PathBuilders_Mega4
+--- PASS: TestResolveFCChrootName_Fallback_Mega4 (0.00s)
+=== CONT  TestJailerCommand_Mega4
+--- PASS: TestJailerVMM_PathBuilders_Mega4 (0.00s)
+=== RUN   TestJailerCommand_Mega4/empty_plan_uses_kernel_default_100
+=== CONT  TestGuestVsockCID_Mega4
+=== PAUSE TestJailerCommand_Mega4/empty_plan_uses_kernel_default_100
+=== RUN   TestJailerCommand_Mega4/plan-derived_weight
+=== CONT  TestParentCgroupFor_Mega4
+=== PAUSE TestJailerCommand_Mega4/plan-derived_weight
+=== RUN   TestJailerCommand_Mega4/builder_overrides_plan_and_weight
+=== CONT  TestColdBootSpecValidate_Mega4
+=== PAUSE TestJailerCommand_Mega4/builder_overrides_plan_and_weight
+--- PASS: TestGuestVsockCID_Mega4 (0.00s)
+=== RUN   TestJailerCommand_Mega4/memory.max_only_when_set
+--- PASS: TestParentCgroupFor_Mega4 (0.00s)
+=== PAUSE TestJailerCommand_Mega4/memory.max_only_when_set
+=== RUN   TestColdBootSpecValidate_Mega4/empty_kernel
+=== RUN   TestJailerCommand_Mega4/explicit_exec-file_overrides_default
+=== PAUSE TestColdBootSpecValidate_Mega4/empty_kernel
+=== PAUSE TestJailerCommand_Mega4/explicit_exec-file_overrides_default
+=== RUN   TestColdBootSpecValidate_Mega4/empty_base
+=== PAUSE TestColdBootSpecValidate_Mega4/empty_base
+=== CONT  TestBuildColdBootConfig_WorkloadsPath_Mega4
+=== RUN   TestColdBootSpecValidate_Mega4/empty_layer_+_no_workloads
+=== PAUSE TestColdBootSpecValidate_Mega4/empty_layer_+_no_workloads
+=== RUN   TestColdBootSpecValidate_Mega4/layer_+_workloads_dual-spec_rejected
+=== CONT  TestBuildColdBootConfig_WorkloadHasExplicitDriveID_Mega4
+=== PAUSE TestColdBootSpecValidate_Mega4/layer_+_workloads_dual-spec_rejected
+=== RUN   TestColdBootSpecValidate_Mega4/happy_legacy
+=== CONT  TestNewVsockDevice_Mega4
+=== PAUSE TestColdBootSpecValidate_Mega4/happy_legacy
+=== RUN   TestColdBootSpecValidate_Mega4/happy_workloads
+=== PAUSE TestColdBootSpecValidate_Mega4/happy_workloads
+=== CONT  TestJailerCommand_Mega4/plan-derived_weight
+=== RUN   TestColdBootSpecValidate_Mega4/zero_vcpu_count_rejected
+=== PAUSE TestColdBootSpecValidate_Mega4/zero_vcpu_count_rejected
+=== CONT  TestJailerCommand_Mega4/explicit_exec-file_overrides_default
+=== CONT  TestJailerCommand_Mega4/memory.max_only_when_set
+=== CONT  TestJailerCommand_Mega4/builder_overrides_plan_and_weight
+--- PASS: TestBuildColdBootConfig_WorkloadsPath_Mega4 (0.00s)
+=== CONT  TestJailerCommand_Mega4/empty_plan_uses_kernel_default_100
+=== CONT  TestColdBootSpecValidate_Mega4/empty_base
+--- PASS: TestBuildColdBootConfig_WorkloadHasExplicitDriveID_Mega4 (0.00s)
+=== CONT  TestColdBootSpecValidate_Mega4/happy_workloads
+=== CONT  TestColdBootSpecValidate_Mega4/zero_vcpu_count_rejected
+=== CONT  TestColdBootSpecValidate_Mega4/layer_+_workloads_dual-spec_rejected
+=== CONT  TestColdBootSpecValidate_Mega4/empty_layer_+_no_workloads
+=== CONT  TestColdBootSpecValidate_Mega4/happy_legacy
+--- PASS: TestNewVsockDevice_Mega4 (0.00s)
+=== CONT  TestColdBootSpecValidate_Mega4/empty_kernel
+--- PASS: TestJailerCommand_Mega4 (0.00s)
+    --- PASS: TestJailerCommand_Mega4/plan-derived_weight (0.00s)
+    --- PASS: TestJailerCommand_Mega4/explicit_exec-file_overrides_default (0.00s)
+    --- PASS: TestJailerCommand_Mega4/memory.max_only_when_set (0.00s)
+    --- PASS: TestJailerCommand_Mega4/builder_overrides_plan_and_weight (0.00s)
+    --- PASS: TestJailerCommand_Mega4/empty_plan_uses_kernel_default_100 (0.00s)
+--- PASS: TestColdBootSpecValidate_Mega4 (0.00s)
+    --- PASS: TestColdBootSpecValidate_Mega4/empty_base (0.00s)
+    --- PASS: TestColdBootSpecValidate_Mega4/happy_workloads (0.00s)
+    --- PASS: TestColdBootSpecValidate_Mega4/zero_vcpu_count_rejected (0.00s)
+    --- PASS: TestColdBootSpecValidate_Mega4/layer_+_workloads_dual-spec_rejected (0.00s)
+    --- PASS: TestColdBootSpecValidate_Mega4/empty_layer_+_no_workloads (0.00s)
+    --- PASS: TestColdBootSpecValidate_Mega4/happy_legacy (0.00s)
+    --- PASS: TestColdBootSpecValidate_Mega4/empty_kernel (0.00s)
+=== RUN   FuzzAllocatorNoLiveCollision
+=== RUN   FuzzAllocatorNoLiveCollision/seed#0
+=== RUN   FuzzAllocatorNoLiveCollision/seed#1
+=== RUN   FuzzAllocatorNoLiveCollision/seed#2
+--- PASS: FuzzAllocatorNoLiveCollision (0.00s)
+    --- PASS: FuzzAllocatorNoLiveCollision/seed#0 (0.00s)
+    --- PASS: FuzzAllocatorNoLiveCollision/seed#1 (0.00s)
+    --- PASS: FuzzAllocatorNoLiveCollision/seed#2 (0.00s)
+=== RUN   FuzzPlanWakeFCVersionMismatchFallsBack
+=== RUN   FuzzPlanWakeFCVersionMismatchFallsBack/seed#0
+=== RUN   FuzzPlanWakeFCVersionMismatchFallsBack/seed#1
+=== RUN   FuzzPlanWakeFCVersionMismatchFallsBack/seed#2
+=== RUN   FuzzPlanWakeFCVersionMismatchFallsBack/seed#3
+=== RUN   FuzzPlanWakeFCVersionMismatchFallsBack/seed#4
+=== RUN   FuzzPlanWakeFCVersionMismatchFallsBack/seed#5
+=== RUN   FuzzPlanWakeFCVersionMismatchFallsBack/seed#6
+=== RUN   FuzzPlanWakeFCVersionMismatchFallsBack/seed#7
+=== RUN   FuzzPlanWakeFCVersionMismatchFallsBack/seed#8
+=== RUN   FuzzPlanWakeFCVersionMismatchFallsBack/seed#9
+--- PASS: FuzzPlanWakeFCVersionMismatchFallsBack (0.00s)
+    --- PASS: FuzzPlanWakeFCVersionMismatchFallsBack/seed#0 (0.00s)
+    --- PASS: FuzzPlanWakeFCVersionMismatchFallsBack/seed#1 (0.00s)
+    --- PASS: FuzzPlanWakeFCVersionMismatchFallsBack/seed#2 (0.00s)
+    --- PASS: FuzzPlanWakeFCVersionMismatchFallsBack/seed#3 (0.00s)
+    --- PASS: FuzzPlanWakeFCVersionMismatchFallsBack/seed#4 (0.00s)
+    --- PASS: FuzzPlanWakeFCVersionMismatchFallsBack/seed#5 (0.00s)
+    --- PASS: FuzzPlanWakeFCVersionMismatchFallsBack/seed#6 (0.00s)
+    --- PASS: FuzzPlanWakeFCVersionMismatchFallsBack/seed#7 (0.00s)
+    --- PASS: FuzzPlanWakeFCVersionMismatchFallsBack/seed#8 (0.00s)
+    --- PASS: FuzzPlanWakeFCVersionMismatchFallsBack/seed#9 (0.00s)
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/fcvm	395.274s
+FAIL
+make: *** [Makefile:413: test-metal] Error 1
+native metal smoke: pkg/fcvm metal — 591 passed, 19 skipped, 2 failed
+native metal smoke: skipped tests (each names the fixture it wants):
+  --- SKIP: TestMetalFrameworkReadyAcrossSnapshots (0.00s)
+  --- SKIP: TestMetalImageBindMount (0.00s)
+  --- SKIP: TestMetalInitialBurstConcurrentRestores (0.00s)
+  --- SKIP: TestMetalIPSetupBatch (0.00s)
+  --- SKIP: TestMetalFreshNetworkPolicy (0.00s)
+  --- SKIP: TestMetalReusedLeaseNeighbor (0.00s)
+  --- SKIP: TestMetalParkDeadlineReleasesPausedVM (0.00s)
+  --- SKIP: TestMetalPreparedBridgeMAC (0.00s)
+  --- SKIP: TestMetalPreparedNetworkOwnership (0.00s)
+  --- SKIP: TestMetalPreparedNetworkRestoreTiming (0.00s)
+  --- SKIP: TestMetalOptimizedRestore (0.00s)
+  --- SKIP: TestMetalPreBootSkipBench (0.00s)
+  --- SKIP: TestMetalRestorePrefetchBench (0.00s)
+  --- SKIP: TestMetalRestoreTimingBench (0.00s)
+  --- SKIP: TestMetalSnapshotMemoryHeadroom (0.00s)
+  --- SKIP: TestMetalSnapshotPublicationFailurePreservesPrevious (0.00s)
+  --- SKIP: TestMetal_StatelessAdvisory_EndToEnd (0.00s)
+  --- SKIP: TestDetectFirecrackerVersion_WithStub (0.00s)
+  --- SKIP: TestMetalBuilderAcceptance (0.00s)
+native metal smoke: compile the namespace-batch test binary
+native metal smoke: run the namespace batch under unshare
+=== RUN   TestMetalImageBindMount
+    image_mount_metal_test.go:96: image_bind_samples_ms={"commands":[4.785425,3.837554,3.629402,3.566723,3.80266,3.544071,3.99845,3.892771,3.421664,3.280472,3.217701,3.266663,3.28929,3.570901,4.859212,4.041074,6.883198,4.329027,4.043998,4.900964,4.303808,3.982014,3.875655,3.924282,3.905182,4.153873,4.351036,3.522065,3.445273,3.320548,3.398663,3.349987,3.379761,3.310916,3.254727,3.464431,4.210905,4.19052,3.799495,3.602248,3.295939,3.312338,3.556028,3.556668,3.452092,3.256102,3.353966,3.371223,3.454566,3.384564],"syscalls":[0.010867,0.026348,0.011207,0.020199,0.022564,0.023483,0.010658,0.021366,0.009817,0.020728,0.00955,0.020464,0.010586,0.02332,0.012483,0.023763,0.016881,0.021685,0.011345,0.022961,0.016844,0.024869,0.010823,0.023917,0.019156,0.020589,0.010114,0.022988,0.01076,0.021107,0.010583,0.021985,0.025044,0.030191,0.011251,0.021382,0.010515,0.019968,0.010014,0.019961,0.010389,0.020813,0.010394,0.021875,0.010663,0.02189,0.01051,0.026273,0.010143,0.020911]}
+--- PASS: TestMetalImageBindMount (0.22s)
+=== RUN   TestMetalIPSetupBatch
+    network_batch_metal_test.go:91: network_setup_samples_ms={"batched":[22.711025,25.172721,23.348495,23.410641,25.410392,27.006898,26.603735,31.865416,30.308719,28.505973,33.950802,26.751347,22.290121,27.44196,26.016891,29.373519,25.075023,23.295875,27.241113,26.09638,25.963008,26.885629,22.788927,23.324525,25.817094,23.503483,24.081108,21.838633,23.587135,27.958759,28.516692,23.830682,26.073176,26.399936,25.046463,24.663693,31.401448,24.772316,22.245657,24.450385,27.845922,25.395841,24.080628,26.680756,26.658569,29.696728,25.454936,27.793745,24.926755,23.174966],"sequential":[45.626237,42.373809,48.394077,51.4526,46.65645,50.422088,49.291388,48.347362,48.540729,47.271972,59.926163,48.504884,48.692516,42.797233,43.974719,46.845982,43.923845,44.145031,48.005591,47.852648,44.236119,48.676799,49.016763,50.778674,49.118851,49.715105,50.467183,43.118896,38.54869,42.518287,46.866112,45.457526,47.464769,46.502391,46.625506,49.764569,45.633572,47.072589,46.317669,41.60991,44.440665,46.864481,49.259624,47.1035,54.005118,48.495495,47.262461,42.276777,47.84502,46.129725]}
+--- PASS: TestMetalIPSetupBatch (6.60s)
+=== RUN   TestMetalFreshNetworkPolicy
+    network_fresh_metal_test.go:145: network_fresh_samples_ms={"fresh_policy":[45.61272,48.809935,46.033101,47.101951,48.901807,49.521015,55.143869,46.735798,51.046665,45.589579,42.813678,47.527194,49.359587,49.370944,49.809027,45.614695,50.540309,48.419436,47.431044,47.351792,46.238768,52.796197,42.91659,47.272455,47.204221,48.27667,48.807233,47.775744,46.372447,44.949286,44.718109,42.656077,44.772266,42.534764,43.891732,46.375516,47.710352,47.18474,48.811291,47.818857,46.28179,48.930807,46.947818,48.706986,49.517538,45.010609,48.261068,46.159486,46.658489,45.496047],"with_resets":[66.799208,70.42152,66.935816,67.773918,70.22118,67.479778,60.741157,65.645443,65.133042,66.740768,69.697449,63.657,71.162832,76.425128,66.972905,69.817701,66.011524,63.060773,60.075484,68.107564,67.002644,67.733493,66.595131,62.578539,61.969374,71.725845,74.865168,64.162117,64.869563,66.873315,55.428271,63.077128,67.802111,66.410065,58.794787,70.011473,64.760758,62.358903,64.409937,59.830453,65.077974,59.521373,64.275779,71.540123,65.040632,67.193389,67.23077,73.771067,64.347161,68.99206]}
+--- PASS: TestMetalFreshNetworkPolicy (11.22s)
+=== RUN   TestMetalReusedLeaseNeighbor
+    network_neighbor_metal_test.go:120: reused_lease_first_packet_ms=4.897 old_mac=62:a4:14:71:42:d7 new_mac=8a:ae:5b:af:5b:7a
+--- PASS: TestMetalReusedLeaseNeighbor (0.20s)
+=== RUN   TestMetalPreparedBridgeMAC
+--- PASS: TestMetalPreparedBridgeMAC (0.04s)
+=== RUN   TestMetalPreparedNetworkOwnership
+--- PASS: TestMetalPreparedNetworkOwnership (0.22s)
+PASS
+native metal smoke: namespace batch — 6 passed, 0 skipped, 0 failed
+native metal smoke: total — 597 passed, 19 skipped, 2 failed
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+native metal smoke: FAIL (2); services restored and staging removed

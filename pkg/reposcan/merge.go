@@ -69,6 +69,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		schedules []CronSchedule
 		ports     []int
 		envKeys   []string
+		// internalPorts follows the same first-declaration-wins rule.
+		internalPorts    []api.WorkloadPort
+		internalPortsSet bool
 		// Whether each per-field slot is filled. We never overwrite
 		// an already-filled field — first non-empty per tier order wins.
 		classSet bool
@@ -200,6 +203,10 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			b.ports = append([]int(nil), s.ports...)
 			b.portsSet = true
 		}
+		if !b.internalPortsSet && s.internalPorts != nil {
+			b.internalPorts = append([]api.WorkloadPort{}, s.internalPorts...)
+			b.internalPortsSet = true
+		}
 		if !b.envSet && len(s.envKeys) > 0 {
 			b.envKeys = append([]string(nil), s.envKeys...)
 			b.envSet = true
@@ -245,6 +252,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
 			PlatformTenantRequired:    b.platformTenantRequired,
 			ComputeRegion:             b.computeRegion,
+			InternalPorts:             b.internalPorts,
 
 			Class:     cls,
 			Schedule:  primarySchedule,

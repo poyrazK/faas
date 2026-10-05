@@ -10,6 +10,7 @@ from ..models.project_environment_clone_response_shared_resources_item import (
     ProjectEnvironmentCloneResponseSharedResourcesItem,
     check_project_environment_clone_response_shared_resources_item,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="ProjectEnvironmentCloneResponse")
 
@@ -29,6 +30,9 @@ class ProjectEnvironmentCloneResponse:
     routes_copied: int
     policies_copied: int
     shared_resources: list[ProjectEnvironmentCloneResponseSharedResourcesItem]
+    secret_references_copied: int | Unset = UNSET
+    """Destination-to-source references copied under the new catalog environment identity. Git source bindings,
+    ownership, overrides and runtime receipts are not copied."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -51,6 +55,8 @@ class ProjectEnvironmentCloneResponse:
             shared_resources_item: str = shared_resources_item_data
             shared_resources.append(shared_resources_item)
 
+        secret_references_copied = self.secret_references_copied
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -65,6 +71,8 @@ class ProjectEnvironmentCloneResponse:
                 "shared_resources": shared_resources,
             }
         )
+        if secret_references_copied is not UNSET:
+            field_dict["secret_references_copied"] = secret_references_copied
 
         return field_dict
 
@@ -94,6 +102,8 @@ class ProjectEnvironmentCloneResponse:
 
             shared_resources.append(shared_resources_item)
 
+        secret_references_copied = d.pop("secret_references_copied", UNSET)
+
         project_environment_clone_response = cls(
             configuration_copied=configuration_copied,
             variables_copied=variables_copied,
@@ -103,6 +113,7 @@ class ProjectEnvironmentCloneResponse:
             routes_copied=routes_copied,
             policies_copied=policies_copied,
             shared_resources=shared_resources,
+            secret_references_copied=secret_references_copied,
         )
 
         project_environment_clone_response.additional_properties = d

@@ -6,6 +6,8 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.event_preview_subscription_filter import EventPreviewSubscriptionFilter
 
@@ -15,7 +17,7 @@ T = TypeVar("T", bound="EventPreviewSubscription")
 
 @_attrs_define
 class EventPreviewSubscription:
-    """A bounded sample of an enabled subscription considered by the event router."""
+    """A bounded sample of an enabled subscription or workflow considered by the event router."""
 
     app_slug: str
     subscription_id: UUID
@@ -26,6 +28,10 @@ class EventPreviewSubscription:
     reason: str
     """would_deliver, content_filter_mismatch, pattern_mismatch, tenant_mismatch, or an invalid_subscription
     explanation."""
+    workflow_name: str | Unset = UNSET
+    """Present for workflow recipients."""
+    deployment_id: UUID | Unset = UNSET
+    """Acceptance candidate deployment for workflow recipients."""
 
     def to_dict(self) -> dict[str, Any]:
         app_slug = self.app_slug
@@ -40,6 +46,12 @@ class EventPreviewSubscription:
 
         reason = self.reason
 
+        workflow_name = self.workflow_name
+
+        deployment_id: str | Unset = UNSET
+        if not isinstance(self.deployment_id, Unset):
+            deployment_id = str(self.deployment_id)
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -52,6 +64,10 @@ class EventPreviewSubscription:
                 "reason": reason,
             }
         )
+        if workflow_name is not UNSET:
+            field_dict["workflow_name"] = workflow_name
+        if deployment_id is not UNSET:
+            field_dict["deployment_id"] = deployment_id
 
         return field_dict
 
@@ -72,6 +88,15 @@ class EventPreviewSubscription:
 
         reason = d.pop("reason")
 
+        workflow_name = d.pop("workflow_name", UNSET)
+
+        _deployment_id = d.pop("deployment_id", UNSET)
+        deployment_id: UUID | Unset
+        if isinstance(_deployment_id, Unset):
+            deployment_id = UNSET
+        else:
+            deployment_id = UUID(_deployment_id)
+
         event_preview_subscription = cls(
             app_slug=app_slug,
             subscription_id=subscription_id,
@@ -79,6 +104,8 @@ class EventPreviewSubscription:
             type_=type_,
             filter_=filter_,
             reason=reason,
+            workflow_name=workflow_name,
+            deployment_id=deployment_id,
         )
 
         return event_preview_subscription

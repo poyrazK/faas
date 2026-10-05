@@ -1,6 +1,6 @@
 # Bare-metal service capacity protection
 
-ADR-422 and ADR-463 preserve compute capacity for recovery after one host fails. It uses
+ADR-422 and ADR-589 preserve compute capacity for recovery after one host fails. It uses
 desired service intent, including pending deployments and rollout overlap,
 rather than waiting for VMs to consume physical memory.
 
@@ -75,7 +75,7 @@ the VM warm and returns retryable capacity. Promotion into an existing declared
 slot on a healthy surviving host remains possible while degraded.
 
 Ordinary placement checks the prospective RAM, CPU and guest-vCPU cost against
-the certificate before applying affinity (ADR-464). Unrestricted wakes and jobs
+the certificate before applying affinity (ADR-590). Unrestricted wakes and jobs
 can use safe foreign capacity when a preferred region's spare slots are reserved.
 Pinned workloads remain local. Mirrors, warm fills and internal app tasks consume
 ordinary headroom; normal service wake and prime retain declared recovery slots.
@@ -163,7 +163,7 @@ path tripwire and two static-egress tests lacking account fixtures). Fresh
 apply-and-walk and the added-migration replay gate pass under race. These
 migration checks use disposable private databases with synchronous commit and
 disk fsync disabled; they do not establish crash durability. The regional
-checks include the ADR-459 forced-JIT
+checks include the ADR-585 forced-JIT
 regression, caller-setting restoration, enabled replay/down/up, concurrent
 regional admission and protected recovery. The first diagnostic run exposed
 Postgres JIT compilation in the projection; on a fixed fixture, the function
@@ -177,7 +177,7 @@ use nested KVM; they are Linux runtime evidence, and do not satisfy the dedicate
 native multi-host regional recovery/routing qualification or the full metal
 suite. The node is excluded from the serving fleet; protection remains opt-in.
 
-ADR-459 disables JIT only within the capacity input function. Other queries
+ADR-585 disables JIT only within the capacity input function. Other queries
 retain the caller's settings. Downgrade resets this function setting and can
 reintroduce compiler latency while preserving the admission guard.
 

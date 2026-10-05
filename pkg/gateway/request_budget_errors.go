@@ -44,11 +44,27 @@ func writeRequestBudgetExceededForRequest(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set(api.ErrorCodeHeader, api.CodeRequestBudgetExceeded)
 	w.Header().Set("Cache-Control", "no-store")
-	api.WriteProblem(w, api.NewProblem(http.StatusGatewayTimeout,
+	problem := api.NewProblem(http.StatusGatewayTimeout,
 		api.CodeRequestBudgetExceeded,
 		"Request budget exceeded",
-		"the request exceeded its wall-clock budget while capacity was becoming ready"))
+		"the request exceeded its wall-clock budget while capacity was becoming ready")
+	// Limit errors carry the limit, the observed value and a docs link
+	// (CLAUDE.md conventions) so a customer can tell a 30 s budget from an
+	// outage and knows which knob to change.
+	if r != nil {
+		if b, ok := reqbudget.FromContext(r.Context()); ok && b.Total > 0 {
+			observed := time.Since(b.Started)
+			if b.Started.IsZero() {
+				observed = b.Total
+			}
+			problem = problem.WithLimit(b.Total.Milliseconds(), observed.Milliseconds())
+		}
+	}
+	api.WriteProblem(w, problem.WithDocs(requestBudgetDocsURL))
 }
+
+// requestBudgetDocsURL is the customer errors page entry for the budget.
+var requestBudgetDocsURL = docsTypeBase
 
 // writeBurstCapacityError maps an admission wait failure without confusing a
 // caller disconnect with a platform failure. It returns false when the client

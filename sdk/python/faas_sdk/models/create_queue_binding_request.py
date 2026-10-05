@@ -29,6 +29,9 @@ class CreateQueueBindingRequest:
 
     name: str
     queue_name: str
+    environment: str | Unset = UNSET
+    """Immutable registered project environment. The binding captures its catalog UUID; omitted creates a shared
+    legacy binding."""
     mode: CreateQueueBindingRequestMode | Unset = "pull"
     workload_class: CreateQueueBindingRequestWorkloadClass | Unset = "worker"
     enabled: bool | Unset = True
@@ -48,6 +51,8 @@ class CreateQueueBindingRequest:
         name = self.name
 
         queue_name = self.queue_name
+
+        environment = self.environment
 
         mode: str | Unset = UNSET
         if not isinstance(self.mode, Unset):
@@ -73,6 +78,8 @@ class CreateQueueBindingRequest:
                 "queue_name": queue_name,
             }
         )
+        if environment is not UNSET:
+            field_dict["environment"] = environment
         if mode is not UNSET:
             field_dict["mode"] = mode
         if workload_class is not UNSET:
@@ -94,6 +101,8 @@ class CreateQueueBindingRequest:
         name = d.pop("name")
 
         queue_name = d.pop("queue_name")
+
+        environment = d.pop("environment", UNSET)
 
         _mode = d.pop("mode", UNSET)
         mode: CreateQueueBindingRequestMode | Unset
@@ -123,6 +132,7 @@ class CreateQueueBindingRequest:
         create_queue_binding_request = cls(
             name=name,
             queue_name=queue_name,
+            environment=environment,
             mode=mode,
             workload_class=workload_class,
             enabled=enabled,

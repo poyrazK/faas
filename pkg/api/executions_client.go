@@ -81,6 +81,13 @@ func (c *Client) GetExecutionWorkflow(ctx context.Context, workflowID string) (E
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// CreateManagedExecutionWorkflow stores an encrypted sequential plan and lets
+// the control plane admit later Runs after this client disconnects.
+func (c *Client) CreateManagedExecutionWorkflow(ctx context.Context, req CreateManagedExecutionWorkflowRequest) (ManagedExecutionWorkflowResponse, error) {
+	var out ManagedExecutionWorkflowResponse
+	return out, c.do(ctx, "POST", "/v1/execution-workflows", req, &out)
+}
+
 // CancelExecution requests cancellation. Cancellation is idempotent: queued
 // runs become terminal immediately, while claimed runs are fenced during
 // teardown by the scheduler.

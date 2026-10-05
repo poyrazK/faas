@@ -2,7 +2,7 @@
 // fences. Its operation counts are barriers, never evidence of native VM drain.
 package runtimequotahost
 
-// adr: 493
+// adr: 619
 import (
 	"context"
 	"errors"

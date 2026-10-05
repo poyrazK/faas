@@ -2,13 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -110,6 +113,62 @@ func TestJSONMutations_WakeWaitsForCorrelatedRunningInstance(t *testing.T) {
 	}
 }
 
+// A warm app gets 200 already_running; --wait must not poll for an instance
+// schedd will never create.
+func TestCmdWakeWaitReturnsAtOnceWhenAlreadyRunning(t *testing.T) {
+	instanceReads := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/wake":
+			writeJSONTest(w, api.AppWakeResponse{WakeID: "wake-old", AlreadyRunning: true, InstanceID: "instance-9"})
+		case r.URL.Path == "/v1/apps/demo/instances":
+			instanceReads++
+			writeJSONTest(w, []api.InstanceResponse{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = oldOut }()
+	resetJSONOut(t)
+	jsonOutput = true
+
+	// Flags after the slug, as `gregale wake --help` shows the synopsis.
+	if code := cmdWake([]string{"demo", "--wait", "--timeout", "2s"}); code != 0 {
+		t.Fatalf("wake demo --wait = %d, want 0", code)
+	}
+	var receipt map[string]string
+	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if receipt["status"] != "running" || receipt["instance_id"] != "instance-9" || instanceReads != 0 {
+		t.Fatalf("receipt = %#v after %d instance reads, want running instance-9 without polling", receipt, instanceReads)
+	}
+}
+
+// The poll in flight when --timeout fires fails with the wait's own context
+// error; wrapping it made a timeout print "Could not reach Gregale".
+func TestWaitForAppWakeTimeoutIsNotANetworkError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(150 * time.Millisecond) // every poll is still in flight at the deadline
+		writeJSONTest(w, []api.InstanceResponse{})
+	}))
+	defer srv.Close()
+	client := NewClient(srv.URL, "fp_live_x")
+	_, err := waitForAppWake(context.Background(), client, "demo", "wake-1", 300*time.Millisecond, 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("waitForAppWake succeeded without a running instance")
+	}
+	if errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "did not reach running within") {
+		t.Fatalf("timeout error = %v, want a plain wake timeout that does not wrap context.DeadlineExceeded", err)
+	}
+}
+
 func TestJSONMutations_QuietDelete(t *testing.T) {
 	var method, path string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -187,6 +246,32 @@ func TestJSONMutations_CronAddAndRemove(t *testing.T) {
 	}
 	if removed["id"] != jsonMutationCronID || removed["status"] != "deleted" || removed["deleted"] != true {
 		t.Fatalf("cron remove receipt = %#v", removed)
+	}
+}
+
+// Prod hunt #3: `crons add` printed only "Cron scheduled: <expr> <path>", so
+// the id every other crons verb needs had to be looked up with `crons list`.
+func TestCronAddHumanOutputNamesTheID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/crons" {
+			writeJSONTest(w, api.CronResponse{ID: jsonMutationCronID, AppID: "demo", Schedule: "0 * * * *", Path: "/tick", Enabled: true})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = oldOut }()
+	resetJSONOut(t)
+	if code := cmdCrons([]string{"add", "--app", "demo", "--schedule", "0 * * * *", "--path", "/tick"}); code != 0 {
+		t.Fatalf("cron add = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), "id: "+jsonMutationCronID) || !strings.Contains(stdout.String(), "gregale crons run "+jsonMutationCronID) {
+		t.Fatalf("cron add output does not name the new id:\n%s", stdout.String())
 	}
 }
 

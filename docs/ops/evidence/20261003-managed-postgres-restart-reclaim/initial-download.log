@@ -1,0 +1,8 @@
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+/usr/bin/scp: open local "/Users/poyrazk/.codex/checks/managed-postgres-restart-reclaim-20261003/results.tar.gz": No space left on device
+ERROR: (gcloud.compute.scp) [/usr/bin/scp] exited with return code [1].

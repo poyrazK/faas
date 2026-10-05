@@ -1,0 +1,5 @@
+full vmmd Linux race suite passed
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+integrated diagnostic passed
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts

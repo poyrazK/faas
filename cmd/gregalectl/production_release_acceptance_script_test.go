@@ -41,6 +41,11 @@ case "$1" in
       esac
     done
     printf '%s\n' "$slug" >>"$TEST_DEPLOY_LOG"
+    if [[ -n "${TEST_FAIL_SLUG_SUFFIX:-}" && "$slug" == *"$TEST_FAIL_SLUG_SUFFIX" ]]; then
+      echo "build: step 4/7 failed: npm ci exited 1" >&2
+      printf '{"id":"deployment-%s","status":"failed","rollout_state":"aborted","error":"build failed","error_code":"build_failed"}\n' "$slug"
+      exit 1
+    fi
     if [[ "$no_wait" == true ]]; then
       printf '{"id":"redeploy-queued"}\n'
     else
@@ -214,5 +219,43 @@ fi
 	}
 	if _, err := os.Stat(failRevokeLog); err != nil {
 		t.Fatalf("failed acceptance did not revoke token: %v", err)
+	}
+
+	// A failed first-wave or coverage deployment must name the deployment and
+	// carry its receipt and CLI stderr into the workflow log before cleanup
+	// deletes them; the gate used to say only that something failed.
+	for _, tt := range []struct {
+		name, suffix, extraEnv, wantSummary string
+	}{
+		{name: "first wave", suffix: "-f1", wantSummary: "one or more production acceptance deployments failed"},
+		{name: "coverage follow-up", suffix: "-x1", wantSummary: "a production acceptance coverage deployment failed"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.Command("bash", script)
+			cmd.Env = append(os.Environ(),
+				"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"RELEASE_SHA="+strings.Repeat("a", 40), "RUN_ID=12345678", "ACTIVE_NODE_COUNT=2",
+				"GREGALE_BIN="+gregale, "GREGALECTL_BIN="+gregalectl,
+				"TEST_DEPLOY_LOG="+filepath.Join(t.TempDir(), "deploys"),
+				"TEST_CURL_LOG="+filepath.Join(t.TempDir(), "curls"),
+				"TEST_REVOKE_LOG="+filepath.Join(t.TempDir(), "revokes"),
+				"TEST_FAIL_SLUG_SUFFIX="+tt.suffix,
+			)
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("a failed acceptance deployment passed the gate: %s", out)
+			}
+			for _, want := range []string{
+				"acceptance deployment ra-aaaaaaaa-12345678" + tt.suffix + " failed (exit 1)",
+				`"status":"failed"`,
+				`"error_code":"build_failed"`,
+				"npm ci exited 1",
+				tt.wantSummary,
+			} {
+				if !strings.Contains(string(out), want) {
+					t.Errorf("failure output is missing %q:\n%s", want, out)
+				}
+			}
+		})
 	}
 }

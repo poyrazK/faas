@@ -1,0 +1,15 @@
+/var/tmp/faas-metal-smoke-managed-pg-prepared-handoff-6ac4ffcb/source.tar.gz: OK
+/var/tmp/faas-metal-smoke-managed-pg-prepared-handoff-6ac4ffcb/runner.sh: OK
+/var/tmp/faas-metal-smoke-managed-pg-prepared-handoff-6ac4ffcb/change.patch: OK
+/var/tmp/faas-metal-smoke-managed-pg-prepared-handoff-6ac4ffcb/source-hashes.sha256: OK
+MemoryMax=10737418240
+ActiveState=active
+SubState=running
+InvocationID=740e060fc1d04cd88f96ee20dc2ade26
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+Running as unit: gregale-managed-pg-prepared-handoff-6ac4ffcb.service; invocation ID: 740e060fc1d04cd88f96ee20dc2ade26

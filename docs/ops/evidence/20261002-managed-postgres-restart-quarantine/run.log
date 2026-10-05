@@ -1,0 +1,102 @@
+/var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-4d700a71/source-verified.tar.gz: OK
+validation source: 4d700a7176e697e8a76ed4b92a45da79faee8d7d
+Linux gregale-internal-test-1.us-east1-b.c.gregale-prod.internal 7.0.0-1011-gcp #11~24.04.1-Ubuntu SMP PREEMPT Tue Aug 11 20:14:48 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+go version go1.25.13 linux/amd64
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+e2fsck 1.47.0 (5-Feb-2023)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+faas-metal-smoke: 28/16384 files (3.6% non-contiguous), 8074/16384 blocks
+e2fsck 1.47.0 (5-Feb-2023)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+faas-metal-layer: 16/4096 files (0.0% non-contiguous), 272/4096 blocks
+178f50d3a868d8fc08228225cd49fca2d8f117a88c8924385b33166c4f158e3b  /srv/fc/base/vmlinux-6.1.134
+4e53e95047aea6bc5213b9bf8ba7bd2aa3136411e775850daf8710173164e706  /var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-4d700a71/fixtures/hello-base.ext4
+a0dda0bfaf6f4bac24e796d1b077830cd9b9dd42f1ad97df6a67a735b73e8fae  /var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-4d700a71/fixtures/hello-layer.ext4
+=== RUN   TestFailureReportOwnershipRequiresResourceIdentity
+--- PASS: TestFailureReportOwnershipRequiresResourceIdentity (0.00s)
+=== RUN   TestMetalTeardownRetainsOwnershipUntilConfirmed
+--- PASS: TestMetalTeardownRetainsOwnershipUntilConfirmed (1.10s)
+=== RUN   TestMetalRestartQuarantineProtectsSurvivingGuest
+=== RUN   TestMetalRestartQuarantineProtectsSurvivingGuest/uuid
+=== RUN   TestMetalRestartQuarantineProtectsSurvivingGuest/builder_id
+=== RUN   TestMetalRestartQuarantineProtectsSurvivingGuest/compact_id
+--- PASS: TestMetalRestartQuarantineProtectsSurvivingGuest (5.93s)
+    --- PASS: TestMetalRestartQuarantineProtectsSurvivingGuest/uuid (1.99s)
+    --- PASS: TestMetalRestartQuarantineProtectsSurvivingGuest/builder_id (1.99s)
+    --- PASS: TestMetalRestartQuarantineProtectsSurvivingGuest/compact_id (1.95s)
+=== RUN   TestRestartQuarantineProtectsSurvivingIdentities
+--- PASS: TestRestartQuarantineProtectsSurvivingIdentities (0.00s)
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/unknown_uid
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/unknown_id
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/unreadable_argv
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/missing_proc
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/missing_sysfs
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/cancelled
+--- PASS: TestRestartQuarantineFailsClosedBeforeMutation (0.01s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/unknown_uid (0.00s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/unknown_id (0.00s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/unreadable_argv (0.00s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/missing_proc (0.00s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/missing_sysfs (0.00s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/cancelled (0.00s)
+=== RUN   TestRestartQuarantineOnlyAtStartup
+=== RUN   TestRestartQuarantineOnlyAtStartup/lease
+=== RUN   TestRestartQuarantineOnlyAtStartup/prepared_reservation
+=== RUN   TestRestartQuarantineOnlyAtStartup/boot
+=== RUN   TestRestartQuarantineOnlyAtStartup/stop
+=== RUN   TestRestartQuarantineOnlyAtStartup/already_scanned
+--- PASS: TestRestartQuarantineOnlyAtStartup (0.01s)
+    --- PASS: TestRestartQuarantineOnlyAtStartup/lease (0.00s)
+    --- PASS: TestRestartQuarantineOnlyAtStartup/prepared_reservation (0.00s)
+    --- PASS: TestRestartQuarantineOnlyAtStartup/boot (0.00s)
+    --- PASS: TestRestartQuarantineOnlyAtStartup/stop (0.00s)
+    --- PASS: TestRestartQuarantineOnlyAtStartup/already_scanned (0.00s)
+=== RUN   TestRestartQuarantineAllowsUnusedNode
+--- PASS: TestRestartQuarantineAllowsUnusedNode (0.00s)
+=== RUN   TestRestartQuarantineRejectsAmbiguousIdentities
+--- PASS: TestRestartQuarantineRejectsAmbiguousIdentities (0.00s)
+=== RUN   TestRestartQuarantineCoversInternalGuestIDs
+--- PASS: TestRestartQuarantineCoversInternalGuestIDs (0.00s)
+=== RUN   TestMetalFailureOutboxRetriesConfirmedTeardown
+=== RUN   TestMetalFailureOutboxRetriesConfirmedTeardown/liveness
+2026/10/02 17:05:37 WARN vmmd: failure report pending instance_id=e0d5ae73f834c9660bd4e5f307bb62fd kind=liveness attempt=1 retry_delay=1.171875s err="rpc error: code = Internal desc = sched: liveness: destroy instance e0d5ae73f834c9660bd4e5f307bb62fd: injected unconfirmed scheduler stop"
+2026/10/02 17:05:38 WARN vmmd: failure report pending instance_id=e0d5ae73f834c9660bd4e5f307bb62fd kind=liveness attempt=2 retry_delay=2.34375s err="rpc error: code = Internal desc = sched: liveness: destroy instance e0d5ae73f834c9660bd4e5f307bb62fd: injected unconfirmed scheduler stop"
+2026/10/02 17:05:38 INFO vmmd: failure report acknowledged instance_id=e0d5ae73f834c9660bd4e5f307bb62fd kind=liveness
+=== RUN   TestMetalFailureOutboxRetriesConfirmedTeardown/workload_oom
+2026/10/02 17:05:39 WARN vmmd: failure report pending instance_id=46f3ce20c2d9fbb1797fbe90924c1570 kind=workload_oom attempt=1 retry_delay=1.157226562s err="rpc error: code = Internal desc = sched: workload_oom: destroy instance 46f3ce20c2d9fbb1797fbe90924c1570: injected unconfirmed scheduler stop"
+2026/10/02 17:05:41 WARN vmmd: failure report pending instance_id=46f3ce20c2d9fbb1797fbe90924c1570 kind=workload_oom attempt=2 retry_delay=2.314453125s err="rpc error: code = Internal desc = sched: workload_oom: destroy instance 46f3ce20c2d9fbb1797fbe90924c1570: injected unconfirmed scheduler stop"
+2026/10/02 17:05:41 INFO vmmd: failure report acknowledged instance_id=46f3ce20c2d9fbb1797fbe90924c1570 kind=workload_oom
+--- PASS: TestMetalFailureOutboxRetriesConfirmedTeardown (5.02s)
+    --- PASS: TestMetalFailureOutboxRetriesConfirmedTeardown/liveness (2.51s)
+    --- PASS: TestMetalFailureOutboxRetriesConfirmedTeardown/workload_oom (2.52s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/fcvm	13.205s
+=== RUN   TestFailureReportSenderRequiresAffirmativeAck
+2026/10/02 17:06:13 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/02 17:06:13 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/02 17:06:13 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/02 17:06:13 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM applied_default=1m0s
+2026/10/02 17:06:13 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM applied_default=1m0s
+2026/10/02 17:06:13 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM applied_default=1m0s
+--- PASS: TestFailureReportSenderRequiresAffirmativeAck (0.03s)
+=== RUN   TestFailureReportWiringPersistsCanceledProducerContexts
+--- PASS: TestFailureReportWiringPersistsCanceledProducerContexts (0.00s)
+=== RUN   TestRecoveredFailureReportRequiresManagerOwnership
+2026/10/02 17:06:13 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+--- PASS: TestRecoveredFailureReportRequiresManagerOwnership (0.00s)
+PASS
+ok  	github.com/onebox-faas/faas/cmd/vmmd	1.149s
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+diagnostic exit: metal=0 lint=0
+make: Entering directory '/var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-4d700a71/source'
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+make: Leaving directory '/var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-4d700a71/source'

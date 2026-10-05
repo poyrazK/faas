@@ -271,7 +271,7 @@ func attachPreviewReportTest(profiles []previewReportTest, profile string, passe
 
 func finishPreviewRouteReport(report *previewRouteReport) {
 	report.Outcome = "no_findings"
-	if report.Readiness.Status != "available" || report.Contract.Status != "available" || report.Policy.Status != "available" || report.Performance.Status == "unavailable" || report.Tests.Status != "available" {
+	if report.Readiness.Status != "available" || report.Contract.Status != "available" || report.Policy.Status != "available" || report.PolicyDrift.Status != "available" || report.Performance.Status == "unavailable" || report.Tests.Status != "available" {
 		report.Outcome = "incomplete"
 	}
 	if report.Requirements != nil {
@@ -292,6 +292,17 @@ func finishPreviewRouteReport(report *previewRouteReport) {
 		}
 		if row.RequestContractChanged && (row.RequestCompatibility == nil || !row.RequestCompatibility.Complete) && report.Outcome == "no_findings" {
 			report.Outcome = "review_required"
+		}
+		if row.PolicyDrift != nil {
+			switch row.PolicyDrift.Status {
+			case "changed":
+				row.NextActions = append(row.NextActions, "Review the changed route rule selectors and configuration before release; report output redacts action values.")
+				if report.Outcome == "no_findings" {
+					report.Outcome = "review_required"
+				}
+			case "unknown":
+				row.NextActions = append(row.NextActions, "Compare this route's parent and preview edge rules manually; the report could not compare every action.")
+			}
 		}
 		if row.Change != "removed" && len(row.TestProfiles) == 0 {
 			action := "Add an HTTP assertion for this route; no matching candidate test receipt was supplied."

@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -138,7 +136,7 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		PostgresMajors:               []int{14, 15, 16, 17, 18},
 		ServiceClasses:               []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction},
 		Availability:                 []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
-		CredentialAccess:             []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite},
+		CredentialAccess:             []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialMigration},
 		ScaleToZero:                  true,
 		PooledConnections:            true,
 		PointInTimeRestore:           p.maxRestoreWindow > 0,
@@ -262,43 +260,37 @@ func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (mana
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	projectPath := "/projects/" + url.PathEscape(ref.projectID)
-	var projectResult projectResponse
-	var branchesResult branchesResponse
-	var endpointsResult endpointsResponse
-	var operationsResult operationsResponse
-	group, groupContext := errgroup.WithContext(ctx)
-	group.Go(func() error {
-		return p.doJSON(groupContext, http.MethodGet, projectPath, nil, nil, &projectResult, http.StatusOK)
-	})
-	group.Go(func() error {
-		return p.doJSON(groupContext, http.MethodGet, projectPath+"/branches", nil, nil, &branchesResult, http.StatusOK)
-	})
-	group.Go(func() error {
-		return p.doJSON(groupContext, http.MethodGet, projectPath+"/endpoints", nil, nil, &endpointsResult, http.StatusOK)
-	})
-	group.Go(func() error {
-		query := url.Values{"limit": {"1000"}}
-		return p.doJSON(groupContext, http.MethodGet, projectPath+"/operations", query, nil, &operationsResult, http.StatusOK)
-	})
-	if err := group.Wait(); err != nil {
+	metadata, err := p.readDatabaseMetadata(ctx, ref, true)
+	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	if projectResult.Project.ID != ref.projectID || operationsResult.Pagination.Cursor != "" {
+	if metadata.operations.Pagination.Cursor != "" {
 		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
 	}
-	selectedBranch, primaryEndpoint, resourcesReady := selectBranch(branchesResult.Branches, endpointsResult.Endpoints, ref.branchID)
-	status := operationStatus(operationsResult.Operations, resourcesReady)
-	observedSpec := p.observedSpec(projectResult.Project, primaryEndpoint)
+	selectedBranch, primaryEndpoint, resourcesReady := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, ref.branchID)
+	status := operationStatus(metadata.operations.Operations, resourcesReady)
+	observedComputeState := computeState(primaryEndpoint.CurrentState)
+	observedSpec := p.observedSpec(metadata.project.Project, primaryEndpoint)
 	if selectedBranch.ID == "" {
 		status = managedpostgres.ProviderStatusPending
 	}
-	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, Status: status, ComputeState: computeState(primaryEndpoint.CurrentState), Spec: observedSpec}, nil
+	if ref.branchID != "" && status == managedpostgres.ProviderStatusReady {
+		owner, err := p.ownerCredentials(ctx, ref.projectID, ref.branchID)
+		if err != nil {
+			return managedpostgres.ObservedDatabase{}, err
+		}
+		role := p.credentialRole(managedpostgres.CredentialRequest{ProviderResourceID: providerResourceID, Access: managedpostgres.CredentialReadWrite})
+		if err := p.roles.RestrictInherited(ctx, owner, role.scope); err != nil {
+			return managedpostgres.ObservedDatabase{}, credentialSQLError(err)
+		}
+		observedComputeState = managedpostgres.ComputeStateActive
+	}
+	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, Status: status, ComputeState: observedComputeState, Spec: observedSpec}, nil
 }
 
 // ProbeScaleToZero is used only by the isolated operator qualification run.
 // It proves the configured endpoint actually suspends and wakes; lifecycle
-// reconciliation never opens customer connections.
+// routine source lifecycle reconciliation never opens customer connections.
 func (p *Provider) ProbeScaleToZero(ctx context.Context, providerResourceID string, material managedpostgres.CredentialMaterial) (managedpostgres.ScaleToZeroProbeResult, error) {
 	dsn, err := probeDSN(material)
 	if err != nil {
@@ -390,38 +382,48 @@ func (*Provider) Update(context.Context, managedpostgres.UpdateRequest) (managed
 	return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
 }
 
+func (p *Provider) Discover(ctx context.Context, request managedpostgres.ResourceDiscoveryRequest) (string, error) {
+	if request.ResourceID == "" || len(request.ResourceID) > 255 {
+		return "", managedpostgres.ErrInvalid
+	}
+	if request.RestoreSourceResourceID != "" {
+		source, err := parseResourceRef(request.RestoreSourceResourceID)
+		if err != nil {
+			return "", err
+		}
+		candidate, err := p.findBranch(ctx, source.projectID, p.restoreBranchName(request.ResourceID))
+		if err != nil {
+			return "", err
+		}
+		if candidate.ID == "" {
+			return "", managedpostgres.ErrNotFound
+		}
+		return (resourceRef{projectID: source.projectID, branchID: candidate.ID}).String(), nil
+	}
+	identity, err := p.findProject(ctx, p.projectName(request.ResourceID))
+	if err == nil && identity == "" {
+		err = managedpostgres.ErrNotFound
+	}
+	return identity, err
+}
+
 func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteRequest) (managedpostgres.DeleteResult, error) {
 	if request.IdempotencyKey == "" || (request.ProviderResourceID == "" && request.ResourceID == "") {
 		return managedpostgres.DeleteResult{}, managedpostgres.ErrInvalid
 	}
 	providerResourceID := request.ProviderResourceID
 	if providerResourceID == "" {
-		if request.RestoreSourceResourceID != "" {
-			source, sourceErr := parseResourceRef(request.RestoreSourceResourceID)
-			if sourceErr != nil {
-				return managedpostgres.DeleteResult{}, sourceErr
-			}
-			candidate, findErr := p.findBranch(ctx, source.projectID, p.restoreBranchName(request.ResourceID))
-			if findErr != nil {
-				return managedpostgres.DeleteResult{}, findErr
-			}
-			if candidate.ID == "" {
-				return managedpostgres.DeleteResult{Done: true}, nil
-			}
-			providerResourceID = (resourceRef{projectID: source.projectID, branchID: candidate.ID}).String()
-		}
-	}
-	if providerResourceID == "" {
-		if len(request.ResourceID) > 255 {
-			return managedpostgres.DeleteResult{}, managedpostgres.ErrInvalid
-		}
+		// Disposable qualification cleanup also supports logical-name lookup.
+		// Customer lifecycle deletion discovers and persists identity first.
 		var err error
-		providerResourceID, err = p.findProject(ctx, p.projectName(request.ResourceID))
+		providerResourceID, err = p.Discover(ctx, managedpostgres.ResourceDiscoveryRequest{
+			ResourceID: request.ResourceID, RestoreSourceResourceID: request.RestoreSourceResourceID,
+		})
+		if errors.Is(err, managedpostgres.ErrNotFound) {
+			return managedpostgres.DeleteResult{Done: true}, nil
+		}
 		if err != nil {
 			return managedpostgres.DeleteResult{}, err
-		}
-		if providerResourceID == "" {
-			return managedpostgres.DeleteResult{Done: true}, nil
 		}
 	}
 	ref, err := parseResourceRef(providerResourceID)
@@ -432,7 +434,7 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 	if ref.branchID != "" {
 		path += "/branches/" + url.PathEscape(ref.branchID)
 	}
-	var response projectResponse
+	var response createdBranchResponse
 	accepted := []int{http.StatusOK, http.StatusNoContent}
 	err = p.doJSON(ctx, http.MethodDelete, path, nil, nil, &response, accepted...)
 	if errors.Is(err, managedpostgres.ErrNotFound) {
@@ -440,6 +442,28 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 	}
 	if err != nil {
 		return managedpostgres.DeleteResult{}, err
+	}
+	if ref.branchID != "" {
+		for _, op := range response.Operations {
+			if op.Status == "error" || op.Status == "cancelled" {
+				return managedpostgres.DeleteResult{}, managedpostgres.ErrUnavailable
+			}
+		}
+		for _, op := range response.Operations {
+			if op.ID == "" || !operationFinished(op.Status) {
+				return managedpostgres.DeleteResult{Done: false}, nil
+			}
+		}
+		if len(response.Operations) == 0 {
+			// An accepted request alone is not evidence that the branch has
+			// disappeared. Confirm synchronous/empty-operation responses.
+			var remaining createdBranchResponse
+			err := p.doJSON(ctx, http.MethodGet, path, nil, nil, &remaining, http.StatusOK)
+			if errors.Is(err, managedpostgres.ErrNotFound) {
+				return managedpostgres.DeleteResult{Done: true}, nil
+			}
+			return managedpostgres.DeleteResult{Done: false}, err
+		}
 	}
 	return managedpostgres.DeleteResult{Done: true}, nil
 }
@@ -460,7 +484,7 @@ func (p *Provider) projectPayload(name string, spec managedpostgres.Spec) create
 	request.Project.DefaultEndpointSettings = endpointSettings{MinimumCU: profile.minimumCU, MaximumCU: profile.maximumCU, SuspendTimeoutSecond: suspendTimeout}
 	request.Project.Settings.Quota.LogicalSizeBytes = &spec.StorageLimitBytes
 	request.Project.Branch.Name = "production"
-	request.Project.Branch.RoleName = "gregale_owner"
+	request.Project.Branch.RoleName = ownerLogin
 	request.Project.Branch.DatabaseName = p.databaseName
 	return request
 }

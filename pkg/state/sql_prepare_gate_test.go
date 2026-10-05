@@ -40,13 +40,14 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 	defer conn.Release()
 
 	// ADR-430: Commit's relay SQL belongs to a customer's independent
-	// database. Platform migrations must never install its public tables.
+	// database. Restore qualification also owns a separate disposable DB.
+	// Platform migrations must never install either one's public tables.
 	var customerTablesInPlatform bool
-	if err := conn.QueryRow(ctx, `SELECT to_regclass('public.gregale_outbox') IS NOT NULL OR to_regclass('public.gregale_commit_binding') IS NOT NULL`).Scan(&customerTablesInPlatform); err != nil {
+	if err := conn.QueryRow(ctx, `SELECT to_regclass('public.gregale_outbox') IS NOT NULL OR to_regclass('public.gregale_commit_binding') IS NOT NULL OR to_regclass('public.gregale_qualification_restore_probe') IS NOT NULL`).Scan(&customerTablesInPlatform); err != nil {
 		t.Fatal(err)
 	}
 	if customerTablesInPlatform {
-		t.Fatal("platform migrations installed customer-owned Commit tables")
+		t.Fatal("platform migrations installed customer or qualification tables")
 	}
 	customerPool := pgtest.OpenDatabase(t)
 	customerSchema, err := os.ReadFile("../../pkg/commit/schema.sql")
@@ -61,6 +62,16 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer customerConn.Release()
+
+	qualificationPool := pgtest.OpenDatabase(t)
+	if _, err := qualificationPool.Exec(ctx, `CREATE TABLE public.gregale_qualification_restore_probe (id integer PRIMARY KEY CHECK (id = 1), marker text NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	qualificationConn, err := qualificationPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer qualificationConn.Release()
 
 	stmts := literalSQLStatements(t, "../../pkg", "../../cmd")
 	if len(stmts) < 500 {
@@ -84,7 +95,7 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 		"42P10": true, // invalid_column_reference
 		"42P08": true, // ambiguous_parameter / inconsistent parameter types
 	}
-	var customerStatements int
+	var customerStatements, qualificationStatements int
 	for i, s := range stmts {
 		name := fmt.Sprintf("sql_gate_%d", i)
 		target := conn
@@ -94,10 +105,14 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 			target = customerConn
 			query = s.sql
 			customerStatements++
+		} else if strings.HasPrefix(pos, "../../pkg/managedpostgres/neon/restore_probe.go:") {
+			target = qualificationConn
+			query = s.sql
+			qualificationStatements++
 		}
 		// pgtest isolates each test in its own schema, which stands in for
 		// public; a few statements qualify public.<table> deliberately.
-		// Customer SQL keeps its exact public qualification in its own DB.
+		// Customer and qualification SQL keep public qualification in their own DBs.
 		_, err := target.Conn().Prepare(ctx, name, query)
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && definitive[pgErr.Code] {
@@ -111,7 +126,10 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 	if customerStatements == 0 {
 		t.Fatal("customer Commit SQL was absent from the source walk")
 	}
-	t.Logf("validated %d platform and %d customer SQL literals", len(stmts)-customerStatements, customerStatements)
+	if qualificationStatements == 0 {
+		t.Fatal("restore qualification SQL was absent from the source walk")
+	}
+	t.Logf("validated %d platform, %d customer and %d qualification SQL literals", len(stmts)-customerStatements-qualificationStatements, customerStatements, qualificationStatements)
 }
 
 type sqlLiteral struct {

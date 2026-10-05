@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,6 +64,25 @@ func TestSecretAckProgressWaitsForUnsupportedTargetAfterRestart(t *testing.T) {
 	secret.RuntimeReloadObservations[0].ApplicationAck = "applied"
 	if targets, pending, err := secretAckProgressWithRestart(secret, "fresh-instance"); err != nil || targets != 1 || pending != 0 {
 		t.Fatalf("acknowledged restart progress = targets %d pending %d err %v, want 1/0/nil", targets, pending, err)
+	}
+}
+
+// A restarted runtime without reload opt-in is never given the
+// acknowledgement endpoint, so `rotate --restart --wait-for-ack` used to wait
+// out the full --timeout before failing. It now fails at the first poll.
+func TestSecretAckProgressFailsFastWhenRestartedRuntimeCannotAcknowledge(t *testing.T) {
+	secret := api.AppSecretResponse{DeliveryVersion: 2, RuntimeReloadObservations: []api.SecretRuntimeReloadObservation{
+		{InstanceID: "old-instance", ReloadSupport: "disabled"},
+		{InstanceID: "fresh-instance", ReloadSupport: "disabled"},
+	}}
+	_, _, err := secretAckProgressWithRestart(secret, "fresh-instance")
+	if err == nil || !strings.Contains(err.Error(), "omit --wait-for-ack") {
+		t.Fatalf("restart progress err = %v, want an immediate cannot-acknowledge error", err)
+	}
+	// A runtime still booting reports "unknown" and may yet acknowledge.
+	secret.RuntimeReloadObservations[1].ReloadSupport = "unknown"
+	if targets, pending, err := secretAckProgressWithRestart(secret, "fresh-instance"); err != nil || targets != 2 || pending != 2 {
+		t.Fatalf("booting restart progress = targets %d pending %d err %v, want 2/2/nil", targets, pending, err)
 	}
 }
 

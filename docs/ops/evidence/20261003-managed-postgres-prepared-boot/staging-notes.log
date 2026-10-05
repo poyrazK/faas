@@ -1,0 +1,7 @@
+Initial private-index staging failed with: fatal: unable to write loose object file: No space left on device.
+No branch mutation or source archive resulted. The retry succeeded from the same working files after local space became available; snapshot.log records the final source.
+Initial macOS race command failed during package loading because the downloaded Go 1.25.13 toolchain lacked vendor/golang.org/x/net/http/httpproxy. No tests ran. toolchain-failed-portable-macos.* preserve the failed attempt.
+The retry uses GOTOOLCHAIN=local and /Users/poyrazk/sdk/go1.25.13/bin/go, whose standard-library source exists.
+The standalone SDK retry hit local disk exhaustion during vet-file creation before test results. disk-failed-portable-macos.* preserve the failure. The successful macOS retry uses -vet=off and -ldflags="-s -w"; Linux default vet and changed-code lint provide static checks.
+The first Linux fcvm.test process hit the 10 GiB unit memory cgroup limit. oom-diagnostic.log preserves kernel attribution. The source was unchanged on the 384 MiB/GOGC=10 retry; verbose output exposed an unrelated fault-around alignment fixture failure.
+The Linux-only fixture was corrected to align its expected fault-around window using the actual virtual mapping address and clip it to file bounds. darwin-source-match.log proves Darwin inputs remain byte-identical to the passed race snapshot.

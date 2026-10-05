@@ -9,13 +9,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 const workflowRunSelectCols = `id, app_id, workflow_name, status, current_step, input, output,
-       definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at`
+       definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, resume_count, cancelled_at`
 
 const workflowStepSelectCols = `run_id, step_name, status, attempt, input, output,
-       started_at, next_check_at, next_retry_at, finished_at, error, created_at`
+       started_at, next_check_at, next_retry_at, finished_at, error, created_at, when_matched, when_evaluated_at, skip_reason, foreach_parent, foreach_index, foreach_count, retry_base`
 
 const workflowEventSelectCols = `id, run_id, event_name, payload, received_at`
 
@@ -25,7 +27,7 @@ func scanWorkflowRunCols(scan func(...any) error) (*WorkflowRun, error) {
 	var runUUID string
 	if err := scan(&runUUID, &r.AppID, &r.WorkflowName, &r.Status, &r.CurrentStep,
 		&inputBytes, &outputBytes, &defBytes, &r.ScheduledFor, &r.StartedAt,
-		&r.FinishedAt, &r.LastError, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		&r.FinishedAt, &r.LastError, &r.CreatedAt, &r.UpdatedAt, &r.ResumeCount, &r.CancelledAt); err != nil {
 		return nil, err
 	}
 	r.ID = runUUID
@@ -47,7 +49,7 @@ func scanWorkflowStepCols(scan func(...any) error) (*WorkflowStep, error) {
 	var runUUID string
 	if err := scan(&runUUID, &s.StepName, &s.Status, &s.Attempt,
 		&inputBytes, &outputBytes, &s.StartedAt, &s.NextCheckAt, &s.NextRetryAt, &s.FinishedAt,
-		&s.Error, &s.CreatedAt); err != nil {
+		&s.Error, &s.CreatedAt, &s.WhenMatched, &s.WhenEvaluatedAt, &s.SkipReason, &s.ForEachParent, &s.ForEachIndex, &s.ForEachCount, &s.RetryBase); err != nil {
 		return nil, err
 	}
 	s.RunID = runUUID
@@ -89,6 +91,9 @@ type workflowRunQueryer interface {
 func prepareWorkflowRun(r *WorkflowRun) error {
 	if r == nil {
 		return fmt.Errorf("%w: nil run", ErrWorkflowInvalidRecord)
+	}
+	if r.ResumeCount != 0 || r.CancelledAt != nil {
+		return ErrWorkflowInvalidRecord
 	}
 	if r.ID == "" {
 		r.ID = uuid.NewString()
@@ -251,32 +256,15 @@ func (s *PgStore) MarkWorkflowRunStatus(ctx context.Context, id, status string, 
 	if err := validateWorkflowJSON(output, false); err != nil {
 		return err
 	}
-	query := `
-		UPDATE workflow_runs
-		SET status = $2,
-		    output = COALESCE($3, output),
-		    last_error = COALESCE($4, last_error),
-		    started_at = CASE WHEN $2 = 'running' AND started_at IS NULL THEN now() ELSE started_at END,
-		    finished_at = CASE WHEN $2 IN ('succeeded', 'failed', 'dead') THEN now() ELSE finished_at END,
-		    updated_at = now()
-			WHERE id = $1
-			  AND (status NOT IN ('succeeded', 'failed', 'dead') OR status = $2)
-	`
-	tag, err := s.pool.Exec(ctx, query, id, status, output, lastErr)
+	errorText := pgtype.Text{}
+	if lastErr != nil {
+		errorText = pgtype.Text{String: *lastErr, Valid: true}
+	}
+	rows, err := sqlc.New().MarkWorkflowRunStatusFenced(ctx, s.pool, sqlc.MarkWorkflowRunStatusFencedParams{RunID: mustPgUUID(id), Status: status, Output: output, LastError: errorText, Generation: workflowGenerationArg(ctx, id)})
 	if err != nil {
-		return fmt.Errorf("pgstore: mark workflow run status: %w", err)
+		return fmt.Errorf("mark workflow run: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		var exists bool
-		if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM workflow_runs WHERE id = $1)`, id).Scan(&exists); err != nil {
-			return fmt.Errorf("pgstore: inspect workflow transition conflict: %w", err)
-		}
-		if !exists {
-			return ErrWorkflowRunNotFound
-		}
-		return fmt.Errorf("%w: workflow run is terminal", ErrConflict)
-	}
-	return nil
+	return s.workflowRunWriteResult(ctx, id, rows, false)
 }
 
 func (s *PgStore) ClaimNextPendingRun(ctx context.Context) (*WorkflowRun, error) {
@@ -345,15 +333,11 @@ func (s *PgStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, er
 		return nil, fmt.Errorf("pgstore: claim next due workflow run: %w", err)
 	}
 	if priorStatus == WorkflowRunStatusRunning {
-		if _, err := tx.Exec(ctx, `
-			UPDATE workflow_steps
-			SET status = 'pending', attempt = GREATEST(attempt - 1, 0),
-			    finished_at = NULL, error = NULL, next_retry_at = NULL
-			WHERE run_id = $1 AND status = 'running'
-		`, id); err != nil {
+		if err := recoverWorkflowStepsTx(ctx, tx, id); err != nil {
 			return nil, fmt.Errorf("pgstore: recover stale workflow steps: %w", err)
 		}
 	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("pgstore: commit workflow claim: %w", err)
 	}
@@ -367,13 +351,12 @@ func (s *PgStore) ExtendWorkflowRunLease(ctx context.Context, runID string, time
 	if timeout <= 0 {
 		return ErrWorkflowInvalidInput
 	}
-	result, err := s.pool.Exec(ctx, `UPDATE workflow_runs SET lease_until = now() + ($2::bigint * interval '1 millisecond') + interval '5 minutes'
-		WHERE id = $1 AND status = 'running'`, runID, int64(timeout/time.Millisecond))
+	rows, err := sqlc.New().ExtendWorkflowRunLeaseFenced(ctx, s.pool, sqlc.ExtendWorkflowRunLeaseFencedParams{RunID: mustPgUUID(runID), TimeoutMs: int64(timeout / time.Millisecond), Generation: workflowGenerationArg(ctx, runID)})
 	if err != nil {
 		return err
 	}
-	if result.RowsAffected() == 0 {
-		return ErrWorkflowNotRunning
+	if rows == 0 {
+		return ErrWorkflowOutboundAttemptExpired
 	}
 	return nil
 }
@@ -383,86 +366,54 @@ func (s *PgStore) ScheduleWorkflowRun(ctx context.Context, id, status string, sc
 	if err := validateWorkflowRunStatus(status); err != nil {
 		return err
 	}
-	tag, err := s.pool.Exec(ctx, `
-			UPDATE workflow_runs
-			SET status = $2,
-			    scheduled_for = CASE
-			      WHEN status = 'awaiting_event' AND $2 = 'awaiting_event'
-			      THEN LEAST(scheduled_for, $3)
-			      ELSE $3 END,
-			    updated_at = now()
-			WHERE id = $1
-			  AND (status NOT IN ('succeeded', 'failed', 'dead') OR status = $2)
-		`, id, status, scheduledFor.UTC())
+	rows, err := sqlc.New().ScheduleWorkflowRunFenced(ctx, s.pool, sqlc.ScheduleWorkflowRunFencedParams{RunID: mustPgUUID(id), Status: status, ScheduledFor: pgtype.Timestamptz{Time: scheduledFor.UTC(), Valid: true}, Generation: workflowGenerationArg(ctx, id)})
 	if err != nil {
-		return fmt.Errorf("pgstore: schedule workflow run: %w", err)
+		return fmt.Errorf("schedule workflow run: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		var exists bool
-		if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM workflow_runs WHERE id = $1)`, id).Scan(&exists); err != nil {
-			return fmt.Errorf("pgstore: inspect workflow schedule conflict: %w", err)
-		}
-		if !exists {
-			return ErrWorkflowRunNotFound
-		}
-		return fmt.Errorf("%w: workflow run is terminal", ErrConflict)
-	}
-	return nil
+	return s.workflowRunWriteResult(ctx, id, rows, false)
 }
 
 func (s *PgStore) SetWorkflowRunWake(ctx context.Context, id, status string, scheduledFor time.Time) error {
 	if status != WorkflowRunStatusPending && status != WorkflowRunStatusAwaitingEvent {
 		return ErrWorkflowInvalidRecord
 	}
-	tag, err := s.pool.Exec(ctx, `UPDATE workflow_runs SET status = $2, scheduled_for = $3, updated_at = now() WHERE id = $1 AND status IN ('running', 'pending', 'awaiting_event') AND NOT (status = 'pending' AND scheduled_for <= now())`, id, status, scheduledFor.UTC())
+	rows, err := sqlc.New().SetWorkflowRunWakeFenced(ctx, s.pool, sqlc.SetWorkflowRunWakeFencedParams{RunID: mustPgUUID(id), Status: status, ScheduledFor: pgtype.Timestamptz{Time: scheduledFor.UTC(), Valid: true}, Generation: workflowGenerationArg(ctx, id)})
 	if err != nil {
-		return fmt.Errorf("pgstore: set workflow wake: %w", err)
+		return fmt.Errorf("set workflow wake: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		var exists bool
-		if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM workflow_runs WHERE id = $1)`, id).Scan(&exists); err != nil {
-			return fmt.Errorf("pgstore: inspect workflow wake: %w", err)
-		}
-		if !exists {
-			return ErrWorkflowRunNotFound
-		}
-	}
-	return nil
+	return s.workflowRunWriteResult(ctx, id, rows, true)
 }
 
-// RecoverWorkflowRun returns a non-terminal orchestration attempt to the due
-// queue. Any ambiguous running step is retried with the same attempt number so
-// its Idempotency-Key remains stable across a crash or persistence failure.
+// uncertain mutations become terminal unless provider idempotency is supported.
 func (s *PgStore) RecoverWorkflowRun(ctx context.Context, id string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("pgstore: begin recover workflow: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
-	if _, err := tx.Exec(ctx, `
-		UPDATE workflow_steps
-		SET status = 'pending', attempt = GREATEST(attempt - 1, 0),
-		    finished_at = NULL, error = NULL, next_retry_at = NULL
-		WHERE run_id = $1 AND status = 'running'
-	`, id); err != nil {
+	status, err := sqlc.New().LockWorkflowRecovery(ctx, tx, mustPgUUID(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrWorkflowRunNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("pgstore: lock workflow recovery: %w", err)
+	}
+	if err := checkWorkflowGenerationTx(ctx, tx, id); err != nil {
+		return err
+	}
+
+	if status == WorkflowRunStatusSucceeded || status == WorkflowRunStatusFailed || status == WorkflowRunStatusDead {
+		return nil
+	}
+	if err := recoverWorkflowStepsTx(ctx, tx, id); err != nil {
 		return fmt.Errorf("pgstore: recover workflow steps: %w", err)
 	}
-	tag, err := tx.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		UPDATE workflow_runs
 		SET status = 'pending', scheduled_for = now(), updated_at = now()
-		WHERE id = $1 AND status NOT IN ('succeeded', 'failed', 'dead')
-	`, id)
-	if err != nil {
+		WHERE id = $1
+	`, id); err != nil {
 		return fmt.Errorf("pgstore: recover workflow run: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		var exists bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM workflow_runs WHERE id = $1)`, id).Scan(&exists); err != nil {
-			return fmt.Errorf("pgstore: inspect workflow recovery: %w", err)
-		}
-		if !exists {
-			return ErrWorkflowRunNotFound
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("pgstore: commit workflow recovery: %w", err)
@@ -500,6 +451,9 @@ func (s *PgStore) CancelWorkflowRun(ctx context.Context, id, reason string) (*Wo
 	`, id, reason); err != nil {
 		return nil, fmt.Errorf("pgstore: skip workflow steps for cancellation: %w", err)
 	}
+	if err := sqlc.New().CancelWorkflowOutboundAttempts(ctx, tx, sqlc.CancelWorkflowOutboundAttemptsParams{RunID: mustPgUUID(id), Reason: reason}); err != nil {
+		return nil, err
+	}
 	updateQuery := fmt.Sprintf(`
 		UPDATE workflow_runs
 		SET status = 'failed', last_error = $2, finished_at = now(), updated_at = now()
@@ -510,6 +464,11 @@ func (s *PgStore) CancelWorkflowRun(ctx context.Context, id, reason string) (*Wo
 	if err != nil {
 		return nil, fmt.Errorf("pgstore: mark workflow cancelled: %w", err)
 	}
+	if err := sqlc.New().RecordWorkflowCancellation(ctx, tx, mustPgUUID(id)); err != nil {
+		return nil, err
+	}
+	run.CancelledAt = run.FinishedAt
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("pgstore: commit workflow cancellation: %w", err)
 	}
@@ -545,6 +504,9 @@ func (s *PgStore) CreateWorkflowSteps(ctx context.Context, runID string, steps [
 		}
 		if err := validateWorkflowStepStatus(status); err != nil {
 			return err
+		}
+		if step.RetryBase != 0 {
+			return ErrWorkflowInvalidRecord
 		}
 		if step.Attempt < 0 {
 			return ErrWorkflowInvalidAttempt
@@ -665,13 +627,39 @@ func (s *PgStore) StartWorkflowStep(ctx context.Context, runID, stepName string,
 		}
 		return nil, fmt.Errorf("pgstore: lock run to start workflow step: %w", err)
 	}
+	if err := checkWorkflowGenerationTx(ctx, tx, runID); err != nil {
+		return nil, err
+	}
+
+	current, err := sqlc.New().WorkflowOutboundStartCurrent(ctx, tx, sqlc.WorkflowOutboundStartCurrentParams{RunID: mustPgUUID(runID), StepName: stepName, Attempt: int32(attempt)})
+	if err != nil {
+		return nil, err
+	}
+	if !current {
+		return nil, ErrWorkflowOutboundAttemptExpired
+	}
 	if runStatus == WorkflowRunStatusSucceeded || runStatus == WorkflowRunStatusFailed || runStatus == WorkflowRunStatusDead {
 		return nil, fmt.Errorf("%w: workflow run is terminal", ErrConflict)
+	}
+	allowed, err := sqlc.New().WorkflowGuardStartAllowed(ctx, tx, sqlc.WorkflowGuardStartAllowedParams{RunID: mustPgUUID(runID), StepName: stepName})
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, ErrWorkflowGuardNotReady
+	}
+	foreachAllowed, err := sqlc.New().WorkflowForEachStartAllowed(ctx, tx, sqlc.WorkflowForEachStartAllowedParams{RunID: mustPgUUID(runID), StepName: stepName, Input: input})
+	if err != nil {
+		return nil, err
+	}
+	if !foreachAllowed {
+		return nil, ErrWorkflowGuardNotReady
 	}
 	var storedInput []byte
 	err = tx.QueryRow(ctx, `
 		UPDATE workflow_steps
 		SET status = 'running', attempt = $3, input = $4, error = NULL,
+		    outbound_attempt_token = gen_random_uuid(),
 		    started_at = COALESCE(started_at, now()), next_retry_at = NULL,
 		    finished_at = NULL
 		WHERE run_id = $1 AND step_name = $2 AND status IN ('pending', 'awaiting_event')
@@ -753,6 +741,31 @@ func (s *PgStore) markWorkflowStepStatus(ctx context.Context, runID, stepName, s
 			return ErrWorkflowRunNotFound
 		}
 		return fmt.Errorf("pgstore: lock workflow run for step status: %w", err)
+	}
+	if err := checkWorkflowGenerationTx(ctx, tx, runID); err != nil {
+		return err
+	}
+
+	if attemptStatus != nil {
+		if err := checkWorkflowOutboundCompletionTx(ctx, tx, runID, stepName, attempt); err != nil {
+			return err
+		}
+	}
+
+	if status == WorkflowStepStatusSucceeded && attemptStatus != nil {
+		steps, readErr := workflowControlSteps(ctx, tx, runID)
+		if readErr != nil {
+			return readErr
+		}
+		if child := steps[stepName]; child.ForEachParent != nil {
+			parent := steps[*child.ForEachParent]
+			if parent.ForEachCount == nil {
+				return ErrWorkflowGuardNotReady
+			}
+			if _, limitErr := workflowForEachOutputs(steps, parent.StepName, *parent.ForEachCount, stepName, output); limitErr != nil {
+				return limitErr
+			}
+		}
 	}
 
 	query := `
@@ -842,6 +855,15 @@ func (s *PgStore) scheduleWorkflowStepRetry(ctx context.Context, runID, stepName
 		}
 		return fmt.Errorf("pgstore: lock workflow retry run: %w", err)
 	}
+	if err := checkWorkflowGenerationTx(ctx, tx, runID); err != nil {
+		return err
+	}
+
+	if recordAttempt {
+		if err := checkWorkflowOutboundCompletionTx(ctx, tx, runID, stepName, attempt); err != nil {
+			return err
+		}
+	}
 	if runStatus == WorkflowRunStatusSucceeded || runStatus == WorkflowRunStatusFailed || runStatus == WorkflowRunStatusDead {
 		return fmt.Errorf("%w: workflow run is terminal", ErrConflict)
 	}
@@ -904,6 +926,10 @@ func (s *PgStore) ParkWorkflowTimer(ctx context.Context, runID, stepName string,
 		}
 		return time.Time{}, fmt.Errorf("pgstore: lock workflow timer run: %w", err)
 	}
+	if err := checkWorkflowGenerationTx(ctx, tx, runID); err != nil {
+		return time.Time{}, err
+	}
+
 	if runStatus == WorkflowRunStatusSucceeded || runStatus == WorkflowRunStatusFailed || runStatus == WorkflowRunStatusDead {
 		return time.Time{}, fmt.Errorf("%w: workflow run is terminal", ErrConflict)
 	}
@@ -957,6 +983,10 @@ func (s *PgStore) ParkWorkflowEvent(ctx context.Context, runID, stepName, eventN
 		}
 		return nil, time.Time{}, fmt.Errorf("pgstore: lock workflow event run: %w", err)
 	}
+	if err := checkWorkflowGenerationTx(ctx, tx, runID); err != nil {
+		return nil, time.Time{}, err
+	}
+
 	if runStatus == WorkflowRunStatusSucceeded || runStatus == WorkflowRunStatusFailed || runStatus == WorkflowRunStatusDead {
 		return nil, time.Time{}, fmt.Errorf("%w: workflow run is terminal", ErrConflict)
 	}
@@ -1032,6 +1062,10 @@ func (s *PgStore) ResolveWorkflowEventWait(ctx context.Context, runID, stepName,
 		}
 		return nil, false, fmt.Errorf("pgstore: lock workflow event wait run: %w", err)
 	}
+	if err := checkWorkflowGenerationTx(ctx, tx, runID); err != nil {
+		return nil, false, err
+	}
+
 	if runStatus == WorkflowRunStatusSucceeded || runStatus == WorkflowRunStatusFailed || runStatus == WorkflowRunStatusDead {
 		return nil, false, fmt.Errorf("%w: workflow run is terminal", ErrConflict)
 	}
@@ -1299,4 +1333,21 @@ func (s *PgStore) SweepExpiredWorkflowEvents(ctx context.Context, olderThan time
 		return 0, fmt.Errorf("pgstore: sweep expired workflow events: %w", err)
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+func (s *PgStore) workflowRunWriteResult(ctx context.Context, id string, rows int64, noop bool) error {
+	if rows > 0 {
+		return nil
+	}
+	run, err := s.GetWorkflowRun(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !WorkflowRunGenerationMatches(ctx, id, run.ResumeCount) {
+		return ErrWorkflowOutboundAttemptExpired
+	}
+	if noop {
+		return nil
+	}
+	return fmt.Errorf("%w: workflow run is terminal", ErrConflict)
 }

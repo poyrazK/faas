@@ -121,6 +121,17 @@
     mode: "0644"
   notify: restart faas-gatewayd-public
 
+# ADR-520: rendered unconditionally so turning the feature off removes the
+# ask endpoint on the next converge.
+- name: gatewayd_public_service — install custom-domain TLS drop-in
+  ansible.builtin.template:
+    src: 99-faas-custom-domain-tls.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-public.service.d/99-faas-custom-domain-tls.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-gatewayd-public
+
 # Issue #2700: *.apps.gregale.dev was retired when app hosts moved to the
 # apex wildcard. Leaving it in an existing Caddy site makes Caddy retry a
 # DNS-01-only wildcard with the HTTP/TLS-ALPN issuers every six hours. Keep

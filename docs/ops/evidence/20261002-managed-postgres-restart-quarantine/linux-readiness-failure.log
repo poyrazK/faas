@@ -1,0 +1,95 @@
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+ok  	github.com/onebox-faas/faas/pkg/fcvm	22.931s
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:57 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:46:58 WARN egress flow log: list failed instance=i-bad netns=fc-bad err="nft exec failed"
+2026/10/02 10:46:58 WARN egress flow log: list failed instance=i-bad netns=fc-bad err="nft exec failed"
+2026/10/02 10:46:58 WARN egress flow log: list failed instance=i-bad netns=fc-bad err="nft exec failed"
+2026/10/02 10:46:58 WARN egress flow log: list failed instance=i-bad netns=fc-bad err="nft exec failed"
+2026/10/02 10:46:58 WARN egress flow log: list failed instance=i-bad netns=fc-bad err="nft exec failed"
+--- FAIL: TestEgressWatcher_Reload_AtomicReplaceFailureDoesNotCallReload (0.00s)
+    egress_watcher_test.go:287: expected Reload to fail on atomic-replace; got nil
+2026/10/02 10:47:03 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/02 10:47:03 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/02 10:47:03 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/02 10:47:03 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM applied_default=1m0s
+2026/10/02 10:47:03 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM applied_default=1m0s
+2026/10/02 10:47:03 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM applied_default=1m0s
+2026/10/02 10:47:03 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/02 10:47:03 INFO framework_ready receiver registered vsock_host_port=1027 transport=firecracker_uds
+2026/10/02 10:47:03 INFO workload identity receiver registered vsock_host_port=1030 transport=firecracker_uds enabled=false
+--- FAIL: TestNetworkdDispatcherFilterIsNarrow (0.00s)
+    host_journal_metrics_test.go:209: open ../../deploy/ansible/roles/vmmd_service/templates/60-faas-firecracker-links.conf.j2: no such file or directory
+--- FAIL: TestJournalPolicyHasFiniteBounds (0.00s)
+    host_journal_metrics_test.go:234: open ../../deploy/ansible/roles/host_hardening/defaults/main.yml: no such file or directory
+2026/10/02 10:47:06 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:47:06 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:47:06 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:47:06 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:47:06 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:47:06 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 10:47:06 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- FAIL: TestBuildReadinessProbe_HappyPath (0.00s)
+    readiness_test.go:52: after MarkBound: probe All() = true, want false (kvm/fc platform-dependent)
+--- FAIL: TestBuildReadinessProbe_ProbeEndToEnd (0.00s)
+    readiness_test.go:77: /readyz code = 200, want 503 (a signal is down)
+    readiness_test.go:81: /readyz body = "ready", want prefix "not-ready:"
+--- FAIL: TestGrpcBoundSignal_MarkBoundIdempotent (0.00s)
+    readiness_test.go:97: after two MarkBound calls: probe All() = true, want false
+FAIL
+FAIL	github.com/onebox-faas/faas/cmd/vmmd	11.481s
+FAIL

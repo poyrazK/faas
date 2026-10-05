@@ -1,0 +1,5 @@
+# github.com/onebox-faas/faas/pkg/fcvm
+pkg/fcvm/resource_restart_prepared.go:22:6: invalid operation: operator ! not defined on ok (variable of interface type error)
+FAIL	github.com/onebox-faas/faas/pkg/fcvm [build failed]
+FAIL	github.com/onebox-faas/faas/cmd/vmmd [build failed]
+FAIL

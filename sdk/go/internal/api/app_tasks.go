@@ -32,10 +32,11 @@ func (s AppTaskStatus) Terminal() bool {
 }
 
 type CreateAppTaskRequest struct {
-	Command        []string `json:"command"`
-	CommandShell   bool     `json:"command_shell,omitempty"`
-	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
-	MaxOutputBytes int      `json:"max_output_bytes,omitempty"`
+	VerificationDeploymentID string   `json:"verification_deployment_id,omitempty"`
+	Command                  []string `json:"command"`
+	CommandShell             bool     `json:"command_shell,omitempty"`
+	TimeoutSeconds           int      `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes           int      `json:"max_output_bytes,omitempty"`
 }
 
 type AppTaskFailure struct {

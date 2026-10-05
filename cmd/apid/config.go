@@ -38,6 +38,8 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	// OutboundProbeGatewayURL is the operator-trusted HTTPS origin reachable by task guests.
+	OutboundProbeGatewayURL string `toml:"outbound_probe_gateway_url"`
 	// GlobalAppDirectoryEnabled exposes the internal cross-cell identity API.
 	// The directory belongs to an unbound database, never a regional cell.
 	GlobalAppDirectoryEnabled bool `toml:"global_app_directory_enabled"`

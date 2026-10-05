@@ -112,6 +112,15 @@ def pre_normalize_spec(spec: Path) -> Path:
         return node
 
     fixed = fix_flow_scalars(safe_data)
+    # 0.29 interprets validation-only required/not compositions as Any,
+    # dropping these named DTOs and their nested types. Preserve the source
+    # schema and its runtime validation; give codegen the same object fields
+    # without cross-field predicates it cannot express in attrs models.
+    for name in ("ObjectRetentionPeriod", "ObjectLockDefaultRetention"):
+        schema = fixed["components"]["schemas"].get(name)
+        if schema is not None:
+            for keyword in ("oneOf", "anyOf", "not"):
+                schema.pop(keyword, None)
     # The pinned generator discards object properties when a oneOf contains
     # only required-field constraints, producing body: Any instead of the
     # existing typed request model. Keep its wire shape in generated clients;

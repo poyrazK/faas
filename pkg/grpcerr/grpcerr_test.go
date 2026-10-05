@@ -44,6 +44,8 @@ func TestRoundTrip_StableCodes(t *testing.T) {
 		{api.CodeCapacity, codes.ResourceExhausted, "No capacity"},
 		{api.CodeSnapshotBackoff, codes.ResourceExhausted, "Snapshot backoff"},
 		{api.CodeNotImplemented, codes.Unimplemented, "Not implemented"},
+		{api.CodeDatabaseCutoverFenced, codes.FailedPrecondition, "Database cutover in progress"},
+		{api.CodeAppAdmissionUnavailable, codes.Unavailable, "App admission unavailable"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {

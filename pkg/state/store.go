@@ -390,6 +390,13 @@ type DeploymentHostingFailureStore interface {
 	FailDeploymentWithHostingReceipt(ctx context.Context, deploymentID string, receipt []byte, code, message string) (changed bool, err error)
 }
 
+// DeploymentHostingVerificationStore fences durable verification progress to
+// the snapshotting candidate and the current attempt. It does not own retries;
+// the notification outbox remains the delivery mechanism.
+type DeploymentHostingVerificationStore interface {
+	UpdateDeploymentHostingVerification(ctx context.Context, deploymentID string, update HostingVerificationUpdate) (HostingVerificationProgress, error)
+}
+
 // OpenAPISnapshotStore is the optional persistence seam for the API contract
 // gate (ADR-121). It is intentionally separate from Store so narrow test
 // doubles and daemon-specific stores remain source-compatible. Production
@@ -398,6 +405,13 @@ type OpenAPISnapshotStore interface {
 	UpdateDeploymentOpenAPISnapshot(ctx context.Context, snap OpenAPISnapshot) error
 	LatestOpenAPISnapshotForScope(ctx context.Context, appID, scope string) (OpenAPISnapshot, error)
 	OpenAPISnapshotByDeployment(ctx context.Context, deploymentID string) (OpenAPISnapshot, error)
+}
+
+// DeploymentRoutePolicySnapshotStore is the read seam for immutable gateway
+// policy captured with a deployment. It is separate from OpenAPISnapshotStore
+// so implementations that only support contract snapshots remain compatible.
+type DeploymentRoutePolicySnapshotStore interface {
+	DeploymentRoutePolicySnapshotByDeployment(ctx context.Context, deploymentID string) (DeploymentRoutePolicySnapshot, error)
 }
 
 // RecoverRolloutStuckAfter (issue #976 / ADR-122 / SAFE-RELEASES-R +
@@ -976,7 +990,7 @@ type DeploymentActivationLocker interface {
 // narrow keeps the ownership rules enforceable — apid only touches
 // customer-intent tables through the methods it is given.
 type Store interface {
-	// ADR-490: admission authority must survive Store decorators and scheduler
+	// ADR-616: admission authority must survive Store decorators and scheduler
 	// restarts. Missing authority is never an optional-capability fallback.
 	RegionalRuntimeQuotaAdmissionReader
 	RegionalRuntimeIssuedPlacementReader
@@ -1983,6 +1997,16 @@ type Store interface {
 	// AppBySlugIncludingDeleted is the restore-side lookup. The normal
 	// AppBySlug intentionally hides tombstones from customer reads.
 	AppBySlugIncludingDeleted(ctx context.Context, slug string) (App, error)
+	// AppByServiceAddressIndex resolves an account-scoped private service
+	// address (ADR-576) to its live app. Tombstones and other accounts'
+	// apps are ErrNotFound, so an address never routes across a tenant or to
+	// a deleted app.
+	AppByServiceAddressIndex(ctx context.Context, accountID string, index int) (App, error)
+	// AppServiceAddressIndex returns the app's account-scoped index into
+	// api.ServiceAddressCIDR (ADR-576); 0 means it holds no address. It is a
+	// narrow read rather than an App field so the shared apps projection
+	// stays valid on schemas that predate the column.
+	AppServiceAddressIndex(ctx context.Context, appID string) (int, error)
 	ListApps(ctx context.Context, accountID string) ([]App, error)
 	// ListAllApps returns every non-deleted app on the box. schedd's reaper and
 	// cron loops walk this (one-box scale, spec §4.3); apid never calls it.
@@ -4252,6 +4276,14 @@ type Store interface {
 	// queue binding. Queue names are exact matches; the empty queue name is
 	// reserved for the legacy app-wide queue returned by QueueState.
 	QueueStateForQueue(ctx context.Context, appID, queueName string) (QueueStats, error)
+	// Scoped queue demand uses the environment captured at admission. Scope is
+	// required; an empty scope must not silently aggregate neighboring work.
+	QueueStateInScope(ctx context.Context, appID, scope string) (QueueStats, error)
+	QueueStateForQueueInScope(ctx context.Context, appID, queueName, scope string) (QueueStats, error)
+	// Binding readers follow immutable message identity through rename/retirement.
+	QueueStateForBinding(ctx context.Context, appID, bindingID string) (QueueStats, error)
+	QueueStateForBindingInScope(ctx context.Context, appID, bindingID, scope string) (QueueStats, error)
+	WorkerPoolHistory(ctx context.Context, appID, deploymentID string) (WorkerPoolHistory, error)
 	// QueuePeek lists the oldest pending queue messages for an app
 	// without acquiring a lease or incrementing attempts. Paginated by
 	// `before` (a queue row id, uuid) — same cursor convention as
@@ -4267,6 +4299,7 @@ type Store interface {
 	// Queue bindings are the durable app-scoped mapping between a logical queue
 	// and a worker/job workload. They are the configuration seam consumed by
 	// push workers and queue-depth autoscaling.
+	QueueBindingHistoryStore
 	CreateQueueBinding(ctx context.Context, binding QueueBinding) (QueueBinding, error)
 	QueueBindingByID(ctx context.Context, accountID, appID, id string) (QueueBinding, error)
 	ListQueueBindingsForApp(ctx context.Context, accountID, appID string) ([]QueueBinding, error)
@@ -4831,6 +4864,20 @@ type Store interface {
 	// operator's carefully-POSTed target_url with the bind
 	// address.
 	UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNode) (ComputeNode, error)
+	// SetComputeNodeServiceAddressReady records whether this node's vmmd
+	// creates namespaces that admit private service addresses (ADR-576).
+	// ready keeps the earliest stamp (the database clock on first call);
+	// !ready clears it. It returns the stored stamp, nil when cleared, and
+	// ErrNotFound for an unknown node.
+	SetComputeNodeServiceAddressReady(ctx context.Context, nodeID string, ready bool) (*time.Time, error)
+	// ComputeNodeServiceAddressReadyAt reads that stamp; nil means the node
+	// is not service-address capable. ErrNotFound for an unknown node.
+	ComputeNodeServiceAddressReadyAt(ctx context.Context, nodeID string) (*time.Time, error)
+	// ServiceAddressCallerByHostIP resolves the live instance behind a tenant
+	// source address for service DNS (ADR-576). nodeName scopes the lookup to
+	// one compute node; empty matches any. ErrNotFound when no live instance
+	// owns the address, ErrConflict when two apps claim it.
+	ServiceAddressCallerByHostIP(ctx context.Context, nodeName, hostIP string) (ServiceAddressCaller, error)
 	// UpsertNodeKey inserts or updates a (compute_node_id, key_id)
 	// row in compute_node_keys (ADR-053 / migration 00076). vmmd's
 	// self-registration calls this on startup once it has loaded
@@ -5190,7 +5237,9 @@ type Store interface {
 	//
 	// The stage_state jsonb is owned entirely by these two methods —
 	// callers MUST NOT write the column directly. The atomic JSONB
-	// merge is the load-bearing contract: the SSE handler's 2s
+	// merge preserves additive hosting verification progress, whose nested
+	// object is owned by DeploymentHostingVerificationStore.
+	// The merge is the load-bearing contract: the SSE handler's 2s
 	// polling tick (`statusTicker` at
 	// cmd/apid/handlers_ext.go:4156-4157) reads `stage_state`
 	// verbatim and emits `event: stage` frames per transition, so
@@ -5797,6 +5846,8 @@ type Store interface {
 	// RecordAppSecretRuntimeReloadAck records an app's explicit, version-fenced
 	// claim that it applied (or failed to apply) the current secret revision.
 	RecordAppSecretRuntimeReloadAck(ctx context.Context, result AppSecretRuntimeReloadAckResult) (int, error)
+	BeginAppSecretRuntimeProcess(context.Context, AppSecretRuntimeProcess) error
+	RetireAppSecretRuntimeProcess(context.Context, AppSecretRuntimeProcess) error
 	// ListAppSecretRuntimeReloadObservations returns the latest report for each
 	// active runtime and secret in one app. An empty scope lists all scopes.
 	// Only non-sensitive version, instance and guest-init outcome metadata is

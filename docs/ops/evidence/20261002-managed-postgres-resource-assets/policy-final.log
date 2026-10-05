@@ -1,0 +1,6 @@
+go run ./cmd/deployctl/ check
+text-encoding-check: clean
+shell-quoting-check: clean
+sealed-env-scope-check: OK (only faas-apid.service loads sealed.env)
+bash scripts/ci/check_adr_number_uniqueness.sh
+adr-number-uniqueness: OK — 470 ADRs, 361 distinct numbers, 71 pre-existing duplicates held at the baseline

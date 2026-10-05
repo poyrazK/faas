@@ -1,0 +1,21 @@
+native metal wrapper contracts OK
+native e2e: namespace-batch — 7 passed, 0 skipped, 0 failed
+native e2e: namespace-batch: all 7 required tests passed
+native e2e: namespace-batch — 6 passed, 0 skipped, 0 failed
+native e2e: namespace-batch: required test TestMetalPreparedNetworkMixedPolicies did not pass or run
+native e2e: namespace-batch: required tests did not all pass
+native e2e: namespace-batch — 6 passed, 1 skipped, 0 failed
+native e2e: namespace-batch: required test TestMetalPreparedNetworkMixedPolicies SKIPPED
+native e2e: namespace-batch: required tests did not all pass
+native e2e: namespace-batch — 6 passed, 0 skipped, 1 failed
+native e2e: namespace-batch: required test TestMetalPreparedNetworkMixedPolicies FAILED
+native e2e: namespace-batch: required tests did not all pass
+native e2e: companions — 2 passed, 0 skipped, 0 failed
+native e2e: companions: all 2 required tests passed
+native e2e: companions — 1 passed, 0 skipped, 0 failed
+native e2e: companions: required test TestCompanionTwo did not pass or run
+native e2e: companions: required tests did not all pass
+native e2e: companions — 1 passed, 1 skipped, 0 failed
+native e2e: companions: required test TestCompanionTwo SKIPPED
+native e2e: companions: required tests did not all pass
+companion source selects no tests

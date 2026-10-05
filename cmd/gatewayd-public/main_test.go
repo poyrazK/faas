@@ -125,9 +125,9 @@ func TestBuildServers_PinsMaxHeaderBytes(t *testing.T) {
 
 func TestInstallPublicStaticRoutes_SecurityTxt(t *testing.T) {
 	mux := http.NewServeMux()
-	installPublicStaticRoutes(mux)
+	installPublicStaticRoutes(mux, "gregale.dev", func() http.Handler { return nil })
 
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/security.txt", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://gregale.dev/.well-known/security.txt", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -143,9 +143,9 @@ func TestInstallPublicStaticRoutes_SecurityTxt(t *testing.T) {
 
 func TestInstallPublicStaticRoutes_OAuthMetadata(t *testing.T) {
 	mux := http.NewServeMux()
-	installPublicStaticRoutes(mux)
+	installPublicStaticRoutes(mux, "gregale.dev", func() http.Handler { return nil })
 
-	req := httptest.NewRequest(http.MethodGet, oauthmetadata.Path, nil)
+	req := httptest.NewRequest(http.MethodGet, "http://api.gregale.dev"+oauthmetadata.Path, nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -318,5 +318,30 @@ func TestRequirePublicBindInMultiHost_AcceptsExplicitOverrideInMultiHost(t *test
 
 	if err := requirePublicBindInMultiHost(); err != nil {
 		t.Errorf("explicit loopback override must pass (escape hatch), got: %v", err)
+	}
+}
+
+// On app and customer hosts both documents belong to the app (ADR-480): an
+// MCP app acting as its own authorization server publishes its own RFC 8414
+// metadata, and security.txt is per origin.
+func TestInstallPublicStaticRoutesLeavesTenantHostsToTheApp(t *testing.T) {
+	app := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	mux := http.NewServeMux()
+	installPublicStaticRoutes(mux, "gregale.dev", func() http.Handler { return app })
+	for _, host := range []string{"shop.gregale.dev", "pr-7-shop.gregale.dev", "api.customer.example"} {
+		for _, path := range []string{"/.well-known/security.txt", oauthmetadata.Path} {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://"+host+path, nil))
+			if rec.Code != http.StatusTeapot {
+				t.Errorf("GET %s%s = %d, want the app (418)", host, path, rec.Code)
+			}
+		}
+	}
+	for _, host := range []string{"gregale.dev", "api.gregale.dev", "127.0.0.1"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://"+host+oauthmetadata.Path, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s%s = %d, want platform metadata", host, oauthmetadata.Path, rec.Code)
+		}
 	}
 }

@@ -138,8 +138,12 @@ func TestRuntimeAdmissionFencedAppTaskNeverReceivesCommand(t *testing.T) {
 		return errRuntimeFenceTest
 	})
 	m.RegisterInstanceForTest("task", "deployment", "regional-app", "account")
+	lease, err := m.alloc.Acquire("task")
+	if err != nil {
+		t.Fatal(err)
+	}
 	m.mu.Lock()
-	m.live["task"].Lease.Instance = "task"
+	m.live["task"].Lease = lease
 	m.live["task"].AppTaskOnly = true
 	m.mu.Unlock()
 	req := apptaskproto.Request{Version: apptaskproto.Version, TaskID: "task", Command: []string{"echo", "run"}, TimeoutSeconds: 30, MaxOutputBytes: 1024}

@@ -1,6 +1,6 @@
 package fcvm
 
-// adr: 498
+// adr: 624
 import (
 	"context"
 	"errors"
@@ -189,7 +189,7 @@ func TestIndependentWarmResumeExcludesConcurrentRestoreCompletion(t *testing.T) 
 	case <-time.After(5 * time.Second):
 		t.Fatal("deferred resume did not reach native boundary")
 	}
-	if err := m.ResumeVM(t.Context(), req.Instance); !errors.Is(err, runtimequotahost.ErrBusy) {
+	if err := m.ResumeVM(t.Context(), req.Instance); err == nil {
 		t.Fatal("concurrent restore completion repeated guest hook", err)
 	}
 	close(v.release)
@@ -315,5 +315,86 @@ func TestRegionalResumeCannotRebindPhysicalAttempt(t *testing.T) {
 			}
 			_ = m.Destroy(t.Context(), req.Instance)
 		})
+	}
+}
+
+// Cancellation can arrive while the native backend is still running. A stop
+// must join that operation before touching the retained physical identity.
+type teardownJoinedRegionalResumeVMM struct {
+	*fakeVMM
+	entered, cancelled, release, stopping chan struct{}
+}
+
+func (v *teardownJoinedRegionalResumeVMM) ResumeServingVM(ctx context.Context, _ Lease, _ ServingResumeSpec) error {
+	close(v.entered)
+	<-ctx.Done()
+	close(v.cancelled)
+	<-v.release
+	return nil // Model a late successful native result after cancellation.
+}
+
+func (v *teardownJoinedRegionalResumeVMM) DestroyWithExport(ctx context.Context, lease Lease, exportDir string) (int, error) {
+	close(v.stopping)
+	return v.fakeVMM.DestroyWithExport(ctx, lease, exportDir)
+}
+
+func TestRegionalResumeDestroyJoinsNativeCompletion(t *testing.T) {
+	v := &teardownJoinedRegionalResumeVMM{fakeVMM: &fakeVMM{}, entered: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{}), stopping: make(chan struct{})}
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(v.release) }) }
+	t.Cleanup(unblock)
+	m, _, req := regionalHostFixture(t, v)
+	req.KeepPaused, req.Snapshot = true, usableSnapshot()
+	req.RegionalRuntime.Permit.Kind, req.RegionalRuntime.Seat = runtimequota.CapacityWarm, nil
+	inst, err := m.Wake(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := req.RegionalRuntime.Clone()
+	p.Seat = &runtimequota.ServingSeat{Permit: p.Permit, ID: uuid.NewString()}
+	resumed := make(chan error, 1)
+	go func() { resumed <- m.ResumeRegionalRuntime(t.Context(), req.Instance, p) }()
+	select {
+	case <-v.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("resume did not reach native boundary")
+	}
+	stopped := make(chan error, 1)
+	go func() { stopped <- m.Destroy(t.Context(), req.Instance) }()
+	select {
+	case <-v.cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("destroy did not cancel the native resume flight")
+	}
+	select {
+	case <-v.stopping:
+		t.Fatal("destroy entered native teardown before resume returned")
+	default:
+	}
+	if _, ok := m.NetnsFor(req.Instance); ok {
+		t.Fatal("cancelled pending resume remained routable")
+	}
+	if err := m.ResumeRegionalRuntime(t.Context(), req.Instance, p); err == nil {
+		t.Fatal("new resume entered the teardown flight")
+	}
+	unblock()
+	select {
+	case err := <-resumed:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal("late native success acknowledged cancelled resume", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("resume did not join")
+	}
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("destroy did not join")
+	}
+	if !admissionForInstance(inst).RegionalResumePending {
+		t.Fatal("cancelled resume cleared the serving fence")
 	}
 }

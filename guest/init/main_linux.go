@@ -334,9 +334,6 @@ func boot() error {
 		if rosterErr != nil && !isNotExist(rosterErr) {
 			return fmt.Errorf("secret reload requires a readable workload roster: %w", rosterErr)
 		}
-		if len(roster.Sidecars) > 0 {
-			return fmt.Errorf("secret reload is not supported with sidecars; use restart-based secret rotation")
-		}
 	}
 	if rosterErr == nil && len(roster.Sidecars) > 0 {
 		return runWorkloads(manifest, roster, secrets, apiEnv, slog.Default(), sidecarProxy)
@@ -361,21 +358,17 @@ func boot() error {
 	supRef.onStart = func() { close(mainStarted) }
 	var rotatingSecrets *runtimeSecretsState
 	if manifest.SecretReloadSignal != "" {
-		rotatingSecrets = newRuntimeSecretsState(secrets)
-		secretUID := lookupUID(manifest.EffectiveUser())
-		if err := writeRuntimeSecretsProjection(secretReloadFilePath, secretUID, secrets); err != nil {
-			return fmt.Errorf("prepare runtime secret file: %w", err)
-		}
-		if err := writeRuntimeSecretRevisionProjection(secretReloadRevisionFilePath, secretUID, ""); err != nil {
-			return fmt.Errorf("prepare runtime secret revision file: %w", err)
+		rotatingSecrets, err = prepareWorkloadRuntimeSecrets("", manifest, secrets, secretReloadFilePath, secretReloadRevisionFilePath)
+		if err != nil {
+			return err
 		}
 	}
 	supRef.Start = func() error {
-		currentSecrets := secrets
 		if rotatingSecrets != nil {
-			currentSecrets = rotatingSecrets.snapshot()
+			snapshot := rotatingSecrets.startupSnapshot()
+			return runAppWithSecretStartup(manifest, snapshot.Secrets, apiEnv, supRef, 0, singleWorkloadEndpointEnv(manifest.EffectivePort()), &snapshot, rotatingSecrets.projection, rotatingSecrets)
 		}
-		return runAppWithEnv(manifest, currentSecrets, apiEnv, supRef)
+		return runAppWithEnv(manifest, secrets, apiEnv, supRef)
 	}
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: app restart (restart %d/%d policy=%s): %v\n", attempt, maxRestarts, policy, err)
@@ -458,6 +451,10 @@ func runAppWithRAM(m api.AppManifest, secrets, apiEnv map[string]string, sup *Su
 // contract, so a workload cannot redirect its sibling endpoints by setting a
 // reserved variable in its image or deployment env.
 func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]string, sup *Supervisor, ramMB int, workloadEnv map[string]string, cpuMillicoresOpt ...int) error {
+	return runAppWithSecretStartup(m, secrets, apiEnv, sup, ramMB, workloadEnv, nil, nil, nil, cpuMillicoresOpt...)
+}
+
+func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]string, sup *Supervisor, ramMB int, workloadEnv map[string]string, snapshot *runtimeSecretSnapshot, projection *runtimeSecretProjection, processSecrets *runtimeSecretsState, cpuMillicoresOpt ...int) error {
 	argv := m.Entrypoint
 	env := BuildEnvWithSecrets(os.Environ(), m, secrets, apiEnv)
 	// Issue #460 / ADR-053 (PR-C): stamp PORT=<m.EffectivePort()>
@@ -517,13 +514,26 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	if err != nil {
 		return fmt.Errorf("run app: %w", err)
 	}
+	readyPath, guestReadyPath, err := prepareRuntimeSecretReadyFile(projection, "", m.SecretReloadReadiness)
+	if err != nil {
+		return err
+	}
+	if readyPath != "" {
+		defer func() { _ = os.Remove(readyPath) }()
+		cmd.Env = append(cmd.Env, SecretsReloadReadyEnv+"="+guestReadyPath)
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: execProcessCredential(credential)}
 	// ADR-051 Phase 4: expose the forked cmd to the supervisor so
 	// runCharacterizationForSup can read the PID via LastAppPID().
 	// The supervisor's Run() loop captures the cmd at every
 	// restart; runAppWithEnv executes once per restart.
 	if sup != nil {
-		sup.TrackCommand(cmd)
+		if snapshot != nil {
+			sup.trackRuntimeSecretCommand(cmd, *snapshot, readyPath)
+			defer sup.retireRuntimeSecretCommand(cmd)
+		} else {
+			sup.TrackCommand(cmd)
+		}
 	}
 	// Issue #463 / ADR-069 / PR-B AC #4: per-workload
 	// in-guest cgroup v2 partition for the main workload.
@@ -544,6 +554,11 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	if cgroupFile != nil {
 		defer func() { _ = cgroupFile.Close() }()
 	}
+	retireGeneration, err := prepareRuntimeSecretProcess(cmd, processSecrets, sup, "")
+	if err != nil {
+		return err
+	}
+	defer retireGeneration()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
@@ -958,51 +973,17 @@ func runBuildOnce(m api.BuildManifest) error {
 		// A fresh Firecracker guest may need a few seconds for its first
 		// routed TLS connection even after DNS is available. Keep this as a
 		// fail-fast guard, but leave enough room for the initial handshake.
-		httpCtx, httpCancel := context.WithTimeout(context.Background(), 15*time.Second)
-		req, reqErr := http.NewRequestWithContext(httpCtx, http.MethodGet, "https://nodejs.org/dist/index.json", nil)
-		var httpErr error
-		if reqErr == nil {
-			resp, doErr := (&http.Client{Timeout: 5 * time.Second}).Do(req)
-			if doErr != nil {
-				httpErr = doErr
-			} else {
-				_, _ = io.Copy(io.Discard, resp.Body)
-				_ = resp.Body.Close()
-				if resp.StatusCode >= http.StatusBadRequest {
-					httpErr = fmt.Errorf("status %s", resp.Status)
-				}
-			}
-		} else {
-			httpErr = reqErr
-		}
-		httpCancel()
-		if httpErr != nil {
-			return writeAndPoweroff(m, fmt.Errorf("node toolchain HTTPS preflight: %w", httpErr), "")
+		if err := builderHTTPSPreflight(context.Background(), "node toolchain", "https://nodejs.org/dist/index.json",
+			func(status int) bool { return status < http.StatusBadRequest }); err != nil {
+			return writeAndPoweroff(m, err, "")
 		}
 	}
 	// Railpack's generated plan pulls its builder/runtime layers from GHCR;
 	// a registry challenge is healthy here and proves the guest can reach the
 	// endpoint that BuildKit will subsequently authenticate against.
-	ghcrCtx, ghcrCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	ghcrReq, ghcrReqErr := http.NewRequestWithContext(ghcrCtx, http.MethodGet, "https://ghcr.io/v2/", nil)
-	var ghcrErr error
-	if ghcrReqErr == nil {
-		resp, doErr := (&http.Client{Timeout: 5 * time.Second}).Do(ghcrReq)
-		if doErr != nil {
-			ghcrErr = doErr
-		} else {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			if resp.StatusCode >= http.StatusInternalServerError {
-				ghcrErr = fmt.Errorf("status %s", resp.Status)
-			}
-		}
-	} else {
-		ghcrErr = ghcrReqErr
-	}
-	ghcrCancel()
-	if ghcrErr != nil {
-		return writeAndPoweroff(m, fmt.Errorf("GHCR HTTPS preflight: %w", ghcrErr), "")
+	if err := builderHTTPSPreflight(context.Background(), "GHCR", "https://ghcr.io/v2/",
+		func(status int) bool { return status < http.StatusInternalServerError }); err != nil {
+		return writeAndPoweroff(m, err, "")
 	}
 	guestStage("network-preflight")
 	runcCheck := exec.Command("/usr/local/bin/runc", "--version")
@@ -1922,22 +1903,6 @@ func digestBytes(data []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// classify maps an in-VM exit code to a builderd FailureClass. The vocabulary
-// here matches the canonical names parsed by builderd's ProcessOne
-// (FailureUserError / FailureInfra / FailureOOM / FailureTimeout).
-func classify(exitCode int) string {
-	switch exitCode {
-	case 137:
-		return "FailureOOM"
-	case 124:
-		return "FailureTimeout"
-	case 0:
-		return ""
-	default:
-		return "FailureUserError"
-	}
-}
-
 // tailOf returns the last n bytes of data (or all of it if shorter). Used to
 // truncate the build log so build-done.json stays small.
 func tailOf(data []byte, n int) string {
@@ -1951,18 +1916,7 @@ func tailOf(data []byte, n int) string {
 // mounts the chroot drive1 to copy it out). Warm builders call this while the
 // guest remains alive; ordinary builders call it immediately before poweroff.
 func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
-	exitCode := 0
-	if runErr != nil {
-		var ee *exec.ExitError
-		if errors.As(runErr, &ee) {
-			exitCode = ee.ExitCode()
-		} else if errors.Is(runErr, context.DeadlineExceeded) {
-			exitCode = 124
-		} else {
-			exitCode = 1
-		}
-	}
-	fc := classify(exitCode)
+	exitCode, fc := buildExitStatus(runErr)
 	if logTail == "" && runErr != nil {
 		logTail = runErr.Error()
 	}

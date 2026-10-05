@@ -1,0 +1,14 @@
+Result=success
+ExecMainCode=0
+ExecMainStatus=0
+MemoryPeak=[not set]
+ActiveState=inactive
+SubState=dead
+InvocationID=
+Intentionally stopped duplicate internal E2E compilation after the same d4155bdc5 implementation passed all four E2E shards in CI run 37123907506.
+The internal fresh canonical schema and SQL preparation gate passed before cancellation. This unit is not a full passing E2E gate.
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth

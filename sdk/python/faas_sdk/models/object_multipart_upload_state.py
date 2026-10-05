@@ -1,6 +1,8 @@
 from typing import Literal
 
-ObjectMultipartUploadState = Literal["aborted", "aborting", "active", "completed", "completing", "initiating"]
+ObjectMultipartUploadState = Literal[
+    "aborted", "aborting", "active", "completed", "completing", "completing_conditional", "initiating"
+]
 
 OBJECT_MULTIPART_UPLOAD_STATE_VALUES: set[ObjectMultipartUploadState] = {
     "aborted",
@@ -8,6 +10,7 @@ OBJECT_MULTIPART_UPLOAD_STATE_VALUES: set[ObjectMultipartUploadState] = {
     "active",
     "completed",
     "completing",
+    "completing_conditional",
     "initiating",
 }
 

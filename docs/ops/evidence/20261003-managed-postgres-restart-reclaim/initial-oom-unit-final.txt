@@ -1,0 +1,6 @@
+Result=oom-kill
+ExecMainStatus=9
+MemoryPeak=3954700288
+ActiveState=failed
+SubState=failed
+InvocationID=feda371adf0f44d3ab0c0ef4d189e107

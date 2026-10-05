@@ -9,15 +9,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
-
-func nullableWorkSequence(sequence int64) any {
-	if sequence == 0 {
-		return nil
-	}
-	return sequence
-}
 
 func nullableWorkFairnessLimit(limit int) any {
 	if limit == 0 {
@@ -148,6 +142,9 @@ func (m *MemStore) ExpirePendingKeyedInvocations(_ context.Context, now time.Tim
 // repeated producer ID returns its original row without replacing later work.
 // The selector is resolved by the producer; only its digest reaches storage.
 func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error) {
+	if inv.DeploymentScope != "" && api.ValidateScope(inv.DeploymentScope) != nil {
+		return Invocation{}, ErrInvalidArgument
+	}
 	if err := policy.Validate(); err != nil {
 		return Invocation{}, err
 	}
@@ -196,7 +193,8 @@ func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, po
 	existing, err := scanInvocation(tx.QueryRow(ctx, `select `+invocationSelectCols+` from invocations where id = $1`, inv.ID))
 	if err == nil {
 		if existing.AppID != inv.AppID || existing.PlatformTenantID != inv.PlatformTenantID || existing.WorkPolicyName != policy.Name ||
-			!bytes.Equal(existing.WorkKeyDigest, digest[:]) {
+			!bytes.Equal(existing.WorkKeyDigest, digest[:]) || inv.DeploymentScope != "" && existing.DeploymentScope != inv.DeploymentScope ||
+			inv.QueueBindingID != "" && canonicalMemUUID(existing.QueueBindingID) != canonicalMemUUID(inv.QueueBindingID) {
 			return Invocation{}, ErrConflict
 		}
 		return existing, nil
@@ -357,6 +355,7 @@ func lockFairnessClaimTx(ctx context.Context, tx pgx.Tx, appID, policyName strin
 }
 
 func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error) {
+	requestedScope := inv.DeploymentScope
 	if err := policy.Validate(); err != nil {
 		return Invocation{}, err
 	}
@@ -373,6 +372,11 @@ func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, pol
 	if _, ok := m.apps[inv.AppID]; !ok {
 		return Invocation{}, fmt.Errorf("state: invocation for unknown app %q", inv.AppID)
 	}
+	scope, err := invocationDeploymentScope(m.apps[inv.AppID], inv.DeploymentScope)
+	if err != nil {
+		return Invocation{}, err
+	}
+	inv.DeploymentScope = scope
 	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
 		return Invocation{}, err
 	}
@@ -384,10 +388,15 @@ func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, pol
 	}
 	if existing, ok := m.invocations[inv.ID]; ok {
 		if existing.AppID != inv.AppID || existing.PlatformTenantID != inv.PlatformTenantID || existing.WorkPolicyName != policy.Name ||
-			!bytes.Equal(existing.WorkKeyDigest, digest[:]) {
+			!bytes.Equal(existing.WorkKeyDigest, digest[:]) || requestedScope != "" && existing.DeploymentScope != requestedScope ||
+			inv.QueueBindingID != "" && canonicalMemUUID(existing.QueueBindingID) != canonicalMemUUID(inv.QueueBindingID) {
 			return Invocation{}, ErrConflict
 		}
 		return existing, nil
+	}
+	inv.WorkPolicyName = policy.Name
+	if err := m.captureInvocationQueueBindingLocked(&inv); err != nil {
+		return Invocation{}, err
 	}
 	now := time.Now().UTC()
 	inv.WorkPolicyName = policy.Name
@@ -418,6 +427,7 @@ func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, pol
 	if inv.WorkSequence == 0 {
 		inv.WorkSequence = 1
 	}
+	inv.ReplayGeneration = 0
 	m.invocations[inv.ID] = inv
 	return inv, nil
 }

@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -76,7 +77,7 @@ func (s *PgStore) ListBuildsAwaitingImage(ctx context.Context, nodeID string, li
 	if limit < 0 {
 		limit = 2147483647
 	}
-	rows, err := sqlc.New().ListBuildsAwaitingRegionalOrLocalImage(ctx, s.pool, sqlc.ListBuildsAwaitingRegionalOrLocalImageParams{NodeName: nodeID, BatchSize: int32(limit)})
+	rows, err := sqlc.New().ListBuildsAwaitingRegionalOrLocalImage(ctx, s.pool, sqlc.ListBuildsAwaitingRegionalOrLocalImageParams{NodeName: strings.TrimSpace(nodeID), BatchSize: int32(limit)})
 	if err != nil {
 		return nil, err
 	}

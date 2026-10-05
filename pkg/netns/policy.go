@@ -25,6 +25,7 @@ package netns
 import (
 	"fmt"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -180,6 +181,70 @@ type HostPolicy struct {
 	// SMTP drop, so deny precedence is never bypassed. Only ports 465 and
 	// 587 are accepted; port 25 remains blocked for every tenant.
 	SMTPAllowlistRules []SMTPAllowlistRule
+
+	// ServiceTCP renders the host half of private TCP service addressing
+	// (ADR-576). Nil renders nothing, keeping the pre-ADR-576 ruleset.
+	ServiceTCP *ServiceTCPHostPolicy
+}
+
+// ServiceTCPHostPolicy is the host side of private TCP service addressing
+// (ADR-576). Guest connections to AddressCIDR reach the bridge already
+// masqueraded to the instance's host IP. The nat prerouting chain sends the
+// HTTP service ports to the bridge HTTP service proxy (the Host header still
+// names the service) and every other TCP port to the service TCP proxy,
+// which recovers the original destination with SO_ORIGINAL_DST. The forward
+// chain drops anything else addressed to the block so it never leaves the
+// host.
+type ServiceTCPHostPolicy struct {
+	AddressCIDR netip.Prefix
+	// BridgeIP is the tenant-bridge address the service listeners bind.
+	BridgeIP netip.Addr
+	// HTTPPorts stay on the HTTP service mesh. 443 belongs here only on a
+	// node whose private HTTPS listener is configured; otherwise a guest
+	// could reach whatever else binds the host's :443.
+	HTTPPorts []int
+	// ProxyPort is the service TCP proxy's reserved bridge port.
+	ProxyPort int
+}
+
+// NewServiceTCPHostPolicy returns the host policy for one tenant bridge.
+// httpsEnabled mirrors whether the private HTTPS service listener is staged.
+func NewServiceTCPHostPolicy(addressCIDR netip.Prefix, bridgeIP netip.Addr, proxyPort int, httpsEnabled bool) *ServiceTCPHostPolicy {
+	ports := []int{LegacyServiceProxyPort, ServiceProxyPort}
+	if httpsEnabled {
+		ports = append([]int{ServiceProxyHTTPSPort}, ports...)
+	}
+	return &ServiceTCPHostPolicy{AddressCIDR: addressCIDR.Masked(), BridgeIP: bridgeIP, HTTPPorts: ports, ProxyPort: proxyPort}
+}
+
+// validate panics on a policy that would capture or leak traffic: the same
+// fail-at-the-site posture as the other Render gates.
+func (p *ServiceTCPHostPolicy) validate(masquerade netip.Prefix, overlays []string) {
+	if !p.AddressCIDR.IsValid() || !p.AddressCIDR.Addr().Is4() {
+		panic(fmt.Sprintf("netns: HostPolicy.Render: ServiceTCP.AddressCIDR %s is not an IPv4 prefix", p.AddressCIDR))
+	}
+	if !p.BridgeIP.Is4() || !masquerade.Contains(p.BridgeIP) {
+		panic(fmt.Sprintf("netns: HostPolicy.Render: ServiceTCP.BridgeIP %s is not inside MasqueradeCIDR %s", p.BridgeIP, masquerade))
+	}
+	if p.AddressCIDR.Overlaps(masquerade) {
+		panic(fmt.Sprintf("netns: HostPolicy.Render: ServiceTCP.AddressCIDR %s overlaps MasqueradeCIDR %s", p.AddressCIDR, masquerade))
+	}
+	for _, raw := range overlays {
+		if overlay, err := netip.ParsePrefix(strings.TrimSpace(raw)); err == nil && p.AddressCIDR.Overlaps(overlay) {
+			panic(fmt.Sprintf("netns: HostPolicy.Render: ServiceTCP.AddressCIDR %s overlaps overlay %s", p.AddressCIDR, overlay))
+		}
+	}
+	if len(p.HTTPPorts) == 0 {
+		panic("netns: HostPolicy.Render: ServiceTCP.HTTPPorts is empty; HTTP service calls by address would reach the TCP proxy")
+	}
+	for _, port := range append([]int{p.ProxyPort}, p.HTTPPorts...) {
+		if port < 1 || port > 65535 {
+			panic(fmt.Sprintf("netns: HostPolicy.Render: ServiceTCP has invalid TCP port %d", port))
+		}
+	}
+	if slices.Contains(p.HTTPPorts, p.ProxyPort) {
+		panic(fmt.Sprintf("netns: HostPolicy.Render: ServiceTCP.ProxyPort %d is also an HTTP port", p.ProxyPort))
+	}
 }
 
 // StaticEgressRule (ADR-119 redesign) is one (per-VM host IP →
@@ -508,6 +573,10 @@ func (h HostPolicy) Render() string {
 		}
 	}
 
+	if h.ServiceTCP != nil {
+		h.ServiceTCP.validate(masqPrefix, h.OverlayCIDRs)
+	}
+
 	denyPorts := h.DenySet.SMTPPortsCommaSet()
 	allowPorts := joinInts(h.InputAllowTCPPorts, ",")
 
@@ -591,6 +660,9 @@ func (h HostPolicy) Render() string {
 		fmt.Fprintf(&b, "    %s daddr %s counter name %q drop\n",
 			family, e.Prefix.String(), e.CounterName)
 	}
+	if h.ServiceTCP != nil {
+		fmt.Fprintf(&b, "    ip daddr %s drop     # ADR-576: service addresses never leave the host\n", h.ServiceTCP.AddressCIDR)
+	}
 	// Hobby+ SMTP exception: explicit per-app destination CIDRs may use
 	// authenticated submission ports. These rules intentionally follow
 	// the internal/private deny block and precede the universal SMTP drop.
@@ -639,6 +711,18 @@ func (h HostPolicy) Render() string {
 	b.WriteString("    type filter hook output priority 0; policy accept;\n")
 	b.WriteString("  }\n")
 	b.WriteString("\n")
+	if p := h.ServiceTCP; p != nil {
+		ports := slices.Clone(p.HTTPPorts)
+		slices.Sort(ports)
+		b.WriteString("  chain prerouting {\n")
+		b.WriteString("    type nat hook prerouting priority dstnat; policy accept;\n")
+		fmt.Fprintf(&b, "    iifname %q ip daddr %s tcp dport { %s } dnat ip to %s\n",
+			h.BridgeName, p.AddressCIDR, joinInts(ports, ", "), p.BridgeIP)
+		fmt.Fprintf(&b, "    iifname %q ip daddr %s meta l4proto tcp dnat ip to %s:%d\n",
+			h.BridgeName, p.AddressCIDR, p.BridgeIP, p.ProxyPort)
+		b.WriteString("  }\n")
+		b.WriteString("\n")
+	}
 	b.WriteString("  chain postrouting {\n")
 	b.WriteString("    type nat hook postrouting priority srcnat; policy accept;\n")
 	// ADR-119 redesign: per-VM static-egress SNAT rules. Each

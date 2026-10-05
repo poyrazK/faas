@@ -70,8 +70,9 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 		},
 		{
 			name:  "rest-api-postgres",
-			files: []string{"handler.js", "package.json", "README.md"},
+			files: []string{"handler.js", "migrate.js", "schema.sql", "Procfile", "package.json", "README.md"},
 			readmeHas: []string{
+				"MIGRATION_DATABASE_URL",
 				"DATABASE_URL",
 				"gregale secrets set",
 				"--create-only",

@@ -23,6 +23,11 @@ service_proxy_tls_cert_path = "{{ gatewayd_service_proxy_tls_cert_path }}"
 service_proxy_tls_key_path = "{{ gatewayd_service_proxy_tls_key_path }}"
 service_proxy_tls_ca_path = "{{ gatewayd_service_proxy_tls_ca_path }}"
 {% endif %}
+{% if gatewayd_service_tcp_listen | default('') | length > 0 %}
+# ADR-576: private TCP service addresses; the host DNATs them here.
+service_tcp_listen = "{{ gatewayd_service_tcp_listen }}"
+service_tcp_dns = {{ gatewayd_service_tcp_dns | default(false) | bool | lower }}
+{% endif %}
 
 # ADR-093 operator kill-switch. Default-on (true) so the rollout
 # reaches Hobby/Pro/Scale customers who didn't flip the per-app
@@ -37,9 +42,6 @@ route_metrics_enabled = {{ gatewayd_route_metrics_enabled | default(true) | stri
 # default-on here; operators downgrade with -e gatewayd_streaming_enabled=false.
 # FAAS_GATEWAY_STREAMING remains the emergency env override.
 streaming_enabled = {{ gatewayd_streaming_enabled | default(true) | string | lower }}
-
-[ratelimit]
-mode = "{{ gatewayd_ratelimit_mode | default('central') }}"
 
 # In a single-box deployment this remains apid's loopback listener. The
 # generated split-box inventory overrides it with the control-plane address
@@ -75,3 +77,10 @@ app_errors_tls_cert_path = "{{ gatewayd_app_errors_tls_cert_path }}"
 app_errors_tls_key_path = "{{ gatewayd_app_errors_tls_key_path }}"
 app_errors_tls_ca_path = "{{ gatewayd_app_errors_tls_ca_path }}"
 {% endif %}
+
+# TOML tables must come last: every key after a [table] header belongs to
+# that table. This header used to sit above apid_loopback, which silently
+# moved apid_loopback and every mTLS path into [ratelimit], where the daemon
+# ignores them. TestGatewaydTemplateHasNoUndecodedKeys pins this.
+[ratelimit]
+mode = "{{ gatewayd_ratelimit_mode | default('central') }}"

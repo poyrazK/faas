@@ -39,6 +39,7 @@ type composeCandidate struct {
 	Environment   any      `yaml:"environment"`
 	Image         string   `yaml:"image"`
 	Profiles      []string `yaml:"profiles"`
+	Expose        []any    `yaml:"expose"` // internal-only listeners (ADR-576)
 
 	ServiceBindingPolicy      string                                  `yaml:"x-gregale-service-policy"`
 	ServiceBindingTransport   string                                  `yaml:"x-gregale-service-transport"`
@@ -264,6 +265,10 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			}
 			continue
 		}
+		internalPorts, exposeWarnings := parseExpose(s.Expose)
+		for _, warning := range exposeWarnings {
+			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
+		}
 		// build: path — emit a workloadSeed. Class stays empty so an
 		// explicit hint from another detector can fill it. If no hint
 		// exists, mergeByKey infers HTTP from a published port and worker
@@ -285,9 +290,10 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			allowedServiceCallScopes:  allowedCallScopes,
 			platformTenantRequired:    s.PlatformTenantRequired,
 
-			ports:   parsePorts(s.Ports),
-			envKeys: envKeys(s.Environment),
-			source:  src + ": " + name,
+			ports:         parsePorts(s.Ports),
+			internalPorts: internalPorts,
+			envKeys:       envKeys(s.Environment),
+			source:        src + ": " + name,
 		})
 	}
 	return seeds, managed, warnings, nil
@@ -599,4 +605,42 @@ func intOf(v any) int {
 		return n
 	}
 	return 0
+}
+
+// parseExpose turns compose `expose:` into internal TCP listeners (ADR-576):
+// reachable by same-account services at the app's private service address,
+// never published. Accepted forms are 6379, "6379" and "6379/tcp". Ranges and
+// UDP entries are dropped with a warning; the internal service mesh carries
+// TCP only. nil means the service has no expose: key, so reconcile leaves the
+// app's internal listeners alone; an empty slice declares none.
+func parseExpose(items []any) ([]api.WorkloadPort, []string) {
+	if items == nil {
+		return nil, nil
+	}
+	out := make([]api.WorkloadPort, 0, len(items))
+	var warnings []string
+	seen := make(map[int]struct{}, len(items))
+	for _, item := range items {
+		raw := strings.TrimSpace(fmt.Sprint(item))
+		portText, protocol, _ := strings.Cut(raw, "/")
+		if protocol != "" && !strings.EqualFold(protocol, "tcp") {
+			warnings = append(warnings, fmt.Sprintf("expose %q dropped: only TCP listeners are reachable between services", raw))
+			continue
+		}
+		port, err := strconv.Atoi(strings.TrimSpace(portText))
+		if err != nil || port < 1 || port > 65535 {
+			warnings = append(warnings, fmt.Sprintf("expose %q dropped: want a single port such as 6379 or \"6379/tcp\"", raw))
+			continue
+		}
+		if _, dup := seen[port]; dup {
+			continue
+		}
+		if len(out) == api.WorkloadPortCapMax {
+			warnings = append(warnings, fmt.Sprintf("expose %q dropped: at most %d listeners per service", raw, api.WorkloadPortCapMax))
+			continue
+		}
+		seen[port] = struct{}{}
+		out = append(out, api.WorkloadPort{Port: port, Protocol: api.WorkloadPortTCP, Internal: true})
+	}
+	return out, warnings
 }

@@ -985,6 +985,13 @@ func gatewaydConfig(addr, controlAddr, apidLoopback string, guestDNS bool) strin
 		// setDefaultLocalScheddTarget keeps the seeded node's endpoint current.
 		config += fmt.Sprintf("service_proxy_listen=%q\nnode_name=%q\n",
 			net.JoinHostPort(bridge, strconv.Itoa(netns.ServiceProxyPort)), "default-local")
+		// ADR-576: private TCP service addresses ride the same bridge. The
+		// test also passes FAAS_SERVICE_TCP_ENABLED=1 to vmmd so the netns
+		// admission and host NAT exist.
+		if os.Getenv("FAAS_E2E_SERVICE_TCP") == "1" {
+			config += fmt.Sprintf("service_tcp_listen=%q\nservice_tcp_dns=true\n",
+				net.JoinHostPort(bridge, strconv.Itoa(api.ServiceTCPProxyPort)))
+		}
 	}
 	return config
 }
@@ -1355,6 +1362,11 @@ func testEnvCommon(dbURL string) []string {
 func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
 	env := append(testEnvCommon(dbURL),
 		"FAAS_VMMD_CONFIG="+cfgPath,
+		// vmmd reads its own DSN variable, not DATABASE_URL. Without a store
+		// it cannot resolve the default-local node, and since ADR-471's
+		// durable failure reporting (#4127) a vmmd with a scheduler target
+		// but no node ID refuses to start.
+		"FAAS_VMMD_DBURL="+dbURL,
 	)
 	if currentHarness != nil {
 		env = append(env, "FAAS_VMMD_STREAM_BRIDGE_PATH="+filepath.Join(currentHarness.BinDir, "vmmd-stream-bridge"))

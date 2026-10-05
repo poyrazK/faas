@@ -73,6 +73,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/geoip"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/logarchive"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
@@ -603,7 +604,7 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 			RequestID:            metadata[api.DebugReplayRequestIDHeader],
 			CompletedAt:          time.Now().UTC(),
 		}); storeErr != nil && a.log != nil {
-			a.log.Warn("gateway synth: debug replay ledger write failed", "err", storeErr, "request_id", metadata[api.DebugReplayRequestIDHeader])
+			a.log.Warn("gateway synth: debug replay ledger write failed", "err", logsanitize.FieldAny(storeErr), "request_id", logsanitize.Field(metadata[api.DebugReplayRequestIDHeader]))
 		}
 	}
 	if err != nil {
@@ -729,6 +730,7 @@ func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string,
 	}
 	inv.AppID = appID
 	if a.store != nil {
+		durableScope := inv.DeploymentScope != ""
 		var version state.InvocationVersion
 		var err error
 		inv, version, err = state.ResolveInvocationVersion(ctx, a.store, inv)
@@ -742,6 +744,11 @@ func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string,
 			instance, lookupErr := a.store.InstanceByID(ctx, target.InstanceID)
 			if lookupErr != nil || instance.AppID != appID || instance.DeploymentID != version.DeploymentID || instance.NodeID != target.NodeID || instance.State != string(state.StateRunning) {
 				return inv, 0, fmt.Errorf("gateway synth: pre-woken instance does not belong to pinned deployment")
+			}
+		}
+		if durableScope {
+			if err := a.verifyInvocationScopeTarget(ctx, appID, version.Scope, target); err != nil {
+				return inv, 0, err
 			}
 		}
 	}
@@ -979,6 +986,9 @@ type runDeps struct {
 	// gatewayd.toml `apid_loopback`). Empty in tests; run() populates it
 	// from cfg before invoking runWithDeps.
 	apidLoopback string
+	// appsDomain scopes platform path reservations to platform hosts
+	// (ADR-480). Empty keeps the pre-ADR-480 every-host reservation.
+	appsDomain string
 	// writeTimeout is the http.Server.WriteTimeout override (issue #471 /
 	// ADR-047). When 0, the legacy 300 s default (spec §4.1) applies.
 	// run() resolves this from cfg.ResponseWriteTimeout || api.ResponseWriteTimeoutDefault
@@ -1340,6 +1350,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if appsDomain == "" {
 		appsDomain = cfg.AppsDomain
 	}
+	deps.appsDomain = appsDomain
 	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
@@ -1703,6 +1714,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 			acceptedAt := time.Now()
 			ctx = gateway.WithStartTime(ctx, acceptedAt)
 			ctx = gateway.WithWakeTimelineStart(ctx, acceptedAt)
+			inv.AppID = appID
+			inv, version, err := state.ResolveInvocationVersion(ctx, pgStore, inv)
+			if err != nil {
+				return inv, fmt.Errorf("synth invoke resolve version: %w", err)
+			}
 			app, err := pgStore.AppByID(ctx, appID)
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke resolve app %s: %w", appID, err)
@@ -1717,9 +1733,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if rich, ok := cli.(interface {
 				WakeWithIdentity(context.Context, string, string, string) (string, string, string, string, int, api.PlatformIdentity, error)
 			}); ok {
-				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, "", "")
+				instanceID, nodeID, deploymentID, wakeID, port, identity, err = rich.WakeWithIdentity(ctx, appID, version.DeploymentID, version.Scope)
 			} else {
-				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, "", "")
+				instanceID, nodeID, deploymentID, wakeID, port, err = cli.Wake(ctx, appID, version.DeploymentID, version.Scope)
 			}
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke wake %s: %w", appID, err)
@@ -1736,6 +1752,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 				DeploymentTag:       identity.DeploymentTag,
 				DeploymentCreatedAt: identity.DeploymentCreatedAt,
 				ImageDigest:         identity.ImageDigest,
+			}
+			if err := synth.verifyInvocationScopeTarget(ctx, appID, version.Scope, target); err != nil {
+				return inv, err
 			}
 			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
@@ -1761,10 +1780,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			var identity api.PlatformIdentity
 			var instanceID, nodeID, deploymentID, wakeID string
 			var port int
-			wakeScope := ""
-			if version.DeploymentID != "" {
-				wakeScope = version.Scope
-			}
+			wakeScope := version.Scope
 			if rich, ok := cli.(interface {
 				WakeWithIdentity(context.Context, string, string, string) (string, string, string, string, int, api.PlatformIdentity, error)
 			}); ok {
@@ -1793,6 +1809,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}
 			}
 			target := gateway.Target{AppID: appID, InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port, Region: identity.Region, CommitSHA: identity.CommitSHA, DeploymentTag: identity.DeploymentTag, DeploymentCreatedAt: identity.DeploymentCreatedAt, ImageDigest: identity.ImageDigest}
+			if err := synth.verifyInvocationScopeTarget(ctx, appID, version.Scope, target); err != nil {
+				return inv, 0, err
+			}
 			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
 			return synth.forwardInvocationWithStatus(ctx, target, inv)
@@ -3242,7 +3261,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		)
 	}
 
-	apidHandler := newApidProxyWithGate(apidTarget, handler, logsHandler, writeGate, log)
+	apidHandler := newApidProxyWithGate(apidTarget, handler, logsHandler, writeGate, deps.appsDomain, log)
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
 	// to githubd's loopback listener (ADR-012, §11 single-public-
@@ -3534,6 +3553,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the same endpoint registry, account authorizer, and vmmd transport; the
 	// guest listener adds source-IP instance identity before forwarding.
 	var guestServiceProxy http.Handler
+	// guestServices is the same proxy, typed, so the ADR-576 TCP path shares
+	// its identity, authorizer, endpoint leases, wake and breaker.
+	var guestServices *gateway.ServiceProxy
 	var guestServiceCallerResolver gateway.ServiceProxyCallerResolver
 	var guestServiceAliasAllowed gateway.ServiceAliasAllowed
 	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
@@ -3592,7 +3614,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" {
 				serviceProxyConfig.DevBridge = developmentBridgeServiceForwarder(pgStore, handler)
 			}
-			guestServiceProxy = gateway.NewServiceProxy(serviceProxyConfig)
+			guestServices = gateway.NewServiceProxy(serviceProxyConfig)
+			guestServiceProxy = guestServices
 		}
 	}
 
@@ -3765,6 +3788,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if tlsErr != nil {
 		return tlsErr
 	}
+	if serviceTCPAddr := strings.TrimSpace(cfg.ServiceTCPListen); serviceTCPAddr != "" {
+		if err := validateServiceTCPListen(serviceTCPAddr, serviceProxyAddr); err != nil {
+			return err
+		}
+		if guestServices == nil {
+			return errors.New("gatewayd: service_tcp_listen requires an available guest service proxy")
+		}
+		if err := startServiceTCPProxy(ctx, deps, serviceTCPAddr, guestServices, deps.pgStore, errc, log); err != nil {
+			return err
+		}
+	}
 	if serviceProxyAddr != "" {
 		if err := validateServiceProxyListen(serviceProxyAddr); err != nil {
 			return err
@@ -3831,6 +3865,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// node's vmmd before replying, so the guest may connect to it.
 			if deps.nodeCache != nil && deps.pgStore != nil && cfg.NodeName != "" {
 				dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName)))
+			}
+			// ADR-576: answer service names with service addresses only once
+			// the TCP proxy behind them is configured.
+			if cfg.ServiceTCPDNS {
+				if strings.TrimSpace(cfg.ServiceTCPListen) == "" || deps.pgStore == nil {
+					return errors.New("gatewayd: service_tcp_dns requires service_tcp_listen and the state store")
+				}
+				dnsHandler.WithServiceAddressLookup(newServiceAddressLookup(deps.pgStore, cfg.NodeName, log))
+				log.Info("gatewayd: service DNS answers private service addresses", "service_address_cidr", api.ServiceAddressCIDR().String())
 			}
 			dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(gateway.ServiceDiscoveryDNSPort))
 			listenPacket := deps.listenPacket

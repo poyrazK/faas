@@ -234,6 +234,31 @@ func (m *MemStore) ListExecutionsByWorkflow(_ context.Context, accountID, workfl
 	return rows, nil
 }
 
+func (m *MemStore) ExecutionWorkflowStepByLabel(_ context.Context, accountID, workflowID string, principalID *string, stepLabel string) (Execution, error) {
+	if accountID == "" || principalID == nil || stepLabel == "" || api.ValidateExecutionWorkflowMetadata(workflowID, stepLabel) != nil || !strings.HasPrefix(stepLabel, "gwf:") {
+		return Execution{}, ErrExecutionInvalid
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var selected *Execution
+	for _, row := range m.executions {
+		if row.AccountID != accountID || row.WorkflowID != workflowID || row.StepLabel != stepLabel {
+			continue
+		}
+		if row.RunsPrincipalID == nil || *row.RunsPrincipalID != *principalID {
+			continue
+		}
+		copy := cloneExecution(row)
+		if selected == nil || copy.CreatedAt.After(selected.CreatedAt) {
+			selected = &copy
+		}
+	}
+	if selected == nil {
+		return Execution{}, ErrNotFound
+	}
+	return *selected, nil
+}
+
 func (m *MemStore) ExecutionWorkflowSummary(_ context.Context, accountID, workflowID string, principalID *string) (ExecutionWorkflowResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

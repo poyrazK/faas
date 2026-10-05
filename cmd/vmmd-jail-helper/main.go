@@ -1,5 +1,5 @@
-// Command vmmd-jail-helper sets up the jailer's private device mounts without
-// initializing the vmmd daemon's database, API, and observability dependencies.
+// Command vmmd-jail-helper gates native launches and sets up private device
+// mounts without initializing the vmmd daemon's database, API or observability.
 package main
 
 import (
@@ -11,7 +11,7 @@ import (
 
 func main() {
 	if !jailsetup.Run(os.Args) {
-		fmt.Fprintln(os.Stderr, "vmmd-jail-helper: expected a jail device setup command")
+		fmt.Fprintln(os.Stderr, "vmmd-jail-helper: expected a launch or jail device setup command")
 		os.Exit(2)
 	}
 }

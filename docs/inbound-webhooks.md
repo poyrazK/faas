@@ -75,6 +75,16 @@ Treat the `X-Gregale-*` fields as metadata only after checking that source.
 Stripe retries of the same event for the same endpoint return the same receipt
 ID with `duplicate: true` and do not enqueue a second delivery.
 
+## Start an automation
+
+An endpoint can start a published automation directly through its
+`automation-binding` resource. This opts into automation delivery for that
+endpoint. Signature verification, sealed secrets and endpoint ownership retain
+their existing behavior. The durable receipt and captured workflow definition
+commit before acknowledgement; no relay handler is needed. See
+[automation authoring](automation-authoring.md#start-from-a-stripe-webhook) for
+binding, filters, provider retry behavior and receipt inspection.
+
 ## Complete a workflow callback
 
 An account-authorized client can bind a `wait_for_callback` step to one

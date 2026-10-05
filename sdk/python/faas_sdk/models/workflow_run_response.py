@@ -25,6 +25,9 @@ class WorkflowRunResponse:
     scheduled_for: datetime.datetime
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    resume_count: int | Unset = UNSET
+    """Number of accepted resumptions; send this value when requesting continuation."""
+    cancelled_at: datetime.datetime | Unset = UNSET
     current_step: None | str | Unset = UNSET
     input_: Any | Unset = UNSET
     output: Any | Unset = UNSET
@@ -47,6 +50,12 @@ class WorkflowRunResponse:
         created_at = self.created_at.isoformat()
 
         updated_at = self.updated_at.isoformat()
+
+        resume_count = self.resume_count
+
+        cancelled_at: str | Unset = UNSET
+        if not isinstance(self.cancelled_at, Unset):
+            cancelled_at = self.cancelled_at.isoformat()
 
         current_step: None | str | Unset
         if isinstance(self.current_step, Unset):
@@ -93,6 +102,10 @@ class WorkflowRunResponse:
                 "updated_at": updated_at,
             }
         )
+        if resume_count is not UNSET:
+            field_dict["resume_count"] = resume_count
+        if cancelled_at is not UNSET:
+            field_dict["cancelled_at"] = cancelled_at
         if current_step is not UNSET:
             field_dict["current_step"] = current_step
         if input_ is not UNSET:
@@ -124,6 +137,15 @@ class WorkflowRunResponse:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        resume_count = d.pop("resume_count", UNSET)
+
+        _cancelled_at = d.pop("cancelled_at", UNSET)
+        cancelled_at: datetime.datetime | Unset
+        if isinstance(_cancelled_at, Unset):
+            cancelled_at = UNSET
+        else:
+            cancelled_at = datetime.datetime.fromisoformat(_cancelled_at)
 
         def _parse_current_step(data: object) -> None | str | Unset:
             if data is None:
@@ -189,6 +211,8 @@ class WorkflowRunResponse:
             scheduled_for=scheduled_for,
             created_at=created_at,
             updated_at=updated_at,
+            resume_count=resume_count,
+            cancelled_at=cancelled_at,
             current_step=current_step,
             input_=input_,
             output=output,

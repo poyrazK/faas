@@ -8,20 +8,33 @@
 # safe under live load) and lets the lineinfile change force exactly
 # one restart per idleness epoch.
 #
-# failed_when: false on both — chroot/CI bootstrap has no systemd.
-# Production boxes run systemd and get the real restart/reload.
+# The chroot image build has no running systemd. These handlers used to
+# swallow every failure for that case, which also hid a real host whose
+# PostgreSQL failed to restart after a config change: the run reported
+# success with the cluster down. Detect systemd once per flush instead and
+# let real failures fail the run. Handlers run in definition order, so the
+# detection runs before the handlers that read it.
+
+- name: detect systemd for postgres handlers
+  ansible.builtin.stat:
+    path: /run/systemd/system
+  register: postgres_handlers_systemd
+  listen:
+    - restart postgresql
+    - reload postgresql
+    - daemon-reload postgres
 
 - name: restart postgresql
   ansible.builtin.service:
     name: "postgresql@{{ postgres_major_version }}-main.service"
     state: restarted
-  failed_when: false  # chroot/CI lacks systemd
+  when: postgres_handlers_systemd.stat.exists | default(false) | bool
 
 - name: reload postgresql
   ansible.builtin.service:
     name: "postgresql@{{ postgres_major_version }}-main.service"
     state: reloaded
-  failed_when: false
+  when: postgres_handlers_systemd.stat.exists | default(false) | bool
 
 # Issue #250 — daemon-reload handler for the postgresql@.service.d/
 # off-host backup drop-in. Without this, a changed drop-in doesn't take
@@ -30,4 +43,4 @@
 - name: daemon-reload postgres
   ansible.builtin.systemd:
     daemon_reload: true
-  failed_when: false  # chroot/CI lacks systemd
+  when: postgres_handlers_systemd.stat.exists | default(false) | bool

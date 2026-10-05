@@ -168,8 +168,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	dataServer := &http.Server{
 		Handler:           trace.HTTPHandler("s3-gatewayd", wire.HTTPMetricsHandler(ops, "s3_request", handler)),
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       api.ObjectTransferTimeout,
-		WriteTimeout:      api.ObjectTransferTimeout,
+		ReadTimeout:       registry.TransferTimeout(),
+		WriteTimeout:      registry.TransferTimeout() + api.ObjectUploadSettlementTimeout,
 		IdleTimeout:       2 * time.Minute,
 		MaxHeaderBytes:    64 << 10,
 	}

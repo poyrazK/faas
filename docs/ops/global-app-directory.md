@@ -1,6 +1,6 @@
 # Global app directory and verified regional bindings
 
-ADR-476 introduces a gated directory identity API. A global app has one UUID
+ADR-602 introduces a gated directory identity API. A global app has one UUID
 and `all_selected_regions` as its serving policy. This slice attaches existing
 regional apps and resolves their identities. It does not provision deployments
 or publish ingress routes. Regional provisioning, shared runtime admission, global
@@ -23,10 +23,10 @@ membership and plan checks during allocation. This limit counts directory
 identities; it does not allocate runtime capacity or change billing.
 
 Shared organizations can attach existing regional organization apps with current
-owner/admin consent (ADR-485). Image releases remain unavailable until global
+owner/admin consent (ADR-611). Image releases remain unavailable until global
 runtime quotas and regional organization billing admission are integrated.
 PostgreSQL also refuses shared image release allocation. Personal regional operation remains
-available. Rollback of ADR-483 refuses retained shared directory roots.
+available. Rollback of ADR-609 refuses retained shared directory roots.
 
 ## Configure the directory and regional cells
 
@@ -40,7 +40,7 @@ reject directory writes in regional databases and prevent a populated directory
 database from becoming a regional cell. Unbound identity does not by itself
 prove physical host independence; the operator provisions the separate database.
 
-Each regional fleet uses ADR-475's immutable cell UUID and region. Follow
+Each regional fleet uses ADR-601's immutable cell UUID and region. Follow
 [regional cell initialization](regional-control-plane-cells.md) before exposing
 the proof endpoint. Regional APIs keep their independent credentials and quotas.
 
@@ -167,7 +167,7 @@ recovery or end-to-end ingress failover.
 
 ## Deployment intent for a resolved target
 
-ADR-477 adds `POST /v1/cells/{cell_id}/apps/{app_id}/deployments` to regional
+ADR-603 adds `POST /v1/cells/{cell_id}/apps/{app_id}/deployments` to regional
 apid. Use the immutable `cell_id` and `regional_app_id` from resolution, plus
 a personal-account API key issued by that cell with admin or deploy-write scope.
 The endpoint accepts the existing digest-pinned image JSON and source multipart
@@ -205,7 +205,7 @@ publish a global route.
 
 ## Durable image release acceptance
 
-Use ADR-478's receipt endpoint for coordinator submissions of a prebuilt image:
+Use ADR-604's receipt endpoint for coordinator submissions of a prebuilt image:
 
 ```go
 receipt, err := regional.PutCellImageRelease(ctx, resolved.CellID, resolved.RegionalAppID,
@@ -244,7 +244,7 @@ policy remains `all_selected_regions`.
 
 ## Ordered global image intent
 
-ADR-479 adds an optional generation fence to the regional receipt PUT:
+ADR-605 adds an optional generation fence to the regional receipt PUT:
 
 ```go
 request := api.PutCellImageReleaseRequest{
@@ -280,7 +280,7 @@ the `all_selected_regions` default policy.
 
 <a id="global-image-releases"></a>
 
-## Global image releases (ADR-480, ADR-482)
+## Global image releases (ADR-606, ADR-608)
 
 Submit `PUT /v1/global-apps/{slug}/image-releases/{release_id}` with a digest-pinned
 `image` and optional `regional_api_keys` object indexed by region. The directory
@@ -311,7 +311,7 @@ next requested generation. A rejected allocation writes no release or target.
 
 <a id="regional-delegation"></a>
 
-## Regional release delegation (ADR-481, ADR-482, ADR-484)
+## Regional release delegation (ADR-607, ADR-608, ADR-610)
 
 A caller mints a `fp_release_` token and fixed grant UUID before contacting the
 cell. It must seal the token and bound identity before registering its SHA-256

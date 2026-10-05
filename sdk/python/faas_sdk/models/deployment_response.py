@@ -84,7 +84,12 @@ class DeploymentResponse:
     created_at: datetime.datetime
     stage_state: DeploymentResponseStageState | Unset = UNSET
     """Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be
-    rebuilt."""
+    rebuilt. Optional hosting_verification records started_at, deadline_at, attempts, last_error_code,
+    retry_not_before and completed_at during unavailable candidate verification recovery (ADR-481, ADR-482).
+    last_error_code distinguishes publication, gateway, transport and candidate-evidence failures; a transport
+    failure does not attribute blame to the app or platform. retry_not_before is an eligibility floor, not a
+    promised delivery time; completed_at means the attempt finished, while the hosting receipt records its verdict.
+   """
     revision: int | Unset = UNSET
     """Per-app deployment revision (ADR-198), rendered as `v42`. Accepted in place of a deployment id wherever this
     API takes one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the
@@ -175,7 +180,7 @@ class DeploymentResponse:
     """Per-deployment traffic-split weight (issue #556 PR-A). Summed across live rows for the app = 100 by
     construction."""
     scope: None | str | Unset = UNSET
-    """Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no leading/trailing dash.
+    """Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash.
     nil/omitted = `default`."""
     secret_scan: None | SecretScanResult | Unset = UNSET
     """Per-deploy secret-scan audit row (PR-A / ADR-101). Mirrors

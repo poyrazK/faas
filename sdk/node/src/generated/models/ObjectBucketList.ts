@@ -13,5 +13,21 @@ export type ObjectBucketList = {
   default_region: string;
   max_upload_bytes: number;
   max_buckets_per_app: number;
+  /**
+   * Largest single PUT accepted by the configured upload profile.
+   */
+  max_single_put_bytes?: number;
+  /**
+   * Largest multipart part accepted by the configured upload profile.
+   */
+  max_part_bytes?: number;
+  /**
+   * Combined request staging and forwarding deadline in seconds.
+   */
+  transfer_timeout_seconds?: number;
+  /**
+   * Configured body size contract for the branded storage origin.
+   */
+  upload_profile?: 'proxied' | 'direct';
 };
 

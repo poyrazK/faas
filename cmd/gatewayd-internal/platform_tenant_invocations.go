@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strings"
+
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	schedpkg "github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
-	"net/http"
-	"strings"
 )
 
 func admitPlatformTenantInvocation(ctx context.Context, store state.Store, appID string, inv state.Invocation) (state.Invocation, error) {
@@ -40,6 +42,9 @@ func admitPlatformTenantInvocation(ctx context.Context, store state.Store, appID
 		return inv, nil
 	}
 	if store == nil {
+		if _, err := uuid.Parse(inv.ID); err == nil && inv.Source == "esm" {
+			return inv, fmt.Errorf("%w: durable queue invocation store unavailable", schedpkg.ErrPermanentInvoke)
+		}
 		if inv.PlatformTenantID == "" {
 			return inv, nil
 		}

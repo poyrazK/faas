@@ -290,6 +290,40 @@ local fallback. A warning and `ratelimit_degraded` audit event are emitted at
 most once per scope per minute so a database outage cannot amplify itself
 through logging or audit writes.
 
+## Amendment 8 (coalesced central consults, 2026-10-04)
+
+Central mode cost one pool connection and one row update per request, and
+every request for an app updates the same `pg_ratelimit_counters` row. In a
+200-client surge on production-us, each gatewayd-internal attempted ~146
+consults per second (app plus account scope, about two per request). Only ~20
+got one of the pool's 8 connections; the rest timed out at
+`centralConsultTimeout`. The control-plane host that runs Postgres was at
+100% CPU at the same time, so each held connection took ~350 ms. Since boot,
+each gateway has cancelled about 45k acquires.
+
+A Limiter now keeps at most one statement in flight per counter. The first
+request consults alone, exactly as before. Requests that arrive while it is in
+flight join a batch. When the consult returns, one statement grants
+`min(n, available)` tokens to the whole batch
+(`PGRateLimitBackend.ConsumeTokens`, an optional `CentralBatchBackend`), in
+arrival order. Statements per counter drop from one per request to at most
+one per round trip, so the pool use of a hot counter is bounded by the number
+of counters, not by the request rate.
+
+Behaviour that does not change:
+
+- Every request is still charged against the shared counter, so the
+  cross-replica limit is the same.
+- Refill and `last_refill` follow the single-token statement, and an empty
+  bucket is not written.
+- A request waits at most `centralConsultTimeout` after joining a batch. If
+  the wait expires or the batch fails, the request takes the existing local
+  fallback and the breaker opens.
+- If a request gives up (client disconnect) while its batch is in flight, its
+  token may still be spent. This can only make the limit stricter.
+
+Backends without `ConsumeTokens` keep the per-request consult.
+
 ## References
 
 - ADR-040 (per-account rate limit, wake-path policy)

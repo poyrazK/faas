@@ -1,0 +1,8 @@
+set -eu
+printf %s '1fb51c906db893dde34144883ee8b280bcd8f80a9c320a8571306e297079ab54  /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/source.tar.gz
+10ac7011b48bc73a9c6d715ba348d40b1188e1524a2a72d08bc61411a6e1baec  /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/runner.sh
+c3064279a68cd6a3b4013cd4dbfe7e7da12d065882d745d8f98f9a7077d0a028  /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/change.patch
+5552fceb7ea2f445483c2d5a07d338b42e1817d5db3dc60a0f2e08b6daa7df83  /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/source-hashes.sha256
+' | sha256sum -c -
+sudo systemd-run --unit=gregale-managed-pg-resource-placement-ca1230ac '--property=TemporaryFileSystem=/run/mpp-ca1230ac:rw,size=4G,mode=1777 /srv/fc/jail:rw,size=1G,mode=0755' --property=MemoryMax=10G /usr/bin/bash -c 'exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/runner.sh > /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/run.log 2>&1'
+sudo systemctl show gregale-managed-pg-resource-placement-ca1230ac -p InvocationID -p ActiveState -p SubState -p MemoryMax

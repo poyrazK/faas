@@ -121,3 +121,37 @@ func TestConfigureQueueWorkloadIsPlanGated(t *testing.T) {
 		t.Fatalf("free-plan bindings = %+v, want none", bindings)
 	}
 }
+
+func TestConfigureQueueWorkloadKeepsScopedDefaultsSeparate(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := t.Context()
+	project, err := e.store.CreateProject(ctx, state.Project{AccountID: e.acct.ID, Slug: "queue-profile-scopes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "queue-profile-scopes", WorkloadClass: state.WorkloadClassWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped, err := e.store.CreateQueueBindingWithConsumer(ctx, state.QueueBinding{AccountID: e.acct.ID, AppID: app.ID, DeploymentScope: "production", Name: "default", QueueName: "orders", Mode: "push", Enabled: true, WorkloadClass: state.WorkloadClassWorker, MaxConcurrency: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []int{http.StatusCreated, http.StatusOK} {
+		rec := e.do(t, http.MethodPut, "/v1/apps/queue-profile-scopes/queue-workload", api.QueueWorkloadProfileRequest{QueueName: "orders", MaxConcurrency: 1}, nil)
+		if rec.Code != status {
+			t.Fatalf("profile status=%d want=%d body=%s", rec.Code, status, rec.Body.String())
+		}
+		var got api.QueueWorkloadProfileResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Binding.ID == scoped.Binding.ID || got.Binding.MaxConcurrency != 1 {
+			t.Fatalf("legacy profile selected scoped default: %+v", got.Binding)
+		}
+	}
+	current, err := e.store.QueueBindingByID(ctx, e.acct.ID, app.ID, scoped.Binding.ID)
+	if err != nil || current.DeploymentScope != "production" || current.EnvironmentID != scoped.Binding.EnvironmentID || current.MaxConcurrency != 3 {
+		t.Fatalf("legacy profile changed scoped binding: %+v %v", current, err)
+	}
+}

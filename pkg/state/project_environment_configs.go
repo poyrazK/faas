@@ -43,6 +43,10 @@ func (m *MemStore) CreateProjectEnvironmentConfigVersion(_ context.Context, conf
 	if !json.Valid(config.Values) {
 		return ProjectEnvironmentConfig{}, fmt.Errorf("invalid project environment configuration JSON")
 	}
+	memory, err := m.gitOpsGuardConfigurationLocked(config)
+	if err != nil {
+		return ProjectEnvironmentConfig{}, err
+	}
 	key := projectEnvironmentConfigKey(config.ProjectID, config.EnvironmentSlug)
 	versions := m.projectEnvironmentConfigs[key]
 	config.Version = int64(len(versions) + 1)
@@ -54,6 +58,7 @@ func (m *MemStore) CreateProjectEnvironmentConfigVersion(_ context.Context, conf
 	}
 	config.Values = append(json.RawMessage(nil), config.Values...)
 	m.projectEnvironmentConfigs[key] = append(versions, config)
+	touchGitOpsMemoryIntent(memory)
 	return cloneProjectEnvironmentConfig(config), nil
 }
 

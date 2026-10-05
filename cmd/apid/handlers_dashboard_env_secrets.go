@@ -88,6 +88,7 @@ func (s *server) renderAppEnvSecrets(w http.ResponseWriter, r *http.Request, log
 		SecretQuota: limits.SecretCountMax, EnvCSRF: envTok, SecretCSRF: secretTok,
 		Flash: dashboardConfigFlash(r.URL.Query().Get("changed")),
 	}
+	s.populateDashboardSecretReferences(ctx, log, acct, app, &data)
 	page := dashboard.Page{
 		Title:   app.Slug + " environment",
 		Body:    "env_secrets",
@@ -206,6 +207,8 @@ func dashboardConfigFlash(changed string) string {
 		return "Secret deleted."
 	case "secret-rotate":
 		return "Secret rotated. Store the new value safely; it cannot be read back."
+	case "reference-changed":
+		return "Environment secret reference updated. A future cold wake will use the current reference intent."
 	case "error":
 		return "The change could not be applied. See the error response for details."
 	default:

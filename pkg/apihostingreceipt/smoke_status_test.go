@@ -26,13 +26,10 @@ func TestVerifierReportsGatewayRefusalStatus(t *testing.T) {
 		Authorize: func(context.Context, string, string, time.Time) error { return nil },
 	}
 	got, err := v.VerifyDeployment(context.Background(), "demo", "/healthz", "dep-1")
-	if err != nil {
-		t.Fatal(err)
+	if VerificationRecoveryCode(err) != SmokeErrorGatewayUnavailable || got.Status != SmokeSkipped || got.StatusCode != http.StatusTooManyRequests || got.ErrorCode != SmokeErrorGatewayUnavailable {
+		t.Fatalf("result = %+v err=%v, want unavailable gateway 429", got, err)
 	}
-	if got.Status != SmokeFailed || got.StatusCode != http.StatusTooManyRequests || got.ErrorCode != "smoke_http_status" {
-		t.Fatalf("result = %+v, want a failed smoke_http_status 429", got)
-	}
-	if got.Error != "health probe returned HTTP 429 (app_concurrency_reached)" {
+	if got.Error != "public route returned HTTP 429 without authenticated candidate evidence (app_concurrency_reached)" {
 		t.Fatalf("error = %q", got.Error)
 	}
 	if strings.Contains(got.Error, "secret-looking") {

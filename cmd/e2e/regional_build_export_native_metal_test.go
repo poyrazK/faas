@@ -28,7 +28,7 @@ import (
 // The source fixture must be a known-good HTTP app archive for this fleet.
 func TestNativeRegionalBuildExportAcceptance(t *testing.T) {
 	if os.Getenv("FAAS_REGION_ACCEPTANCE_CONFIRM") != "native-x86" {
-		t.Skip("requires dedicated native regional fleet; see ADR-460")
+		t.Skip("requires dedicated native regional fleet; see ADR-586")
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Fatal("regional build acceptance requires native Linux x86_64")

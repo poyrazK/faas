@@ -27,8 +27,13 @@ const (
 
 // Profile is the inferred run contract for an API source tree.
 type Profile struct {
-	Version      string `json:"version"`
-	Framework    string `json:"framework"`
+	Version   string `json:"version"`
+	Framework string `json:"framework"`
+	// Family is the runtime family the source markers identified
+	// (node|python|go|docker|unknown) — the vocabulary the deployment
+	// pipeline records as BuildPlan.Framework. Framework refines it
+	// (express, fastapi, gin, …). Not part of the profile wire shape.
+	Family       string `json:"-"`
 	FrameworkVer string `json:"framework_version,omitempty"`
 	// DockerfilePath records the explicit Dockerfile selected for this exact
 	// deployment. It is relative to the accepted source root and remains empty
@@ -99,7 +104,7 @@ func Analyze(fsys fs.FS) (Profile, error) {
 	if err != nil {
 		return Profile{}, err
 	}
-	profile := Profile{Version: Version, Framework: string(framework), Port: defaultPort(framework), HealthPath: "/healthz"}
+	profile := Profile{Version: Version, Framework: string(framework), Family: string(framework), Port: defaultPort(framework), HealthPath: "/healthz"}
 
 	switch framework {
 	case markers.FrameworkNode:
@@ -112,6 +117,7 @@ func Analyze(fsys fs.FS) (Profile, error) {
 		inferDocker(fsys, &profile)
 	default:
 		profile.Framework = string(markers.FrameworkUnknown)
+		profile.Family = string(markers.FrameworkUnknown)
 		profile.Warnings = append(profile.Warnings, Warning{Code: "framework_not_detected", Message: "No supported API framework marker was found; supply an explicit Dockerfile or command."})
 	}
 	if framework != markers.FrameworkUnknown {

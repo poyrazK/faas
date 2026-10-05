@@ -1,0 +1,21 @@
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+Result=oom-kill
+ExecMainStatus=9
+MemoryPeak=2411909120
+               total        used        free      shared  buff/cache   available
+Mem:           15986        4223        8948        3323        6474       11762
+Swap:              0           0           0
+1.2G	/var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-4d700a71/go-build
+Oct 02 16:24:40 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: Started gregale-managed-pg-restart-quarantine-4d700a71.service - /usr/bin/bash -c "exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-4d700a71/runner-verified.sh > /var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-4d700a71/run.log 2>&1".
+Oct 02 16:31:47 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-quarantine-4d700a71.service: A process of this unit has been killed by the OOM killer.
+Oct 02 16:31:47 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-quarantine-4d700a71.service: A process of this unit has been killed by the OOM killer.
+Oct 02 16:31:47 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-quarantine-4d700a71.service: Killing process 431791 (bash) with signal SIGKILL.
+Oct 02 16:31:47 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-quarantine-4d700a71.service: Killing process 444274 (bash) with signal SIGKILL.
+Oct 02 16:31:47 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-quarantine-4d700a71.service: Main process exited, code=killed, status=9/KILL
+Oct 02 16:31:48 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-quarantine-4d700a71.service: Failed with result 'oom-kill'.
+Oct 02 16:31:48 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-quarantine-4d700a71.service: Consumed 8min 52.582s CPU time, 2.2G memory peak, 0B memory swap peak.

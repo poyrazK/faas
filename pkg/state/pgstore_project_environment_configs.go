@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func scanProjectEnvironmentConfig(row pgx.Row) (ProjectEnvironmentConfig, error) {
@@ -49,6 +50,12 @@ func (s *PgStore) CreateProjectEnvironmentConfigVersion(ctx context.Context, con
 		return ProjectEnvironmentConfig{}, fmt.Errorf("state: begin environment config version: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// The Git source precedes environment/project locks on every intent path.
+	if _, err := sqlc.New().LockEnvironmentGitSourceForScope(ctx, tx, sqlc.LockEnvironmentGitSourceForScopeParams{
+		AccountID: mustPgUUID(config.AccountID), ProjectID: mustPgUUID(config.ProjectID), Environment: config.EnvironmentSlug,
+	}); err != nil {
+		return ProjectEnvironmentConfig{}, mapErr(err)
+	}
 
 	var projectID string
 	if err := tx.QueryRow(ctx, `

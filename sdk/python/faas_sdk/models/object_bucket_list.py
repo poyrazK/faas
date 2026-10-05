@@ -6,6 +6,12 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.object_bucket_list_upload_profile import (
+    ObjectBucketListUploadProfile,
+    check_object_bucket_list_upload_profile,
+)
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.object_bucket import ObjectBucket
 
@@ -23,6 +29,14 @@ class ObjectBucketList:
     default_region: str
     max_upload_bytes: int
     max_buckets_per_app: int
+    max_single_put_bytes: int | Unset = UNSET
+    """Largest single PUT accepted by the configured upload profile."""
+    max_part_bytes: int | Unset = UNSET
+    """Largest multipart part accepted by the configured upload profile."""
+    transfer_timeout_seconds: int | Unset = UNSET
+    """Combined request staging and forwarding deadline in seconds."""
+    upload_profile: ObjectBucketListUploadProfile | Unset = UNSET
+    """Configured body size contract for the branded storage origin."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -41,6 +55,16 @@ class ObjectBucketList:
 
         max_buckets_per_app = self.max_buckets_per_app
 
+        max_single_put_bytes = self.max_single_put_bytes
+
+        max_part_bytes = self.max_part_bytes
+
+        transfer_timeout_seconds = self.transfer_timeout_seconds
+
+        upload_profile: str | Unset = UNSET
+        if not isinstance(self.upload_profile, Unset):
+            upload_profile = self.upload_profile
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -53,6 +77,14 @@ class ObjectBucketList:
                 "max_buckets_per_app": max_buckets_per_app,
             }
         )
+        if max_single_put_bytes is not UNSET:
+            field_dict["max_single_put_bytes"] = max_single_put_bytes
+        if max_part_bytes is not UNSET:
+            field_dict["max_part_bytes"] = max_part_bytes
+        if transfer_timeout_seconds is not UNSET:
+            field_dict["transfer_timeout_seconds"] = transfer_timeout_seconds
+        if upload_profile is not UNSET:
+            field_dict["upload_profile"] = upload_profile
 
         return field_dict
 
@@ -78,6 +110,19 @@ class ObjectBucketList:
 
         max_buckets_per_app = d.pop("max_buckets_per_app")
 
+        max_single_put_bytes = d.pop("max_single_put_bytes", UNSET)
+
+        max_part_bytes = d.pop("max_part_bytes", UNSET)
+
+        transfer_timeout_seconds = d.pop("transfer_timeout_seconds", UNSET)
+
+        _upload_profile = d.pop("upload_profile", UNSET)
+        upload_profile: ObjectBucketListUploadProfile | Unset
+        if isinstance(_upload_profile, Unset):
+            upload_profile = UNSET
+        else:
+            upload_profile = check_object_bucket_list_upload_profile(_upload_profile)
+
         object_bucket_list = cls(
             items=items,
             enabled=enabled,
@@ -85,6 +130,10 @@ class ObjectBucketList:
             default_region=default_region,
             max_upload_bytes=max_upload_bytes,
             max_buckets_per_app=max_buckets_per_app,
+            max_single_put_bytes=max_single_put_bytes,
+            max_part_bytes=max_part_bytes,
+            transfer_timeout_seconds=transfer_timeout_seconds,
+            upload_profile=upload_profile,
         )
 
         object_bucket_list.additional_properties = d

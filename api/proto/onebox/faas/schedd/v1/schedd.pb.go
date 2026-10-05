@@ -91,7 +91,9 @@ type LivenessFailedReport struct {
 	// reason is the closed-set classifier from the vmmd poll
 	// goroutine: timeout / conn_refused / conn_err / non_200 /
 	// n_consecutive. Lands in the audit row's data JSON.
-	Reason        string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	// Observer node, retained across retries; instance IDs survive migration.
+	SourceNodeId  string `protobuf:"bytes,3,opt,name=source_node_id,json=sourceNodeId,proto3" json:"source_node_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -140,13 +142,22 @@ func (x *LivenessFailedReport) GetReason() string {
 	return ""
 }
 
+func (x *LivenessFailedReport) GetSourceNodeId() string {
+	if x != nil {
+		return x.SourceNodeId
+	}
+	return ""
+}
+
 type LivenessFailedAck struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// ok is true when the schedd engine accepted the report (a
-	// non-RUNNING instance is also "ok" — the state-machine
-	// guard makes the destroy a no-op rather than an error so
-	// a re-report doesn't trip the gRPC error path).
-	Ok            bool `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	// ok retains the legacy acceptance/no-op acknowledgement.
+	Ok bool `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	// ADR-471: true once the observation is applied/superseded by a cold
+	// instance state. False means pending (including cross-node notify relay).
+	// vmmd retains its durable report and retries; this is not a drain receipt.
+	// Old schedds omit this field and therefore cannot prematurely retire it.
+	Applied       bool `protobuf:"varint,2,opt,name=applied,proto3" json:"applied,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -188,6 +199,13 @@ func (x *LivenessFailedAck) GetOk() bool {
 	return false
 }
 
+func (x *LivenessFailedAck) GetApplied() bool {
+	if x != nil {
+		return x.Applied
+	}
+	return false
+}
+
 // ReportWorkloadOOMRequest (Cluster C, ADR-121) is the vmmd → schedd
 // push of a workload OOM-kill detected on the customer's per-VM
 // cgroup v2 leaf. The guest-init emits vsock DGRAM type 0x05 on
@@ -198,8 +216,7 @@ func (x *LivenessFailedAck) GetOk() bool {
 // into Why and "at least peak_mb + 8 MB" into Fix).
 //
 // Wire is additive per ADR-016 — pre-Cluster-C schedds reject the
-// RPC with codes.Unimplemented; vmmd tolerates the rejection
-// (the workload is dead; the signal is best-effort).
+// RPC with codes.Unimplemented; vmmd retains the report for retry (ADR-471).
 type ReportWorkloadOOMRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// instance_id is the instances.id row vmmd observed the OOM
@@ -217,7 +234,9 @@ type ReportWorkloadOOMRequest struct {
 	// (api.PerVMOverheadMB); the comparison is what surfaces the
 	// "your app exceeded the plan's RAM cap" framing on the
 	// dashboard. Templated into the whycopy Fix string.
-	PlanMb        uint32 `protobuf:"varint,3,opt,name=plan_mb,json=planMb,proto3" json:"plan_mb,omitempty"`
+	PlanMb uint32 `protobuf:"varint,3,opt,name=plan_mb,json=planMb,proto3" json:"plan_mb,omitempty"`
+	// Observer node, retained across retries; instance IDs survive migration.
+	SourceNodeId  string `protobuf:"bytes,4,opt,name=source_node_id,json=sourceNodeId,proto3" json:"source_node_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -273,15 +292,20 @@ func (x *ReportWorkloadOOMRequest) GetPlanMb() uint32 {
 	return 0
 }
 
-// ReportWorkloadOOMAck is the typed "I consumed your report"
-// signal vmmd sees after the dial-and-recv completes. ok=true
-// when the schedd engine accepted the report (state-machine
-// guard makes a duplicate report a no-op rather than an error).
-//
-// Additive per ADR-016.
+func (x *ReportWorkloadOOMRequest) GetSourceNodeId() string {
+	if x != nil {
+		return x.SourceNodeId
+	}
+	return ""
+}
+
+// ReportWorkloadOOMAck separates acceptance from application (ADR-471).
+// This is not a fleet drain receipt. Additive per ADR-16.
 type ReportWorkloadOOMAck struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Ok    bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	// False until a cold outcome is observed; older schedds omit this field.
+	Applied       bool `protobuf:"varint,2,opt,name=applied,proto3" json:"applied,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -319,6 +343,13 @@ func (*ReportWorkloadOOMAck) Descriptor() ([]byte, []int) {
 func (x *ReportWorkloadOOMAck) GetOk() bool {
 	if x != nil {
 		return x.Ok
+	}
+	return false
+}
+
+func (x *ReportWorkloadOOMAck) GetApplied() bool {
+	if x != nil {
+		return x.Applied
 	}
 	return false
 }
@@ -3043,20 +3074,24 @@ var File_onebox_faas_schedd_v1_schedd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\n" +
-	"\"onebox/faas/schedd/v1/schedd.proto\x12\x15onebox.faas.schedd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"O\n" +
+	"\"onebox/faas/schedd/v1/schedd.proto\x12\x15onebox.faas.schedd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"u\n" +
 	"\x14LivenessFailedReport\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"#\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\x12$\n" +
+	"\x0esource_node_id\x18\x03 \x01(\tR\fsourceNodeId\"=\n" +
 	"\x11LivenessFailedAck\x12\x0e\n" +
-	"\x02ok\x18\x01 \x01(\bR\x02ok\"m\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
+	"\aapplied\x18\x02 \x01(\bR\aapplied\"\x93\x01\n" +
 	"\x18ReportWorkloadOOMRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x17\n" +
 	"\apeak_mb\x18\x02 \x01(\rR\x06peakMb\x12\x17\n" +
-	"\aplan_mb\x18\x03 \x01(\rR\x06planMb\"&\n" +
+	"\aplan_mb\x18\x03 \x01(\rR\x06planMb\x12$\n" +
+	"\x0esource_node_id\x18\x04 \x01(\tR\fsourceNodeId\"@\n" +
 	"\x14ReportWorkloadOOMAck\x12\x0e\n" +
-	"\x02ok\x18\x01 \x01(\bR\x02ok\"\xbc\x01\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
+	"\aapplied\x18\x02 \x01(\bR\aapplied\"\xbc\x01\n" +
 	"\vWakeRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12#\n" +
 	"\rdeployment_id\x18\x02 \x01(\tR\fdeploymentId\x12\x14\n" +

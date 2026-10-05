@@ -132,6 +132,60 @@ func (s *server) previewEvent(w http.ResponseWriter, r *http.Request, acct state
 		last := subscriptions[len(subscriptions)-1]
 		cursor = state.EventSubscriptionCursor{CreatedAt: last.CreatedAt, ID: last.ID}
 	}
+	if workflows, ok := s.store.(state.EventWorkflowStore); ok {
+		after := ""
+		for {
+			recipients, listErr := workflows.ListMatchingEventWorkflows(r.Context(), acct.ID, envelope.Source, envelope.Type, after, eventPreviewSubscriptionBatch)
+			if listErr != nil {
+				api.WriteProblem(w, api.ErrInternal("event workflow preview"))
+				return
+			}
+			if len(recipients) == 0 {
+				break
+			}
+			if appSlugs == nil {
+				apps, err := s.store.ListApps(r.Context(), acct.ID)
+				if err != nil {
+					api.WriteProblem(w, api.ErrInternal("event workflow preview"))
+					return
+				}
+				appSlugs = make(map[string]string, len(apps))
+				for _, app := range apps {
+					appSlugs[canonicalEventPreviewUUID(app.ID)] = app.Slug
+				}
+			}
+			for _, row := range recipients {
+				out.CandidateCount++
+				var definition struct{ Name string }
+				_ = json.Unmarshal(row.Workflow, &definition)
+				item := api.EventPreviewSubscription{AppSlug: appSlugs[canonicalEventPreviewUUID(row.AppID)], SubscriptionID: row.ID,
+					Source: row.Source, Type: row.Type, Filter: row.Filter, WorkflowName: definition.Name, DeploymentID: row.DeploymentID}
+				reason, err := (events.Subscription{ID: row.ID, AccountID: row.AccountID, Source: row.Source, Type: row.Type, Filter: row.Filter}).ExplainMatch(envelope)
+				if err != nil {
+					item.Reason = "invalid_subscription: " + err.Error()
+					out.OtherMismatchCount++
+					appendEventPreviewSample(&out.NonMatches, item, &out.Truncated)
+				} else {
+					item.Reason = string(reason)
+					switch reason {
+					case events.MatchReasonWouldDeliver:
+						out.MatchedCount++
+						appendEventPreviewSample(&out.Matches, item, &out.Truncated)
+					case events.MatchReasonFilterMismatch:
+						out.FilterMismatchCount++
+						appendEventPreviewSample(&out.NonMatches, item, &out.Truncated)
+					default:
+						out.OtherMismatchCount++
+						appendEventPreviewSample(&out.NonMatches, item, &out.Truncated)
+					}
+				}
+			}
+			if len(recipients) < eventPreviewSubscriptionBatch {
+				break
+			}
+			after = recipients[len(recipients)-1].ID
+		}
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

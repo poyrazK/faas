@@ -16,6 +16,7 @@ import (
 
 func workflowRunResponse(r *state.WorkflowRun) api.WorkflowRunResponse {
 	resp := api.WorkflowRunResponse{
+		ResumeCount:  r.ResumeCount,
 		ID:           r.ID,
 		AppID:        r.AppID,
 		WorkflowName: r.WorkflowName,
@@ -27,6 +28,10 @@ func workflowRunResponse(r *state.WorkflowRun) api.WorkflowRunResponse {
 		LastError:    r.LastError,
 		CreatedAt:    r.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:    r.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+	if r.CancelledAt != nil {
+		v := r.CancelledAt.UTC().Format(time.RFC3339)
+		resp.CancelledAt = &v
 	}
 	if r.StartedAt != nil {
 		s := r.StartedAt.UTC().Format(time.RFC3339)
@@ -41,13 +46,21 @@ func workflowRunResponse(r *state.WorkflowRun) api.WorkflowRunResponse {
 
 func workflowStepResponse(s *state.WorkflowStep) api.WorkflowStepResponse {
 	resp := api.WorkflowStepResponse{
-		StepName:  s.StepName,
-		Status:    s.Status,
-		Attempt:   s.Attempt,
-		Input:     s.Input,
-		Output:    s.Output,
-		Error:     s.Error,
-		CreatedAt: s.CreatedAt.UTC().Format(time.RFC3339),
+		RetryBase:     s.RetryBase,
+		ForEachParent: s.ForEachParent, ForEachIndex: s.ForEachIndex, ForEachCount: s.ForEachCount,
+		WhenMatched: s.WhenMatched,
+		SkipReason:  s.SkipReason,
+		StepName:    s.StepName,
+		Status:      s.Status,
+		Attempt:     s.Attempt,
+		Input:       s.Input,
+		Output:      s.Output,
+		Error:       s.Error,
+		CreatedAt:   s.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if s.WhenEvaluatedAt != nil {
+		evaluated := s.WhenEvaluatedAt.UTC().Format(time.RFC3339)
+		resp.WhenEvaluatedAt = &evaluated
 	}
 	if s.StartedAt != nil {
 		st := s.StartedAt.UTC().Format(time.RFC3339)
@@ -110,10 +123,17 @@ func (s *server) createWorkflowRun(w http.ResponseWriter, r *http.Request, acct 
 	// Runs must snapshot a definition from the current live deployment.
 	// This keeps a run deterministic even when a later deployment changes
 	// the workflow, and avoids accepting a name that was never deployed.
-	dep, err := s.store.LiveDeployment(r.Context(), app.ID)
+	dep, err := s.store.LiveDeploymentForScope(r.Context(), app.ID, "default")
 	if err != nil {
 		api.WriteProblem(w, api.ErrWorkflowDefinitionNotFound())
 		return
+	}
+	if store, ok := s.store.(state.AutomationStore); ok {
+		dep.Workflows, err = store.EffectiveWorkflowDefinitions(r.Context(), app.ID, dep.Workflows)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("failed to read published automations"))
+			return
+		}
 	}
 	var definitions []api.WorkflowSpec
 	if err := json.Unmarshal(dep.Workflows, &definitions); err != nil {

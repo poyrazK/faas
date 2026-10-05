@@ -262,6 +262,8 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 			code, message = "restore_timeout", "app task environment preparation timed out"
 		} else if errors.Is(restoreErr, ErrAppTaskAccountInactive) {
 			code, message = accountInactiveFailureCode, accountInactiveFailureMessage
+		} else if errors.Is(restoreErr, state.ErrManagedPostgresAdmissionFenced) {
+			code, message = appTaskCutoverFailureCode, appTaskCutoverFailureMessage
 		}
 		c.log.Warn("schedd: app task restore failed", "task_id", task.ID, "error_class", appTaskErrorClass(restoreErr))
 		return c.complete(parent, task, appTaskFailure(state.AppTaskFailed, code, message), c.now().UTC())
@@ -279,6 +281,9 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 		}
 		if handled, interruptedErr := c.finishInterrupted(parent, task, signal); handled {
 			return interruptedErr
+		}
+		if errors.Is(err, state.ErrManagedPostgresAdmissionFenced) {
+			return c.complete(parent, task, appTaskFailure(state.AppTaskFailed, appTaskCutoverFailureCode, appTaskCutoverFailureMessage), c.now().UTC())
 		}
 		return fmt.Errorf("sched: mark app task %s running: %w", task.ID, err)
 	}

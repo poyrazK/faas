@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any, cast
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -7,6 +7,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
+from ...models.trigger import Trigger
 from ...types import Response
 
 
@@ -24,10 +25,11 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Any | Problem | None:
-    if response.status_code == 204:
-        response_204 = cast(Any, None)
-        return response_204
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Problem | Trigger | None:
+    if response.status_code == 200:
+        response_200 = Trigger.from_dict(response.json())
+
+        return response_200
 
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
@@ -38,6 +40,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         response_404 = Problem.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
 
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
@@ -50,7 +57,7 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[Any | Problem]:
+def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[Problem | Trigger]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -63,12 +70,14 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Any | Problem]:
+) -> Response[Problem | Trigger]:
     """Disable a trigger without deleting it.
 
      Sets `enabled=false` and pg_notify's `trigger_changed`. Schedd
     stops the broker poller on the next tick; in-flight records
     drain normally.
+    Queue binding consumers are managed through the queue-binding API;
+    direct pause/resume of those private projections returns 409.
 
     Args:
         id (str):
@@ -78,7 +87,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Problem]
+        Response[Problem | Trigger]
     """
 
     kwargs = _get_kwargs(
@@ -96,12 +105,14 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Any | Problem | None:
+) -> Problem | Trigger | None:
     """Disable a trigger without deleting it.
 
      Sets `enabled=false` and pg_notify's `trigger_changed`. Schedd
     stops the broker poller on the next tick; in-flight records
     drain normally.
+    Queue binding consumers are managed through the queue-binding API;
+    direct pause/resume of those private projections returns 409.
 
     Args:
         id (str):
@@ -111,7 +122,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Problem
+        Problem | Trigger
     """
 
     return sync_detailed(
@@ -124,12 +135,14 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Any | Problem]:
+) -> Response[Problem | Trigger]:
     """Disable a trigger without deleting it.
 
      Sets `enabled=false` and pg_notify's `trigger_changed`. Schedd
     stops the broker poller on the next tick; in-flight records
     drain normally.
+    Queue binding consumers are managed through the queue-binding API;
+    direct pause/resume of those private projections returns 409.
 
     Args:
         id (str):
@@ -139,7 +152,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Problem]
+        Response[Problem | Trigger]
     """
 
     kwargs = _get_kwargs(
@@ -155,12 +168,14 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Any | Problem | None:
+) -> Problem | Trigger | None:
     """Disable a trigger without deleting it.
 
      Sets `enabled=false` and pg_notify's `trigger_changed`. Schedd
     stops the broker poller on the next tick; in-flight records
     drain normally.
+    Queue binding consumers are managed through the queue-binding API;
+    direct pause/resume of those private projections returns 409.
 
     Args:
         id (str):
@@ -170,7 +185,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Problem
+        Problem | Trigger
     """
 
     return (

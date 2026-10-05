@@ -21,12 +21,34 @@ const (
 // (issue #3359). It mirrors the ReportLivenessFailed and ReportWorkloadOOM
 // RPC payloads.
 type InstanceFailureReport struct {
-	InstanceID string `json:"instance_id"`
-	AppID      string `json:"app_id"`
-	Kind       string `json:"kind"`
-	Reason     string `json:"reason,omitempty"`
-	PeakMB     int    `json:"peak_mb,omitempty"`
-	PlanMB     int    `json:"plan_mb,omitempty"`
+	InstanceID   string `json:"instance_id"`
+	SourceNodeID string `json:"source_node_id,omitempty"`
+	AppID        string `json:"app_id"`
+	Kind         string `json:"kind"`
+	Reason       string `json:"reason,omitempty"`
+	PeakMB       int    `json:"peak_mb,omitempty"`
+	PlanMB       int    `json:"plan_mb,omitempty"`
+}
+
+type failureReportSourceKey struct{}
+
+// ErrFailureReportSourceChanged refuses a report observed before node migration.
+var ErrFailureReportSourceChanged = errors.New("sched: failure report source node changed")
+
+// WithFailureReportSourceNode carries the wire-bound observer through owner
+// relays and the lock-held Engine reread without changing legacy Engine APIs.
+func WithFailureReportSourceNode(ctx context.Context, nodeID string) context.Context {
+	return context.WithValue(ctx, failureReportSourceKey{}, nodeID)
+}
+
+// ValidateFailureReportSource leaves legacy reports unbound. New durable vmmd
+// reports always carry a resolved node ID; an instance ID survives migration.
+func ValidateFailureReportSource(ctx context.Context, ins state.Instance) error {
+	source, _ := ctx.Value(failureReportSourceKey{}).(string)
+	if source != "" && source != ins.NodeID {
+		return fmt.Errorf("%w: instance %s", ErrFailureReportSourceChanged, ins.ID)
+	}
+	return nil
 }
 
 func (r InstanceFailureReport) validate() error {
@@ -75,6 +97,7 @@ func (e *Engine) HandleRelayedInstanceFailure(ctx context.Context, payload strin
 	if err := r.validate(); err != nil {
 		return err
 	}
+	ctx = WithFailureReportSourceNode(ctx, r.SourceNodeID)
 	ins, err := e.store.InstanceByID(ctx, r.InstanceID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {

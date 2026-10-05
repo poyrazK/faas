@@ -1,6 +1,6 @@
 package state
 
-// adr: 491
+// adr: 617
 import "strings"
 
 // A quota stream currently has no activated allowance. Hold the same mutex as
@@ -42,11 +42,4 @@ func (m *MemStore) checkRegionalQuotaInstanceWriteLocked(old, next Instance) err
 		return ErrRegionalRuntimeQuotaFrozen
 	}
 	return nil
-}
-
-func (m *MemStore) checkInstanceRuntimeTransitionLocked(old, next Instance) error {
-	if err := m.checkRegionalQuotaInstanceWriteLocked(old, next); err != nil {
-		return err
-	}
-	return m.exclusiveRuntimeTransitionLocked(old, next)
 }

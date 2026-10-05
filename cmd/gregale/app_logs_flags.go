@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -30,7 +32,7 @@ func appLogsDegradedMessage(data string) string {
 		Code string `json:"code"`
 	}
 	if json.Unmarshal([]byte(data), &event) == nil && event.Code == "not_found" {
-		return "No running instance is available for these logs; wait for deployment or wake the app."
+		return "No running instance is available for these logs; wake the app (`gregale wake <slug>`) or read a parked instance's retained logs with `gregale logs <slug> --archive --instance <id> --date YYYY-MM-DD` (instance ids: `gregale ps <slug> --all`)."
 	}
 	return "Log stream degraded: the scheduler is temporarily unavailable"
 }
@@ -64,4 +66,34 @@ func appLogsArchiveMessage(reason string) string {
 		return "No archived logs were found for that instance and UTC day (archive gap); verify the instance and date or check archive retention."
 	}
 	return "Archived logs are temporarily unavailable; retry later or ask the operator to check the archive backend."
+}
+
+// formatRuntimeLogLine renders one runtime log event for a terminal. The
+// stream carries a JSON envelope per line; printing it verbatim made human
+// output identical to --json and kept the guest's trailing carriage return.
+// Anything that is not the expected envelope is printed unchanged.
+func formatRuntimeLogLine(data string) string {
+	var event struct {
+		Instance  string  `json:"instance"`
+		Level     string  `json:"level"`
+		Line      *string `json:"line"`
+		Stream    string  `json:"stream"`
+		WrittenAt string  `json:"written_at"`
+	}
+	if json.Unmarshal([]byte(data), &event) != nil || event.Line == nil {
+		return data
+	}
+	stamp := event.WrittenAt
+	if t, err := time.Parse(time.RFC3339Nano, event.WrittenAt); err == nil {
+		stamp = t.UTC().Format("2006-01-02T15:04:05.000Z")
+	}
+	instance := event.Instance
+	if len(instance) > 8 {
+		instance = instance[:8]
+	}
+	prefix := strings.TrimSpace(fmt.Sprintf("%s %s %-6s", stamp, instance, event.Stream))
+	if event.Level != "" {
+		prefix += " " + strings.ToUpper(event.Level)
+	}
+	return prefix + " " + strings.TrimRight(*event.Line, "\r\n")
 }

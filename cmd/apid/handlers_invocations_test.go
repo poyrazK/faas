@@ -167,6 +167,32 @@ func TestReplayInvocation_HappyPath(t *testing.T) {
 	}
 }
 
+func TestReplayInvocation_PreservesCapturedEnvironment(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	appID := mustSeedApp(t, e, "replay-scoped")
+	original, err := e.store.EnqueueInvocation(ctx, state.Invocation{AppID: appID, AccountID: e.acct.ID,
+		DeploymentScope: "staging", Source: state.InvocationAsyncInvoke, Method: "POST", Path: "/task", DueAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := forceInvocationState(t, e, original.ID, "failed"); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, "POST", "/v1/invocations/"+original.ID+"/replay", nil, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("replay: %d, %s", rec.Code, rec.Body.String())
+	}
+	var response api.AsyncInvokeResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.store.InvocationByID(ctx, response.ID)
+	if err != nil || got.DeploymentScope != "staging" {
+		t.Fatalf("replay moved environment: scope=%q, err=%v", got.DeploymentScope, err)
+	}
+}
+
 // TestReplayInvocation_DeadLetterAllowed: state=dead_letter also
 // passes the allow-list (issue #394 terminal failure mode after the
 // retry budget is spent).

@@ -184,9 +184,22 @@ func (r *rawConfig) resolvedSecretReloadSignal() string {
 	return r.Config.Labels[secretReloadSignalLabel]
 }
 
+func (r *rawConfig) resolvedSecretReloadReadiness() bool {
+	return r.Config != nil && r.Config.Labels["com.gregale.secret-reload-readiness"] == "required"
+}
+
 // validate returns an error if the rootfs.type is set to anything other
 // than "layers" (the only mode the platform supports today).
 func (r *rawConfig) validate() error {
+	if r.Config != nil {
+		value := r.Config.Labels["com.gregale.secret-reload-readiness"]
+		if value != "" && value != "required" {
+			return fmt.Errorf("oci: secret reload readiness must be required or absent")
+		}
+		if value == "required" && r.resolvedSecretReloadSignal() == "" {
+			return fmt.Errorf("oci: secret reload readiness requires a reload signal")
+		}
+	}
 	if r.RootFS.Type != "" && r.RootFS.Type != "layers" {
 		return fmt.Errorf("oci: unsupported rootfs type %q", r.RootFS.Type)
 	}

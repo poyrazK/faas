@@ -78,7 +78,8 @@ def sync_detailed(
     Args:
         slug (str):
         bucket (UUID):
-        body (ObjectSignRequest): Exact object operation to authorize for a short time.
+        body (ObjectSignRequest): Exact object operation to authorize at the branded S3 gateway.
+            PUT binds one durable receipt and supports an explicit owned encryption selection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -121,7 +122,8 @@ def sync(
     Args:
         slug (str):
         bucket (UUID):
-        body (ObjectSignRequest): Exact object operation to authorize for a short time.
+        body (ObjectSignRequest): Exact object operation to authorize at the branded S3 gateway.
+            PUT binds one durable receipt and supports an explicit owned encryption selection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -159,7 +161,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         bucket (UUID):
-        body (ObjectSignRequest): Exact object operation to authorize for a short time.
+        body (ObjectSignRequest): Exact object operation to authorize at the branded S3 gateway.
+            PUT binds one durable receipt and supports an explicit owned encryption selection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -200,7 +203,8 @@ async def asyncio(
     Args:
         slug (str):
         bucket (UUID):
-        body (ObjectSignRequest): Exact object operation to authorize for a short time.
+        body (ObjectSignRequest): Exact object operation to authorize at the branded S3 gateway.
+            PUT binds one durable receipt and supports an explicit owned encryption selection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

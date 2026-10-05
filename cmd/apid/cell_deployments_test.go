@@ -1,6 +1,6 @@
 package main
 
-// adr: 477
+// adr: 603
 
 import (
 	"archive/tar"
@@ -283,7 +283,7 @@ func TestCellDeploymentSourceUsesExistingPipeline(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
 	t.Setenv("FAAS_STORAGE_BACKEND", "")
 	t.Setenv("FAAS_STORAGE_REGIONS_FILE", "")
-	// Empty placement retains ADR-475's cell-local filesystem contract.
+	// Empty placement retains ADR-601's cell-local filesystem contract.
 	app := seedCellDeploymentApp(t, e.store, e.acct, "source-shop", uuid.NewString(), "")
 	raw := buildTestTarGz(t, []tar.Header{{Name: "Dockerfile"}}, map[string][]byte{"Dockerfile": []byte("FROM scratch\n")})
 	srv := httptest.NewTLSServer(e.h)

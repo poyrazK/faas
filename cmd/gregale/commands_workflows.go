@@ -16,12 +16,14 @@ var workflowUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{
 
 func cmdWorkflows(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale workflows <list|run|status|steps|attempts|cancel|events>", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflows <list|schedules|run|status|steps|attempts|cancel|events>", "workflows")
 		return 1
 	}
 	switch args[0] {
 	case "list":
 		return cmdWorkflowsList(args[1:])
+	case "schedules":
+		return cmdWorkflowSchedules(args[1:])
 	case "run":
 		return cmdWorkflowsRun(args[1:])
 	case "status":
@@ -89,16 +91,19 @@ func cmdWorkflowsList(args []string) int {
 }
 
 func cmdWorkflowsRun(args []string) int {
-	if len(args) == 0 {
+	// The workflow name may come before or after the flags (help shows
+	// `workflows run --app <slug> <workflow-name>`).
+	flagArgs, positional := splitArgsForFlags(args)
+	if len(positional) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale workflows run <workflow_name> --app <slug> [--input '{\"k\":\"v\"}']", "workflows")
 		return 1
 	}
-	workflowName := args[0]
+	workflowName := positional[0]
 
 	fs := newFlagSet("workflows-run", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "app slug")
 	inputStr := fs.String("input", "{}", "JSON input payload for the workflow")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {

@@ -15,6 +15,7 @@ import (
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gitapproval"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
@@ -35,12 +36,18 @@ type streamSvc struct {
 	streamTotal int64
 	streamErr   error
 
-	mintToken   string
-	mintExpires time.Time
-	mintErr     error
-	branchSHA   string
-	branchFound bool
-	branchErr   error
+	mintToken         string
+	mintExpires       time.Time
+	mintErr           error
+	branchSHA         string
+	branchFound       bool
+	branchErr         error
+	mergeEvidence     gitapproval.MergeEvidence
+	mergeErr          error
+	mergeRequest      chan *githubdpb.GetProtectedBranchEvidenceRequest
+	protectedEvidence githubdgrpc.ProtectedBranchEvidence
+	protectedErr      error
+	protectedRequest  chan *githubdpb.GetProtectedBranchEvidenceRequest
 }
 
 func (s *streamSvc) MintInstallationToken(accountID string, installationID int64) (string, time.Time, error) {
@@ -59,6 +66,14 @@ func (s *streamSvc) StreamSourceRef(_ context.Context, _ string, _ int64, _, _ s
 
 func (s *streamSvc) GetBranchHead(context.Context, string, int64, string, string) (string, bool, error) {
 	return s.branchSHA, s.branchFound, s.branchErr
+}
+
+func (s *streamSvc) GetProtectedBranchEvidence(_ context.Context, accountID string, installationID, repositoryID int64, repository, branch, commitSHA string) (githubdgrpc.ProtectedBranchEvidence, error) {
+	if s.protectedRequest != nil {
+		s.protectedRequest <- &githubdpb.GetProtectedBranchEvidenceRequest{AccountId: accountID, InstallationId: installationID,
+			RepositoryId: repositoryID, RepoFullName: repository, Branch: branch, CommitSha: commitSHA}
+	}
+	return s.protectedEvidence, s.protectedErr
 }
 
 // newStreamServer wires streamSvc into a bufconn listener and returns
@@ -496,4 +511,11 @@ func TestLiftErr_PassThroughForNonStatus(t *testing.T) {
 	if !strings.Contains(err.Error(), "plain fail") {
 		t.Errorf("err = %v", err)
 	}
+}
+
+func (s *streamSvc) GetReviewedMergeEvidence(_ context.Context, accountID string, installationID, repositoryID int64, repository, branch, sha string) (gitapproval.MergeEvidence, error) {
+	if s.mergeRequest != nil {
+		s.mergeRequest <- &githubdpb.GetProtectedBranchEvidenceRequest{AccountId: accountID, InstallationId: installationID, RepositoryId: repositoryID, RepoFullName: repository, Branch: branch, CommitSha: sha}
+	}
+	return s.mergeEvidence, s.mergeErr
 }

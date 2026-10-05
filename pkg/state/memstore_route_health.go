@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -20,7 +19,7 @@ func (m *MemStore) routeHealthGateLocked(accountID, appID string) (api.RouteHeal
 	if !ok {
 		g = defaultRouteHealthGate(appID)
 	}
-	g.Routes = slices.Clone(g.Routes)
+	g.Routes = routehealth.CloneRoutes(g.Routes)
 	if g.UpdatedAt != nil {
 		copy := *g.UpdatedAt
 		g.UpdatedAt = &copy
@@ -50,14 +49,14 @@ func (m *MemStore) SetRouteHealthGate(_ context.Context, accountID, appID string
 	if req.Mode == "enforce" && (!plan.TrafficSplitAllowed() || !plan.DebugTelemetryEnabled()) {
 		return g, ErrRouteHealthPlan
 	}
-	if g.Mode == req.Mode && g.OnRegression == req.OnRegression && slices.Equal(g.Routes, req.Routes) {
+	if g.Mode == req.Mode && g.OnRegression == req.OnRegression && routehealth.RoutesEqual(g.Routes, req.Routes) {
 		return g, nil
 	}
 	if g.Revision >= api.RouteRequirementsMaxRevision {
 		return g, ErrRouteHealthRevision
 	}
 	now := time.Now().UTC()
-	g.Mode, g.OnRegression, g.Routes, g.Revision, g.UpdatedAt = req.Mode, req.OnRegression, slices.Clone(req.Routes), g.Revision+1, &now
+	g.Mode, g.OnRegression, g.Routes, g.Revision, g.UpdatedAt = req.Mode, req.OnRegression, routehealth.CloneRoutes(req.Routes), g.Revision+1, &now
 	if g.Routes == nil {
 		g.Routes = []api.RouteHealthRoute{}
 	}
@@ -83,7 +82,11 @@ func (m *MemStore) routeHealthReportLocked(accountID, appID, deploymentID string
 func (m *MemStore) GetRouteHealthReport(_ context.Context, accountID, appID, deploymentID string) (api.RouteHealthReport, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.routeHealthReportLocked(accountID, appID, deploymentID)
+	report, err := m.routeHealthReportLocked(accountID, appID, deploymentID)
+	if err == nil {
+		routehealth.EvaluateClientErrors(&report, "telemetry_unavailable")
+	}
+	return report, err
 }
 func (m *MemStore) checkRouteHealthLocked(d Deployment, params CanaryAdvanceParams) (routeHealthStoredDecision, memRouteHealthNotification, error) {
 	report, err := m.routeHealthReportLocked(m.apps[d.AppID].AccountID, d.AppID, d.ID)

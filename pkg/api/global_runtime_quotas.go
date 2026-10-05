@@ -1,6 +1,6 @@
 package api
 
-// adr: 486
+// adr: 612
 import (
 	"context"
 	"crypto/sha256"

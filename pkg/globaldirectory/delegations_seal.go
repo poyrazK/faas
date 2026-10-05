@@ -19,7 +19,7 @@ type DelegationKeys struct{ Identities []*age.X25519Identity }
 // The authenticated payload excludes mutable delivery state and server timestamps.
 type delegationPayload struct {
 	ID, GlobalAppID, Slug, APIBase, Token string
-	OwnerID                               string `json:"AccountID"` // ADR-482 ciphertext compatibility.
+	OwnerID                               string `json:"AccountID"` // ADR-608 ciphertext compatibility.
 	Binding                               Binding
 	ExpiresAt                             time.Time
 }

@@ -1,6 +1,6 @@
 //go:build metal
 
-// adr: 468
+// adr: 594
 package e2e_test
 
 import (

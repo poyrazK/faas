@@ -22,6 +22,7 @@ func TestMemStoreManagedSecretRejectsCustomerMutationsButAllowsReseal(t *testing
 		Ciphertext:                  []byte("managed-ciphertext"),
 		Kid:                         "age1old",
 		ManagedPostgresBindingID:    "binding-a",
+		ManagedPostgresAccess:       "read_write",
 		ManagedCredentialRef:        "credential-a",
 		ManagedCredentialGeneration: 1,
 	}
@@ -157,6 +158,7 @@ func TestMemStoreManagedPostgresSecretMutationsRefreshRuntimeConfig(t *testing.T
 		Kid:                         "age1test",
 		ValueHash:                   "0123456789abcdef",
 		ManagedPostgresBindingID:    "binding-a",
+		ManagedPostgresAccess:       "read_write",
 		ManagedCredentialRef:        "credential-a",
 		ManagedCredentialGeneration: 1,
 	}

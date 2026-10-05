@@ -1,0 +1,4 @@
+MacOS race-tested snapshot: d45c57a71db9b00253a2a0509d0c689f72adcb75
+Final Linux snapshot: be4bcd30dbf7cb807a014b954e728dea87dd9534
+Only changed source inputs: pkg/fcvm/resource_restart_prepared_metal_test.go, pkg/fcvm/restore_prefetch_linux_test.go. Both are guarded by Linux build tags and excluded from Darwin builds.
+All Darwin implementation/test inputs and Go module files are byte-identical between snapshots. No Darwin rerun required for these Linux-only fixture corrections.

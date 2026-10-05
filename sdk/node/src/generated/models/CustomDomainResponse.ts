@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DNSRecordInstruction } from './DNSRecordInstruction.js';
 /**
  * A custom domain binding: domain string, target app, optional project environment, verification status, and TLS provisioning state. Issue #961 / Mega-A PR-3 adds `default`, `cert_not_after`, and `cert_sans` for the `gregale domains set-default | verify | show` surface.
  */
@@ -44,5 +45,9 @@ export type CustomDomainResponse = {
    * Timestamp of the most recent DNS verification/doctor probe.
    */
   dns_last_checked_at?: string | null;
+  /**
+   * DNS records to publish (ADR-520): the TXT ownership proof and the routing CNAME, plus A/AAAA alternatives for a zone apex when the platform publishes edge addresses.
+   */
+  dns_records?: Array<DNSRecordInstruction>;
 };
 

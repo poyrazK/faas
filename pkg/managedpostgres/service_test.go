@@ -52,6 +52,10 @@ func (p *fakeProvider) Inspect(_ context.Context, providerResourceID string) (Ob
 	return ObservedDatabase{ProviderResourceID: providerResourceID, Status: p.inspectStatus, Spec: testSpec()}, nil
 }
 
+func (*fakeProvider) Discover(_ context.Context, request ResourceDiscoveryRequest) (string, error) {
+	return "upstream-" + request.ResourceID, nil
+}
+
 func (*fakeProvider) Update(_ context.Context, _ UpdateRequest) (ObservedDatabase, error) {
 	return ObservedDatabase{}, ErrUnsupported
 }
@@ -312,6 +316,35 @@ func TestRestoreCreatesIndependentDurableTargetAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestRestoreCompletedRetrySurvivesRetentionExpiry(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
+	service := testService(t, testRegistry(t, provider, nil), NewMemoryStore())
+	source, err := service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "orders", Spec: testSpec()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 5, 13, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	request := RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID, Name: "restored", PointInTime: now.Add(-time.Hour)}
+	restored, err := service.Restore(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(48 * time.Hour)
+	repeated, err := service.Restore(context.Background(), request)
+	if err != nil || repeated.ID != restored.ID || provider.restoreCalls != 1 {
+		t.Fatalf("completed restore retry after retention expiry = %+v, %v; calls=%d", repeated, err, provider.restoreCalls)
+	}
+	request.PointInTime = request.PointInTime.Add(-time.Minute)
+	if _, err := service.Restore(context.Background(), request); !errors.Is(err, ErrConflict) {
+		t.Fatalf("different restore intent reused existing name: %v", err)
+	}
+	request.Name = "new-expired-restore"
+	if _, err := service.Restore(context.Background(), request); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("new expired restore intent accepted: %v", err)
+	}
+}
+
 func TestReconcileResumesAsynchronousProvisioning(t *testing.T) {
 	provider := &fakeProvider{
 		capabilities:    testCapabilities(),
@@ -435,7 +468,7 @@ func TestDeleteRejectsActiveBindingBeforeProviderCall(t *testing.T) {
 	}
 }
 
-func TestDeleteLetsProviderDiscoverAnUnpersistedUpstreamResource(t *testing.T) {
+func TestDeleteUnattemptedReservationDoesNotCallProvider(t *testing.T) {
 	provider := &fakeProvider{capabilities: testCapabilities(), deleteDone: true}
 	registry := testRegistry(t, provider, nil)
 	store := NewMemoryStore()
@@ -457,7 +490,7 @@ func TestDeleteLetsProviderDiscoverAnUnpersistedUpstreamResource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if deleted.State != StateDeleted || provider.deleteCalls != 1 || provider.lastDelete.ResourceID != database.ID || provider.lastDelete.ProviderResourceID != "" {
+	if deleted.State != StateDeleted || deleted.AccountingRequired || provider.deleteCalls != 0 {
 		t.Fatalf("deleted = %+v; request = %+v; calls = %d", deleted, provider.lastDelete, provider.deleteCalls)
 	}
 }

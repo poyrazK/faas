@@ -17,7 +17,9 @@ func TestMemStoreStatusUptimeBucketsUsePlatformObservations(t *testing.T) {
 	dayOne := since.Add(2 * time.Hour)
 	dayTwo := since.Add(26 * time.Hour)
 	recordCompleteStatusInterval(t, m, dayOne, "", publicstatus.StateOperational)
+	// Degraded is reduced quality, not downtime (publicstatus.CountsAsAvailable).
 	recordCompleteStatusInterval(t, m, dayOne.Add(5*time.Minute), publicstatus.ComponentAPIConsole, publicstatus.StateDegraded)
+	recordCompleteStatusInterval(t, m, dayOne.Add(10*time.Minute), publicstatus.ComponentNetworking, publicstatus.StatePartialOutage)
 	recordCompleteStatusInterval(t, m, dayTwo, "", publicstatus.StateOperational)
 	// This deliberate customer cancellation must not enter public uptime.
 	m.mu.Lock()
@@ -31,8 +33,8 @@ func TestMemStoreStatusUptimeBucketsUsePlatformObservations(t *testing.T) {
 	if len(buckets) != 2 {
 		t.Fatalf("got %d buckets, want 2: %+v", len(buckets), buckets)
 	}
-	if got := buckets[0]; !got.Day.Equal(dayOne.Truncate(24*time.Hour)) || got.Successful != 1 || got.Total != 2 {
-		t.Errorf("day one bucket = %+v, want 1/2", got)
+	if got := buckets[0]; !got.Day.Equal(dayOne.Truncate(24*time.Hour)) || got.Successful != 2 || got.Total != 3 {
+		t.Errorf("day one bucket = %+v, want 2/3 (degraded up, partial outage down)", got)
 	}
 	if got := buckets[1]; !got.Day.Equal(dayTwo.Truncate(24*time.Hour)) || got.Successful != 1 || got.Total != 1 {
 		t.Errorf("day two bucket = %+v, want 1/1", got)

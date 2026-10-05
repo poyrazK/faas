@@ -184,7 +184,7 @@ func TestRegionalBuildExportConsumerBoundaries(t *testing.T) {
 			}
 			switch scenario {
 			case "wrong region", "inactive", "unnamed":
-				if err != nil || back.exportGets != 0 || row.Status != state.DeployBuilding {
+				if !errors.Is(err, db.ErrNotificationNotOwned) || back.exportGets != 0 || row.Status != state.DeployBuilding {
 					t.Fatalf("ineligible worker fetched: gets=%d status=%s err=%v", back.exportGets, row.Status, err)
 				}
 			case "registry unavailable", "missing route":

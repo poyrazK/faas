@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-464: two ordinary allocations can observe the same safe hint, but the
+// ADR-590: two ordinary allocations can observe the same safe hint, but the
 // second committed write must not consume selected-region recovery capacity.
 func testOrdinaryCapacityStaleHint(t *testing.T, fx *Fixture) {
 	fleet := regionalCapacityFleet(t, fx, 2, 2)

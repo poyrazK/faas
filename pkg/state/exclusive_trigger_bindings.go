@@ -77,6 +77,9 @@ func (s *MemStore) UpsertExclusiveTriggerBinding(ctx context.Context, in Exclusi
 		}
 		in.AppID = cron.AppID
 	case "inbound_webhook":
+		if _, exists := s.webhookAutomationBindings[in.TriggerID]; exists {
+			return ExclusiveTriggerBinding{}, ErrConflict
+		}
 		endpoint, ok := s.inboundWebhookEndpoints[in.TriggerID]
 		if !ok {
 			return ExclusiveTriggerBinding{}, ErrNotFound
@@ -326,6 +329,9 @@ equivalence_key=EXCLUDED.equivalence_key, updated_at=clock_timestamp()
 							WHERE exclusive_work_trigger_bindings.account_id=EXCLUDED.account_id
 RETURNING created_at,updated_at`, in.Source, in.TriggerID, in.AccountID, nullableUUID(in.AppID), nullableUUID(in.JobID), policyID, in.PolicyName, nullableUUID(in.PlatformTenantID), in.Key, in.EquivalenceKey)
 	if err := row.Scan(&in.CreatedAt, &in.UpdatedAt); err != nil {
+		if isUniqueViolation(err) {
+			return ExclusiveTriggerBinding{}, ErrConflict
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ExclusiveTriggerBinding{}, ErrConflict
 		}

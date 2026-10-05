@@ -1,0 +1,6 @@
+Oct 03 10:04:52 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: Started gregale-managed-pg-prepared-boot-d4841725-complete.service - /usr/bin/bash -c "exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-prepared-boot-d4841725/runner.sh > /var/tmp/faas-metal-smoke-managed-pg-prepared-boot-d4841725/run.log 2>&1".
+Oct 03 10:07:00 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal runuser[953221]: pam_unix(runuser:session): session opened for user nobody(uid=65534) by (uid=0)
+Oct 03 10:07:14 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal runuser[953221]: pam_unix(runuser:session): session closed for user nobody
+Oct 03 10:25:52 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-prepared-boot-d4841725-complete.service: Main process exited, code=exited, status=2/INVALIDARGUMENT
+Oct 03 10:25:52 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-prepared-boot-d4841725-complete.service: Failed with result 'exit-code'.
+Oct 03 10:25:52 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-prepared-boot-d4841725-complete.service: Consumed 20min 35.667s CPU time, 9.6G memory peak, 0B memory swap peak.

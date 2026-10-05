@@ -1,0 +1,11 @@
+removed /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a state=completed
+LoadState=not-found
+ActiveState=inactive
+SubState=dead
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root        48G   35G   14G  73% /
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth

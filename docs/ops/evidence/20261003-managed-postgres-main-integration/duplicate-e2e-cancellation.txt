@@ -1,0 +1,2 @@
+Intentionally stopped duplicate internal E2E compilation after the same d4155bdc5 implementation passed all four E2E shards in CI run 37123907506.
+The internal fresh canonical schema and SQL preparation gate passed before cancellation. This unit is not a full passing E2E gate.

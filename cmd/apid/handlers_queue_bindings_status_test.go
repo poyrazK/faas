@@ -20,17 +20,15 @@ func TestQueueBindingStatusReportsProjectionAndQueueState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := e.store.CreateQueueBinding(ctx, state.QueueBinding{
-		AccountID: e.acct.ID, AppID: app.ID, ID: "binding-status", Name: "orders",
+	result, err := e.store.CreateQueueBindingWithConsumer(ctx, state.QueueBinding{
+		AccountID: e.acct.ID, AppID: app.ID, Name: "orders",
 		QueueName: "orders", Mode: "push", WorkloadClass: state.WorkloadClassWorker,
 		Enabled: true, MaxConcurrency: 4,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.syncQueueBindingConsumer(ctx, app, e.acct, binding); err != nil {
-		t.Fatalf("create projection: %v", err)
-	}
+	binding := result.Binding
 	triggerID, err := queueBindingTriggerID(ctx, e.store, app.ID, binding.ID)
 	if err != nil || triggerID == "" {
 		t.Fatalf("load projected trigger: id=%q err=%v", triggerID, err)
@@ -51,7 +49,7 @@ func TestQueueBindingStatusReportsProjectionAndQueueState(t *testing.T) {
 		t.Fatalf("seed queue row: %v", err)
 	}
 
-	rec := e.do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/binding-status/status", nil, nil)
+	rec := e.do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/"+binding.ID+"/status", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -78,15 +76,34 @@ func TestQueueBindingStatusReportsProjectionAndQueueState(t *testing.T) {
 		t.Fatal("oldest pending fields are missing")
 	}
 
+	// Renaming keeps the accepted queue ledger visible through binding identity.
+	name := "payments"
+	result, err = e.store.UpdateQueueBindingWithConsumer(ctx, e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{QueueName: &name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := e.store.CreateQueueBinding(ctx, state.QueueBinding{AccountID: e.acct.ID, AppID: app.ID, Name: "replacement", QueueName: "orders", Mode: "pull", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct {
+		id    string
+		depth int
+	}{{binding.ID, 1}, {replacement.ID, 0}} {
+		rec = e.do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/"+item.id+"/status", nil, nil)
+		var status api.QueueBindingStatusResponse
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &status) != nil || status.Depth != item.depth {
+			t.Fatalf("renamed status depth=%d want=%d code=%d", status.Depth, item.depth, rec.Code)
+		}
+	}
+
 	disabled := false
-	binding, err = e.store.UpdateQueueBinding(ctx, e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{Enabled: &disabled})
+	result, err = e.store.UpdateQueueBindingWithConsumer(ctx, e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{Enabled: &disabled})
 	if err != nil {
 		t.Fatalf("disable binding: %v", err)
 	}
-	if err := e.s.syncQueueBindingConsumer(ctx, app, e.acct, binding); err != nil {
-		t.Fatalf("update projection: %v", err)
-	}
-	rec = e.do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/binding-status/status", nil, nil)
+	binding = result.Binding
+	rec = e.do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/"+binding.ID+"/status", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("disabled status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -102,14 +119,12 @@ func TestQueueBindingStatusReportsProjectionAndQueueState(t *testing.T) {
 	}
 
 	pull := "pull"
-	binding, err = e.store.UpdateQueueBinding(ctx, e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{Mode: &pull})
+	result, err = e.store.UpdateQueueBindingWithConsumer(ctx, e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{Mode: &pull})
 	if err != nil {
 		t.Fatalf("switch binding to pull: %v", err)
 	}
-	if err := e.s.syncQueueBindingConsumer(ctx, app, e.acct, binding); err != nil {
-		t.Fatalf("remove projection: %v", err)
-	}
-	rec = e.do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/binding-status/status", nil, nil)
+	binding = result.Binding
+	rec = e.do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/"+binding.ID+"/status", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("pull status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -129,11 +144,22 @@ func TestQueueBindingConsumerLivenessClassifiesErrorsAndStaleness(t *testing.T) 
 	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &poll, LastErrorAt: &errAt}); got != "degraded" {
 		t.Fatalf("degraded liveness = %q, want degraded", got)
 	}
-	stale := now.Add(-queueBindingConsumerStaleAfter - time.Second)
+	stale := now.Add(-api.QueueConsumerMaxPollAge - time.Second)
 	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &stale}); got != "stale" {
 		t.Fatalf("stale liveness = %q, want stale", got)
 	}
 	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{}); got != "not_observed" {
 		t.Fatalf("empty liveness = %q, want not_observed", got)
+	}
+	zero, future := time.Time{}, now.Add(time.Second)
+	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &zero}); got != "not_observed" {
+		t.Fatalf("zero poll liveness = %q, want not_observed", got)
+	}
+	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &future}); got != "unknown" {
+		t.Fatalf("future poll liveness = %q, want unknown", got)
+	}
+	boundary := now.Add(-api.QueueConsumerMaxPollAge)
+	if got := queueBindingConsumerLiveness(now, state.TriggerConsumerHealth{LastPollAt: &boundary}); got != "healthy" {
+		t.Fatalf("poll age boundary = %q, want healthy", got)
 	}
 }

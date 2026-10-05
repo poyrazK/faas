@@ -9,8 +9,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os/exec"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // EventPublishEndpoint is the stable in-guest endpoint applications use to
@@ -34,11 +35,8 @@ func startEventPublishProxy(log *slog.Logger) error {
 	if log == nil {
 		log = slog.Default()
 	}
-	// The metadata address is loopback-local inside the VM. BusyBox images
-	// normally ship `ip`; if a minimal image does not, fail closed rather than
-	// binding a wildcard address and exposing the platform endpoint externally.
-	if err := exec.Command("ip", "addr", "add", "169.254.169.254/32", "dev", "lo").Run(); err != nil {
-		log.Debug("event publish metadata address setup skipped", "err", err)
+	if err := configureMetadataLoopback(); err != nil {
+		return err
 	}
 	ln, err := net.Listen("tcp4", eventPublishListenAddr)
 	if err != nil {
@@ -67,6 +65,47 @@ func startEventPublishProxy(log *slog.Logger) error {
 		}
 	}()
 	log.Info("event publish proxy started", "endpoint", EventPublishEndpoint, "metadata_endpoint", metadataEnvEndpoint)
+	return nil
+}
+
+// PID1 can have an empty PATH, and full-rootfs app images need not ship ip.
+// Configure only the guest's loopback directly, keeping the listener local.
+func configureMetadataLoopback() error {
+	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("metadata loopback socket: %w", err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+	loopback, err := unix.NewIfreq("lo")
+	if err != nil {
+		return fmt.Errorf("metadata loopback interface: %w", err)
+	}
+	if err := unix.IoctlIfreq(fd, unix.SIOCGIFFLAGS, loopback); err != nil {
+		return fmt.Errorf("metadata loopback flags: %w", err)
+	}
+	loopback.SetUint16(loopback.Uint16() | unix.IFF_UP)
+	if err := unix.IoctlIfreq(fd, unix.SIOCSIFFLAGS, loopback); err != nil {
+		return fmt.Errorf("metadata loopback enable: %w", err)
+	}
+	// An alias preserves lo's primary 127.0.0.1 address and makes repeated
+	// setup idempotent. Its /32 mask creates only the platform metadata route.
+	if err := setMetadataLoopbackIPv4(fd, unix.SIOCSIFADDR, []byte{169, 254, 169, 254}); err != nil {
+		return err
+	}
+	return setMetadataLoopbackIPv4(fd, unix.SIOCSIFNETMASK, []byte{255, 255, 255, 255})
+}
+
+func setMetadataLoopbackIPv4(fd int, operation uint, address []byte) error {
+	request, err := unix.NewIfreq("lo:faas")
+	if err != nil {
+		return fmt.Errorf("metadata loopback alias: %w", err)
+	}
+	if err := request.SetInet4Addr(address); err != nil {
+		return fmt.Errorf("metadata loopback IPv4: %w", err)
+	}
+	if err := unix.IoctlIfreq(fd, operation, request); err != nil {
+		return fmt.Errorf("metadata loopback address: %w", err)
+	}
 	return nil
 }
 

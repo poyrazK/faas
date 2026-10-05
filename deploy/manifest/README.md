@@ -62,6 +62,14 @@ route is public. This is the portable source of truth; public Cloudflare DNS
 is never used for private transport names. Do not copy a server IP into the
 committed `deploy/ansible/host_vars` files.
 
+`public_edge.custom_domains` (ADR-520) turns on self-hosted certificates for
+customer custom domains. It renders `faas_custom_domain_*` for the control
+plane only: the `public_edge` role adds Caddy's on-demand TLS site (asking
+gatewayd-public before every certificate load, issue and renewal), nftables
+opens 80/443 to every source while the platform site keeps answering
+Cloudflare only, and apid publishes the CNAME target and apex addresses to
+customers. See `docs/ops/custom-domain-tls.md`.
+
 The validator fails closed on every missing field, every
 malformed CIDR, every non-octal mode, every non-hex digest, and
 every misplaced TOML table (the load-bearing check from issue

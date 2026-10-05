@@ -118,3 +118,21 @@ func TestSummarizeDayDoesNotCreateSyntheticGreenHistory(t *testing.T) {
 }
 
 func floatPointer(value float64) *float64 { return &value }
+
+// The public page and the account status history disagreed about degraded
+// intervals; both now go through CountsAsAvailable, and AvailableStates is
+// the SQL form of the same rule.
+func TestCountsAsAvailableMatchesAvailableStates(t *testing.T) {
+	listed := map[string]bool{}
+	for _, state := range AvailableStates() {
+		listed[state] = true
+	}
+	for _, state := range []State{StateOperational, StateMaintenance, StateDegraded, StatePartialOutage, StateMajorOutage, StateUnknown} {
+		if got := CountsAsAvailable(state); got != listed[string(state)] {
+			t.Errorf("CountsAsAvailable(%s) = %v, AvailableStates lists it = %v", state, got, listed[string(state)])
+		}
+	}
+	if !CountsAsAvailable(StateDegraded) || CountsAsAvailable(StatePartialOutage) {
+		t.Fatal("degraded must count as available and partial outage must not")
+	}
+}

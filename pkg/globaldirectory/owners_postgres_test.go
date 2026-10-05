@@ -228,7 +228,7 @@ func TestGlobalOrganizationPersonalMigrationRoundTrip(t *testing.T) {
 	if _, err = pool.Exec(t.Context(), quotaParts[1]); err != nil {
 		t.Fatal(err)
 	}
-	// Roll back later binding triggers before their ADR-483 dependencies.
+	// Roll back later binding triggers before their ADR-609 dependencies.
 	bindings, err := os.ReadFile("../../migrations/20261004101500003_global_regional_organization_bindings.sql")
 	if err != nil {
 		t.Fatal(err)

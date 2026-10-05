@@ -21,6 +21,19 @@ func TestMarkdownReferenceFresh(t *testing.T) {
 	}
 }
 
+func TestMarkdownReferenceIncludesGitOpsBindingLifecycle(t *testing.T) {
+	var buf bytes.Buffer
+	renderMarkdownReference(&buf, customerCliCommands())
+	for _, action := range []string{"rebind", "unbind"} {
+		if !strings.Contains(buf.String(), "##### projects environments gitops "+action+"\n") {
+			t.Errorf("missing nested GitOps %s reference", action)
+		}
+	}
+	if !strings.Contains(buf.String(), "--expected-generation <N>") {
+		t.Error("binding lifecycle reference omits generation fence")
+	}
+}
+
 func TestMarkdownReferenceOmitsAdvancedCommands(t *testing.T) {
 	var buf bytes.Buffer
 	renderMarkdownReference(&buf, customerCliCommands())

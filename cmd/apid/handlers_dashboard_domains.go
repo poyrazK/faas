@@ -81,6 +81,7 @@ func (s *server) projectDashboardDomains(ctx stdctx, log *slog.Logger, slug stri
 			CertExpiresAt:    resp.CertExpiresAt,
 			CertLastError:    resp.CertLastError,
 			DNSLastCheckedAt: resp.DNSLastCheckedAt,
+			DNSRecords:       resp.DNSRecords,
 			DoctorURL:        dashboardDomainDoctorURL(slug, domain.Domain),
 		}
 		if obs, err := s.store.GetDoctorObservation(ctx, domain.Domain); err == nil {

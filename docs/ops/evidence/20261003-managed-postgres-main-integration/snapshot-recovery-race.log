@@ -1,0 +1,3 @@
+# github.com/onebox-faas/faas/pkg/fcvm.test
+ld: warning: '/private/var/folders/yj/bt9b1gbs363dgg7xm615r9v80000gn/T/go-link-3011107161/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+ok  	github.com/onebox-faas/faas/pkg/fcvm	2.260s

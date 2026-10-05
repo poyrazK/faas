@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CreateEdgeRuleRequest } from '../models/CreateEdgeRuleRequest.js';
+import type { DeploymentRoutePolicySnapshotResponse } from '../models/DeploymentRoutePolicySnapshotResponse.js';
 import type { EdgeRuleResponse } from '../models/EdgeRuleResponse.js';
 import type { ThrottleSuggestionsResponse } from '../models/ThrottleSuggestionsResponse.js';
 import type { UpdateEdgeRuleRequest } from '../models/UpdateEdgeRuleRequest.js';
@@ -10,6 +11,42 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class EdgeRulesService {
+  /**
+   * Read the gateway policy captured with a deployment.
+   * Returns the immutable edge-rule set captured atomically when this
+   * deployment first became live. Rules use the same owner-scoped shape as
+   * the current app edge-rule endpoint. Older deployments without a
+   * snapshot return 404 so callers can report historical policy as unknown.
+   *
+   * @returns DeploymentRoutePolicySnapshotResponse Captured gateway route policy and fingerprint.
+   * @throws ApiError
+   */
+  public static getDeploymentRoutePolicySnapshot({
+    slug,
+    deployment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the deployment whose gateway policy snapshot is requested.
+     */
+    deployment: string,
+  }): CancelablePromise<DeploymentRoutePolicySnapshotResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployments/{deployment}/route-policy',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `Deployment is not owned by the caller or has no captured route policy.`,
+      },
+    });
+  }
   /**
    * List every edge rule owned by the caller.
    * Account-wide listing. The dashboard overview pane uses this;

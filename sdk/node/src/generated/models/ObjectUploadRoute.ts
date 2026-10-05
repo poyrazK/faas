@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ObjectEncryption } from './ObjectEncryption.js';
 /**
  * Policy-controlled edge upload route. The edge generates the final object key and never exposes provider placement.
  */
@@ -15,5 +16,6 @@ export type ObjectUploadRoute = {
   enabled: boolean;
   created_at: string;
   updated_at: string;
+  encryption?: ObjectEncryption;
 };
 

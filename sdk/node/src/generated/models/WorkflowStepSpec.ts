@@ -3,13 +3,17 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { WorkflowConditionSpec } from './WorkflowConditionSpec.js';
+import type { WorkflowForEachSpec } from './WorkflowForEachSpec.js';
+import type { WorkflowGuardSpec } from './WorkflowGuardSpec.js';
+import type { WorkflowJoinSpec } from './WorkflowJoinSpec.js';
+import type { WorkflowOutboundSpec } from './WorkflowOutboundSpec.js';
 import type { WorkflowRetrySpec } from './WorkflowRetrySpec.js';
 /**
  * One workflow step. The canonical ADR-081 target is `run`; `path`
  * and `method` remain accepted for the existing HTTP wake executor
  * during the runtime migration. Exactly one of `run`, `path`,
  * `wait_for_event`, `wait_for_callback`, `wait_for_duration`, or
- * `wait_for_condition` must be supplied.
+ * `wait_for_condition`, `outbound`, `join`, or `for_each` must be supplied.
  *
  */
 export type WorkflowStepSpec = {
@@ -18,6 +22,9 @@ export type WorkflowStepSpec = {
    * Named platform operation to invoke.
    */
   run?: string;
+  for_each?: WorkflowForEachSpec;
+  join?: WorkflowJoinSpec;
+  outbound?: WorkflowOutboundSpec;
   /**
    * JSON input passed to the named operation.
    */
@@ -27,6 +34,7 @@ export type WorkflowStepSpec = {
    */
   path?: string;
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
+  when?: WorkflowGuardSpec;
   depends_on?: Array<string>;
   wait_for_event?: string;
   /**

@@ -3,7 +3,7 @@ import { OpenAPI } from './generated/core/OpenAPI.js';
 import { request } from './generated/core/request.js';
 import type { DeploymentResponse } from './generated/models/DeploymentResponse.js';
 
-/** Source form for the immutable regional deployment endpoint (ADR-477). */
+/** Source form for the immutable regional deployment endpoint (ADR-603). */
 export interface CellDeploymentSourceForm {
   source: Blob;
   dockerfile?: boolean;

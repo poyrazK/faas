@@ -617,6 +617,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := rejectProductionDevEnvironment(cfg.Role, deps.getenv); err != nil {
 		return err
 	}
+	// ADR-520: a malformed edge address would otherwise silently drop out
+	// of the customer DNS instructions and the routing probe.
+	if _, err := api.CustomDomainAddresses(); err != nil {
+		return fmt.Errorf("apid: %w", err)
+	}
 
 	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid")
 	if err != nil {
@@ -714,11 +719,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedPostgresBindingReconciler(ctx)
 		go srv.runProjectEnvironmentCleanupReconciler(ctx)
 		go srv.runManagedPostgresUsageCollector(ctx)
+		go srv.runManagedPostgresHealthCollector(ctx)
 		go srv.runManagedRealtimeEndpointReconciler(ctx)
 		go srv.runManagedRealtimeChannelRouteReconciler(ctx)
 		go srv.runManagedRealtimeOwnerReaper(ctx)
 		go srv.runManagedRealtimeHistoryReaper(ctx)
 		go srv.runManagedRealtimeDrainWorker(ctx)
+		go srv.runManagedExecutionWorkflowWorker(ctx)
 		// ADR-132: pg_notify is a low-latency wake-up only. The
 		// subscriber re-reads the durable runtime_config_entries row, so a
 		// missed notification is repaired by the next reconnect or boot.
@@ -786,13 +793,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 		archiveStore := archiveDeletionClient(srv.sbomStorage, log)
 		startArchiveRetention(ctx, srv.store, archiveStore, srv.ops.Registry(), log)
 		graceLoop := grace.New(grace.Params{
-			Store:       srv.store,
-			Mailer:      graceSenderAdapter{m: srv.mailer},
-			Log:         log,
-			Interval:    graceIntervalFromEnv(log),
-			Artifacts:   srv.sbomStorage,
-			LogArchives: archiveStore,
-			Registry:    srv.ops.Registry(),
+			Store:               srv.store,
+			Mailer:              graceSenderAdapter{m: srv.mailer},
+			Log:                 log,
+			Interval:            graceIntervalFromEnv(log),
+			Artifacts:           srv.sbomStorage,
+			LogArchives:         archiveStore,
+			Registry:            srv.ops.Registry(),
+			BeforeAccountDelete: srv.cleanupExpiredAccountObjectBuckets,
 			Notif: func(ctx context.Context, ch, payload string) error {
 				return srv.notif.Notify(ctx, ch, payload)
 			},
@@ -1411,6 +1419,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureGlobalDirectory(ctx, cfg.GlobalAppDirectoryEnabled, deps.pool); err != nil {
 		return err
 	}
+	if cfg.OutboundProbeGatewayURL != "" && !api.ValidOutboundProbeGateway(cfg.OutboundProbeGatewayURL) {
+		return fmt.Errorf("apid: outbound_probe_gateway_url must be an HTTPS origin")
+	}
+	srv.outboundProbeGatewayURL = cfg.OutboundProbeGatewayURL
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err
 	}
@@ -1429,11 +1441,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid object storage configuration: %w", err)
 	}
 	srv.WithObjectStorage(objectRegistry)
-	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log, ops.Registry())
+	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log, ops.Registry())
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
-	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector)
+	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
 	srv.WithResendWebhookSecret(resendSecret)
 	// Issue #246 acceptance item 8: wire the meterd-owned bounce
 	// handler so Resend bounce / complaint events feed the
@@ -1972,6 +1984,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	// Optional pre-listen hook (DNS poller in production; nil in tests).
 	go srv.runAutomaticRouteCheckWorker(ctx)
+	go srv.runRouteMonitorWorker(ctx)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}
@@ -2354,6 +2367,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The customer-facing /readyz remains the richer dependency probe;
 	// reaching this point means the HTTP listener and its dependencies are
 	// fully constructed.
+	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
+	defer srv.startEnvironmentGitDriftReporting(ctx, deps.getenv)()
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()

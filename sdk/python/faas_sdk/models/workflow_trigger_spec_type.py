@@ -1,9 +1,11 @@
 from typing import Literal
 
-WorkflowTriggerSpecType = Literal["manual"]
+WorkflowTriggerSpecType = Literal["event", "manual", "schedule"]
 
 WORKFLOW_TRIGGER_SPEC_TYPE_VALUES: set[WorkflowTriggerSpecType] = {
+    "event",
     "manual",
+    "schedule",
 }
 
 

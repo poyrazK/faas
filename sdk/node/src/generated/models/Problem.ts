@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { BindingCheckReport } from './BindingCheckReport.js';
 import type { FieldError } from './FieldError.js';
 import type { LogExcerpt } from './LogExcerpt.js';
 import type { SecretFinding } from './SecretFinding.js';
@@ -27,6 +28,7 @@ import type { SecretFinding } from './SecretFinding.js';
  *
  */
 export type Problem = {
+  bindings_check?: BindingCheckReport;
   type?: string;
   title: string;
   status: number;

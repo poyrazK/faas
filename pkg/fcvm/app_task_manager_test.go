@@ -37,7 +37,11 @@ func (v *appTaskTestVMM) DialAppTask(ctx context.Context, _ Lease) (*AppTaskSess
 func TestManagerExecuteAppTaskDestroysInstance(t *testing.T) {
 	vmm := &appTaskTestVMM{fakeVMM: &fakeVMM{}}
 	m := NewManager(&fakeRunner{}, vmm, Paths{}, "1.0.0", nil, nil)
-	m.live["task-vm-1"] = &Instance{Lease: Lease{Instance: "task-vm-1"}, AppTaskOnly: true}
+	lease, leaseErr := m.alloc.Acquire("task-vm-1")
+	if leaseErr != nil {
+		t.Fatal(leaseErr)
+	}
+	m.live["task-vm-1"] = &Instance{Lease: lease, AppTaskOnly: true}
 	result, err := m.ExecuteAppTask(context.Background(), "task-vm-1", appTaskProtocolRequest("task-1"))
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +62,11 @@ func TestManagerExecuteAppTaskDestroysInstance(t *testing.T) {
 func TestManagerExecuteAppTaskDestroysWhenDialerIsUnavailable(t *testing.T) {
 	vmm := &fakeVMM{}
 	m := NewManager(&fakeRunner{}, vmm, Paths{}, "1.0.0", nil, nil)
-	m.live["task-vm-unsupported"] = &Instance{Lease: Lease{Instance: "task-vm-unsupported"}, AppTaskOnly: true}
+	lease, leaseErr := m.alloc.Acquire("task-vm-unsupported")
+	if leaseErr != nil {
+		t.Fatal(leaseErr)
+	}
+	m.live["task-vm-unsupported"] = &Instance{Lease: lease, AppTaskOnly: true}
 	_, err := m.ExecuteAppTask(context.Background(), "task-vm-unsupported", appTaskProtocolRequest("task-1"))
 	if !errors.Is(err, ErrAppTaskNotConfigured) {
 		t.Fatalf("error = %v, want ErrAppTaskNotConfigured", err)

@@ -1,5 +1,5 @@
 ---
-# ADR-475: role-installed base units must carry the same identity as renderer
+# ADR-601: role-installed base units must carry the same identity as renderer
 # output. Run before service roles so their first restart sees the drop-ins.
 - name: control_plane_cell — validate paired canonical identity
   ansible.builtin.assert:

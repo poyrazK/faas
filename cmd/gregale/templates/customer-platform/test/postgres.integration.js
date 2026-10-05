@@ -8,12 +8,18 @@ import { createStore } from "../app/store.js";
 test("PostgreSQL tenant isolation, rollback and connection reuse", async (t) => {
   assert.ok(process.env.CUSTOMER_DATABASE_URL, "Set CUSTOMER_DATABASE_URL to a disposable non-superuser database");
   const { default: pg } = await import("pg");
-  await migrate(process.env.CUSTOMER_DATABASE_URL);
+  assert.ok(process.env.CUSTOMER_MIGRATION_DATABASE_URL, "Set CUSTOMER_MIGRATION_DATABASE_URL to the schema owner connection");
+  await migrate(process.env.CUSTOMER_MIGRATION_DATABASE_URL);
   const pool = new pg.Pool({ connectionString: process.env.CUSTOMER_DATABASE_URL, max: 1 });
   const store = createStore(pool), alice = randomUUID(), bob = randomUUID();
   let doc;
   t.after(async () => { try { if (doc) await store.delete(alice, doc.id); } finally { await pool.end(); } });
   await store.verify();
+  const { rows: [ownership] } = await pool.query(
+    "SELECT current_user AS runtime_role, tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = 'customer_documents'");
+  assert.notEqual(ownership.runtime_role, ownership.tableowner, "runtime must not own the application table");
+  await assert.rejects(pool.query("CREATE TABLE public.runtime_ddl_probe (id integer)"), (error) => error.code === "42501");
+  await assert.rejects(pool.query("ALTER TABLE public.customer_documents DISABLE ROW LEVEL SECURITY"), (error) => error.code === "42501");
   doc = await store.create(alice, { title: "Alice", content: "private" });
   assert.equal(await store.get(bob, doc.id), undefined);
   assert.equal(await store.update(bob, doc.id, { title: "Bob", content: "stolen" }), undefined);

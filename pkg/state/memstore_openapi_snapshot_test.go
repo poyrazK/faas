@@ -36,6 +36,14 @@ func TestMemStoreMarkDeploymentLiveCapturesOpenAPISnapshot(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.CreateEdgeRule(ctx, state.CreateEdgeRuleParams{
+		AccountID: account.ID, AppID: app.ID,
+		MatchHost: "api.example.com", MatchPath: "/disabled", MatchMethods: []string{"GET"},
+		Enabled: false, Kind: state.EdgeRuleKindRoute,
+		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindRoute},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "prod"})
 	if err != nil {
 		t.Fatal(err)
@@ -60,6 +68,45 @@ func TestMemStoreMarkDeploymentLiveCapturesOpenAPISnapshot(t *testing.T) {
 	}
 	if _, ok := spec.Paths["api.example.com/v1/orders"]; !ok {
 		t.Fatalf("captured paths = %v, want projected route", spec.Paths)
+	}
+	policySnapshot, err := store.DeploymentRoutePolicySnapshotByDeployment(ctx, deployment.ID)
+	if err != nil {
+		t.Fatalf("DeploymentRoutePolicySnapshotByDeployment: %v", err)
+	}
+	policyRules, err := state.UnmarshalDeploymentRoutePolicySnapshot(policySnapshot)
+	if err != nil {
+		t.Fatalf("UnmarshalDeploymentRoutePolicySnapshot: %v", err)
+	}
+	if policySnapshot.SchemaVersion != state.DeploymentRoutePolicySnapshotSchemaVersion || len(policySnapshot.SHA256) != 64 || len(policyRules) != 2 {
+		t.Fatalf("route policy snapshot metadata/rules = %+v rules=%+v", policySnapshot, policyRules)
+	}
+	foundDisabled := false
+	for _, rule := range policyRules {
+		if rule.MatchPath == "/disabled" && !rule.Enabled {
+			foundDisabled = true
+		}
+	}
+	if !foundDisabled {
+		t.Fatalf("captured policy omitted disabled rule: %+v", policyRules)
+	}
+	firstPolicyHash := policySnapshot.SHA256
+	if _, err := store.CreateEdgeRule(ctx, state.CreateEdgeRuleParams{
+		AccountID: account.ID, AppID: app.ID,
+		MatchHost: "api.example.com", MatchPath: "/added-after-live", MatchMethods: []string{"GET"},
+		Enabled: true, Kind: state.EdgeRuleKindRoute,
+		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindRoute},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive retry: %v", err)
+	}
+	policySnapshot, err = store.DeploymentRoutePolicySnapshotByDeployment(ctx, deployment.ID)
+	if err != nil {
+		t.Fatalf("reload DeploymentRoutePolicySnapshotByDeployment: %v", err)
+	}
+	if policySnapshot.SHA256 != firstPolicyHash {
+		t.Fatalf("deployment route policy snapshot changed after live: %s -> %s", firstPolicyHash, policySnapshot.SHA256)
 	}
 }
 

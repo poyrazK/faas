@@ -2,8 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ObjectEncryption } from './ObjectEncryption.js';
 /**
- * Exact object operation to authorize for a short time.
+ * Exact object operation to authorize at the branded S3 gateway. PUT binds one durable receipt and supports an explicit owned encryption selection.
  */
 export type ObjectSignRequest = {
   method: 'GET' | 'HEAD' | 'PUT';
@@ -41,5 +42,6 @@ export type ObjectSignRequest = {
    * PUT-only S3 object tags.
    */
   tags?: Record<string, string>;
+  encryption?: ObjectEncryption;
 };
 

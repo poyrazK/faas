@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // RevisionPinStore resolves an exact client-selected deployment. A missing,
@@ -51,28 +53,28 @@ func (s *PgStore) ResolveRevisionPin(ctx context.Context, appID, scope, deployme
 }
 
 // ExpireRevisionPins removes the right to reach old code and makes its
-// deployment non-live in one statement. A concurrent cutover holds the app
-// lock and inserts only fresh deadlines, so already-expired rows cannot be
-// resurrected by a later replacement.
+// deployment non-live atomically. App locks serialize admission and cutover;
+// the expiry statement rechecks retention after acquiring those locks.
 func (s *PgStore) ExpireRevisionPins(ctx context.Context) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `with expired as (
-		delete from deployment_revision_pins p
-		 where p.expires_at <= now()
-		   and not exists (
-		     select 1 from project_release_members rm
-		     join project_release_sets rs on rs.id = rm.release_id
-		     where rm.deployment_id = p.deployment_id
-		       and (rs.active or rs.expires_at > now())
-		   )
-		 returning p.deployment_id
-	)
-	update deployments d set status = 'superseded', traffic_percent = 0
-	  from expired e
-	 where d.id = e.deployment_id and d.status = 'live' and d.traffic_percent = 0`)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return 0, fmt.Errorf("state: expire revision pins begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	apps, err := q.LockExpiredRevisionPinApps(ctx, tx, api.RevisionPinCleanupPageMax)
+	if err != nil {
+		return 0, fmt.Errorf("state: expire revision pins lock apps: %w", err)
+	}
+	count, err := q.ExpireRetainedDeploymentRevisionPins(ctx, tx, sqlc.ExpireRetainedDeploymentRevisionPinsParams{
+		AppIds: apps, PageLimit: api.RevisionPinCleanupPageMax})
 	if err != nil {
 		return 0, fmt.Errorf("state: expire revision pins: %w", err)
 	}
-	return tag.RowsAffected(), nil
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("state: expire revision pins commit: %w", err)
+	}
+	return count, nil
 }
 
 func (m *MemStore) ResolveRevisionPin(_ context.Context, appID, scope, deploymentID string) (Deployment, error) {
@@ -99,16 +101,27 @@ func (m *MemStore) ExpireRevisionPins(_ context.Context) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var expired int64
-	for id, until := range m.revisionPins {
-		if time.Now().Before(until) {
+	pruned := 0
+	ids := make(map[string]struct{}, len(m.revisionPins)+len(m.operationCodePins))
+	for id := range m.revisionPins {
+		ids[id] = struct{}{}
+	}
+	for id := range m.operationCodePins {
+		ids[id] = struct{}{}
+	}
+	now := time.Now()
+	for id := range ids {
+		if m.revisionPins[id].After(now) || m.operationCodePins[id].After(now) ||
+			m.operationRetainsDeploymentLocked(id) || m.deploymentInUsableReleaseLocked(id) {
 			continue
 		}
-		if m.deploymentInUsableReleaseLocked(id) {
-			continue
+		if pruned >= api.RevisionPinCleanupPageMax {
+			break
 		}
 		delete(m.revisionPins, id)
-		dep := m.deployments[id]
-		if dep.Status == DeployLive && dep.TrafficPercent == 0 {
+		delete(m.operationCodePins, id)
+		pruned++
+		if dep, exists := m.deployments[id]; exists && dep.Status == DeployLive && dep.TrafficPercent == 0 {
 			dep.Status = DeploySuperseded
 			m.deployments[id] = dep
 			expired++

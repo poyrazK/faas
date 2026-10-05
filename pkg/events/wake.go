@@ -739,7 +739,7 @@ type Readiness200 struct {
 	InstanceID      string
 	NodeID          string
 	HealthcheckPath string
-	ProbeCount      int
+	ProbeCount      int // all attempts, including the successful TCP/HTTP/gRPC probe
 	ElapsedMs       int64
 }
 

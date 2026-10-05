@@ -210,6 +210,9 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 				body += fmt.Sprintf("  - faas-%s.service\n", entry.Name)
 			}
 		}
+		if host.Role == roleControlPlane {
+			body += renderCustomDomainEdgeVars(m.PublicEdge.CustomDomains)
+		}
 		if host.Role == roleComputeOnly && m.Egress.TenantGateway != nil {
 			gatewayVars, gwErr := renderTenantEgressGatewayVars(m.Egress.TenantGateway, canonicalComputeNodeName(host.Name, roleTemplating.Role(host.Role)))
 			if gwErr != nil {
@@ -565,6 +568,22 @@ func renderPublicListenAddr(host manifest.Host) string {
 // renderPublicControlAddr is the companion emit for
 // faas_public_control_addr. Mirrors renderPublicListenAddr shape
 // but pins to the canonical :9092 control listener port.
+// renderCustomDomainEdgeVars emits ADR-520's switches for a control-plane
+// host: the public_edge Caddy block, the nftables 80/443 opening, apid's
+// customer DNS instructions and gatewayd-public's ask endpoint all key off
+// these variables.
+func renderCustomDomainEdgeVars(c manifest.CustomDomainsEdge) string {
+	if !c.Enabled() {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("faas_custom_domain_tls: true\n")
+	fmt.Fprintf(&b, "faas_custom_domain_target: %q\n", c.Target)
+	fmt.Fprintf(&b, "faas_custom_domain_addresses: [%s]\n", quotedYAMLList(c.Addresses))
+	fmt.Fprintf(&b, "faas_custom_domain_acme_email: %q\n", c.ACMEEmail)
+	return b.String()
+}
+
 func renderPublicControlAddr(host manifest.Host) string {
 	address, _, err := manifest.ParseHostPort(host.Address)
 	if err != nil || address == "" {

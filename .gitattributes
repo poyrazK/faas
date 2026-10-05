@@ -1,3 +1,10 @@
 # openapi-typescript-codegen emits a trailing blank line in every generated
 # TypeScript file. Keep Git's whitespace checks strict outside this directory.
 sdk/node/src/generated/** whitespace=-blank-at-eof
+
+# Collapse captured managed PostgreSQL diagnostics in GitHub's PR view.
+# Evidence summaries and provenance manifests remain directly reviewable.
+docs/ops/evidence/*managed-postgres*/*.log linguist-generated=true
+docs/ops/evidence/*managed-postgres*/change-patch.json linguist-generated=true
+docs/ops/evidence/*managed-postgres*/*SHA256SUMS linguist-generated=true
+docs/ops/evidence/*managed-postgres*/*.sha256 linguist-generated=true

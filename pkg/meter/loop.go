@@ -286,6 +286,9 @@ func (l *Loop) Run(ctx context.Context) error {
 			// BillingCapExceededTotal precedent at
 			// runQuotaOnce:325 (per-account loop, ops
 			// emit inside the loop).
+			observedAt := l.now().UTC()
+			sampler.now = func() time.Time { return observedAt }
+			pricingErr := l.recordFinancialPricing(c, observedAt)
 			rows, err := sampler.SampleAndRoll(c)
 			if err == nil {
 				l.emitFloorApplied(c, rows)
@@ -304,7 +307,8 @@ func (l *Loop) Run(ctx context.Context) error {
 				l.log.Warn("meter: job sampler tick failed",
 					slog.String("err", jerr.Error()))
 			}
-			return err
+			sampleErr := errors.Join(err, jerr, pricingErr)
+			return errors.Join(sampleErr, l.recordFinancialSample(c, sampler, observedAt, sampleErr))
 		}, "sample")
 	}()
 	go func() { errc <- l.runQuotaTicks(ctx) }()

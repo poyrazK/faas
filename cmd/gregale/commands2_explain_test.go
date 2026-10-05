@@ -153,7 +153,7 @@ func TestCmdLogsExplain_ParsesStructuredProductionFrames(t *testing.T) {
 		t.Fatalf("cmdLogs = %d, want 0; output=%q", code, stdout.String())
 	}
 	out := stdout.String()
-	if !strings.Contains(out, `"line":"database connection failed"`) {
+	if !strings.Contains(out, "2026-09-16T16:40:31.000Z inst-1 stdout ERROR database connection failed") {
 		t.Fatalf("structured log row was not rendered: %q", out)
 	}
 	if !strings.Contains(out, "levels: error=1") || !strings.Contains(out, "database connection failed") {

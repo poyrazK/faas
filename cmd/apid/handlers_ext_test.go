@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -2030,6 +2031,55 @@ func TestRollbackApp_ExplicitTarget_ZeroTrafficLiveRevision(t *testing.T) {
 	}
 }
 
+// TestRollbackApp_DefaultNamesZeroTrafficCandidates reproduces production-us:
+// after a traffic split and `traffic promote`, the former production
+// deployment stays live at 0% instead of superseded, and a plain rollback
+// answered "deploy at least twice". It must name the 0% deployments and the
+// explicit command, without guessing which of them used to serve.
+func TestRollbackApp_DefaultNamesZeroTrafficCandidates(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	former := mustSeedDeployment(t, e, "rb-promoted")
+	if err := e.store.MarkDeploymentLive(ctx, former.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.AppBySlug(ctx, "rb-promoted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serving, err := e.store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + repeat("e", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(ctx, serving.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.UpdateDeploymentTraffic(ctx, serving.ID, 100); err != nil {
+		t.Fatal(err)
+	}
+	formerNow, err := e.store.DeploymentByID(ctx, former.ID)
+	if err != nil || formerNow.Status != state.DeployLive || formerNow.TrafficPercent != 0 {
+		t.Fatalf("setup: former deployment = %+v, err=%v; want live at 0%%", formerNow, err)
+	}
+
+	rec := e.do(t, http.MethodPost, "/v1/apps/rb-promoted/rollback", nil, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeNoRollbackTarget)
+	want := fmt.Sprintf("v%d", formerNow.Revision)
+	if formerNow.Revision <= 0 {
+		want = former.ID
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, want) || !strings.Contains(body, "gregale rollback rb-promoted --to "+want) {
+		t.Fatalf("rollback problem must name %s and the explicit command:\n%s", want, body)
+	}
+	if strings.Contains(body, fmt.Sprintf("v%d", serving.Revision)+",") {
+		t.Fatalf("rollback problem lists the serving deployment as a candidate:\n%s", body)
+	}
+}
+
 func TestRollbackApp_ZeroTrafficLiveNotificationFailureRestoresTarget(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	ctx := context.Background()
@@ -2357,6 +2407,41 @@ func TestWakeApp_HappyPath(t *testing.T) {
 	}
 	if len(deliveries) != 0 {
 		t.Fatalf("wake deliveries = %+v, want none before scheduler completion", deliveries)
+	}
+}
+
+// schedd treats a wake for an app with a routable running instance as
+// satisfied and stamps no new instance, so a queued wake for a warm app never
+// completed and `gregale wake --wait` timed out on production. The API now
+// reports the running instance and its wake id instead of queueing.
+func TestWakeApp_AlreadyRunningReportsInstanceWithoutQueueing(t *testing.T) {
+	e, notif := newTestServerWithCapturingNotifier(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "wake-warm")
+	if err := e.store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	running, err := e.store.CreateInstance(t.Context(), dep.AppID, dep.ID, string(state.StateRunning), 256, "node-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/apps/wake-warm/wake", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var response api.AppWakeResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.AlreadyRunning || response.InstanceID != running.ID || response.WakeID != running.WakeID || response.WakeID == "" {
+		t.Fatalf("response = %+v, want already_running for instance %s with its wake id %s", response, running.ID, running.WakeID)
+	}
+	assertLifecycleAuditCount(t, e, "app.wake_requested", 0)
+	notif.mu.Lock()
+	defer notif.mu.Unlock()
+	for _, emitted := range notif.emitted {
+		if emitted.Channel == db.NotifyAppWake {
+			t.Fatalf("warm app queued a wake: %+v", emitted)
+		}
 	}
 }
 
@@ -2902,6 +2987,50 @@ func TestCreateCron_HappyPath(t *testing.T) {
 	}
 	if out.Schedule != "*/5 * * * *" || out.Path != "/heartbeat" {
 		t.Errorf("got %+v", out)
+	}
+}
+
+// Production: `gregale crons list --app e2e-probe` printed the account's
+// four crons from four different apps because listCrons ignored ?slug=.
+func TestListCrons_ScopedToApp(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	first := mustSeedApp(t, e, "cron-first")
+	second := mustSeedApp(t, e, "cron-second")
+	for _, c := range []api.CreateCronRequest{
+		{AppID: first, Schedule: "*/5 * * * *", Path: "/first"},
+		{AppID: second, Schedule: "*/5 * * * *", Path: "/second"},
+	} {
+		if rec := e.do(t, "POST", "/v1/crons", c, nil); rec.Code != http.StatusCreated {
+			t.Fatalf("create cron: %d %s", rec.Code, rec.Body)
+		}
+	}
+	for _, tc := range []struct {
+		query string
+		want  []string
+	}{
+		{"", []string{"/first", "/second"}},
+		{"?slug=cron-second", []string{"/second"}},
+		{"?slug=" + first, []string{"/first"}},
+	} {
+		rec := e.do(t, "GET", "/v1/crons"+tc.query, nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /v1/crons%s: %d %s", tc.query, rec.Code, rec.Body)
+		}
+		var out []api.CronResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, c := range out {
+			got = append(got, c.Path)
+		}
+		sort.Strings(got)
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Errorf("GET /v1/crons%s paths = %v, want %v", tc.query, got, tc.want)
+		}
+	}
+	if rec := e.do(t, "GET", "/v1/crons?slug=not-mine", nil, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown app: status %d, want 404", rec.Code)
 	}
 }
 

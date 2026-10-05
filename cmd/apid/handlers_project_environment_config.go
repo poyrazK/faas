@@ -44,6 +44,9 @@ func (s *server) updateProjectEnvironmentConfig(w http.ResponseWriter, r *http.R
 		ConfigHash: hash, Values: values,
 	})
 	if err != nil {
+		if writeEnvironmentGitOpsOwnershipProblem(w, err) {
+			return
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, environment.Slug))
 		} else {

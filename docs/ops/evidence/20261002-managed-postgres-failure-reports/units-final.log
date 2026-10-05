@@ -1,0 +1,4 @@
+ok  	github.com/onebox-faas/faas/pkg/daemonunit	2.977s
+# github.com/onebox-faas/faas/pkg/daemonunitspec.test
+ld: warning: '/private/var/folders/yj/bt9b1gbs363dgg7xm615r9v80000gn/T/go-link-3448112026/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+ok  	github.com/onebox-faas/faas/pkg/daemonunitspec	22.155s

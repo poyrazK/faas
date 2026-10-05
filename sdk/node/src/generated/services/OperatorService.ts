@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ManagedPostgresAccountingDiagnosticsResponse } from '../models/ManagedPostgresAccountingDiagnosticsResponse.js';
 import type { ManagedPostgresUsageOperatorResponse } from '../models/ManagedPostgresUsageOperatorResponse.js';
 import type { ObjectStorageUsageReport } from '../models/ObjectStorageUsageReport.js';
 import type { OperatorRuntimeConfig } from '../models/OperatorRuntimeConfig.js';
@@ -33,6 +34,43 @@ export class OperatorService {
       url: '/v1/admin/managed-postgres/usage/{account_id}',
       path: {
         'account_id': accountId,
+      },
+    });
+  }
+  /**
+   * Explain managed PostgreSQL accounting blockers
+   * Operator allowlist and admin scope required, with the existing session MFA gate (bearer API keys follow IAM policy). Reads local catalog and ledger evidence only. Each page is one database snapshot; pages are live views, not a frozen account snapshot. No provider requests, opaque provider IDs, or credentials.
+   * @returns ManagedPostgresAccountingDiagnosticsResponse Bounded per-database accounting evidence; Cache-Control no-store
+   * @returns Problem Access denied, invalid pagination, account not found, or accounting unavailable
+   * @throws ApiError
+   */
+  public static listManagedPostgresAccountingDiagnostics({
+    accountId,
+    after,
+    limit = 50,
+  }: {
+    /**
+     * Account whose local accounting evidence is requested.
+     */
+    accountId: string,
+    /**
+     * Resume after the database ID returned as next_cursor.
+     */
+    after?: string,
+    /**
+     * Maximum databases returned in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<ManagedPostgresAccountingDiagnosticsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/managed-postgres/accounting/{account_id}',
+      path: {
+        'account_id': accountId,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
       },
     });
   }

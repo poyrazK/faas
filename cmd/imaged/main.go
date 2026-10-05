@@ -99,7 +99,7 @@ func defaultDeps() runDeps {
 			// F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap.
 			return db.MigrateUp(ctx, pool)
 		},
-		lvUsedPct:  imaged.DefaultLvFcUsedPct(imaged.LvFcName),
+		lvUsedPct:  imaged.DefaultFcVolumeUsedPct(envOr("FAAS_STORAGE_ROOT", defaultStorageRoot)),
 		detectFC:   imaged.DetectFirecrackerVersion,
 		now:        time.Now,
 		configPath: imagedConfigPath(flag.Lookup),
@@ -700,6 +700,9 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		"assigned_runtimes", assignedBases.Runtimes,
 		"assigned_minimal", assignedBases.Minimal,
 	)
+	// ADR-567: keep every staged base byte-identical to its shared
+	// publication so snapshots restore on any node (ADR-510).
+	go h.RunBaseConvergence(ctx, imaged.BaseConvergenceInterval)
 
 	// Issue #571 PR-A2: construct the daemon-level readiness probe
 	// independently of the optional metrics listener. systemd's
@@ -790,10 +793,11 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 
 	// Recover deploy handoffs that were emitted while imaged was restarting or
 	// its LISTEN connection was down. The replay worker shares Loop's handler
-	// with the low-latency subscriber and starts after its five-second wakeup
-	// grace, so ordinary notifications are not processed twice.
+	// with the low-latency subscriber. Both paths claim the same row and renew
+	// ownership while work runs; the grace period only favors immediate delivery.
 	go func() {
-		err := db.RunNotificationOutbox(ctx, pool, "imaged", []string{
+		err := db.RunNotificationOutboxForNode(ctx, pool, "imaged", getenv("FAAS_NODE_NAME"), []string{
+			db.NotifyEnvironmentWorkloadImage,
 			db.NotifySnapshotBoot,
 			db.NotifySnapshotWritten,
 			db.NotifyDeploymentReady,

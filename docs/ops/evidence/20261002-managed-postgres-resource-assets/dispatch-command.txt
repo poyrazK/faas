@@ -1,0 +1,25 @@
+set -eu
+state="$(sudo systemctl show gregale-managed-pg-resource-assets-ebb5a2a4 -p ActiveState --value)"
+case "$state" in inactive) ;; *) echo "initial unit still active: $state"; exit 1 ;; esac
+printf %s 'a5217bb61fae36e63289cd586d042869e810763a9f48211e5697cdcf080973bb  /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/final-source.tar.gz
+7c3cdbf4309dc630e18fb3ffa9a8aee53d68ba54ffe6e4789d846a883455bf1a  /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/final-runner.sh
+92899d4f77430ed74c690964502d38db7f0edf56db4f9850b71f675c7adf6d72  /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/final-change.patch
+8ed78e4b10636a0c67703cd3dca9bb83de6ca357c06f5a255d3325e80b0d3c02  /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/final-source-hashes.sha256
+' | sha256sum -c -
+sudo mkdir /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/initial
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/run.log /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/initial/run.log
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/portable-linux.log /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/initial/portable-linux.log
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/portable-linux.exit /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/initial/portable-linux.exit
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/metal.log /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/initial/metal.log
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/metal.exit /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/initial/metal.exit
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/linux-lint.log /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/initial/linux-lint.log
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/linux-lint.exit /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/initial/linux-lint.exit
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/unit-final.txt /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/initial/unit-final.txt
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/source-runtime-match.log /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/initial/source-runtime-match.log
+sudo mv /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/results.tar.gz /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/initial/results.tar.gz
+mv /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/final-source.tar.gz /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/source.tar.gz
+mv /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/final-runner.sh /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/runner.sh
+mv /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/final-change.patch /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/change.patch
+mv /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/final-source-hashes.sha256 /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/source-hashes.sha256
+sudo systemd-run --unit=gregale-managed-pg-resource-assets-ebb5a2a4-final '--property=TemporaryFileSystem=/run/mpa-ebb5a2a4-final:rw,size=4G,mode=1777 /srv/fc/jail:rw,size=1G,mode=0755' --property=MemoryMax=10G /usr/bin/bash -c 'exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/runner.sh > /var/tmp/faas-metal-smoke-managed-pg-resource-assets-ebb5a2a4/run.log 2>&1'
+sudo systemctl show gregale-managed-pg-resource-assets-ebb5a2a4-final -p InvocationID -p ActiveState -p SubState -p MemoryMax

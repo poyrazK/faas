@@ -208,6 +208,49 @@ func TestRunnerRevalidationDoesNotChangeInitialFanoutMetrics(t *testing.T) {
 	}
 }
 
+// Prod hunt #3: revalidation re-downloaded every replica the bounded cache had
+// evicted, which evicted another, so idle compute nodes rewrote 1-2 GiB
+// snapshot files every few seconds. An evicted replica must be retired
+// without a parent read; a resident one stays ready without a fetch.
+func TestRunnerRevalidationRetiresEvictedReplicaWithoutRefetching(t *testing.T) {
+	const mem, vmstate = "snap/dep-evicted/mem", "snap/dep-evicted/vmstate"
+	for _, tc := range []struct {
+		name      string
+		resident  []string
+		wantReady bool
+	}{
+		{name: "evicted", resident: []string{mem}, wantReady: false},
+		{name: "resident", resident: []string{mem, vmstate}, wantReady: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := &fakeBackend{objects: map[string][]byte{mem: []byte("memory"), vmstate: []byte("vmstate")}}
+			cache, err := storage.NewLocalCacheBackend(parent, t.TempDir(), 1<<20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range tc.resident {
+				if err := cache.Put(context.Background(), key, bytes.NewReader(parent.objects[key])); err != nil {
+					t.Fatal(err)
+				}
+			}
+			store := &fakeReplicaStore{job: state.SnapshotReplicaJob{
+				SnapshotID: "snap-evicted", DeploymentID: "dep-evicted", NodeID: "node-2",
+				StorageKey: mem, VMStateStorageKey: vmstate, Attempts: 1, Revalidation: true,
+			}}
+			New(store, cache, "node-2", slog.Default()).runWorkTick(context.Background())
+			if len(parent.gets) != 0 {
+				t.Fatalf("revalidation read the parent: %v", parent.gets)
+			}
+			if store.ready != tc.wantReady {
+				t.Fatalf("ready = %v, want %v (failed=%v)", store.ready, tc.wantReady, store.failed)
+			}
+			if !tc.wantReady && !errors.Is(store.failed, errReplicaEvicted) {
+				t.Fatalf("failed = %v, want an eviction retirement", store.failed)
+			}
+		})
+	}
+}
+
 func TestRunnerDefaultIntervalFitsPrepositionedWakeBudget(t *testing.T) {
 	if DefaultInterval >= 200*time.Millisecond {
 		t.Fatalf("DefaultInterval = %s, want < 200ms prepositioned-wake budget", DefaultInterval)

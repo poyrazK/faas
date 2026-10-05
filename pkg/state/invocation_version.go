@@ -37,6 +37,9 @@ func ResolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
+	if InvocationHasOperation(inv) {
+		return resolveOperationInvocationVersion(ctx, store, app, inv)
+	}
 	headers := map[string]string{}
 	if len(inv.Headers) > 0 {
 		if err := json.Unmarshal(inv.Headers, &headers); err != nil {
@@ -52,11 +55,13 @@ func ResolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
-	scope := DefaultEnvScope
 	projectApp := app.ProjectID != "" && app.PreviewOfSlug == ""
-	if projectApp {
-		scope = "production"
-	} else if release != "" {
+	scope, err := invocationDeploymentScope(app, inv.DeploymentScope)
+	if err != nil {
+		return inv, InvocationVersion{}, err
+	}
+	inv.DeploymentScope = scope
+	if !projectApp && release != "" {
 		return inv, InvocationVersion{}, ErrNotFound
 	}
 	version := InvocationVersion{Scope: scope}
@@ -99,6 +104,25 @@ func ResolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	return inv, version, nil
 }
 
+// DefaultInvocationDeploymentScope is the admission scope for producers that
+// have no explicit environment. It must never reinterpret already stored work.
+func DefaultInvocationDeploymentScope(app App) string {
+	if app.ProjectID != "" && app.PreviewOfSlug == "" {
+		return "production"
+	}
+	return DefaultEnvScope
+}
+
+func invocationDeploymentScope(app App, scope string) (string, error) {
+	if scope == "" {
+		scope = DefaultInvocationDeploymentScope(app)
+	}
+	if err := api.ValidateScope(scope); err != nil {
+		return "", ErrInvalidArgument
+	}
+	return scope, nil
+}
+
 func invocationPinHeaders(headers map[string]string) (revision, release string, err error) {
 	var revisionSeen, releaseSeen bool
 	for key, value := range headers {
@@ -129,4 +153,34 @@ func invocationPinHeaders(headers map[string]string) (revision, release string, 
 		}
 	}
 	return revision, release, nil
+}
+
+// Durable operation pins are trusted admission metadata. They outlive public
+// revision-pin TTLs, and cannot move to a newer deployment when dispatch waits.
+func resolveOperationInvocationVersion(ctx context.Context, store invocationAppReader, app App, inv Invocation) (Invocation, InvocationVersion, error) {
+	operations, ok := store.(OperationStore)
+	if !ok {
+		return inv, InvocationVersion{}, ErrConflict
+	}
+	op, err := operations.OperationByID(ctx, inv.AccountID, inv.PlatformTenantID, inv.OperationID)
+	if err != nil {
+		return inv, InvocationVersion{}, err
+	}
+	if app.AccountID != op.AccountID || app.ID != op.AppID || app.Status == AppDeleted || op.CurrentInvocationID != inv.ID || (op.State != api.OperationAccepted && op.State != api.OperationRunning) {
+		return inv, InvocationVersion{}, ErrOperationStaleAttempt
+	}
+	reader, ok := store.(interface {
+		DeploymentByID(context.Context, string) (Deployment, error)
+	})
+	if !ok {
+		return inv, InvocationVersion{}, ErrConflict
+	}
+	dep, err := reader.DeploymentByID(ctx, op.DeploymentID)
+	if err != nil {
+		return inv, InvocationVersion{}, err
+	}
+	if dep.AppID != app.ID || dep.Scope != op.Scope || dep.Status != DeployLive {
+		return inv, InvocationVersion{}, ErrConflict
+	}
+	return inv, InvocationVersion{DeploymentID: op.DeploymentID, ReleaseID: op.ReleaseID, Scope: op.Scope}, nil
 }

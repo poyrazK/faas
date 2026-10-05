@@ -1,6 +1,6 @@
 package sched
 
-// adr: 494
+// adr: 620
 import "github.com/onebox-faas/faas/pkg/runtimequota"
 
 // RegionalRuntimeEpochForNode refuses absent discovery and cross-node samples.

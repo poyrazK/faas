@@ -1,0 +1,9 @@
+{"artifact_id": "307f55c3d2cbfd01f2431f0528d0ec8cbb2e37632e41dbc59782713d4ee6a3f4", "created_at": 1790979515.3546042, "host": "gregale-internal-test-1.us-east1-b.c.gregale-prod.internal", "kind": "native-metal", "path": "/var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a", "run_id": "managed-pg-resource-links-f8b10c6a", "state": "active", "updated_at": 1790979515.3546042}
+6.3G	/var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root        48G   42G  5.4G  89% /
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth

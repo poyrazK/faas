@@ -121,6 +121,13 @@ func secretAckProgressWithRestart(secret api.AppSecretResponse, restartInstanceI
 		}
 		if target.ReloadSupport != "enabled" {
 			if afterRestart {
+				// The platform only exposes the acknowledgement endpoint to
+				// runtimes that opt in to secret reload, so a restarted runtime
+				// that reports reload support "disabled" can never confirm.
+				// Waiting would only burn the whole --timeout.
+				if target.InstanceID == restartInstanceID && target.ReloadSupport == "disabled" {
+					return targetCount, pending, fmt.Errorf("%s restarted with the new secret value but cannot acknowledge it (reload support disabled); the restart already applied the value at boot, so omit --wait-for-ack or opt in with com.gregale.secret-reload-signal", secretRuntimeTargetName(target))
+				}
 				pending++
 				continue
 			}

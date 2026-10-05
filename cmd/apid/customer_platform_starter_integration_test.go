@@ -28,8 +28,8 @@ import (
 // retains dependency-free HTTP/operator tests in cmd/gregale/templates.
 func TestCustomerPlatformStarterTwoCustomerAcceptance(t *testing.T) {
 	dir, database := os.Getenv("GREGALE_CUSTOMER_PLATFORM_DIR"), os.Getenv("CUSTOMER_DATABASE_URL")
-	if dir == "" || database == "" {
-		t.Skip("run make test-customer-platform with DATABASE_URL and CUSTOMER_DATABASE_URL")
+	if dir == "" || database == "" || os.Getenv("CUSTOMER_MIGRATION_DATABASE_URL") == "" {
+		t.Skip("run make test-customer-platform with DATABASE_URL, CUSTOMER_DATABASE_URL, and CUSTOMER_MIGRATION_DATABASE_URL")
 	}
 	// An explicitly requested acceptance run must fail on unavailable Postgres.
 	// pgtest's ordinary unit-test helper otherwise skips that condition.
@@ -343,7 +343,7 @@ func startCustomerStarter(t *testing.T, node, dir, database string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	t.Cleanup(cancel)
 	migration := exec.CommandContext(ctx, node, "app/migrate.js")
-	migration.Dir, migration.Env = dir, append(os.Environ(), "DATABASE_URL="+database)
+	migration.Dir, migration.Env = dir, append(os.Environ(), "MIGRATION_DATABASE_URL="+os.Getenv("CUSTOMER_MIGRATION_DATABASE_URL"))
 	if output, err := migration.CombinedOutput(); err != nil {
 		t.Fatalf("starter migration: %v\n%s", err, output)
 	}

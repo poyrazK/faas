@@ -1,0 +1,34 @@
+Result=oom-kill
+ExecMainStatus=15
+MemoryPeak=2183090176
+MemoryMax=10737418240
+ActiveState=failed
+SubState=failed
+InvocationID=1f20e3f434cb4d908b86f15874d537ca
+Oct 03 09:44:01 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: Started gregale-managed-pg-prepared-boot-d4841725.service - /usr/bin/bash -c "exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-prepared-boot-d4841725/runner.sh > /var/tmp/faas-metal-smoke-managed-pg-prepared-boot-d4841725/run.log 2>&1".
+Oct 03 09:52:27 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-prepared-boot-d4841725.service: A process of this unit has been killed by the OOM killer.
+Oct 03 09:52:28 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-prepared-boot-d4841725.service: Failed with result 'oom-kill'.
+Oct 03 09:52:28 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-prepared-boot-d4841725.service: Consumed 8min 18.462s CPU time, 2.0G memory peak, 0B memory swap peak.
+[Fri Oct  2 22:36:03 2026] Out of memory: Killed process 703767 (fcvm.test) total-vm:12872992kB, anon-rss:8918896kB, file-rss:1580kB, shmem-rss:47604kB, UID:0 pgtables:17828kB oom_score_adj:0
+[Sat Oct  3 08:44:41 2026] fcvm.test invoked oom-killer: gfp_mask=0xcc0(GFP_KERNEL), order=0, oom_score_adj=0
+[Sat Oct  3 08:44:41 2026] oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=gregale-managed-pg-restart-reclaim-adc1b1d8.service,mems_allowed=0,oom_memcg=/system.slice/gregale-managed-pg-restart-reclaim-adc1b1d8.service,task_memcg=/system.slice/gregale-managed-pg-restart-reclaim-adc1b1d8.service,task=fcvm.test,pid=869613,uid=0
+[Sat Oct  3 08:44:41 2026] Memory cgroup out of memory: Killed process 869613 (fcvm.test) total-vm:12873324kB, anon-rss:9450700kB, file-rss:1628kB, shmem-rss:46836kB, UID:0 pgtables:18852kB oom_score_adj:0
+[Sat Oct  3 08:44:41 2026] bash invoked oom-killer: gfp_mask=0xcc0(GFP_KERNEL), order=0, oom_score_adj=0
+[Sat Oct  3 08:44:41 2026] oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=gregale-managed-pg-restart-reclaim-adc1b1d8.service,mems_allowed=0,oom_memcg=/system.slice/gregale-managed-pg-restart-reclaim-adc1b1d8.service,task_memcg=/system.slice/gregale-managed-pg-restart-reclaim-adc1b1d8.service,task=bash,pid=863394,uid=0
+[Sat Oct  3 08:44:41 2026] Memory cgroup out of memory: Killed process 863394 (bash) total-vm:7752kB, anon-rss:316kB, file-rss:3520kB, shmem-rss:0kB, UID:0 pgtables:60kB oom_score_adj:0
+[Sat Oct  3 09:52:25 2026] fcvm.test invoked oom-killer: gfp_mask=0xcc0(GFP_KERNEL), order=0, oom_score_adj=0
+[Sat Oct  3 09:52:25 2026] oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=gregale-managed-pg-prepared-boot-d4841725.service,mems_allowed=0,oom_memcg=/system.slice/gregale-managed-pg-prepared-boot-d4841725.service,task_memcg=/system.slice/gregale-managed-pg-prepared-boot-d4841725.service,task=fcvm.test,pid=926875,uid=0
+[Sat Oct  3 09:52:25 2026] Memory cgroup out of memory: Killed process 926875 (fcvm.test) total-vm:12873168kB, anon-rss:9460732kB, file-rss:1628kB, shmem-rss:47532kB, UID:0 pgtables:18868kB oom_score_adj:0
+MemTotal:       16369984 kB
+MemFree:         9748624 kB
+MemAvailable:   13479680 kB
+Buffers:          199748 kB
+Cached:          5390580 kB
+SwapCached:            0 kB
+Active:          2591504 kB
+Inactive:        3144616 kB
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth

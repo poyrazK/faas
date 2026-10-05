@@ -40,7 +40,7 @@ export type CreateDeploymentRequest = {
    */
   traffic_percent?: number | null;
   /**
-   * Top-level per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no leading/trailing dash. nil/omitted = `default`.
+   * Top-level per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash. nil/omitted = `default`.
    */
   scope?: string | null;
   /**

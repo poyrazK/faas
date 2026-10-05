@@ -11,6 +11,59 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+func TestManagedExecutionWorkflowRequestPreservesDAGContract(t *testing.T) {
+	plan := executionWorkflowPlan{
+		WorkflowID: "managed-cli", Version: "v1", MaxParallelSteps: 2,
+		FailurePolicy: executionWorkflowFailurePolicyContinueIndependent,
+		Steps: []executionWorkflowStep{
+			{Label: "inspect", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return 1"}},
+			{Label: "test", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return true"}},
+			{Label: "summarize", DependsOn: []string{"inspect", "test"}, IncludeDependencyResults: true, Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return input"}},
+			{Label: "report", InputFromPreviousResult: true, Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return input"}},
+		},
+	}
+	request, err := managedExecutionWorkflowRequest(plan)
+	if err != nil {
+		t.Fatalf("managed request: %v", err)
+	}
+	if len(request.Steps) != 4 || request.WorkflowID != plan.WorkflowID || request.MaxParallelSteps != 2 ||
+		request.FailurePolicy != executionWorkflowFailurePolicyContinueIndependent ||
+		!request.Steps[2].IncludeDependencyResults ||
+		len(request.Steps[2].DependsOn) != 2 || request.Steps[2].DependsOn[1] != "test" ||
+		!request.Steps[3].InputFromPreviousResult {
+		t.Fatalf("managed request = %+v", request)
+	}
+
+	plan.Steps[0].ResultSchema = json.RawMessage(`{"type":"integer"}`)
+	request, err = managedExecutionWorkflowRequest(plan)
+	if err != nil {
+		t.Fatalf("managed result schema request: %v", err)
+	}
+	if string(request.Steps[0].ResultSchema) != string(plan.Steps[0].ResultSchema) {
+		t.Fatalf("managed result schema = %s; want %s", request.Steps[0].ResultSchema, plan.Steps[0].ResultSchema)
+	}
+	plan.Steps[0].ResultSchema = json.RawMessage(`{"$ref":"https://example.com/schema.json"}`)
+	if _, err := managedExecutionWorkflowRequest(plan); err == nil {
+		t.Fatal("managed request accepted an external schema reference")
+	}
+	plan.Steps[0].ResultSchema = nil
+	artifactPlan := executionWorkflowPlan{WorkflowID: "managed-artifact-cli", Version: "v1", Steps: []executionWorkflowStep{
+		{Label: "collect", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null", OutputFiles: []string{"patch.diff"}}},
+		{Label: "review", ArtifactInputs: []executionWorkflowArtifactInput{{FromStep: "collect", Name: "patch.diff", Path: "input/patch.diff"}},
+			Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimePython313, Source: "print('review')"}},
+	}}
+	artifactRequest, err := managedExecutionWorkflowRequest(artifactPlan)
+	if err != nil {
+		t.Fatalf("managed artifact request: %v", err)
+	}
+	review := artifactRequest.Steps[1]
+	if len(review.ArtifactInputs) != 1 || review.ArtifactInputs[0].FromStep != "collect" ||
+		review.ArtifactInputs[0].Name != "patch.diff" || review.ArtifactInputs[0].Path != "input/patch.diff" ||
+		review.Request.Entrypoint != "main.py" || len(review.Request.Files) != 1 || string(review.Request.Files[0].Content) != "print('review')" {
+		t.Fatalf("managed artifact handoff = %+v", review)
+	}
+}
+
 type executionWorkflowFakeClient struct {
 	runs            map[string]api.ExecutionResponse
 	requests        []api.CreateExecutionRequest

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"github.com/onebox-faas/faas/pkg/eventfilter"
 	"math/big"
 	"strings"
 )
@@ -40,35 +40,11 @@ const (
 // ValidatePattern validates an event source or type pattern without needing
 // an envelope. Manifest loaders use it to reject malformed declarations before
 // they reach a router worker.
-func ValidatePattern(pattern string) error {
-	return validatePattern("pattern", pattern)
-}
+func ValidatePattern(pattern string) error { return eventfilter.ValidatePattern(pattern) }
 
 // ValidateFilter validates the JSON filter language used by subscriptions.
 // Empty and null filters mean "match every event".
-func ValidateFilter(filter json.RawMessage) error {
-	trimmed := bytes.TrimSpace(filter)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil
-	}
-	decoder := json.NewDecoder(bytes.NewReader(trimmed))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return fmt.Errorf("event: decode subscription filter: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			return errors.New("event: subscription filter must contain one JSON value")
-		}
-		return fmt.Errorf("event: decode subscription filter: %w", err)
-	}
-	if !isObject(value) {
-		return errors.New("event: subscription filter must be a JSON object")
-	}
-	return validateFilterValue(value)
-}
+func ValidateFilter(filter json.RawMessage) error { return eventfilter.ValidateFilter(filter) }
 
 // Match reports whether e satisfies the subscription. A malformed
 // subscription or filter returns an error; an account or envelope mismatch is
@@ -176,16 +152,7 @@ func (s Subscription) Validate() error {
 }
 
 func validatePattern(name, pattern string) error {
-	if strings.TrimSpace(pattern) == "" {
-		return fmt.Errorf("event: subscription %s is required", name)
-	}
-	if strings.Count(pattern, "*") > 2 {
-		return fmt.Errorf("event: subscription %s has too many wildcards", name)
-	}
-	if strings.Contains(strings.Trim(pattern, "*"), "*") {
-		return fmt.Errorf("event: subscription %s wildcard must be at an edge", name)
-	}
-	return nil
+	return eventfilter.ValidateNamedPattern(name, pattern)
 }
 
 func matchPattern(pattern, value string) (bool, error) {
@@ -298,36 +265,6 @@ func matchOperator(operator string, expected, actual any) (bool, error) {
 	default:
 		return false, fmt.Errorf("unsupported operator %q", operator)
 	}
-}
-
-func validateFilterValue(value any) error {
-	object, ok := value.(map[string]any)
-	if !ok {
-		return nil
-	}
-	for key, operand := range object {
-		if strings.HasPrefix(key, "$") {
-			switch key {
-			case "$eq":
-				// Any JSON value is a valid exact-match operand.
-			case "$prefix", "$suffix":
-				if _, ok := operand.(string); !ok {
-					return fmt.Errorf("event: %s expects a string", key)
-				}
-			case "$gt", "$gte", "$lt", "$lte":
-				if _, ok := jsonNumber(operand); !ok {
-					return fmt.Errorf("event: %s expects a JSON number", key)
-				}
-			default:
-				return fmt.Errorf("event: unsupported operator %q", key)
-			}
-			continue
-		}
-		if err := validateFilterValue(operand); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func jsonNumber(value any) (*big.Rat, bool) {

@@ -1,0 +1,4 @@
+Oct 03 09:44:01 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: Started gregale-managed-pg-prepared-boot-d4841725.service - /usr/bin/bash -c "exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-prepared-boot-d4841725/runner.sh > /var/tmp/faas-metal-smoke-managed-pg-prepared-boot-d4841725/run.log 2>&1".
+Oct 03 09:52:27 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-prepared-boot-d4841725.service: A process of this unit has been killed by the OOM killer.
+Oct 03 09:52:28 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-prepared-boot-d4841725.service: Failed with result 'oom-kill'.
+Oct 03 09:52:28 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-prepared-boot-d4841725.service: Consumed 8min 18.462s CPU time, 2.0G memory peak, 0B memory swap peak.

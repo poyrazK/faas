@@ -1,0 +1,240 @@
+/var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/source.tar.gz: OK
+validation source: 76e31c547c4011866491d33bb87bffbfa350ea45
+Linux gregale-internal-test-1.us-east1-b.c.gregale-prod.internal 7.0.0-1011-gcp #11~24.04.1-Ubuntu SMP PREEMPT Tue Aug 11 20:14:48 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+go version go1.25.13 linux/amd64
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+e2fsck 1.47.0 (5-Feb-2023)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+faas-metal-smoke: 28/16384 files (3.6% non-contiguous), 8074/16384 blocks
+e2fsck 1.47.0 (5-Feb-2023)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+faas-metal-layer: 16/4096 files (0.0% non-contiguous), 272/4096 blocks
+178f50d3a868d8fc08228225cd49fca2d8f117a88c8924385b33166c4f158e3b  /srv/fc/base/vmlinux-6.1.134
+e4ba1b7629faddd40bf1ec472a022451b1d701b82e4b321fc349998a56b30079  /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/fixtures/hello-base.ext4
+54e578081f146f93e3bd84cfb108b033862f51f252f2fcd4a558933fc6106650  /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/fixtures/hello-layer.ext4
+=== RUN   TestFailureReportOwnershipRequiresResourceIdentity
+--- PASS: TestFailureReportOwnershipRequiresResourceIdentity (0.00s)
+=== RUN   TestMetalTeardownRetainsOwnershipUntilConfirmed
+--- PASS: TestMetalTeardownRetainsOwnershipUntilConfirmed (0.96s)
+=== RUN   TestMetalResourceAssetsBindLifecycle
+--- PASS: TestMetalResourceAssetsBindLifecycle (0.02s)
+=== RUN   TestMetalResourceAssetsRefuseForeignMountAndTarget
+--- PASS: TestMetalResourceAssetsRefuseForeignMountAndTarget (0.01s)
+=== RUN   TestMetalResourceAssetsFailedBindCheckpoint
+=== RUN   TestMetalResourceAssetsFailedBindCheckpoint/intent
+=== RUN   TestMetalResourceAssetsFailedBindCheckpoint/target
+=== RUN   TestMetalResourceAssetsFailedBindCheckpoint/mount
+--- PASS: TestMetalResourceAssetsFailedBindCheckpoint (0.02s)
+    --- PASS: TestMetalResourceAssetsFailedBindCheckpoint/intent (0.01s)
+    --- PASS: TestMetalResourceAssetsFailedBindCheckpoint/target (0.01s)
+    --- PASS: TestMetalResourceAssetsFailedBindCheckpoint/mount (0.01s)
+=== RUN   TestResourceAssetsIntentCheckpointAndReopen
+--- PASS: TestResourceAssetsIntentCheckpointAndReopen (0.00s)
+=== RUN   TestResourceAssetsFailedCommitRetainsCleanup
+=== RUN   TestResourceAssetsFailedCommitRetainsCleanup/intent
+=== RUN   TestResourceAssetsFailedCommitRetainsCleanup/checkpoint
+=== RUN   TestResourceAssetsFailedCommitRetainsCleanup/retirement
+--- PASS: TestResourceAssetsFailedCommitRetainsCleanup (0.00s)
+    --- PASS: TestResourceAssetsFailedCommitRetainsCleanup/intent (0.00s)
+    --- PASS: TestResourceAssetsFailedCommitRetainsCleanup/checkpoint (0.00s)
+    --- PASS: TestResourceAssetsFailedCommitRetainsCleanup/retirement (0.00s)
+=== RUN   TestResourceAssetsRefuseReplacedFile
+--- PASS: TestResourceAssetsRefuseReplacedFile (0.00s)
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords/legacy
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords/legacy_assets
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords/relative
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords/duplicate
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords/unknown
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords/partial_mount
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords/namespace_mismatch
+--- PASS: TestResourceAssetsLegacyAndCorruptRecords (0.01s)
+    --- PASS: TestResourceAssetsLegacyAndCorruptRecords/legacy (0.00s)
+    --- PASS: TestResourceAssetsLegacyAndCorruptRecords/legacy_assets (0.00s)
+    --- PASS: TestResourceAssetsLegacyAndCorruptRecords/relative (0.00s)
+    --- PASS: TestResourceAssetsLegacyAndCorruptRecords/duplicate (0.00s)
+    --- PASS: TestResourceAssetsLegacyAndCorruptRecords/unknown (0.00s)
+    --- PASS: TestResourceAssetsLegacyAndCorruptRecords/partial_mount (0.00s)
+    --- PASS: TestResourceAssetsLegacyAndCorruptRecords/namespace_mismatch (0.00s)
+=== RUN   TestResourceAssetsBindModeRetryAndAliases
+--- PASS: TestResourceAssetsBindModeRetryAndAliases (0.00s)
+=== RUN   TestResourceAssetsBindModeWaitsForForeignOwner
+--- PASS: TestResourceAssetsBindModeWaitsForForeignOwner (0.00s)
+=== RUN   TestResourceAssetsMountInfoIdentity
+--- PASS: TestResourceAssetsMountInfoIdentity (0.00s)
+=== RUN   TestMetalResourceJournalSurvivingGuest
+--- PASS: TestMetalResourceJournalSurvivingGuest (1.82s)
+=== RUN   TestResourceJournalExclusiveDurableAndConcurrent
+--- PASS: TestResourceJournalExclusiveDurableAndConcurrent (0.01s)
+=== RUN   TestResourceJournalBootOrderingAndConfirmedRetirement
+=== RUN   TestResourceJournalBootOrderingAndConfirmedRetirement/job=false
+=== RUN   TestResourceJournalBootOrderingAndConfirmedRetirement/job=true
+--- PASS: TestResourceJournalBootOrderingAndConfirmedRetirement (0.01s)
+    --- PASS: TestResourceJournalBootOrderingAndConfirmedRetirement/job=false (0.00s)
+    --- PASS: TestResourceJournalBootOrderingAndConfirmedRetirement/job=true (0.00s)
+=== RUN   TestResourceJournalWriteFailureRejectsBoot
+--- PASS: TestResourceJournalWriteFailureRejectsBoot (0.00s)
+=== RUN   TestResourceJournalRecoveredIntentQuarantinesWithoutResources
+--- PASS: TestResourceJournalRecoveredIntentQuarantinesWithoutResources (0.00s)
+=== RUN   TestResourceJournalProcessIncarnationMatches
+=== RUN   TestResourceJournalProcessIncarnationMatches/match
+=== RUN   TestResourceJournalProcessIncarnationMatches/reused_pid
+=== RUN   TestResourceJournalProcessIncarnationMatches/other_boot
+=== RUN   TestResourceJournalProcessIncarnationMatches/other_uid
+=== RUN   TestResourceJournalProcessIncarnationMatches/other_instance
+=== RUN   TestResourceJournalProcessIncarnationMatches/gone
+=== RUN   TestResourceJournalProcessIncarnationMatches/missing_boot
+--- PASS: TestResourceJournalProcessIncarnationMatches (0.01s)
+    --- PASS: TestResourceJournalProcessIncarnationMatches/match (0.00s)
+    --- PASS: TestResourceJournalProcessIncarnationMatches/reused_pid (0.00s)
+    --- PASS: TestResourceJournalProcessIncarnationMatches/other_boot (0.00s)
+    --- PASS: TestResourceJournalProcessIncarnationMatches/other_uid (0.00s)
+    --- PASS: TestResourceJournalProcessIncarnationMatches/other_instance (0.00s)
+    --- PASS: TestResourceJournalProcessIncarnationMatches/gone (0.00s)
+    --- PASS: TestResourceJournalProcessIncarnationMatches/missing_boot (0.00s)
+=== RUN   TestResourceJournalRejectsCorruptStorage
+=== RUN   TestResourceJournalRejectsCorruptStorage/version
+=== RUN   TestResourceJournalRejectsCorruptStorage/uid
+=== RUN   TestResourceJournalRejectsCorruptStorage/duplicate_slot
+=== RUN   TestResourceJournalRejectsCorruptStorage/trailing
+=== RUN   TestResourceJournalRejectsCorruptStorage/unknown_field
+=== RUN   TestResourceJournalRejectsCorruptStorage/permissions
+=== RUN   TestResourceJournalRejectsCorruptStorage/symlink
+=== RUN   TestResourceJournalRejectsCorruptStorage/hardlink
+=== RUN   TestResourceJournalRejectsCorruptStorage/unexpected
+--- PASS: TestResourceJournalRejectsCorruptStorage (0.01s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/version (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/uid (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/duplicate_slot (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/trailing (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/unknown_field (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/permissions (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/symlink (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/hardlink (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/unexpected (0.00s)
+=== RUN   TestMetalResourcePlacementPreparedAlias
+--- PASS: TestMetalResourcePlacementPreparedAlias (0.02s)
+=== RUN   TestMetalResourcePlacementForeignJailMount
+--- PASS: TestMetalResourcePlacementForeignJailMount (0.01s)
+=== RUN   TestMetalResourcePlacementNamespaceReplacement
+--- PASS: TestMetalResourcePlacementNamespaceReplacement (0.02s)
+=== RUN   TestResourcePlacementJailCheckpointReopenAndReplacement
+--- PASS: TestResourcePlacementJailCheckpointReopenAndReplacement (0.00s)
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords/legacy1
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords/legacy2
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords/old_jail
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords/wrong_jail
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords/wrong_netns
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords/partial_netns
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords/networkless
+--- PASS: TestResourcePlacementLegacyAndInvalidRecords (0.00s)
+    --- PASS: TestResourcePlacementLegacyAndInvalidRecords/legacy1 (0.00s)
+    --- PASS: TestResourcePlacementLegacyAndInvalidRecords/legacy2 (0.00s)
+    --- PASS: TestResourcePlacementLegacyAndInvalidRecords/old_jail (0.00s)
+    --- PASS: TestResourcePlacementLegacyAndInvalidRecords/wrong_jail (0.00s)
+    --- PASS: TestResourcePlacementLegacyAndInvalidRecords/wrong_netns (0.00s)
+    --- PASS: TestResourcePlacementLegacyAndInvalidRecords/partial_netns (0.00s)
+    --- PASS: TestResourcePlacementLegacyAndInvalidRecords/networkless (0.00s)
+=== RUN   TestResourcePlacementJailCommitFailures
+=== RUN   TestResourcePlacementJailCommitFailures/intent
+=== RUN   TestResourcePlacementJailCommitFailures/checkpoint
+=== RUN   TestResourcePlacementJailCommitFailures/retirement
+--- PASS: TestResourcePlacementJailCommitFailures (0.01s)
+    --- PASS: TestResourcePlacementJailCommitFailures/intent (0.00s)
+    --- PASS: TestResourcePlacementJailCommitFailures/checkpoint (0.00s)
+    --- PASS: TestResourcePlacementJailCommitFailures/retirement (0.00s)
+=== RUN   TestResourcePlacementNetworkOrderingReplacementAndRetirement
+--- PASS: TestResourcePlacementNetworkOrderingReplacementAndRetirement (0.00s)
+=== RUN   TestResourcePlacementPreparedTransfer
+--- PASS: TestResourcePlacementPreparedTransfer (0.00s)
+=== RUN   TestResourcePlacementNetworkCheckpointFailure
+--- PASS: TestResourcePlacementNetworkCheckpointFailure (0.00s)
+=== RUN   TestMetalRestartQuarantineProtectsSurvivingGuest
+=== RUN   TestMetalRestartQuarantineProtectsSurvivingGuest/uuid
+=== RUN   TestMetalRestartQuarantineProtectsSurvivingGuest/builder_id
+=== RUN   TestMetalRestartQuarantineProtectsSurvivingGuest/compact_id
+--- PASS: TestMetalRestartQuarantineProtectsSurvivingGuest (7.14s)
+    --- PASS: TestMetalRestartQuarantineProtectsSurvivingGuest/uuid (1.96s)
+    --- PASS: TestMetalRestartQuarantineProtectsSurvivingGuest/builder_id (2.50s)
+    --- PASS: TestMetalRestartQuarantineProtectsSurvivingGuest/compact_id (2.67s)
+=== RUN   TestRestartQuarantineProtectsSurvivingIdentities
+--- PASS: TestRestartQuarantineProtectsSurvivingIdentities (0.01s)
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/unknown_uid
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/unknown_id
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/unreadable_argv
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/missing_proc
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/missing_sysfs
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/cancelled
+--- PASS: TestRestartQuarantineFailsClosedBeforeMutation (0.01s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/unknown_uid (0.00s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/unknown_id (0.00s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/unreadable_argv (0.00s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/missing_proc (0.00s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/missing_sysfs (0.00s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/cancelled (0.00s)
+=== RUN   TestRestartQuarantineOnlyAtStartup
+=== RUN   TestRestartQuarantineOnlyAtStartup/lease
+=== RUN   TestRestartQuarantineOnlyAtStartup/prepared_reservation
+=== RUN   TestRestartQuarantineOnlyAtStartup/boot
+=== RUN   TestRestartQuarantineOnlyAtStartup/stop
+=== RUN   TestRestartQuarantineOnlyAtStartup/already_scanned
+--- PASS: TestRestartQuarantineOnlyAtStartup (0.01s)
+    --- PASS: TestRestartQuarantineOnlyAtStartup/lease (0.00s)
+    --- PASS: TestRestartQuarantineOnlyAtStartup/prepared_reservation (0.00s)
+    --- PASS: TestRestartQuarantineOnlyAtStartup/boot (0.00s)
+    --- PASS: TestRestartQuarantineOnlyAtStartup/stop (0.00s)
+    --- PASS: TestRestartQuarantineOnlyAtStartup/already_scanned (0.00s)
+=== RUN   TestRestartQuarantineAllowsUnusedNode
+--- PASS: TestRestartQuarantineAllowsUnusedNode (0.00s)
+=== RUN   TestRestartQuarantineRejectsAmbiguousIdentities
+--- PASS: TestRestartQuarantineRejectsAmbiguousIdentities (0.00s)
+=== RUN   TestRestartQuarantineCoversInternalGuestIDs
+--- PASS: TestRestartQuarantineCoversInternalGuestIDs (0.01s)
+=== RUN   TestMetalFailureOutboxRetriesConfirmedTeardown
+=== RUN   TestMetalFailureOutboxRetriesConfirmedTeardown/liveness
+2026/10/02 20:49:37 WARN vmmd: failure report pending instance_id=28f61d316f326a05072e66bbe24d5c8c kind=liveness attempt=1 retry_delay=1.067382812s err="rpc error: code = Internal desc = sched: liveness: destroy instance 28f61d316f326a05072e66bbe24d5c8c: injected unconfirmed scheduler stop"
+2026/10/02 20:49:38 WARN vmmd: failure report pending instance_id=28f61d316f326a05072e66bbe24d5c8c kind=liveness attempt=2 retry_delay=2.134765625s err="rpc error: code = Internal desc = sched: liveness: destroy instance 28f61d316f326a05072e66bbe24d5c8c: injected unconfirmed scheduler stop"
+2026/10/02 20:49:39 INFO vmmd: failure report acknowledged instance_id=28f61d316f326a05072e66bbe24d5c8c kind=liveness
+=== RUN   TestMetalFailureOutboxRetriesConfirmedTeardown/workload_oom
+2026/10/02 20:49:40 WARN vmmd: failure report pending instance_id=60d4b785e86fc7d50135069f2e48ee45 kind=workload_oom attempt=1 retry_delay=1.190429687s err="rpc error: code = Internal desc = sched: workload_oom: destroy instance 60d4b785e86fc7d50135069f2e48ee45: injected unconfirmed scheduler stop"
+2026/10/02 20:49:42 WARN vmmd: failure report pending instance_id=60d4b785e86fc7d50135069f2e48ee45 kind=workload_oom attempt=2 retry_delay=2.380859375s err="rpc error: code = Internal desc = sched: workload_oom: destroy instance 60d4b785e86fc7d50135069f2e48ee45: injected unconfirmed scheduler stop"
+2026/10/02 20:49:42 INFO vmmd: failure report acknowledged instance_id=60d4b785e86fc7d50135069f2e48ee45 kind=workload_oom
+--- PASS: TestMetalFailureOutboxRetriesConfirmedTeardown (6.05s)
+    --- PASS: TestMetalFailureOutboxRetriesConfirmedTeardown/liveness (2.99s)
+    --- PASS: TestMetalFailureOutboxRetriesConfirmedTeardown/workload_oom (3.07s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/fcvm	17.319s
+=== RUN   TestFailureReportSenderRequiresAffirmativeAck
+2026/10/02 20:50:21 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/02 20:50:21 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/02 20:50:21 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/02 20:50:21 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM applied_default=1m0s
+2026/10/02 20:50:21 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM applied_default=1m0s
+2026/10/02 20:50:21 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM applied_default=1m0s
+--- PASS: TestFailureReportSenderRequiresAffirmativeAck (0.03s)
+=== RUN   TestFailureReportWiringPersistsCanceledProducerContexts
+--- PASS: TestFailureReportWiringPersistsCanceledProducerContexts (0.00s)
+=== RUN   TestRecoveredFailureReportRequiresManagerOwnership
+2026/10/02 20:50:21 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+--- PASS: TestRecoveredFailureReportRequiresManagerOwnership (0.00s)
+=== RUN   TestLoadConfigResourceJournal
+2026/10/02 20:50:21 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/02 20:50:21 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfigResourceJournal (0.00s)
+PASS
+ok  	github.com/onebox-faas/faas/cmd/vmmd	1.198s
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+diagnostic exit: metal=0 lint=0
+make: Entering directory '/var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/source'
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+make: Leaving directory '/var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/source'

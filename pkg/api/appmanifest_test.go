@@ -84,6 +84,8 @@ func TestManifestValidate(t *testing.T) {
 		{"neg port", AppManifest{Entrypoint: []string{"x"}, Port: -1}, false},
 		{"secret reload SIGHUP", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGHUP"}, true},
 		{"secret reload SIGUSR1", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGUSR1"}, true},
+		{"secret reload readiness without signal", AppManifest{Entrypoint: []string{"x"}, SecretReloadReadiness: true}, false},
+		{"secret reload readiness", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGHUP", SecretReloadReadiness: true}, true},
 		{"secret reload invalid signal", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGTERM"}, false},
 		{"secret reload collides with stop signal", AppManifest{Entrypoint: []string{"x"}, SecretReloadSignal: "SIGHUP", StopSignal: "HUP"}, false},
 		{"protocol ports", AppManifest{Entrypoint: []string{"x"}, Ports: []WorkloadPort{

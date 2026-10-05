@@ -1,0 +1,30 @@
+# github.com/onebox-faas/faas/pkg/fcvm.test
+ld: warning: '/Users/poyrazk/.codex/checks/managed-postgres-restart-reclaim-20261003/tmp/go-link-2437357484/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+--- FAIL: TestTriggerBeforeCheckpointWire (0.00s)
+    --- FAIL: TestTriggerBeforeCheckpointWire/success (0.00s)
+        before_checkpoint_test.go:35: listen unix /Users/poyrazk/.codex/checks/managed-postgres-restart-reclaim-20261003/tmp/fcvmt-11046-chk/f/i1/root/vsock.sock: bind: invalid argument
+    --- FAIL: TestTriggerBeforeCheckpointWire/callback_failed (0.00s)
+        before_checkpoint_test.go:35: listen unix /Users/poyrazk/.codex/checks/managed-postgres-restart-reclaim-20261003/tmp/fcvmt-11046-chk/f/i1/root/vsock.sock: bind: invalid argument
+2026/10/03 11:36:05 INFO vmm: startup CPU boost tail complete instance=startup-cpu-tail startup_millicores=1000 configured_millicores=250 tail_ms=10 quota_restore_ms=0 additional_cpu_quota_millicore_ms=7500 restore_error=""
+--- FAIL: TestTriggerExtensionHookWire (0.00s)
+    extension_hook_test.go:28: listen /Users/poyrazk/.codex/checks/managed-postgres-restart-reclaim-20261003/tmp/fcvmt-11046-extension/f/i-extension/root/vsock.sock: listen unix /Users/poyrazk/.codex/checks/managed-postgres-restart-reclaim-20261003/tmp/fcvmt-11046-extension/f/i-extension/root/vsock.sock: bind: invalid argument
+--- FAIL: TestUpdateAppWorkloadCPULimitWire (0.00s)
+    extension_hook_test.go:110: listen: listen unix /Users/poyrazk/.codex/checks/managed-postgres-restart-reclaim-20261003/tmp/fcvmt-11046-cpu/f/i1/root/vsock.sock: bind: invalid argument
+--- FAIL: TestTriggerResumeHookReconnectsAfterLostAck (0.00s)
+    resume_retry_test.go:58: listen unix /Users/poyrazk/.codex/checks/managed-postgres-restart-reclaim-20261003/tmp/fcvmt-11046-reset/f/resume-reset/root/vsock.sock: bind: invalid argument
+2026/10/03 11:36:19 INFO events: emit actor=vmmd kind=wake.readiness_200 subject=<nil>
+2026/10/03 11:36:19 INFO events: emit actor=vmmd kind=wake.restore_breakdown subject=<nil>
+2026/10/03 11:36:19 INFO events: emit actor=vmmd kind=wake.cold_boot_breakdown subject=<nil>
+2026/10/03 11:36:19 INFO events: emit actor=vmmd kind=wake.cold_boot_cpu subject=<nil>
+--- FAIL: TestTriggerResumeHookDialSuccess (0.00s)
+    vmm_test.go:1553: listen /Users/poyrazk/.codex/checks/managed-postgres-restart-reclaim-20261003/tmp/fcvmt-11046-dialok/f/iA/root/vsock.sock: listen unix /Users/poyrazk/.codex/checks/managed-postgres-restart-reclaim-20261003/tmp/fcvmt-11046-dialok/f/iA/root/vsock.sock: bind: invalid argument
+--- FAIL: TestTriggerResumeHookAckPropagatesError (0.00s)
+    vmm_test.go:1736: listen /Users/poyrazk/.codex/checks/managed-postgres-restart-reclaim-20261003/tmp/fcvmt-11046-ackerr/f/iA/root/vsock.sock: listen unix /Users/poyrazk/.codex/checks/managed-postgres-restart-reclaim-20261003/tmp/fcvmt-11046-ackerr/f/iA/root/vsock.sock: bind: invalid argument
+--- FAIL: TestTriggerResumeHookAfterRestoreFailure (0.00s)
+    vmm_test.go:1756: listen /Users/poyrazk/.codex/checks/managed-postgres-restart-reclaim-20261003/tmp/fcvmt-11046-apphook/f/iA/root/vsock.sock: listen unix /Users/poyrazk/.codex/checks/managed-postgres-restart-reclaim-20261003/tmp/fcvmt-11046-apphook/f/iA/root/vsock.sock: bind: invalid argument
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/fcvm	25.066s
+# github.com/onebox-faas/faas/cmd/vmmd.test
+ld: warning: '/Users/poyrazk/.codex/checks/managed-postgres-restart-reclaim-20261003/tmp/go-link-1801740468/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+ok  	github.com/onebox-faas/faas/cmd/vmmd	13.026s
+FAIL

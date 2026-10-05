@@ -47,7 +47,7 @@ func (m *MemStore) CreateAppTask(_ context.Context, params CreateAppTaskParams) 
 		return AppTask{}, ErrAppTaskDeploymentUnavailable
 	}
 	deployment, ok := m.deployments[resolved.DeploymentID]
-	if !ok || !validAppTaskDeployment(deployment, app.ID) {
+	if !ok || !validAppTaskDeployment(deployment, app.ID) || resolved.RequireLiveDeployment && deployment.Status != DeployLive {
 		return AppTask{}, ErrAppTaskDeploymentUnavailable
 	}
 	if resolved.ExclusiveOperationID != "" {
@@ -67,6 +67,7 @@ func (m *MemStore) CreateAppTask(_ context.Context, params CreateAppTaskParams) 
 
 	now := resolved.CreatedAt
 	task := AppTask{
+		BindingVerification:  cloneBindingVerificationPin(resolved.BindingVerification),
 		FailureRules:         workpolicy.Clone(resolved.FailureRules),
 		OccurrenceID:         resolved.OccurrenceID,
 		StartDeadlineAt:      cloneAppTaskTimePtr(resolved.StartDeadlineAt),

@@ -308,6 +308,13 @@ var restoreTimingPhases = []string{
 	"wall_ms",
 	"total_ms",
 	"stage_pre_boot_files_ms",
+	"pre_boot_prepare_us",
+	"pre_boot_mount_ms",
+	"pre_boot_check_us",
+	"pre_boot_write_us",
+	"pre_boot_unmount_ms",
+	"pre_boot_files_total",
+	"pre_boot_files_written",
 	"resume_hook_ms",
 	"stage_snapshot_ms",
 	"load_snapshot_ms",
@@ -332,7 +339,7 @@ var restoreTimingPhases = []string{
 
 func reportRestoreTiming(t *testing.T, rows []map[string]int64) {
 	t.Helper()
-	t.Logf("restore timing over %d park→restore cycles (nearest-rank percentiles, ms)", len(rows))
+	t.Logf("restore timing over %d park→restore cycles (nearest-rank percentiles; units in field suffix, files_* are counts)", len(rows))
 	t.Logf("%-26s %6s %6s %6s %6s %6s %6s", "phase (ms unless noted)", "min", "p50", "p90", "p95", "max", "mean")
 	for _, phase := range restoreTimingPhases {
 		vals := make([]int64, 0, len(rows))
@@ -349,12 +356,12 @@ func reportRestoreTiming(t *testing.T, rows []map[string]int64) {
 		for _, v := range vals {
 			sum += v
 		}
-		// Most phases are milliseconds; the helper's self-reported work is
-		// microseconds because it is sub-millisecond. Label the row with its
-		// unit rather than silently mixing the two in one column.
+		// Label sub-millisecond work and file counts explicitly.
 		label := phase
 		if strings.HasSuffix(phase, "_us") {
 			label = phase + " (µs)"
+		} else if strings.HasPrefix(phase, "pre_boot_files_") {
+			label = phase + " (count)"
 		}
 		t.Logf("%-26s %6d %6d %6d %6d %6d %6.1f",
 			label, vals[0], nearestRank(vals, 50), nearestRank(vals, 90),

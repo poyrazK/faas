@@ -1,0 +1,71 @@
+egress-render: DIVERGE default-local
+0a1,5
+> #!/usr/sbin/nft -f
+> # onebox-faas nftables.conf (spec §7, §11)
+> # Managed by Gregale Ansible; do not edit on the host.
+> # Tenant egress denylist — SMTP, RFC1918, link-local, metadata.
+> # Tap proxy NAT — used by gatewayd-internal for outbound guest traffic.
+1a7,67
+> flush ruleset
+>
+> table inet faas {
+>   counter drop_v4_10_0_0_0_8 {}
+>   counter drop_v4_100_64_0_0_10 {}
+>   counter drop_v4_169_254_0_0_16 {}
+>   counter drop_v4_172_16_0_0_12 {}
+>   counter drop_v4_192_168_0_0_16 {}
+>   counter drop_v6____128 {}
+>   counter drop_v6___1_128 {}
+>   counter drop_v6_2001___32 {}
+>   counter drop_v6_2002___16 {}
+>   counter drop_v6_fc00___7 {}
+>   counter drop_v6_fe80___10 {}
+>   counter drop_v6_ff00___8 {}
+>   chain input {
+>     type filter hook input priority 0; policy drop;
+>     ct state established,related accept
+>     iif lo accept
+>     iifname "br-tenants" accept
+>     tcp dport { 22,80,443 } accept     # sshd + gatewayd-public public listener
+>   }
+>
+>   chain forward {
+>     type filter hook forward priority 0; policy drop;
+>     ct state established,related accept
+>
+>     # spec §11 denylist — evaluated BEFORE the bridged-tenant broad allow
+>     # so tenant traffic to RFC1918 / SMTP / link-local is actually dropped at
+>     # the host layer; the per-netns chain is the primary block, this is defense
+>     # in depth. PR-E renders ONE RULE per DenySet entry so each CIDR's drop
+>     # count is observable via `nft list counters` (the vmmd scrape adapter
+>     # exposes them as <daemon>_egress_deny_total{cidr,family}). The previous
+>     # aggregate `ip daddr { … } drop` shape produced one anonymous bucket
+>     # for the entire list — useless for the per-tenant / per-CIDR observability
+>     # question.
+>     ip daddr 10.0.0.0/8 counter name "drop_v4_10_0_0_0_8" drop
+>     ip daddr 100.64.0.0/10 counter name "drop_v4_100_64_0_0_10" drop
+>     ip daddr 169.254.0.0/16 counter name "drop_v4_169_254_0_0_16" drop
+>     ip daddr 172.16.0.0/12 counter name "drop_v4_172_16_0_0_12" drop
+>     ip daddr 192.168.0.0/16 counter name "drop_v4_192_168_0_0_16" drop
+>     ip6 daddr ::/128 counter name "drop_v6____128" drop
+>     ip6 daddr ::1/128 counter name "drop_v6___1_128" drop
+>     ip6 daddr 2001::/32 counter name "drop_v6_2001___32" drop
+>     ip6 daddr 2002::/16 counter name "drop_v6_2002___16" drop
+>     ip6 daddr fc00::/7 counter name "drop_v6_fc00___7" drop
+>     ip6 daddr fe80::/10 counter name "drop_v6_fe80___10" drop
+>     ip6 daddr ff00::/8 counter name "drop_v6_ff00___8" drop
+>     tcp dport { 25,465,587 } drop
+>     iifname "br-tenants" oifname "eth0" accept
+>   }
+>
+>   chain output {
+>     type filter hook output priority 0; policy accept;
+>   }
+>
+>   chain postrouting {
+>     type nat hook postrouting priority srcnat; policy accept;
+>     ip saddr 10.100.0.0/16 oifname "eth0" masquerade
+>   }
+> }
+egress-render: OK cloudflare-origin
+make: *** [Makefile:894: egress-render-cross-check] Error 1

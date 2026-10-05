@@ -302,6 +302,9 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if !allowedServiceCallScopesEqual(a.Manifest.AllowedServiceCallScopes, w.AllowedServiceCallScopes) {
 		changed = append(changed, "allowed_service_call_scopes")
 	}
+	if internalPortsChanged(a.Manifest.Ports, w.InternalPorts) {
+		changed = append(changed, "internal_ports")
+	}
 	return changed
 }
 

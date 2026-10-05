@@ -83,6 +83,62 @@ func TestBuilderStopAfterDestroyRemovedLiveEntry(t *testing.T) {
 	}
 }
 
+func TestManagerBuilderDestroyWaitDoesNotBlockInterrupt(t *testing.T) {
+	v, id, rec := runningBuildProcess(t)
+	v.destroyWait = 10 * time.Second
+	m := newTestManager(&fakeRunner{}, v)
+	lease, err := m.alloc.Acquire(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.Networkless = true
+	m.live[id] = &Instance{Lease: lease, ExecutionOnly: true}
+	m.exportDirs[id] = t.TempDir()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	destroyResult := make(chan error, 1)
+	go func() { _, err := m.DestroyWithExport(ctx, id, ""); destroyResult <- err }()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		m.mu.Lock()
+		waiting := m.live[id] != nil && m.pendingCleanup[id] != nil && m.instanceStops[id] != nil && m.exportDirs[id] != ""
+		m.mu.Unlock()
+		if waiting {
+			break
+		}
+		select {
+		case err := <-destroyResult:
+			t.Fatalf("builder destroy returned before interruption: %v", err)
+		case <-ctx.Done():
+			t.Fatal("builder destroy did not enter its export wait")
+		case <-ticker.C:
+		}
+	}
+	select {
+	case <-rec.done:
+		t.Fatal("builder exited before interruption")
+	default:
+	}
+	if killed, _, err := m.SignalAndKill(ctx, id, syscall.SIGKILL, 0); err != nil || !killed {
+		t.Fatalf("builder interruption joined its destroy wait: killed=%v err=%v", killed, err)
+	}
+	select {
+	case err := <-destroyResult:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("interrupted builder destroy did not complete")
+	}
+	v.mu.Lock()
+	_, retained := v.recs[id]
+	v.mu.Unlock()
+	if retained || m.ExportDirFor(id) != "" || m.LiveCount() != 0 || m.LeasedCount() != 0 {
+		t.Fatal("builder destroy leaked its record, registration or lease")
+	}
+}
+
 func TestDestroyCancelledContextKillsChildAndCleansUp(t *testing.T) {
 	v, id, rec := runningBuildProcess(t)
 	ctx, cancel := context.WithCancel(context.Background())

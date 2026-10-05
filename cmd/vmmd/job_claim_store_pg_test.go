@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// ADR-468: legacy job claim wiring reads a real isolated PostgreSQL identity
+// ADR-594: legacy job claim wiring reads a real isolated PostgreSQL identity
 // and refuses inference once that database contains a shared compute fleet.
 package main
 

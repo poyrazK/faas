@@ -37,6 +37,10 @@ class QueueBindingResponse:
     max_concurrency: int
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    environment: str | Unset = UNSET
+    """Immutable project environment slug; omitted for a shared legacy binding."""
+    environment_id: UUID | Unset = UNSET
+    """Original catalog environment identity; omitted for a shared legacy binding."""
     retry_policy: RetryPolicyDTO | Unset = UNSET
     """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. max_attempts
     is a requested total-attempt count; zero inherits the applicable
@@ -46,6 +50,8 @@ class QueueBindingResponse:
     downgrades. Lives in pkg/api so the SDK can type the policy
     without importing pkg/dispatch directly.
     """
+    retired_at: datetime.datetime | Unset = UNSET
+    """Retirement hold timestamp; present only for a retained retired binding."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,9 +77,19 @@ class QueueBindingResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        environment = self.environment
+
+        environment_id: str | Unset = UNSET
+        if not isinstance(self.environment_id, Unset):
+            environment_id = str(self.environment_id)
+
         retry_policy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.retry_policy, Unset):
             retry_policy = self.retry_policy.to_dict()
+
+        retired_at: str | Unset = UNSET
+        if not isinstance(self.retired_at, Unset):
+            retired_at = self.retired_at.isoformat()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -92,8 +108,14 @@ class QueueBindingResponse:
                 "updated_at": updated_at,
             }
         )
+        if environment is not UNSET:
+            field_dict["environment"] = environment
+        if environment_id is not UNSET:
+            field_dict["environment_id"] = environment_id
         if retry_policy is not UNSET:
             field_dict["retry_policy"] = retry_policy
+        if retired_at is not UNSET:
+            field_dict["retired_at"] = retired_at
 
         return field_dict
 
@@ -124,12 +146,28 @@ class QueueBindingResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        environment = d.pop("environment", UNSET)
+
+        _environment_id = d.pop("environment_id", UNSET)
+        environment_id: UUID | Unset
+        if isinstance(_environment_id, Unset):
+            environment_id = UNSET
+        else:
+            environment_id = UUID(_environment_id)
+
         _retry_policy = d.pop("retry_policy", UNSET)
         retry_policy: RetryPolicyDTO | Unset
         if isinstance(_retry_policy, Unset):
             retry_policy = UNSET
         else:
             retry_policy = RetryPolicyDTO.from_dict(_retry_policy)
+
+        _retired_at = d.pop("retired_at", UNSET)
+        retired_at: datetime.datetime | Unset
+        if isinstance(_retired_at, Unset):
+            retired_at = UNSET
+        else:
+            retired_at = datetime.datetime.fromisoformat(_retired_at)
 
         queue_binding_response = cls(
             id=id,
@@ -143,7 +181,10 @@ class QueueBindingResponse:
             max_concurrency=max_concurrency,
             created_at=created_at,
             updated_at=updated_at,
+            environment=environment,
+            environment_id=environment_id,
             retry_policy=retry_policy,
+            retired_at=retired_at,
         )
 
         queue_binding_response.additional_properties = d

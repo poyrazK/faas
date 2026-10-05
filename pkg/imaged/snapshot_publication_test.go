@@ -373,7 +373,8 @@ func TestSnapshotPublicationConflictPreservesWinnerAndCleansCandidate(t *testing
 	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithStorage(snapshotUnlistedBackend{be})
 	first, second := state.SnapshotCaptureMemKey(dep.ID, "init", "first"), state.SnapshotCaptureMemKey(dep.ID, "init", "second")
 	for _, key := range []string{first, second} {
-		for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})} {
+		// ADR-510: each capture also carries its backing identity object.
+		for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key}), state.SnapshotBackingKey(state.Snapshot{StorageKey: key})} {
 			if err := be.Put(ctx, part, strings.NewReader(part)); err != nil {
 				t.Fatal(err)
 			}
@@ -386,7 +387,7 @@ func TestSnapshotPublicationConflictPreservesWinnerAndCleansCandidate(t *testing
 	if err != nil || latest.StorageKey != first {
 		t.Fatalf("winner changed: %+v %v", latest, err)
 	}
-	for _, key := range []string{second, state.SnapshotVMStateKey(state.Snapshot{StorageKey: second})} {
+	for _, key := range []string{second, state.SnapshotVMStateKey(state.Snapshot{StorageKey: second}), state.SnapshotBackingKey(state.Snapshot{StorageKey: second})} {
 		rc, err := be.Get(ctx, key)
 		if err == nil {
 			_ = rc.Close()
@@ -398,7 +399,7 @@ func TestSnapshotPublicationConflictPreservesWinnerAndCleansCandidate(t *testing
 	}
 	// App deletion must also remove generation keys when the local cache is empty.
 	h.cleanupSnapshotCaptures(ctx, snapshotUnlistedBackend{be}, dep.ID)
-	for _, key := range []string{first, state.SnapshotVMStateKey(latest)} {
+	for _, key := range []string{first, state.SnapshotVMStateKey(latest), state.SnapshotBackingKey(latest)} {
 		rc, err := be.Get(ctx, key)
 		if err == nil {
 			_ = rc.Close()

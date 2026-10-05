@@ -204,9 +204,13 @@ type Loop struct {
 
 	// workflowsDispatched is the FAAS_WORKFLOWS_ENABLED opt-in for the
 	// workflow dispatch tick (ADR-081).
-	workflowsDispatched bool
-	workflowOrch        *WorkflowOrchestrator
-	workflowRetention   *WorkflowRetention
+	workflowsDispatched      bool
+	workflowScheduleMinute   int64
+	workflowScheduleAfter    string
+	workflowScheduleComplete bool
+	workflowScheduleFailed   bool
+	workflowOrch             *WorkflowOrchestrator
+	workflowRetention        *WorkflowRetention
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
@@ -1131,6 +1135,12 @@ func (l *Loop) Run(ctx context.Context) error {
 		l.beatMain()
 		select {
 		case <-ctx.Done():
+			// Prime teardown uses a detached, bounded context. Join accepted
+			// work before Run returns so its instance-state write can finish
+			// while cmd/schedd still owns an open Postgres pool.
+			if !l.workPool().drainFor(2*DestroyTimeout + 5*time.Second) {
+				l.log.Warn("sched: timed out draining loop work during shutdown")
+			}
 			return nil
 		case n, ok := <-notif:
 			if !ok {
@@ -1880,6 +1890,20 @@ const maxConcurrentPrimes = 4
 
 const maxSnapshotPrimeAttempts = 2
 
+func snapshotPrimeInterruptedByShutdown(ctx context.Context, err error) bool {
+	if ctx == nil || err == nil {
+		return false
+	}
+	switch ctx.Err() {
+	case context.Canceled:
+		return errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled
+	case context.DeadlineExceeded:
+		return errors.Is(err, context.DeadlineExceeded) || status.Code(err) == codes.DeadlineExceeded
+	default:
+		return false
+	}
+}
+
 func retryableSnapshotPrimeError(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
@@ -1955,6 +1979,11 @@ func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
 				"app", appID, "deployment", deploymentID, "attempt", attempt, "err", err)
 		}
 		if err != nil {
+			if snapshotPrimeInterruptedByShutdown(ctx, err) {
+				l.log.Info("sched: snapshot prime interrupted by daemon shutdown; leaving deployment recoverable",
+					"app", appID, "deployment", deploymentID, "err", err)
+				return
+			}
 			l.log.Warn("sched: prime failed", "app", appID, "deployment", deploymentID, "attempts", attempts, "err", err)
 			l.engine.markPrimeFailed(ctx, deploymentID, err)
 		}
@@ -2020,6 +2049,7 @@ func (l *Loop) handleRuntimeConfigRestart(ctx context.Context, n db.Notification
 	var payload struct {
 		AppID  string `json:"app_id"`
 		WakeID string `json:"wake_id"`
+		Scope  string `json:"scope"`
 	}
 	if err := json.Unmarshal([]byte(n.Payload), &payload); err != nil {
 		return fmt.Errorf("sched: decode runtime config restart payload: %w", err)
@@ -2027,7 +2057,13 @@ func (l *Loop) handleRuntimeConfigRestart(ctx context.Context, n db.Notification
 	if payload.AppID == "" || payload.WakeID == "" {
 		return errors.New("sched: runtime config restart payload requires app_id and wake_id")
 	}
-	out, err := l.engine.RefreshRuntimeConfig(ctx, payload.AppID, payload.WakeID)
+	var out CoordOutcome
+	var err error
+	if payload.Scope != "" {
+		out, err = l.engine.RefreshRuntimeConfigForEnvironment(ctx, payload.AppID, payload.WakeID, payload.Scope)
+	} else {
+		out, err = l.engine.RefreshRuntimeConfig(ctx, payload.AppID, payload.WakeID)
+	}
 	if err != nil {
 		return fmt.Errorf("sched: runtime config restart %s: %w", payload.WakeID, err)
 	}
@@ -2895,6 +2931,17 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 	// "park everything down to floor+1".
 	consideredAppIDs := map[string]struct{}{}
 	desiredByApp := map[string]int{}
+	vmmdInflightByApp := map[string]int64{}
+	planByApp := map[string]api.Plan{}
+	for _, s := range snapshot {
+		if s.State != state.StateRunning {
+			continue
+		}
+		vmmdInflightByApp[s.AppID] += s.InflightRequests
+		if planByApp[s.AppID] == "" {
+			planByApp[s.AppID] = s.Plan
+		}
+	}
 	for _, a := range apps {
 		// Skip apps that don't participate in the aggressive path:
 		// single-instance apps can't exceed max(min_instances,
@@ -2915,6 +2962,9 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 		desired, observed := l.recentLoad.RecentDesiredReplicasWithSignal(a.ID, now, a.AutoscaleTargetRPS)
 		if !observed {
 			continue
+		}
+		if demand := l.inflightDemandReplicas(a.ID, planByApp[a.ID], vmmdInflightByApp[a.ID], now); demand > desired {
+			desired = demand
 		}
 		consideredAppIDs[a.ID] = struct{}{}
 		desiredByApp[a.ID] = desired
@@ -3051,6 +3101,31 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 			}
 		}
 	}
+}
+
+// inflightDemandReplicas returns how many instances the app's in-flight
+// requests need at the plan's per-instance concurrency bound. Scale-in takes
+// the larger of this and the rate-derived count. The rates are completions
+// (gateway) and request starts (vmmd), and both fall toward zero when an
+// overloaded or stalled app stops making progress while its clients wait. On
+// production-us a 200-client surge read desired=0 and lost three of its four
+// instances while the gateway was asking for more. In-flight requests stay
+// high in that state. The gateway's count covers only the local gateway and
+// vmmd's covers only forwarded requests, so the larger of the two is still a
+// lower bound on demand.
+func (l *Loop) inflightDemandReplicas(appID string, plan api.Plan, vmmdInflight int64, now time.Time) int {
+	inflight := vmmdInflight
+	if gateway, ok := l.recentLoad.RecentInflight(appID, now); ok && gateway > inflight {
+		inflight = gateway
+	}
+	if inflight <= 0 {
+		return 0
+	}
+	perVM := 1
+	if limits, ok := api.LimitsFor(plan); ok && limits.ConcurrencyPerVMBound > 0 {
+		perVM = limits.ConcurrencyPerVMBound
+	}
+	return int((inflight + int64(perVM) - 1) / int64(perVM))
 }
 
 // emitScaleDownAudit writes one events row per aggressive scale-
@@ -3848,6 +3923,11 @@ func (l *Loop) runJobsReaperTick(ctx context.Context) {
 }
 
 func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
+	l.submitWork(workWorkflowSchedules, "tick", func() {
+		if err := l.runWorkflowSchedulesTick(ctx); err != nil && l.log != nil {
+			l.log.Warn("schedd: workflow schedule tick failed", "error_type", fmt.Sprintf("%T", err))
+		}
+	})
 	key := fmt.Sprintf("%d", l.workflowDispatchCursor.Add(1)%4)
 	l.submitWork(workWorkflowDispatch, key, func() {
 		orch := l.workflowOrch

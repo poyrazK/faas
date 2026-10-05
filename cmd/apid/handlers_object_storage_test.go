@@ -24,6 +24,7 @@ type fakeObjectProvider struct {
 	accessed             []string
 	objects              map[string][]byte
 	createErr, deleteErr error
+	multipartConditions  []api.ObjectWriteConditions
 	multipartErr         error
 	multipartParts       objectstorage.MultipartPartsPage
 	multipartCompleted   []string
@@ -108,11 +109,11 @@ func (p *fakeObjectProvider) AbortMultipartUpload(_ context.Context, b string, r
 	return p.multipartErr
 }
 
-func objectRegistry(t *testing.T, a, b *fakeObjectProvider, defaultID string) *objectstorage.Registry {
+func objectRegistry(t *testing.T, a, b objectstorage.Provider, defaultID string) *objectstorage.Registry {
 	return objectRegistryWithFeed(t, a, b, defaultID, true)
 }
 
-func objectRegistryWithFeed(t *testing.T, a, b *fakeObjectProvider, defaultID string, feed bool) *objectstorage.Registry {
+func objectRegistryWithFeed(t *testing.T, a, b objectstorage.Provider, defaultID string, feed bool) *objectstorage.Registry {
 	t.Helper()
 	backends := []objectstorage.BackendConfig{}
 	for _, id := range []string{"external", "ceph"} {
@@ -397,6 +398,8 @@ func TestObjectStorageComputeBindingRotationWithoutLiveDeployment(t *testing.T) 
 }
 
 func TestObjectStorageFailuresAndAuthorization(t *testing.T) {
+	_, teardown := withTestIdentities(t)
+	defer teardown()
 	e := setup(t, api.PlanHobby)
 	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
@@ -520,4 +523,9 @@ func qualifyObjectAccounting(t *testing.T, e testEnv, bucket string) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func (p *fakeObjectProvider) CompleteConditionalMultipartUpload(ctx context.Context, b string, r objectstorage.MultipartCompleteRequest, c api.ObjectWriteConditions) error {
+	p.multipartConditions = append(p.multipartConditions, c)
+	return p.CompleteMultipartUpload(ctx, b, r)
 }

@@ -207,6 +207,17 @@ func interpolateComposeCandidate(candidate *composeCandidate, values map[string]
 	if ports != nil {
 		candidate.Ports, _ = ports.([]any)
 	}
+	// An absent expose: must stay nil: reconcile reads nil as "the source
+	// says nothing" and an empty list as "no internal listeners".
+	if candidate.Expose != nil {
+		expose, err := interpolateComposeValue(candidate.Expose, values, source, service, "expose")
+		if err != nil {
+			return err
+		}
+		if items, ok := expose.([]any); ok {
+			candidate.Expose = items
+		}
+	}
 	image, err := interpolateComposeString(candidate.Image, values, source, service, "image")
 	if err != nil {
 		return err

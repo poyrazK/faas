@@ -1,0 +1,529 @@
+=== RUN   TestFailureReportOwnershipRequiresResourceIdentity
+--- PASS: TestFailureReportOwnershipRequiresResourceIdentity (0.00s)
+=== RUN   TestMetalTeardownRetainsOwnershipUntilConfirmed
+--- PASS: TestMetalTeardownRetainsOwnershipUntilConfirmed (1.13s)
+=== RUN   TestPreparedNetworkClaimsAreUniqueAndNotAdmission
+--- PASS: TestPreparedNetworkClaimsAreUniqueAndNotAdmission (0.00s)
+=== RUN   TestPreparedNetworkDuplicateInstanceKeepsOriginalLease
+--- PASS: TestPreparedNetworkDuplicateInstanceKeepsOriginalLease (0.00s)
+=== RUN   TestPreparedNetworkPolicyAndExpiry
+--- PASS: TestPreparedNetworkPolicyAndExpiry (0.00s)
+=== RUN   TestPreparedNetworkRefreshesOldSpareBeforeHardExpiry
+--- PASS: TestPreparedNetworkRefreshesOldSpareBeforeHardExpiry (0.01s)
+=== RUN   TestPreparedNetworkChangedConfigRebuildsPolicy
+--- PASS: TestPreparedNetworkChangedConfigRebuildsPolicy (0.00s)
+=== RUN   TestPreparedNetworkDefaultPortMatches
+=== RUN   TestPreparedNetworkDefaultPortMatches/0-to-0
+=== RUN   TestPreparedNetworkDefaultPortMatches/0-to-8080
+=== RUN   TestPreparedNetworkDefaultPortMatches/8080-to-0
+=== RUN   TestPreparedNetworkDefaultPortMatches/8080-to-8080
+--- PASS: TestPreparedNetworkDefaultPortMatches (0.01s)
+    --- PASS: TestPreparedNetworkDefaultPortMatches/0-to-0 (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortMatches/0-to-8080 (0.01s)
+    --- PASS: TestPreparedNetworkDefaultPortMatches/8080-to-0 (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortMatches/8080-to-8080 (0.00s)
+=== RUN   TestPreparedNetworkWakeKeepsNetworkForAnyPort
+=== RUN   TestPreparedNetworkWakeKeepsNetworkForAnyPort/0
+=== RUN   TestPreparedNetworkWakeKeepsNetworkForAnyPort/8080
+=== RUN   TestPreparedNetworkWakeKeepsNetworkForAnyPort/3000
+=== RUN   TestPreparedNetworkWakeKeepsNetworkForAnyPort/8000
+--- PASS: TestPreparedNetworkWakeKeepsNetworkForAnyPort (0.01s)
+    --- PASS: TestPreparedNetworkWakeKeepsNetworkForAnyPort/0 (0.00s)
+    --- PASS: TestPreparedNetworkWakeKeepsNetworkForAnyPort/8080 (0.00s)
+    --- PASS: TestPreparedNetworkWakeKeepsNetworkForAnyPort/3000 (0.00s)
+    --- PASS: TestPreparedNetworkWakeKeepsNetworkForAnyPort/8000 (0.00s)
+=== RUN   TestPreparedNetworkRetargetsGuestPortInOneTransaction
+--- PASS: TestPreparedNetworkRetargetsGuestPortInOneTransaction (0.00s)
+=== RUN   TestPreparedNetworkRetargetFailureRebuilds
+--- PASS: TestPreparedNetworkRetargetFailureRebuilds (0.00s)
+=== RUN   TestPreparedNetworkRetargetOnlyForPort
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/custom_port
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/max_port
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/negative_port
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/overflow_port
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/port_and_instance
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/port_and_tap_owner
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/port_and_egress_rate
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/port_and_conntrack_cap
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/port_and_allowlist
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/port_and_private_network
+=== RUN   TestPreparedNetworkRetargetOnlyForPort/port_and_egress_circuit
+--- PASS: TestPreparedNetworkRetargetOnlyForPort (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/custom_port (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/max_port (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/negative_port (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/overflow_port (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/port_and_instance (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/port_and_tap_owner (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/port_and_egress_rate (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/port_and_conntrack_cap (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/port_and_allowlist (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/port_and_private_network (0.00s)
+    --- PASS: TestPreparedNetworkRetargetOnlyForPort/port_and_egress_circuit (0.00s)
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/custom_port
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/negative_port
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/overflow_port
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/instance
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/namespace
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/tap_owner
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/host_ip
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/bridge
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/egress_rate
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/conntrack_cap
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/egress_allowlist
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/private_network
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/operator_exceptions
+=== RUN   TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/egress_circuit
+--- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/custom_port (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/negative_port (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/overflow_port (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/instance (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/namespace (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/tap_owner (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/host_ip (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/bridge (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/egress_rate (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/conntrack_cap (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/egress_allowlist (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/private_network (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/operator_exceptions (0.00s)
+    --- PASS: TestPreparedNetworkDefaultPortDoesNotHidePolicyChanges/egress_circuit (0.00s)
+=== RUN   TestPreparedNetworkClaimFailureFallsBack
+--- PASS: TestPreparedNetworkClaimFailureFallsBack (0.00s)
+=== RUN   TestPreparedNetworkTeardownFailureRetainsSlot
+--- PASS: TestPreparedNetworkTeardownFailureRetainsSlot (0.00s)
+=== RUN   TestPreparedNetworkShutdownDrainsWorker
+--- PASS: TestPreparedNetworkShutdownDrainsWorker (0.00s)
+=== RUN   TestMetalResourceAssetsBindLifecycle
+--- PASS: TestMetalResourceAssetsBindLifecycle (0.02s)
+=== RUN   TestMetalResourceAssetsRefuseForeignMountAndTarget
+--- PASS: TestMetalResourceAssetsRefuseForeignMountAndTarget (0.01s)
+=== RUN   TestMetalResourceAssetsFailedBindCheckpoint
+=== RUN   TestMetalResourceAssetsFailedBindCheckpoint/intent
+=== RUN   TestMetalResourceAssetsFailedBindCheckpoint/target
+=== RUN   TestMetalResourceAssetsFailedBindCheckpoint/mount
+--- PASS: TestMetalResourceAssetsFailedBindCheckpoint (0.02s)
+    --- PASS: TestMetalResourceAssetsFailedBindCheckpoint/intent (0.00s)
+    --- PASS: TestMetalResourceAssetsFailedBindCheckpoint/target (0.01s)
+    --- PASS: TestMetalResourceAssetsFailedBindCheckpoint/mount (0.01s)
+=== RUN   TestResourceAssetsIntentCheckpointAndReopen
+--- PASS: TestResourceAssetsIntentCheckpointAndReopen (0.00s)
+=== RUN   TestResourceAssetsFailedCommitRetainsCleanup
+=== RUN   TestResourceAssetsFailedCommitRetainsCleanup/intent
+=== RUN   TestResourceAssetsFailedCommitRetainsCleanup/checkpoint
+=== RUN   TestResourceAssetsFailedCommitRetainsCleanup/retirement
+--- PASS: TestResourceAssetsFailedCommitRetainsCleanup (0.00s)
+    --- PASS: TestResourceAssetsFailedCommitRetainsCleanup/intent (0.00s)
+    --- PASS: TestResourceAssetsFailedCommitRetainsCleanup/checkpoint (0.00s)
+    --- PASS: TestResourceAssetsFailedCommitRetainsCleanup/retirement (0.00s)
+=== RUN   TestResourceAssetsRefuseReplacedFile
+--- PASS: TestResourceAssetsRefuseReplacedFile (0.00s)
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords/legacy
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords/legacy_assets
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords/relative
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords/duplicate
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords/unknown
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords/partial_mount
+=== RUN   TestResourceAssetsLegacyAndCorruptRecords/namespace_mismatch
+--- PASS: TestResourceAssetsLegacyAndCorruptRecords (0.01s)
+    --- PASS: TestResourceAssetsLegacyAndCorruptRecords/legacy (0.00s)
+    --- PASS: TestResourceAssetsLegacyAndCorruptRecords/legacy_assets (0.00s)
+    --- PASS: TestResourceAssetsLegacyAndCorruptRecords/relative (0.00s)
+    --- PASS: TestResourceAssetsLegacyAndCorruptRecords/duplicate (0.00s)
+    --- PASS: TestResourceAssetsLegacyAndCorruptRecords/unknown (0.00s)
+    --- PASS: TestResourceAssetsLegacyAndCorruptRecords/partial_mount (0.00s)
+    --- PASS: TestResourceAssetsLegacyAndCorruptRecords/namespace_mismatch (0.00s)
+=== RUN   TestResourceAssetsBindModeRetryAndAliases
+--- PASS: TestResourceAssetsBindModeRetryAndAliases (0.00s)
+=== RUN   TestResourceAssetsBindModeWaitsForForeignOwner
+--- PASS: TestResourceAssetsBindModeWaitsForForeignOwner (0.00s)
+=== RUN   TestResourceAssetsMountInfoIdentity
+--- PASS: TestResourceAssetsMountInfoIdentity (0.00s)
+=== RUN   TestMetalResourceJournalSurvivingGuest
+--- PASS: TestMetalResourceJournalSurvivingGuest (1.71s)
+=== RUN   TestResourceJournalExclusiveDurableAndConcurrent
+--- PASS: TestResourceJournalExclusiveDurableAndConcurrent (0.01s)
+=== RUN   TestResourceJournalBootOrderingAndConfirmedRetirement
+=== RUN   TestResourceJournalBootOrderingAndConfirmedRetirement/job=false
+=== RUN   TestResourceJournalBootOrderingAndConfirmedRetirement/job=true
+--- PASS: TestResourceJournalBootOrderingAndConfirmedRetirement (0.01s)
+    --- PASS: TestResourceJournalBootOrderingAndConfirmedRetirement/job=false (0.00s)
+    --- PASS: TestResourceJournalBootOrderingAndConfirmedRetirement/job=true (0.00s)
+=== RUN   TestResourceJournalWriteFailureRejectsBoot
+--- PASS: TestResourceJournalWriteFailureRejectsBoot (0.00s)
+=== RUN   TestResourceJournalRecoveredIntentQuarantinesWithoutResources
+--- PASS: TestResourceJournalRecoveredIntentQuarantinesWithoutResources (0.00s)
+=== RUN   TestResourceJournalProcessIncarnationMatches
+=== RUN   TestResourceJournalProcessIncarnationMatches/match
+=== RUN   TestResourceJournalProcessIncarnationMatches/reused_pid
+=== RUN   TestResourceJournalProcessIncarnationMatches/other_boot
+=== RUN   TestResourceJournalProcessIncarnationMatches/other_uid
+=== RUN   TestResourceJournalProcessIncarnationMatches/other_instance
+=== RUN   TestResourceJournalProcessIncarnationMatches/gone
+=== RUN   TestResourceJournalProcessIncarnationMatches/missing_boot
+--- PASS: TestResourceJournalProcessIncarnationMatches (0.01s)
+    --- PASS: TestResourceJournalProcessIncarnationMatches/match (0.00s)
+    --- PASS: TestResourceJournalProcessIncarnationMatches/reused_pid (0.00s)
+    --- PASS: TestResourceJournalProcessIncarnationMatches/other_boot (0.00s)
+    --- PASS: TestResourceJournalProcessIncarnationMatches/other_uid (0.00s)
+    --- PASS: TestResourceJournalProcessIncarnationMatches/other_instance (0.00s)
+    --- PASS: TestResourceJournalProcessIncarnationMatches/gone (0.00s)
+    --- PASS: TestResourceJournalProcessIncarnationMatches/missing_boot (0.00s)
+=== RUN   TestResourceJournalRejectsCorruptStorage
+=== RUN   TestResourceJournalRejectsCorruptStorage/version
+=== RUN   TestResourceJournalRejectsCorruptStorage/uid
+=== RUN   TestResourceJournalRejectsCorruptStorage/duplicate_slot
+=== RUN   TestResourceJournalRejectsCorruptStorage/trailing
+=== RUN   TestResourceJournalRejectsCorruptStorage/unknown_field
+=== RUN   TestResourceJournalRejectsCorruptStorage/permissions
+=== RUN   TestResourceJournalRejectsCorruptStorage/symlink
+=== RUN   TestResourceJournalRejectsCorruptStorage/hardlink
+=== RUN   TestResourceJournalRejectsCorruptStorage/unexpected
+--- PASS: TestResourceJournalRejectsCorruptStorage (0.01s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/version (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/uid (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/duplicate_slot (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/trailing (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/unknown_field (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/permissions (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/symlink (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/hardlink (0.00s)
+    --- PASS: TestResourceJournalRejectsCorruptStorage/unexpected (0.00s)
+=== RUN   TestResourceLinksRtnetlinkParser
+--- PASS: TestResourceLinksRtnetlinkParser (0.00s)
+=== RUN   TestMetalResourceLinksReplacement
+=== RUN   TestMetalResourceLinksReplacement/dummy
+=== RUN   TestMetalResourceLinksReplacement/veth
+=== RUN   TestMetalResourceLinksReplacement/address
+=== RUN   TestMetalResourceLinksReplacement/rename
+--- PASS: TestMetalResourceLinksReplacement (0.28s)
+    --- PASS: TestMetalResourceLinksReplacement/dummy (0.08s)
+    --- PASS: TestMetalResourceLinksReplacement/veth (0.09s)
+    --- PASS: TestMetalResourceLinksReplacement/address (0.06s)
+    --- PASS: TestMetalResourceLinksReplacement/rename (0.06s)
+=== RUN   TestResourceLinksRejectReplacementBeforeNamespaceDeletion
+=== RUN   TestResourceLinksRejectReplacementBeforeNamespaceDeletion/index
+=== RUN   TestResourceLinksRejectReplacementBeforeNamespaceDeletion/address
+=== RUN   TestResourceLinksRejectReplacementBeforeNamespaceDeletion/kind
+=== RUN   TestResourceLinksRejectReplacementBeforeNamespaceDeletion/rename
+=== RUN   TestResourceLinksRejectReplacementBeforeNamespaceDeletion/creator
+=== RUN   TestResourceLinksRejectReplacementBeforeNamespaceDeletion/absent_creator
+=== RUN   TestResourceLinksRejectReplacementBeforeNamespaceDeletion/unknown_owner
+--- PASS: TestResourceLinksRejectReplacementBeforeNamespaceDeletion (0.02s)
+    --- PASS: TestResourceLinksRejectReplacementBeforeNamespaceDeletion/index (0.00s)
+    --- PASS: TestResourceLinksRejectReplacementBeforeNamespaceDeletion/address (0.01s)
+    --- PASS: TestResourceLinksRejectReplacementBeforeNamespaceDeletion/kind (0.00s)
+    --- PASS: TestResourceLinksRejectReplacementBeforeNamespaceDeletion/rename (0.00s)
+    --- PASS: TestResourceLinksRejectReplacementBeforeNamespaceDeletion/creator (0.00s)
+    --- PASS: TestResourceLinksRejectReplacementBeforeNamespaceDeletion/absent_creator (0.00s)
+    --- PASS: TestResourceLinksRejectReplacementBeforeNamespaceDeletion/unknown_owner (0.00s)
+=== RUN   TestResourceLinksDurableOrderingAndFailures
+=== RUN   TestResourceLinksDurableOrderingAndFailures/intent
+=== RUN   TestResourceLinksDurableOrderingAndFailures/checkpoint
+=== RUN   TestResourceLinksDurableOrderingAndFailures/retirement
+--- PASS: TestResourceLinksDurableOrderingAndFailures (0.01s)
+    --- PASS: TestResourceLinksDurableOrderingAndFailures/intent (0.00s)
+    --- PASS: TestResourceLinksDurableOrderingAndFailures/checkpoint (0.00s)
+    --- PASS: TestResourceLinksDurableOrderingAndFailures/retirement (0.00s)
+=== RUN   TestResourceLinksPrivateReplacementAndUnpublishedAttachment
+--- PASS: TestResourceLinksPrivateReplacementAndUnpublishedAttachment (0.00s)
+=== RUN   TestResourceLinksLivePrivateReconciliation
+--- PASS: TestResourceLinksLivePrivateReconciliation (0.01s)
+=== RUN   TestResourceLinksPreparedReplacementRetainsReservation
+--- PASS: TestResourceLinksPreparedReplacementRetainsReservation (0.00s)
+=== RUN   TestResourceLinksRecordValidationAndClone
+=== RUN   TestResourceLinksRecordValidationAndClone/legacy
+=== RUN   TestResourceLinksRecordValidationAndClone/networkless
+=== RUN   TestResourceLinksRecordValidationAndClone/name
+=== RUN   TestResourceLinksRecordValidationAndClone/epoch
+=== RUN   TestResourceLinksRecordValidationAndClone/index
+=== RUN   TestResourceLinksRecordValidationAndClone/extra
+--- PASS: TestResourceLinksRecordValidationAndClone (0.00s)
+    --- PASS: TestResourceLinksRecordValidationAndClone/legacy (0.00s)
+    --- PASS: TestResourceLinksRecordValidationAndClone/networkless (0.00s)
+    --- PASS: TestResourceLinksRecordValidationAndClone/name (0.00s)
+    --- PASS: TestResourceLinksRecordValidationAndClone/epoch (0.00s)
+    --- PASS: TestResourceLinksRecordValidationAndClone/index (0.00s)
+    --- PASS: TestResourceLinksRecordValidationAndClone/extra (0.00s)
+=== RUN   TestMetalResourcePlacementPreparedAlias
+--- PASS: TestMetalResourcePlacementPreparedAlias (0.06s)
+=== RUN   TestMetalResourcePlacementForeignJailMount
+--- PASS: TestMetalResourcePlacementForeignJailMount (0.01s)
+=== RUN   TestMetalResourcePlacementNamespaceReplacement
+--- PASS: TestMetalResourcePlacementNamespaceReplacement (0.02s)
+=== RUN   TestResourcePlacementJailCheckpointReopenAndReplacement
+--- PASS: TestResourcePlacementJailCheckpointReopenAndReplacement (0.00s)
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords/legacy1
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords/legacy2
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords/old_jail
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords/wrong_jail
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords/wrong_netns
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords/partial_netns
+=== RUN   TestResourcePlacementLegacyAndInvalidRecords/networkless
+--- PASS: TestResourcePlacementLegacyAndInvalidRecords (0.00s)
+    --- PASS: TestResourcePlacementLegacyAndInvalidRecords/legacy1 (0.00s)
+    --- PASS: TestResourcePlacementLegacyAndInvalidRecords/legacy2 (0.00s)
+    --- PASS: TestResourcePlacementLegacyAndInvalidRecords/old_jail (0.00s)
+    --- PASS: TestResourcePlacementLegacyAndInvalidRecords/wrong_jail (0.00s)
+    --- PASS: TestResourcePlacementLegacyAndInvalidRecords/wrong_netns (0.00s)
+    --- PASS: TestResourcePlacementLegacyAndInvalidRecords/partial_netns (0.00s)
+    --- PASS: TestResourcePlacementLegacyAndInvalidRecords/networkless (0.00s)
+=== RUN   TestResourcePlacementJailCommitFailures
+=== RUN   TestResourcePlacementJailCommitFailures/intent
+=== RUN   TestResourcePlacementJailCommitFailures/checkpoint
+=== RUN   TestResourcePlacementJailCommitFailures/retirement
+--- PASS: TestResourcePlacementJailCommitFailures (0.01s)
+    --- PASS: TestResourcePlacementJailCommitFailures/intent (0.00s)
+    --- PASS: TestResourcePlacementJailCommitFailures/checkpoint (0.00s)
+    --- PASS: TestResourcePlacementJailCommitFailures/retirement (0.01s)
+=== RUN   TestResourcePlacementNetworkOrderingReplacementAndRetirement
+--- PASS: TestResourcePlacementNetworkOrderingReplacementAndRetirement (0.00s)
+=== RUN   TestResourcePlacementPreparedTransfer
+--- PASS: TestResourcePlacementPreparedTransfer (0.00s)
+=== RUN   TestResourcePlacementNetworkCheckpointFailure
+--- PASS: TestResourcePlacementNetworkCheckpointFailure (0.00s)
+=== RUN   TestResourcePlacementAbsentPathRequiresCreatorContext
+--- PASS: TestResourcePlacementAbsentPathRequiresCreatorContext (0.01s)
+=== RUN   TestMetalResourcePreparedCrashRecovery
+=== RUN   TestMetalResourcePreparedCrashRecovery/spare
+=== RUN   TestMetalResourcePreparedCrashRecovery/transfer
+=== RUN   TestMetalResourcePreparedCrashRecovery/two_aliases
+=== RUN   TestMetalResourcePreparedCrashRecovery/alias
+=== RUN   TestMetalResourcePreparedCrashRecovery/guest
+--- PASS: TestMetalResourcePreparedCrashRecovery (0.72s)
+    --- PASS: TestMetalResourcePreparedCrashRecovery/spare (0.14s)
+    --- PASS: TestMetalResourcePreparedCrashRecovery/transfer (0.14s)
+    --- PASS: TestMetalResourcePreparedCrashRecovery/two_aliases (0.15s)
+    --- PASS: TestMetalResourcePreparedCrashRecovery/alias (0.14s)
+    --- PASS: TestMetalResourcePreparedCrashRecovery/guest (0.14s)
+=== RUN   TestResourcePreparedOrderingAndGuestLifecycle
+=== RUN   TestResourcePreparedOrderingAndGuestLifecycle/8080
+=== RUN   TestResourcePreparedOrderingAndGuestLifecycle/3000
+--- PASS: TestResourcePreparedOrderingAndGuestLifecycle (0.01s)
+    --- PASS: TestResourcePreparedOrderingAndGuestLifecycle/8080 (0.00s)
+    --- PASS: TestResourcePreparedOrderingAndGuestLifecycle/3000 (0.00s)
+=== RUN   TestResourcePreparedRestartQuarantine
+=== RUN   TestResourcePreparedRestartQuarantine/intent
+=== RUN   TestResourcePreparedRestartQuarantine/spare
+=== RUN   TestResourcePreparedRestartQuarantine/before_move
+=== RUN   TestResourcePreparedRestartQuarantine/after_move
+=== RUN   TestResourcePreparedRestartQuarantine/guest
+--- PASS: TestResourcePreparedRestartQuarantine (0.02s)
+    --- PASS: TestResourcePreparedRestartQuarantine/intent (0.00s)
+    --- PASS: TestResourcePreparedRestartQuarantine/spare (0.00s)
+    --- PASS: TestResourcePreparedRestartQuarantine/before_move (0.00s)
+    --- PASS: TestResourcePreparedRestartQuarantine/after_move (0.01s)
+    --- PASS: TestResourcePreparedRestartQuarantine/guest (0.00s)
+=== RUN   TestResourcePreparedCommitFailuresRetainAndRetry
+=== RUN   TestResourcePreparedCommitFailuresRetainAndRetry/intent
+=== RUN   TestResourcePreparedCommitFailuresRetainAndRetry/transfer
+=== RUN   TestResourcePreparedCommitFailuresRetainAndRetry/adoption
+=== RUN   TestResourcePreparedCommitFailuresRetainAndRetry/retirement
+=== RUN   TestResourcePreparedCommitFailuresRetainAndRetry/transfer_before_rename
+--- PASS: TestResourcePreparedCommitFailuresRetainAndRetry (0.02s)
+    --- PASS: TestResourcePreparedCommitFailuresRetainAndRetry/intent (0.00s)
+    --- PASS: TestResourcePreparedCommitFailuresRetainAndRetry/transfer (0.00s)
+    --- PASS: TestResourcePreparedCommitFailuresRetainAndRetry/adoption (0.00s)
+    --- PASS: TestResourcePreparedCommitFailuresRetainAndRetry/retirement (0.00s)
+    --- PASS: TestResourcePreparedCommitFailuresRetainAndRetry/transfer_before_rename (0.01s)
+=== RUN   TestResourcePreparedEarlyWakeFailureAndNetworkless
+=== RUN   TestResourcePreparedEarlyWakeFailureAndNetworkless/false
+=== RUN   TestResourcePreparedEarlyWakeFailureAndNetworkless/true
+--- PASS: TestResourcePreparedEarlyWakeFailureAndNetworkless (0.00s)
+    --- PASS: TestResourcePreparedEarlyWakeFailureAndNetworkless/false (0.00s)
+    --- PASS: TestResourcePreparedEarlyWakeFailureAndNetworkless/true (0.00s)
+=== RUN   TestResourcePreparedRejectsMalformedRecordsAndLaunch
+=== RUN   TestResourcePreparedRejectsMalformedRecordsAndLaunch/version
+=== RUN   TestResourcePreparedRejectsMalformedRecordsAndLaunch/source
+=== RUN   TestResourcePreparedRejectsMalformedRecordsAndLaunch/target
+=== RUN   TestResourcePreparedRejectsMalformedRecordsAndLaunch/plan
+=== RUN   TestResourcePreparedRejectsMalformedRecordsAndLaunch/process
+=== RUN   TestResourcePreparedRejectsMalformedRecordsAndLaunch/asset
+=== RUN   TestResourcePreparedRejectsMalformedRecordsAndLaunch/storage_key
+=== RUN   TestResourcePreparedRejectsMalformedRecordsAndLaunch/overlap
+--- PASS: TestResourcePreparedRejectsMalformedRecordsAndLaunch (0.01s)
+    --- PASS: TestResourcePreparedRejectsMalformedRecordsAndLaunch/version (0.00s)
+    --- PASS: TestResourcePreparedRejectsMalformedRecordsAndLaunch/source (0.00s)
+    --- PASS: TestResourcePreparedRejectsMalformedRecordsAndLaunch/target (0.00s)
+    --- PASS: TestResourcePreparedRejectsMalformedRecordsAndLaunch/plan (0.00s)
+    --- PASS: TestResourcePreparedRejectsMalformedRecordsAndLaunch/process (0.00s)
+    --- PASS: TestResourcePreparedRejectsMalformedRecordsAndLaunch/asset (0.00s)
+    --- PASS: TestResourcePreparedRejectsMalformedRecordsAndLaunch/storage_key (0.00s)
+    --- PASS: TestResourcePreparedRejectsMalformedRecordsAndLaunch/overlap (0.00s)
+=== RUN   TestResourcePreparedSnapshotsDoNotMutateIdentity
+--- PASS: TestResourcePreparedSnapshotsDoNotMutateIdentity (0.00s)
+=== RUN   TestMetalResourceRestartPreparedPriorBoot
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/absent
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/namespace
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/veth
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/dummy
+=== RUN   TestMetalResourceRestartPreparedPriorBoot/uid
+--- PASS: TestMetalResourceRestartPreparedPriorBoot (0.17s)
+    --- PASS: TestMetalResourceRestartPreparedPriorBoot/absent (0.02s)
+    --- PASS: TestMetalResourceRestartPreparedPriorBoot/namespace (0.03s)
+    --- PASS: TestMetalResourceRestartPreparedPriorBoot/veth (0.05s)
+    --- PASS: TestMetalResourceRestartPreparedPriorBoot/dummy (0.04s)
+    --- PASS: TestMetalResourceRestartPreparedPriorBoot/uid (0.03s)
+=== RUN   TestResourceRestartPreparedRetiresBeforeAllocation
+--- PASS: TestResourceRestartPreparedRetiresBeforeAllocation (0.00s)
+=== RUN   TestResourceRestartPreparedKeepsAmbiguousReservations
+=== RUN   TestResourceRestartPreparedKeepsAmbiguousReservations/same_boot
+=== RUN   TestResourceRestartPreparedKeepsAmbiguousReservations/transfer
+=== RUN   TestResourceRestartPreparedKeepsAmbiguousReservations/guest
+=== RUN   TestResourceRestartPreparedKeepsAmbiguousReservations/no_assets
+=== RUN   TestResourceRestartPreparedKeepsAmbiguousReservations/namespace_intent
+=== RUN   TestResourceRestartPreparedKeepsAmbiguousReservations/namespace_checkpoint
+=== RUN   TestResourceRestartPreparedKeepsAmbiguousReservations/link_intent
+=== RUN   TestResourceRestartPreparedKeepsAmbiguousReservations/mixed_boots
+--- PASS: TestResourceRestartPreparedKeepsAmbiguousReservations (0.01s)
+    --- PASS: TestResourceRestartPreparedKeepsAmbiguousReservations/same_boot (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsAmbiguousReservations/transfer (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsAmbiguousReservations/guest (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsAmbiguousReservations/no_assets (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsAmbiguousReservations/namespace_intent (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsAmbiguousReservations/namespace_checkpoint (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsAmbiguousReservations/link_intent (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsAmbiguousReservations/mixed_boots (0.00s)
+=== RUN   TestResourceRestartPreparedKeepsPhysicalCollisions
+=== RUN   TestResourceRestartPreparedKeepsPhysicalCollisions/host
+=== RUN   TestResourceRestartPreparedKeepsPhysicalCollisions/peer
+=== RUN   TestResourceRestartPreparedKeepsPhysicalCollisions/private_host
+=== RUN   TestResourceRestartPreparedKeepsPhysicalCollisions/private_peer
+=== RUN   TestResourceRestartPreparedKeepsPhysicalCollisions/namespace
+=== RUN   TestResourceRestartPreparedKeepsPhysicalCollisions/dangling_namespace
+=== RUN   TestResourceRestartPreparedKeepsPhysicalCollisions/jail
+=== RUN   TestResourceRestartPreparedKeepsPhysicalCollisions/guest_process
+=== RUN   TestResourceRestartPreparedKeepsPhysicalCollisions/unrelated_uid
+=== RUN   TestResourceRestartPreparedKeepsPhysicalCollisions/partial_uid
+--- PASS: TestResourceRestartPreparedKeepsPhysicalCollisions (0.02s)
+    --- PASS: TestResourceRestartPreparedKeepsPhysicalCollisions/host (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsPhysicalCollisions/peer (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsPhysicalCollisions/private_host (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsPhysicalCollisions/private_peer (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsPhysicalCollisions/namespace (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsPhysicalCollisions/dangling_namespace (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsPhysicalCollisions/jail (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsPhysicalCollisions/guest_process (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsPhysicalCollisions/unrelated_uid (0.00s)
+    --- PASS: TestResourceRestartPreparedKeepsPhysicalCollisions/partial_uid (0.00s)
+=== RUN   TestResourceRestartPreparedFailsClosed
+=== RUN   TestResourceRestartPreparedFailsClosed/boot_absent
+=== RUN   TestResourceRestartPreparedFailsClosed/boot_invalid
+=== RUN   TestResourceRestartPreparedFailsClosed/uid_unreadable
+=== RUN   TestResourceRestartPreparedFailsClosed/uid_missing
+=== RUN   TestResourceRestartPreparedFailsClosed/uid_invalid
+=== RUN   TestResourceRestartPreparedFailsClosed/fsync
+=== RUN   TestResourceRestartPreparedFailsClosed/cancelled
+--- PASS: TestResourceRestartPreparedFailsClosed (0.01s)
+    --- PASS: TestResourceRestartPreparedFailsClosed/boot_absent (0.00s)
+    --- PASS: TestResourceRestartPreparedFailsClosed/boot_invalid (0.00s)
+    --- PASS: TestResourceRestartPreparedFailsClosed/uid_unreadable (0.00s)
+    --- PASS: TestResourceRestartPreparedFailsClosed/uid_missing (0.00s)
+    --- PASS: TestResourceRestartPreparedFailsClosed/uid_invalid (0.00s)
+    --- PASS: TestResourceRestartPreparedFailsClosed/fsync (0.00s)
+    --- PASS: TestResourceRestartPreparedFailsClosed/cancelled (0.00s)
+=== RUN   TestResourceRestartPreparedCancellationAfterRetirement
+--- PASS: TestResourceRestartPreparedCancellationAfterRetirement (0.00s)
+=== RUN   TestResourceRestartPreparedRetirementRechecksRecord
+--- PASS: TestResourceRestartPreparedRetirementRechecksRecord (0.00s)
+=== RUN   TestResourceRestartPreparedUIDFields
+=== RUN   TestResourceRestartPreparedUIDFields/0
+=== RUN   TestResourceRestartPreparedUIDFields/1
+=== RUN   TestResourceRestartPreparedUIDFields/2
+=== RUN   TestResourceRestartPreparedUIDFields/3
+=== RUN   TestResourceRestartPreparedUIDFields/4
+--- PASS: TestResourceRestartPreparedUIDFields (0.00s)
+    --- PASS: TestResourceRestartPreparedUIDFields/0 (0.00s)
+    --- PASS: TestResourceRestartPreparedUIDFields/1 (0.00s)
+    --- PASS: TestResourceRestartPreparedUIDFields/2 (0.00s)
+    --- PASS: TestResourceRestartPreparedUIDFields/3 (0.00s)
+    --- PASS: TestResourceRestartPreparedUIDFields/4 (0.00s)
+=== RUN   TestMetalRestartQuarantineProtectsSurvivingGuest
+=== RUN   TestMetalRestartQuarantineProtectsSurvivingGuest/uuid
+=== RUN   TestMetalRestartQuarantineProtectsSurvivingGuest/builder_id
+=== RUN   TestMetalRestartQuarantineProtectsSurvivingGuest/compact_id
+--- PASS: TestMetalRestartQuarantineProtectsSurvivingGuest (5.16s)
+    --- PASS: TestMetalRestartQuarantineProtectsSurvivingGuest/uuid (1.72s)
+    --- PASS: TestMetalRestartQuarantineProtectsSurvivingGuest/builder_id (1.73s)
+    --- PASS: TestMetalRestartQuarantineProtectsSurvivingGuest/compact_id (1.71s)
+=== RUN   TestRestartQuarantineProtectsSurvivingIdentities
+--- PASS: TestRestartQuarantineProtectsSurvivingIdentities (0.00s)
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/unknown_uid
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/unknown_id
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/unreadable_argv
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/missing_proc
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/missing_sysfs
+=== RUN   TestRestartQuarantineFailsClosedBeforeMutation/cancelled
+--- PASS: TestRestartQuarantineFailsClosedBeforeMutation (0.01s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/unknown_uid (0.00s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/unknown_id (0.00s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/unreadable_argv (0.00s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/missing_proc (0.00s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/missing_sysfs (0.00s)
+    --- PASS: TestRestartQuarantineFailsClosedBeforeMutation/cancelled (0.00s)
+=== RUN   TestRestartQuarantineOnlyAtStartup
+=== RUN   TestRestartQuarantineOnlyAtStartup/lease
+=== RUN   TestRestartQuarantineOnlyAtStartup/prepared_reservation
+=== RUN   TestRestartQuarantineOnlyAtStartup/boot
+=== RUN   TestRestartQuarantineOnlyAtStartup/stop
+=== RUN   TestRestartQuarantineOnlyAtStartup/already_scanned
+--- PASS: TestRestartQuarantineOnlyAtStartup (0.01s)
+    --- PASS: TestRestartQuarantineOnlyAtStartup/lease (0.00s)
+    --- PASS: TestRestartQuarantineOnlyAtStartup/prepared_reservation (0.00s)
+    --- PASS: TestRestartQuarantineOnlyAtStartup/boot (0.00s)
+    --- PASS: TestRestartQuarantineOnlyAtStartup/stop (0.00s)
+    --- PASS: TestRestartQuarantineOnlyAtStartup/already_scanned (0.00s)
+=== RUN   TestRestartQuarantineAllowsUnusedNode
+--- PASS: TestRestartQuarantineAllowsUnusedNode (0.00s)
+=== RUN   TestRestartQuarantineRejectsAmbiguousIdentities
+--- PASS: TestRestartQuarantineRejectsAmbiguousIdentities (0.00s)
+=== RUN   TestRestartQuarantineCoversInternalGuestIDs
+--- PASS: TestRestartQuarantineCoversInternalGuestIDs (0.00s)
+=== RUN   TestPreparedNetworkRetargetCoversEgressPorts
+=== RUN   TestPreparedNetworkRetargetCoversEgressPorts/ports_only
+=== RUN   TestPreparedNetworkRetargetCoversEgressPorts/ports_and_app_port
+=== RUN   TestPreparedNetworkRetargetCoversEgressPorts/app_port_only
+=== RUN   TestPreparedNetworkRetargetCoversEgressPorts/ports_and_rate_differ
+--- PASS: TestPreparedNetworkRetargetCoversEgressPorts (0.00s)
+    --- PASS: TestPreparedNetworkRetargetCoversEgressPorts/ports_only (0.00s)
+    --- PASS: TestPreparedNetworkRetargetCoversEgressPorts/ports_and_app_port (0.00s)
+    --- PASS: TestPreparedNetworkRetargetCoversEgressPorts/app_port_only (0.00s)
+    --- PASS: TestPreparedNetworkRetargetCoversEgressPorts/ports_and_rate_differ (0.00s)
+=== RUN   TestMetalFailureOutboxRetriesConfirmedTeardown
+=== RUN   TestMetalFailureOutboxRetriesConfirmedTeardown/liveness
+2026/10/03 08:54:59 WARN vmmd: failure report pending instance_id=0afe9b69d2399a29e11b4d0a169200cc kind=liveness attempt=1 retry_delay=1.142578125s err="rpc error: code = Internal desc = sched: liveness: destroy instance 0afe9b69d2399a29e11b4d0a169200cc: injected unconfirmed scheduler stop"
+2026/10/03 08:55:01 WARN vmmd: failure report pending instance_id=0afe9b69d2399a29e11b4d0a169200cc kind=liveness attempt=2 retry_delay=2.28515625s err="rpc error: code = Internal desc = sched: liveness: destroy instance 0afe9b69d2399a29e11b4d0a169200cc: injected unconfirmed scheduler stop"
+2026/10/03 08:55:01 INFO vmmd: failure report acknowledged instance_id=0afe9b69d2399a29e11b4d0a169200cc kind=liveness
+=== RUN   TestMetalFailureOutboxRetriesConfirmedTeardown/workload_oom
+2026/10/03 08:55:01 WARN vmmd: failure report pending instance_id=4e015b25b76f4889febd3cb75d164cb1 kind=workload_oom attempt=1 retry_delay=1.068359375s err="rpc error: code = Internal desc = sched: workload_oom: destroy instance 4e015b25b76f4889febd3cb75d164cb1: injected unconfirmed scheduler stop"
+2026/10/03 08:55:03 WARN vmmd: failure report pending instance_id=4e015b25b76f4889febd3cb75d164cb1 kind=workload_oom attempt=2 retry_delay=2.13671875s err="rpc error: code = Internal desc = sched: workload_oom: destroy instance 4e015b25b76f4889febd3cb75d164cb1: injected unconfirmed scheduler stop"
+2026/10/03 08:55:03 INFO vmmd: failure report acknowledged instance_id=4e015b25b76f4889febd3cb75d164cb1 kind=workload_oom
+--- PASS: TestMetalFailureOutboxRetriesConfirmedTeardown (4.83s)
+    --- PASS: TestMetalFailureOutboxRetriesConfirmedTeardown/liveness (2.44s)
+    --- PASS: TestMetalFailureOutboxRetriesConfirmedTeardown/workload_oom (2.39s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/fcvm	15.595s
+=== RUN   TestFailureReportSenderRequiresAffirmativeAck
+2026/10/03 08:55:36 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/03 08:55:36 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/03 08:55:36 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+2026/10/03 08:55:36 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM applied_default=1m0s
+2026/10/03 08:55:36 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM applied_default=1m0s
+2026/10/03 08:55:36 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM applied_default=1m0s
+--- PASS: TestFailureReportSenderRequiresAffirmativeAck (0.02s)
+=== RUN   TestFailureReportWiringPersistsCanceledProducerContexts
+--- PASS: TestFailureReportWiringPersistsCanceledProducerContexts (0.00s)
+=== RUN   TestRecoveredFailureReportRequiresManagerOwnership
+2026/10/03 08:55:36 WARN wire: unary gRPC call without deadline method=/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed applied_default=1m0s
+--- PASS: TestRecoveredFailureReportRequiresManagerOwnership (0.00s)
+=== RUN   TestLoadConfigResourceJournal
+2026/10/03 08:55:36 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+2026/10/03 08:55:36 INFO vmmd: compute node sizing resolved source=derived host_mem_mb=15986 host_cpus=2 mem_mb=15986 tenant_slice_max_mb=7794 tenant_budget_mb=7611 admission_ceiling_mb=6469 non_tenant_reserve_mb=8192 vcpu_slots=16
+--- PASS: TestLoadConfigResourceJournal (0.00s)
+PASS
+ok  	github.com/onebox-faas/faas/cmd/vmmd	1.132s

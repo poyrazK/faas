@@ -75,3 +75,44 @@ func TestParseAppDomainsPath(t *testing.T) {
 		})
 	}
 }
+
+// ADR-520: the dashboard must tell customers where to point the domain, not
+// only how to prove ownership.
+func TestDashboardHandler_AppDomainsShowsDNSRecords(t *testing.T) {
+	t.Setenv("FAAS_CUSTOM_DOMAIN_TARGET", "edge.gregale.dev")
+	t.Setenv("FAAS_CUSTOM_DOMAIN_ADDRESSES", "203.0.113.10")
+	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{
+		AccountID: acct.ID, Slug: "records-app", Type: state.AppTypeApp,
+		Runtime: "node22", Status: state.AppActive,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	if _, err := store.CreateCustomDomain(t.Context(), "shop.example.com", app.ID, "txt-token"); err != nil {
+		t.Fatalf("CreateCustomDomain: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/apps/records-app/domains", nil)
+	req.AddCookie(cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d\nbody = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"DNS records",
+		"_faas-verify.shop.example.com  TXT  txt-token",
+		"shop.example.com  CNAME  edge.gregale.dev",
+		"shop.example.com  A  203.0.113.10",
+		"at a zone apex, instead of the CNAME",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("domains page missing %q\n%s", want, body)
+		}
+	}
+}

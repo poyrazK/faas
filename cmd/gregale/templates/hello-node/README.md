@@ -34,5 +34,6 @@ gregale deploy --name <slug>
 gregale env push --app <slug> -f .env
 ```
 
-The handler's `/` endpoint echoes the secret key names (not values) so
-you can confirm the push landed.
+Confirm the keys landed with `gregale secrets list --app <slug>`. It shows
+key names only and needs your login. The app's public `/` response does not
+list environment variables.

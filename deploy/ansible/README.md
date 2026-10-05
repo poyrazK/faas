@@ -101,6 +101,16 @@ manifest rendering, the node doctor, daemon restart, and readiness checks run
 on every rollout. A changed bootstrap source or failed host probe falls back to
 the full convergence path.
 
+The control plane follows the same pattern from CD (ADR-580).
+`cd-controlplane` runs `gregalectl deploy converge-control-plane`, which wraps
+`control_plane_converge.yml` around the control-plane play, before it activates
+a release. Its fingerprint also covers `ansible.cfg`, the manifest-rendered
+inventory and the operator variables from the `CP_ANSIBLE_VARS_B64` environment
+secret, so a variable-only change converges too. The fingerprint is recorded in
+`/var/lib/faas/bootstrap/control-plane-bootstrap-contract.sha256`; delete it to
+force the next rollout to converge. Keep `CP_ANSIBLE_VARS_B64` in step with any
+variables you pass to a manual `make bootstrap-control-plane`.
+
 ## Configuration contract (ADR-143)
 
 - Systemd units are generated from `pkg/daemonunitspec` into every role's

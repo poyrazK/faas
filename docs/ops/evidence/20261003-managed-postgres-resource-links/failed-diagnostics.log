@@ -1,0 +1,16 @@
+Result=oom-kill
+ExecMainStatus=15
+ActiveState=failed
+SubState=failed
+Oct 02 22:27:41 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: Started gregale-managed-pg-resource-links-f8b10c6a.service - /usr/bin/bash -c "exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/runner.sh > /var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/run.log 2>&1".
+Oct 02 22:36:05 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-resource-links-f8b10c6a.service: A process of this unit has been killed by the OOM killer.
+Oct 02 22:36:06 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-resource-links-f8b10c6a.service: Failed with result 'oom-kill'.
+Oct 02 22:36:06 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-resource-links-f8b10c6a.service: Consumed 7min 59.973s CPU time, 3.0G memory peak, 0B memory swap peak.
+6.2G	/var/tmp/faas-metal-smoke-managed-pg-resource-links-f8b10c6a/go-build
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root        48G   44G  4.1G  92% /
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth

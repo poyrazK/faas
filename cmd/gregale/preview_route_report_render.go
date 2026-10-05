@@ -26,10 +26,15 @@ func renderPreviewRouteReport(w io.Writer, report previewRouteReport, markdown b
 		}
 		_, _ = fmt.Fprintln(w)
 	}
+	_, _ = fmt.Fprintf(w, "Policy drift: %s", previewReportText(report.PolicyDrift.Status))
+	if report.PolicyDrift.Reason != "" {
+		_, _ = fmt.Fprintf(w, " (%s)", previewReportText(report.PolicyDrift.Reason))
+	}
+	_, _ = fmt.Fprintf(w, "; changed routes: %d; unknown routes: %d\n", report.PolicyDrift.ChangedRoutes, report.PolicyDrift.UnknownRoutes)
 	_, _ = fmt.Fprintln(w)
 	if markdown {
-		_, _ = fmt.Fprintln(w, "| Route | Contract | Current policy kinds | Matching test profiles | Observed p95 delta |")
-		_, _ = fmt.Fprintln(w, "|---|---|---|---|---|")
+		_, _ = fmt.Fprintln(w, "| Route | Contract | Current policy kinds | Policy drift | Matching test profiles | Observed p95 delta |")
+		_, _ = fmt.Fprintln(w, "|---|---|---|---|---|---|")
 	}
 	for _, route := range report.Routes {
 		renderPreviewReportRoute(w, route, markdown)
@@ -48,6 +53,7 @@ func renderPreviewRouteReport(w io.Writer, report previewRouteReport, markdown b
 		for _, action := range route.NextActions {
 			_, _ = fmt.Fprintf(w, "- %s: %s\n", previewReportText(previewReportRouteKey(route.Method, route.Path)), previewReportText(action))
 		}
+		renderPreviewRoutePolicyDrift(w, route, markdown)
 	}
 	_, _ = fmt.Fprintln(w)
 	for _, note := range report.Notes {
@@ -55,6 +61,7 @@ func renderPreviewRouteReport(w io.Writer, report previewRouteReport, markdown b
 	}
 	renderPreviewRequestFindings(w, report, markdown)
 	renderPreviewSecurityFindings(w, report, markdown)
+	renderPreviewCustomers(w, report, markdown)
 	if report.SourceImpact == nil && len(report.ReviewPriorities) > 0 {
 		if markdown {
 			_, _ = fmt.Fprint(w, "\n### Route review priorities\n\n")
@@ -101,7 +108,14 @@ func renderPreviewReportRoute(w io.Writer, route previewReportRoute, markdown bo
 			route.BaselineTraffic.P95MS, route.CandidateTraffic.P95MS, *route.P95ChangeMS,
 			route.BaselineTraffic.Requests, route.CandidateTraffic.Requests)
 	}
-	fields := []string{previewReportRouteKey(route.Method, route.Path), contract, policy, tests, performance}
+	policyDrift := "unknown"
+	if route.PolicyDrift != nil {
+		policyDrift = route.PolicyDrift.Status
+		if route.PolicyDrift.Status == "changed" {
+			policyDrift = fmt.Sprintf("%d rule changes", len(route.PolicyDrift.Changes))
+		}
+	}
+	fields := []string{previewReportRouteKey(route.Method, route.Path), contract, policy, policyDrift, tests, performance}
 	for i, field := range fields {
 		fields[i] = previewReportText(field)
 		if markdown {
@@ -111,8 +125,36 @@ func renderPreviewReportRoute(w io.Writer, route previewReportRoute, markdown bo
 	if markdown {
 		_, _ = fmt.Fprintf(w, "| %s |\n", strings.Join(fields, " | "))
 	} else {
-		_, _ = fmt.Fprintf(w, "%s: %s\n  policy: %s\n  tests: %s\n  performance: %s\n", fields[0], fields[1], fields[2], fields[3], fields[4])
+		_, _ = fmt.Fprintf(w, "%s: %s\n  policy: %s\n  policy drift: %s\n  tests: %s\n  performance: %s\n", fields[0], fields[1], fields[2], fields[3], fields[4], fields[5])
 	}
+}
+
+func renderPreviewRoutePolicyDrift(w io.Writer, route previewReportRoute, markdown bool) {
+	if route.PolicyDrift == nil || len(route.PolicyDrift.Changes) == 0 {
+		return
+	}
+	label := previewReportRouteKey(route.Method, route.Path)
+	for _, change := range route.PolicyDrift.Changes {
+		before, after := previewPolicyRuleSourceLabel(change.Before), previewPolicyRuleSourceLabel(change.After)
+		fields := strings.Join(change.ChangedFields, ", ")
+		if fields == "" {
+			fields = "rule configuration"
+		}
+		line := fmt.Sprintf("%s: route rule %s; before %s; after %s; changed %s", label, change.Change, before, after, fields)
+		if markdown {
+			_, _ = fmt.Fprintf(w, "- %s\n", mdCell(previewReportText(line)))
+		} else {
+			_, _ = fmt.Fprintf(w, "- %s\n", previewReportText(line))
+		}
+	}
+}
+
+func previewPolicyRuleSourceLabel(rule *previewPolicyRuleSource) string {
+	if rule == nil {
+		return "none"
+	}
+	return fmt.Sprintf("%s %s (priority %d, path %s, id %s)", rule.Kind,
+		map[bool]string{true: "enabled", false: "disabled"}[rule.Enabled], rule.Priority, rule.MatchPath, rule.ID)
 }
 
 func previewReportText(value string) string {

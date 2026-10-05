@@ -1,0 +1,4 @@
+Oct 03 09:59:21 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: Started gregale-managed-pg-prepared-boot-d4841725-retry.service - /usr/bin/bash -c "exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-prepared-boot-d4841725/runner.sh > /var/tmp/faas-metal-smoke-managed-pg-prepared-boot-d4841725/run.log 2>&1".
+Oct 03 09:59:59 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-prepared-boot-d4841725-retry.service: Main process exited, code=exited, status=1/FAILURE
+Oct 03 09:59:59 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-prepared-boot-d4841725-retry.service: Failed with result 'exit-code'.
+Oct 03 09:59:59 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-prepared-boot-d4841725-retry.service: Consumed 23.769s CPU time, 1.5M memory peak, 0B memory swap peak.

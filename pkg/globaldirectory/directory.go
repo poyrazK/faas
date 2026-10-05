@@ -1,5 +1,5 @@
 // Package globaldirectory owns the durable global-to-regional app directory
-// contract (ADR-476). Only apid mutates intent; ADR-482 retains scoped ciphertext.
+// contract (ADR-602). Only apid mutates intent; ADR-608 retains scoped ciphertext.
 package globaldirectory
 
 import (
@@ -45,7 +45,7 @@ type Binding struct {
 	Region            string
 	CellGeneration    int64
 	RegionalAccountID string
-	RegionalOrgID     string `json:",omitempty"` // Preserve ADR-482 personal ciphertext spelling.
+	RegionalOrgID     string `json:",omitempty"` // Preserve ADR-608 personal ciphertext spelling.
 	RegionalAppID     string
 	RegionalAppSlug   string
 }

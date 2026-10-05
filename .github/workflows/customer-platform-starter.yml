@@ -42,6 +42,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
+      CUSTOMER_MIGRATION_DATABASE_URL: postgres://customer_migration:customer_migration_test@127.0.0.1:5432/customer_platform?sslmode=disable
       CUSTOMER_DATABASE_URL: postgres://customer_app:customer_test@127.0.0.1:5432/customer_platform?sslmode=disable
     steps:
       - uses: actions/checkout@v7
@@ -51,10 +52,15 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - name: Create a database role subject to row security
+      - name: Create separate schema-owner and runtime roles
         run: |
           docker exec "${{ job.services.postgres.id }}" psql -U faas -d faas -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE customer_migration LOGIN PASSWORD 'customer_migration_test' NOSUPERUSER NOBYPASSRLS;" \
             -c "CREATE ROLE customer_app LOGIN PASSWORD 'customer_test' NOSUPERUSER NOBYPASSRLS;" \
-            -c "CREATE DATABASE customer_platform OWNER customer_app;"
+            -c "CREATE DATABASE customer_platform OWNER customer_migration;"
+          docker exec "${{ job.services.postgres.id }}" psql -U faas -d customer_platform -v ON_ERROR_STOP=1 \
+            -c "REVOKE CREATE ON SCHEMA public FROM PUBLIC;" \
+            -c "GRANT USAGE ON SCHEMA public TO customer_app;" \
+            -c "ALTER DEFAULT PRIVILEGES FOR ROLE customer_migration IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO customer_app;"
       - name: Test two-customer lifecycle and PostgreSQL isolation
         run: make test-customer-platform

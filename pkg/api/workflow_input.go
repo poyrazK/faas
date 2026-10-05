@@ -87,7 +87,23 @@ func workflowInputReferences(template json.RawMessage, stepNames []string) ([]wo
 // value reference retains its JSON type; references interpolated into a
 // longer string must resolve to a scalar.
 func ResolveWorkflowStepInput(template, runInput json.RawMessage, dependencyOutputs map[string]json.RawMessage, failureContext json.RawMessage) (json.RawMessage, error) {
+	return resolveWorkflowStepInput(template, runInput, dependencyOutputs, failureContext, 0)
+}
+
+// ResolveWorkflowStepInputBounded uses the runtime template language and checks
+// expansion before JSON serialization or oversized string allocation.
+func ResolveWorkflowStepInputBounded(template, runInput json.RawMessage, dependencyOutputs map[string]json.RawMessage, failureContext json.RawMessage, maxBytes int64) (json.RawMessage, error) {
+	if maxBytes <= 0 {
+		return nil, ErrWorkflowInputLimit
+	}
+	return resolveWorkflowStepInput(template, runInput, dependencyOutputs, failureContext, maxBytes)
+}
+
+func resolveWorkflowStepInput(template, runInput json.RawMessage, dependencyOutputs map[string]json.RawMessage, failureContext json.RawMessage, maxBytes int64) (json.RawMessage, error) {
 	if len(template) == 0 {
+		if maxBytes > 0 && int64(len(runInput)) > maxBytes {
+			return nil, ErrWorkflowInputLimit
+		}
 		return cloneRawJSON(runInput), nil
 	}
 	if !json.Valid(template) {
@@ -157,12 +173,39 @@ func ResolveWorkflowStepInput(template, runInput json.RawMessage, dependencyOutp
 		return workflowValueAtPath(root, reference.Path)
 	}
 
+	remaining := maxBytes
+	consume := func(value any) error {
+		if maxBytes == 0 {
+			return nil
+		}
+		return consumeWorkflowJSONSize(value, &remaining)
+	}
+	reserve := func(n int64) error {
+		if maxBytes == 0 {
+			return nil
+		}
+		remaining -= n
+		if remaining < 0 {
+			return ErrWorkflowInputLimit
+		}
+		return nil
+	}
 	var resolveValue func(any) (any, error)
 	resolveValue = func(current any) (any, error) {
 		switch item := current.(type) {
 		case string:
-			return resolveWorkflowInputString(item, stepNames, resolveReference)
+			if maxBytes > 0 && remaining <= 0 {
+				return nil, ErrWorkflowInputLimit
+			}
+			resolved, err := resolveWorkflowInputString(item, stepNames, resolveReference, remaining)
+			if err != nil {
+				return nil, err
+			}
+			return resolved, consume(resolved)
 		case []any:
+			if err := reserve(2 + int64(max(0, len(item)-1))); err != nil {
+				return nil, err
+			}
 			resolved := make([]any, len(item))
 			for i, child := range item {
 				value, err := resolveValue(child)
@@ -173,8 +216,17 @@ func ResolveWorkflowStepInput(template, runInput json.RawMessage, dependencyOutp
 			}
 			return resolved, nil
 		case map[string]any:
+			if err := reserve(2 + int64(max(0, len(item)-1))); err != nil {
+				return nil, err
+			}
 			resolved := make(map[string]any, len(item))
 			for key, child := range item {
+				if err := consume(key); err != nil {
+					return nil, err
+				}
+				if err := reserve(1); err != nil {
+					return nil, err
+				}
 				if strings.Contains(key, "{{") || strings.Contains(key, "}}") {
 					return nil, errors.New("templates are only supported in JSON values, not object keys")
 				}
@@ -186,12 +238,17 @@ func ResolveWorkflowStepInput(template, runInput json.RawMessage, dependencyOutp
 			}
 			return resolved, nil
 		default:
-			return current, nil
+			return current, consume(current)
 		}
 	}
 	resolved, err := resolveValue(value)
 	if err != nil {
 		return nil, err
+	}
+	if maxBytes > 0 {
+		if err := boundedWorkflowJSONSize(resolved, maxBytes); err != nil {
+			return nil, err
+		}
 	}
 	encoded, err := json.Marshal(resolved)
 	if err != nil {
@@ -285,7 +342,7 @@ func workflowInputPath(value string) ([]string, error) {
 	return parts, nil
 }
 
-func resolveWorkflowInputString(value string, stepNames []string, resolve func(workflowInputReference) (any, error)) (any, error) {
+func resolveWorkflowInputString(value string, stepNames []string, resolve func(workflowInputReference) (any, error), maxBytes int64) (any, error) {
 	references, err := workflowStringReferences(value, stepNames)
 	if err != nil {
 		return nil, err
@@ -299,15 +356,26 @@ func resolveWorkflowInputString(value string, stepNames []string, resolve func(w
 		return resolve(references[0])
 	}
 	var result strings.Builder
+	writePart := func(part string) error {
+		if maxBytes > 0 && int64(len(part)) > maxBytes-int64(result.Len()) {
+			return ErrWorkflowInputLimit
+		}
+		result.WriteString(part)
+		return nil
+	}
 	position := 0
 	for {
 		open := strings.Index(value[position:], "{{")
 		if open < 0 {
-			result.WriteString(value[position:])
+			if err := writePart(value[position:]); err != nil {
+				return nil, err
+			}
 			break
 		}
 		open += position
-		result.WriteString(value[position:open])
+		if err := writePart(value[position:open]); err != nil {
+			return nil, err
+		}
 		end := strings.Index(value[open+2:], "}}") + open + 2
 		resolved, err := resolve(references[0])
 		if err != nil {
@@ -317,11 +385,15 @@ func resolveWorkflowInputString(value string, stepNames []string, resolve func(w
 		if err != nil {
 			return nil, err
 		}
-		result.WriteString(text)
+		if err := writePart(text); err != nil {
+			return nil, err
+		}
 		references = references[1:]
 		position = end + 2
 		if len(references) == 0 {
-			result.WriteString(value[position:])
+			if err := writePart(value[position:]); err != nil {
+				return nil, err
+			}
 			break
 		}
 	}

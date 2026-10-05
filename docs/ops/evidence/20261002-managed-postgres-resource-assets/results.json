@@ -1,0 +1,29 @@
+{
+  "snapshot": "439c12019a36256135624d3fba68d0cf48776cfd",
+  "native_acceptance": false,
+  "top_level_passed": 31,
+  "all_passed": 78,
+  "skipped": 0,
+  "failed": 0,
+  "leak_checks": 3,
+  "results_archive_sha256": "70bc000a7765a3bfb447411ef29b4ae6ff08abcebd659b2ed8e8ed27e3ce06c1",
+  "exit_codes": {
+    "portable_linux": 0,
+    "metal": 0,
+    "linux_lint": 0
+  },
+  "new_tests": [
+    "--- PASS: TestMetalResourceAssetsBindLifecycle (0.02s)",
+    "--- PASS: TestMetalResourceAssetsRefuseForeignMountAndTarget (0.01s)",
+    "--- PASS: TestMetalResourceAssetsFailedBindCheckpoint (0.03s)",
+    "--- PASS: TestMetalResourceJournalSurvivingGuest (2.09s)"
+  ],
+  "metal_packages": [
+    "ok  \tgithub.com/onebox-faas/faas/pkg/fcvm\t15.966s",
+    "ok  \tgithub.com/onebox-faas/faas/cmd/vmmd\t1.165s"
+  ],
+  "linux_packages": [
+    "ok  \tgithub.com/onebox-faas/faas/pkg/fcvm\t1.190s",
+    "ok  \tgithub.com/onebox-faas/faas/cmd/vmmd\t1.307s"
+  ]
+}

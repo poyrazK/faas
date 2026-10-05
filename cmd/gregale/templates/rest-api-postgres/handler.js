@@ -6,10 +6,8 @@
 // contract (UX spec §8): if `DATABASE_URL` is missing, the handler
 // exits at startup with an actionable hint.
 //
-// The schema auto-creates a tiny `notes` table on first boot so the
-// customer can `curl` it without first running migrations. In a
-// production app, schema migrations belong in a dedicated tool
-// (Drizzle, Prisma, atlas, goose) — not on every wake.
+// The release command creates the schema using MIGRATION_DATABASE_URL.
+// Serving instances receive only the restricted DATABASE_URL binding.
 //
 // Required env vars (set via `gregale secrets set --app <slug> ...`):
 //
@@ -58,19 +56,6 @@ const app = express();
 const port = process.env.PORT || 8080;
 app.use(express.json({ limit: "64kb" }));
 
-// Schema bootstrap. Runs on every cold boot; the IF NOT EXISTS makes
-// it a no-op after the first time. For a real app, gate this behind
-// a flag or move to a migration runner.
-async function bootstrapSchema() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS notes (
-      id SERIAL PRIMARY KEY,
-      body TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-  `);
-}
-
 app.get("/notes", async (_req, res) => {
   try {
     const { rows } = await pool.query("SELECT id, body, created_at FROM notes ORDER BY id DESC LIMIT 50");
@@ -110,13 +95,6 @@ app.get("/healthz", async (_req, res) => {
   }
 });
 
-bootstrapSchema()
-  .then(() => {
-    app.listen(port, () => {
-      console.log(`rest-api-postgres listening on :${port}`);
-    });
-  })
-  .catch((err) => {
-    console.error("schema bootstrap failed:", err.message);
-    process.exit(1);
-  });
+app.listen(port, () => {
+  console.log(`rest-api-postgres listening on :${port}`);
+});

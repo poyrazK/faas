@@ -1,5 +1,6 @@
 //go:build metal
 
+// adr: 138
 // Lifecycle failure taxonomy metal tests (M-2 commit 11, ADR-138).
 //
 // Each test boots a real firecracker guest whose /init is shaped to
@@ -95,7 +96,7 @@ func buildLifecycleExt4(dst, inittab string) error {
 	if err := bbCopyFile(bb, filepath.Join(work, "bin/busybox")); err != nil {
 		return err
 	}
-	for _, name := range []string{"bin/sh", "bin/ash", "init", "sbin/init"} {
+	for _, name := range []string{"bin/sh", "bin/ash", "bin/true", "init", "sbin/init"} {
 		if err := os.Symlink("/bin/busybox", filepath.Join(work, name)); err != nil {
 			return err
 		}

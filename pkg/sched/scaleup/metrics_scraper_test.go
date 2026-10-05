@@ -77,6 +77,45 @@ gateway_requests_total{app="a2"} 7
 	}
 }
 
+// TestHTTPPromScraper_ScrapeLoad pins the scale-in input: one scrape yields
+// both the per-app completion counts and the per-app in-flight requests, and
+// neither family leaks into the other.
+func TestHTTPPromScraper_ScrapeLoad(t *testing.T) {
+	body := `# TYPE gateway_requests_total counter
+gateway_requests_total{app="a1",code="200",plan="scale"} 100
+gateway_requests_total{app="a1",code="504",plan="scale"} 4
+# TYPE gateway_app_inflight_requests gauge
+gateway_app_inflight_requests{app="a1"} 160
+gateway_app_inflight_requests{app="a2"} 0
+`
+	s := &HTTPPromScraper{
+		URL:    "http://localhost/metrics/gateway-requests",
+		Client: &fakeHTTPFetcher{body: body},
+	}
+	counts, inflight, err := s.ScrapeLoad(context.Background())
+	if err != nil {
+		t.Fatalf("ScrapeLoad: %v", err)
+	}
+	if len(counts) != 1 || counts["a1"] != 104 {
+		t.Errorf("counts = %v, want {a1: 104}", counts)
+	}
+	if len(inflight) != 2 || inflight["a1"] != 160 || inflight["a2"] != 0 {
+		t.Errorf("inflight = %v, want {a1: 160, a2: 0}", inflight)
+	}
+	scrapeOnly, err := s.Scrape(context.Background())
+	if err != nil {
+		t.Fatalf("Scrape: %v", err)
+	}
+	if len(scrapeOnly) != 1 || scrapeOnly["a1"] != 104 {
+		t.Errorf("Scrape = %v, want {a1: 104} without in-flight samples", scrapeOnly)
+	}
+
+	failing := &HTTPPromScraper{URL: "http://localhost/metrics", Client: &fakeHTTPFetcher{err: io.ErrUnexpectedEOF}}
+	if counts, inflight, err := failing.ScrapeLoad(context.Background()); err == nil || counts == nil || inflight == nil {
+		t.Errorf("failing ScrapeLoad = (%v, %v, %v), want non-nil empty maps and an error", counts, inflight, err)
+	}
+}
+
 // TestHTTPPromScraper_NilSafe verifies the nil-receiver contract.
 func TestHTTPPromScraper_NilSafe(t *testing.T) {
 	var s *HTTPPromScraper

@@ -1,0 +1,45 @@
+{
+  "default_region": "us-east-1",
+  "public_endpoint": "https://s3.gregale.dev",
+  "public_region": "us-east-1",
+  "defaults": {
+    "us-east-1": "managed-virginia-v1"
+  },
+  "max_buckets_per_app": 10,
+  "max_upload_bytes": 5497558138880,
+  "max_single_put_bytes": 536870912,
+  "max_part_bytes": 1073741824,
+  "transfer": {
+    "profile": "direct",
+    "timeout_seconds": 7200,
+    "max_concurrent_uploads": 4,
+    "max_spool_bytes": 2147483648,
+    "min_spool_free_bytes": 1073741824
+  },
+  "accounting": null,
+  "backends": [
+    {
+      "id": "managed-virginia-v1",
+      "driver": "s3",
+      "region": "us-east-1",
+      "namespace": "replace-with-your-dedicated-provider-project-id",
+      "endpoint": "https://s3.us-east-va.io.cloud.ovh.us",
+      "s3_region": "us-east-va",
+      "path_style": true,
+      "access_key_env": "GREGALE_OBJECT_STORAGE_ACCESS_KEY",
+      "secret_key_env": "GREGALE_OBJECT_STORAGE_SECRET_KEY",
+      "usage_reports_path": "/var/spool/faas/s3-gatewayd/managed-virginia-v1-usage.json",
+      "usage": {
+        "driver": "ovh",
+        "application_key_env": "GREGALE_OVH_APPLICATION_KEY",
+        "application_secret_env": "GREGALE_OVH_APPLICATION_SECRET",
+        "consumer_key_env": "GREGALE_OVH_CONSUMER_KEY",
+        "request_log_bucket": "replace-with-dedicated-ovh-access-log-bucket",
+        "request_log_prefix": "gregale/"
+      },
+      "allowed_origins": [
+        "https://gregale.dev"
+      ]
+    }
+  ]
+}

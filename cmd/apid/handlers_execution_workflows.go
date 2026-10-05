@@ -35,18 +35,35 @@ func (s *server) getExecutionWorkflow(w http.ResponseWriter, r *http.Request, ac
 		principalID = access.principal
 	}
 	summary, err := workflowStore.ExecutionWorkflowSummary(r.Context(), acct.ID, workflowID, principalID)
-	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			s.notFound(w, "no such workflow")
+	var managed []state.ExecutionWorkflowJob
+	if managedStore, ok := s.store.(state.ExecutionWorkflowJobStore); ok {
+		managedRows, managedErr := managedStore.ListExecutionWorkflowJobsByKey(r.Context(), acct.ID, workflowID, principalID)
+		if managedErr == nil {
+			managed = managedRows
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("could not read managed execution workflow status"))
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not read execution workflow"))
-		return
 	}
-	writeJSON(w, http.StatusOK, api.ExecutionWorkflowResponse{
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			if len(managed) == 0 {
+				s.notFound(w, "no such workflow")
+				return
+			}
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("could not read execution workflow"))
+			return
+		}
+	}
+	response := api.ExecutionWorkflowResponse{
 		WorkflowID:   workflowID,
 		RunCount:     summary.RunCount,
 		StatusCounts: summary.StatusCounts,
 		Usage:        summary.Usage,
-	})
+	}
+	for _, managedRow := range managed {
+		response.Managed = append(response.Managed, managedExecutionWorkflowResponse(managedRow))
+	}
+	writeJSON(w, http.StatusOK, response)
 }

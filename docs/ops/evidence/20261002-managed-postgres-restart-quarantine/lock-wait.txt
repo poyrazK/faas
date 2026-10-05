@@ -1,0 +1,30 @@
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+ 445559 448878 448879 448896 452498 452504 453095 464395 464408                     USER        PID ACCESS COMMAND
+/run/lock/faas-builder-acceptance.lock:
+                     root      F.... bash
+                     root      F.... make
+                     root      F.... tee
+                     root      F.... sh
+                     root      F.... bash
+                     root      F.... flock
+                     root      F.... go
+                     root      F.... e2e.test
+                     root      F.... go
+COMMAND     PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
+bash     445559 root    9w   REG   0,29        0   13 /run/lock/faas-builder-acceptance.lock
+make     448878 root    9w   REG   0,29        0   13 /run/lock/faas-builder-acceptance.lock
+tee      448879 root    9w   REG   0,29        0   13 /run/lock/faas-builder-acceptance.lock
+sh       448896 root    9w   REG   0,29        0   13 /run/lock/faas-builder-acceptance.lock
+bash     452498 root    9w   REG   0,29        0   13 /run/lock/faas-builder-acceptance.lock
+flock    452504 root    9w   REG   0,29        0   13 /run/lock/faas-builder-acceptance.lock
+go       453095 root    9w   REG   0,29        0   13 /run/lock/faas-builder-acceptance.lock
+e2e.test 464395 root    9w   REG   0,29        0   13 /run/lock/faas-builder-acceptance.lock
+go       464408 root    9w   REG   0,29        0   13 /run/lock/faas-builder-acceptance.lock
+Result=success
+ActiveState=active
+SubState=running

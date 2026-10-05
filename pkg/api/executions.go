@@ -626,10 +626,11 @@ type ExecutionWorkflowUsage struct {
 // ExecutionWorkflowResponse provides lifecycle and usage totals for runs
 // sharing one workflow id and visible to the authenticated Runs principal.
 type ExecutionWorkflowResponse struct {
-	WorkflowID   string                        `json:"workflow_id"`
-	RunCount     int64                         `json:"run_count"`
-	StatusCounts ExecutionWorkflowStatusCounts `json:"status_counts"`
-	Usage        ExecutionWorkflowUsage        `json:"usage"`
+	WorkflowID   string                             `json:"workflow_id"`
+	RunCount     int64                              `json:"run_count"`
+	StatusCounts ExecutionWorkflowStatusCounts      `json:"status_counts"`
+	Usage        ExecutionWorkflowUsage             `json:"usage"`
+	Managed      []ManagedExecutionWorkflowResponse `json:"managed,omitempty"`
 }
 
 // ExecutionListResponse is the page returned by GET /v1/executions. Narrow

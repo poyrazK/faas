@@ -12,7 +12,11 @@ import (
 // Preserve ordering across namespace switches and non-ip commands. ip's batch
 // mode stops at the first error (no -force); callers retain normal rollback.
 func (m *Manager) runIPSetupCommands(ctx context.Context, cmds [][]string) error {
-	runner, ok := m.run.(InputRunner)
+	hostRunner, err := m.networkCommandRunner(ctx)
+	if err != nil {
+		return err
+	}
+	runner, ok := hostRunner.(InputRunner)
 	if !ok {
 		return m.runCommands(ctx, cmds)
 	}

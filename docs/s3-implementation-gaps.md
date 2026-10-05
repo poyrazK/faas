@@ -1,0 +1,126 @@
+# Remaining S3 implementation work
+
+This tracks the scope requested on 2026-10-02. End to end means customer API,
+provider adapter, persisted state/recovery, quota and usage accounting, clients,
+and local integration tests. A real provider environment is not required for
+this implementation task. Local protocol tests do not establish production
+provider qualification.
+
+## Scoped pre-1.0 release
+
+The current implementation can be reviewed as one release candidate without
+completing every row below. The supported S3 contract includes bounded uploads,
+tracked write/deletion receipts, multipart and owned same-placement copies,
+versioning/tagging, supported lifecycle rules, owned notifications and encryption.
+Unsupported operations continue to return explicit errors; uncertain mutations
+retain their fences and capacity instead of assuming success or refunding quota.
+
+Keep new Object Lock enrollment disabled on release backends by omitting
+`object_lock` or setting `object_lock.enabled:false`. Accepted recovery continues
+regardless of enrollment. Per-version protection management and coordinated
+per-version customer protection management and protected lifecycle deletion
+remain outside the release contract. ADR-571 adds conservative owned
+bucket/account cleanup for retained versions and observed native protection.
+Replication, SSE-C, cross-placement transfers and external notification targets
+remain follow-up work. Scoped local acceptance does not replace the normal
+repository CI, approved main-branch commit and signed release bundle gates.
+
+## Post-merge hardening: 2026-10-04
+
+The first audit of merged PR #4161 focuses on native listing validation,
+multipart initiation and accounting publication. It found and fixes these
+implementation defects without expanding the supported feature contract:
+
+| Finding | Consequence | Hardening |
+| --- | --- | --- |
+| Missing `IsTruncated` was treated as false in object, part and upload listings | Incomplete responses could publish zero usage, prove an abort or authorize another native initiation | Require explicit completeness, bounded entries and valid pagination before returning a page or creating an upload. Unknown cleanup preserves reservations. |
+| Unencrypted initiation inherited two SDK attempts | A lost acknowledgment could create two native uploads and make exact-key recovery ambiguous | Dispatch one create attempt for every encryption profile. Reconstructed adapters discover the retained upload before creating anything. |
+| Multipart discovery did not detect repeated markers; part pages could skip or duplicate entries | Discovery consumed all 100 page requests; listings could omit parts | Reject empty truncated pages, repeated identities, invalid ordering and continuation markers that do not match the returned boundary. |
+| Routine usage inventory validated less than capacity reconciliation | Duplicate keys across pages or grouped/partial results could publish incorrect usage | Use the same complete inventory scanner for both paths; reject unexpected grouped keys before publication. |
+
+Native object/upload listings request URL-encoded keys and decode only those
+keys. Continuation tokens and upload IDs remain opaque. Initiation still has
+the existing 100-page bound; native upload IDs have the persisted 4096-byte
+bound. These limits now live in `pkg/api/limits.go`. The validation follows
+the [ListObjectsV2](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html),
+[ListParts](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html) and
+[ListMultipartUploads](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html)
+protocols for general-purpose buckets.
+
+Regression coverage includes malformed native HTTP responses, complete and
+ambiguous paginated discovery, encoded keys and opaque tokens, one uncertain
+initiation followed by adapter reconstruction, accounting publication failures,
+and PostgreSQL lifecycle abort recovery with disabled ingress. An empty
+incomplete listing retains both the cleanup fence and part-byte reservation;
+subsequent verified cleanup releases the reservation. No live provider tests
+are part of this acceptance.
+
+The follow-up audit covers those remaining hardening priorities:
+
+| Finding | Hardening | Remaining work |
+| --- | --- | --- |
+| Native metadata bodies were decoded without a wire-byte budget | Bound every native S3 metadata/error body to 32 MiB before SDK decoding. This admits maximum-size escaped upload listings. Close rejected upstream bodies; successful object GETs retain streaming and HEAD lengths remain object sizes. Oversized mutation acknowledgments remain uncertain, including any observed native-version accounting fence. | Provider qualification remains separate from local acceptance. |
+| Current unencrypted write proof accepted ambiguous headers | Apply exact ETag/receipt header and native version/delete-marker validation to every encryption profile, write acknowledgment, including brokered gateway PUTs. Existing multipart current-object version validation is preserved. | ADR-571 gives pending receipts exclusive key custody across Gregale admissions until durable settlement. Legacy capabilities issued earlier and out-of-band native mutations remain unqualified; absence/time still cannot settle unknown writes. |
+| Developer cleanup removed data before claiming the bucket | Claim before provider contact, block pending write admissions atomically in memory/PostgreSQL, and preserve this guard for older SQL writers with an append-only migration. Recovery recognizes developer buckets after restart and persists failed cleanup retries. | Legacy untracked signed writers cannot be retroactively fenced at their provider. |
+| Current-object cleanup could create markers in versioned buckets while leaving retained data | ADR-571 drains accepted work, seals owned buckets and removes bounded batches of exact retained versions, nulls and markers. Data-version retention/legal holds defer cleanup without bypass. Expired-account grace coordinates these journals before metadata cascades. | Legacy native capabilities and out-of-band mutations remain provider qualification constraints. Per-version customer protection management and write protection snapshots remain separate work. |
+
+These changes preserve current-object proof under Gregale-controlled mutations
+and implement protected recursive deletion through the durable bucket worker. Object Lock enrollment stays
+disabled until the remaining per-version customer protection paths are qualified. Feature
+parity work such as replication, SSE-C and cross-placement transfers remains
+separately scoped below.
+
+| Area | Required behavior | Status / acceptance evidence |
+| --- | --- | --- |
+| Write recovery | Retain per-attempt completion proof through overwrite/delete; settle uncertain attempts without unsafe time-based refunds; cover direct writes, GCS and cross-bucket copies | Partial (ADR-539). Tracked S3 PUT/copy recovery can find exact proof in retained native versions using bounded scans and durable cursors; retained-version observations select durable native version inventories (ADR-540) and block unsafe current-object reclamation. ADR-562 adds owned same-placement cross-bucket copy recovery from destination proof, including reconstruction after grant revocation without repeating the copy or source read. Automatic proof retention through unversioned overwrite/deletion, direct writes and GCS remain open. |
+| Lifecycle | Bucket rule management, prefix/tag filters, expiration, abandoned multipart cleanup, durable bounded worker, quota reconciliation and restart/race tests | Implemented supported lifecycle contract (ADR-550 Accepted). Validated rules, eligibility, durable memory/PostgreSQL scans, expiration dispatch and the bounded discovery worker are implemented. Actions bind private immutable discovery identities to deletion receipts, establish the mutation fence before final history/tag checks, and validate scan leases and revisions atomically at dispatch. Discovery persists only keys, limits each step to 32 new actions, replays terminal receipts and pauses behind unsettled deletions. Due scans sort by effective retry time so failing providers yield to waiting policies. Local S3 HTTP tests with both stores cover current, retained-version and sole-marker expiration, replacement/tag changes, history/request bounds, lost acknowledgments, cancellation, reconstruction, competing workers and action-limit retries. PostgreSQL daemon tests cover the hot flag, missing placement backoff, completion and provider metrics. State/migration guards preserve ownership, immutable identity and rollback safety. Acknowledgments preserve baselines; marker capacity is admitted before dispatch. Rule-driven multipart scans now persist a separate phase and bounded owned-session cursor, exclude post-start uploads and commit admission with progress. Private immutable bindings preserve scan/rule/native identity and initiation time; existing verified cleanup recovers after rule removal or disabled ingress. S3 lifecycle configuration and owned management policy/scan routes are available, with strict bounded XML/JSON validation, capability checks, grants and disabled-ingress reads/removal. Public Go/Node/Python clients and CLI commands are implemented. Customer configuration now drives the local S3 HTTP and PostgreSQL expiration/multipart recovery tests; focused race tests, related regressions, OpenAPI parity and changed-line lint pass. Storage-class transitions and object-size predicates remain explicitly unsupported. |
+| Multipart copy | Authenticated same-bucket and explicitly granted cross-bucket sources/ranges, copied-byte admission, atomic source fence, one dispatch, uncertain response fencing, completion/list/abort compatibility | Implemented for S3 (ADRs 538/562). AWS SDK → gateway → S3 adapter → local HTTP provider tests pass with memory and PostgreSQL stores, including race checks and restart/abort fencing. Cross-bucket parts atomically admit copied bytes and capture current source authority with one durable dispatch; destination session encryption and cleanup remain intact. Other placements/provider adapters return NotImplemented. |
+| Copy conditions | Customer ETag and date conditions with S3 precedence and atomic source identity; unsafe/unsupported conditions fail explicitly | ETag predicates implemented for tracked S3 copies and part copies. ADR-541 adds private immutable native source selection and signed date predicates, preserving provider precedence without an internal If-Match override; ADR-543 exposes customer-selected sources. Local SDK/gateway/memory/PostgreSQL and race coverage includes failures and restart. Independently restrictive dates on unversioned/null sources still require immutable proof retention. |
+| Cross-bucket copy | Owned source authority, unambiguous selectors, prefix bounds, exact source selection, destination accounting/encryption, management API/SDK/CLI and restart recovery | Implemented supported same-placement native S3 contract (ADR-562 Accepted). Explicit copy-only grants require destination write and source read management authority. UUID selectors take precedence over names, including collisions; ordinary source reads remain unavailable to a destination writer. Grant epochs, an append-only PostgreSQL identity ledger and immutable receipt/part provenance fence preparation and dispatch. Prefix changes, revocation and credential rotation preserve the bounded one-attempt contract; already dispatched work can settle after revocation. Source-version inventories and destination quotas/defaults are independent. Local memory/PostgreSQL API → AWS SDK → TLS gateway → native HTTP tests cover copies, selected versions, metadata, KMS defaults, part ranges, lost acknowledgments and reconstruction. State/database/race tests, full protocol/API/CLI suites, Go/Node/Python clients, generation/schema parity, OpenAPI/SDK coverage and zero-issue changed-line lint pass. Cross-placement/GCS transfer execution and stronger completion-proof retention remain open. |
+| Notifications | Create/delete events, filter configuration, durable outbox, function/queue delivery, retries, idempotent delivery identity, recovery and tenant isolation | Partial (ADR-551/552). Confirmed tracked mutations publish atomic durable events. S3 GET/PUT notification configuration and control API/CLI/Go/Node/Python clients validate owned function and queue destinations, event groups and prefix/suffix filters. Acceptance captures destinations and public version selectors; local AWS SDK, memory/PostgreSQL reconstruction, concurrent queue-cap and checkpoint-loss tests qualify Records payloads, stable identities, retries and tenant isolation. Authoritative direct URL/provider-external events, provider ordering/provenance, AWS destination probes/test events and external AWS destinations remain open. |
+| Versioning | Configuration, version IDs on I/O, version listing/deletion, delete markers, restore and accounting across all versions | Partial (ADRs 542–544). Durable bucket/key-owned customer IDs, bounded version listing, exact GET/HEAD, marker reads and ordinary PUT/copy version acknowledgments are implemented. Customer-selected CopyObject/UploadPartCopy preserve exact source identity and return public source IDs; same-key copy restores older data as a new current version with retained-version quota. Multipart completion now persists the actual ETag/public version ID atomically, replays it after overwrite, and recovers hidden session receipts through bounded historical pages after restart. The control-plane client also exposes persisted complete/get/list results. Read/list/copy/completion observations activate all-version accounting fences; ADR-540 supplies verified inventories and tracked admission. Local SDK/gateway/memory/PostgreSQL and race tests cover these paths. ADR-545 adds Enabled/Suspended configuration through S3 and control APIs, durable provider reconciliation, propagation gates, verified all-version accounting cutover, typed Go/Node/Python clients and CLI progress. Local SDK/control/PostgreSQL restart tests cover lost acknowledgment, interrupted inventory, suspension and per-version quotas; state tests cover stale workers, ownership, cancellation and unsafe legacy grants. ADR-546 adds permanent immutable version/marker deletion through the S3 single/bulk APIs and typed control clients/CLI, with stable owned retry identities after PostgreSQL/store reconstruction, one provider attempt, conservative quota and verified inventory refunds. The control current-DELETE path now shares the native accounting guard. ADR-547 implements coordinated durable ordinary/null deletion, per-marker admission, signed retry identities and receipt APIs/clients/CLI. Enabled marker recovery uses a persisted complete exact-key baseline; incomplete preparation fails before mutation. ADR-548 journals immutable selected deletion under the same fence as usage inventory, permits safe exact-selector restart retries, and prevents deletion of paginated scan continuation identities. The receipt API and Go/Node/Python/CLI clients accept owned public version selectors. Bounded paginated marker preparation is now safe against every owned delete. Memory/PostgreSQL SDK/control restart and race tests cover acknowledgment loss, rejection, bulk receipts, admission/configuration/inventory fences and conservative legacy cleanup. Lost acknowledgments for mutable null, Suspended ordinary and unversioned deletion still require stronger retained completion proof. ADR-549 implements current/null/immutable version tagging through S3 and control APIs, typed Go/Node/Python clients and CLI. Exact selectors survive PostgreSQL reconstruction; one provider attempt, strict bounded input/response validation, ownership/grant checks and unchanged data accounting have local integration coverage. Tags preserve private completion proof. Direct URL replay handling and coordinated account deletion remain required. |
+| Large uploads | Production upload profile with bounded resources, configurable part/request sizes, transfer deadlines, reverse proxy settings and local boundary tests | Implemented configured production transfer contract (ADR-553 Accepted). Explicit proxied/direct profiles validate decoded request/part limits; direct supports the existing 5 GiB request/part and 5 TiB total ceilings. Configured deadlines cover staging and forwarding, socket deadlines interrupt stalled bodies, and atomic spool admission counts concurrent unwritten reservations. API/Go/Node/Python discovery advertises the transfer contract. The Ansible role requires matching edge/registry profiles and derives Caddy transport timeouts without request replay; direct mode requires operator DNS-only TLS origin routing. Local AWS SDK → gateway → S3 adapter tests with memory/PostgreSQL cover a 65 MiB PUT/GET, streamed multipart part/list/completion/read, exact hashes and capacity, spool overload, cleanup, one combined deadline and pending dispatched receipts after timeout/reconstruction. Local S3 and Google Storage SDK fixtures verify native stream budgets and the separate metadata timeout. Local Caddy fixtures validate both rendered profiles, streaming and signed request preservation. Focused races, related regressions, SDK/API/OpenAPI and deployment/repository checks qualify the implementation. Live provider/network qualification and activation remain deployment work. |
+| Customer encryption | Provider capability/placement validation, encryption configuration and KMS identity/permissions, all write/copy/multipart paths, safe response metadata and secret handling | Partial (ADRs 554–562). Explicit branded S3 AES256/KMS/DSSE PUT, supported same/cross-bucket copy and multipart capture immutable owned snapshots, meter native requests and require exact acknowledgments/recovery proof. GET/HEAD and successful writes map native keys to owned references. Capability discovery and Go/Node/Python/CLI clients are implemented. Control API GET/HEAD/PUT URLs use the branded broker; encrypted PUT captures a single receipt and retries cannot dispatch a second write. ADR-558 adds explicit owned encryption to control multipart creation and branded session/part-bound URLs. Atomic part dispatch checks current authority, enforces one unsafe attempt and avoids duplicating the full-object grant; settled parts may be replaced sequentially. Local memory/PostgreSQL API-to-gateway tests cover revocation, abort/completion races, lost acknowledgment and restart with disabled KMS. Database old-writer/rollback guards, focused races, related regressions, full provider/gateway suites, Go/Node/Python clients, generation parity, OpenAPI/SDK coverage and zero-issue changed-line lint pass. ADR-559 adds explicit owned encryption to application upload routes. Management requires matching bucket write authority; route admission compares the current private snapshot atomically and blocks older untracked writers. Uploads require current single-PUT limits and exact acknowledgments; idempotent replay and restart recovery preserve the original selection after policy changes or disabled KMS. Local memory/PostgreSQL API-to-native flows, state/database fences, focused races, related regressions, full provider/gateway suites, Go/Node/Python clients, generation parity and zero-issue changed-line lint pass. ADR-561 adds durable native bucket defaults captured atomically by new writes, URLs, routes and multipart sessions, with verified reconciliation, drift/restart recovery, owned APIs/SDKs/CLI and local memory/PostgreSQL race acceptance. ADR-562 preserves captured destination defaults for same-placement cross-bucket copies and session encryption for copied parts. GCS encryption/exact write recovery, cross-placement transfers and SSE-C remain open. |
+| Object Lock | Retention/legal hold management, version ownership, protected deletion/lifecycle/account-deletion behavior, provider capability gating | Partial customer bucket configuration (ADRs 563/564 Accepted). Native S3 adapters support bucket enablement/defaults, exact-version fixed/event retention and independent legal holds. The durable bucket journal preserves irreversible enablement, versioning suspension fences, fresh inventory, accepted transfer drain, leased readback recovery and SQL/rollback/cascade guards. Owned control and standard S3 configuration APIs, a bounded daemon worker, explicit backend/event-hold enrollment, Go/Node/Python clients and CLI are connected and locally qualified. Memory/PostgreSQL/HTTP/TLS tests cover ownership, lost acknowledgments, restart, disabled-capability recovery, propagation/inventory and unknown native responses; full protocol/API/CLI suites, focused races, generated-client parity and changed-line lint pass. New Object Lock enrollment remains disabled for the scoped release. Owned per-version management/recovery, write protection snapshots and qualified protected lifecycle deletion remain open. ADR-571 implements bounded protected recursive bucket/account cleanup, without governance bypass or removing active holds. |
+| Replication | Configured owned destinations, durable copy/delete jobs, version/marker propagation, loop prevention, failures and destination accounting | Open; depends on durable events and versioning. |
+| Production accounting/deletion | Authoritative usage adapters and cutoffs, coordinated account deletion across new versions/retention/events/jobs, local E2E acceptance | ADR-548 implements permanent deletion/inventory coordination with local SDK, memory/PostgreSQL restart and race coverage. ADR-571 coordinates expired-account cleanup with retained-version/protection checks and native deletion proof before cascades. Usage adapters still need qualification against the expanded features. Live provider tests are excluded by user instruction. |
+
+ADR-560 binds new fixed control multipart sessions to their declared full-object
+quota in one transaction. Failed session or quota admission leaves no grant;
+creation replay and completion reuse the accepted reservation. All-version
+accounting reserves each new version separately and preserves capacity through
+restart and lost completion responses. Local memory/PostgreSQL API → part
+broker → native HTTP tests cover both inventory profiles, and state/migration
+tests cover atomic failures, concurrent replay, old-writer/rollback fences,
+verified abort reclamation and bucket/account lock ordering. Focused state/API
+race tests, related regressions, full provider/gateway suites, API/Go SDK checks,
+schema/SQLC parity and zero-issue changed-line lint pass.
+
+ADR-561 implements owned bucket default encryption through standard S3 SDK
+configuration and control APIs, with Go/Node/Python clients and CLI progress.
+Verified defaults are captured by each new implicit PUT, copy, signed URL,
+application route and multipart session; accepted work survives policy changes
+and clear. Native reconciliation preserves unrelated blocking settings, repairs
+observed drift and recovers lost acknowledgments without repeating a successful
+mutation or requiring a newly enabled KMS key. Local HTTP/TLS fixtures cover all
+write paths, memory/PostgreSQL restart, permissions, strict input, quota/provenance
+fences, lock ordering and guarded rollback. Focused races, related regressions,
+full provider/gateway/API and SDK suites, schema/SQLC and SDK generation parity,
+OpenAPI/SDK coverage and zero-issue changed-line lint pass. Production provider
+qualification remains outside this implementation task.
+
+Legacy direct multipart part URLs retain their immutable cleanup deadlines.
+New branded part URLs bind publication to the active session and revoke unused
+authority immediately on abort or completion; dispatched parts keep their
+durable transfer fence. Every abort profile verifies a bounded empty part listing or
+NoSuchUpload after its cleanup delay; acknowledgment alone cannot terminate an
+abort through the generic store method. Memory/PostgreSQL race tests and local
+control API → S3 HTTP tests cover URL execution, lost abort responses, remaining
+parts, reconstructed stores, disabled-ingress recovery and terminal replay.
+Legacy untracked key grants and inventory baselines remain conservative. This
+does not establish direct-write reclamation. Rule-driven multipart admission is now connected to this executor; local acceptance covers S3 SDK initiation/part writes, conservative quota, rule removal, remaining parts, lost responses and reconstructed owners.
+
+Implement in reviewable increments, updating the evidence here. An increment
+does not mark the entire scope complete. Feature completion requires both the
+ordinary path and its failure/restart/tenant-isolation behavior, not just an
+endpoint or an adapter interface.

@@ -1,0 +1,23 @@
+Result=oom-kill
+ExecMainStatus=9
+MemoryPeak=3954700288
+ActiveState=failed
+SubState=failed
+InvocationID=feda371adf0f44d3ab0c0ef4d189e107
+Oct 03 08:39:44 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: Started gregale-managed-pg-restart-reclaim-adc1b1d8.service - /usr/bin/bash -c "exec /usr/bin/bash /var/tmp/faas-metal-smoke-managed-pg-restart-reclaim-adc1b1d8/runner.sh > /var/tmp/faas-metal-smoke-managed-pg-restart-reclaim-adc1b1d8/run.log 2>&1".
+Oct 03 08:44:43 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-reclaim-adc1b1d8.service: A process of this unit has been killed by the OOM killer.
+Oct 03 08:44:43 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-reclaim-adc1b1d8.service: A process of this unit has been killed by the OOM killer.
+Oct 03 08:44:43 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-reclaim-adc1b1d8.service: Killing process 863394 (bash) with signal SIGKILL.
+Oct 03 08:44:43 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-reclaim-adc1b1d8.service: Killing process 869702 (bash) with signal SIGKILL.
+Oct 03 08:44:43 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-reclaim-adc1b1d8.service: Main process exited, code=killed, status=9/KILL
+Oct 03 08:44:43 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-reclaim-adc1b1d8.service: Failed with result 'oom-kill'.
+Oct 03 08:44:43 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal systemd[1]: gregale-managed-pg-restart-reclaim-adc1b1d8.service: Consumed 4min 55.192s CPU time, 3.6G memory peak, 0B memory swap peak.
+               total        used        free      shared  buff/cache   available
+Mem:           15986         766       10744          28        4841       15219
+Swap:              0           0           0
+-rw-r--r-- 1 root root 0 Oct  3 08:39 /var/tmp/faas-metal-smoke-managed-pg-restart-reclaim-adc1b1d8/portable-linux.log
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth

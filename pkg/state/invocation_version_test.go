@@ -112,3 +112,60 @@ func TestResolveInvocationVersionExactRevisionAndMalformedHeaders(t *testing.T) 
 		}
 	}
 }
+
+func TestResolveInvocationVersionUsesCapturedProjectScope(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	account, err := store.CreateAccount(ctx, "captured-version@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, Project{AccountID: account.ID, Slug: "captured-version"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProjectEnvironment(ctx, ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, App{AccountID: account.ID, ProjectID: project.ID, Slug: "captured-api",
+		Status: AppActive, Manifest: AppManifest{RevisionPinTTLSeconds: 3600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployments := map[string]Deployment{}
+	releases := map[string]ProjectReleaseSet{}
+	for _, scope := range []string{"production", "staging"} {
+		dep, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, Scope: scope, ImageDigest: "sha256:" + scope})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+			t.Fatal(err)
+		}
+		release, err := store.PublishProjectReleaseSet(ctx, account.ID, project.ID, scope, 1800,
+			[]ProjectReleaseMember{{AppID: app.ID, DeploymentID: dep.ID}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deployments[scope], releases[scope] = dep, release
+	}
+	for _, scope := range []string{"production", "staging"} {
+		inv, selected, err := ResolveInvocationVersion(ctx, store, Invocation{AppID: app.ID, DeploymentScope: scope})
+		if err != nil || inv.DeploymentScope != scope || selected.Scope != scope || selected.DeploymentID != deployments[scope].ID || selected.ReleaseID != releases[scope].ID {
+			t.Fatalf("resolution %s = %+v, %v", scope, selected, err)
+		}
+	}
+	for _, header := range []string{api.ReleaseHeader, api.RevisionHeader} {
+		pin := releases["production"].ID
+		if header == api.RevisionHeader {
+			pin = deployments["production"].ID
+		}
+		headers, _ := json.Marshal(map[string]string{header: pin})
+		if _, _, err := ResolveInvocationVersion(ctx, store, Invocation{AppID: app.ID, DeploymentScope: "staging", Headers: headers}); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("cross-scope pin accepted for %s: %v", header, err)
+		}
+	}
+	if _, _, err := ResolveInvocationVersion(ctx, store, Invocation{AppID: app.ID, DeploymentScope: "__all__"}); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("invalid captured scope accepted: %v", err)
+	}
+}

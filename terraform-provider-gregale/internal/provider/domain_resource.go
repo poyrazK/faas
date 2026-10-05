@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -32,6 +33,26 @@ type domainModel struct {
 	CertSANs           types.List   `tfsdk:"cert_sans"`
 	CertLastError      types.String `tfsdk:"cert_last_error"`
 	DNSLastCheckedAt   types.String `tfsdk:"dns_last_checked_at"`
+	RoutingRecords     types.List   `tfsdk:"routing_records"`
+}
+
+// domainRoutingRecordModel is one routing record (CNAME, or A/AAAA at a zone
+// apex) from the API's dns_records. The TXT proof stays in the sensitive
+// txt_record attribute.
+type domainRoutingRecordModel struct {
+	Type        types.String `tfsdk:"type"`
+	Name        types.String `tfsdk:"name"`
+	Value       types.String `tfsdk:"value"`
+	Alternative types.Bool   `tfsdk:"alternative"`
+}
+
+var domainRoutingRecordObjectType = types.ObjectType{
+	AttrTypes: map[string]attr.Type{
+		"type":        types.StringType,
+		"name":        types.StringType,
+		"value":       types.StringType,
+		"alternative": types.BoolType,
+	},
 }
 
 func newDomainResource() resource.Resource {
@@ -118,6 +139,19 @@ func (r *domainResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Computed:            true,
 				Description:         "RFC3339 timestamp of the latest DNS observation.",
 				MarkdownDescription: "RFC3339 timestamp of the latest DNS observation.",
+			},
+			"routing_records": schema.ListNestedAttribute{
+				Computed:            true,
+				Description:         "DNS records that route the domain to Gregale: a CNAME, plus A/AAAA records to use instead at a zone apex.",
+				MarkdownDescription: "DNS records that route the domain to Gregale: a `CNAME`, plus `A`/`AAAA` records to use instead at a zone apex (`alternative = true`).",
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"type":        schema.StringAttribute{Computed: true, Description: "Record type: CNAME, A or AAAA."},
+						"name":        schema.StringAttribute{Computed: true, Description: "Record name."},
+						"value":       schema.StringAttribute{Computed: true, Description: "Record value."},
+						"alternative": schema.BoolAttribute{Computed: true, Description: "True for A/AAAA records that replace the CNAME at a zone apex."},
+					},
+				},
 			},
 		},
 		Description:         "Bind a custom hostname to a Gregale app and observe DNS/TLS verification.",
@@ -219,6 +253,21 @@ func setDomainModel(ctx context.Context, state *tfsdk.State, out domainResponse,
 	if diags.HasError() {
 		return diags
 	}
+	var routing []domainRoutingRecordModel
+	for _, record := range out.DNSRecords {
+		if record.Purpose != "routing" {
+			continue
+		}
+		routing = append(routing, domainRoutingRecordModel{
+			Type: types.StringValue(record.Type), Name: types.StringValue(record.Name),
+			Value: types.StringValue(record.Value), Alternative: types.BoolValue(record.Alternative),
+		})
+	}
+	routingRecords, routingDiags := types.ListValueFrom(ctx, domainRoutingRecordObjectType, routing)
+	diags.Append(routingDiags...)
+	if diags.HasError() {
+		return diags
+	}
 	verificationStatus := "pending"
 	if out.Verified {
 		verificationStatus = "verified"
@@ -241,6 +290,7 @@ func setDomainModel(ctx context.Context, state *tfsdk.State, out domainResponse,
 		CertSANs:           certSANs,
 		CertLastError:      types.StringValue(out.CertLastError),
 		DNSLastCheckedAt:   types.StringValue(out.DNSLastCheckedAt),
+		RoutingRecords:     routingRecords,
 	}
 	diags.Append(state.Set(ctx, &model)...)
 	return diags

@@ -202,9 +202,11 @@ func TestCmdDeploysShow_NoArgs(t *testing.T) {
 // `gregale deploys show --status <id>`. Pre-fix, stdlib
 // flag.NewFlagSet stops at the first positional, leaving
 // `--status` unparsed in fs.Args(); the NArg==2 check then
-// returned a confusing usage error. Post-fix, splitFlagArgs
-// reorders argv so flags come first; both forms hit the same
-// happy path.
+// returned a confusing usage error. Post-fix, parseInterspersed
+// accepts flags on either side; both forms hit the same happy
+// path. Prod hunt #3: the documented `deploys show v42 --app
+// my-api --status` reordered to `--app v42 my-api`, so a value
+// flag after the id stole the id — form C pins that.
 func TestCmdDeploysShow_FlagOrder(t *testing.T) {
 	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
 	srv := showServerDual(t,
@@ -227,6 +229,10 @@ func TestCmdDeploysShow_FlagOrder(t *testing.T) {
 	// Form B: positional before flag — review finding C4.
 	if code := cmdDeploysShow([]string{showTestID, "--status"}); code != 0 {
 		t.Fatalf("cmdDeploysShow [id --status] = %d, want 0 (review finding C4)", code)
+	}
+	// Form C: a value flag after the positional keeps its value.
+	if code := cmdDeploysShow([]string{showTestID, "--app", "my-api", "--status"}); code != 0 {
+		t.Fatalf("cmdDeploysShow [id --app my-api --status] = %d, want 0", code)
 	}
 	// Both forms must produce equivalent output (the post-stream
 	// block + footer). Spot-check the live footer on form B.

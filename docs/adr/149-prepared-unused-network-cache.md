@@ -46,6 +46,9 @@
   the slot reserved and retries, rather than exposing a surviving network to
   another VM. Startup removes only UUID-qualified `fc-prepared-*` names left
   by an interrupted daemon; claimed instance names use ordinary VM recovery.
+  [ADR-460](460-prepared-network-policy-retention.md) proposes preserving fresh
+  spares for other exact policies within the same global capacity, replacing
+  only one oldest spare when a new target policy is absent from a full pool.
 - **Bridge identity:** Enabling the cache pins the bridge's current MAC address
   without changing its value. Automatic MAC selection from newly attached
   veth ports can invalidate running namespaces' cached gateway MACs. A first

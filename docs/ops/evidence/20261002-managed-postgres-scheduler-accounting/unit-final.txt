@@ -1,0 +1,5 @@
+Result=success
+ExecMainStatus=0
+TemporaryFileSystem=
+ActiveState=inactive
+SubState=dead

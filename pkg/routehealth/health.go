@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -31,6 +32,9 @@ func Validate(request api.SetRouteHealthGateRequest) error {
 		}
 		if route.MaxP95MS < 0 || route.MaxP95MS > api.RouteHealthMaxP95BudgetMS {
 			return fmt.Errorf("max_p95_ms must be between 0 (disabled) and %d", api.RouteHealthMaxP95BudgetMS)
+		}
+		if err := ValidateWatchStatuses(route.WatchStatuses); err != nil {
+			return err
 		}
 		seen[[2]string{route.Method, route.Path}] = true
 	}
@@ -217,4 +221,33 @@ func Decision(report api.RouteHealthReport) api.RouteHealthDecision {
 		}
 	}
 	return api.RouteHealthDecision{OnRegression: report.OnRegression, Mode: report.Mode, Revision: report.Revision, DeploymentID: report.DeploymentID, StableDeploymentID: report.StableDeploymentID, CheckedAt: report.CheckedAt, Status: status, Reason: report.Reason}
+}
+
+// ValidateWatchStatuses accepts only explicit, distinct supported client errors.
+func ValidateWatchStatuses(statuses []int) error {
+	if len(statuses) > api.RouteHealthMaxWatchedStatuses {
+		return errors.New("too many watched statuses")
+	}
+	seen := map[int]bool{}
+	for _, code := range statuses {
+		if !slices.Contains([]int{401, 403, 404, 422, 429}, code) || seen[code] {
+			return errors.New("watch_statuses must contain distinct codes from 401, 403, 404, 422, 429")
+		}
+		seen[code] = true
+	}
+	return nil
+}
+
+func RoutesEqual(a, b []api.RouteHealthRoute) bool {
+	return slices.EqualFunc(a, b, func(x, y api.RouteHealthRoute) bool {
+		return x.Method == y.Method && x.Path == y.Path && x.CheckLatency == y.CheckLatency && x.MaxP95MS == y.MaxP95MS && slices.Equal(x.WatchStatuses, y.WatchStatuses)
+	})
+}
+
+func CloneRoutes(routes []api.RouteHealthRoute) []api.RouteHealthRoute {
+	out := slices.Clone(routes)
+	for i := range out {
+		out[i].WatchStatuses = slices.Clone(out[i].WatchStatuses)
+	}
+	return out
 }

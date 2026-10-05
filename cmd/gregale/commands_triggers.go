@@ -205,7 +205,7 @@ func cmdTriggersGet(args []string) int {
 }
 
 func cmdTriggersCreate(args []string) int {
-	flags, pos := splitArgsForFlags(args)
+	flags, pos := splitArgsForFlags(args, "disabled", "enabled")
 	usage := "usage: gregale triggers create --app <slug> --kind <" + triggerBrokerKindsUsage + "> [flags]"
 	fs := triggerFlagSet("triggers-create", usage)
 	appSlug := fs.String("app", "", "app slug (required)")
@@ -291,7 +291,7 @@ func cmdTriggersCreate(args []string) int {
 }
 
 func cmdTriggersUpdate(args []string) int {
-	flags, pos := splitArgsForFlags(args)
+	flags, pos := splitArgsForFlags(args, "disabled", "enabled")
 	usage := "usage: gregale triggers update <id> [flags]"
 	fs := triggerFlagSet("triggers-update", usage)
 	enabled := fs.Bool("enabled", false, "enable the trigger")
@@ -373,13 +373,13 @@ func cmdTriggersUpdate(args []string) int {
 }
 
 func cmdTriggersDelete(args []string) int {
-	flags, pos := splitArgsForFlags(args)
 	usage := "usage: gregale triggers delete <id> [--quiet]"
 	fs := triggerFlagSet("triggers-delete", usage)
 	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
-	if err := fs.Parse(flags); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	pos := fs.Args()
 	if len(pos) != 1 {
 		return triggerUsageError(usage, "expected one trigger ID")
 	}

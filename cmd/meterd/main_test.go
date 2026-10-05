@@ -254,9 +254,8 @@ func TestRun_MetricsAddrEmptySkipsListener(t *testing.T) {
 //
 // The factory returns a real *http.Server whose Handler is the captured mux
 // but whose Serve is never called — Shutdown on a never-Serve'd server is a
-// no-op. After this PR the four timer ticks each Observe once, so the
-// /metrics body carries meterd_ops_total + meterd_op_duration_seconds series
-// in addition to the promhttp internals.
+// no-op. Spec §14 M7 and ADR-015: wait for the real healthy response before
+// checking the tick diagnostics and exported meterd metrics.
 func TestRun_MetricsAddrServesEndpoints(t *testing.T) {
 	dir := shortDir(t)
 	cfgPath := writeMeterdConfig(t, dir, "127.0.0.1:0")
@@ -272,47 +271,57 @@ func TestRun_MetricsAddrServesEndpoints(t *testing.T) {
 		captured = h
 		return &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}, nil
 	}
-	// Shrink every timer to 20 ms so the four loops each fire at least
-	// once during the handler wait — without this the only ticks that
-	// land are stripe (60 min default), which never fires in a unit
-	// test.
-	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn, subSecondIntervalsEnv())
+	// A 20 ms cadence leaves only 60 ms before a tick becomes stale,
+	// shorter than the real database work on a busy race-test runner.
+	// Keep every loop observable within the test's deadline while giving
+	// completed ticks a three-second freshness window.
+	intervalEnv := subSecondIntervalsEnv()
+	deps := stubMeterdDeps(cfgPath, "127.0.0.1:0", pool, listenFn, func(k string) string {
+		if value := intervalEnv(k); value != "20ms" {
+			return value
+		}
+		return "1s"
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- runWithDeps(ctx, discardLog(), deps) }()
 
-	// Wait for the goroutine to register the handler AND for every
-	// tracked timer (sample, quota, stripe, upstream_probe,
-	// upstream_part) to land at least one tick each. The healthz
-	// response below will flip Healthy=false on any "never" Ticks entry,
-	// so we need each timer to have fired before we read the body.
-	deadline := time.Now().Add(2 * time.Second)
+	// Registration and a fixed sleep do not prove that every loop has
+	// completed successfully. Poll /healthz and keep the response that
+	// established health, so a scheduler pause cannot expire it between
+	// observing readiness and asserting the response below.
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	var handler http.Handler
+	var rec *httptest.ResponseRecorder
 	for {
 		mu.Lock()
-		got := captured
+		handler = captured
 		mu.Unlock()
-		// Give the timer goroutines a generous tail window so the
-		// freshly-spawned cron (upstream_part) at least one tick lands
-		// before we read /healthz. 1.5s comfortably covers the
-		// sub-second intervals the test factory sets.
-		ready := got != nil && time.Now().After(deadline.Add(-1500*time.Millisecond))
-		if ready {
-			break
+		if handler != nil {
+			rec = httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+			if rec.Code == http.StatusOK {
+				break
+			}
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("metrics handler was not registered within 2s")
+		select {
+		case err := <-done:
+			t.Fatalf("run stopped before /healthz became healthy: %v", err)
+		case <-deadline.C:
+			if rec == nil {
+				t.Fatal("metrics handler was not registered within 10s")
+			}
+			t.Fatalf("/healthz did not become healthy within 10s: status=%d body=%s", rec.Code, rec.Body.String())
+		case <-poll.C:
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 
-	// /healthz — every wired loop has ticked at least once
-	// (sub-second intervals), so the JSON body reports Healthy=true
-	// and a status of 200. If a new cron is added without bumping
-	// the wait window, this test will flake via the "never" check
-	// below — the assertion is the canonical regression tripwire.
-	rec := httptest.NewRecorder()
-	captured.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	// /healthz — every wired loop has completed successfully.
 	if rec.Code != http.StatusOK {
 		t.Errorf("/healthz status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -345,7 +354,7 @@ func TestRun_MetricsAddrServesEndpoints(t *testing.T) {
 	// registered on the same wire.OpsMetrics instance and surfaces as
 	// an INFO/help line even before the first push.
 	rec = httptest.NewRecorder()
-	captured.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if rec.Code != http.StatusOK {
 		t.Errorf("/metrics status = %d, want 200", rec.Code)
 	}

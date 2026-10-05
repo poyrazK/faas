@@ -23,7 +23,7 @@ func TestBuildRoutePolicyPreview(t *testing.T) {
 	}
 	rules := []state.EdgeRule{
 		{ID: "z-disabled", MatchPath: "/users", MatchMethods: []string{"POST"}, Priority: 20, Enabled: false, Kind: state.EdgeRuleKindHeaders},
-		{ID: "a-wildcard", MatchPath: "/", Priority: 10, Enabled: true, Kind: state.EdgeRuleKindRoute},
+		{ID: "a-wildcard", MatchPath: "*", Priority: 10, Enabled: true, Kind: state.EdgeRuleKindRoute},
 		{ID: "b-get", MatchPath: "/users", MatchMethods: []string{"GET"}, Priority: 5, Enabled: true, Kind: state.EdgeRuleKindValidate},
 	}
 	got := BuildRoutePolicyPreview(spec, []RouteRow{
@@ -49,5 +49,23 @@ func TestBuildRoutePolicyPreview(t *testing.T) {
 	}
 	if got[3].Rules[0].ID != "a-wildcard" || got[3].Rules[1].ID != "z-disabled" {
 		t.Fatalf("rule ordering: %+v", got[3].Rules)
+	}
+}
+
+func TestBuildRoutePolicyPreviewMatchesPathGlobsAgainstRouteTemplates(t *testing.T) {
+	spec, err := LoadBytes([]byte(`{
+      "openapi":"3.1.0",
+      "info":{"title":"preview","version":"1"},
+      "paths":{"/users/{id}/orders":{"get":{}}}
+    }`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := BuildRoutePolicyPreview(spec, nil, []state.EdgeRule{
+		{ID: "family", MatchPath: "/users/*", MatchMethods: []string{"GET"}, Enabled: true, Kind: state.EdgeRuleKindThrottle},
+		{ID: "root-only", MatchPath: "/", Enabled: true, Kind: state.EdgeRuleKindHeaders},
+	})
+	if len(got) != 1 || len(got[0].Rules) != 1 || got[0].Rules[0].ID != "family" {
+		t.Fatalf("route family policy match = %+v", got)
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,6 +137,18 @@ func TestE2E_NormalPath_QueuedAdmissionDoesNotConsumeExecutionBudget(t *testing.
 	if f == nil {
 		return
 	}
+	// This test holds capacity for longer than the execution budget. Give
+	// that deliberate wait room inside the separate admission deadline;
+	// the Free default of 1s left only 250ms for CI scheduling and forwarding.
+	body, status := doReq(t, f.h, f.key, http.MethodPatch, "/v1/apps/"+f.app.Slug,
+		api.UpdateAppRequest{ScalingPolicy: &api.ScalingPolicy{
+			MaxQueueWaitMS:    5000,
+			ScaleOutCooldownS: api.MinScaleOutCooldownS,
+			ScaleInCooldownS:  api.MinScaleInCooldownS,
+		}})
+	if status != http.StatusOK {
+		t.Fatalf("PATCH admission wait: status=%d body=%s", status, body)
+	}
 	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "admission-timeout")
 	f.vmmd.SetVersion(instance.ID, "admission-timeout")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:admission-timeout\n", 10*time.Second)
@@ -168,6 +182,7 @@ func TestE2E_NormalPath_QueuedAdmissionDoesNotConsumeExecutionBudget(t *testing.
 	ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
 	defer cancel()
 	waiter := normalPathAdmissionRequest(client, ctx, f.h.EdgeURL(), f.host, "/admission-timeout/waiter")
+	waitForNormalPathQueuedAdmission(t, f)
 	select {
 	case got := <-waiter:
 		t.Fatalf("queued request completed before capacity was released: status=%d body=%q err=%v", got.status, got.body, got.err)
@@ -189,6 +204,10 @@ func TestE2E_NormalPath_QueuedAdmissionDoesNotConsumeExecutionBudget(t *testing.
 		}
 		if got.status != http.StatusOK || string(got.body) != "normal-path:admission-timeout\n" {
 			t.Fatalf("queued request response=(status=%d,body=%q), want 200 after capacity release", got.status, got.body)
+		}
+		queuedMS, err := strconv.ParseInt(got.headers.Get(api.QueueWaitHeader), 10, 64)
+		if err != nil || queuedMS <= 500 {
+			t.Fatalf("queue wait header=%q, want more than the 500ms execution budget", got.headers.Get(api.QueueWaitHeader))
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("queued request did not complete after capacity release")
@@ -214,4 +233,33 @@ func TestE2E_NormalPath_QueuedAdmissionDoesNotConsumeExecutionBudget(t *testing.
 			t.Fatalf("active request %d did not complete after releasing the instance slots", i)
 		}
 	}
+}
+
+func waitForNormalPathQueuedAdmission(t *testing.T, f *normalPathFixture) {
+	t.Helper()
+	queued := fmt.Sprintf("gateway_concurrency_queue_depth{app=%q,plan=%q} 1", f.app.ID, api.PlanFree)
+	ctx, cancel := context.WithTimeout(f.ctx, 5*time.Second)
+	defer cancel()
+	for ctx.Err() == nil {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.h.GatewayControlURL+"/metrics", nil)
+		if err != nil {
+			t.Fatalf("create queue metrics request: %v", err)
+		}
+		resp, err := f.h.HTTPClient().Do(req)
+		if err != nil {
+			t.Fatalf("scrape queue metrics: %v", err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatalf("read queue metrics: status=%d err=%v", resp.StatusCode, err)
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			if line == queued {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("request did not enter the warm-capacity queue")
 }

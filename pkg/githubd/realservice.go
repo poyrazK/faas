@@ -104,7 +104,10 @@ type RealService struct {
 	// BranchHeads resolves branch refs for webhook freshness checks and the
 	// source-ref promotion guard.
 	BranchHeads BranchHeadClient
-	Recipient   *age.X25519Recipient
+	// ProtectedBranches observes policy evidence without approving revisions.
+	ProtectedBranches ProtectedBranchClient
+	ReviewedMerges    ReviewedMergeClient
+	Recipient         *age.X25519Recipient
 	// Identities is the multi-identity unseal slice for rotation
 	// overlap (issue #316 / ADR-057). Pre-rotation: length 1
 	// (just the current). During the 30-day overlap window:

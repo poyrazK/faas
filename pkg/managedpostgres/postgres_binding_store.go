@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 const postgresBindingColumns = `id::text, account_id::text, database_id::text,
@@ -218,28 +219,13 @@ func (s *PostgresStore) DueBindings(ctx context.Context, includeProvisioning boo
 	if limit < 1 || limit > 100 || now.IsZero() {
 		return nil, ErrInvalid
 	}
-	rows, err := s.pool.Query(ctx,
-		`SELECT `+postgresBindingColumns+` FROM managed_postgres_bindings
-		 WHERE (state = 'deleting' OR ($1 AND state IN ('provisioning','failed'))
-		   OR (rotation_cleanup_ready AND state IN ('ready','retiring')))
-		   AND retry_at <= $2 AND (lease_until IS NULL OR lease_until <= $2)
-		 ORDER BY retry_at, id LIMIT $3`,
-		includeProvisioning, now, limit,
-	)
+	rows, err := sqlc.New().ListDueManagedPostgresBindings(ctx, s.pool, sqlc.ListDueManagedPostgresBindingsParams{IncludeProvisioning: includeProvisioning, Now: pgtype.Timestamptz{Time: now, Valid: true}, BatchSize: int32(limit)})
 	if err != nil {
 		return nil, mapPostgresError(err)
 	}
-	defer rows.Close()
-	items := make([]Binding, 0)
-	for rows.Next() {
-		binding, scanErr := scanBinding(rows)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		items = append(items, binding)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, mapPostgresError(err)
+	items := make([]Binding, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, bindingFromDeliveryRow(sqlc.FinishManagedPostgresBindingProvisionRow(row)))
 	}
 	return items, nil
 }
@@ -306,6 +292,19 @@ func (s *PostgresStore) ClaimBinding(ctx context.Context, accountID, bindingID, 
 	if err != nil {
 		return Binding{}, err
 	}
+	if operation == BindingStateRetiring {
+		row, claimErr := sqlc.New().ClaimManagedPostgresBindingRetirement(ctx, s.pool, sqlc.ClaimManagedPostgresBindingRetirementParams{LeaseToken: leaseToken, LeaseUntil: pgtype.Timestamptz{Time: leaseUntil, Valid: true}, Now: pgtype.Timestamptz{Time: now, Valid: true}, AccountID: account, ID: id})
+		if errors.Is(claimErr, pgx.ErrNoRows) {
+			if _, lookupErr := s.GetBinding(ctx, accountID, bindingID); lookupErr != nil {
+				return Binding{}, lookupErr
+			}
+			return Binding{}, ErrConflict
+		}
+		if claimErr != nil {
+			return Binding{}, mapPostgresError(claimErr)
+		}
+		return bindingFromDeliveryRow(sqlc.FinishManagedPostgresBindingProvisionRow(row)), nil
+	}
 	binding, err := queryBinding(ctx, s.pool,
 		`UPDATE managed_postgres_bindings SET
 			state = $1, lease_token = $2, lease_until = $3, updated_at = $4,
@@ -346,26 +345,14 @@ func (s *PostgresStore) FinishBindingProvision(ctx context.Context, bindingID, l
 	if err != nil {
 		return Binding{}, err
 	}
-	binding, err := queryBinding(ctx, s.pool,
-		`UPDATE managed_postgres_bindings AS binding SET state = 'ready',
-			provider_identity_id = $1, credential_ref = $2,
-			last_error_code = NULL, lease_token = NULL, lease_until = NULL,
-			attempt_count = 0, retry_at = $3, updated_at = $3
-		 WHERE binding.id = $4 AND binding.state = 'provisioning' AND binding.lease_token = $5
-		   AND binding.lease_until > $3
-		   AND EXISTS (
-			SELECT 1 FROM app_secrets secret
-			WHERE secret.managed_postgres_binding_id = binding.id
-			  AND secret.managed_credential_ref = $2
-			  AND secret.managed_credential_generation = binding.credential_generation
-		   )
-		 RETURNING `+postgresBindingColumns,
-		providerIdentityID, credentialRef, now, id, leaseToken,
-	)
-	if errors.Is(err, ErrNotFound) {
+	row, err := sqlc.New().FinishManagedPostgresBindingProvision(ctx, s.pool, sqlc.FinishManagedPostgresBindingProvisionParams{ProviderIdentityID: providerIdentityID, CredentialRef: credentialRef, Now: pgtype.Timestamptz{Time: now, Valid: true}, ID: id, LeaseToken: leaseToken})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return Binding{}, ErrConflict
 	}
-	return binding, err
+	if err != nil {
+		return Binding{}, mapPostgresError(err)
+	}
+	return bindingFromDeliveryRow(row), nil
 }
 
 func (s *PostgresStore) ReleaseBinding(ctx context.Context, bindingID, leaseToken string, next BindingState, errorCode string, now, retryAt time.Time) error {

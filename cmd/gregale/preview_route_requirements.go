@@ -45,19 +45,19 @@ func readRouteRequirementsDocument(path string) ([]byte, string, error) {
 }
 
 func attachPreviewRouteRequirements(ctx context.Context, client *api.Client, report *previewRouteReport, config routerequirements.Config, digest string) {
-	evidence := loadRouteRequirementsContext(ctx, client, report.Preview)
+	evidence := loadPreviewRouteRequirementsContext(ctx, client, report.Preview, report.candidateEdgeRules, report.candidateRulesLoaded, report.candidateRulesErr)
 	result := routerequirements.WrapReport(routerequirements.Evaluate(config, digest, evidence))
 	report.Requirements = &result
 }
 
 func attachPreviewCoverageRequirements(ctx context.Context, client *api.Client, report *previewRouteReport, config routerequirements.PreviewConfig, digest string) {
-	evidence := loadRouteRequirementsContext(ctx, client, report.Preview)
+	evidence := loadPreviewRouteRequirementsContext(ctx, client, report.Preview, report.candidateEdgeRules, report.candidateRulesLoaded, report.candidateRulesErr)
 	inventory := routerequirements.CandidateInventory(report.candidateContract, report.CandidateDeployment, report.CandidateDocumentHash)
 	result := routerequirements.EvaluatePreview(config, digest, evidence, inventory)
 	report.Requirements = &result
 }
 
-func loadRouteRequirementsContext(ctx context.Context, client *api.Client, slug string) routerequirements.Context {
+func loadPreviewRouteRequirementsContext(ctx context.Context, client *api.Client, slug string, candidateRules []api.EdgeRuleResponse, rulesLoaded bool, rulesErr error) routerequirements.Context {
 	evidence := routerequirements.Context{App: api.AppResponse{Slug: slug}}
 	app, err := client.GetApp(ctx, slug)
 	if err != nil {
@@ -69,7 +69,11 @@ func loadRouteRequirementsContext(ctx context.Context, client *api.Client, slug 
 		evidence.Host, evidence.Unavailable = previewRequirementsHost(app)
 	}
 	if evidence.Unavailable == "" {
-		evidence.Rules, err = client.ListEdgeRulesForApp(ctx, slug)
+		if rulesLoaded {
+			evidence.Rules, err = candidateRules, rulesErr
+		} else {
+			evidence.Rules, err = client.ListEdgeRulesForApp(ctx, slug)
+		}
 		if err != nil {
 			evidence.Unavailable = "rules:" + previewReportReadReason(err)
 		}

@@ -49,6 +49,10 @@ func (m *MemStore) PutProjectEnvironmentRoutePolicy(_ context.Context, policy Pr
 	if _, err := m.projectEnvironmentBySlugLocked(policy.ProjectID, policy.EnvironmentSlug); err != nil {
 		return ProjectEnvironmentRoutePolicy{}, err
 	}
+	memory, err := m.gitOpsGuardScopedWriteLocked(policy.AccountID, policy.AppID, policy.EnvironmentSlug, []string{"routes"})
+	if err != nil {
+		return ProjectEnvironmentRoutePolicy{}, err
+	}
 	key := projectEnvironmentRoutePolicyKey(policy.AppID, policy.EnvironmentSlug)
 	now := time.Now().UTC()
 	if prior, ok := m.projectEnvironmentRoutePolicies[key]; ok {
@@ -59,6 +63,7 @@ func (m *MemStore) PutProjectEnvironmentRoutePolicy(_ context.Context, policy Pr
 	policy.UpdatedAt = now
 	policy.DeclaredRoutes = cloneDeclaredRoutes(policy.DeclaredRoutes)
 	m.projectEnvironmentRoutePolicies[key] = policy
+	touchGitOpsMemoryIntent(memory)
 	policy.DeclaredRoutes = cloneDeclaredRoutes(policy.DeclaredRoutes)
 	return policy, nil
 }

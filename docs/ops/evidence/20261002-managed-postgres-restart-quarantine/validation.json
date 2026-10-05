@@ -1,0 +1,51 @@
+{
+  "snapshot": "4d700a7176e697e8a76ed4b92a45da79faee8d7d",
+  "tree": "558c832e2ccebba13b02646a9543fee7634f177c",
+  "parent": "1f6b59838b7119ec2770a073a7a2f24c699e96b9",
+  "selected_paths": [
+    "go.mod",
+    "go.sum",
+    ".golangci.yml",
+    "Makefile",
+    "pkg",
+    "api",
+    "cmd/vmmd",
+    "cmd/vmmd-jail-helper",
+    "guest",
+    "deploy/scripts/leakcheck.sh",
+    "migrations",
+    "schema.sql",
+    "docs/adr/398-managed-postgres-restart-resource-quarantine.md"
+  ],
+  "changed_paths": [
+    "cmd/vmmd/main.go",
+    "cmd/vmmd/restart_inventory_linux.go",
+    "cmd/vmmd/restart_inventory_other.go",
+    "pkg/fcvm/alloc.go",
+    "pkg/fcvm/instance_flight.go",
+    "pkg/fcvm/instance_teardown.go",
+    "pkg/fcvm/manager.go",
+    "pkg/fcvm/restart_quarantine.go",
+    "pkg/fcvm/restart_quarantine_test.go",
+    "pkg/fcvm/restart_quarantine_metal_test.go",
+    "docs/adr/398-managed-postgres-restart-resource-quarantine.md",
+    "cmd/vmmd/readiness_test.go"
+  ],
+  "project": "gregale-prod",
+  "zone": "us-east1-b",
+  "instance": "gregale-internal-test-1",
+  "nested_virtualization": true,
+  "run_id": "managed-pg-restart-quarantine-4d700a71",
+  "stage": "/var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-4d700a71",
+  "runtime_dir": "/run/mpq-4d700a71",
+  "archive_sha256": "43eb47623b2cb330d339d882ab89285e3a597bcc30bf6b993d8144c53feef6e9",
+  "archive_bytes": 13430787,
+  "unit": "gregale-managed-pg-restart-quarantine-4d700a71-bounded",
+  "runner_sha256": "2681144da15a211a0c7df32d939cc4e9f61db003a4e473b36146ee9cf736ce83",
+  "patch_sha256": "0a7fcb36bce80d3e64e9ed5da012c29f43515d6b13fa3f03764b9c7e17f9a3e3",
+  "previous_attempt_snapshots": [
+    "9da44e64e83a4f25467eab9b624289e5cd83d4af",
+    "c533c5ead9a6162b8498f7295c6f2f5dd5413ee9"
+  ],
+  "expired_stage": "/var/tmp/faas-metal-smoke-managed-pg-restart-quarantine-9da44e64"
+}

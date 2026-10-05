@@ -80,6 +80,8 @@ type apidProxy struct {
 	// hop; the gate's bypass path is a true no-op so the proxy
 	// hop is unchanged for reads and same-box writes.
 	writeGate http.Handler
+	// appsDomain scopes the reservation to platform hosts (ADR-480).
+	appsDomain string
 }
 
 // newApidProxy parses target and returns the wrapping handler.
@@ -96,7 +98,7 @@ func newApidProxy(target string, next http.Handler, log *slog.Logger) http.Handl
 // AppLogsHandler; unit tests omit it (logsHandler=nil) and
 // the carve-out is benign.
 func newApidProxyWithLogs(target string, next http.Handler, logsHandler http.Handler, log *slog.Logger) http.Handler {
-	return newApidProxyWithGate(target, next, logsHandler, nil, log)
+	return newApidProxyWithGate(target, next, logsHandler, nil, "", log)
 }
 
 // newApidProxyWithGate is the full Tier A9 constructor: same
@@ -106,7 +108,7 @@ func newApidProxyWithLogs(target string, next http.Handler, logsHandler http.Han
 // exists so single-node tests that don't care about the gate
 // don't have to thread a no-op handler through every
 // constructor call.
-func newApidProxyWithGate(target string, next, logsHandler, writeGate http.Handler, log *slog.Logger) http.Handler {
+func newApidProxyWithGate(target string, next, logsHandler, writeGate http.Handler, appsDomain string, log *slog.Logger) http.Handler {
 	if target == "" || log == nil {
 		return next
 	}
@@ -124,6 +126,7 @@ func newApidProxyWithGate(target string, next, logsHandler, writeGate http.Handl
 		next:        next,
 		logsHandler: logsHandler,
 		writeGate:   writeGate,
+		appsDomain:  appsDomain,
 		log:         log,
 	}
 }
@@ -152,7 +155,10 @@ func (a *apidProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.logsHandler.ServeHTTP(w, r)
 		return
 	}
-	if isApidPath(r.URL.Path) {
+	// ADR-480: on an app, preview or customer host the platform paths
+	// belong to the app. The compute-owned log stream above stays on every
+	// host because the CLI and dashboard address it that way.
+	if isApidPath(r.URL.Path) && apid.IsPlatformHost(r.Host, a.appsDomain) {
 		// Tier A9 / ADR-084: route every apid-bound
 		// request through the standby write-redirect
 		// gate BEFORE the proxy hop. The gate's

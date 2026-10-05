@@ -59,6 +59,10 @@ func TestPreviewRequirementsCLIReadOnlyGateAndEvidence(t *testing.T) {
 						App: api.AppResponse{ID: "preview-id", Slug: "pr-42-api", PreviewOfSlug: "api"}, Parent: &api.AppResponse{ID: "parent-id", Slug: "api"},
 						LatestDeployment: &api.DeploymentResponse{ID: "candidate", Status: "live"}, ProductionDeployment: &api.DeploymentResponse{ID: "baseline", Status: "live"},
 					})
+				case "/v1/apps/api/deployments/baseline/route-policy":
+					writePreviewPolicySnapshotTest(w, "baseline", "parent-id", []api.EdgeRuleResponse{})
+				case "/v1/apps/pr-42-api/deployments/candidate/route-policy":
+					writePreviewPolicySnapshotTest(w, "candidate", "preview-id", []api.EdgeRuleResponse{})
 				case "/v1/apps/pr-42-api":
 					if tc.appFailure {
 						http.NotFound(w, r)
@@ -66,6 +70,8 @@ func TestPreviewRequirementsCLIReadOnlyGateAndEvidence(t *testing.T) {
 					}
 					writeJSONTest(w, api.AppResponse{ID: "preview-id", Slug: "pr-42-api", URL: "https://pr-42-api.gregale.dev", ConsumerAuthMode: "required", RequestTimeoutS: 2,
 						EffectiveLimits: api.AppEffectiveLimits{RequestBudgetMS: 10000, RequestBudgetMaxMS: 20000}})
+				case "/v1/apps/api/edge-rules":
+					writeJSONTest(w, []api.EdgeRuleResponse{})
 				case "/v1/apps/pr-42-api/edge-rules":
 					if tc.rulesFailure {
 						http.NotFound(w, r)

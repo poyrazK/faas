@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 464
+// adr: 590
 package sched
 
 import (

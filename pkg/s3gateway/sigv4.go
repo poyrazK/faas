@@ -219,7 +219,9 @@ func verifyPresignedSigV4(ctx context.Context, r *http.Request, parsed sigV4Requ
 	query := clone.URL.Query()
 	query.Del("X-Amz-Signature")
 	clone.URL.RawQuery = query.Encode()
-	signed, _, err := s3Signer().PresignHTTP(ctx, aws.Credentials{AccessKeyID: parsed.AccessKeyID, SecretAccessKey: secret}, clone, parsed.PayloadHash, "s3", region, parsed.SignedAt)
+	// Reproduce the client's explicit signed-header placement. Hoisting a
+	// header here changes the canonical query of a valid brokered request.
+	signed, _, err := s3Signer().PresignHTTP(ctx, aws.Credentials{AccessKeyID: parsed.AccessKeyID, SecretAccessKey: secret}, clone, parsed.PayloadHash, "s3", region, parsed.SignedAt, func(o *awsv4.SignerOptions) { o.DisableHeaderHoisting = true })
 	if err != nil {
 		return errSignature
 	}

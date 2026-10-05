@@ -42,6 +42,9 @@ type ObjectS3Credential struct {
 	RotationParentID  string
 	RotationWakeID    string
 	RotationStampedAt *time.Time
+	// URL is private authority for a single branded signed request. Its secret
+	// is never returned to the caller or included in credential inventories.
+	URL *ObjectURLCapability `json:"-"`
 }
 
 // ObjectS3CredentialRotationRequest switches the binding's current key and
@@ -166,6 +169,9 @@ type ObjectS3CredentialBindingStore interface {
 }
 
 func validObjectS3Credential(c ObjectS3Credential) bool {
+	if c.URL != nil {
+		return false // URL credentials must be admitted atomically with their receipt.
+	}
 	if c.ID == "" || c.AccountID == "" || c.BucketID == "" || c.AccessKeyID == "" || len(c.SecretSealed) == 0 || c.KID == "" || len(c.Label) < 1 || len(c.Label) > 64 {
 		return false
 	}

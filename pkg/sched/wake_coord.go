@@ -198,6 +198,9 @@ type wakeCoordCall struct {
 	outcome   CoordOutcome
 	waiters   int
 	completed bool
+	// A follower can only reuse a result for its requested environment. Calls
+	// remain grouped by app so deletion and admission limits cover all scopes.
+	scope string
 	// existingAtStart is the ledger concurrency observed before the first
 	// leader in this coordinator generation started. Every sibling copies
 	// the same baseline so its own ledger reservation is never counted
@@ -235,6 +238,10 @@ func newWakeCoord() *wakeCoord {
 // un-drained" read on the gateway gate — wake_coord.go closes done
 // inside Complete, so the leader's Complete itself is the cancellation.
 func (c *wakeCoord) Enter(appID string, fanout WakeFanout) (*wakeCoordCall, bool /*leader*/, error) {
+	return c.EnterScoped(appID, "", fanout)
+}
+
+func (c *wakeCoord) EnterScoped(appID, scope string, fanout WakeFanout) (*wakeCoordCall, bool /*leader*/, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -251,19 +258,28 @@ func (c *wakeCoord) Enter(appID string, fanout WakeFanout) (*wakeCoordCall, bool
 			active = append(active, call)
 		}
 	}
+	c.inflight[appID] = active
+	// Choose followers and fan-out demand only within one scope. Keep other
+	// scopes in the app's list so Forget still releases the whole app.
+	scoped := make([]*wakeCoordCall, 0, len(active))
+	for _, call := range active {
+		if call.scope == scope {
+			scoped = append(scoped, call)
+		}
+	}
 
-	if len(active) > 0 {
+	if len(scoped) > 0 {
 		// Every sibling in one generation uses the first leader's ledger
 		// baseline. A fresh policy snapshot may already include reservations
 		// made by these active leaders; adding it here would double-count
 		// their capacity and suppress valid cold fan-out.
-		fanout.Existing = active[0].existingAtStart
+		fanout.Existing = scoped[0].existingAtStart
 		// Pick the least-loaded live wake — with fan-out there can be
 		// several, and piling every follower onto the first one would
 		// hit the per-call cap while its siblings sat idle.
-		best := active[0]
+		best := scoped[0]
 		waiting := 0
-		for _, call := range active {
+		for _, call := range scoped {
 			waiting += call.waiters
 			if call.waiters < best.waiters {
 				best = call
@@ -271,7 +287,7 @@ func (c *wakeCoord) Enter(appID string, fanout WakeFanout) (*wakeCoordCall, bool
 		}
 		// Start another wake only when the ones already running cannot
 		// absorb the callers queued behind them (this one included).
-		if !fanout.wants(len(active), waiting+1) {
+		if !fanout.wants(len(scoped), waiting+1) {
 			if best.waiters >= c.cap {
 				c.inflight[appID] = active
 				return nil, false, ErrQueueFull
@@ -286,6 +302,7 @@ func (c *wakeCoord) Enter(appID string, fanout WakeFanout) (*wakeCoordCall, bool
 		coord:           c,
 		done:            make(chan struct{}),
 		waiters:         1,
+		scope:           scope,
 		existingAtStart: fanout.Existing,
 	}
 	c.inflight[appID] = append(active, call)

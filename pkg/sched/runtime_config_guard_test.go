@@ -43,6 +43,10 @@ func TestPark_RuntimeConfigChange(t *testing.T) {
 				if err := store.MarkAppRuntimeConfigChanged(ctx, app.ID); err != nil {
 					t.Fatal(err)
 				}
+				// Freshness is anchored on the wake's UUIDv7 admission time,
+				// which has millisecond precision; a change in the same
+				// millisecond is conservatively treated as concurrent.
+				time.Sleep(2 * time.Millisecond)
 			}
 			insID := primeRunPlusFrameworkReady(t, store, vmm, notif, e, app.ID, dep.ID)
 			if tc.changeAfter {
@@ -153,9 +157,20 @@ func TestInvalidateAppSnapshotsStampsRuntimeConfigChange(t *testing.T) {
 // for a database error during park.
 type changeLookupFailingStore struct {
 	*state.MemStore
+	fail bool
 }
 
-func (changeLookupFailingStore) AppRuntimeConfigChangedAt(context.Context, string) (time.Time, bool, error) {
+func (s *changeLookupFailingStore) AppRuntimeConfigChangedAt(ctx context.Context, appID string) (time.Time, bool, error) {
+	if !s.fail {
+		return s.MemStore.AppRuntimeConfigChangedAt(ctx, appID)
+	}
+	return time.Time{}, false, errors.New("database unavailable")
+}
+
+func (s *changeLookupFailingStore) AppRuntimeConfigChangedAtInScope(ctx context.Context, appID, scope string) (time.Time, bool, error) {
+	if !s.fail {
+		return s.MemStore.AppRuntimeConfigChangedAtInScope(ctx, appID, scope)
+	}
 	return time.Time{}, false, errors.New("database unavailable")
 }
 
@@ -164,12 +179,13 @@ func (changeLookupFailingStore) AppRuntimeConfigChangedAt(context.Context, strin
 func TestPark_RuntimeConfigLookupFailureSkipsCapture(t *testing.T) {
 	ctx := context.Background()
 	mem := state.NewMemStore()
-	store := changeLookupFailingStore{MemStore: mem}
+	store := &changeLookupFailingStore{MemStore: mem}
 	_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
 	vmm := &fakeVMM{}
 	notif := &fakeNotifier{}
 	e := newEngine(t, store, vmm, notif, "1.10.0")
 	insID := primeRunPlusFrameworkReady(t, store, vmm, notif, e, app.ID, dep.ID)
+	store.fail = true
 	capturesBefore := vmm.snapshots
 	publishedBefore := notif.count(db.NotifySnapshotWritten)
 

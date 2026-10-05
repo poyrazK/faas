@@ -1,0 +1,14 @@
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+Oct 02 16:31:47 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal kernel: fcvm.test invoked oom-killer: gfp_mask=0xcc0(GFP_KERNEL), order=0, oom_score_adj=0
+Oct 02 16:31:47 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal kernel: oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=gregale-managed-pg-restart-quarantine-4d700a71.service,mems_allowed=0,oom_memcg=/system.slice/gregale-managed-pg-restart-quarantine-4d700a71.service,task_memcg=/system.slice/gregale-managed-pg-restart-quarantine-4d700a71.service,task=fcvm.test,pid=444257,uid=0
+Oct 02 16:31:47 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal kernel: Memory cgroup out of memory: Killed process 444257 (fcvm.test) total-vm:13175640kB, anon-rss:7941772kB, file-rss:1628kB, shmem-rss:46772kB, UID:0 pgtables:15972kB oom_score_adj:0
+Oct 02 16:31:47 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal kernel: bash invoked oom-killer: gfp_mask=0x440dc0(GFP_KERNEL_ACCOUNT|__GFP_ZERO|__GFP_COMP), order=0, oom_score_adj=0
+Oct 02 16:31:47 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal kernel: oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=gregale-managed-pg-restart-quarantine-4d700a71.service,mems_allowed=0,oom_memcg=/system.slice/gregale-managed-pg-restart-quarantine-4d700a71.service,task_memcg=/system.slice/gregale-managed-pg-restart-quarantine-4d700a71.service,task=bash,pid=431791,uid=0
+Oct 02 16:31:47 gregale-internal-test-1.us-east1-b.c.gregale-prod.internal kernel: Memory cgroup out of memory: Killed process 431791 (bash) total-vm:7752kB, anon-rss:312kB, file-rss:3472kB, shmem-rss:0kB, UID:0 pgtables:52kB oom_score_adj:0
+MemoryCurrent=5933002752
+MemoryMax=infinity

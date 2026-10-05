@@ -2,8 +2,10 @@
 #
 # Severity → notification mapping (locked to deploy/ansible/roles/prometheus/files/faas.rules.yml):
 #   info  → suppressed (no receiver; surfaces in Prometheus / Grafana only).
-#   warn  → ticket-only email via faas-warn receiver.
-#   page  → operator email + Pushover via faas-page receiver.
+#   warn  → ticket email and/or chat via faas-warn receiver.
+#   page  → operator email + Pushover and/or chat via faas-page receiver.
+# FaasWatchdog (always firing) → faas-heartbeat, the dead-man's switch: an
+# external monitor alerts when its periodic posts stop.
 #
 # Grouping: by alertname + component so a single fault (e.g. apid down)
 # doesn't fan out into per-route email storms; group_wait 30s gives the
@@ -17,6 +19,8 @@
 #   /etc/alertmanager/secrets/smtp-password      (mode 0400, alertmanager:alertmanager)
 #   /etc/alertmanager/secrets/pushover-token    (mode 0400, alertmanager:alertmanager)
 #   /etc/alertmanager/secrets/pushover-user-key (mode 0400, alertmanager:alertmanager)
+#   /etc/alertmanager/secrets/discord-webhook-url, slack-webhook-url,
+#   heartbeat-url                                (mode 0400, alertmanager:alertmanager)
 # The tasks/main.yml loader asserts the file permissions before systemd unit
 # enable. Empty paths are valid only for am_dev_mode: the resulting config is
 # deliberately silent until an operator provisions a notification channel.
@@ -25,9 +29,17 @@
 {% set am_pushover_token_path = am_pushover_token_file | default('') | trim %}
 {% set am_pushover_user_key_path = am_pushover_user_key_file | default('') | trim %}
 {% set am_smtp_host = am_smtp_smarthost | default('') | trim %}
+{% set am_discord_path = am_discord_webhook_url_file | default('') | trim %}
+{% set am_slack_path = am_slack_webhook_url_file | default('') | trim %}
+{% set am_heartbeat_path = am_heartbeat_url_file | default('') | trim %}
 {% set am_email_enabled = am_smtp_host | length > 0 and am_smtp_password_path | length > 0 %}
 {% set am_pushover_enabled = am_pushover_token_path | length > 0 and am_pushover_user_key_path | length > 0 %}
-{% set am_notifications_enabled = am_email_enabled or am_pushover_enabled %}
+{% set am_discord_enabled = am_discord_path | length > 0 %}
+{% set am_slack_enabled = am_slack_path | length > 0 %}
+{% set am_chat_enabled = am_discord_enabled or am_slack_enabled %}
+{% set am_heartbeat_enabled = am_heartbeat_path | length > 0 %}
+{% set am_notifications_enabled = am_email_enabled or am_pushover_enabled or am_chat_enabled %}
+{% set am_warn_enabled = am_email_enabled or am_chat_enabled %}
 
 {% if am_email_enabled %}
 global:
@@ -50,6 +62,20 @@ route:
   group_interval: 5m
   repeat_interval: 4h
   routes:
+    # Dead-man's switch first, so no severity route can swallow it. The
+    # short group/repeat interval turns the permanently firing FaasWatchdog
+    # into a periodic heartbeat post.
+    - matchers:
+        - alertname = "FaasWatchdog"
+{% if am_heartbeat_enabled %}
+      receiver: faas-heartbeat
+{% else %}
+      receiver: faas-silent
+{% endif %}
+      group_wait: 0s
+      group_interval: {{ am_heartbeat_interval | default('5m') }}
+      repeat_interval: {{ am_heartbeat_interval | default('5m') }}
+      continue: false
 {% if not am_email_customer_alert_presets | default(false) | bool %}
     # Customer-configured alert rules are delivered by meterd's signed webhook
     # path. Keep the Prometheus mirrors visible without duplicating them into the
@@ -59,7 +85,7 @@ route:
       receiver: faas-silent
       continue: false
 {% endif %}
-    # page-severity: full notify (email + Pushover).
+    # page-severity: full notify (email + Pushover + chat).
     - matchers:
         - severity = "page"
 {% if am_notifications_enabled %}
@@ -69,10 +95,10 @@ route:
 {% endif %}
       group_wait: 10s
       repeat_interval: 1h
-    # warn-severity: ticket-only email; longer repeat so we don't spam.
+    # warn-severity: ticket email and/or chat; longer repeat so we don't spam.
     - matchers:
         - severity = "warn"
-{% if am_email_enabled %}
+{% if am_warn_enabled %}
       receiver: faas-warn
 {% else %}
       receiver: faas-silent
@@ -112,6 +138,18 @@ receivers:
         title: "faas page"
         url: "{{ am_alerts_url | default('http://127.0.0.1:9095/alerts') }}"
 {% endif %}
+{% if am_discord_enabled %}
+    # Discord's Slack-compatible endpoint (webhook URL + /slack): Alertmanager
+    # 0.27 rejects discord_configs whose URL comes from a file.
+    slack_configs:
+      - api_url_file: "{{ am_discord_path }}"
+        send_resolved: true
+{% endif %}
+{% if am_slack_enabled %}
+    slack_configs:
+      - api_url_file: "{{ am_slack_path }}"
+        send_resolved: true
+{% endif %}
 
   - name: faas-warn
 {% if am_email_enabled %}
@@ -123,6 +161,29 @@ receivers:
         send_resolved: true
         headers:
           X-Faas-Alert: "warn"
+{% endif %}
+{% if am_discord_enabled %}
+    # Discord's Slack-compatible endpoint (webhook URL + /slack): Alertmanager
+    # 0.27 rejects discord_configs whose URL comes from a file.
+    slack_configs:
+      - api_url_file: "{{ am_discord_path }}"
+        send_resolved: true
+{% endif %}
+{% if am_slack_enabled %}
+    slack_configs:
+      - api_url_file: "{{ am_slack_path }}"
+        send_resolved: true
+{% endif %}
+
+  - name: faas-heartbeat
+{% if am_heartbeat_enabled %}
+    webhook_configs:
+      # Any heartbeat endpoint that accepts a POST: healthchecks.io,
+      # Better Stack, Cronitor. Only the newest alert is sent and resolution
+      # is never sent; the ping itself is the signal.
+      - url_file: "{{ am_heartbeat_path }}"
+        send_resolved: false
+        max_alerts: 1
 {% endif %}
 
   - name: faas-silent

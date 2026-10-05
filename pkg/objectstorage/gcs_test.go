@@ -131,6 +131,15 @@ func TestGCSCopyObjectBetweenBuckets(t *testing.T) {
 	}
 }
 
+func TestGCSCopyRejectsVersionSelector(t *testing.T) {
+	store := &fakeGCSStore{}
+	provider := testGCS(gcsDefaultEndpoint, store)
+	_, err := provider.CopyObject(context.Background(), "bucket", CopyObjectRequest{SourceKey: "source", DestinationKey: "destination", SourceProviderVersionID: "native"})
+	if !errors.Is(err, ErrUnsupported) || store.copySourceBucket != "" {
+		t.Fatal("GCS ignored native version selection", err, store.copySourceBucket)
+	}
+}
+
 func TestGCSBucketSafetyRecoveryAndErrors(t *testing.T) {
 	store := &fakeGCSStore{}
 	p := testGCS(gcsDefaultEndpoint, store)
@@ -318,7 +327,7 @@ func TestGCSMultipartOAuthProtocolAndCompletionRecovery(t *testing.T) {
 		}
 	}))
 	defer upstream.Close()
-	store := &fakeGCSStore{object: gcsObjectState{Size: 10, Metadata: map[string]string{ReservedMultipartSessionMetadataKey: "session-1"}}}
+	store := &fakeGCSStore{object: gcsObjectState{Size: 10, ETag: `"actual"`, Metadata: map[string]string{ReservedMultipartSessionMetadataKey: "session-1"}}}
 	p := testGCS(upstream.URL, store)
 	p.httpClient = upstream.Client()
 

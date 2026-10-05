@@ -70,6 +70,7 @@ func AsProblem(err error) *Problem {
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
+	BindingsCheck *BindingCheckReport `json:"bindings_check,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -645,8 +646,16 @@ const (
 	// gateway cannot load or compile the contract required by an enabled app.
 	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
 	CodeValidation                     = "validation_failed"
+	CodeAppAdmissionUnavailable        = "app_admission_unavailable"
+	CodeDatabaseCutoverFenced          = "database_cutover_fenced"
+	CodeAutomationVersionConflict      = "automation_version_conflict"
+	CodeAutomationOwnershipConflict    = "automation_ownership_conflict"
+	CodeAutomationInvalid              = "automation_invalid"
 	CodeConflict                       = "conflict"
-	CodeNoLiveDeployment               = "no_live_deployment"
+	// ADR-568: the original private VM attempt cannot yet acknowledge its
+	// ownership or complete physical retirement. Keep its reservation charged.
+	CodeEnvironmentQualificationUnconfirmed = "environment_qualification_unconfirmed"
+	CodeNoLiveDeployment                    = "no_live_deployment"
 	// CodeInternal is returned by handlers when an unexpected server-side
 	// failure surfaces to the caller (DB Tx commit, network blip, partial
 	// state). Distinct from CodeCapacity (503, "we ran out of headroom")
@@ -917,7 +926,7 @@ const (
 	CodeEnvVarNotFound      = "env_var_not_found"
 
 	// Customer env-var scopes (ADR-090). The scope query param on
-	// /v1/apps/{slug}/envs?scope= accepts a domain-valid slug (3..40
+	// /v1/apps/{slug}/envs?scope= accepts a domain-valid slug (1..40
 	// lowercase alnum + dash) OR the reserved sentinel "__all__" on
 	// the read path. Two distinct codes so a CLI author can tell
 	// "you used the all-scopes sentinel on a write" (400
@@ -1564,6 +1573,9 @@ const (
 	// failures so operators can tell serving-path regressions from image
 	// startup regressions.
 	CodeDeploymentSmokeFailed = "deployment_smoke_failed"
+	// Public candidate verification stayed unavailable within the durable
+	// recovery window. This does not establish an application health verdict.
+	CodeDeploymentVerificationUnavailable = "deployment_verification_unavailable"
 	// CodeReleaseCommandFailed means the deployment's pre-boot release task
 	// failed, timed out, or was cancelled. The previous deployment remains
 	// live; task output is available through the app-task inspection surface.
@@ -1818,6 +1830,11 @@ const (
 	CodeWorkflowRunNotFound             = "workflow_run_not_found"
 	CodeWorkflowDefinitionNotFound      = "workflow_definition_not_found"
 	CodeWorkflowEventNotFound           = "workflow_event_not_found"
+	CodeWebhookAutomationUnavailable    = "webhook_automation_unavailable"
+	CodeWebhookAutomationConflict       = "webhook_automation_conflict"
+	CodeWorkflowResumeConflict          = "workflow_resume_conflict"
+	CodeWorkflowResumeUnsafe            = "workflow_resume_unsafe"
+	CodeWorkflowResumeLimit             = "workflow_resume_limit"
 	CodeWorkflowNotRunning              = "workflow_not_running"
 	CodeWorkflowDeploymentUnavailable   = "workflow_deployment_unavailable"
 	CodeWorkflowCallbackClosed          = "workflow_callback_closed"
@@ -1868,7 +1885,7 @@ func StatusForCode(code string) int {
 		return http.StatusServiceUnavailable
 	case CodeGlobalAppTargetVerificationFailed:
 		return http.StatusBadGateway
-	case CodeComputeRegionUnknown, CodeComputeRegionOutsideCell:
+	case CodeComputeRegionUnknown, CodeComputeRegionOutsideCell, CodeAutomationInvalid:
 		return http.StatusUnprocessableEntity
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
@@ -1896,7 +1913,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotImplemented
 	case CodeWorkflowCallbackExpired:
 		return http.StatusGone
-	case CodeComputeRegionAdmissionPaused, CodeComputeRegionUnavailable, CodeComputeRegionCapacityExhausted, CodeCapacity, CodeServiceRecoveryCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
+	case CodeComputeRegionAdmissionPaused, CodeComputeRegionUnavailable, CodeComputeRegionCapacityExhausted, CodeAppAdmissionUnavailable, CodeCapacity, CodeDeploymentVerificationUnavailable, CodeServiceRecoveryCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeAppUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
 		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable:
 		return http.StatusServiceUnavailable
@@ -1926,7 +1943,7 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeNotFound, CodeUndeclaredRoute:
 		return http.StatusNotFound
-	case CodeDeclaredRoutePolicyUnavailable:
+	case CodeWebhookAutomationUnavailable, CodeDeclaredRoutePolicyUnavailable:
 		return http.StatusServiceUnavailable
 	case CodeNotImplemented:
 		return http.StatusNotImplemented
@@ -1934,7 +1951,11 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
+	case CodeDatabaseCutoverFenced, CodeConflict, CodeEnvironmentQualificationUnconfirmed,
+		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
+		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
+		CodeWebhookAutomationConflict, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
+		CodeWorkflowResumeLimit,
 		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
@@ -4579,6 +4600,23 @@ func ErrNoRollbackTarget() *Problem {
 	return NewProblem(http.StatusConflict, CodeNoRollbackTarget,
 		"No previous deployment",
 		"there's no superseded deployment to roll back to; deploy at least twice.").
+		WithDocs(docsBase + "/deploys#rollback")
+}
+
+// ErrNoRollbackTargetWithCandidates is ErrNoRollbackTarget for an app whose
+// earlier deployments are still live at 0% traffic. That is the state a
+// traffic split leaves after `traffic promote`. Those deployments can be
+// rolled back to explicitly, but a default rollback won't pick one: it cannot
+// tell a former production deployment from a staged preview that never served.
+// The detail names them, newest first, and gives the explicit command.
+func ErrNoRollbackTargetWithCandidates(appSlug string, revisions []string) *Problem {
+	if len(revisions) == 0 {
+		return ErrNoRollbackTarget()
+	}
+	return NewProblem(http.StatusConflict, CodeNoRollbackTarget,
+		"Choose a rollback target",
+		fmt.Sprintf("no deployment was superseded, but these deployments are live at 0%% traffic: %s. Roll back to one explicitly: gregale rollback %s --to %s",
+			strings.Join(revisions, ", "), appSlug, revisions[0])).
 		WithDocs(docsBase + "/deploys#rollback")
 }
 

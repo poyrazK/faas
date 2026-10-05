@@ -1,8 +1,8 @@
 package imaged
 
-// imaged-local diagnostics: lvs probe + Firecracker version detection.
+// imaged-local diagnostics: fc volume usage probe + Firecracker version detection.
 //
-// These are *thin* exec wrappers, not VM lifecycle. They do not import
+// These are thin host probes, not VM lifecycle. They do not import
 // pkg/fcvm because imaged must not touch firecracker/jailer (CLAUDE.md
 // ownership: vmmd is the ONLY root component that does). The probes
 // are the only outward-facing firecracker-adjacent concerns imaged has:
@@ -16,52 +16,30 @@ package imaged
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"os/exec"
-	"strconv"
-	"strings"
-	"time"
+
+	"github.com/onebox-faas/faas/pkg/hostsize"
 )
 
-// LvFcName is the canonical name of the lv-fc logical volume the GC
-// pressure probe reads. Kept here (not in pkg/fcvm) so imaged has no
-// depguard-flagged import surface to fcvm.
-const LvFcName = "lv-fc"
-
-// DefaultLvFcUsedPct returns a closure that runs
-// `lvs --noheadings -o data_percent <lvName>` and parses the trailing
-// percent.
+// DefaultFcVolumeUsedPct returns a closure that reports how full the
+// filesystem holding root (the spec §8 lv-fc volume, FAAS_STORAGE_ROOT,
+// /srv/fc by default) is, using statfs.
 //
-// On failure (lvs not on PATH, lv missing, parse error) the closure
-// returns math.NaN() and a non-nil error. NaN is the load-bearing
-// choice: the F1 GC tick treats NaN as "no data" and stays in the
-// safe-noop mode (per-app sweep only, no pressure eviction) rather
-// than reading a misleading "0% used" that would leave the fleet
-// snapshot budget unchecked.
+// It used to read `lvs -o data_percent lv-fc`. data_percent is only
+// populated for thin pools and snapshots, and fleets on cloud disks have
+// no LVM at all, so the probe always failed and the F1 GC tick never
+// entered budget-pressure eviction however full the volume became.
 //
-// The 1 s ctx budget matches the loop-tick cadence; lv-fc stats are cheap.
-func DefaultLvFcUsedPct(lvName string) func(ctx context.Context) (float64, error) {
-	return func(ctx context.Context) (float64, error) {
-		if lvName == "" {
-			return math.NaN(), errors.New("imaged: empty lv name")
-		}
-		cctx, cancel := context.WithTimeout(ctx, time.Second)
-		defer cancel()
-		out, err := exec.CommandContext(cctx, "lvs", "--noheadings", "-o", "data_percent", lvName).Output()
+// On failure the closure returns math.NaN() and the error. The GC tick
+// treats NaN as "no data" and stays in the safe-noop mode (per-app sweep
+// only, no pressure eviction) rather than acting on a guessed value.
+func DefaultFcVolumeUsedPct(root string) func(ctx context.Context) (float64, error) {
+	return func(context.Context) (float64, error) {
+		pct, err := hostsize.FilesystemUsedPct(root)
 		if err != nil {
-			return math.NaN(), err
-		}
-		// Output looks like "  37.42\n" — trim, drop trailing %, parse.
-		s := strings.TrimSpace(string(out))
-		s = strings.TrimSuffix(s, "%")
-		if s == "" {
-			return math.NaN(), nil
-		}
-		pct, err := strconv.ParseFloat(s, 64)
-		if err != nil {
-			return math.NaN(), err
+			return math.NaN(), fmt.Errorf("imaged: fc volume usage: %w", err)
 		}
 		return pct, nil
 	}

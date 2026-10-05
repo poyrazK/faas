@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"filippo.io/age"
@@ -16,8 +15,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
-
-var objectStorageBindingPrefixPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,47}$`)
 
 func (s *server) objectStorageComputeBindingContext(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, state.ObjectBucket, state.ObjectS3CredentialBindingStore, bool) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
@@ -58,7 +55,7 @@ func defaultObjectStorageBindingPrefix(bucketName string) string {
 }
 
 func validObjectStorageBindingPrefix(prefix string) bool {
-	return objectStorageBindingPrefixPattern.MatchString(prefix)
+	return api.ValidObjectStorageBindingPrefix(prefix)
 }
 
 func objectStorageBindingSecretKeys(prefix string) api.ObjectStorageComputeBindingSecretKeys {

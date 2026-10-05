@@ -31,6 +31,10 @@ func Field(s string) string {
 	if s == "" {
 		return s
 	}
+	// Make line-break removal explicit for the log-injection analyzer.
+	// The rune pass below retains the same treatment of all other controls.
+	s = strings.ReplaceAll(s, "\r", "·")
+	s = strings.ReplaceAll(s, "\n", "·")
 	// Use a strings.Builder for clean rune-aware iteration; the previous
 	// hand-rolled byte decoder was both slower and not obviously correct.
 	var b strings.Builder

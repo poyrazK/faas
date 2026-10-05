@@ -267,11 +267,11 @@ esac
 		return err
 	}
 
-	// Pre-size and mkfs. 64 MiB mirrors the busybox helper — ample for
-	// guest-init (~10 MB static) + busybox (~1 MB).
+	// Pre-size and mkfs. The compiled guest-init plus ext4 metadata exceeds
+	// 64 MiB on the native acceptance build, so leave 128 MiB for the fixture.
 	if f, err := os.Create(dst); err != nil {
 		return fmt.Errorf("create ext4 file: %w", err)
-	} else if err := f.Truncate(64 << 20); err != nil {
+	} else if err := f.Truncate(128 << 20); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("size ext4 file: %w", err)
 	} else if err := f.Close(); err != nil {

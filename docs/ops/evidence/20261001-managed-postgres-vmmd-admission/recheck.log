@@ -1,0 +1,440 @@
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+e2fsck 1.47.0 (5-Feb-2023)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+faas-metal-smoke: 28/16384 files (3.6% non-contiguous), 8074/16384 blocks
+e2fsck 1.47.0 (5-Feb-2023)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+faas-metal-layer: 16/4096 files (0.0% non-contiguous), 272/4096 blocks
+178f50d3a868d8fc08228225cd49fca2d8f117a88c8924385b33166c4f158e3b  /srv/fc/base/vmlinux-6.1.134
+47a0ccdc496f74cecc113fc9b6f48838489dde63136ec7520434e509abc14f9e  /var/tmp/faas-metal-smoke-managed-pg-recheck-bbd416e9/fixtures/hello-base.ext4
+213d692e5226530178dfedbb07a7105878f29fb18c5bb1fe6efbbb173f4709c4  /var/tmp/faas-metal-smoke-managed-pg-recheck-bbd416e9/fixtures/hello-layer.ext4
+=== RUN   TestMetalAppAdmissionFence
+--- PASS: TestMetalAppAdmissionFence (1.87s)
+=== RUN   TestMetalDestroyJoinsLateResume
+--- PASS: TestMetalDestroyJoinsLateResume (1.03s)
+=== RUN   TestTriggerExtensionHookWire
+--- PASS: TestTriggerExtensionHookWire (0.00s)
+=== RUN   TestMetalHelloBoot
+--- PASS: TestMetalHelloBoot (0.92s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/fcvm	4.939s
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+=== RUN   TestMetalBoot50Concurrent
+2026/10/01 21:20:48 WARN slow cold boot timing breakdown wake_id="" instance=m1-3 resolve_images_ms=0 resolve_artifacts="[{Artifact:kernel Source:direct DurationMs:0 Bytes:29892944} {Artifact:base Source:direct DurationMs:0 Bytes:67108864} {Artifact:main Source:direct DurationMs:0 Bytes:16777216}]" chroot_ms=0 provision_ms=192 stage_runtime_ms=113 prepare_config_ms=0 helper_ms=5139 start_jailer_ms=385 bind_tun_ms=455 cgroup_ms=0 write_config_ms=0 wait_ready_ms=1591 quota_restore_ms=0 total_ms=7880
+2026/10/01 21:20:57 WARN slow cold boot timing breakdown wake_id="" instance=m1-5 resolve_images_ms=0 resolve_artifacts="[{Artifact:kernel Source:direct DurationMs:0 Bytes:29892944} {Artifact:base Source:direct DurationMs:0 Bytes:67108864} {Artifact:main Source:direct DurationMs:0 Bytes:16777216}]" chroot_ms=0 provision_ms=221 stage_runtime_ms=107 prepare_config_ms=0 helper_ms=7283 start_jailer_ms=1 bind_tun_ms=622 cgroup_ms=0 write_config_ms=0 wait_ready_ms=9042 quota_restore_ms=0 total_ms=17279
+2026/10/01 21:21:02 WARN slow cold boot timing breakdown wake_id="" instance=m1-0 resolve_images_ms=0 resolve_artifacts="[{Artifact:kernel Source:direct DurationMs:0 Bytes:29892944} {Artifact:base Source:direct DurationMs:0 Bytes:67108864} {Artifact:main Source:direct DurationMs:0 Bytes:16777216}]" chroot_ms=0 provision_ms=216 stage_runtime_ms=128 prepare_config_ms=1 helper_ms=7490 start_jailer_ms=2 bind_tun_ms=641 cgroup_ms=0 write_config_ms=0 wait_ready_ms=13771 quota_restore_ms=0 total_ms=22252
+2026/10/01 21:21:06 WARN slow cold boot timing breakdown wake_id="" instance=m1-2 resolve_images_ms=0 resolve_artifacts="[{Artifact:kernel Source:direct DurationMs:0 Bytes:29892944} {Artifact:base Source:direct DurationMs:0 Bytes:67108864} {Artifact:main Source:direct DurationMs:0 Bytes:16777216}]" chroot_ms=0 provision_ms=1587 stage_runtime_ms=448 prepare_config_ms=0 helper_ms=5811 start_jailer_ms=1 bind_tun_ms=909 cgroup_ms=0 write_config_ms=3 wait_ready_ms=16685 quota_restore_ms=0 total_ms=25448
+    manager_metal_test.go:111: boot m1-18: wake m1-18: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-28: wake m1-28: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-12: wake m1-12: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-10: wake m1-10: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-14: wake m1-14: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-29: wake m1-29: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-8: wake m1-8: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-22: wake m1-22: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-9: wake m1-9: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-1: wake m1-1: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-24: wake m1-24: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-4: wake m1-4: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-7: wake m1-7: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-6: wake m1-6: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-19: wake m1-19: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-16: wake m1-16: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-26: wake m1-26: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-27: wake m1-27: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-15: wake m1-15: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-21: wake m1-21: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-11: wake m1-11: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-25: wake m1-25: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-23: wake m1-23: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-13: wake m1-13: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-17: wake m1-17: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-20: wake m1-20: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:119: live=4, want 30
+    helper_metal_test.go:68: guest m1-14: 2026-10-01T21:20:53.477825945 [m1-14:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-8: 2026-10-01T21:20:52.954957954 [m1-8:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-8: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-8: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-10: 2026-10-01T21:20:53.281813559 [m1-10:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-6: 2026-10-01T21:20:52.320619931 [m1-6:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-6: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-18: 2026-10-01T21:20:52.650523159 [m1-18:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-18: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-18: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-11: 2026-10-01T21:20:53.488566304 [m1-11:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-11: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-11: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-4: 2026-10-01T21:20:52.433176656 [m1-4:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-25: 2026-10-01T21:20:50.985054114 [m1-25:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-25: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-25: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-20: 2026-10-01T21:20:51.313565992 [m1-20:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-20: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-20: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-20: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-20: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-20: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-20: 2026/10/01 21:21:07 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-17: 2026-10-01T21:20:52.800508717 [m1-17:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-17: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-17: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-17: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-17: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-17: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-17: 2026/10/01 21:21:06 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-17: 2026/10/01 21:21:06 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-17: 2026/10/01 21:21:06 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-17: 2026/10/01 21:21:06 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-17: 2026/10/01 21:21:06 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-17: 2026/10/01 21:21:06 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/redis err="invalid argument"
+    helper_metal_test.go:68: guest m1-17: 2026/10/01 21:21:06 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mysql err="invalid argument"
+    helper_metal_test.go:68: guest m1-17: 2026/10/01 21:21:06 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongodb err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026-10-01T21:20:49.032677546 [m1-0:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-0: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-0: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-0: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-0: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-0: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:20:58 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:20:58 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:20:59 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:20:59 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:20:59 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:20:59 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/redis err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:20:59 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mysql err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:20:59 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongodb err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:20:59 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongo err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:20:59 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cockroach err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:20:59 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cassandra err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:20:59 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/clickhouse err="invalid argument"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:20:59 WARN stateless advisory unavailable err="vsock socket: no such device"
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:21:00 INFO tail_events proxy started socket=/run/guest-init/tail-events.sock vsock_port=1027
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:21:00 INFO sidecar events proxy started vsock_port=1027 transport=stream
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:21:00 INFO framework_ready stream proxy started vsock_port=1027
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:21:01 INFO healthcheck: NONE shape; no poll goroutine
+    helper_metal_test.go:68: guest m1-0: 2026/10/01 21:21:03 INFO characterization complete mode=none port=8080 class=http exit=-1 shipped=true reason=ok duration=2.280306158s pid=139 owned_sockets=2 listen_rows_tcp=2 listen_rows_tcp6=-1
+    helper_metal_test.go:68: guest m1-3: 2026-10-01T21:20:46.873530190 [m1-3:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-3: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-3: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-3: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-3: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-3: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/redis err="invalid argument"
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mysql err="invalid argument"
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongodb err="invalid argument"
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongo err="invalid argument"
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cockroach err="invalid argument"
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cassandra err="invalid argument"
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/clickhouse err="invalid argument"
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 WARN stateless advisory unavailable err="vsock socket: no such device"
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 INFO tail_events proxy started socket=/run/guest-init/tail-events.sock vsock_port=1027
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 INFO sidecar events proxy started vsock_port=1027 transport=stream
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 INFO framework_ready stream proxy started vsock_port=1027
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:47 INFO healthcheck: NONE shape; no poll goroutine
+    helper_metal_test.go:68: guest m1-3: 2026/10/01 21:20:48 INFO characterization complete mode=none port=8080 class=http exit=-1 shipped=true reason=ok duration=262.982859ms pid=141 owned_sockets=2 listen_rows_tcp=2 listen_rows_tcp6=-1
+    helper_metal_test.go:68: guest m1-29: 2026-10-01T21:20:52.731868721 [m1-29:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-24: 2026-10-01T21:20:51.801405487 [m1-24:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-24: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-24: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-9: 2026-10-01T21:20:53.265683979 [m1-9:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-23: 2026-10-01T21:20:51.679674515 [m1-23:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-19: 2026-10-01T21:20:51.827767993 [m1-19:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-1: 2026-10-01T21:20:51.302240554 [m1-1:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-1: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-1: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-1: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-1: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-1: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-1: 2026/10/01 21:21:07 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-1: 2026/10/01 21:21:07 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-1: 2026/10/01 21:21:07 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-1: 2026/10/01 21:21:07 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-1: 2026/10/01 21:21:07 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-26: 2026-10-01T21:20:51.309851023 [m1-26:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-26: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-26: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-26: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-27: 2026-10-01T21:20:50.675724748 [m1-27:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-27: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-27: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-22: 2026-10-01T21:20:53.041502866 [m1-22:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-21: 2026-10-01T21:20:50.520553367 [m1-21:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-21: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-21: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-21: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-21: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-21: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-21: 2026/10/01 21:21:04 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-21: 2026/10/01 21:21:04 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-21: 2026/10/01 21:21:05 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-21: 2026/10/01 21:21:05 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-21: 2026/10/01 21:21:05 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-21: 2026/10/01 21:21:05 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/redis err="invalid argument"
+    helper_metal_test.go:68: guest m1-21: 2026/10/01 21:21:05 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mysql err="invalid argument"
+    helper_metal_test.go:68: guest m1-21: 2026/10/01 21:21:05 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongodb err="invalid argument"
+    helper_metal_test.go:68: guest m1-21: 2026/10/01 21:21:05 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongo err="invalid argument"
+    helper_metal_test.go:68: guest m1-21: 2026/10/01 21:21:05 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cockroach err="invalid argument"
+    helper_metal_test.go:68: guest m1-21: 2026/10/01 21:21:05 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cassandra err="invalid argument"
+    helper_metal_test.go:68: guest m1-21: 2026/10/01 21:21:05 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/clickhouse err="invalid argument"
+    helper_metal_test.go:68: guest m1-21: 2026/10/01 21:21:05 WARN stateless advisory unavailable err="vsock socket: no such device"
+    helper_metal_test.go:68: guest m1-21: 2026/10/01 21:21:07 INFO tail_events proxy started socket=/run/guest-init/tail-events.sock vsock_port=1027
+    helper_metal_test.go:68: guest m1-16: 2026-10-01T21:20:52.977949203 [m1-16:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-16: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-12: 2026-10-01T21:20:52.722607561 [m1-12:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-12: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-12: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-12: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-12: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-12: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-7: 2026-10-01T21:20:53.289677076 [m1-7:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-7: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-7: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-7: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-7: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-7: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-15: 2026-10-01T21:20:53.424497941 [m1-15:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-15: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-15: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-5: 2026-10-01T21:20:48.963449291 [m1-5:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-5: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-5: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-5: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-5: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-5: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:53 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:53 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:54 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:54 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:54 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:54 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/redis err="invalid argument"
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:54 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mysql err="invalid argument"
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:54 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongodb err="invalid argument"
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:54 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongo err="invalid argument"
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:54 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cockroach err="invalid argument"
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:54 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cassandra err="invalid argument"
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:54 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/clickhouse err="invalid argument"
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:54 WARN stateless advisory unavailable err="vsock socket: no such device"
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:55 INFO tail_events proxy started socket=/run/guest-init/tail-events.sock vsock_port=1027
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:55 INFO sidecar events proxy started vsock_port=1027 transport=stream
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:55 INFO framework_ready stream proxy started vsock_port=1027
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:56 INFO healthcheck: NONE shape; no poll goroutine
+    helper_metal_test.go:68: guest m1-5: 2026/10/01 21:20:58 INFO characterization complete mode=none port=8080 class=http exit=-1 shipped=true reason=ok duration=2.395815568s pid=141 owned_sockets=2 listen_rows_tcp=2 listen_rows_tcp6=-1
+    helper_metal_test.go:68: guest m1-2: 2026-10-01T21:20:49.814703997 [m1-2:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-2: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-2: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-2: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-2: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-2: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:03 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:03 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:04 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:04 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:04 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:04 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/redis err="invalid argument"
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:04 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mysql err="invalid argument"
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:04 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongodb err="invalid argument"
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:04 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongo err="invalid argument"
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:04 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cockroach err="invalid argument"
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:04 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cassandra err="invalid argument"
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:04 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/clickhouse err="invalid argument"
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:04 WARN stateless advisory unavailable err="vsock socket: no such device"
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:05 INFO tail_events proxy started socket=/run/guest-init/tail-events.sock vsock_port=1027
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:05 INFO sidecar events proxy started vsock_port=1027 transport=stream
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:05 INFO framework_ready stream proxy started vsock_port=1027
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:05 INFO healthcheck: NONE shape; no poll goroutine
+    helper_metal_test.go:68: guest m1-2: 2026/10/01 21:21:07 INFO characterization complete mode=none port=8080 class=http exit=-1 shipped=false reason=ack_timeout duration=2.056579587s pid=144 owned_sockets=2 listen_rows_tcp=2 listen_rows_tcp6=-1
+    helper_metal_test.go:68: guest m1-28: 2026-10-01T21:20:52.696862630 [m1-28:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-28: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-28: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-13: 2026-10-01T21:20:52.702100748 [m1-13:main] Successfully started microvm that was configured from one single json
+--- FAIL: TestMetalBoot50Concurrent (31.19s)
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/fcvm	31.323s
+FAIL
+make: *** [Makefile:413: test-metal] Error 1
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+=== RUN   TestMetalBoot50Concurrent
+2026/10/01 21:23:40 WARN slow cold boot timing breakdown wake_id="" instance=m1-24 resolve_images_ms=0 resolve_artifacts="[{Artifact:kernel Source:direct DurationMs:0 Bytes:29892944} {Artifact:base Source:direct DurationMs:0 Bytes:67108864} {Artifact:main Source:direct DurationMs:0 Bytes:16777216}]" chroot_ms=0 provision_ms=1516 stage_runtime_ms=336 prepare_config_ms=0 helper_ms=5017 start_jailer_ms=1 bind_tun_ms=334 cgroup_ms=0 write_config_ms=0 wait_ready_ms=2164 quota_restore_ms=0 total_ms=9372
+2026/10/01 21:23:57 WARN slow cold boot timing breakdown wake_id="" instance=m1-14 resolve_images_ms=0 resolve_artifacts="[{Artifact:kernel Source:direct DurationMs:0 Bytes:29892944} {Artifact:base Source:direct DurationMs:0 Bytes:67108864} {Artifact:main Source:direct DurationMs:0 Bytes:16777216}]" chroot_ms=0 provision_ms=1546 stage_runtime_ms=114 prepare_config_ms=0 helper_ms=5084 start_jailer_ms=1 bind_tun_ms=557 cgroup_ms=0 write_config_ms=0 wait_ready_ms=18698 quota_restore_ms=0 total_ms=26004
+    manager_metal_test.go:111: boot m1-5: wake m1-5: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-18: wake m1-18: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-3: wake m1-3: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-17: wake m1-17: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-29: wake m1-29: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-19: wake m1-19: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-15: wake m1-15: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-21: wake m1-21: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-16: wake m1-16: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-23: wake m1-23: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-20: wake m1-20: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-12: wake m1-12: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-11: wake m1-11: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-9: wake m1-9: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-22: wake m1-22: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-8: wake m1-8: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-28: wake m1-28: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-6: wake m1-6: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-1: wake m1-1: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-4: wake m1-4: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-7: wake m1-7: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-27: wake m1-27: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-0: wake m1-0: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-25: wake m1-25: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-13: wake m1-13: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-2: wake m1-2: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-26: wake m1-26: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:111: boot m1-10: wake m1-10: cold boot: vmm: readiness: context deadline exceeded
+    manager_metal_test.go:119: live=2, want 30
+    helper_metal_test.go:68: guest m1-8: 2026-10-01T21:23:41.809599696 [m1-8:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-23: 2026-10-01T21:23:39.992487919 [m1-23:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-23: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-23: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-23: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-23: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-17: 2026-10-01T21:23:39.025569081 [m1-17:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-17: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-17: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-17: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-17: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-17: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-17: 2026/10/01 21:23:56 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-17: 2026/10/01 21:23:56 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-17: 2026/10/01 21:23:57 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-17: 2026/10/01 21:23:57 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-29: 2026-10-01T21:23:41.790552943 [m1-29:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-21: 2026-10-01T21:23:42.090612808 [m1-21:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-5: 2026-10-01T21:23:41.615494871 [m1-5:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-3: 2026-10-01T21:23:41.825196363 [m1-3:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-19: 2026-10-01T21:23:42.257509288 [m1-19:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-22: 2026-10-01T21:23:41.471553397 [m1-22:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-15: 2026-10-01T21:23:41.131072596 [m1-15:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-15: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-15: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-15: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-15: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-15: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-1: 2026-10-01T21:23:42.128476861 [m1-1:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-26: 2026-10-01T21:23:40.354341961 [m1-26:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-24: 2026-10-01T21:23:37.990524470 [m1-24:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-24: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-24: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-24: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-24: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-24: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:38 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:38 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:38 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:38 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:38 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:38 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/redis err="invalid argument"
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:38 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mysql err="invalid argument"
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:38 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongodb err="invalid argument"
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:38 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongo err="invalid argument"
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:38 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cockroach err="invalid argument"
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:38 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cassandra err="invalid argument"
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:38 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/clickhouse err="invalid argument"
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:38 WARN stateless advisory unavailable err="vsock socket: no such device"
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:39 INFO tail_events proxy started socket=/run/guest-init/tail-events.sock vsock_port=1027
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:39 INFO sidecar events proxy started vsock_port=1027 transport=stream
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:39 INFO framework_ready stream proxy started vsock_port=1027
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:39 INFO healthcheck: NONE shape; no poll goroutine
+    helper_metal_test.go:68: guest m1-24: 2026/10/01 21:23:40 INFO characterization complete mode=none port=8080 class=http exit=-1 shipped=true reason=ok duration=851.581136ms pid=139 owned_sockets=2 listen_rows_tcp=2 listen_rows_tcp6=-1
+    helper_metal_test.go:68: guest m1-4: 2026-10-01T21:23:41.049459470 [m1-4:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-0: 2026-10-01T21:23:41.071516130 [m1-0:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-9: 2026-10-01T21:23:42.346131399 [m1-9:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-9: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-9: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-9: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-20: 2026-10-01T21:23:41.823049712 [m1-20:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-13: 2026-10-01T21:23:41.500462800 [m1-13:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-6: 2026-10-01T21:23:42.268895071 [m1-6:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-11: 2026-10-01T21:23:40.701674464 [m1-11:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-2: 2026-10-01T21:23:42.290492524 [m1-2:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-10: 2026-10-01T21:23:39.880555256 [m1-10:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-10: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-10: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-10: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-10: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-10: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-28: 2026-10-01T21:23:41.464036431 [m1-28:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-18: 2026-10-01T21:23:42.217792798 [m1-18:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-25: 2026-10-01T21:23:40.450697112 [m1-25:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-25: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-25: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-25: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-25: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-25: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-25: 2026/10/01 21:23:57 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-12: 2026-10-01T21:23:40.093595740 [m1-12:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-12: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-12: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-7: 2026-10-01T21:23:42.254497816 [m1-7:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-16: 2026-10-01T21:23:42.389475615 [m1-16:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-14: 2026-10-01T21:23:38.471451084 [m1-14:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-14: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-14: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-14: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-14: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-14: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:52 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:52 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:53 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:53 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:53 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:53 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/redis err="invalid argument"
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:53 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mysql err="invalid argument"
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:53 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongodb err="invalid argument"
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:53 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongo err="invalid argument"
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:53 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cockroach err="invalid argument"
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:53 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cassandra err="invalid argument"
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:53 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/clickhouse err="invalid argument"
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:53 WARN stateless advisory unavailable err="vsock socket: no such device"
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:54 INFO tail_events proxy started socket=/run/guest-init/tail-events.sock vsock_port=1027
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:54 INFO sidecar events proxy started vsock_port=1027 transport=stream
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:54 INFO framework_ready stream proxy started vsock_port=1027
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:54 INFO healthcheck: NONE shape; no poll goroutine
+    helper_metal_test.go:68: guest m1-14: 2026/10/01 21:23:58 INFO characterization complete mode=none port=8080 class=http exit=-1 shipped=false reason=ack_timeout duration=2.994214635s pid=142 owned_sockets=2 listen_rows_tcp=2 listen_rows_tcp6=-1
+    helper_metal_test.go:68: guest m1-27: 2026-10-01T21:23:38.815734402 [m1-27:main] Successfully started microvm that was configured from one single json
+    helper_metal_test.go:68: guest m1-27: guest-init: stage boot
+    helper_metal_test.go:68: guest m1-27: guest-init: stage mount-basics
+    helper_metal_test.go:68: guest m1-27: guest-init: stage assemble-overlay
+    helper_metal_test.go:68: guest m1-27: guest-init: stage pivot
+    helper_metal_test.go:68: guest m1-27: guest-init: stage mode-0
+    helper_metal_test.go:68: guest m1-27: 2026/10/01 21:23:54 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token
+    helper_metal_test.go:68: guest m1-27: 2026/10/01 21:23:55 WARN event publish proxy unavailable err="event publish proxy listen: listen tcp4 169.254.169.254:80: bind: cannot assign requested address"
+    helper_metal_test.go:68: guest m1-27: 2026/10/01 21:23:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err="invalid argument"
+    helper_metal_test.go:68: guest m1-27: 2026/10/01 21:23:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/db err="invalid argument"
+    helper_metal_test.go:68: guest m1-27: 2026/10/01 21:23:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/postgresql err="invalid argument"
+    helper_metal_test.go:68: guest m1-27: 2026/10/01 21:23:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/redis err="invalid argument"
+    helper_metal_test.go:68: guest m1-27: 2026/10/01 21:23:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mysql err="invalid argument"
+    helper_metal_test.go:68: guest m1-27: 2026/10/01 21:23:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongodb err="invalid argument"
+    helper_metal_test.go:68: guest m1-27: 2026/10/01 21:23:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/mongo err="invalid argument"
+    helper_metal_test.go:68: guest m1-27: 2026/10/01 21:23:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cockroach err="invalid argument"
+    helper_metal_test.go:68: guest m1-27: 2026/10/01 21:23:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/cassandra err="invalid argument"
+    helper_metal_test.go:68: guest m1-27: 2026/10/01 21:23:55 WARN stateless advisory fanotify_mark failed (non-fatal) path=/var/lib/clickhouse err="invalid argument"
+    helper_metal_test.go:68: guest m1-27: 2026/10/01 21:23:55 WARN stateless advisory unavailable err="vsock socket: no such device"
+--- FAIL: TestMetalBoot50Concurrent (31.09s)
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/fcvm	31.220s
+FAIL
+make: *** [Makefile:413: test-metal] Error 1
+make: Entering directory '/var/tmp/faas-metal-smoke-managed-pg-recheck-bbd416e9/source'
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+make: Leaving directory '/var/tmp/faas-metal-smoke-managed-pg-recheck-bbd416e9/source'
+recheck: focused=0 changed_concurrent=2 baseline_concurrent=2
+make: Entering directory '/var/tmp/faas-metal-smoke-managed-pg-recheck-bbd416e9/source'
+leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts
+make: Leaving directory '/var/tmp/faas-metal-smoke-managed-pg-recheck-bbd416e9/source'

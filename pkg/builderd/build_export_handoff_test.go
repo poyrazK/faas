@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -102,8 +103,9 @@ func stringsOfHex(s string) string {
 }
 
 func TestRegionalBuildExportConnectedPeerHandoff(t *testing.T) {
-	for _, function := range []bool{false, true} {
-		t.Run(fmt.Sprintf("function=%t", function), func(t *testing.T) {
+	for _, test := range []struct{ function, crash bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+		function := test.function
+		t.Run(fmt.Sprintf("function=%t/crash=%t", function, test.crash), func(t *testing.T) {
 			st, app, producer := regionalSourceFixture(t)
 			if function {
 				original := app
@@ -175,14 +177,36 @@ func TestRegionalBuildExportConnectedPeerHandoff(t *testing.T) {
 			}
 			layerBuilder := &handoffLayerBuilder{function: function}
 			imageNotif := &fakeNotifier{}
-			newHandler := func(name string) *imaged.Handler {
-				return imaged.New(st, imageNotif, nil, layerBuilder, "./init", t.TempDir(), quietLogger()).WithStorage(router).WithNodeName(name).WithFunctionRunnerGo124("./runner-go")
+			newHandler := func(name string, store state.Store) *imaged.Handler {
+				return imaged.New(store, imageNotif, nil, layerBuilder, "./init", t.TempDir(), quietLogger()).WithStorage(router).WithNodeName(name).WithFunctionRunnerGo124("./runner-go")
 			}
-			firstHandler, secondHandler := newHandler(peer.Name), newHandler(second.Name)
+			firstHandler, secondHandler := newHandler(peer.Name, st), newHandler(second.Name, st)
 			payload, _ := json.Marshal(map[string]string{"app_id": app.ID, "deployment_id": dep.ID, "node_id": producer.Name})
+
+			handlers := []*imaged.Handler{firstHandler, secondHandler}
+			if test.crash {
+				failure := errors.New("lost response after regional layer publication")
+				wrapped := &crashedRegionalImageStore{Store: st, DeploymentImagePreparationStore: st, DeploymentActivationLocker: st, failure: failure}
+				firstHandler = newHandler(peer.Name, wrapped)
+				if err := firstHandler.HandleNotification(t.Context(), db.Notification{Channel: db.NotifySnapshotBoot, Payload: string(payload)}); !errors.Is(err, failure) {
+					t.Fatalf("publication failure did not remain recoverable: %v", err)
+				}
+				current, err := st.DeploymentByID(t.Context(), dep.ID)
+				if err != nil || current.Status != state.DeployImaging || layerBuilder.calls != 1 {
+					t.Fatalf("lost published regional layer: %+v %v calls=%d", current, err, layerBuilder.calls)
+				}
+				if err := st.SetComputeNodeActive(t.Context(), peer.ID, false); err != nil {
+					t.Fatal(err)
+				}
+				work, err := st.ListResumableImagePreparations(t.Context(), second.Name, 16)
+				if err != nil || len(work) != 1 || work[0].DeploymentID != dep.ID {
+					t.Fatalf("peer could not discover preparation: %+v %v", work, err)
+				}
+				handlers = []*imaged.Handler{secondHandler}
+			}
 			var wg sync.WaitGroup
 			errs := make(chan error, 2)
-			for _, h := range []*imaged.Handler{firstHandler, secondHandler} {
+			for _, h := range handlers {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
@@ -215,4 +239,20 @@ func TestRegionalBuildExportConnectedPeerHandoff(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The layer metadata and checkpoint committed, but the worker did not receive
+// the result. A peer must continue from publication without converting again.
+type crashedRegionalImageStore struct {
+	state.Store
+	state.DeploymentImagePreparationStore
+	state.DeploymentActivationLocker
+	failure error
+}
+
+func (s *crashedRegionalImageStore) PublishImagePreparationLayer(ctx context.Context, id, token, path, key string, bytes int64) error {
+	if err := s.DeploymentImagePreparationStore.PublishImagePreparationLayer(ctx, id, token, path, key, bytes); err != nil {
+		return err
+	}
+	return s.failure
 }

@@ -15,6 +15,12 @@ func (c *Client) ListQueueBindings(ctx context.Context, slug string) ([]QueueBin
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/queue-bindings", nil, &out)
 }
 
+// ListQueueBindingHistory includes retired identities for reviewed recovery.
+func (c *Client) ListQueueBindingHistory(ctx context.Context, slug string) ([]QueueBindingResponse, error) {
+	var out []QueueBindingResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/queue-bindings?include_retired=true", nil, &out)
+}
+
 func (c *Client) CreateQueueBinding(ctx context.Context, slug string, req CreateQueueBindingRequest) (QueueBindingResponse, error) {
 	var out QueueBindingResponse
 	return out, c.doWithIdempotencyKey(ctx, "POST", "/v1/apps/"+slug+"/queue-bindings", req, &out, "")

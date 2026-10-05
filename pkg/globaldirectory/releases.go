@@ -1,6 +1,6 @@
 package globaldirectory
 
-// ADR-480: immutable global release intent and durable regional outcomes.
+// ADR-606: immutable global release intent and durable regional outcomes.
 import (
 	"context"
 	"errors"

@@ -39,6 +39,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/netns"
 )
 
@@ -64,6 +65,10 @@ func main() {
 		"PR scale-out tier-1 residual (Gap #4): CIDR accepted BEFORE the §11 deny block on the host forward chain. Operators using an RFC1918 overlay (e.g. 10.42.0.0/24) declare the exception here. Env: FAAS_OVERLAY_EXCEPTIONS (comma-separated). Each entry is parsed via netip.ParsePrefix; malformed CIDRs fail at startup.")
 	dangerAccept := flag.Bool("danger-accept-rfc1918-lateral-movement", false,
 		"PR scale-out tier-1 residual (Gap #4): enable the deny-set exception path. When true, the renderer emits per-CIDR accept rules BEFORE the §11 deny block. Default: false. Operators using an RFC1918 overlay MUST set this AND list the overlay CIDR in --overlay-exception; the manifest schema enforces the same pair at the DB CHECK constraint level.")
+	serviceTCPBridgeIP := flag.String("service-tcp-bridge-ip", "",
+		"ADR-576: tenant-bridge address of the service listeners (e.g. 10.100.0.1). When set, the renderer emits the private TCP service-address NAT. Env: FAAS_SERVICE_TCP_BRIDGE_IP.")
+	serviceTCPHTTPS := flag.Bool("service-tcp-https", false,
+		"ADR-576: keep service-address :443 on the private HTTPS service listener. Set only where that listener is staged. Env: FAAS_SERVICE_TCP_HTTPS=1.")
 	flag.Parse()
 
 	policy := netns.DefaultHostPolicy
@@ -120,6 +125,16 @@ func main() {
 		// silently dropping exceptions would surprise the operator.
 		fmt.Fprintln(os.Stderr, "faas-nft-render: --overlay-exception entries present without --danger-accept-rfc1918-lateral-movement; the flag is the gate.")
 		os.Exit(1)
+	}
+
+	if raw := pickValue(*serviceTCPBridgeIP, "FAAS_SERVICE_TCP_BRIDGE_IP"); raw != "" {
+		bridgeIP, err := netip.ParseAddr(strings.TrimSpace(raw))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "faas-nft-render: --service-tcp-bridge-ip %q: %v\n", raw, err)
+			os.Exit(1)
+		}
+		https := *serviceTCPHTTPS || os.Getenv("FAAS_SERVICE_TCP_HTTPS") == "1"
+		policy.ServiceTCP = netns.NewServiceTCPHostPolicy(api.ServiceAddressCIDR(), bridgeIP, api.ServiceTCPProxyPort, https)
 	}
 
 	if _, err := os.Stdout.WriteString(policy.Render()); err != nil {

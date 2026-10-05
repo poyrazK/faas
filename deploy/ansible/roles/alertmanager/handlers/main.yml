@@ -13,6 +13,8 @@
   ansible.builtin.systemd:
     name: alertmanager
     state: restarted
+  # A restart starts a stopped unit; dev mode must leave it stopped.
+  when: not am_dev_mode | bool
   listen: restart alertmanager
 
 - name: daemon-reload

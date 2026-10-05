@@ -1,0 +1,9 @@
+{
+  "advancedMachineFeatures": {
+    "enableNestedVirtualization": true
+  },
+  "cpuPlatform": "Intel Cascade Lake",
+  "id": "415427828508782095",
+  "machineType": "https://www.googleapis.com/compute/v1/projects/gregale-prod/zones/us-east1-b/machineTypes/n2-highmem-2",
+  "status": "RUNNING"
+}

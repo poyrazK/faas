@@ -60,6 +60,17 @@ NATIVE_E2E_REQUIRED_TESTS=(
   TestSec11_SeccompFilterEnforced_CrossProcess
 )
 
+# Original-owner producer recovery is qualified independently from guest boot.
+# Derive this set so adding a native ownership test cannot silently leave it
+# outside the required evidence. Missing sources also fail qualification.
+native_recovery_tests() {
+  local repo_root="$1" names
+  names="$(grep -hE '^func TestMetalNative[A-Za-z0-9_]+\(' "${repo_root}"/pkg/fcvm/native_*_metal_test.go 2>/dev/null |
+    sed -E 's/^func //; s/\(.*$//' | sort -u)" || return 1
+  [[ -n "${names}" ]] || { echo 'native recovery: no ownership tests found' >&2; return 1; }
+  printf '%s\n' "${names}"
+}
+
 # native_e2e_verdict reports the run and decides whether it counts as a gate.
 # It never inspects the `go test` exit status — the caller keeps that — so a
 # suite that failed loudly and a suite that skipped itself green are judged

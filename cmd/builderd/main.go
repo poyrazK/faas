@@ -268,6 +268,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		FairnessWindow:      cfg.FairnessWindow,
 		CacheAffinityGrace:  cfg.CacheAffinityGrace,
 		WarmIdle:            cfg.WarmIdle,
+		DisableWarmBuilders: !cfg.WarmBuilders,
 		// ADR-038: BuilderNodeID is stamped onto every
 		// build_provenance row builderd writes. Defaulted to
 		// "default-local" in LoadConfig; multi-node deployments

@@ -159,6 +159,36 @@ func TestAdmitRejectsDuplicate(t *testing.T) {
 	}
 }
 
+func TestLedgerRolloutScopeTracksServingLifecycle(t *testing.T) {
+	ledger := NewLedger()
+	if err := ledger.Admit(Request{Instance: "old", AppID: "app", DeploymentID: "old-revision",
+		DeploymentScope: "staging", Plan: api.PlanPro, RAMMB: 128, VCPU: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if !ledger.HasOtherRevisionInScope("app", "new-revision", "staging") || ledger.HasOtherRevisionInScope("app", "new-revision", "production") {
+		t.Fatal("rollout allowance crossed environments")
+	}
+	ledger.BeginSnapshot("old")
+	if ledger.HasOtherRevisionInScope("app", "new-revision", "staging") {
+		t.Fatal("snapshotting capacity authorized a rollout")
+	}
+	ledger.Release("old")
+	if err := ledger.Admit(Request{Instance: "warm", AppID: "app", DeploymentID: "old-revision",
+		DeploymentScope: "staging", Plan: api.PlanPro, RAMMB: 128, VCPU: 1, Kind: KindWarmPool}); err != nil {
+		t.Fatal(err)
+	}
+	if ledger.HasOtherRevisionInScope("app", "new-revision", "staging") {
+		t.Fatal("paused warm capacity authorized a rollout")
+	}
+	if !ledger.PromoteWarm("warm") || !ledger.HasOtherRevisionInScope("app", "new-revision", "staging") {
+		t.Fatal("warm promotion lost environment identity")
+	}
+	ledger.Release("warm")
+	if ledger.HasOtherRevisionInScope("app", "new-revision", "staging") {
+		t.Fatal("released capacity authorized a rollout")
+	}
+}
+
 // TestConcurrentAdmitReleaseNoCorruption stresses the ledger under concurrency;
 // with -race this guards the accounting against data races and drift.
 func TestConcurrentAdmitReleaseNoCorruption(t *testing.T) {

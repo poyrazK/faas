@@ -175,7 +175,7 @@ func printOpenapiContractPreview(resp api.OpenAPIContractDiffResponse) {
 // two phases: run without --confirm to inspect the deterministic plan, then
 // pass its --preview-sha256 back with --confirm to authorize the write.
 func cmdOpenapiApply(args []string) int {
-	flags, pos := splitArgsForFlags(args)
+	flags, pos := splitArgsForFlags(args, "confirm")
 	fs := newOpenapiFlagSet("openapi apply")
 	confirm := fs.Bool("confirm", false, "apply the plan (requires --preview-sha256)")
 	previewSHA256 := fs.String("preview-sha256", "", "approval hash returned by the plan")

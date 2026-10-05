@@ -21,6 +21,22 @@ func TestMemInvoiceRefresh(t *testing.T) {
 	testInvoiceRefreshHistoryLimit(t, s, s.SeedInvoiceForTest)
 }
 
+func TestMemInvoiceRefreshAdvancesWhenClockStalls(t *testing.T) {
+	s := state.NewMemStore()
+	ctx := context.Background()
+	inv := deliverLifecycle(t, s, lifecycleFixture(t, s, "refresh-clock-stall"))
+	inv.UpdatedAt = time.Now().UTC().Add(time.Minute)
+	s.SeedInvoiceForTest(inv)
+
+	updated, err := s.RefreshInvoiceDetails(ctx, inv.AccountID, inv.ID, inv.UpdatedAt, &state.InvoiceDetails{PaymentTerms: "Net 30"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.UpdatedAt.After(inv.UpdatedAt) {
+		t.Fatalf("refresh revision = %s, want after %s", updated.UpdatedAt, inv.UpdatedAt)
+	}
+}
+
 // adr:383
 func TestPgInvoiceRefresh(t *testing.T) {
 	s, pool, ctx := pgStoreInvoicesWithPool(t)

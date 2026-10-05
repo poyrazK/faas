@@ -44,14 +44,14 @@ func (s *PgStore) AcquireBuildImageMaterializationLock(ctx context.Context, id s
 	if strings.TrimSpace(id) == "" {
 		return nil, ErrInvalidArgument
 	}
-	return s.AcquireDeploymentActivationLock(ctx, "build-image:"+id)
+	return s.AcquireDeploymentActivationLock(ctx, id)
 }
 
 func (m *MemStore) AcquireBuildImageMaterializationLock(ctx context.Context, id string) (func(context.Context), error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, ErrInvalidArgument
 	}
-	return m.AcquireDeploymentActivationLock(ctx, "build-image:"+id)
+	return m.AcquireDeploymentActivationLock(ctx, id)
 }
 
 func (s *PgStore) BuildArtifactReferencedForMaterialization(ctx context.Context, key string) (bool, error) {

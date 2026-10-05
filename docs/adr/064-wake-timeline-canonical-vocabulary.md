@@ -108,6 +108,11 @@ Rejected: `kind string + data map[string]any` (mirrors
 
 ### 2. Canonical `wake.*` vocabulary
 
+`wake.readiness_200.probe_count` records all readiness attempts, including
+the successful one, for TCP, HTTP and gRPC. In the legacy TCP path the event
+must use the loop counter rather than a constant one; otherwise a slow
+readiness interval appears to have succeeded on its first probe.
+
 | Kind | Payload | Emit site |
 |---|---|---|
 | `wake.queue_accepted` | `{wake_id, app_id, request_id, queue_wait_ms}` | schedd `pkg/sched/engine.go` Wake Phase 1 + `pkg/sched/loop.go` cron boundary |

@@ -15,9 +15,14 @@ from ..models.route_health_finding_latency_status import (
     check_route_health_finding_latency_status,
 )
 from ..models.route_health_finding_status import RouteHealthFindingStatus, check_route_health_finding_status
+from ..models.route_health_finding_watch_statuses_item import (
+    RouteHealthFindingWatchStatusesItem,
+    check_route_health_finding_watch_statuses_item,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.route_health_client_error_report import RouteHealthClientErrorReport
     from ..models.route_health_window_evidence import RouteHealthWindowEvidence
 
 
@@ -33,6 +38,16 @@ class RouteHealthFinding:
     status: RouteHealthFindingStatus
     reason: str
     windows: list[RouteHealthWindowEvidence]
+    client_errors: RouteHealthClientErrorReport | Unset = UNSET
+    """Live advisory watched-code evidence, independent of the 5xx/latency verdict. Each code uses at least 20
+    represented requests on both deployments per window, two matching regression windows, at least two candidate
+    responses, a rate of at least 5 percent, three times stable, and at least five percentage points above stable.
+    Stable expected rejection rates remain healthy. Sparse, one-sided, missing or pre-anchor evidence is unknown.
+    Coverage inherits observed_only from the containing report; these observations neither prove a defect nor
+    certify an SLO. Excluded from saved decisions, recovery and webhook payloads."""
+    watch_statuses: list[RouteHealthFindingWatchStatusesItem] | Unset = UNSET
+    """Configured watched response codes for this exact route. Live client_errors contains their independent
+    advisory evidence; saved decisions retain selectors without code evidence."""
     check_latency: bool | Unset = UNSET
     """Whether the relative p95 slowdown check is selected."""
     max_p95_ms: int | Unset = UNSET
@@ -57,6 +72,17 @@ class RouteHealthFinding:
         for windows_item_data in self.windows:
             windows_item = windows_item_data.to_dict()
             windows.append(windows_item)
+
+        client_errors: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.client_errors, Unset):
+            client_errors = self.client_errors.to_dict()
+
+        watch_statuses: list[int] | Unset = UNSET
+        if not isinstance(self.watch_statuses, Unset):
+            watch_statuses = []
+            for watch_statuses_item_data in self.watch_statuses:
+                watch_statuses_item: int = watch_statuses_item_data
+                watch_statuses.append(watch_statuses_item)
 
         check_latency = self.check_latency
 
@@ -85,6 +111,10 @@ class RouteHealthFinding:
                 "windows": windows,
             }
         )
+        if client_errors is not UNSET:
+            field_dict["client_errors"] = client_errors
+        if watch_statuses is not UNSET:
+            field_dict["watch_statuses"] = watch_statuses
         if check_latency is not UNSET:
             field_dict["check_latency"] = check_latency
         if max_p95_ms is not UNSET:
@@ -102,6 +132,7 @@ class RouteHealthFinding:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.route_health_client_error_report import RouteHealthClientErrorReport
         from ..models.route_health_window_evidence import RouteHealthWindowEvidence
 
         d = dict(src_dict)
@@ -119,6 +150,22 @@ class RouteHealthFinding:
             windows_item = RouteHealthWindowEvidence.from_dict(windows_item_data)
 
             windows.append(windows_item)
+
+        _client_errors = d.pop("client_errors", UNSET)
+        client_errors: RouteHealthClientErrorReport | Unset
+        if isinstance(_client_errors, Unset):
+            client_errors = UNSET
+        else:
+            client_errors = RouteHealthClientErrorReport.from_dict(_client_errors)
+
+        _watch_statuses = d.pop("watch_statuses", UNSET)
+        watch_statuses: list[RouteHealthFindingWatchStatusesItem] | Unset = UNSET
+        if _watch_statuses is not UNSET:
+            watch_statuses = []
+            for watch_statuses_item_data in _watch_statuses:
+                watch_statuses_item = check_route_health_finding_watch_statuses_item(watch_statuses_item_data)
+
+                watch_statuses.append(watch_statuses_item)
 
         check_latency = d.pop("check_latency", UNSET)
 
@@ -148,6 +195,8 @@ class RouteHealthFinding:
             status=status,
             reason=reason,
             windows=windows,
+            client_errors=client_errors,
+            watch_statuses=watch_statuses,
             check_latency=check_latency,
             max_p95_ms=max_p95_ms,
             error_status=error_status,

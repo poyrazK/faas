@@ -2,7 +2,7 @@
 
 package state
 
-// adr: 491
+// adr: 617
 import (
 	"context"
 	"errors"
@@ -183,6 +183,8 @@ func TestPGRegionalQuotaWriteFenceJournalLockWait(t *testing.T) {
 				}
 				if action == "task-claim" {
 					query = "ClaimAppTaskWithRegionalQuota"
+				} else if action == "task-running" {
+					query = "MarkUnfencedAppTaskRunning"
 				}
 				go func() {
 					var writeErr error

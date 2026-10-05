@@ -509,6 +509,14 @@ func (s *Server) resumeMigrationVM(ctx context.Context, instanceID string) (bool
 func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMigratedInstanceRequest) (*vmmdpb.AdoptMigratedInstanceResponse, error) {
 	const op = "AdoptMigratedInstance"
 	start := time.Now()
+	if req.GetWakeId() != "" {
+		if _, err := uuid.Parse(req.GetWakeId()); err != nil {
+			return nil, grpcerr.ToStatus(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid wake identity", "wake_id must be a UUID"))
+		}
+		fields, _ := wire.FromContext(ctx)
+		fields.WakeID = req.GetWakeId()
+		ctx = wire.WithContext(ctx, fields)
+	}
 	if req.GetInstanceId() == "" || req.GetMemStorageKey() == "" ||
 		req.GetVmstateStorageKey() == "" || req.GetLeaseToken() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
@@ -528,7 +536,7 @@ func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMig
 	// production server has a VMM and takes the restore branch below.
 	if s.vmm == nil {
 		s.ops.Observe(op, time.Since(start), nil)
-		return &vmmdpb.AdoptMigratedInstanceResponse{}, nil
+		return &vmmdpb.AdoptMigratedInstanceResponse{SupportsSecretAliases: true}, nil
 	}
 	wakeReq, err := toMigrationWakeRequest(ctx, req)
 	if err != nil {
@@ -553,10 +561,20 @@ func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMig
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	s.ops.Observe(op, time.Since(start), nil)
+	method := vmmdpb.WakeMethod_WAKE_UNKNOWN
+	switch inst.Method {
+	case fcvm.WakeRestore:
+		method = vmmdpb.WakeMethod_WAKE_RESTORE
+	case fcvm.WakeColdBoot:
+		method = vmmdpb.WakeMethod_WAKE_COLD_BOOT
+	}
 	return &vmmdpb.AdoptMigratedInstanceResponse{
-		HostIp:   addrOrEmpty(inst.Lease.HostIP),
-		Netns:    inst.Net.Netns,
-		GuestUid: int32(inst.Lease.UID),
+		SupportsSecretAliases: true,
+		HostIp:                addrOrEmpty(inst.Lease.HostIP),
+		Netns:                 inst.Net.Netns,
+		GuestUid:              int32(inst.Lease.UID),
+		Method:                method,
+		WakeId:                req.GetWakeId(),
 	}, nil
 }
 

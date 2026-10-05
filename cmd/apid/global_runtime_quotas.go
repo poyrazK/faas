@@ -1,6 +1,6 @@
 package main
 
-// adr: 486
+// adr: 612
 import (
 	"errors"
 	"net/http"
@@ -112,7 +112,7 @@ func globalRuntimeQuotaResponse(a globaldirectory.RuntimeQuotaAllocation) api.Gl
 		}
 	}
 	p := a.Policy
-	out := api.GlobalRuntimeQuotaResponse{GlobalAppID: a.GlobalAppID, AllocationID: a.AllocationID, Generation: a.Generation, Policy: api.GlobalRuntimeQuotaPolicy{ID: p.ID, Plan: p.Plan, Concurrency: p.Concurrency, PeakConcurrency: p.PeakConcurrency}, Status: status, CreatedAt: a.CreatedAt, RetirementID: retirementID, RetiredAt: a.RetiredAt, Targets: make([]api.GlobalRuntimeQuotaTargetResponse, 0, len(a.Targets))}
+	out := api.GlobalRuntimeQuotaResponse{GlobalAppID: a.GlobalAppID, AllocationID: a.AllocationID, Generation: a.Generation, Policy: api.GlobalRuntimeQuotaPolicy(p), Status: status, CreatedAt: a.CreatedAt, RetirementID: retirementID, RetiredAt: a.RetiredAt, Targets: make([]api.GlobalRuntimeQuotaTargetResponse, 0, len(a.Targets))}
 	for _, t := range a.Targets {
 		out.Targets = append(out.Targets, api.GlobalRuntimeQuotaTargetResponse{CellID: t.CellID, Region: t.Region, CellGeneration: t.CellGeneration, RegionalAccountID: t.RegionalAccountID, RegionalOrgID: t.RegionalOrgID, RegionalAppID: t.RegionalAppID, RegionalAppSlug: t.RegionalAppSlug, Concurrency: t.Concurrency, RolloutConcurrency: t.RolloutConcurrency, IssuedAt: t.IssuedAt, ReleasedAt: t.ReleasedAt})
 	}

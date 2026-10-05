@@ -1,10 +1,17 @@
 ---
-# Public TLS edge for a Cloudflare-fronted control plane (manifest
-# dns.mode: cloudflare, rendered as faas_cloudflare_origin_only). Caddy
-# terminates TLS with the zone's Cloudflare Origin CA certificate and proxies
-# every public host to gatewayd-public on loopback. nftables already admits
-# 80/443 only from Cloudflare.
-faas_public_edge_enabled: "{{ faas_cloudflare_origin_only | default(false) | bool }}"
+# Public TLS edge. Two independent parts, both served by Caddy on this host
+# and both proxying to gatewayd-public on loopback:
+#
+#  - Platform hosts (manifest dns.mode: cloudflare, rendered as
+#    faas_cloudflare_origin_only): Caddy terminates TLS with the zone's
+#    Cloudflare Origin CA certificate and only answers Cloudflare.
+#  - Customer domains (manifest public_edge.custom_domains, rendered as
+#    faas_custom_domain_tls; ADR-520): Caddy obtains and renews a Let's
+#    Encrypt certificate per hostname on demand, after gatewayd-public
+#    confirms the hostname is a verified custom domain. Customers reach the
+#    edge directly, so ports 80/443 are open to the internet.
+faas_public_edge_enabled: "{{ (faas_cloudflare_origin_only | default(false) | bool) or (faas_custom_domain_tls | default(false) | bool) }}"
+faas_public_edge_platform_tls: "{{ faas_cloudflare_origin_only | default(false) | bool }}"
 faas_public_edge_domain: "{{ gatewayd_apps_domain | default('gregale.dev') }}"
 # Must match faas-gatewayd-public.socket ListenStream.
 faas_public_edge_upstream: "127.0.0.1:8080"
@@ -14,3 +21,15 @@ faas_public_edge_caddy_binary: /usr/bin/caddy
 # repository). The key is readable by the caddy service user only.
 faas_public_edge_cert: /etc/caddy/tls/cloudflare-origin.pem
 faas_public_edge_key: /etc/caddy/tls/cloudflare-origin.key
+
+# ADR-520 on-demand customer certificates. The ask URL is gatewayd-public's
+# loopback control listener (FAAS_PUBLIC_CONTROL_ADDR in its unit); the
+# endpoint only answers loopback peers. The ACME account email receives the
+# CA's expiry and policy notices.
+faas_custom_domain_tls: false
+faas_custom_domain_acme_email: ""
+faas_public_edge_ask_url: "http://127.0.0.1:9092/v1/internal/tls/ask"
+# Platform hosts stay Cloudflare-only once 443 is open to everyone: the
+# platform site aborts any connection that did not come from these ranges.
+# Shared with the nftables role so both layers use one pinned list.
+faas_public_edge_cloudflare_cidrs: "{{ lookup('ansible.builtin.file', role_path ~ '/../nftables/files/cloudflare-ips-v4.txt').splitlines() + lookup('ansible.builtin.file', role_path ~ '/../nftables/files/cloudflare-ips-v6.txt').splitlines() }}"

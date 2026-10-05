@@ -1,0 +1,10 @@
+Result=success
+ExecMainStatus=0
+Id=gregale-managed-pg-restart-quarantine-4d700a71-bounded.service
+LoadState=not-found
+ActiveState=inactive
+SubState=dead
+Fri Oct  2 17:18:09 UTC 2026
+portable-linux.exit=0
+metal.exit=0
+linux-lint.exit=0

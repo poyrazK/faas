@@ -18,6 +18,7 @@ import (
 // accounted as resident and concurrent until vmmd confirms destruction; unlike
 // Park, this path never asks vmmd to write a snapshot.
 func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID string) (CoordOutcome, error) {
+	refreshScope, _ := ctx.Value(runtimeRefreshScopeKey{}).(string)
 	release := e.lockApp(appID)
 	app, err := e.store.AppByID(ctx, appID)
 	if err != nil {
@@ -28,18 +29,51 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		release()
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: app %s is owned by node %s", appID, app.NodeID)
 	}
-	if app.Status == state.AppEvictedCold {
-		if _, err := compareAndSetAppStatus(ctx, e.store, appID, state.AppEvictedCold, state.AppActive); err != nil {
-			release()
-			return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: activate app %s: %w", appID, err)
-		}
-		app.Status = state.AppActive
-	}
-	if app.Status != state.AppActive {
+	if app.Status != state.AppActive && app.Status != state.AppEvictedCold {
 		release()
 		return CoordOutcome{}, nil
 	}
 	release()
+	deployments, err := e.store.ListDeploymentsForApp(ctx, appID, 0, 0)
+	if err != nil {
+		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list deployments for %s: %w", appID, err)
+	}
+	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	if err != nil {
+		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list initial instances for %s: %w", appID, err)
+	}
+	selected := make(map[string]bool)
+	deploymentScopes := make(map[string]string)
+	for _, deployment := range deployments {
+		selected[deployment.ID] = refreshScope == "" || normalizedDeploymentScope(deployment.Scope) == refreshScope
+		deploymentScopes[deployment.ID] = deployment.Scope
+	}
+	resident := make(map[string]bool)
+	for _, instance := range instances {
+		if selected[instance.DeploymentID] && runtimeConfigResident(instance) {
+			resident[instance.DeploymentID] = true
+		}
+	}
+	if refreshScope != "" && len(resident) == 0 {
+		return CoordOutcome{}, nil
+	}
+	live := make([]state.Deployment, 0, len(deployments))
+	liveByID := make(map[string]state.Deployment)
+	for _, deployment := range deployments {
+		if deployment.Status == state.DeployLive && selected[deployment.ID] && (refreshScope == "" || resident[deployment.ID]) {
+			live = append(live, deployment)
+			liveByID[deployment.ID] = deployment
+		}
+	}
+	if len(live) == 0 {
+		return CoordOutcome{}, errors.New("sched: runtime config restart: no resident live deployment in selected environment")
+	}
+	if app.Status == state.AppEvictedCold {
+		if changed, err := compareAndSetAppStatus(ctx, e.store, appID, state.AppEvictedCold, state.AppActive); err != nil || !changed {
+			return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: activate app %s: %w", appID, errors.Join(err, state.ErrConflict))
+		}
+		app.Status = state.AppActive
+	}
 	account, err := e.store.AccountByID(ctx, app.AccountID)
 	if err != nil {
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: load account %s: %w", app.AccountID, err)
@@ -50,7 +84,13 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 	}
 	maxConcurrency := effectiveMaxConcurrency(app, limits)
 
-	changedAt, stamped, err := e.store.AppRuntimeConfigChangedAt(ctx, appID)
+	readBoundary := func() (time.Time, bool, error) {
+		if refreshScope != "" {
+			return state.RuntimeConfigChangedAtForScope(ctx, e.store, appID, refreshScope)
+		}
+		return e.store.AppRuntimeConfigChangedAt(ctx, appID)
+	}
+	changedAt, stamped, err := readBoundary()
 	if err != nil {
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: read change stamp for %s: %w", appID, err)
 	}
@@ -61,22 +101,19 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		if _, err := state.InvalidateAppSnapshots(ctx, e.store, appID); err != nil {
 			return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: invalidate snapshots for %s: %w", appID, err)
 		}
-		changedAt, stamped, err = e.store.AppRuntimeConfigChangedAt(ctx, appID)
+		changedAt, stamped, err = readBoundary()
 		if err != nil || !stamped {
 			return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: load change stamp for %s: %w", appID, err)
 		}
 	}
-
-	// Clear stale non-serving resident VMs across every scope first. Besides
-	// preventing an old warm process from being resumed, this ensures one
-	// scope's obsolete boot cannot consume the capacity needed to refresh a
-	// different live scope.
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
-	if err != nil {
-		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list initial instances for %s: %w", appID, err)
+	staleInputs := func(instance state.Instance) bool {
+		return e.runtimeConfigReceiptStale(ctx, instance, changedAt, deploymentScopes[instance.DeploymentID])
 	}
+
+	// Clear stale non-serving VMs within the selected environment. An
+	// application-wide request retains its existing coverage of every scope.
 	for _, instance := range instances {
-		if !instance.StartedAt.IsZero() && !changedAt.After(instance.StartedAt) {
+		if !selected[instance.DeploymentID] || !staleInputs(instance) {
 			continue
 		}
 		switch state.State(instance.State) {
@@ -85,22 +122,6 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 				return CoordOutcome{}, err
 			}
 		}
-	}
-
-	deployments, err := e.store.ListDeploymentsForApp(ctx, appID, 0, 0)
-	if err != nil {
-		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list deployments for %s: %w", appID, err)
-	}
-	live := make([]state.Deployment, 0, len(deployments))
-	liveByID := make(map[string]state.Deployment)
-	for _, deployment := range deployments {
-		if deployment.Status == state.DeployLive {
-			live = append(live, deployment)
-			liveByID[deployment.ID] = deployment
-		}
-	}
-	if len(live) == 0 {
-		return CoordOutcome{}, errors.New("sched: runtime config restart: app has no live deployment")
 	}
 
 	var firstReady *CoordInstance
@@ -130,7 +151,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 			var staleServing, staleDraining []state.Instance
 			var staleBooting []state.Instance
 			for _, instance := range instances {
-				stale := instance.StartedAt.IsZero() || changedAt.After(instance.StartedAt)
+				stale := staleInputs(instance)
 				if instance.DeploymentID == deployment.ID && !stale {
 					switch state.State(instance.State) {
 					case state.StateRunning:
@@ -225,7 +246,10 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list final stale instances for %s: %w", appID, err)
 	}
 	for _, instance := range instances {
-		if _, isLive := liveByID[instance.DeploymentID]; isLive || (!instance.StartedAt.IsZero() && !changedAt.After(instance.StartedAt)) {
+		if !selected[instance.DeploymentID] {
+			continue
+		}
+		if _, isLive := liveByID[instance.DeploymentID]; isLive || !staleInputs(instance) {
 			continue
 		}
 		switch state.State(instance.State) {
@@ -258,7 +282,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		}
 		ready := 0
 		for _, instance := range instances {
-			stale := instance.StartedAt.IsZero() || changedAt.After(instance.StartedAt)
+			stale := staleInputs(instance)
 			if instance.DeploymentID != deployment.ID || stale || state.State(instance.State) != state.StateRunning {
 				continue
 			}
@@ -275,6 +299,19 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		return CoordOutcome{}, errors.New("sched: runtime config restart completed without a ready replacement")
 	}
 	return CoordOutcome{Instance: firstReady}, nil
+}
+
+func runtimeConfigInstanceStale(instance state.Instance, boundary time.Time) bool {
+	return !runtimeConfigResolvedAt(instance).After(boundary)
+}
+
+func runtimeConfigResident(instance state.Instance) bool {
+	switch state.State(instance.State) {
+	case state.StateWaking, state.StateColdBooting, state.StateRunning, state.StateWarm, state.StateDraining:
+		return true
+	default:
+		return false
+	}
 }
 
 func (e *Engine) destroyStaleRuntimeConfigInstance(ctx context.Context, instance state.Instance) error {

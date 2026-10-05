@@ -27,6 +27,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
 // WithInternalSvcVerifier wires the per-service public-key
@@ -81,7 +82,7 @@ func (s *SynthServer) applyIngressInternalSvc(w http.ResponseWriter, r *http.Req
 	if s.internalSvcVerifier == nil {
 		if s.log != nil {
 			s.log.Error("synth: app in internal_only mode but no InternalSvcVerifier wired — refusing",
-				"app_id", appID, "from", from)
+				"app_id", logsanitize.Field(appID), "from", logsanitize.Field(from))
 		}
 		if s.metrics != nil {
 			s.metrics.ObserveInternalAuthMatch("blocked")

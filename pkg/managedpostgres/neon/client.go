@@ -22,6 +22,12 @@ func (p *Provider) doJSON(ctx context.Context, method, path string, query url.Va
 	if p == nil || p.baseURL == nil || p.httpClient == nil || p.apiKey == "" || !strings.HasPrefix(path, "/") {
 		return managedpostgres.ErrUnavailable
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if p.requestsDeferred(path) {
+		return managedpostgres.ErrUnavailable
+	}
 	ctx, span := trace.StartSpan(ctx, "gregale.binding.managed_postgres",
 		attribute.String("gregale.dependency.type", "managed_binding"),
 		attribute.String("gregale.binding.type", "managed_postgres"),
@@ -65,15 +71,25 @@ func (p *Provider) doJSON(ctx context.Context, method, path string, query url.Va
 	defer func() { _ = response.Body.Close() }()
 
 	if !acceptedStatus(response.StatusCode, accepted) {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maximumResponseBytes))
+		if response.StatusCode == http.StatusTooManyRequests {
+			p.deferRequests(path, response.Header.Get("Retry-After"))
+		}
+		if _, err := io.Copy(io.Discard, io.LimitReader(response.Body, maximumResponseBytes)); err != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return statusError(response.StatusCode)
 	}
 	if output == nil || response.StatusCode == http.StatusNoContent {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maximumResponseBytes))
+		if _, err := io.Copy(io.Discard, io.LimitReader(response.Body, maximumResponseBytes)); err != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return nil
 	}
 	payload, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	if err != nil || len(payload) > maximumResponseBytes {
+		if err != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return managedpostgres.ErrUnavailable
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))

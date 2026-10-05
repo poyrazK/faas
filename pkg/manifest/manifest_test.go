@@ -240,6 +240,32 @@ func TestValidate_Valid(t *testing.T) {
 	}
 }
 
+func TestValidate_GatewaydInternalRateLimitMode(t *testing.T) {
+	const gateway = "  gatewayd_internal:\n    bind: tcp://0.0.0.0:8080\n"
+	cases := []struct {
+		name, daemon, wantErr string
+	}{
+		{"central", gateway + "    ratelimit_mode: central\n", ""},
+		{"local", gateway + "    ratelimit_mode: local\n", ""},
+		{"typo", gateway + "    ratelimit_mode: centrall\n", `daemons.gatewayd_internal.ratelimit_mode: unsupported "centrall"`},
+		{"wrong daemon", "  apid:\n    bind: unix:///run/faas/apid.sock\n    ratelimit_mode: central\n", "daemons.apid.ratelimit_mode: is only valid for gatewayd_internal"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := mustParseValidate(t, strings.Replace(validManifest, "overlay:\n", tc.daemon+"overlay:\n", 1))
+			if tc.wantErr == "" {
+				if errs != nil {
+					t.Fatalf("Validate = %v, want nil", errs)
+				}
+				return
+			}
+			if errs == nil || !strings.Contains(errs.Error(), tc.wantErr) {
+				t.Fatalf("Validate = %v, want error containing %q", errs, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidate_StorageDeviceMustBeAbsolute(t *testing.T) {
 	body := strings.Replace(validManifest,
 		"      address: 10.42.0.2:50051\n",

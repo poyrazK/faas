@@ -1,0 +1,16 @@
+OOMPolicy=stop
+ControlGroup=
+MemoryHigh=infinity
+MemoryMax=10737418240
+/var/tmp/faas-metal-smoke-managed-pg-restart-reclaim-adc1b1d8/runner.sh: OK
+MemoryMax=10737418240
+ActiveState=active
+SubState=running
+InvocationID=971d10c331a04144bce3120c36838b92
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+Running as unit: gregale-managed-pg-restart-reclaim-adc1b1d8-retry.service; invocation ID: 971d10c331a04144bce3120c36838b92

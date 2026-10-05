@@ -1,0 +1,24 @@
+{
+  "snapshot": "4d700a7176e697e8a76ed4b92a45da79faee8d7d",
+  "acceptance": "nested-node diagnostic; supported native acceptance pending",
+  "metal": {
+    "top_level_passed": 13,
+    "including_subtests_passed": 29,
+    "skipped": 0,
+    "failed": 0,
+    "packages_seconds": {
+      "fcvm": 13.205,
+      "vmmd": 1.149
+    },
+    "restart_quarantine_id_cases": {
+      "uuid": 1.99,
+      "builder_id": 1.99,
+      "compact_id": 1.95
+    }
+  },
+  "leakchecks_passed": 3,
+  "linux_portable_exit": 0,
+  "metal_exit": 0,
+  "linux_changed_code_lint_exit": 0,
+  "results_archive_sha256": "53c05efe58954d3e2e4969d4bc079d068e20bc07a8fe6ea7a963cbe3a3f8f020"
+}

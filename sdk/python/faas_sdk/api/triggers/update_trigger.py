@@ -55,6 +55,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 422:
         response_422 = Problem.from_dict(response.json())
 
@@ -93,6 +98,9 @@ def sync_detailed(
 ) -> Response[Problem | Trigger]:
     """Partial-update a trigger.
 
+     Queue binding consumers are managed through the queue-binding API.
+    Direct mutations of those private projections return 409.
+
     Args:
         id (str):
         body (UpdateTriggerRequest): Partial trigger update. nil means "leave unchanged" (same
@@ -130,6 +138,9 @@ def sync(
 ) -> Problem | Trigger | None:
     """Partial-update a trigger.
 
+     Queue binding consumers are managed through the queue-binding API.
+    Direct mutations of those private projections return 409.
+
     Args:
         id (str):
         body (UpdateTriggerRequest): Partial trigger update. nil means "leave unchanged" (same
@@ -161,6 +172,9 @@ async def asyncio_detailed(
     body: UpdateTriggerRequest,
 ) -> Response[Problem | Trigger]:
     """Partial-update a trigger.
+
+     Queue binding consumers are managed through the queue-binding API.
+    Direct mutations of those private projections return 409.
 
     Args:
         id (str):
@@ -196,6 +210,9 @@ async def asyncio(
     body: UpdateTriggerRequest,
 ) -> Problem | Trigger | None:
     """Partial-update a trigger.
+
+     Queue binding consumers are managed through the queue-binding API.
+    Direct mutations of those private projections return 409.
 
     Args:
         id (str):

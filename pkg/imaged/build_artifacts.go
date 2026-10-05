@@ -35,6 +35,9 @@ func (h *Handler) acceptBuildNotification(ctx context.Context, p snapshotBootPay
 }
 
 func (h *Handler) handleRegionalBuildExport(ctx context.Context, id string) error {
+	if _, ok := h.store.(state.DeploymentImagePreparationStore); ok {
+		return h.handleSnapshotBoot(ctx, snapshotBootPayload{DeploymentID: id, NodeID: h.nodeName})
+	}
 	locker, ok := h.store.(state.BuildImageMaterializationLocker)
 	if !ok {
 		return errors.New("imaged: regional image materialization requires a fleet-wide lock")

@@ -1,0 +1,7 @@
+Result=exit-code
+ExecMainStatus=2
+MemoryPeak=10318540800
+MemoryMax=10737418240
+ActiveState=failed
+SubState=failed
+InvocationID=b870000047c34823a7970a5e51657acb

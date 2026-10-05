@@ -9,6 +9,7 @@ import (
 const (
 	EnvironmentEnv                  = "FAAS_ENVIRONMENT"
 	QualificationEnv                = "FAAS_MANAGED_POSTGRES_QUALIFIED"
+	QualificationVersionEnv         = "FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION"
 	QualificationBackendEnv         = "FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND"
 	QualificationFingerprintEnv     = "FAAS_MANAGED_POSTGRES_QUALIFIED_FINGERPRINT"
 	QualificationUntilEnv           = "FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL"
@@ -60,7 +61,7 @@ func NewStagingProvisioningGate(registry *Registry, getenv func(string) string, 
 			return registry.VerifyQualificationArtifact(*approval, canaryAccounts, now().UTC()).Ready
 		}
 		approved, err := strconv.ParseBool(strings.TrimSpace(getenv(QualificationEnv)))
-		if err != nil || !approved {
+		if err != nil || !approved || strings.TrimSpace(getenv(QualificationVersionEnv)) != strconv.Itoa(QualificationArtifactVersion) {
 			return false
 		}
 		until, err := time.Parse(time.RFC3339, strings.TrimSpace(getenv(QualificationUntilEnv)))

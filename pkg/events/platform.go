@@ -102,11 +102,19 @@ type Platform struct {
 	broadcaster BroadcasterIf
 	asyncOnce   sync.Once
 	asyncQueue  chan asyncWakeEmit
+
+	onceMu    sync.Mutex
+	onceSeen  map[string]struct{}
+	onceOrder []string
 }
 
 const (
 	asyncWakeQueueCapacity = 512
 	asyncWakeWriteTimeout  = time.Second
+	// emitOnceCapacity bounds the keys EmitAsyncOnce remembers; the oldest
+	// key is forgotten first. Comfortably above the wakes one gateway
+	// serves between restarts of a busy app.
+	emitOnceCapacity = 4096
 )
 
 type asyncWakeEmit struct {
@@ -170,6 +178,40 @@ func (p *Platform) EmitAsync(ctx context.Context, ev WakeEvent) {
 		p.log.Warn("events: async wake queue full",
 			"actor", p.actor, "kind", ev.Kind(), "capacity", asyncWakeQueueCapacity)
 	}
+}
+
+// EmitAsyncOnce is EmitAsync for events that describe a one-time moment of a
+// wake (the first proxied byte): it queues ev only the first time this
+// Platform sees key for ev's kind. The gateway keeps an admitted target's
+// wake id for the instance's whole life, so without this every later request
+// re-emitted wake.proxy_first_byte — one events row per request, flooding the
+// bounded queue that the real wake phases share.
+func (p *Platform) EmitAsyncOnce(ctx context.Context, key string, ev WakeEvent) {
+	if ev == nil {
+		return
+	}
+	if key != "" && !p.claimOnce(ev.Kind()+"\x00"+key) {
+		return
+	}
+	p.EmitAsync(ctx, ev)
+}
+
+func (p *Platform) claimOnce(key string) bool {
+	p.onceMu.Lock()
+	defer p.onceMu.Unlock()
+	if _, seen := p.onceSeen[key]; seen {
+		return false
+	}
+	if p.onceSeen == nil {
+		p.onceSeen = make(map[string]struct{}, emitOnceCapacity)
+	}
+	if len(p.onceOrder) >= emitOnceCapacity {
+		delete(p.onceSeen, p.onceOrder[0])
+		p.onceOrder = p.onceOrder[1:]
+	}
+	p.onceSeen[key] = struct{}{}
+	p.onceOrder = append(p.onceOrder, key)
+	return true
 }
 
 func (p *Platform) runAsyncWakeEvents() {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -66,24 +65,16 @@ func (s *server) cleanupDevSessionBucket(ctx context.Context, store state.Object
 			}
 		}
 	}
-	backend, err := s.objectStorage.Resolve(bucket.BackendID, bucket.BackendFingerprint)
-	if err != nil {
-		return objectstorage.ErrConfiguration
-	}
-	callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
-	if err := emptyOwnedObjectBucket(callCtx, backend.Provider, bucket.PhysicalName); err != nil && !errors.Is(err, objectstorage.ErrNotFound) {
-		return err
-	}
 	token := uuid.NewString()
 	var claimed state.ObjectBucket
+	var err error
 	if bucket.State == "deleting" {
-		claimed, err = store.ClaimObjectBucketRecovery(callCtx, bucket.AccountID, bucket.AppID, bucket.ID, token, "deleting")
+		claimed, err = store.ClaimObjectBucketRecovery(ctx, bucket.AccountID, bucket.AppID, bucket.ID, token, "deleting")
 	} else {
-		claimed, err = store.ClaimObjectBucket(callCtx, bucket.AccountID, bucket.AppID, bucket.ID, token, "deleting")
+		claimed, err = store.ClaimObjectBucket(ctx, bucket.AccountID, bucket.AppID, bucket.ID, token, "deleting")
 	}
 	if err != nil {
 		return err
 	}
-	return s.executeBucketOperation(callCtx, store, claimed)
+	return s.executeBucketOperation(ctx, store, claimed)
 }

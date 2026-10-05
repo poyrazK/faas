@@ -17,7 +17,7 @@ func cmdProjectsEnvironmentRoutes(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale projects environments routes set <project> <environment> <workload> (--file PATH|--stdin) [--yes]", "projects environments")
 		return 1
 	}
-	flags, positional := splitArgsForFlags(args[1:], "file", "stdin", "yes")
+	flags, positional := splitArgsForFlags(args[1:], "stdin", "yes")
 	fs := newFlagSet("projects-environments-routes-set", flag.ContinueOnError)
 	file := fs.String("file", "", "JSON route-policy file")
 	stdin := fs.Bool("stdin", false, "read JSON route policy from stdin")

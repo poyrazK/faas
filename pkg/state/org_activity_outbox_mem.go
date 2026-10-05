@@ -113,6 +113,10 @@ func (m *MemStore) UpsertAppEnvInScopeWithActivity(_ context.Context, accountID,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	memory, guardErr := m.gitOpsGuardScopedWriteLocked(accountID, appID, scope, []string{"variables/" + key})
+	if guardErr != nil {
+		return 0, guardErr
+	}
 	envKey := envKey{AppID: appID, Scope: scope, Key: key}
 	existing, ok := m.envs[envKey]
 	now := time.Now().UTC()
@@ -126,6 +130,7 @@ func (m *MemStore) UpsertAppEnvInScopeWithActivity(_ context.Context, accountID,
 		existing.UpdatedAt = now
 		m.envs[envKey] = existing
 	}
+	touchGitOpsMemoryIntent(memory)
 	return m.enqueueOrgActivityOutboxLocked(entry), nil
 }
 
@@ -141,7 +146,12 @@ func (m *MemStore) DeleteAppEnvInScopeWithActivity(_ context.Context, accountID,
 	if !ok || row.AccountID != accountID {
 		return 0, ErrNotFound
 	}
+	memory, guardErr := m.gitOpsGuardScopedWriteLocked(accountID, appID, scope, []string{"variables/" + key})
+	if guardErr != nil {
+		return 0, guardErr
+	}
 	delete(m.envs, envKey)
+	touchGitOpsMemoryIntent(memory)
 	return m.enqueueOrgActivityOutboxLocked(entry), nil
 }
 

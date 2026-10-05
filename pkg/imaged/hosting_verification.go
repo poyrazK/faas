@@ -18,16 +18,36 @@ func (h *Handler) verifyHostingCandidate(ctx context.Context, app state.App, dep
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("hosting verification interrupted: %w", err)
 	}
+	progress, err := h.beginHostingVerification(ctx, app, dep, started)
+	if err != nil {
+		return err
+	}
+	smokeCtx := ctx
+	if progress != nil && progress.LastErrorCode == apihostingreceipt.SmokeErrorAuthorizationUnavailable {
+		smokeCtx = apihostingreceipt.WithChallengePublicationDeadline(ctx, progress.DeadlineAt)
+	} else if progress != nil && apihostingreceipt.IsVerificationRecoveryCode(progress.LastErrorCode) {
+		smokeCtx = apihostingreceipt.WithVerificationRecoveryDeadline(ctx, progress.DeadlineAt)
+	}
 	smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: HostingHealthPath(app, dep), ErrorCode: apihostingreceipt.SmokeErrorNotConfigured}
 	var smokeErr error
 	if h.hostingSmoke != nil {
-		smoke, smokeErr = h.hostingSmoke(ctx, app, dep)
+		smoke, smokeErr = h.hostingSmoke(smokeCtx, app, dep)
 	}
 	// Parent cancellation belongs to the consumer, not the candidate. In
 	// particular a shutdown must not turn an interrupted probe into a verdict.
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("hosting verification interrupted: %w", err)
 	}
+	if code := apihostingreceipt.VerificationRecoveryCode(smokeErr); code != "" {
+		return h.retryHostingVerification(ctx, app, dep, progress, started, code, smokeErr)
+	}
+	if err := h.completeHostingVerification(ctx, dep, progress); err != nil {
+		return err
+	}
+	return h.finishHostingVerification(ctx, app, dep, smoke, smokeErr, required, started)
+}
+
+func (h *Handler) finishHostingVerification(ctx context.Context, app state.App, dep state.Deployment, smoke apihostingreceipt.SmokeResult, smokeErr error, required bool, started time.Time) error {
 	if smokeErr == nil && required && smoke.Status != apihostingreceipt.SmokeVerified {
 		smoke.Status = apihostingreceipt.SmokeFailed
 		if smoke.ErrorCode == "" || h.hostingSmoke == nil {
@@ -68,7 +88,13 @@ func (h *Handler) commitHostingFailure(ctx context.Context, app state.App, dep s
 	if err != nil {
 		return fmt.Errorf("imaged: encode hosting failure: %w", err)
 	}
-	changed, err := store.FailDeploymentWithHostingReceipt(ctx, dep.ID, raw, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
+	code := api.CodeDeploymentSmokeFailed
+	message := "post-readiness smoke failed: " + smokeErr.Error()
+	if smoke.ErrorCode == apihostingreceipt.SmokeErrorVerificationUnavailable {
+		code = api.CodeDeploymentVerificationUnavailable
+		message = "hosting verification unavailable: " + smokeErr.Error()
+	}
+	changed, err := store.FailDeploymentWithHostingReceipt(ctx, dep.ID, raw, code, message)
 	if err != nil {
 		return fmt.Errorf("imaged: commit hosting failure: %w", err)
 	}

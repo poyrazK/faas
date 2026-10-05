@@ -168,6 +168,13 @@ func (a *canaryStoreAdapter) dependencyCallSummary(ctx context.Context, appID, d
 }
 
 func (a *canaryStoreAdapter) deploymentHealthWindow(ctx context.Context, appID, deploymentID pgtype.UUID, since, now time.Time) (canary.HealthWindow, error) {
+	// Request telemetry is collapsed into minute buckets (received_at is the
+	// bucket's minute). A window that starts mid-minute, at the canary step's
+	// start, would skip that whole first bucket. On production-us a 60 s stage
+	// lost 21 of its requests that way and held at "insufficient request
+	// samples (candidate=0 stable=0)". Align to the bucket, as the CPU window
+	// in the same summary query already does for usage_minutes.
+	since = since.UTC().Truncate(time.Minute)
 	if reader, ok := a.store.(canaryHealthTelemetrySummaryReader); ok {
 		requests, serverErrors, p95, coldBootRequests, coldBootP95, cpuUsec, cpuRequests, err := reader.RequestTelemetryCircuitBreakerSummary(ctx, uuid.UUID(appID.Bytes).String(), uuid.UUID(deploymentID.Bytes).String(), since, now)
 		if err != nil {

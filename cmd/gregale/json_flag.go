@@ -53,6 +53,45 @@ func newFlagSet(name string, handling flag.ErrorHandling) *flag.FlagSet {
 	return fs
 }
 
+// parseInterspersed parses args with flags allowed before, between, and after
+// positionals; the standard flag package stops at the first positional, so
+// `gregale x <id> --flag v` would otherwise be a usage error. Whether a flag
+// takes a value comes from fs itself, so a bool flag never swallows the
+// positional that follows it. Positionals keep their order and are returned
+// through fs.Args(); everything after a literal "--" stays positional.
+func parseInterspersed(fs *flag.FlagSet, args []string) error {
+	flags := make([]string, 0, len(args))
+	positionals := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			positionals = append(positionals, args[i+1:]...)
+			break
+		}
+		if len(arg) < 2 || arg[0] != '-' {
+			positionals = append(positionals, arg)
+			continue
+		}
+		flags = append(flags, arg)
+		name := strings.TrimLeft(arg, "-")
+		if strings.Contains(name, "=") {
+			continue
+		}
+		f := fs.Lookup(name)
+		if f == nil {
+			continue
+		}
+		if b, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && b.IsBoolFlag() {
+			continue
+		}
+		if i+1 < len(args) {
+			flags = append(flags, args[i+1])
+			i++
+		}
+	}
+	return fs.Parse(append(append(flags, "--"), positionals...))
+}
+
 // rejectUnexpectedFlagArgs closes the standard flag package's permissive
 // trailing-token behavior for flag-only leaves. Call it immediately after a
 // successful Parse and before authentication or any API request.

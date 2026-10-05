@@ -127,19 +127,29 @@ type domainRequest struct {
 }
 
 type domainResponse struct {
-	Domain           string   `json:"domain"`
-	AppID            string   `json:"app_id"`
-	ChallengeToken   string   `json:"challenge_token,omitempty"`
-	TXTRecord        string   `json:"txt_record,omitempty"`
-	Verified         bool     `json:"verified"`
-	VerifiedAt       string   `json:"verified_at,omitempty"`
-	Default          bool     `json:"default,omitempty"`
-	CertNotAfter     string   `json:"cert_not_after,omitempty"`
-	CertSANs         []string `json:"cert_sans,omitempty"`
-	CertExpiresAt    string   `json:"cert_expires_at,omitempty"`
-	CertLastError    string   `json:"cert_last_error,omitempty"`
-	DNSLastCheckedAt string   `json:"dns_last_checked_at,omitempty"`
-	CertStatus       string   `json:"cert_status,omitempty"`
+	Domain           string            `json:"domain"`
+	AppID            string            `json:"app_id"`
+	ChallengeToken   string            `json:"challenge_token,omitempty"`
+	TXTRecord        string            `json:"txt_record,omitempty"`
+	Verified         bool              `json:"verified"`
+	VerifiedAt       string            `json:"verified_at,omitempty"`
+	Default          bool              `json:"default,omitempty"`
+	CertNotAfter     string            `json:"cert_not_after,omitempty"`
+	CertSANs         []string          `json:"cert_sans,omitempty"`
+	CertExpiresAt    string            `json:"cert_expires_at,omitempty"`
+	CertLastError    string            `json:"cert_last_error,omitempty"`
+	DNSLastCheckedAt string            `json:"dns_last_checked_at,omitempty"`
+	CertStatus       string            `json:"cert_status,omitempty"`
+	DNSRecords       []domainDNSRecord `json:"dns_records,omitempty"`
+}
+
+// domainDNSRecord is one record the customer publishes (ADR-520).
+type domainDNSRecord struct {
+	Type        string `json:"type"`
+	Name        string `json:"name"`
+	Value       string `json:"value"`
+	Purpose     string `json:"purpose"`
+	Alternative bool   `json:"alternative,omitempty"`
 }
 
 type alertRuleRequest struct {

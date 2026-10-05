@@ -1,0 +1,20 @@
+set -eu
+for attempt in $(seq 1 90); do
+ state="$(sudo systemctl show gregale-managed-pg-resource-placement-ca1230ac-final -p ActiveState --value)"
+ case "$state" in inactive|failed) break ;; esac
+ sleep 10
+done
+case "$state" in inactive|failed) ;; *) exit 1 ;; esac
+sudo systemctl show gregale-managed-pg-resource-placement-ca1230ac-final -p LoadState -p ActiveState -p SubState -p Result -p ExecMainStatus -p InvocationID > /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/unit-final.txt
+test "$(cat /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/portable-linux.exit)" = 0
+test "$(cat /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/metal.exit)" = 0
+test "$(cat /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/linux-lint.exit)" = 0
+printf %s 'c0dc5bfc04adc303a03902d3ffda5d19d5058c3e3f409a4ffa76a12840595be2  /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/source-hashes.sha256
+' | sha256sum -c -
+(cd /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/source-final && sudo sha256sum -c --quiet ../source-hashes.sha256)
+printf 'all 4209 selected Go/module files match uploaded source after execution
+' > /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/source-runtime-match.log
+sudo tar -czf /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/results.tar.gz -C /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac run.log portable-linux.log portable-linux.exit metal.log metal.exit linux-lint.log linux-lint.exit unit-final.txt source-runtime-match.log
+sudo chmod 0644 /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/results.tar.gz
+sha256sum /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/results.tar.gz
+cat /var/tmp/faas-metal-smoke-managed-pg-resource-placement-ca1230ac/unit-final.txt

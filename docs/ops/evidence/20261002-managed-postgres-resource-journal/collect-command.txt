@@ -1,0 +1,10 @@
+set -eu
+state="$(sudo systemctl show gregale-managed-pg-resource-journal-4e4f5a64 -p ActiveState --value)"
+case "$state" in inactive|failed) ;; *) echo "unit still active: $state"; exit 1 ;; esac
+sudo systemctl show gregale-managed-pg-resource-journal-4e4f5a64 -p LoadState -p ActiveState -p SubState -p Result -p ExecMainStatus -p InvocationID > /var/tmp/faas-metal-smoke-managed-pg-resource-journal-4e4f5a64/unit-final.txt
+(cd /var/tmp/faas-metal-smoke-managed-pg-resource-journal-4e4f5a64/source && sudo sha256sum -c --quiet ../source-hashes.sha256)
+printf "all 4197 selected Go/module files match the uploaded snapshot after execution\n" > /var/tmp/faas-metal-smoke-managed-pg-resource-journal-4e4f5a64/source-runtime-match.log
+sudo tar -czf /var/tmp/faas-metal-smoke-managed-pg-resource-journal-4e4f5a64/results.tar.gz -C /var/tmp/faas-metal-smoke-managed-pg-resource-journal-4e4f5a64 run.log portable-linux.log portable-linux.exit metal.log metal.exit linux-lint.log linux-lint.exit unit-final.txt source-runtime-match.log
+sudo chmod 0644 /var/tmp/faas-metal-smoke-managed-pg-resource-journal-4e4f5a64/results.tar.gz
+sha256sum /var/tmp/faas-metal-smoke-managed-pg-resource-journal-4e4f5a64/results.tar.gz
+cat /var/tmp/faas-metal-smoke-managed-pg-resource-journal-4e4f5a64/unit-final.txt

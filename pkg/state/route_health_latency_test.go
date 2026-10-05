@@ -46,6 +46,10 @@ func TestRouteLatencyWeightedEvidenceAndAtomicGate(t *testing.T) {
 				t.Fatal(err)
 			}
 			windows := routehealth.Windows(time.Now().UTC())
+			// The report and atomic gate read the DB clock separately. Keep the
+			// following minute populated if their closed-window cutoff rolls over.
+			nextStart := windows[len(windows)-1].End
+			windows = append(windows, api.RouteHealthWindowEvidence{Start: nextStart, End: nextStart.Add(api.RouteHealthWindow)})
 			q := &sqlc.Queries{}
 			for i, w := range windows {
 				for _, dep := range []state.Deployment{stable, d} {

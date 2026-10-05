@@ -7,6 +7,7 @@ package imaged
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -491,8 +492,8 @@ func TestHandleSnapshotBoot_RetriesBusyBuildExportLease(t *testing.T) {
 	if err := syscall.Flock(int(cleaner.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.handleSnapshotBoot(context.Background(), snapshotBootPayload{AppID: app.ID, DeploymentID: dep.ID}); err != nil {
-		t.Fatalf("busy handoff should defer without failing: %v", err)
+	if err := h.handleSnapshotBoot(context.Background(), snapshotBootPayload{AppID: app.ID, DeploymentID: dep.ID}); !errors.Is(err, errImagePreparationRecovery) {
+		t.Fatalf("busy handoff must stay retryable: %v", err)
 	}
 	got, _ := store.DeploymentByID(context.Background(), dep.ID)
 	if got.Status != state.DeployPending || len(bld.calls) != 0 {

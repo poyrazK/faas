@@ -1,61 +1,57 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..types import UNSET, Unset
+if TYPE_CHECKING:
+    from ..models.dispatch_invocation_batch_response_200_results_item import (
+        DispatchInvocationBatchResponse200ResultsItem,
+    )
+
 
 T = TypeVar("T", bound="DispatchInvocationBatchResponse200")
 
 
 @_attrs_define
 class DispatchInvocationBatchResponse200:
-    succeeded: list[str] | Unset = UNSET
-    retry: list[str] | Unset = UNSET
-    dead_letter: list[str] | Unset = UNSET
+    results: list[DispatchInvocationBatchResponse200ResultsItem]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        succeeded: list[str] | Unset = UNSET
-        if not isinstance(self.succeeded, Unset):
-            succeeded = self.succeeded
-
-        retry: list[str] | Unset = UNSET
-        if not isinstance(self.retry, Unset):
-            retry = self.retry
-
-        dead_letter: list[str] | Unset = UNSET
-        if not isinstance(self.dead_letter, Unset):
-            dead_letter = self.dead_letter
+        results = []
+        for results_item_data in self.results:
+            results_item = results_item_data.to_dict()
+            results.append(results_item)
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({})
-        if succeeded is not UNSET:
-            field_dict["succeeded"] = succeeded
-        if retry is not UNSET:
-            field_dict["retry"] = retry
-        if dead_letter is not UNSET:
-            field_dict["dead_letter"] = dead_letter
+        field_dict.update(
+            {
+                "results": results,
+            }
+        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.dispatch_invocation_batch_response_200_results_item import (
+            DispatchInvocationBatchResponse200ResultsItem,
+        )
+
         d = dict(src_dict)
-        succeeded = cast(list[str], d.pop("succeeded", UNSET))
+        results = []
+        _results = d.pop("results")
+        for results_item_data in _results:
+            results_item = DispatchInvocationBatchResponse200ResultsItem.from_dict(results_item_data)
 
-        retry = cast(list[str], d.pop("retry", UNSET))
-
-        dead_letter = cast(list[str], d.pop("dead_letter", UNSET))
+            results.append(results_item)
 
         dispatch_invocation_batch_response_200 = cls(
-            succeeded=succeeded,
-            retry=retry,
-            dead_letter=dead_letter,
+            results=results,
         )
 
         dispatch_invocation_batch_response_200.additional_properties = d

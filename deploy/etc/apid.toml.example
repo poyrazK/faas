@@ -5,6 +5,10 @@
 # Default: 127.0.0.1:8081  (behind a TLS-terminating reverse proxy)
 # listen_addr = "127.0.0.1:8081"
 
+# Optional outbound binding verification gateway: an HTTPS origin reachable by
+# task guests and routed to outboundd. Omit to leave outbound probes unsupported.
+# outbound_probe_gateway_url = "https://outbound.example.com"
+
 # base_domain: the apps.<domain> suffix for app URLs.
 # Default: example.com
 # base_domain = "example.com"

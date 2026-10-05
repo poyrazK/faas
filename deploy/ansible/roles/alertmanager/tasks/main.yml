@@ -10,15 +10,16 @@
 #      message that points at the readme + Prometheus release page.
 #      Production hosts MUST set this; the `am_release_sha256 is not
 #      defined` early-exit is the safety belt.
-#   2. Secret material (SMTP password, Pushover token, Pushover user
-#      key) is read at notification time by Alertmanager via its
+#   2. Secret material (SMTP password, Pushover token and user key,
+#      chat webhook URLs, heartbeat URL) is read at notification time
+#      by Alertmanager via its
 #      native `*_file` indirection. The role only asserts the files
 #      exist with mode 0400 owned by alertmanager:alertmanager —
 #      nothing is slurped, b64decoded, or templated. Same precedent
 #      as FAAS_HOST_AGE_RECIPIENT_PATH (gap G2 lean §17, sealed at
-#      rest). On hosts without secrets provisioned, set am_dev_mode:
-#      true to skip the secret-file existence asserts and the
-#      systemd enable; otherwise the role fails loud.
+#      rest). Single-box dev/CI hosts without secrets may set
+#      am_dev_mode: true to skip the secret-file asserts and leave
+#      Alertmanager stopped; a control-plane host refuses dev mode.
 #   3. Alertmanager runs on loopback only; the only caller is
 #      Prometheus on the same host. Bind addr defaults to
 #      127.0.0.1:9094.
@@ -33,6 +34,22 @@
       from the Alertmanager release page
       (https://github.com/prometheus/alertmanager/releases/tag/v{{ am_version }}).
       The role fails-closed rather than installing an unverified binary.
+
+# A production control plane must reach a human, and must prove it is alive
+# to something that is not itself. Dev mode exists for single-box dev/CI
+# hosts; on a control plane it silently routed every page to faas-silent.
+- name: alertmanager — refuse a silent control plane
+  ansible.builtin.assert:
+    that:
+      - not am_dev_mode | bool
+      - (am_heartbeat_url_file | default('') | trim | length) > 0
+    fail_msg: >-
+      A control-plane host must deliver alerts. Unset am_dev_mode and
+      provision a notification channel (am_discord_webhook_url_file,
+      am_slack_webhook_url_file, SMTP or Pushover) plus
+      am_heartbeat_url_file for the dead-man's switch. See
+      docs/runbooks/FaasWatchdog.md.
+  when: (faas_box_role | default('single-box')) == 'control-plane'
 
 - name: alertmanager — create system user
   ansible.builtin.user:
@@ -112,6 +129,9 @@
     - "{{ am_smtp_password_file }}"
     - "{{ am_pushover_token_file }}"
     - "{{ am_pushover_user_key_file }}"
+    - "{{ am_discord_webhook_url_file }}"
+    - "{{ am_slack_webhook_url_file }}"
+    - "{{ am_heartbeat_url_file }}"
   failed_when:
     - not am_dev_mode | bool
     - item | length > 0
@@ -127,6 +147,24 @@
     - item | length > 0
   no_log: true   # paths flow through ansible.builtin.stat, defensive even though they're not the secret bytes
 
+# Discord only accepts Alertmanager's Slack-format payload on its /slack
+# endpoint; a bare Discord webhook URL fails every notification with a 400.
+# grep -q reads the file without printing it.
+- name: alertmanager — require the Slack-compatible Discord endpoint
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -Eq
+      - '^https://(discord\.com|discordapp\.com|canary\.discord\.com|ptb\.discord\.com)/api/webhooks/[^[:space:]]+/slack/?$'
+      - "{{ am_discord_webhook_url_file }}"
+  register: am_discord_url_check
+  changed_when: false
+  failed_when: am_discord_url_check.rc != 0
+  when:
+    - not am_dev_mode | bool
+    - am_discord_webhook_url_file | default('') | trim | length > 0
+  no_log: true
+
 - name: alertmanager — require a notification channel in production
   ansible.builtin.assert:
     that:
@@ -134,10 +172,13 @@
         ((am_smtp_smarthost | default('') | trim | length > 0) and
          (am_smtp_password_file | default('') | trim | length > 0)) or
         ((am_pushover_token_file | default('') | trim | length > 0) and
-         (am_pushover_user_key_file | default('') | trim | length > 0))
+         (am_pushover_user_key_file | default('') | trim | length > 0)) or
+        (am_discord_webhook_url_file | default('') | trim | length > 0) or
+        (am_slack_webhook_url_file | default('') | trim | length > 0)
     fail_msg: >-
       Alertmanager production mode needs at least one complete notification
-      channel: SMTP host + password file, or Pushover token + user-key files.
+      channel: a Discord or Slack webhook URL file, SMTP host + password
+      file, or Pushover token + user-key files.
       Use am_dev_mode=true only for a deliberately silent bootstrap/CI host.
   when: not am_dev_mode | bool
   no_log: true
@@ -170,8 +211,10 @@
     - daemon-reload
     - restart alertmanager
 
-# dev_mode: drop the unit but do not enable — production hosts that
-# forget to set the secrets won't accidentally start a broken Alertmanager.
+# Dev mode keeps the unit installed but stopped and disabled. The unit-install
+# restart handler is skipped in dev mode too; it used to start the service
+# anyway, leaving a running Alertmanager that routed everything to
+# faas-silent and looked like working alerting.
 - name: alertmanager — enable + start service (production only)
   ansible.builtin.service:
     name: alertmanager
@@ -180,13 +223,21 @@
   register: am_svc
   when: not am_dev_mode | bool
 
-- name: "alertmanager — dev mode: skip service start"
+- name: "alertmanager — dev mode: keep the service stopped and disabled"
+  ansible.builtin.systemd:
+    name: alertmanager
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  when: am_dev_mode | bool
+
+- name: "alertmanager — dev mode: report that nothing is delivered"
   ansible.builtin.debug:
     msg: >-
-      am_dev_mode=true; alertmanager.service NOT enabled. Run with
-      -e am_dev_mode=false and operator-provisioned secret files
-      (am_smtp_password_file, am_pushover_token_file,
-      am_pushover_user_key_file) to enable production notifications.
+      am_dev_mode=true; alertmanager.service is stopped and disabled, so no
+      alert reaches anyone. Run with -e am_dev_mode=false and
+      operator-provisioned secret files (a chat webhook, SMTP or Pushover,
+      plus am_heartbeat_url_file) to enable production notifications.
   when: am_dev_mode | bool
 
 - name: alertmanager — remove downloaded tarball

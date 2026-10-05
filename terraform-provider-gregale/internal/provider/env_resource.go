@@ -139,6 +139,10 @@ func (r *envResource) Create(ctx context.Context, req resource.CreateRequest, re
 		return
 	}
 	scope := stringValue(plan.Scope)
+	if err := r.client.envOwnership(ctx, plan.AppSlug.ValueString(), scope, plan.Key.ValueString(), false); err != nil {
+		appendClientError(&resp.Diagnostics, "Could not reserve Terraform field ownership", err)
+		return
+	}
 	if err := r.client.setEnv(ctx, plan.AppSlug.ValueString(), scope, plan.Key.ValueString(), plan.Value.ValueString()); err != nil {
 		appendClientError(&resp.Diagnostics, "Could not set Gregale environment variable", err)
 		return
@@ -162,7 +166,15 @@ func (r *envResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 		return
 	}
 	if !found {
+		if err := r.client.envOwnership(ctx, state.AppSlug.ValueString(), stringValue(state.Scope), state.Key.ValueString(), true); err != nil && !isNotFound(err) {
+			appendClientError(&resp.Diagnostics, "Could not release Terraform ownership", err)
+			return
+		}
 		resp.State.RemoveResource(ctx)
+		return
+	}
+	if err := r.client.envOwnership(ctx, state.AppSlug.ValueString(), stringValue(state.Scope), state.Key.ValueString(), false); err != nil {
+		appendClientError(&resp.Diagnostics, "Could not reserve Terraform field ownership", err)
 		return
 	}
 	resp.Diagnostics.Append(setEnvModel(ctx, &resp.State, metadata, state)...)
@@ -179,6 +191,10 @@ func (r *envResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 	scope := stringValue(plan.Scope)
+	if err := r.client.envOwnership(ctx, plan.AppSlug.ValueString(), scope, plan.Key.ValueString(), false); err != nil {
+		appendClientError(&resp.Diagnostics, "Could not reserve Terraform field ownership", err)
+		return
+	}
 	if err := r.client.setEnv(ctx, plan.AppSlug.ValueString(), scope, plan.Key.ValueString(), plan.Value.ValueString()); err != nil {
 		appendClientError(&resp.Diagnostics, "Could not update Gregale environment variable", err)
 		return
@@ -198,6 +214,10 @@ func (r *envResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 	}
 	if err := r.client.deleteEnv(ctx, state.AppSlug.ValueString(), stringValue(state.Scope), state.Key.ValueString()); err != nil && !isEnvNotFound(err) {
 		appendClientError(&resp.Diagnostics, "Could not delete Gregale environment variable", err)
+		return
+	}
+	if err := r.client.envOwnership(ctx, state.AppSlug.ValueString(), stringValue(state.Scope), state.Key.ValueString(), true); err != nil && !isNotFound(err) {
+		appendClientError(&resp.Diagnostics, "Could not release Terraform ownership", err)
 	}
 }
 

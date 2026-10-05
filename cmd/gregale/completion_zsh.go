@@ -49,11 +49,11 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "_gregale_cache_slugs() {")
 	_, _ = fmt.Fprintln(w, "  local kind=\"$1\"")
-	_, _ = fmt.Fprintln(w, "  local path=\"$(gregale completion completion-cache-path 2>/dev/null)\"")
-	_, _ = fmt.Fprintln(w, "  [[ -z \"$path\" || ! -r \"$path\" ]] && return 1")
+	_, _ = fmt.Fprintln(w, "  local cache_file=\"$(gregale completion completion-cache-path 2>/dev/null)\"")
+	_, _ = fmt.Fprintln(w, "  [[ -z \"$cache_file\" || ! -r \"$cache_file\" ]] && return 1")
 	// sed slice rather than grep -E with literal braces — grep
 	// treats '{' as a quantifier metacharacter and rejects it.
-	_, _ = fmt.Fprintln(w, "  sed -n \"/\\\"$kind\\\":\\[/,/]/p\" \"$path\" 2>/dev/null \\")
+	_, _ = fmt.Fprintln(w, "  sed -n \"/\\\"$kind\\\":\\[/,/]/p\" \"$cache_file\" 2>/dev/null \\")
 	_, _ = fmt.Fprintln(w, "    | sed -E \"s/.*\\\"$kind\\\":\\[//; s/\\].*//\" \\")
 	_, _ = fmt.Fprintln(w, "    | grep -oE '\"slug\":\"[^\"]+\"' \\")
 	_, _ = fmt.Fprintln(w, "    | sed -E 's/.*\"slug\":\"([^\"]+)\".*/\\1/'")
