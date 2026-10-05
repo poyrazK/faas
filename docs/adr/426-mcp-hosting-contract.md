@@ -99,3 +99,20 @@ Portable acceptance covers both modern and stateless legacy discovery/execution,
 alternating/concurrent callers, guessed tool names, forged headers, missing
 identity, all-required scopes, empty policies, and redacted logs. This extends the
 resource-server contract without a new gateway or deployment policy owner.
+
+## Application-owned execution diagnostics
+
+Versioned request summaries and callback events share an application-generated
+UUID returned in `X-MCP-Request-ID`. Capture denials before dispatch, public
+Standard Schema input/output validation, callback outcomes and disconnects.
+Only registered tool names and closed method/protocol/outcome/reason fields enter
+events; never retain caller IDs, JWT claims, arguments, results or error text.
+Logging failures cannot change execution or authorization.
+
+`mcp events` reads the existing control-plane application log stream with operator
+credentials, validates the event DTO, discards unknown fields and supports local
+tool/outcome/request filters. Retention gaps and unavailable streams are explicit
+partial results with nonzero exit status. No new telemetry store, gateway policy
+owner or VM lifecycle path is introduced. These events are lossy application
+diagnostics, not a platform-authenticated audit record or fleet metrics. Existing
+servers must update their code to adopt the event contract.

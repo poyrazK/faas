@@ -251,6 +251,27 @@ Examples:
 gregale mcp config --app my-mcp --name my-mcp
 ```
 
+### mcp events
+
+Read correlated MCP diagnostics from application logs
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (defaults to linked app) |  |
+| `--tool <NAME>` | filter by registered tool name |  |
+| `--outcome <OUTCOME>` | filter by event outcome | one of `success` · `denied` · `validation_error` · `tool_error` · `error` · `cancelled` · `protocol_error` |
+| `--request <UUID>` | filter by server-generated MCP request ID |  |
+| `--since <TIME>` | lookback duration or RFC3339 timestamp |  |
+| `--deployment <REF>` | deployment ID or vN |  |
+| `--follow` | follow live events |  |
+
+Examples:
+
+```sh
+gregale mcp events --app my-mcp --tool add --outcome denied --since 15m --json
+gregale mcp events --app my-mcp --follow
+```
+
 ### mcp lock
 
 Capture a complete tool contract without invoking tools
