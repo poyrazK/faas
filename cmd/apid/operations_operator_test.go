@@ -205,10 +205,9 @@ func testOperationOperatorHTTP(t *testing.T, store operationOperatorTestStore) {
 	testOperationDoctorHTTP(t, srv, store, acct, dep, alice, hook, read, other, token, call)
 	discoveryServer.Close()
 	q := "?scope=" + url.QueryEscape(dep.Scope) + "&limit=1"
-	page := api.OperationListResponse{}
 	w := call("GET", base+q, read, nil)
 	check(w, 200)
-	page = api.OperationListResponse{}
+	page := api.OperationListResponse{}
 	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
 		t.Fatal(err)
 	}

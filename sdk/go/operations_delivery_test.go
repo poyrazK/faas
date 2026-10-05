@@ -2,6 +2,7 @@
 package faas_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -33,16 +34,16 @@ func TestOperationDeliveryReceiptWireContract(t *testing.T) {
 	}))
 	defer server.Close()
 	client := operationClient(t, server)
-	report, err := client.GetOperationDelivery(t.Context(), "exports", "operation")
+	report, err := client.GetOperationDelivery(context.Background(), "exports", "operation")
 	if err != nil || report.BusinessState != faas.OperationSucceeded || report.State != "dead" || report.ReplayGeneration == nil || *report.ReplayGeneration != 0 {
 		t.Fatalf("report %+v %v", report, err)
 	}
-	page, err := client.GetOperationDeliveryAttempts(t.Context(), "exports", "operation", 1, "opaque+/=")
+	page, err := client.GetOperationDeliveryAttempts(context.Background(), "exports", "operation", 1, "opaque+/=")
 	if err != nil || page.NextCursor != "next" {
 		t.Fatalf("page %+v %v", page, err)
 	}
 	generation := 0
-	r, err := client.RetryOperationDeliveryWithReceipt(t.Context(), "exports", "operation", faas.OperationDeliveryRetryRequest{RetryID: "stable", DeliveryID: "delivery", ExpectedReplayGeneration: &generation})
+	r, err := client.RetryOperationDeliveryWithReceipt(context.Background(), "exports", "operation", faas.OperationDeliveryRetryRequest{RetryID: "stable", DeliveryID: "delivery", ExpectedReplayGeneration: &generation})
 	if err != nil || r.State != "queued" || r.ReplayGeneration != 1 {
 		t.Fatalf("receipt %+v %v", r, err)
 	}

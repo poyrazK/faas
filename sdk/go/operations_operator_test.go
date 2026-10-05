@@ -39,19 +39,19 @@ func TestOperationAccountOperatorRoutes(t *testing.T) {
 	}))
 	defer server.Close()
 	client := operationClient(t, server)
-	page, err := client.ListAccountOperations(t.Context(), "exports", faas.OperationListOptions{Scope: "production", TenantID: "customer", Name: "export", State: faas.OperationSucceeded, Limit: 2, Cursor: "opaque"})
+	page, err := client.ListAccountOperations(context.Background(), "exports", faas.OperationListOptions{Scope: "production", TenantID: "customer", Name: "export", State: faas.OperationSucceeded, Limit: 2, Cursor: "opaque"})
 	if err != nil || len(page.Operations) != 1 || page.Operations[0].PlatformTenantID != "customer" || page.NextCursor != "next" {
 		t.Fatalf("list %+v %v", page, err)
 	}
-	events, err := client.GetAccountOperationEvents(t.Context(), "exports", "operation", 7)
+	events, err := client.GetAccountOperationEvents(context.Background(), "exports", "operation", 7)
 	if err != nil || !events.ResyncRequired {
 		t.Fatalf("events %+v %v", events, err)
 	}
-	executions, err := client.GetOperationExecutions(t.Context(), "exports", "operation", 1, 2)
+	executions, err := client.GetOperationExecutions(context.Background(), "exports", "operation", 1, 2)
 	if err != nil || executions.NextGeneration != 2 || executions.Executions[0].Attempts != 1 {
 		t.Fatalf("executions %+v %v", executions, err)
 	}
-	op, err := client.RetryOperationDelivery(t.Context(), "exports", "operation")
+	op, err := client.RetryOperationDelivery(context.Background(), "exports", "operation")
 	if err != nil || op.State != faas.OperationSucceeded || op.Generation != 2 || op.CompletionDelivery.State != "pending" {
 		t.Fatalf("notification retry %+v %v", op, err)
 	}
@@ -74,15 +74,15 @@ func TestOperationDefinitionDiscoveryAndTenantIdentity(t *testing.T) {
 	}))
 	defer server.Close()
 	client := operationClient(t, server)
-	page, err := client.ListOperationDefinitions(t.Context(), "exports", "deployment")
+	page, err := client.ListOperationDefinitions(context.Background(), "exports", "deployment")
 	if err != nil || len(page.Definitions) != 1 || page.Definitions[0].Revision != "immutable" {
 		t.Fatalf("definitions %+v %v", page, err)
 	}
-	definition, err := client.GetOperationDefinition(t.Context(), "exports", "deployment", "export")
+	definition, err := client.GetOperationDefinition(context.Background(), "exports", "deployment", "export")
 	if err != nil || definition.ID != "definition" || string(definition.Spec.InputSchema) != `{"type":"object"}` {
 		t.Fatalf("definition %+v %v", definition, err)
 	}
-	identity, err := client.GetPlatformTenantSelfOperationIdentity(t.Context())
+	identity, err := client.GetPlatformTenantSelfOperationIdentity(context.Background())
 	if err != nil || identity.PlatformTenantID != "tenant" {
 		t.Fatalf("identity %+v %v", identity, err)
 	}
