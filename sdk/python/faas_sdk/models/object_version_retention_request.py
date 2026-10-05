@@ -15,14 +15,19 @@ T = TypeVar("T", bound="ObjectVersionRetentionRequest")
 
 @_attrs_define
 class ObjectVersionRetentionRequest:
-    """Stable identity and fixed retention intent for an owned version."""
+    """Stable identity and fixed or enrolled event hold retention intent for an owned version. ON requires a duration; OFF
+    omits duration and requires a previously active hold unless a fixed date is supplied.
+
+    """
 
     id: UUID
     """Stable caller-generated UUID v4; reuse only for the identical intent."""
     retention: ObjectVersionRetention
-    """Verified native retention, or a fixed-retention intent. An empty object requests a clear; active retention
-    cannot be shortened without bypass, which is unsupported. Event hold fields are observation only for this
-    contract."""
+    """Verified native retention or a retention intent. An empty object requests a clear. Active fixed retention
+    cannot be shortened and active COMPLIANCE cannot be downgraded. Enrolled event hold ON requires one duration;
+    OFF omits duration and lets the provider fix the final date from the existing hold. Observed dates and requested
+    minimum dates are preserved. Governance bypass is unsupported. Per-write protection remains fixed retention
+    only."""
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)

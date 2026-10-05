@@ -13311,7 +13311,7 @@ INSERT INTO object_version_protection(id,bucket_id,account_id,app_id,object_key,
 VALUES($1,$2,$3,$4,$5,$6,$7,$8);
 
 -- name: ObjectVersionProtectionUpdate :exec
-UPDATE object_version_protection SET state=$2,lease_token=$3,lease_until=$4,retry_at=$5,dispatched=$6,last_error_code=$7,updated_at=now() WHERE id=$1;
+UPDATE object_version_protection SET state=$2,lease_token=$3,lease_until=$4,retry_at=$5,dispatched=$6,last_error_code=$7,event_hold_baseline=$8,updated_at=now() WHERE id=$1;
 
 -- name: ObjectVersionProtectionDue :many
 SELECT id FROM object_version_protection WHERE state IN ('waiting','applying') AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,id LIMIT $1;

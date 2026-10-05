@@ -5984,6 +5984,43 @@ $$;
 
 
 --
+-- Name: object_event_hold_retention_valid(jsonb, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_event_hold_retention_valid(r jsonb, writing boolean) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE p jsonb; n numeric; d timestamptz;
+BEGIN
+ IF jsonb_typeof(r) IS DISTINCT FROM 'object' OR octet_length(r::text)>16384
+  OR EXISTS(SELECT 1 FROM jsonb_object_keys(r) AS k WHERE k NOT IN ('mode','retain_until_date','event_hold','event_hold_duration')) THEN RETURN false; END IF;
+ IF r='{}'::jsonb THEN RETURN true; END IF;
+ IF jsonb_typeof(r->'mode') IS DISTINCT FROM 'string' OR r->>'mode' NOT IN ('COMPLIANCE','GOVERNANCE') THEN RETURN false; END IF;
+ IF r ? 'retain_until_date' THEN
+  IF jsonb_typeof(r->'retain_until_date') IS DISTINCT FROM 'string' OR r->>'retain_until_date' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$' THEN RETURN false; END IF;
+  d:=(r->>'retain_until_date')::timestamptz;
+  IF NOT isfinite(d) OR extract(year FROM d) NOT BETWEEN 1 AND 9999 THEN RETURN false; END IF;
+ END IF;
+ IF r ? 'event_hold' THEN
+  IF jsonb_typeof(r->'event_hold') IS DISTINCT FROM 'string' OR r->>'event_hold' NOT IN ('ON','OFF') THEN RETURN false; END IF;
+ ELSE
+  RETURN r ? 'retain_until_date' AND NOT r ? 'event_hold_duration';
+ END IF;
+ IF r ? 'event_hold_duration' THEN
+  p:=r->'event_hold_duration';
+  IF jsonb_typeof(p) IS DISTINCT FROM 'object' OR (SELECT count(*) FROM jsonb_object_keys(p))<>1 OR NOT (p ? 'days' OR p ? 'years') THEN RETURN false; END IF;
+  IF jsonb_typeof(coalesce(p->'days',p->'years')) IS DISTINCT FROM 'number' OR coalesce(p->>'days',p->>'years') !~ '^[0-9]+$' THEN RETURN false; END IF;
+  n:=coalesce(p->>'days',p->>'years')::numeric;
+  IF n<1 OR n>(CASE WHEN p ? 'days' THEN 36500 ELSE 100 END) THEN RETURN false; END IF;
+ END IF;
+ IF r->>'event_hold'='ON' AND NOT r ? 'event_hold_duration' THEN RETURN false; END IF;
+ IF writing THEN RETURN r->>'event_hold'<>'OFF' OR NOT r ? 'event_hold_duration'; END IF;
+ RETURN r ? 'retain_until_date';
+EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow OR numeric_value_out_of_range THEN RETURN false;
+END $_$;
+
+
+--
 -- Name: object_lock_drained(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6729,6 +6766,26 @@ BEGIN
   OR (OLD.state='dispatched' AND NEW.state NOT IN ('dispatched','completed') AND NOT (NEW.state='failed' AND NEW.last_error_code='provider_rejected' AND NOT OLD.recovery_claimed))
   OR OLD.state IN ('completed','failed') THEN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Deletion identity and dispatched attempt are immutable';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_object_event_hold_baseline(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_object_event_hold_baseline() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF NEW.event_hold_baseline IS NOT NULL THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Event hold baseline requires a live worker lease'; END IF;
+ ELSIF NEW.event_hold_baseline IS DISTINCT FROM OLD.event_hold_baseline THEN
+  IF OLD.event_hold_baseline IS NOT NULL OR OLD.dispatched OR NEW.dispatched OR OLD.state<>'applying' OR NEW.state<>'applying'
+   OR OLD.lease_token='' OR NEW.lease_token<>OLD.lease_token OR OLD.lease_until<=clock_timestamp() THEN
+   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Preserve immutable event hold baseline';
+  END IF;
  END IF;
  RETURN NEW;
 END $$;
@@ -14601,10 +14658,10 @@ CREATE TABLE public.managed_postgres_databases (
     restore_source_resource_id text,
     restore_point_in_time timestamp with time zone,
     cutover_id uuid,
-    accounting_required boolean DEFAULT true NOT NULL,
     environment_clone_operation_id uuid,
     data_resource_id text,
     clone_resource_role text DEFAULT 'target'::text NOT NULL,
+    accounting_required boolean DEFAULT true NOT NULL,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -16031,17 +16088,19 @@ CREATE TABLE public.object_version_protection (
     last_error_code text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    event_hold_baseline jsonb,
     CONSTRAINT object_version_protection_check CHECK (((state = 'applying'::text) = ((lease_token <> ''::text) AND (lease_until IS NOT NULL)))),
     CONSTRAINT object_version_protection_check1 CHECK (((state = 'applying'::text) OR ((lease_token = ''::text) AND (lease_until IS NULL)))),
     CONSTRAINT object_version_protection_check2 CHECK (((public_version_id = 'null'::text) = (native_version_id = 'null'::text))),
     CONSTRAINT object_version_protection_check3 CHECK (COALESCE((((intent ->> 'id'::text) = (id)::text) AND ((intent ->> 'bucket_id'::text) = (bucket_id)::text) AND ((intent ->> 'key'::text) = object_key) AND ((intent ->> 'version_id'::text) = public_version_id)), false)),
+    CONSTRAINT object_version_protection_event_baseline CHECK ((((event_hold_baseline IS NULL) OR COALESCE((((intent ->> 'kind'::text) = 'retention'::text) AND (((intent -> 'retention'::text) ->> 'event_hold'::text) = ANY (ARRAY['ON'::text, 'OFF'::text])) AND public.object_event_hold_retention_valid(event_hold_baseline, false) AND ((((intent -> 'retention'::text) ->> 'event_hold'::text) <> 'OFF'::text) OR ((intent -> 'retention'::text) ? 'retain_until_date'::text) OR ((event_hold_baseline ->> 'event_hold'::text) = 'ON'::text))), false)) AND ((NOT COALESCE((((intent -> 'retention'::text) ->> 'event_hold'::text) = ANY (ARRAY['ON'::text, 'OFF'::text])), false)) OR (NOT (dispatched OR (state = 'ready'::text))) OR (event_hold_baseline IS NOT NULL)))),
     CONSTRAINT object_version_protection_id_check CHECK (((id)::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)),
     CONSTRAINT object_version_protection_intent_check CHECK (((jsonb_typeof(intent) = 'object'::text) AND (octet_length((intent)::text) <= 32768) AND COALESCE(((intent ->> 'kind'::text) = ANY (ARRAY['retention'::text, 'legal_hold'::text])), false))),
-    CONSTRAINT object_version_protection_intent_check1 CHECK (COALESCE(((((intent ->> 'kind'::text) = 'legal_hold'::text) AND (NOT (intent ? 'retention'::text)) AND (jsonb_typeof((intent -> 'legal_hold'::text)) = 'object'::text) AND (((intent -> 'legal_hold'::text) ->> 'status'::text) = ANY (ARRAY['ON'::text, 'OFF'::text]))) OR (((intent ->> 'kind'::text) = 'retention'::text) AND (NOT (intent ? 'legal_hold'::text)) AND (jsonb_typeof((intent -> 'retention'::text)) = 'object'::text) AND (NOT ((intent -> 'retention'::text) ? 'event_hold'::text)) AND (NOT ((intent -> 'retention'::text) ? 'event_hold_duration'::text)) AND (((intent -> 'retention'::text) = '{}'::jsonb) OR ((((intent -> 'retention'::text) ->> 'mode'::text) = ANY (ARRAY['GOVERNANCE'::text, 'COMPLIANCE'::text])) AND (jsonb_typeof(((intent -> 'retention'::text) -> 'retain_until_date'::text)) = 'string'::text))))), false)),
     CONSTRAINT object_version_protection_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'provider_uncertain'::text, 'provider_unsupported'::text, 'provider_mismatch'::text, 'preparation_failed'::text, 'provider_rejected'::text]))),
     CONSTRAINT object_version_protection_lease_token_check CHECK ((octet_length(lease_token) <= 128)),
     CONSTRAINT object_version_protection_native_version_id_check CHECK ((((octet_length(native_version_id) >= 1) AND (octet_length(native_version_id) <= 1024)) AND (native_version_id !~ '[\x01-\x1f\x7f]'::text))),
     CONSTRAINT object_version_protection_object_key_check CHECK ((((octet_length(object_key) >= 1) AND (octet_length(object_key) <= 1024)) AND (object_key !~ '[\x01-\x1f\x7f]'::text))),
+    CONSTRAINT object_version_protection_policy_shape CHECK (COALESCE(((((intent ->> 'kind'::text) = 'legal_hold'::text) AND (NOT (intent ? 'retention'::text)) AND (jsonb_typeof((intent -> 'legal_hold'::text)) = 'object'::text) AND (((intent -> 'legal_hold'::text) ->> 'status'::text) = ANY (ARRAY['ON'::text, 'OFF'::text]))) OR (((intent ->> 'kind'::text) = 'retention'::text) AND (NOT (intent ? 'legal_hold'::text)) AND public.object_event_hold_retention_valid((intent -> 'retention'::text), true))), false)),
     CONSTRAINT object_version_protection_public_version_id_check CHECK (((public_version_id = 'null'::text) OR (public_version_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
     CONSTRAINT object_version_protection_state_check CHECK ((state = ANY (ARRAY['waiting'::text, 'applying'::text, 'ready'::text, 'failed'::text])))
 );
@@ -32299,6 +32358,13 @@ CREATE TRIGGER object_deletion_protection_fence BEFORE INSERT OR UPDATE ON publi
 --
 
 CREATE TRIGGER object_deletion_write_fence BEFORE INSERT ON public.object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION public.fence_object_deletion();
+
+
+--
+-- Name: object_version_protection object_event_hold_baseline_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_event_hold_baseline_guard BEFORE INSERT OR UPDATE ON public.object_version_protection FOR EACH ROW EXECUTE FUNCTION public.protect_object_event_hold_baseline();
 
 
 --

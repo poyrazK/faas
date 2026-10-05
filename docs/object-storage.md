@@ -1947,7 +1947,8 @@ Control routes use `?key=<url-encoded-key>&version_id=<public-version>`:
 The prefix is `/v1/apps/{slug}/buckets/{bucket}`. GET reads native policy and
 requires the bucket read grant. PUT requires the write grant, storage manage
 scope, existing MFA policy, ingress and explicit backend Object Lock enrollment.
-The capability response advertises `version_retention` and `version_legal_hold`.
+The capability response advertises `version_retention`, `version_legal_hold` and
+separately enrolled `version_event_hold`.
 Inspection and accepted recovery remain available when enrollment is disabled.
 Receipt inspection also works while backend placement is unavailable.
 
@@ -1961,9 +1962,38 @@ Legal hold uses `{"id":"<operation-id>","legal_hold":{"status":"ON"}}`
 or `OFF`. An explicit empty `retention:{}` clears expired/no fixed retention.
 Active retention cannot be shortened or cleared, and active COMPLIANCE cannot
 be downgraded. GOVERNANCE does not imply bypass. Dates round upward to native
-millisecond precision. Event-hold changes, governance bypass and fixed retention
-changes over existing event holds are rejected. Event-hold observations remain
-readable. Nulls, duplicate keys, unknown fields and bodies over 16 KiB fail.
+millisecond precision. Governance bypass and fixed retention changes over
+existing event holds remain rejected. Event-hold observations remain readable. Nulls, duplicate keys, unknown fields and bodies over 16 KiB fail.
+
+Event holds use the same retention endpoint on backends enrolled with
+`object_lock.event_holds:true`. ON requires one duration. OFF omits duration;
+the provider fixes the final retention date from the active hold. For example:
+
+```json
+{"id":"<enable-operation-id>","retention":{"mode":"COMPLIANCE","event_hold":"ON","event_hold_duration":{"days":30}}}
+{"id":"<release-operation-id>","retention":{"mode":"COMPLIANCE","event_hold":"OFF"}}
+```
+
+Supply `retain_until_date` to preserve a requested minimum. Changing a duration
+while ON requires readback that preserves the observed retention date. Releasing
+without an explicit date requires a fresh ON observation. The worker persists
+that policy before dispatch and verifies the provider's final date after release.
+Uncertainty retains the operation and bucket fence; recovery never repeats PUT.
+The private snapshot does not appear in customer receipts. Event-hold protection
+for new writes and bucket default snapshots remains outside the fixed write
+protection contract below.
+
+CLI examples:
+
+```bash
+gregale bucket protection event-hold APP BUCKET KEY VERSION COMPLIANCE ON days 30 OPERATION_ID
+gregale bucket protection event-hold APP BUCKET KEY VERSION COMPLIANCE OFF OPERATION_ID
+```
+
+Use `years N` instead of `days N`, and add `--retain-until RFC3339_DATE`
+before the operation ID for a minimum date. Standard S3 retention XML uses
+`EventHold` and `EventHoldDuration` with the same rules. Legal holds remain
+independent.
 
 PUT returns 202 after durable acceptance. The receipt transitions through
 `waiting`/`applying` to `ready` or `failed`; it contains the public version and

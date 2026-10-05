@@ -4809,6 +4809,7 @@
       "bucket_id",
       "created_at",
       "dispatched",
+      "event_hold_baseline",
       "id",
       "intent",
       "last_error_code",

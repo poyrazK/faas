@@ -3327,10 +3327,10 @@ type ManagedPostgresDatabase struct {
 	RestoreSourceResourceID     pgtype.Text
 	RestorePointInTime          pgtype.Timestamptz
 	CutoverID                   pgtype.UUID
-	AccountingRequired          bool
 	EnvironmentCloneOperationID pgtype.UUID
 	DataResourceID              pgtype.Text
 	CloneResourceRole           string
+	AccountingRequired          bool
 }
 
 type ManagedPostgresHealth struct {
@@ -4176,22 +4176,23 @@ type ObjectUploadRoute struct {
 }
 
 type ObjectVersionProtection struct {
-	ID              pgtype.UUID
-	BucketID        pgtype.UUID
-	AccountID       pgtype.UUID
-	AppID           pgtype.UUID
-	ObjectKey       string
-	PublicVersionID string
-	NativeVersionID string
-	Intent          []byte
-	State           string
-	LeaseToken      string
-	LeaseUntil      pgtype.Timestamptz
-	RetryAt         pgtype.Timestamptz
-	Dispatched      bool
-	LastErrorCode   string
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
+	ID                pgtype.UUID
+	BucketID          pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	ObjectKey         string
+	PublicVersionID   string
+	NativeVersionID   string
+	Intent            []byte
+	State             string
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	RetryAt           pgtype.Timestamptz
+	Dispatched        bool
+	LastErrorCode     string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	EventHoldBaseline []byte
 }
 
 type ObjectVersionReference struct {
