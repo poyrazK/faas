@@ -15,9 +15,12 @@ T = TypeVar("T", bound="ApplicationStandardViolation")
 
 @_attrs_define
 class ApplicationStandardViolation:
+    """A field-level constraint violation and the inherited source that imposed it."""
+
     field: str
     code: str
     source: ApplicationStandardSource
+    """Inherited assignment, enforcement mode and any applicable exception contributing to one field."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

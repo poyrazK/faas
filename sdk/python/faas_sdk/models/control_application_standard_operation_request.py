@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ControlApplicationStandardOperationRequest")
 
 @_attrs_define
 class ControlApplicationStandardOperationRequest:
+    """Current operation timestamp required to pause, resume or abort retained rollout intent."""
+
     expected_updated_at: datetime.datetime
     """Exact nonzero updated_at from the current operation, with at most microsecond precision; never round a stale
     token."""

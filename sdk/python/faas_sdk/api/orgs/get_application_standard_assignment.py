@@ -91,10 +91,10 @@ def sync_detailed(
 ) -> Response[ApplicationStandardAssignment | Problem]:
     """Read a retained assignment and its current revision
 
-     Includes retained inactive assignments. The admission version governs new services; per-application
-    adoption and persisted/observed progress are separate. Read a fresh revision before a reviewed
-    update, deactivation or rollback. Read routes remain available while mutation admission is disabled.
-    All organization roles require read scope and completed MFA.
+     Returns the retained assignment even when inactive. Its admission version governs new services;
+    application adoption and consumer progress remain separate. Use its current revision to preview an
+    update, deactivation or rollback. Available while mutations are disabled; requires organization
+    membership, read scope and completed MFA.
 
     Args:
         slug (str):
@@ -128,10 +128,10 @@ def sync(
 ) -> ApplicationStandardAssignment | Problem | None:
     """Read a retained assignment and its current revision
 
-     Includes retained inactive assignments. The admission version governs new services; per-application
-    adoption and persisted/observed progress are separate. Read a fresh revision before a reviewed
-    update, deactivation or rollback. Read routes remain available while mutation admission is disabled.
-    All organization roles require read scope and completed MFA.
+     Returns the retained assignment even when inactive. Its admission version governs new services;
+    application adoption and consumer progress remain separate. Use its current revision to preview an
+    update, deactivation or rollback. Available while mutations are disabled; requires organization
+    membership, read scope and completed MFA.
 
     Args:
         slug (str):
@@ -160,10 +160,10 @@ async def asyncio_detailed(
 ) -> Response[ApplicationStandardAssignment | Problem]:
     """Read a retained assignment and its current revision
 
-     Includes retained inactive assignments. The admission version governs new services; per-application
-    adoption and persisted/observed progress are separate. Read a fresh revision before a reviewed
-    update, deactivation or rollback. Read routes remain available while mutation admission is disabled.
-    All organization roles require read scope and completed MFA.
+     Returns the retained assignment even when inactive. Its admission version governs new services;
+    application adoption and consumer progress remain separate. Use its current revision to preview an
+    update, deactivation or rollback. Available while mutations are disabled; requires organization
+    membership, read scope and completed MFA.
 
     Args:
         slug (str):
@@ -195,10 +195,10 @@ async def asyncio(
 ) -> ApplicationStandardAssignment | Problem | None:
     """Read a retained assignment and its current revision
 
-     Includes retained inactive assignments. The admission version governs new services; per-application
-    adoption and persisted/observed progress are separate. Read a fresh revision before a reviewed
-    update, deactivation or rollback. Read routes remain available while mutation admission is disabled.
-    All organization roles require read scope and completed MFA.
+     Returns the retained assignment even when inactive. Its admission version governs new services;
+    application adoption and consumer progress remain separate. Use its current revision to preview an
+    update, deactivation or rollback. Available while mutations are disabled; requires organization
+    membership, read scope and completed MFA.
 
     Args:
         slug (str):

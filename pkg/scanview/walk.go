@@ -69,7 +69,7 @@ func (w *boundedWalk) directory(ctx context.Context, name string, info fs.FileIn
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	opened, err := f.Stat()
 	if err != nil {
 		return nil, err

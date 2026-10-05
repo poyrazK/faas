@@ -122,7 +122,8 @@ def sync_detailed(
         slug (str):
         app (UUID):
         idempotency_key (str | Unset):
-        body (SetApplicationStandardLocalIntentRequest):
+        body (SetApplicationStandardLocalIntentRequest): Replacement local settings and additional
+            log destinations bound to the current enrollment revision.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -168,7 +169,8 @@ def sync(
         slug (str):
         app (UUID):
         idempotency_key (str | Unset):
-        body (SetApplicationStandardLocalIntentRequest):
+        body (SetApplicationStandardLocalIntentRequest): Replacement local settings and additional
+            log destinations bound to the current enrollment revision.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -209,7 +211,8 @@ async def asyncio_detailed(
         slug (str):
         app (UUID):
         idempotency_key (str | Unset):
-        body (SetApplicationStandardLocalIntentRequest):
+        body (SetApplicationStandardLocalIntentRequest): Replacement local settings and additional
+            log destinations bound to the current enrollment revision.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -253,7 +256,8 @@ async def asyncio(
         slug (str):
         app (UUID):
         idempotency_key (str | Unset):
-        body (SetApplicationStandardLocalIntentRequest):
+        body (SetApplicationStandardLocalIntentRequest): Replacement local settings and additional
+            log destinations bound to the current enrollment revision.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

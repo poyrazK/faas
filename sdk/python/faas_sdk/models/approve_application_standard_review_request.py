@@ -10,6 +10,8 @@ T = TypeVar("T", bound="ApproveApplicationStandardReviewRequest")
 
 @_attrs_define
 class ApproveApplicationStandardReviewRequest:
+    """Exact approval hash of the saved review whose authoritative inputs must still match."""
+
     approval_hash: str
 
     def to_dict(self) -> dict[str, Any]:

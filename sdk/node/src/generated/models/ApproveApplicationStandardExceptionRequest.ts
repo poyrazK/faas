@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Time-limited, reasoned exception for one adopted standard field, bound to the enrollment revision.
+ */
 export type ApproveApplicationStandardExceptionRequest = {
   expected_revision: number;
   standard_id: string;

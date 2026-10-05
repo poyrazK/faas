@@ -15,4 +15,3 @@ type Reference = ociref.Reference
 
 func ParseReference(s string) (Reference, error) { return ociref.ParseReference(s) }
 func validateDigest(s string) error              { return ociref.ValidateDigest(s) }
-func isLowerHex(c byte) bool                     { return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' }

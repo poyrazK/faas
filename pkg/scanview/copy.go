@@ -21,12 +21,12 @@ func Copy(ctx context.Context, source, target string, expected Tree) (actual Tre
 	if err != nil {
 		return Tree{}, err
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 	dst, err := openDirectory(target)
 	if err != nil {
 		return Tree{}, err
 	}
-	defer dst.Close()
+	defer func() { _ = dst.Close() }()
 	return copyRoots(ctx, src, dst, expected, nil)
 }
 
@@ -98,12 +98,12 @@ func requireEmptyDirectory(root *os.Root) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	entries, err := f.ReadDir(1)
 	if len(entries) != 0 {
 		return ErrInvalid
 	}
-	if err == io.EOF {
+	if errors.Is(err, io.EOF) {
 		return nil
 	}
 	return errors.Join(ErrInvalid, err)

@@ -81,9 +81,9 @@ func validateStandardLocalIntent(s standardReviewSnapshot, current ApplicationSt
 	unchanged := before == after && slices.Equal(app.Enrollment.AdditionalLogDestinations, intent.Additional)
 	s.Applications[0].Enrollment.LocalSettings = cloneStandardSettings(intent.Settings)
 	s.Applications[0].Enrollment.AdditionalLogDestinations = []string{}
-	_, baseline, code, err := resolveAutomaticStandardEnrollment(s, now)
-	if err != nil || code != "" {
-		return proposed, false, standardLocalIntentRefusal(code, err)
+	_, baseline, code := resolveAutomaticStandardEnrollment(s, now)
+	if code != "" {
+		return proposed, false, standardLocalIntentRefusal(code)
 	}
 	for field := range intent.Settings {
 		if len(baseline.Effective.Sources[field]) == 0 {
@@ -94,17 +94,14 @@ func validateStandardLocalIntent(s standardReviewSnapshot, current ApplicationSt
 		return proposed, false, err
 	}
 	s.Applications[0].Enrollment.AdditionalLogDestinations = append([]string{}, intent.Additional...)
-	_, proposed, code, err = resolveAutomaticStandardEnrollment(s, now)
-	if err != nil || code != "" {
-		return proposed, false, standardLocalIntentRefusal(code, err)
+	_, proposed, code = resolveAutomaticStandardEnrollment(s, now)
+	if code != "" {
+		return proposed, false, standardLocalIntentRefusal(code)
 	}
 	return proposed, !unchanged, nil
 }
 
-func standardLocalIntentRefusal(code string, err error) error {
-	if err != nil {
-		return err
-	}
+func standardLocalIntentRefusal(code string) error {
 	return fmt.Errorf("local application intent refused (%s): %w", code, ErrApplicationStandardReviewBlocked)
 }
 
@@ -120,11 +117,11 @@ func validateStandardLocalLogIntent(baseline ApplicationStandardReviewedApp, int
 			return fmt.Errorf("required logging uses additional destinations: %w", ErrInvalidArgument)
 		}
 		if len(intent.Additional) > 0 && (source.Mode != appstandards.Mandatory || source.Override != appstandards.Extend) {
-			return standardLocalIntentRefusal("logging_extension_not_permitted", nil)
+			return standardLocalIntentRefusal("logging_extension_not_permitted")
 		}
 	}
 	if len(intent.Additional) > 0 && !constrained {
-		return standardLocalIntentRefusal("logging_extension_not_permitted", nil)
+		return standardLocalIntentRefusal("logging_extension_not_permitted")
 	}
 	for _, id := range intent.Additional {
 		if slices.Contains(standardReviewStrings(baseline.Effective.Values[appstandards.LogDestinations]), id) {

@@ -17,6 +17,8 @@ T = TypeVar("T", bound="ApplicationStandardEffective")
 
 @_attrs_define
 class ApplicationStandardEffective:
+    """Resolved control values with their inheritance sources and any constraint violations."""
+
     values: ApplicationStandardSettings
     """Logical control values; resource references contain UUIDs, never credentials."""
     sources: ApplicationStandardEffectiveSources

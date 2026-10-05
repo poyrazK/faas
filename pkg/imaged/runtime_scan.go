@@ -12,7 +12,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/runtimescan"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/vmmdmount"
 )
 
 type ProducedRuntimeScan struct {
@@ -42,7 +41,7 @@ func (h *Handler) ScanProducedRuntime(ctx context.Context, accountID, appID, dep
 	if !runtimeScanScopeMatches(inputs, accountID, appID, deploymentID) {
 		return ProducedRuntimeScan{}, runtimeadmission.ErrInvalid
 	}
-	parent := vmmdmount.OverlayStagingRoot
+	parent := runtimescan.StagingRoot
 	if h.runtimeScanParent != "" {
 		parent = h.runtimeScanParent
 	}
@@ -50,7 +49,7 @@ func (h *Handler) ScanProducedRuntime(ctx context.Context, accountID, appID, dep
 }
 
 func scanProducedRuntime(ctx context.Context, store state.DeploymentRuntimeProducerInputStore, owner RuntimeScanMaterializer, scan func(context.Context, string) (*ScanResult, error), inputs state.DeploymentRuntimeProducerInputs, parent string) (result ProducedRuntimeScan, err error) {
-	target, err := os.MkdirTemp(parent, vmmdmount.RuntimeScanTargetPrefix)
+	target, err := os.MkdirTemp(parent, runtimescan.TargetPrefix)
 	if err != nil {
 		return result, err
 	}

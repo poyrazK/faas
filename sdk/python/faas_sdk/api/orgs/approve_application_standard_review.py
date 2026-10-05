@@ -120,7 +120,8 @@ def sync_detailed(
         slug (str):
         review (UUID):
         idempotency_key (str | Unset):
-        body (ApproveApplicationStandardReviewRequest):
+        body (ApproveApplicationStandardReviewRequest): Exact approval hash of the saved review
+            whose authoritative inputs must still match.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -164,7 +165,8 @@ def sync(
         slug (str):
         review (UUID):
         idempotency_key (str | Unset):
-        body (ApproveApplicationStandardReviewRequest):
+        body (ApproveApplicationStandardReviewRequest): Exact approval hash of the saved review
+            whose authoritative inputs must still match.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -203,7 +205,8 @@ async def asyncio_detailed(
         slug (str):
         review (UUID):
         idempotency_key (str | Unset):
-        body (ApproveApplicationStandardReviewRequest):
+        body (ApproveApplicationStandardReviewRequest): Exact approval hash of the saved review
+            whose authoritative inputs must still match.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -245,7 +248,8 @@ async def asyncio(
         slug (str):
         review (UUID):
         idempotency_key (str | Unset):
-        body (ApproveApplicationStandardReviewRequest):
+        body (ApproveApplicationStandardReviewRequest): Exact approval hash of the saved review
+            whose authoritative inputs must still match.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

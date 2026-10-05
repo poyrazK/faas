@@ -125,7 +125,8 @@ def sync_detailed(
         app (UUID):
         exception (UUID):
         idempotency_key (str | Unset):
-        body (RevokeApplicationStandardExceptionRequest):
+        body (RevokeApplicationStandardExceptionRequest): Current enrollment revision authorizing
+            revocation of the selected exception.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,7 +174,8 @@ def sync(
         app (UUID):
         exception (UUID):
         idempotency_key (str | Unset):
-        body (RevokeApplicationStandardExceptionRequest):
+        body (RevokeApplicationStandardExceptionRequest): Current enrollment revision authorizing
+            revocation of the selected exception.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -216,7 +218,8 @@ async def asyncio_detailed(
         app (UUID):
         exception (UUID):
         idempotency_key (str | Unset):
-        body (RevokeApplicationStandardExceptionRequest):
+        body (RevokeApplicationStandardExceptionRequest): Current enrollment revision authorizing
+            revocation of the selected exception.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -262,7 +265,8 @@ async def asyncio(
         app (UUID):
         exception (UUID):
         idempotency_key (str | Unset):
-        body (RevokeApplicationStandardExceptionRequest):
+        body (RevokeApplicationStandardExceptionRequest): Current enrollment revision authorizing
+            revocation of the selected exception.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

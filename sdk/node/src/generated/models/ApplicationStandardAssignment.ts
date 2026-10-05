@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Retained scope assignment and its current admission version, activity and concurrency revision.
+ */
 export type ApplicationStandardAssignment = {
   id: string;
   org_id: string;

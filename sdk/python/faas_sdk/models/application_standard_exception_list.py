@@ -18,6 +18,8 @@ T = TypeVar("T", bound="ApplicationStandardExceptionList")
 
 @_attrs_define
 class ApplicationStandardExceptionList:
+    """Page of historical exceptions and their status evaluated at the server as_of timestamp."""
+
     exceptions: list[ApplicationStandardException]
     as_of: datetime.datetime
     next_page_after: UUID | Unset = UNSET

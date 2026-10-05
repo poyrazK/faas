@@ -21,6 +21,8 @@ T = TypeVar("T", bound="ApplicationStandardReviewBlocker")
 
 @_attrs_define
 class ApplicationStandardReviewBlocker:
+    """A scope or application condition that prevents approval of the saved review."""
+
     code: str
     app_id: UUID | Unset = UNSET
     scope: ApplicationStandardReviewBlockerScope | Unset = UNSET

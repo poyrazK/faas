@@ -213,8 +213,6 @@ type stubPuller struct {
 	manifestErr error
 	blob        io.ReadCloser
 	blobErr     error
-
-	manifestPuller bool
 }
 
 func (s *stubPuller) PullDigest(_ context.Context, _ string) (string, error) {

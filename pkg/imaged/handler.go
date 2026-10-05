@@ -4179,10 +4179,6 @@ type aboveBaseStream struct {
 // both paths dispatch via PullManifestWithAuth / PullBlobWithAuth;
 // offline DefaultPuller satisfies the interface too (auth
 // ignored).
-func (h *Handler) aboveBaseLayers(ctx context.Context, mp oci.ManifestPuller,
-	appRef, runtime string, _ api.AppManifest, appAuth *oci.BasicAuth) (aboveBaseStream, []string, error) {
-	return h.aboveBaseLayersVerified(ctx, mp, appRef, runtime, api.AppManifest{}, appAuth, preparedContainerWorkload{})
-}
 func (h *Handler) aboveBaseLayersVerified(ctx context.Context, mp oci.ManifestPuller,
 	appRef, runtime string, _ api.AppManifest, appAuth *oci.BasicAuth, prepared preparedContainerWorkload) (aboveBaseStream, []string, error) {
 	start := time.Now()
@@ -4847,7 +4843,6 @@ func (h *Handler) buildFullRootfsLayer(
 	if len(appManifest.Layers) == 0 {
 		return fmt.Errorf("imaged: full-rootfs image has zero layers")
 	}
-	readers := make([]io.Reader, 0, len(appManifest.Layers))
 	closers := make([]io.ReadCloser, 0, len(appManifest.Layers))
 	for _, l := range appManifest.Layers {
 		start := time.Now()
@@ -4860,7 +4855,6 @@ func (h *Handler) buildFullRootfsLayer(
 			return fmt.Errorf("imaged: full-rootfs pull blob %s: %w", l.Digest, err)
 		}
 		closers = append(closers, rc)
-		readers = append(readers, rc)
 	}
 	defer func() {
 		for _, c := range closers {
@@ -4872,7 +4866,7 @@ func (h *Handler) buildFullRootfsLayer(
 	if err != nil {
 		return err
 	}
-	readers = layersAsReaders(verified)
+	readers := layersAsReaders(verified)
 	be, err := h.storageFor()
 	if err != nil {
 		return fmt.Errorf("imaged: full-rootfs storage backend: %w", err)

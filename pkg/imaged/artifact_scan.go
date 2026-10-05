@@ -230,7 +230,7 @@ func stageProducedScanArtifact(ctx context.Context, be storage.StorageBackend, s
 }
 
 func checkStagedScanArtifact(ctx context.Context, path string, expected scanArtifactTarget) error {
-	f, err := os.Open(path)
+	f, err := openStagedScanArtifact(path)
 	if err != nil {
 		return err
 	}

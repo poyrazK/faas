@@ -49,7 +49,7 @@ func TestProducedRuntimePublicationRechecksCurrentFactsAfterCleanup(t *testing.T
 			case "extra report":
 				result.Reports["extra"] = producedScanResult(t, false)
 			default:
-				mutateRuntimeScanProducerFixture(t, th, result.Inputs, mode)
+				mutateRuntimeScanProducerFixture(t, t.Context(), th, result.Inputs, mode)
 			}
 			value, err := publishProducedRuntimeScan(t.Context(), th.store, result)
 			valid := mode == "complete" || mode == "high findings"
@@ -81,7 +81,7 @@ func TestProducedRuntimePublicationRechecksCurrentFactsAfterCleanup(t *testing.T
 
 func TestProducedRuntimeFailurePublicationCannotInvalidateReplacement(t *testing.T) {
 	th, result := producedRuntimePublicationFixture(t)
-	mutateRuntimeScanProducerFixture(t, th, result.Inputs, "producer replaced")
+	mutateRuntimeScanProducerFixture(t, t.Context(), th, result.Inputs, "producer replaced")
 	if err := publishRuntimeScanFailure(t.Context(), th.store, result.Inputs, "scanner_unavailable"); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatal("stale failure selected over replacement", err)
 	}

@@ -145,7 +145,7 @@ func TestRuntimeScanFullRootfsMarkerCannotSelectUnverifiedLayout(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			err := checkRuntimeScanFullRootfsMarker(root, mode != "unexpected")
+			err := checkRuntimeScanFullRootfsMarker(t.Context(), root, mode != "unexpected")
 			if (err == nil) != (mode == "valid") {
 				t.Fatal("unsupported marker acquired layout authority", mode, err)
 			}

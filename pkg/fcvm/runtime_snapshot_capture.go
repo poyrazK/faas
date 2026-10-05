@@ -71,7 +71,7 @@ func (m *Manager) snapshotInstance(instance string, spec SnapshotSpec) (*Instanc
 	return inst, spec, nil
 }
 
-func (m *Manager) pauseMeasuredSnapshotProbes(inst *Instance, spec SnapshotSpec) func(bool) {
+func (m *Manager) pauseMeasuredSnapshotProbes(ctx context.Context, inst *Instance, spec SnapshotSpec) func(bool) {
 	if spec.admittedParent.Binding.ProtocolVersion == 0 {
 		return func(bool) {}
 	}
@@ -86,10 +86,10 @@ func (m *Manager) pauseMeasuredSnapshotProbes(inst *Instance, spec SnapshotSpec)
 		if !resumed || !live {
 			return
 		}
-		ctx := context.Background()
-		m.startLivenessLoop(ctx, inst.Lease.Instance, inst.Lease.Slot, inst.LivenessProbe)
-		m.startReadinessLoop(ctx, inst.Lease.Instance, inst.Lease.Slot, inst.ReadinessProbe)
-		m.startFrameworkReadyLoop(ctx, inst.Lease.Instance)
+		probeCtx := context.WithoutCancel(ctx)
+		m.startLivenessLoop(probeCtx, inst.Lease.Instance, inst.Lease.Slot, inst.LivenessProbe)
+		m.startReadinessLoop(probeCtx, inst.Lease.Instance, inst.Lease.Slot, inst.ReadinessProbe)
+		m.startFrameworkReadyLoop(probeCtx, inst.Lease.Instance)
 		// Destroy can win between the initial check and probe registration.
 		m.mu.Lock()
 		live = m.live[inst.Lease.Instance] == inst
@@ -148,11 +148,11 @@ func (v *JailerVMM) beginNativeSnapshot(ctx context.Context, lease Lease, spec S
 	flight := &nativeSnapshotFlight{ctx: flightCtx, cancel: cancel, done: make(chan struct{}), handoff: handoff, parent: parent.Clone()}
 	handoff.snapshot = flight
 	handoff.mu.Unlock()
-	if err := v.checkSnapshotParent(flight.ctx, lease, parent); err != nil {
+	if err := v.checkSnapshotParent(flightCtx, lease, parent); err != nil {
 		flight.finish()
 		return nil, err
 	}
-	if err := v.checkFreshSnapshotNamespace(flight.ctx, spec); err != nil {
+	if err := v.checkFreshSnapshotNamespace(flightCtx, spec); err != nil {
 		flight.finish()
 		return nil, err
 	}

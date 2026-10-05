@@ -13,9 +13,9 @@ cleanup() {
   rm -rf "$replay_root"
 }
 trap cleanup EXIT
-"$pg_bin/initdb" -D "$replay_root/data" -U faas --auth=trust >/dev/null
+"$pg_bin/initdb" -D "$replay_root/data" -U faas --auth=trust --encoding=UTF8 --locale=C >/dev/null
 "$pg_bin/pg_ctl" -D "$replay_root/data" -l "$replay_root/postgres.log" \
-  -o "-k $replay_root -p 55432 -h ''" -w start >/dev/null
+  -o "-k $replay_root -p 55432 -h '' -c timezone=UTC -c max_locks_per_transaction=512" -w start >/dev/null
 "$pg_bin/createdb" -h "$replay_root" -p 55432 -U faas faas
 export PATH="$pg_bin:$PATH"
 export DATABASE_URL="postgresql://faas@/faas?host=$replay_root&port=55432"

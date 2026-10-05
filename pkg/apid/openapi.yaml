@@ -26457,6 +26457,68 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/orgs/{slug}/application-standard-assignments:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listApplicationStandardAssignments
+      summary: Page retained assignments and their current admission versions
+      description: >-
+        Includes retained inactive assignments. The admission version governs new services;
+        per-application adoption and persisted/observed progress are separate. Read a fresh
+        revision before a reviewed update, deactivation or rollback. Read routes remain available
+        while mutation admission is disabled. All organization roles require read scope and completed MFA.
+      parameters:
+        - { in: query, name: after, schema: { type: string, format: uuid }, description: Last assignment UUID from the previous page. }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 100 }, description: Maximum retained assignments to return in this page. }
+      responses:
+        '200':
+          description: Organization-scoped assignment metadata with no credentials or private rollout proofs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardAssignmentList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller lacks read scope, current organization membership or completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Assignment inventory storage is unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/orgs/{slug}/application-standard-assignments/{assignment}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { in: path, name: assignment, required: true, schema: { type: string, format: uuid }, description: UUID of the retained assignment to inspect. }
+    get:
+      tags: [orgs]
+      operationId: getApplicationStandardAssignment
+      summary: Read a retained assignment and its current revision
+      description: >-
+        Returns the retained assignment even when inactive. Its admission version governs new services;
+        application adoption and consumer progress remain separate. Use its current revision to
+        preview an update, deactivation or rollback. Available while mutations are disabled;
+        requires organization membership, read scope and completed MFA.
+      responses:
+        '200':
+          description: Retained assignment identity, admission version and revision for the selected organization.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardAssignment' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Assignment inspection requires read scope, current organization membership and completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: The selected assignment could not be read because storage is unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
   /v1/orgs/{slug}/application-standard-reviews:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -26491,83 +26553,278 @@ paths:
           description: Assignment changed or inputs are busy; refresh and retry the preview.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
 
-  /v1/orgs/{slug}/application-standard-reviews/{review}:
+  /v1/orgs/{slug}/application-standard-reviews/{review}/approve:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
-      - { in: path, name: review, required: true, schema: { type: string, format: uuid } }
-    get:
+      - { in: path, name: review, required: true, schema: { type: string, format: uuid }, description: UUID of the saved review to approve with its exact hash. }
+    post:
       tags: [orgs]
-      operationId: getApplicationStandardReview
-      summary: Inspect a saved review, including expiry and blockers
+      operationId: approveApplicationStandardReview
+      summary: Approve an exact saved review and queue a controlled rollout
+      description: >-
+        Release gated and disabled by default. Requires a current organization owner or administrator,
+        write scope and completed MFA. Approval rechecks the exact saved plan; operator controls
+        compare the exact expected_updated_at from a current read. Installed settings and consumer
+        observation remain separate. Aborting does not undo installed targets; rollback requires
+        a fresh assignment preview and approval under current constraints.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApproveApplicationStandardReviewRequest' }
       responses:
-        '200':
-          description: Organization-scoped saved standards data.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ApplicationStandardReview' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403':
-          description: Caller lacks the required scope, organization action or completed MFA.
-          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503':
-          description: Application standards storage is temporarily unavailable.
-          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
-
-  /v1/orgs/{slug}/application-standard-operations/{operation}:
-    parameters:
-      - $ref: '#/components/parameters/OrgSlug'
-      - { in: path, name: operation, required: true, schema: { type: string, format: uuid } }
-    get:
-      tags: [orgs]
-      operationId: getApplicationStandardOperation
-      summary: Inspect saved rollout targets and progress
-      responses:
-        '200':
-          description: Organization-scoped saved standards data.
+        '201':
+          description: Durable operation intent and retained target progress; consumer convergence is pending.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ApplicationStandardOperation' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
-          description: Caller lacks the required scope, organization action or completed MFA.
+          description: Caller lacks the required scope, current organization action or completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Review changed or expired, inputs are busy, or the operation timestamp or state changed.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Application standards mutations are disabled or storage is unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/orgs/{slug}/application-standard-operations/{operation}/pause:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { in: path, name: operation, required: true, schema: { type: string, format: uuid }, description: UUID of the rollout operation to pause. }
+    post:
+      tags: [orgs]
+      operationId: pauseApplicationStandardOperation
+      summary: Pause outstanding targets in a controlled rollout
+      description: >-
+        Pauses outstanding rollout targets without undoing installed settings. Requires the exact
+        expected_updated_at from a current operation read, organization owner or administrator
+        access, write scope and completed MFA. Release gated and disabled by default.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlApplicationStandardOperationRequest' }
+      responses:
+        '200':
+          description: Paused operation with retained target progress and installed facts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The caller lacks the organization authorization, write scope or completed MFA required to pause this operation.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The operation timestamp or state changed; refresh before retrying pause.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: The pause request cannot proceed while standards mutations are disabled or storage is unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/orgs/{slug}/application-standard-operations/{operation}/resume:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { in: path, name: operation, required: true, schema: { type: string, format: uuid }, description: UUID of the paused rollout operation to resume. }
+    post:
+      tags: [orgs]
+      operationId: resumeApplicationStandardOperation
+      summary: Resume a paused controlled rollout
+      description: >-
+        Resumes an eligible paused operation using its exact current expected_updated_at. Requires
+        organization owner or administrator access, write scope and completed MFA. Installed
+        targets retain their progress; consumer observation continues separately. Release gated
+        and disabled by default.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlApplicationStandardOperationRequest' }
+      responses:
+        '200':
+          description: Resumed operation whose outstanding targets can continue their controlled rollout.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The caller lacks the organization authorization, write scope or completed MFA required to resume this operation.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The operation timestamp or state changed; refresh before retrying resume.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: The resume request cannot proceed while standards mutations are disabled or storage is unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/orgs/{slug}/application-standard-operations/{operation}/abort:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { in: path, name: operation, required: true, schema: { type: string, format: uuid }, description: UUID of the rollout operation to abort. }
+    post:
+      tags: [orgs]
+      operationId: abortApplicationStandardOperation
+      summary: Abort outstanding targets while retaining installed facts
+      description: >-
+        Aborts outstanding targets and retains already installed facts. Requires the exact
+        expected_updated_at from a current operation read, organization owner or administrator
+        access, write scope and completed MFA. Undoing installed settings requires a fresh
+        rollback preview and approval. Release gated and disabled by default.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlApplicationStandardOperationRequest' }
+      responses:
+        '200':
+          description: Aborted operation with outstanding targets stopped and installed facts retained.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The caller lacks the organization authorization, write scope or completed MFA required to abort this operation.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The operation timestamp or state changed; refresh before retrying abort.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: The abort request cannot proceed while standards mutations are disabled or storage is unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/orgs/{slug}/application-standard-reviews/{review}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { in: path, name: review, required: true, schema: { type: string, format: uuid }, description: UUID of the saved review to inspect. }
+    get:
+      tags: [orgs]
+      operationId: getApplicationStandardReview
+      summary: Inspect a saved review, including expiry and blockers
+      responses:
+        '200':
+          description: Saved review with its exact proposed changes, expiry and blockers.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardReview' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Saved review access requires the corresponding organization action, scope and completed MFA.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503':
-          description: Application standards storage is temporarily unavailable.
+          description: Saved review storage is temporarily unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/orgs/{slug}/application-standard-operations/{operation}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { in: path, name: operation, required: true, schema: { type: string, format: uuid }, description: UUID of the retained rollout operation to inspect. }
+    get:
+      tags: [orgs]
+      operationId: getApplicationStandardOperation
+      summary: Inspect saved rollout targets and progress
+      responses:
+        '200':
+          description: Retained rollout operation and individual application target progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Rollout operation access requires the corresponding organization action, scope and completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Rollout operation storage is temporarily unavailable.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
 
   /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
-      - { in: path, name: app, required: true, schema: { type: string, format: uuid } }
+      - { in: path, name: app, required: true, schema: { type: string, format: uuid }, description: UUID of the live application enrolled in standards. }
     get:
       tags: [orgs]
       operationId: listApplicationStandardExceptions
       summary: List approval, revocation and expiry history for a live application
       description: UUID-ordered history with status evaluated at as_of. A full page has a next cursor; the final follow-up page may be empty. Historical approval does not imply that the exception contributes to current effective settings.
       parameters:
-        - { in: query, name: after, schema: { type: string, format: uuid } }
-        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 100 } }
+        - { in: query, name: after, schema: { type: string, format: uuid }, description: Exclusive exception UUID from the preceding page. }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 100 }, description: Maximum records to return in this page. }
       responses:
         '200':
-          description: Organization-scoped saved standards data.
+          description: Exception approval and revocation history evaluated at the returned server timestamp.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ApplicationStandardExceptionList' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
-          description: Caller lacks the required scope, organization action or completed MFA.
+          description: Exception history access requires the corresponding organization action, scope and completed MFA.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503':
-          description: Application standards storage is temporarily unavailable.
+          description: Exception history storage is temporarily unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+    post:
+      tags: [orgs]
+      operationId: approveApplicationStandardException
+      summary: Approve a bounded application exception
+      description: |
+        Requires an active owner or admin. Approves one field for an adopted immutable standard version; all independent constraints and platform controls still apply. The server enforces a future expiry within 30 days and queues a new desired revision.
+        Disabled by default until the application standards release acceptance gates pass.
+        Idempotency replay requires the current role and release gate. Saved intent is not consumer observation.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApproveApplicationStandardExceptionRequest' }
+      responses:
+        '201':
+          description: Saved intent or retained exception approval; worker installation and consumer convergence remain separate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardException' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller lacks the write scope, required organization action or completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Exception history conflicts with the current enrollment revision, exception state or pending installation.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Exception history is disabled by the standards release gate or storage is unavailable. Disabled requests return application_standards_pending without changing intent.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
 
   /v1/orgs/{slug}/application-standard-enrollments/{app}:
@@ -26586,7 +26843,7 @@ paths:
         Requires org.view_application_standards and a read-scoped credential, with MFA for sessions.
         Local choices and desired revision describe saved intent. installed_effective describes
         the last installed projection and is absent before installation. Neither persisted
-        settings nor this read establish consumer observation. Read-only during implementation.
+        settings nor this read establish consumer observation. Reads remain available while mutations are disabled.
       responses:
         '200':
           description: Scoped enrollment with saved adoption pins and installed field provenance.
@@ -26601,7 +26858,86 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503':
-          description: Application standards storage is temporarily unavailable.
+          description: Enrollment status storage is temporarily unavailable.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/orgs/{slug}/application-standard-enrollments/{app}/local-intent:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { in: path, name: app, required: true, schema: { type: string, format: uuid }, description: UUID of the enrolled application whose local settings will be replaced. }
+    put:
+      tags: [orgs]
+      operationId: setApplicationStandardLocalIntent
+      summary: Replace permitted local application settings
+      description: |
+        Requires an active owner, admin or developer. settings and additional_log_destinations replace the complete local intent; explicit empty values clear it. Mandatory settings and permitted extensions are checked atomically against the current desired revision. The response retains the last installed projection while a changed desired revision waits for installation.
+        Disabled by default until the application standards release acceptance gates pass.
+        Idempotency replay requires the current role and release gate. Saved intent is not consumer observation.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetApplicationStandardLocalIntentRequest' }
+      responses:
+        '200':
+          description: Enrollment with replacement local intent, pending desired revision and the last installed projection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardEnrollment' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Updating local settings requires write scope, the enrollment mutation action and completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Local enrollment intent conflicts with the current enrollment revision, exception state or pending installation.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Local enrollment intent is disabled by the standards release gate or storage is unavailable. Disabled requests return application_standards_pending without changing intent.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions/{exception}/revoke:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { in: path, name: app, required: true, schema: { type: string, format: uuid }, description: UUID of the enrolled application whose exception will be revoked. }
+      - { in: path, name: exception, required: true, schema: { type: string, format: uuid }, description: UUID of the retained exception approval to revoke. }
+    post:
+      tags: [orgs]
+      operationId: revokeApplicationStandardException
+      summary: Revoke an application exception and retain its approval history
+      description: |
+        Requires an active owner or admin and the current desired revision. The original approval, reason and value remain immutable; revocation queues reevaluation under the ordinary inherited controls. A conflicting local setting can leave the application blocked until it is corrected.
+        Disabled by default until the application standards release acceptance gates pass.
+        Idempotency replay requires the current role and release gate. Saved intent is not consumer observation.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevokeApplicationStandardExceptionRequest' }
+      responses:
+        '200':
+          description: Retained exception approval with its revocation actor and timestamp; installation of inherited settings remains pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardException' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Revoking an exception requires write scope, the organization exception action and completed MFA.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Exception revocation conflicts with the current enrollment revision, exception state or pending installation.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Exception revocation is disabled by the standards release gate or storage is unavailable. Disabled requests return application_standards_pending without changing intent.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
 
   /v1/orgs/{slug}/application-standards:
@@ -51635,6 +51971,68 @@ components:
         created_by: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
 
+    SetApplicationStandardLocalIntentRequest:
+      type: object
+      description: Replacement local settings and additional log destinations bound to the current enrollment revision.
+      additionalProperties: false
+      required: [expected_revision, settings, additional_log_destinations]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740990 }
+        settings: { $ref: '#/components/schemas/ApplicationStandardSettings' }
+        additional_log_destinations:
+          type: array
+          maxItems: 64
+          items: { type: string, format: uuid }
+
+    ApproveApplicationStandardExceptionRequest:
+      type: object
+      description: Time-limited, reasoned exception for one adopted standard field, bound to the enrollment revision.
+      additionalProperties: false
+      required: [expected_revision, standard_id, version, field, value, reason, expires_at]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740990 }
+        standard_id: { type: string, format: uuid }
+        version: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        field:
+          type: string
+          enum: [log_destinations, require_signed, security_policy, trusted_publishers, egress_cidrs, egress_extra_ports]
+        value:
+          description: Non-null value for the selected field, validated by the server against that field and the full inherited controls.
+          oneOf:
+            - type: boolean
+            - { type: string, enum: [off, warn, enforce] }
+            - { type: array, maxItems: 64, items: { type: string } }
+            - { type: array, maxItems: 64, items: { type: integer, minimum: 1, maximum: 65535 } }
+        reason: { type: string, minLength: 1, maxLength: 512, description: Trimmed nonempty UTF-8 reason bounded to 512 bytes. }
+        expires_at: { type: string, format: date-time, description: Future expiry within 30 days of server time. }
+
+    ApproveApplicationStandardReviewRequest:
+      type: object
+      description: Exact approval hash of the saved review whose authoritative inputs must still match.
+      additionalProperties: false
+      required: [approval_hash]
+      properties:
+        approval_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+
+    ControlApplicationStandardOperationRequest:
+      type: object
+      description: Current operation timestamp required to pause, resume or abort retained rollout intent.
+      additionalProperties: false
+      required: [expected_updated_at]
+      properties:
+        expected_updated_at:
+          type: string
+          format: date-time
+          description: Exact nonzero updated_at from the current operation, with at most microsecond precision; never round a stale token.
+
+    RevokeApplicationStandardExceptionRequest:
+      type: object
+      description: Current enrollment revision authorizing revocation of the selected exception.
+      additionalProperties: false
+      required: [expected_revision]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740990 }
+
     ApplicationStandardSettings:
       type: object
       additionalProperties: false
@@ -51657,6 +52055,7 @@ components:
 
     ApplicationStandardAdoption:
       type: object
+      description: Assignment and immutable version pinned when an application adopts a standard.
       required: [assignment_id, version]
       properties:
         assignment_id: { type: string, format: uuid }
@@ -51664,6 +52063,7 @@ components:
 
     ApplicationStandardSource:
       type: object
+      description: Inherited assignment, enforcement mode and any applicable exception contributing to one field.
       required: [standard_id, version, scope, mode, override]
       properties:
         assignment_id: { type: string, format: uuid }
@@ -51677,6 +52077,7 @@ components:
 
     ApplicationStandardViolation:
       type: object
+      description: A field-level constraint violation and the inherited source that imposed it.
       required: [field, code, source]
       properties:
         field: { type: string }
@@ -51685,6 +52086,7 @@ components:
 
     ApplicationStandardEffective:
       type: object
+      description: Resolved control values with their inheritance sources and any constraint violations.
       required: [values, sources, violations]
       properties:
         values: { $ref: '#/components/schemas/ApplicationStandardSettings' }
@@ -51696,6 +52098,33 @@ components:
         violations:
           type: array
           items: { $ref: '#/components/schemas/ApplicationStandardViolation' }
+
+    ApplicationStandardAssignment:
+      type: object
+      description: Retained scope assignment and its current admission version, activity and concurrency revision.
+      required: [id, org_id, scope, scope_id, standard_id, admission_version, revision, active, created_by, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        scope: { type: string, enum: [organization, project, application] }
+        scope_id: { type: string, format: uuid }
+        standard_id: { type: string, format: uuid }
+        admission_version: { type: integer, format: int64, minimum: 1 }
+        revision: { type: integer, format: int64, minimum: 1 }
+        active: { type: boolean }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ApplicationStandardAssignmentList:
+      type: object
+      description: Page of retained assignments with an optional exclusive cursor for the next page.
+      required: [assignments]
+      properties:
+        assignments:
+          type: array
+          items: { $ref: '#/components/schemas/ApplicationStandardAssignment' }
+        next_page_after: { type: string, format: uuid }
 
     ApplicationStandardEnrollment:
       type: object
@@ -51820,6 +52249,7 @@ components:
         inspection; approval always requires fresh validation.
     ApplicationStandardReviewBlocker:
       type: object
+      description: A scope or application condition that prevents approval of the saved review.
       additionalProperties: false
       required:
       - code
@@ -51849,6 +52279,7 @@ components:
           type: string
     ApplicationStandardReviewedApp:
       type: object
+      description: Application inputs, adoption pins and resolved changes captured in a saved review.
       additionalProperties: false
       required:
       - app_id
@@ -51969,6 +52400,7 @@ components:
         advances it.
     ApplicationStandardOperationTarget:
       type: object
+      description: One application target and its installation and observation progress in a controlled rollout.
       additionalProperties: false
       required:
       - app_id
@@ -52054,7 +52486,7 @@ components:
           - type: string
             enum:
             - 'off'
-            - audit
+            - warn
             - enforce
           - type: array
             items:
@@ -52093,6 +52525,7 @@ components:
         expiry; applicability depends on current adoption.
     ApplicationStandardExceptionList:
       type: object
+      description: Page of historical exceptions and their status evaluated at the server as_of timestamp.
       additionalProperties: false
       required:
       - exceptions

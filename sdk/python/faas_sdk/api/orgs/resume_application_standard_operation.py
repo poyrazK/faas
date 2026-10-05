@@ -110,17 +110,16 @@ def sync_detailed(
 ) -> Response[ApplicationStandardOperation | Problem]:
     """Resume a paused controlled rollout
 
-     Release gated and disabled by default. Requires a current organization owner or administrator, write
-    scope and completed MFA. Approval rechecks the exact saved plan; operator controls compare the exact
-    expected_updated_at from a current read. Installed settings and consumer observation remain
-    separate. Aborting does not undo installed targets; rollback requires a fresh assignment preview and
-    approval under current constraints.
+     Resumes an eligible paused operation using its exact current expected_updated_at. Requires
+    organization owner or administrator access, write scope and completed MFA. Installed targets retain
+    their progress; consumer observation continues separately. Release gated and disabled by default.
 
     Args:
         slug (str):
         operation (UUID):
         idempotency_key (str | Unset):
-        body (ControlApplicationStandardOperationRequest):
+        body (ControlApplicationStandardOperationRequest): Current operation timestamp required to
+            pause, resume or abort retained rollout intent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -154,17 +153,16 @@ def sync(
 ) -> ApplicationStandardOperation | Problem | None:
     """Resume a paused controlled rollout
 
-     Release gated and disabled by default. Requires a current organization owner or administrator, write
-    scope and completed MFA. Approval rechecks the exact saved plan; operator controls compare the exact
-    expected_updated_at from a current read. Installed settings and consumer observation remain
-    separate. Aborting does not undo installed targets; rollback requires a fresh assignment preview and
-    approval under current constraints.
+     Resumes an eligible paused operation using its exact current expected_updated_at. Requires
+    organization owner or administrator access, write scope and completed MFA. Installed targets retain
+    their progress; consumer observation continues separately. Release gated and disabled by default.
 
     Args:
         slug (str):
         operation (UUID):
         idempotency_key (str | Unset):
-        body (ControlApplicationStandardOperationRequest):
+        body (ControlApplicationStandardOperationRequest): Current operation timestamp required to
+            pause, resume or abort retained rollout intent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -193,17 +191,16 @@ async def asyncio_detailed(
 ) -> Response[ApplicationStandardOperation | Problem]:
     """Resume a paused controlled rollout
 
-     Release gated and disabled by default. Requires a current organization owner or administrator, write
-    scope and completed MFA. Approval rechecks the exact saved plan; operator controls compare the exact
-    expected_updated_at from a current read. Installed settings and consumer observation remain
-    separate. Aborting does not undo installed targets; rollback requires a fresh assignment preview and
-    approval under current constraints.
+     Resumes an eligible paused operation using its exact current expected_updated_at. Requires
+    organization owner or administrator access, write scope and completed MFA. Installed targets retain
+    their progress; consumer observation continues separately. Release gated and disabled by default.
 
     Args:
         slug (str):
         operation (UUID):
         idempotency_key (str | Unset):
-        body (ControlApplicationStandardOperationRequest):
+        body (ControlApplicationStandardOperationRequest): Current operation timestamp required to
+            pause, resume or abort retained rollout intent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -235,17 +232,16 @@ async def asyncio(
 ) -> ApplicationStandardOperation | Problem | None:
     """Resume a paused controlled rollout
 
-     Release gated and disabled by default. Requires a current organization owner or administrator, write
-    scope and completed MFA. Approval rechecks the exact saved plan; operator controls compare the exact
-    expected_updated_at from a current read. Installed settings and consumer observation remain
-    separate. Aborting does not undo installed targets; rollback requires a fresh assignment preview and
-    approval under current constraints.
+     Resumes an eligible paused operation using its exact current expected_updated_at. Requires
+    organization owner or administrator access, write scope and completed MFA. Installed targets retain
+    their progress; consumer observation continues separately. Release gated and disabled by default.
 
     Args:
         slug (str):
         operation (UUID):
         idempotency_key (str | Unset):
-        body (ControlApplicationStandardOperationRequest):
+        body (ControlApplicationStandardOperationRequest): Current operation timestamp required to
+            pause, resume or abort retained rollout intent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

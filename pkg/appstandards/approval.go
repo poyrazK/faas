@@ -129,7 +129,7 @@ func approvalDigest(raw string) bool {
 		return false
 	}
 	for _, character := range raw {
-		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
 			return false
 		}
 	}

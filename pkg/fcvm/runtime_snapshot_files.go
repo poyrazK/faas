@@ -117,7 +117,7 @@ func publishMeasuredSnapshotFile(ctx context.Context, backend storage.StorageBac
 		return errors.Join(runtimeadmission.ErrInvalid, io.ErrUnexpectedEOF)
 	}
 	var probe [1]byte
-	if n, err := reader.Read(probe[:]); n != 0 || err != io.EOF {
+	if n, err := reader.Read(probe[:]); n != 0 || !errors.Is(err, io.EOF) {
 		return errors.Join(runtimeadmission.ErrInvalid, err)
 	}
 	return checkCapturedSnapshotFile(file)

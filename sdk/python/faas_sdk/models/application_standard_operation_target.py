@@ -22,9 +22,12 @@ T = TypeVar("T", bound="ApplicationStandardOperationTarget")
 
 @_attrs_define
 class ApplicationStandardOperationTarget:
+    """One application target and its installation and observation progress in a controlled rollout."""
+
     app_id: UUID
     position: int
     approved_app: ApplicationStandardReviewedApp
+    """Application inputs, adoption pins and resolved changes captured in a saved review."""
     state: ApplicationStandardOperationTargetState
     desired_revision: int
     updated_at: datetime.datetime

@@ -15,6 +15,8 @@ T = TypeVar("T", bound="SetApplicationStandardLocalIntentRequest")
 
 @_attrs_define
 class SetApplicationStandardLocalIntentRequest:
+    """Replacement local settings and additional log destinations bound to the current enrollment revision."""
+
     expected_revision: int
     settings: ApplicationStandardSettings
     """Logical control values; resource references contain UUIDs, never credentials."""

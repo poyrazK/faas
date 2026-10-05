@@ -114,7 +114,7 @@ func (v *JailerVMM) pinApprovedRuntimeDrives(ctx context.Context, lease Lease, r
 	if err != nil {
 		return err
 	}
-	defer sandbox.Close()
+	defer func() { _ = sandbox.Close() }()
 	seen := map[string]bool{}
 	for _, drive := range config.Drives {
 		source, found := handoff.sources[drive.DriveID]
@@ -201,7 +201,7 @@ func (v *JailerVMM) measureFinalRuntimeDrives(ctx context.Context, lease Lease, 
 	if err != nil {
 		return err
 	}
-	defer sandbox.Close()
+	defer func() { _ = sandbox.Close() }()
 	for i := range handoff.drives {
 		drive := &handoff.drives[i]
 		info, err := sandbox.Lstat(drive.path)

@@ -98,7 +98,7 @@ func readStandardResourceRequest(path string, target any) error {
 	if err != nil {
 		return fmt.Errorf("open resource file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(file, api.ApplicationStandardMaxDefinitionBytes+1))
 	if err != nil {
 		return fmt.Errorf("could not read resource file")

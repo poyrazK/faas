@@ -5,6 +5,7 @@ package rootfs
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -37,7 +38,7 @@ func (r *artifactIdentityReader) Read(p []byte) (int, error) {
 		_, _ = r.digest.Write(p[:n])
 		r.bytes += int64(n)
 	}
-	if err == io.EOF {
+	if errors.Is(err, io.EOF) {
 		r.eof = true
 	}
 	return n, err
@@ -82,10 +83,10 @@ func publishArtifactIdentity(ctx context.Context, be storage.StorageBackend, key
 	if !tracked.eof {
 		var probe [1]byte
 		n, err := tracked.Read(probe[:])
-		if err != nil && err != io.EOF {
+		if err != nil && !errors.Is(err, io.EOF) {
 			return ArtifactIdentity{}, fmt.Errorf("rootfs: complete artifact probe: %w", err)
 		}
-		if n != 0 || err != io.EOF {
+		if n != 0 || !errors.Is(err, io.EOF) {
 			return ArtifactIdentity{}, fmt.Errorf("rootfs: storage did not consume complete artifact: %w", io.ErrUnexpectedEOF)
 		}
 	}

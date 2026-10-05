@@ -32,12 +32,12 @@ func ApplyApplicationStandardLedgerRecovery(ctx context.Context, pool *pgxpool.P
 	if err != nil {
 		return MigrationLedgerRecoveryReceipt{}, err
 	}
-	defer release(context.WithoutCancel(ctx))
+	defer func() { _ = release(context.WithoutCancel(ctx)) }()
 	tx, err := DirectPool(pool).BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return MigrationLedgerRecoveryReceipt{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	receipt, err := migrationRecoveryApply(ctx, tx, DirectPool(pool).Config().ConnConfig, approval)
 	if err != nil {
 		return MigrationLedgerRecoveryReceipt{}, err

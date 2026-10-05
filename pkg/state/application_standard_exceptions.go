@@ -89,9 +89,9 @@ func validateStandardException(s standardReviewSnapshot, before ApplicationStand
 		return ErrInvalidArgument
 	}
 	app.Exceptions = append(append([]ApplicationStandardException{}, app.Exceptions...), x)
-	_, _, code, err := resolveAutomaticStandardEnrollment(s, now)
-	if err != nil || code != "" {
-		return standardLocalIntentRefusal(code, err)
+	_, _, code := resolveAutomaticStandardEnrollment(s, now)
+	if code != "" {
+		return standardLocalIntentRefusal(code)
 	}
 	return nil
 }

@@ -5,6 +5,9 @@
 import type { ApplicationStandardAdoption } from './ApplicationStandardAdoption.js';
 import type { ApplicationStandardEffective } from './ApplicationStandardEffective.js';
 import type { ApplicationStandardSettings } from './ApplicationStandardSettings.js';
+/**
+ * Application inputs, adoption pins and resolved changes captured in a saved review.
+ */
 export type ApplicationStandardReviewedApp = {
   app_id: string;
   slug: string;

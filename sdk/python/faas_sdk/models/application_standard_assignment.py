@@ -18,6 +18,8 @@ T = TypeVar("T", bound="ApplicationStandardAssignment")
 
 @_attrs_define
 class ApplicationStandardAssignment:
+    """Retained scope assignment and its current admission version, activity and concurrency revision."""
+
     id: UUID
     org_id: UUID
     scope: ApplicationStandardAssignmentScope

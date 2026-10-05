@@ -34,7 +34,7 @@ func (m *Manager) acquireAppEgressPolicy(ctx context.Context, appID string, weig
 		return func() {}, nil
 	}
 	if ctx == nil { // Legacy cache-only callers predate context use.
-		ctx = context.Background()
+		ctx = context.Background() //nolint:contextcheck // Legacy nil-context cache writes have no parent to inherit.
 	}
 	gate, _ := m.appEgressPolicyLocks.LoadOrStore(appID, semaphore.NewWeighted(math.MaxInt64))
 	sem := gate.(*semaphore.Weighted)

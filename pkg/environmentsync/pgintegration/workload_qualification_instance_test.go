@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -301,7 +302,10 @@ func TestPgEnvironmentGitOpsQualificationInstanceSQLFencesAndReplay(t *testing.T
 		t.Fatalf("admit: %+v %v", admitted, err)
 	}
 	for _, assignment := range []string{`id=gen_random_uuid()`, `deployment_id='` + serving.ID + `'`, `node_id=gen_random_uuid()`, `wake_id=gen_random_uuid()`, `ram_mb=ram_mb+1`, `mode='mirror'`} {
-		if _, err := pool.Exec(t.Context(), `update instances set `+assignment+` where id=$1`, admitted.Instance.ID); err == nil || (!strings.Contains(err.Error(), "identity is immutable") && !strings.Contains(err.Error(), "identity are immutable") && !strings.Contains(err.Error(), "placement survives parent removal")) {
+		_, err := pool.Exec(t.Context(), `update instances set `+assignment+` where id=$1`, admitted.Instance.ID)
+		var guard *pgconn.PgError
+		standardsFence := errors.As(err, &guard) && guard.Code == "23514" && guard.ConstraintName == "application_standard_runtime_stale"
+		if err == nil || (!standardsFence && !strings.Contains(err.Error(), "identity is immutable") && !strings.Contains(err.Error(), "identity are immutable") && !strings.Contains(err.Error(), "placement survives parent removal")) {
 			t.Fatalf("SQL reassigned active reservation: %s %v", assignment, err)
 		}
 	}

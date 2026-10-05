@@ -55,7 +55,7 @@ func (s *PgStore) materializeStandardEnrollmentAttempt(ctx context.Context, c Ap
 	if err != nil {
 		return ApplicationStandardEnrollment{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	until, err := q.LockApplicationStandardEnrollmentWorker(ctx, tx, sqlc.LockApplicationStandardEnrollmentWorkerParams{AppID: mustPgUUID(c.AppID), OrgID: mustPgUUID(c.OrgID), Owner: c.Owner, Generation: c.Generation, DesiredRevision: c.DesiredRevision})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -87,10 +87,7 @@ func (s *PgStore) materializeStandardEnrollmentAttempt(ctx context.Context, c Ap
 		return ApplicationStandardEnrollment{}, err
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	app, proposed, code, err := resolveAutomaticStandardEnrollment(snapshot, now)
-	if err != nil {
-		return ApplicationStandardEnrollment{}, err
-	}
+	app, proposed, code := resolveAutomaticStandardEnrollment(snapshot, now)
 	if code != "" {
 		return blockAutomaticStandardEnrollment(ctx, tx, c, code)
 	}

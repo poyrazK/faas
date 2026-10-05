@@ -5287,7 +5287,7 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 func (m *Manager) warmSnapshotInstance(ctx context.Context, inst *Instance, spec SnapshotSpec) (SnapshotInfo, error) {
 	instance := inst.Lease.Instance
 	spec.ResumeBeforePublish = true
-	restartProbes := m.pauseMeasuredSnapshotProbes(inst, spec)
+	restartProbes := m.pauseMeasuredSnapshotProbes(ctx, inst, spec)
 	resumed := false
 	defer func() { restartProbes(resumed) }()
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)

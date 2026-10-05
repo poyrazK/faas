@@ -571,6 +571,9 @@ export class OrgsService {
      * Last assignment UUID from the previous page.
      */
     after?: string,
+    /**
+     * Maximum retained assignments to return in this page.
+     */
     limit?: number,
   }): CancelablePromise<ApplicationStandardAssignmentList> {
     return __request(OpenAPI, {
@@ -598,8 +601,8 @@ export class OrgsService {
   }
   /**
    * Read a retained assignment and its current revision
-   * Includes retained inactive assignments. The admission version governs new services; per-application adoption and persisted/observed progress are separate. Read a fresh revision before a reviewed update, deactivation or rollback. Read routes remain available while mutation admission is disabled. All organization roles require read scope and completed MFA.
-   * @returns ApplicationStandardAssignment Organization-scoped assignment metadata with no credentials or private rollout proofs.
+   * Returns the retained assignment even when inactive. Its admission version governs new services; application adoption and consumer progress remain separate. Use its current revision to preview an update, deactivation or rollback. Available while mutations are disabled; requires organization membership, read scope and completed MFA.
+   * @returns ApplicationStandardAssignment Retained assignment identity, admission version and revision for the selected organization.
    * @throws ApiError
    */
   public static getApplicationStandardAssignment({
@@ -614,6 +617,9 @@ export class OrgsService {
      *
      */
     slug: string,
+    /**
+     * UUID of the retained assignment to inspect.
+     */
     assignment: string,
   }): CancelablePromise<ApplicationStandardAssignment> {
     return __request(OpenAPI, {
@@ -626,13 +632,13 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        403: `Caller lacks read scope, current organization membership or completed MFA.`,
+        403: `Assignment inspection requires read scope, current organization membership and completed MFA.`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `Assignment inventory storage is unavailable.`,
+        503: `The selected assignment could not be read because storage is unavailable.`,
       },
     });
   }
@@ -707,6 +713,9 @@ export class OrgsService {
      *
      */
     slug: string,
+    /**
+     * UUID of the saved review to approve with its exact hash.
+     */
     review: string,
     requestBody: ApproveApplicationStandardReviewRequest,
     /**
@@ -744,8 +753,8 @@ export class OrgsService {
   }
   /**
    * Pause outstanding targets in a controlled rollout
-   * Release gated and disabled by default. Requires a current organization owner or administrator, write scope and completed MFA. Approval rechecks the exact saved plan; operator controls compare the exact expected_updated_at from a current read. Installed settings and consumer observation remain separate. Aborting does not undo installed targets; rollback requires a fresh assignment preview and approval under current constraints.
-   * @returns ApplicationStandardOperation Durable operation intent and retained target progress; consumer convergence is pending.
+   * Pauses outstanding rollout targets without undoing installed settings. Requires the exact expected_updated_at from a current operation read, organization owner or administrator access, write scope and completed MFA. Release gated and disabled by default.
+   * @returns ApplicationStandardOperation Paused operation with retained target progress and installed facts.
    * @throws ApiError
    */
   public static pauseApplicationStandardOperation({
@@ -762,6 +771,9 @@ export class OrgsService {
      *
      */
     slug: string,
+    /**
+     * UUID of the rollout operation to pause.
+     */
     operation: string,
     requestBody: ControlApplicationStandardOperationRequest,
     /**
@@ -786,21 +798,21 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        403: `Caller lacks the required scope, current organization action or completed MFA.`,
+        403: `The caller lacks the organization authorization, write scope or completed MFA required to pause this operation.`,
         404: `code: not_found`,
-        409: `Review changed or expired, inputs are busy, or the operation timestamp or state changed.`,
+        409: `The operation timestamp or state changed; refresh before retrying pause.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `Application standards mutations are disabled or storage is unavailable.`,
+        503: `The pause request cannot proceed while standards mutations are disabled or storage is unavailable.`,
       },
     });
   }
   /**
    * Resume a paused controlled rollout
-   * Release gated and disabled by default. Requires a current organization owner or administrator, write scope and completed MFA. Approval rechecks the exact saved plan; operator controls compare the exact expected_updated_at from a current read. Installed settings and consumer observation remain separate. Aborting does not undo installed targets; rollback requires a fresh assignment preview and approval under current constraints.
-   * @returns ApplicationStandardOperation Durable operation intent and retained target progress; consumer convergence is pending.
+   * Resumes an eligible paused operation using its exact current expected_updated_at. Requires organization owner or administrator access, write scope and completed MFA. Installed targets retain their progress; consumer observation continues separately. Release gated and disabled by default.
+   * @returns ApplicationStandardOperation Resumed operation whose outstanding targets can continue their controlled rollout.
    * @throws ApiError
    */
   public static resumeApplicationStandardOperation({
@@ -817,6 +829,9 @@ export class OrgsService {
      *
      */
     slug: string,
+    /**
+     * UUID of the paused rollout operation to resume.
+     */
     operation: string,
     requestBody: ControlApplicationStandardOperationRequest,
     /**
@@ -841,21 +856,21 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        403: `Caller lacks the required scope, current organization action or completed MFA.`,
+        403: `The caller lacks the organization authorization, write scope or completed MFA required to resume this operation.`,
         404: `code: not_found`,
-        409: `Review changed or expired, inputs are busy, or the operation timestamp or state changed.`,
+        409: `The operation timestamp or state changed; refresh before retrying resume.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `Application standards mutations are disabled or storage is unavailable.`,
+        503: `The resume request cannot proceed while standards mutations are disabled or storage is unavailable.`,
       },
     });
   }
   /**
    * Abort outstanding targets while retaining installed facts
-   * Release gated and disabled by default. Requires a current organization owner or administrator, write scope and completed MFA. Approval rechecks the exact saved plan; operator controls compare the exact expected_updated_at from a current read. Installed settings and consumer observation remain separate. Aborting does not undo installed targets; rollback requires a fresh assignment preview and approval under current constraints.
-   * @returns ApplicationStandardOperation Durable operation intent and retained target progress; consumer convergence is pending.
+   * Aborts outstanding targets and retains already installed facts. Requires the exact expected_updated_at from a current operation read, organization owner or administrator access, write scope and completed MFA. Undoing installed settings requires a fresh rollback preview and approval. Release gated and disabled by default.
+   * @returns ApplicationStandardOperation Aborted operation with outstanding targets stopped and installed facts retained.
    * @throws ApiError
    */
   public static abortApplicationStandardOperation({
@@ -872,6 +887,9 @@ export class OrgsService {
      *
      */
     slug: string,
+    /**
+     * UUID of the rollout operation to abort.
+     */
     operation: string,
     requestBody: ControlApplicationStandardOperationRequest,
     /**
@@ -896,20 +914,20 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        403: `Caller lacks the required scope, current organization action or completed MFA.`,
+        403: `The caller lacks the organization authorization, write scope or completed MFA required to abort this operation.`,
         404: `code: not_found`,
-        409: `Review changed or expired, inputs are busy, or the operation timestamp or state changed.`,
+        409: `The operation timestamp or state changed; refresh before retrying abort.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `Application standards mutations are disabled or storage is unavailable.`,
+        503: `The abort request cannot proceed while standards mutations are disabled or storage is unavailable.`,
       },
     });
   }
   /**
    * Inspect a saved review, including expiry and blockers
-   * @returns ApplicationStandardReview Organization-scoped saved standards data.
+   * @returns ApplicationStandardReview Saved review with its exact proposed changes, expiry and blockers.
    * @throws ApiError
    */
   public static getApplicationStandardReview({
@@ -924,6 +942,9 @@ export class OrgsService {
      *
      */
     slug: string,
+    /**
+     * UUID of the saved review to inspect.
+     */
     review: string,
   }): CancelablePromise<ApplicationStandardReview> {
     return __request(OpenAPI, {
@@ -936,19 +957,19 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        403: `Caller lacks the required scope, organization action or completed MFA.`,
+        403: `Saved review access requires the corresponding organization action, scope and completed MFA.`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `Application standards storage is temporarily unavailable.`,
+        503: `Saved review storage is temporarily unavailable.`,
       },
     });
   }
   /**
    * Inspect saved rollout targets and progress
-   * @returns ApplicationStandardOperation Organization-scoped saved standards data.
+   * @returns ApplicationStandardOperation Retained rollout operation and individual application target progress.
    * @throws ApiError
    */
   public static getApplicationStandardOperation({
@@ -963,6 +984,9 @@ export class OrgsService {
      *
      */
     slug: string,
+    /**
+     * UUID of the retained rollout operation to inspect.
+     */
     operation: string,
   }): CancelablePromise<ApplicationStandardOperation> {
     return __request(OpenAPI, {
@@ -975,20 +999,20 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        403: `Caller lacks the required scope, organization action or completed MFA.`,
+        403: `Rollout operation access requires the corresponding organization action, scope and completed MFA.`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `Application standards storage is temporarily unavailable.`,
+        503: `Rollout operation storage is temporarily unavailable.`,
       },
     });
   }
   /**
    * List approval, revocation and expiry history for a live application
    * UUID-ordered history with status evaluated at as_of. A full page has a next cursor; the final follow-up page may be empty. Historical approval does not imply that the exception contributes to current effective settings.
-   * @returns ApplicationStandardExceptionList Organization-scoped saved standards data.
+   * @returns ApplicationStandardExceptionList Exception approval and revocation history evaluated at the returned server timestamp.
    * @throws ApiError
    */
   public static listApplicationStandardExceptions({
@@ -1005,8 +1029,17 @@ export class OrgsService {
      *
      */
     slug: string,
+    /**
+     * UUID of the live application enrolled in standards.
+     */
     app: string,
+    /**
+     * Exclusive exception UUID from the preceding page.
+     */
     after?: string,
+    /**
+     * Maximum records to return in this page.
+     */
     limit?: number,
   }): CancelablePromise<ApplicationStandardExceptionList> {
     return __request(OpenAPI, {
@@ -1023,13 +1056,13 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        403: `Caller lacks the required scope, organization action or completed MFA.`,
+        403: `Exception history access requires the corresponding organization action, scope and completed MFA.`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `Application standards storage is temporarily unavailable.`,
+        503: `Exception history storage is temporarily unavailable.`,
       },
     });
   }
@@ -1056,6 +1089,9 @@ export class OrgsService {
      *
      */
     slug: string,
+    /**
+     * UUID of the live application enrolled in standards.
+     */
     app: string,
     requestBody: ApproveApplicationStandardExceptionRequest,
     /**
@@ -1082,12 +1118,12 @@ export class OrgsService {
         401: `code: unauthorized`,
         403: `Caller lacks the write scope, required organization action or completed MFA.`,
         404: `code: not_found`,
-        409: `Enrollment revision changed, an exception already exists, or installation or a controlled operation is pending.`,
+        409: `Exception history conflicts with the current enrollment revision, exception state or pending installation.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `Standards mutations are disabled by the release gate, or storage is unavailable. Disabled requests return application_standards_pending and make no change.`,
+        503: `Exception history is disabled by the standards release gate or storage is unavailable. Disabled requests return application_standards_pending without changing intent.`,
       },
     });
   }
@@ -1134,7 +1170,7 @@ export class OrgsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `Application standards storage is temporarily unavailable.`,
+        503: `Enrollment status storage is temporarily unavailable.`,
       },
     });
   }
@@ -1144,7 +1180,7 @@ export class OrgsService {
    * Disabled by default until the application standards release acceptance gates pass.
    * Idempotency replay requires the current role and release gate. Saved intent is not consumer observation.
    *
-   * @returns ApplicationStandardEnrollment Saved intent or retained exception approval; worker installation and consumer convergence remain separate.
+   * @returns ApplicationStandardEnrollment Enrollment with replacement local intent, pending desired revision and the last installed projection.
    * @throws ApiError
    */
   public static setApplicationStandardLocalIntent({
@@ -1161,6 +1197,9 @@ export class OrgsService {
      *
      */
     slug: string,
+    /**
+     * UUID of the enrolled application whose local settings will be replaced.
+     */
     app: string,
     requestBody: SetApplicationStandardLocalIntentRequest,
     /**
@@ -1185,14 +1224,14 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        403: `Caller lacks the write scope, required organization action or completed MFA.`,
+        403: `Updating local settings requires write scope, the enrollment mutation action and completed MFA.`,
         404: `code: not_found`,
-        409: `Enrollment revision changed, an exception already exists, or installation or a controlled operation is pending.`,
+        409: `Local enrollment intent conflicts with the current enrollment revision, exception state or pending installation.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `Standards mutations are disabled by the release gate, or storage is unavailable. Disabled requests return application_standards_pending and make no change.`,
+        503: `Local enrollment intent is disabled by the standards release gate or storage is unavailable. Disabled requests return application_standards_pending without changing intent.`,
       },
     });
   }
@@ -1202,7 +1241,7 @@ export class OrgsService {
    * Disabled by default until the application standards release acceptance gates pass.
    * Idempotency replay requires the current role and release gate. Saved intent is not consumer observation.
    *
-   * @returns ApplicationStandardException Saved intent or retained exception approval; worker installation and consumer convergence remain separate.
+   * @returns ApplicationStandardException Retained exception approval with its revocation actor and timestamp; installation of inherited settings remains pending.
    * @throws ApiError
    */
   public static revokeApplicationStandardException({
@@ -1220,7 +1259,13 @@ export class OrgsService {
      *
      */
     slug: string,
+    /**
+     * UUID of the enrolled application whose exception will be revoked.
+     */
     app: string,
+    /**
+     * UUID of the retained exception approval to revoke.
+     */
     exception: string,
     requestBody: RevokeApplicationStandardExceptionRequest,
     /**
@@ -1246,14 +1291,14 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        403: `Caller lacks the write scope, required organization action or completed MFA.`,
+        403: `Revoking an exception requires write scope, the organization exception action and completed MFA.`,
         404: `code: not_found`,
-        409: `Enrollment revision changed, an exception already exists, or installation or a controlled operation is pending.`,
+        409: `Exception revocation conflicts with the current enrollment revision, exception state or pending installation.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
-        503: `Standards mutations are disabled by the release gate, or storage is unavailable. Disabled requests return application_standards_pending and make no change.`,
+        503: `Exception revocation is disabled by the standards release gate or storage is unavailable. Disabled requests return application_standards_pending without changing intent.`,
       },
     });
   }

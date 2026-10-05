@@ -10,6 +10,8 @@ T = TypeVar("T", bound="RevokeApplicationStandardExceptionRequest")
 
 @_attrs_define
 class RevokeApplicationStandardExceptionRequest:
+    """Current enrollment revision authorizing revocation of the selected exception."""
+
     expected_revision: int
 
     def to_dict(self) -> dict[str, Any]:

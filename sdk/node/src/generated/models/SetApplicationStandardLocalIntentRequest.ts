@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ApplicationStandardSettings } from './ApplicationStandardSettings.js';
+/**
+ * Replacement local settings and additional log destinations bound to the current enrollment revision.
+ */
 export type SetApplicationStandardLocalIntentRequest = {
   expected_revision: number;
   settings: ApplicationStandardSettings;

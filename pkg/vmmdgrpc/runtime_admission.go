@@ -242,7 +242,7 @@ func (s *Server) wakeAdmittedWithBridge(ctx context.Context, vmm admittedRuntime
 }
 
 func admissionStatus(err error) error {
-	code := codes.Internal
+	var code codes.Code
 	switch {
 	case errors.Is(err, runtimeadmission.ErrUnavailable):
 		code = codes.Unimplemented

@@ -142,7 +142,7 @@ func (m *appLogDrainManager) Run(ctx context.Context) {
 		return
 	}
 	defer func() { _ = m.spoolLease.Unlock() }()
-	defer m.stopAllLogWorkersJoined()
+	defer m.stopAllLogWorkersJoined(ctx)
 	m.reconcile(ctx)
 	m.flushHealth(ctx)
 	if m.standardLogConsumerFenced() {
@@ -155,7 +155,7 @@ func (m *appLogDrainManager) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			m.stopAllLogWorkersJoined()
+			m.stopAllLogWorkersJoined(ctx)
 			flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			m.flushHealth(flushCtx)
 			cancel()

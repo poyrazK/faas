@@ -12,6 +12,8 @@ T = TypeVar("T", bound="ApplicationStandardAdoption")
 
 @_attrs_define
 class ApplicationStandardAdoption:
+    """Assignment and immutable version pinned when an application adopts a standard."""
+
     assignment_id: UUID
     version: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -11,6 +11,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/scanview"
 )
 
+// StagingRoot and TargetPrefix define the private projection handoff path.
+// Mounting and native path validation remain owned by vmmd.
+const StagingRoot = "/dev/shm/faas-base-staging"
+const TargetPrefix = "imaged-runtime-scan-"
+
 const Version uint32 = 1
 
 type Request struct {

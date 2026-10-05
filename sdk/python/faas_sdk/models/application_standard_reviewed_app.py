@@ -23,6 +23,8 @@ T = TypeVar("T", bound="ApplicationStandardReviewedApp")
 
 @_attrs_define
 class ApplicationStandardReviewedApp:
+    """Application inputs, adoption pins and resolved changes captured in a saved review."""
+
     app_id: UUID
     slug: str
     desired_revision: int
@@ -34,6 +36,7 @@ class ApplicationStandardReviewedApp:
     """Logical control values; resource references contain UUIDs, never credentials."""
     additional_log_destinations: list[UUID]
     effective: ApplicationStandardEffective
+    """Resolved control values with their inheritance sources and any constraint violations."""
     changed_fields: list[ApplicationStandardReviewedAppChangedFieldsItem]
     project_id: UUID | Unset = UNSET
 

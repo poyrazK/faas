@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Inherited assignment, enforcement mode and any applicable exception contributing to one field.
+ */
 export type ApplicationStandardSource = {
   assignment_id?: string;
   scope_id?: string;

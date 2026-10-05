@@ -113,7 +113,7 @@ func TestProducedRuntimeScanBindsEveryViewAndFreshProducerAfterScanner(t *testin
 					}
 				}
 				if calls == 1 {
-					mutateRuntimeScanProducerFixture(t, th, inputs, mode)
+					mutateRuntimeScanProducerFixture(t, ctx, th, inputs, mode)
 				}
 				return producedScanResult(t, false), nil
 			}
@@ -134,21 +134,21 @@ func TestProducedRuntimeScanBindsEveryViewAndFreshProducerAfterScanner(t *testin
 	}
 }
 
-func mutateRuntimeScanProducerFixture(t *testing.T, th *testHarness, inputs state.DeploymentRuntimeProducerInputs, mode string) {
+func mutateRuntimeScanProducerFixture(t *testing.T, ctx context.Context, th *testHarness, inputs state.DeploymentRuntimeProducerInputs, mode string) {
 	t.Helper()
 	if mode == "publisher revoked" {
-		if err := th.store.DeleteAppTrustedSigner(t.Context(), th.app.AccountID, th.app.ID, "company"); err != nil {
+		if err := th.store.DeleteAppTrustedSigner(ctx, th.app.AccountID, th.app.ID, "company"); err != nil {
 			t.Fatal(err)
 		}
 		return
 	}
 	if mode == "base replaced" {
-		base, err := th.store.GetBaseImageProducerByID(t.Context(), inputs.Artifacts[0].ProducerID)
+		base, err := th.store.GetBaseImageProducerByID(ctx, inputs.Artifacts[0].ProducerID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		base.Input.ID = uuid.NewString()
-		if _, err := th.store.PublishBaseImageProducer(t.Context(), base.Input); err != nil {
+		if _, err := th.store.PublishBaseImageProducer(ctx, base.Input); err != nil {
 			t.Fatal(err)
 		}
 		return
@@ -160,12 +160,12 @@ func mutateRuntimeScanProducerFixture(t *testing.T, th *testHarness, inputs stat
 	if mode == "sidecar replaced" {
 		name = "metrics"
 	}
-	root, err := th.store.GetCurrentDeploymentRegistryRootfs(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, name)
+	root, err := th.store.GetCurrentDeploymentRegistryRootfs(ctx, th.app.AccountID, th.app.ID, th.dep.ID, name)
 	if err != nil {
 		t.Fatal(err)
 	}
 	root.Input.ID = uuid.NewString()
-	if _, err := th.store.PublishDeploymentRegistryRootfs(t.Context(), root.Input); err != nil {
+	if _, err := th.store.PublishDeploymentRegistryRootfs(ctx, root.Input); err != nil {
 		t.Fatal(err)
 	}
 }

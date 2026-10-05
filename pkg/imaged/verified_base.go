@@ -92,10 +92,7 @@ func (h *Handler) reuseVerifiedBase(ctx context.Context, r verifiedBaseRequest, 
 	if !baseCacheParentMatches(ctx, store, in, r) {
 		return BaseStageResult{}, false, nil
 	}
-	if err := checkStoredBaseArtifact(ctx, r.be, in.Artifact); err != nil {
-		return BaseStageResult{}, false, nil
-	}
-	if err := h.validateBaseArtifact(ctx, r.be, r.key); err != nil {
+	if !h.verifiedBaseArtifactReusable(ctx, r, in.Artifact) {
 		return BaseStageResult{}, false, nil
 	}
 	image, err := imagechain.Validate(in.ImageChain, in.SourceDigest, in.SelectedDigest)
@@ -104,6 +101,11 @@ func (h *Handler) reuseVerifiedBase(ctx context.Context, r verifiedBaseRequest, 
 	}
 	result, err := h.finishVerifiedBase(ctx, r, producer, image.Config.Digest, true)
 	return result, err == nil, err
+}
+
+// Invalid or missing cache bytes require a verified rebuild before reuse.
+func (h *Handler) verifiedBaseArtifactReusable(ctx context.Context, r verifiedBaseRequest, artifact imagechain.BaseArtifact) bool {
+	return checkStoredBaseArtifact(ctx, r.be, artifact) == nil && h.validateBaseArtifact(ctx, r.be, r.key) == nil
 }
 
 func baseCacheParentMatches(ctx context.Context, store state.BaseImageProducerStore, in state.BaseImageProducerInput, r verifiedBaseRequest) bool {
@@ -202,7 +204,7 @@ func (h *Handler) buildVerifiedChildBase(ctx context.Context, r verifiedBaseRequ
 	if err != nil {
 		return build, err
 	}
-	defer os.RemoveAll(staging)
+	defer func() { _ = os.RemoveAll(staging) }()
 	expected := imagechain.ParentMaterialization{Artifact: parent.Input.Artifact, TargetDir: staging}
 	actual, err := owner.MaterializeVerifiedParentExt4(ctx, expected)
 	if err != nil {

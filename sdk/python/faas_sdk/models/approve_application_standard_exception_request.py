@@ -21,6 +21,8 @@ T = TypeVar("T", bound="ApproveApplicationStandardExceptionRequest")
 
 @_attrs_define
 class ApproveApplicationStandardExceptionRequest:
+    """Time-limited, reasoned exception for one adopted standard field, bound to the enrollment revision."""
+
     expected_revision: int
     standard_id: UUID
     version: int

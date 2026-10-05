@@ -25,7 +25,7 @@ func PrepareApplicationStandardLedgerRecovery(ctx context.Context, pool *pgxpool
 	if err != nil {
 		return err
 	}
-	defer release(context.WithoutCancel(ctx))
+	defer func() { _ = release(context.WithoutCancel(ctx)) }()
 	sources, _, err := migrationRecoverySources()
 	if err != nil {
 		return err
@@ -70,7 +70,7 @@ func migrationRecoveryPrepareAudit(ctx context.Context, pool *pgxpool.Pool, sour
 	if err != nil {
 		return fmt.Errorf("prepare ledger recovery: %w", err)
 	}
-	defer sqlDB.Close()
+	defer func() { _ = sqlDB.Close() }()
 	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations.FS,
 		goose.WithExcludeVersions(exclude), goose.WithAllowOutofOrder(true), goose.WithDisableGlobalRegistry(true))
 	if err != nil {

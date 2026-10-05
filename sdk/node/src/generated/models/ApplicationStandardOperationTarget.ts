@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ApplicationStandardReviewedApp } from './ApplicationStandardReviewedApp.js';
+/**
+ * One application target and its installation and observation progress in a controlled rollout.
+ */
 export type ApplicationStandardOperationTarget = {
   app_id: string;
   position: number;

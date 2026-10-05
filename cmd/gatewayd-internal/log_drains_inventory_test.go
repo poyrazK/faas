@@ -144,7 +144,7 @@ func inventoryGatewayManager(t *testing.T, f inventoryGatewayFixture, q *invento
 	if err := m.acquireLogSpoolLease(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { m.stopAllLogWorkersJoined(); _ = m.spoolLease.Unlock() })
+	t.Cleanup(func() { m.stopAllLogWorkersJoined(t.Context()); _ = m.spoolLease.Unlock() })
 	return m
 }
 
@@ -299,7 +299,7 @@ func TestStandardLogManagerLockSurvivesWorkerShutdown(t *testing.T) {
 	stopping, exited := make(chan struct{}), make(chan struct{})
 	m.workers["old"] = &appLogDrainWorker{cancel: func() { close(stopping) }, done: exited}
 	finished := make(chan struct{})
-	go func() { m.stopAllLogWorkersJoined(); m.spoolLease.Unlock(); close(finished) }()
+	go func() { m.stopAllLogWorkersJoined(t.Context()); _ = m.spoolLease.Unlock(); close(finished) }()
 	<-stopping
 	if err := next.acquireLogSpoolLease(); err == nil {
 		t.Fatal("replacement acquired spool while worker was still exiting")

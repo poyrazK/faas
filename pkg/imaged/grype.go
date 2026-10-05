@@ -346,11 +346,11 @@ func parseGrypeOutput(raw []byte, dir string) (*ScanResult, error) {
 }
 
 func validateScanExt4(ctx context.Context, image string) error {
-	f, err := os.Open(image)
+	f, err := openStagedScanArtifact(image)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Size() > api.ApplicationStandardBaseMaxArtifactBytes {
 		return fmt.Errorf("scan image is not a bounded regular ext4")

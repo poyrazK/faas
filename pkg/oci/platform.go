@@ -173,11 +173,6 @@ func selectImagePlatform(body []byte) (Descriptor, error) {
 	return selected, nil
 }
 
-func (c *RegistryClient) verifiedImageConfig(ctx context.Context, r Reference, m imageManifest, auth *BasicAuth) (ImageConfig, error) {
-	cfg, _, err := c.verifiedImageConfigBytes(ctx, r, m, auth)
-	return cfg, err
-}
-
 func (c *RegistryClient) verifiedImageConfigBytes(ctx context.Context, r Reference, m imageManifest, auth *BasicAuth) (ImageConfig, []byte, error) {
 	if m.SchemaVersion != 2 || len(m.Layers) == 0 {
 		return ImageConfig{}, nil, fmt.Errorf("%w: expected schemaVersion 2 and at least one filesystem layer", ErrImageManifestInvalid)

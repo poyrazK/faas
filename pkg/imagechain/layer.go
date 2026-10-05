@@ -60,7 +60,7 @@ func (s *LayerStream) Read(p []byte) (int, error) {
 	if s.compressedBytes > s.descriptor.Size {
 		err = fmt.Errorf("%w: compressed layer size", ErrInvalid)
 	}
-	if err == io.EOF {
+	if errors.Is(err, io.EOF) {
 		if s.compressedBytes != s.descriptor.Size || fmt.Sprintf("sha256:%x", s.compressed.Sum(nil)) != s.descriptor.Digest {
 			err = fmt.Errorf("%w: compressed layer digest/size", ErrInvalid)
 		} else {
@@ -110,7 +110,7 @@ func (r *uncompressedReader) Read(p []byte) (int, error) {
 	if r.bytes > api.OCIImageMaxUncompressedLayerBytes {
 		err = fmt.Errorf("%w: uncompressed layer limit", ErrInvalid)
 	}
-	if err == io.EOF {
+	if errors.Is(err, io.EOF) {
 		if fmt.Sprintf("sha256:%x", r.digest.Sum(nil)) != r.owner.diffID {
 			err = fmt.Errorf("%w: uncompressed DiffID", ErrInvalid)
 		} else {

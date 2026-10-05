@@ -46,6 +46,7 @@ class ApplicationStandardEnrollment:
     updated_at: datetime.datetime
     project_id: UUID | Unset = UNSET
     installed_effective: ApplicationStandardEffective | Unset = UNSET
+    """Resolved control values with their inheritance sources and any constraint violations."""
     installed_effective_hash: str | Unset = UNSET
     installed_exception_expires_at: datetime.datetime | Unset = UNSET
     """Deadline of a contributing exception in the last persisted projection; it can already be expired while

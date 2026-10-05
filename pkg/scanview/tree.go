@@ -62,7 +62,7 @@ func Snapshot(ctx context.Context, dir string) (Tree, error) {
 	if err != nil {
 		return Tree{}, err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	return snapshotRoot(ctx, root, defaultLimits())
 }
 
@@ -177,7 +177,7 @@ func readRegular(ctx context.Context, root *os.Root, name string, info fs.FileIn
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	before, err := f.Stat()
 	if err != nil {
 		return "", err

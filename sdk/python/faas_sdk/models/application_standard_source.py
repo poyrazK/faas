@@ -26,6 +26,8 @@ T = TypeVar("T", bound="ApplicationStandardSource")
 
 @_attrs_define
 class ApplicationStandardSource:
+    """Inherited assignment, enforcement mode and any applicable exception contributing to one field."""
+
     standard_id: UUID
     version: int
     scope: ApplicationStandardSourceScope

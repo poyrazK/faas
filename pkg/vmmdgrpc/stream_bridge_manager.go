@@ -204,7 +204,7 @@ func (m *streamBridgeManager) prewarm(req *vmmdpb.ForwardHTTPRequestInit, netnsN
 	if m == nil || req == nil || req.GetInstance() == "" || netnsName == "" {
 		return
 	}
-	m.startReaper()
+	m.startReaper() //nolint:contextcheck // Bridge manager lifetime extends beyond the wake RPC.
 	port := req.GetPort()
 	if port == 0 {
 		port = netns.AppPort

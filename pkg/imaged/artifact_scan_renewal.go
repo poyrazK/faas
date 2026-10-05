@@ -98,10 +98,9 @@ func producedRuntimeRenewalDue(ctx context.Context, scans state.DeploymentRuntim
 	if producedEvidenceBusy(err) || ctx.Err() != nil {
 		return false, err
 	}
-	if err != nil {
-		return true, nil
-	} // A failed current binding cannot be reused.
-	return producedEvidenceRenewalDue(current.ScannedAt, fresh.ExpiresAt, now), nil
+	// A failed current binding cannot be reused; schedule fresh evidence.
+	due := err != nil || producedEvidenceRenewalDue(current.ScannedAt, fresh.ExpiresAt, now)
+	return due, nil
 }
 
 func producedEvidenceRenewalDue(at, expires, now time.Time) bool {

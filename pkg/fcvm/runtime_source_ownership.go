@@ -123,7 +123,7 @@ func writeRuntimeSourceRecord(root, name string, body []byte) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
+	defer func() { _ = os.Remove(file.Name()) }()
 	_, err = file.Write(body)
 	if err == nil {
 		err = file.Sync()

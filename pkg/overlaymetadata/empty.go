@@ -16,7 +16,7 @@ func EnsureEmptyLowerDirectory(path string) (retErr error) {
 	if err != nil || !before.IsDir() {
 		return errors.Join(ErrInvalid, err)
 	}
-	dir, err := os.Open(path)
+	dir, err := os.Open(path) //nolint:forbidigo // Platform-owned directory: Lstat rejects symlinks and SameFile fences the opened descriptor and path.
 	if err != nil {
 		return err
 	}

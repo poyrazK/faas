@@ -194,7 +194,8 @@ func walkJSON(dec *json.Decoder) error {
 	if !ok {
 		return nil
 	}
-	if delim == '{' {
+	switch delim {
+	case '{':
 		seen := map[string]bool{}
 		for dec.More() {
 			keyToken, err := dec.Token()
@@ -210,13 +211,13 @@ func walkJSON(dec *json.Decoder) error {
 				return err
 			}
 		}
-	} else if delim == '[' {
+	case '[':
 		for dec.More() {
 			if err := walkJSON(dec); err != nil {
 				return err
 			}
 		}
-	} else {
+	default:
 		return fmt.Errorf("unexpected JSON delimiter")
 	}
 	_, err = dec.Token()

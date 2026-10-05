@@ -33,7 +33,7 @@ func (m *appLogDrainManager) acquireLogSpoolLease() error {
 	return nil
 }
 
-func (m *appLogDrainManager) stopAllLogWorkersJoined() {
+func (m *appLogDrainManager) stopAllLogWorkersJoined(ctx context.Context) {
 	m.shutdownMu.Lock()
 	defer m.shutdownMu.Unlock()
 	m.mu.Lock()
@@ -50,10 +50,10 @@ func (m *appLogDrainManager) stopAllLogWorkersJoined() {
 	for _, done := range joined {
 		<-done
 	}
-	m.closeStandardLogConsumerJoined()
+	m.closeStandardLogConsumerJoined(ctx)
 }
 
-func (m *appLogDrainManager) closeStandardLogConsumerJoined() {
+func (m *appLogDrainManager) closeStandardLogConsumerJoined(ctx context.Context) {
 	s, ok := m.store.(state.ApplicationStandardLogConsumerClosureStore)
 	if !ok || m.spoolLease == nil {
 		return
@@ -64,7 +64,7 @@ func (m *appLogDrainManager) closeStandardLogConsumerJoined() {
 	if session.Generation == 0 {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), api.ApplicationStandardLogReceiptTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ApplicationStandardLogReceiptTimeout)
 	defer cancel()
 	if _, err := s.CloseApplicationStandardLogConsumer(ctx, session); err != nil && !errors.Is(err, state.ErrApplicationStandardLogConsumerFenced) {
 		m.log.WarnContext(ctx, "persist standard logging shutdown", slog.String("code", "storage_unavailable"))

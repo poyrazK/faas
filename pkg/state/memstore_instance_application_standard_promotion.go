@@ -11,7 +11,7 @@ var _ InstanceApplicationStandardPromotionStore = (*MemStore)(nil)
 
 func (m *MemStore) lockNativePromotionLocked(id string, allowRunning bool) (Instance, InstanceApplicationStandardAdmission, runtimeadmission.Receipt, error) {
 	ins, ok := m.instances[id]
-	if !ok || (ins.State != string(StateWarm) && !(allowRunning && ins.State == string(StateRunning))) {
+	if !ok || (ins.State != string(StateWarm) && (!allowRunning || ins.State != string(StateRunning))) {
 		return Instance{}, InstanceApplicationStandardAdmission{}, runtimeadmission.Receipt{}, ErrConflict
 	}
 	ins, capture, err := m.lockNativeBootInputsLocked(id, ins.State)

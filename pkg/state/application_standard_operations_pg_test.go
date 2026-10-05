@@ -93,14 +93,14 @@ func TestPgApplicationStandardProjectApprovalMembershipRace(t *testing.T) {
 	if _, err := s.ApproveApplicationStandardReview(ctx, f.owner.PersonalOrg.ID, f.owner.Account.ID, p.ID, p.ApprovalHash); !errors.Is(err, ErrApplicationStandardReviewBusy) {
 		t.Fatalf("foreign membership was not fenced: %v", err)
 	}
-	assertStandardApprovalNoWrites(t, pool)
+	assertStandardApprovalNoWrites(t, t.Context(), pool)
 	if err := writer.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.ApproveApplicationStandardReview(ctx, f.owner.PersonalOrg.ID, f.owner.Account.ID, p.ID, p.ApprovalHash); !errors.Is(err, ErrApplicationStandardReviewStale) {
 		t.Fatalf("foreign membership was assigned: %v", err)
 	}
-	assertStandardApprovalNoWrites(t, pool)
+	assertStandardApprovalNoWrites(t, t.Context(), pool)
 	if _, err := pool.Exec(ctx, `DELETE FROM apps WHERE id=$1`, foreignApp); err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestPgApplicationStandardApprovalExpired(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	assertStandardApprovalNoWrites(t, pool)
+	assertStandardApprovalNoWrites(t, t.Context(), pool)
 }
 
 func TestPgApplicationStandardReviewRetainedArtifacts(t *testing.T) {
@@ -210,13 +210,13 @@ func TestPgApplicationStandardApprovalLifecycle(t *testing.T) {
 
 func TestPgApplicationStandardApprovalRejectsChangedInputs(t *testing.T) {
 	s, pool := standardOperationPGStore(t)
-	standardApprovalRejectsChangedInputs(t, s, func() { assertStandardApprovalNoWrites(t, pool) })
+	standardApprovalRejectsChangedInputs(t, s, func() { assertStandardApprovalNoWrites(t, t.Context(), pool) })
 }
 
-func assertStandardApprovalNoWrites(t *testing.T, pool *pgxpool.Pool) {
+func assertStandardApprovalNoWrites(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	var count int
-	if err := pool.QueryRow(context.Background(), `SELECT (SELECT count(*) FROM application_standard_assignments)
+	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM application_standard_assignments)
       + (SELECT count(*) FROM application_standard_operations) + (SELECT count(*) FROM application_standard_operation_targets)
       + (SELECT count(*) FROM audit_log WHERE kind = 'application_standard.approved')`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("rejected approval wrote intent/history: %d %v", count, err)
@@ -235,7 +235,7 @@ func TestPgApplicationStandardApprovalFailureRollsBack(t *testing.T) {
 	if _, err := s.ApproveApplicationStandardReview(ctx, f.owner.PersonalOrg.ID, f.owner.Account.ID, f.plan.ID, f.plan.ApprovalHash); err == nil {
 		t.Fatal("injected failure committed")
 	}
-	assertStandardApprovalNoWrites(t, pool)
+	assertStandardApprovalNoWrites(t, t.Context(), pool)
 	if _, err := pool.Exec(ctx, `DROP TRIGGER reject_standard_approval_audit ON audit_log`); err != nil {
 		t.Fatal(err)
 	}
@@ -259,14 +259,14 @@ func TestPgApplicationStandardApprovalWriterFirst(t *testing.T) {
 	if _, err := s.ApproveApplicationStandardReview(ctx, f.owner.PersonalOrg.ID, f.owner.Account.ID, f.plan.ID, f.plan.ApprovalHash); !errors.Is(err, ErrApplicationStandardReviewBusy) {
 		t.Fatalf("in-flight writer bypassed parent fences: %v", err)
 	}
-	assertStandardApprovalNoWrites(t, pool)
+	assertStandardApprovalNoWrites(t, t.Context(), pool)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.ApproveApplicationStandardReview(ctx, f.owner.PersonalOrg.ID, f.owner.Account.ID, f.plan.ID, f.plan.ApprovalHash); !errors.Is(err, ErrApplicationStandardReviewStale) {
 		t.Fatalf("committed writer did not stale review: %v", err)
 	}
-	assertStandardApprovalNoWrites(t, pool)
+	assertStandardApprovalNoWrites(t, t.Context(), pool)
 }
 
 func TestPgApplicationStandardApprovalParentFences(t *testing.T) {
@@ -445,7 +445,7 @@ func TestPgApplicationStandardArtifactWriterFences(t *testing.T) {
 			if _, err := s.ApproveApplicationStandardReview(ctx, f.owner.PersonalOrg.ID, f.owner.Account.ID, p.ID, p.ApprovalHash); !errors.Is(err, ErrApplicationStandardReviewBusy) {
 				t.Fatalf("in-flight artifact writer bypassed approval: %v", err)
 			}
-			assertStandardApprovalNoWrites(t, pool)
+			assertStandardApprovalNoWrites(t, ctx, pool)
 		})
 	}
 	_, err = pool.Exec(ctx, `UPDATE deployments SET app_id=$1 WHERE id=$2`, f.apps[1].ID, dep.ID)
@@ -503,7 +503,7 @@ func TestPgApplicationStandardControlWriterFences(t *testing.T) {
 			if _, err := s.ApproveApplicationStandardReview(ctx, f.owner.PersonalOrg.ID, f.owner.Account.ID, p.ID, p.ApprovalHash); !errors.Is(err, ErrApplicationStandardReviewBusy) {
 				t.Fatalf("in-flight control writer bypassed approval: %v", err)
 			}
-			assertStandardApprovalNoWrites(t, pool)
+			assertStandardApprovalNoWrites(t, ctx, pool)
 		})
 	}
 	foreign, err := s.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{Email: "control-other-account@example.com", Plan: api.PlanPro})

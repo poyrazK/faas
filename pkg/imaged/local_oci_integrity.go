@@ -111,7 +111,7 @@ func readLocalOCIEntryFrom(ctx context.Context, archive io.ReadSeeker, name stri
 }
 
 func validateLocalOCIEntry(hdr *tar.Header, maxBytes int64) error {
-	if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+	if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != byte(0) /* legacy regular-file tar header */ {
 		return fmt.Errorf("OCI entry %q is not a regular file", hdr.Name)
 	}
 	if hdr.Size < 0 || hdr.Size > maxBytes {

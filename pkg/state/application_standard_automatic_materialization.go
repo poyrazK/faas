@@ -31,24 +31,25 @@ func standardEnrollmentClaimValid(c ApplicationStandardEnrollmentClaim) bool {
 
 // Resolve only the pins captured at the ownership boundary. Publishing or
 // advancing admission cannot silently move this service to another version.
-func resolveAutomaticStandardEnrollment(s standardReviewSnapshot, now time.Time) (standardReviewAppSnapshot, ApplicationStandardReviewedApp, string, error) {
+// Invalid inputs become durable blocker codes, not transient worker errors.
+func resolveAutomaticStandardEnrollment(s standardReviewSnapshot, now time.Time) (standardReviewAppSnapshot, ApplicationStandardReviewedApp, string) {
 	var app standardReviewAppSnapshot
 	var proposed ApplicationStandardReviewedApp
 	var err error
 	s, err = normalizeStandardReviewSnapshot(s)
 	if err != nil {
-		return app, proposed, "invalid_enrollment_inputs", nil
+		return app, proposed, "invalid_enrollment_inputs"
 	}
 	if s.DeletedPending || s.OrgStatus != string(OrgStatusActive) || !s.ScopeOwned || len(s.Applications) != 1 {
-		return app, proposed, "application_scope_not_active", nil
+		return app, proposed, "application_scope_not_active"
 	}
 	app = s.Applications[0]
 	if !app.HasEnrollment || app.Enrollment.OrgID != app.OrgID || app.Enrollment.ProjectID != app.ProjectID {
-		return app, proposed, "invalid_enrollment_scope", nil
+		return app, proposed, "invalid_enrollment_scope"
 	}
 	versions, err := standardSnapshotVersions(s)
 	if err != nil {
-		return app, proposed, "invalid_standard_version", nil
+		return app, proposed, "invalid_standard_version"
 	}
 	assignments := make([]appstandards.Assignment, 0, len(s.Assignments))
 	for _, a := range s.Assignments {
@@ -56,24 +57,24 @@ func resolveAutomaticStandardEnrollment(s standardReviewSnapshot, now time.Time)
 	}
 	selection, err := appstandards.SelectAdopted(appstandards.ApplicationOwnership{ID: app.AppID, OrgID: app.OrgID, ProjectID: app.ProjectID}, assignments, app.Enrollment.Adoptions, versions, api.ApplicationStandardResolverLimits())
 	if err != nil {
-		return app, proposed, "invalid_standard_adoption", nil
+		return app, proposed, "invalid_standard_adoption"
 	}
 	proposed, err = resolveStandardReviewedApp(app, selection, selection, now)
 	if err != nil {
-		return app, proposed, "invalid_application_projection", nil
+		return app, proposed, "invalid_application_projection"
 	}
 	blockers := standardReviewAppBlockers(app, proposed)
 	refs := map[appstandards.Field]map[string]bool{appstandards.LogDestinations: {}, appstandards.TrustedPublishers: {}}
 	blockers = append(blockers, bindStandardReviewAppResources(s, app, proposed, refs)...)
 	blockers = append(blockers, standardReviewArtifactBlockers(s.Publishers, app, proposed, now)...)
 	if len(blockers) > 0 {
-		return app, proposed, blockers[0].Code, nil
+		return app, proposed, blockers[0].Code
 	}
 	delta := len(standardReviewStrings(proposed.Effective.Values[appstandards.LogDestinations])) - len(app.Drains)
 	if delta > 0 && app.AccountDrainCount+delta > app.AccountPlan.LogDrainPerAccount() {
-		return app, proposed, "plan_log_drain_account_limit", nil
+		return app, proposed, "plan_log_drain_account_limit"
 	}
-	return app, proposed, "", nil
+	return app, proposed, ""
 }
 
 func standardSnapshotVersions(s standardReviewSnapshot) (map[appstandards.VersionKey]appstandards.PublishedVersion, error) {

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * A scope or application condition that prevents approval of the saved review.
+ */
 export type ApplicationStandardReviewBlocker = {
   app_id?: string;
   scope?: 'organization' | 'project' | 'application';

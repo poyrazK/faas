@@ -21,11 +21,11 @@ func composeRuntimeScanRoots(ctx context.Context, request runtimescan.Request, m
 		}
 		root := mounts[source.Role()]
 		if source.Kind == "full-rootfs" {
-			if err := checkRuntimeScanFullRootfsMarker(root, true); err != nil {
+			if err := checkRuntimeScanFullRootfsMarker(ctx, root, true); err != nil {
 				return nil, err
 			}
 		} else {
-			if err := checkRuntimeScanFullRootfsMarker(root, false); err != nil {
+			if err := checkRuntimeScanFullRootfsMarker(ctx, root, false); err != nil {
 				return nil, err
 			}
 			root = filepath.Join(root, "upper")
@@ -52,8 +52,8 @@ func composeRuntimeScanRoots(ctx context.Context, request runtimescan.Request, m
 	return roots, nil
 }
 
-func checkRuntimeScanFullRootfsMarker(dir string, expected bool) error {
-	present, err := scanview.FullRootfsMarkerPresent(context.Background(), dir)
+func checkRuntimeScanFullRootfsMarker(ctx context.Context, dir string, expected bool) error {
+	present, err := scanview.FullRootfsMarkerPresent(ctx, dir)
 	if err != nil {
 		return err
 	}

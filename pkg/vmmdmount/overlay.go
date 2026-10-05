@@ -51,6 +51,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/runtimescan"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,7 +68,7 @@ import (
 // On non-Linux dev (macOS / Windows) the function never runs —
 // the gRPC handler is metal-only, and the unit test in
 // overlay_test.go uses a stub for the syscall.
-const OverlayStagingRoot = "/dev/shm/faas-base-staging"
+const OverlayStagingRoot = runtimescan.StagingRoot
 
 // OverlayMountPrefix is the basename prefix for upper/work/merged
 // subdirs. Picked to be visually distinct from

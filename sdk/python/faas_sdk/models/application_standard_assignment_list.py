@@ -18,6 +18,8 @@ T = TypeVar("T", bound="ApplicationStandardAssignmentList")
 
 @_attrs_define
 class ApplicationStandardAssignmentList:
+    """Page of retained assignments with an optional exclusive cursor for the next page."""
+
     assignments: list[ApplicationStandardAssignment]
     next_page_after: UUID | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

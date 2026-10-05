@@ -38,7 +38,7 @@ func (m *MemStore) ClaimApplicationStandardEnrollment(ctx context.Context, owner
 	m.queueExpiredStandardExceptionsLocked(now)
 	entries := []ApplicationStandardEnrollment{}
 	for _, e := range m.applicationStandardEnrollments {
-		if e.State != "pending" && !(e.State == "blocked" && !e.UpdatedAt.Add(api.ApplicationStandardBlockedRetry).After(now)) {
+		if e.State != "pending" && (e.State != "blocked" || e.UpdatedAt.Add(api.ApplicationStandardBlockedRetry).After(now)) {
 			continue
 		}
 		held := m.applicationStandardEnrollmentClaims[canonicalStandardUUID(e.AppID)]
@@ -104,10 +104,7 @@ func (m *MemStore) MaterializeApplicationStandardEnrollment(ctx context.Context,
 	if err != nil {
 		return ApplicationStandardEnrollment{}, err
 	}
-	app, proposed, code, err := resolveAutomaticStandardEnrollment(snapshot, now)
-	if err != nil {
-		return ApplicationStandardEnrollment{}, err
-	}
+	app, proposed, code := resolveAutomaticStandardEnrollment(snapshot, now)
 	if code != "" {
 		return m.blockStandardEnrollmentLocked(key, c, current, code, now), nil
 	}

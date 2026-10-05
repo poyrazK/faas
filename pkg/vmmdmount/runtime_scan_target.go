@@ -2,13 +2,14 @@ package vmmdmount
 
 import (
 	"errors"
+	"github.com/onebox-faas/faas/pkg/runtimescan"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-const RuntimeScanTargetPrefix = "imaged-runtime-scan-"
+const RuntimeScanTargetPrefix = runtimescan.TargetPrefix
 
 type RuntimeScanTarget struct {
 	parent, root     *os.Root
