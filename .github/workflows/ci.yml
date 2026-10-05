@@ -722,8 +722,7 @@ jobs:
       matrix:
         include:
           - id: a
-            # Retain the live branch-protection context; state shards stay separate.
-            label: state/reconcile/reposcan
+            label: parity/operations/reconcile/reposcan
             # Bridge, GitOps, and customer-operation acceptance require PostgreSQL.
             package_pattern: '/(pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
             coverage_file: cover-shard2a.out
