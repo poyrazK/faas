@@ -1,4 +1,4 @@
-// adr: 583
+// adr: 585
 package state
 
 import (
@@ -36,6 +36,8 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"object_bucket_lifecycle":                  CloneSchemaConfiguration,
 		"object_bucket_notifications":              CloneSchemaConfiguration,
 		"object_bucket_object_lock":                CloneSchemaConfiguration,
+		"object_version_protection":                CloneSchemaConfiguration,
+		"managed_postgres_usage_imports":           CloneSchemaIdentity,
 		"object_bucket_versioning":                 CloneSchemaConfiguration,
 		"object_s3_copy_source_grants":             CloneSchemaConfiguration,
 		"object_s3_copy_source_epochs":             CloneSchemaConfiguration,

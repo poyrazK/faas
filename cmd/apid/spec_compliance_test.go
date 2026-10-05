@@ -1018,6 +1018,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_lock.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_object_lock.go"),
+		filepath.Join(root, "pkg", "api", "object_version_protection.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_versioning.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_s3_copy_sources.go"),
@@ -1073,6 +1074,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
 		filepath.Join(root, "pkg", "api", "managed_postgres_diagnostics.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_usage_import.go"),
 		filepath.Join(root, "pkg", "api", openapiContractFile),
 		filepath.Join(root, "pkg", "api", executionsFile),
 		filepath.Join(root, "pkg", "api", executionWorkflowManagedFile),
@@ -1080,7 +1082,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", executionArtifactGrantsFile),
 		filepath.Join(root, "pkg", "api", appTasksFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
-		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-583
+		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-585
 		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", "dev_bridge.go"),

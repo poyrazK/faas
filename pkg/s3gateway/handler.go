@@ -294,7 +294,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPut && r.URL.Query().Has("encryption") {
 		bodyLimit = api.MaxObjectBucketEncryptionBodyBytes
 	}
-	if r.Method == http.MethodPut && r.URL.Query().Has("object-lock") {
+	if r.Method == http.MethodPut && (r.URL.Query().Has("object-lock") || r.URL.Query().Has("retention") || r.URL.Query().Has("legal-hold")) {
 		bodyLimit = api.MaxObjectLockBodyBytes
 	}
 	if r.Method == http.MethodPut && r.URL.Query().Get("uploadId") != "" {
@@ -498,6 +498,14 @@ func validDelimiter(delimiter string) bool {
 func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
 	query := operationQuery(r.URL.Query())
 	query.Del("x-id")
+	if query.Has("retention") || query.Has("legal-hold") {
+		kind := "retention"
+		if query.Has("legal-hold") {
+			kind = "legal_hold"
+		}
+		h.objectVersionProtection(w, r, req, key, kind)
+		return
+	}
 	if query.Has("tagging") {
 		if !queryKeysOnly(query, "tagging", "versionId") {
 			h.unsupported(w, r, req.requestID)
@@ -960,6 +968,11 @@ func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requ
 	resource := r.URL.Path
 	if errors.Is(err, state.ErrObjectBucketWriteFenced) {
 		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Bucket writes are temporarily paused for checkpoint capture.", resource, req.requestID)
+		return
+	}
+	if errors.Is(err, state.ErrObjectVersionProtectionPending) {
+		w.Header().Set("Retry-After", "30")
+		writeS3Error(w, http.StatusConflict, "OperationAborted", "Object version protection is pending.", resource, req.requestID)
 		return
 	}
 	if errors.Is(err, objectstorage.ErrNotFound) {

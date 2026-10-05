@@ -2041,6 +2041,7 @@
       "secret_reload_signal",
       "secret_scanned_at",
       "service_rollout_handoff",
+      "serving_ended_at",
       "sidecars",
       "snapshot_miss_backoff_until",
       "snapshot_miss_count",
@@ -3818,6 +3819,27 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_usage_imports",
+    "columns": [
+      "account_id",
+      "actor_id",
+      "after_records",
+      "before_records",
+      "created_at",
+      "database_id",
+      "evidence_reference",
+      "evidence_sha256",
+      "import_id",
+      "policy",
+      "preview_revision",
+      "reason",
+      "request",
+      "request_sha256",
+      "result"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "managed_realtime_channel_heads",
     "columns": [
       "channel",
@@ -4736,6 +4758,28 @@
       "key_prefix",
       "max_bytes",
       "name",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "object_version_protection",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bucket_id",
+      "created_at",
+      "dispatched",
+      "id",
+      "intent",
+      "last_error_code",
+      "lease_token",
+      "lease_until",
+      "native_version_id",
+      "object_key",
+      "public_version_id",
+      "retry_at",
+      "state",
       "updated_at"
     ],
     "kind": "configuration"

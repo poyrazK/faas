@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 583
+// adr: 585
 package state_test
 
 import (
@@ -59,6 +59,7 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 		{Table: "object_bucket_lifecycle", Code: "isolated_strategy_unavailable"},
 		{Table: "object_bucket_notifications", Code: "isolated_strategy_unavailable"},
 		{Table: "object_bucket_object_lock", Code: "isolated_strategy_unavailable"},
+		{Table: "object_version_protection", Code: "isolated_strategy_unavailable"},
 		{Table: "object_bucket_versioning", Code: "isolated_strategy_unavailable"},
 		{Table: "object_s3_copy_source_grants", Code: "isolated_strategy_unavailable"},
 		{Table: "object_s3_copy_source_epochs", Code: "isolated_strategy_unavailable"},

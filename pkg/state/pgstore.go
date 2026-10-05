@@ -22359,6 +22359,24 @@ func (s *PgStore) ReserveIdempotent(ctx context.Context, accountID, key string, 
 	return res, nil
 }
 
+// ReclaimIdempotent turns a completed response back into an in-flight
+// reservation for the caller, but only while the row still holds exactly
+// status and body (what the caller read). apid uses it when a replay would
+// return an outcome that is no longer true, such as a deployment whose build
+// has since failed. Two concurrent reclaims of one row: exactly one wins.
+func (s *PgStore) ReclaimIdempotent(ctx context.Context, accountID, key string, status int, body []byte) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`update idempotency_keys
+		    set response_status = 0, response_body = ''::bytea, created_at = now()
+		  where account_id = $1 and key = $2
+		    and response_status = $3 and response_body = $4`,
+		accountID, key, status, body)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // ReleaseIdempotent drops an in-flight reservation without storing a
 // response, so the next request with the key runs instead of waiting out
 // abandonAfter. A completed response is never touched.
@@ -25199,6 +25217,9 @@ func mapErr(err error) error {
 			}
 			return err
 		case pgerrcode.CheckViolation:
+			if pgErr.ConstraintName == "object_version_protection_fenced" {
+				return ErrConflict
+			}
 			if pgErr.ConstraintName == "queue_binding_environment_unavailable" {
 				return ErrQueueBindingEnvironmentUnavailable
 			}

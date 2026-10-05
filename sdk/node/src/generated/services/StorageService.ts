@@ -45,6 +45,11 @@ import type { ObjectTaggingResult } from '../models/ObjectTaggingResult.js';
 import type { ObjectUploadRoute } from '../models/ObjectUploadRoute.js';
 import type { ObjectUploadRouteList } from '../models/ObjectUploadRouteList.js';
 import type { ObjectVersionDeleteResult } from '../models/ObjectVersionDeleteResult.js';
+import type { ObjectVersionLegalHoldRequest } from '../models/ObjectVersionLegalHoldRequest.js';
+import type { ObjectVersionLegalHoldResult } from '../models/ObjectVersionLegalHoldResult.js';
+import type { ObjectVersionProtection } from '../models/ObjectVersionProtection.js';
+import type { ObjectVersionRetentionRequest } from '../models/ObjectVersionRetentionRequest.js';
+import type { ObjectVersionRetentionResult } from '../models/ObjectVersionRetentionResult.js';
 import type { ObjectWriteReceipt } from '../models/ObjectWriteReceipt.js';
 import type { ObjectWriteReceiptList } from '../models/ObjectWriteReceiptList.js';
 import type { Problem } from '../models/Problem.js';
@@ -1130,6 +1135,221 @@ export class StorageService {
       path: {
         'slug': slug,
         'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Read exact version retention
+   * Read fresh native retention for an explicit owned version with storage manage scope and a bucket read grant. Available with enrollment disabled.
+   * @returns ObjectVersionRetentionResult Verified native version retention policy
+   * @returns Problem Retention read rejected by validation, capability, ownership or mutation fencing
+   * @throws ApiError
+   */
+  public static getObjectVersionRetention({
+    slug,
+    bucket,
+    key,
+    versionId,
+  }: {
+    /**
+     * Application owning this retention target.
+     */
+    slug: string,
+    /**
+     * Owned logical bucket for retention management.
+     */
+    bucket: string,
+    /**
+     * Logical object key whose retention is selected.
+     */
+    key: string,
+    /**
+     * Exact owned version for retention; current selection is unsupported.
+     */
+    versionId: string,
+  }): CancelablePromise<ObjectVersionRetentionResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/retention',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+    });
+  }
+  /**
+   * Request a durable exact version retention change
+   * Accept durable retention intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Event hold changes and governance bypass are unsupported.
+   * @returns ObjectVersionProtection Existing retention operation receipt
+   * @returns Problem Retention mutation rejected by validation, capability, ownership or mutation fencing
+   * @throws ApiError
+   */
+  public static putObjectVersionRetention({
+    slug,
+    bucket,
+    key,
+    versionId,
+    requestBody,
+  }: {
+    /**
+     * Application owning this retention target.
+     */
+    slug: string,
+    /**
+     * Owned logical bucket for retention management.
+     */
+    bucket: string,
+    /**
+     * Logical object key whose retention is selected.
+     */
+    key: string,
+    /**
+     * Exact owned version for retention; current selection is unsupported.
+     */
+    versionId: string,
+    requestBody: ObjectVersionRetentionRequest,
+  }): CancelablePromise<ObjectVersionProtection | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/retention',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read exact version legal hold
+   * Read fresh native legal hold for an explicit owned version with storage manage scope and a bucket read grant. Available with enrollment disabled.
+   * @returns ObjectVersionLegalHoldResult Verified native version legal hold policy
+   * @returns Problem Legal hold read rejected by validation, capability, ownership or mutation fencing
+   * @throws ApiError
+   */
+  public static getObjectVersionLegalHold({
+    slug,
+    bucket,
+    key,
+    versionId,
+  }: {
+    /**
+     * Application owning this legal hold target.
+     */
+    slug: string,
+    /**
+     * Owned logical bucket for legal hold management.
+     */
+    bucket: string,
+    /**
+     * Logical object key whose legal hold is selected.
+     */
+    key: string,
+    /**
+     * Exact owned version for legal hold; current selection is unsupported.
+     */
+    versionId: string,
+  }): CancelablePromise<ObjectVersionLegalHoldResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/legal-hold',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+    });
+  }
+  /**
+   * Request a durable exact version legal hold change
+   * Accept durable legal hold intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Event hold changes and governance bypass are unsupported.
+   * @returns ObjectVersionProtection Existing legal hold operation receipt
+   * @returns Problem Legal hold mutation rejected by validation, capability, ownership or mutation fencing
+   * @throws ApiError
+   */
+  public static putObjectVersionLegalHold({
+    slug,
+    bucket,
+    key,
+    versionId,
+    requestBody,
+  }: {
+    /**
+     * Application owning this legal hold target.
+     */
+    slug: string,
+    /**
+     * Owned logical bucket for legal hold management.
+     */
+    bucket: string,
+    /**
+     * Logical object key whose legal hold is selected.
+     */
+    key: string,
+    /**
+     * Exact owned version for legal hold; current selection is unsupported.
+     */
+    versionId: string,
+    requestBody: ObjectVersionLegalHoldRequest,
+  }): CancelablePromise<ObjectVersionProtection | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/legal-hold',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'key': key,
+        'version_id': versionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Inspect an owned version protection operation
+   * Requires storage manage scope and a bucket read grant. Available with ingress or enrollment disabled. Provider identities and worker leases are private.
+   * @returns ObjectVersionProtection Durable operation status and accepted policy
+   * @returns Problem Protection operation inspection rejected by validation, capability, ownership or mutation fencing
+   * @throws ApiError
+   */
+  public static getObjectVersionProtection({
+    slug,
+    bucket,
+    operation,
+  }: {
+    /**
+     * Application owning this protection operation target.
+     */
+    slug: string,
+    /**
+     * Owned logical bucket for protection operation management.
+     */
+    bucket: string,
+    /**
+     * Durable protection operation identity.
+     */
+    operation: string,
+  }): CancelablePromise<ObjectVersionProtection | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/protection-operations/{operation}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'operation': operation,
       },
     });
   }

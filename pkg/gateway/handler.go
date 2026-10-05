@@ -5679,7 +5679,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ADR-583: resolve source-host readiness before route substitution. Once
+	// ADR-585: resolve source-host readiness before route substitution. Once
 	// ready, the ADR-089 route matcher may select another app whose auth,
 	// admission and proxy settings apply to the rest of the request.
 	var (

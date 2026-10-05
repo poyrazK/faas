@@ -24,6 +24,18 @@ func (c *Client) ListManagedPostgresAccountingDiagnostics(ctx context.Context, a
 	return out, err
 }
 
+func (c *Client) PreviewManagedPostgresUsageImport(ctx context.Context, accountID string, request ManagedPostgresUsageImportRequest) (ManagedPostgresUsageImportResult, error) {
+	var out ManagedPostgresUsageImportResult
+	err := c.do(ctx, http.MethodPost, "/v1/admin/managed-postgres/accounting/"+url.PathEscape(accountID)+"/usage-imports/preview", request, &out)
+	return out, err
+}
+
+func (c *Client) ApplyManagedPostgresUsageImport(ctx context.Context, accountID string, request ManagedPostgresUsageImportRequest) (ManagedPostgresUsageImportResult, error) {
+	var out ManagedPostgresUsageImportResult
+	err := c.do(ctx, http.MethodPost, "/v1/admin/managed-postgres/accounting/"+url.PathEscape(accountID)+"/usage-imports", request, &out)
+	return out, err
+}
+
 func (c *Client) GetManagedPostgresUsage(ctx context.Context) (ManagedPostgresUsageResponse, error) {
 	var out ManagedPostgresUsageResponse
 	err := c.do(ctx, http.MethodGet, "/v1/account/managed-postgres-usage", nil, &out)

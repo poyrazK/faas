@@ -346,6 +346,10 @@ var cliCommands = []cliCommand{
 				{Name: "clear-default", Short: "Clear future defaults while keeping Object Lock enabled", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "GOVERNANCE", Short: "Set governance defaults", Positionals: []string{"<app>", "<bucket-id>"}, Flags: objectLockCLIFlags()},
 				{Name: "COMPLIANCE", Short: "Set compliance defaults", Positionals: []string{"<app>", "<bucket-id>"}, Flags: objectLockCLIFlags()},
+			}}, {Name: "protection", Short: "Manage exact version retention and legal holds", Subcommands: []cliSub{
+				{Name: "status", Short: "Inspect a durable protection operation", Positionals: []string{"<app>", "<bucket-id>", "<operation-id>"}},
+				{Name: "retention", Short: "Read, set or clear fixed retention", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<version-id>", "[clear operation-id | GOVERNANCE|COMPLIANCE retain-until operation-id]"}},
+				{Name: "legal-hold", Short: "Read or change an independent legal hold", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<version-id>", "[ON|OFF operation-id]"}},
 			}}, {Name: "reconcile", Short: "Start, inspect or cancel a fenced capacity inventory", Subcommands: []cliSub{
 				{Name: "start", Short: "Pause writes and request capacity reconciliation", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "status", Short: "Show reconciliation progress and reclaimed capacity", Positionals: []string{"<app>", "<bucket-id>", "<job-id>"}},
@@ -499,7 +503,14 @@ var cliCommands = []cliCommand{
 				{Name: "webhook-secret-stdin", Short: "read the webhook signing secret from stdin (this or --webhook-secret is required)"},
 				{Name: "webhook-secret", Short: "webhook signing secret (prefer --webhook-secret-stdin)", Value: "VALUE"},
 			}, Examples: []string{`printf '%s\n' "$WEBHOOK_SECRET" | gregale alerts add --app my-api --name p95-latency --metric latency_p95_ms --comparison gt --threshold 800 --window-spec 15m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin`}},
-			{Name: "info", Short: "Show one alert rule", Positionals: []string{"<alert-id>"}},
+			{Name: "info", Short: "Show one alert rule and its last delivery", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}},
+			{Name: "deliveries", Short: "List a rule's webhook deliveries, newest first", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "limit", Short: "max deliveries (1..100, default 20)", Value: "N"},
+				{Name: "include-test", Short: "include test deliveries"},
+			}},
 			{Name: "update", Short: "Update one alert rule", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
 				{Name: "webhook-secret-stdin", Short: "read the replacement webhook secret from stdin"},
@@ -1005,6 +1016,11 @@ var cliCommands = []cliCommand{
 			{Name: "list", Short: "List jobs in this account"},
 			{Name: "add", Short: "Create a new job", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "image", Value: "REF", Short: "OCI image", Req: true},
+				{Name: "command", Value: "ARGV", Short: "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi)"},
+				{Name: "ram", Value: "MB", Short: "billable memory in MB (0 = plan default)"},
+				{Name: "timeout", Value: "SECONDS", Short: "per-task wall-clock deadline (0 = plan default)"},
+				{Name: "parallelism", Value: "N", Short: "max concurrent tasks across a run (0 = plan default)"},
+				{Name: "retries", Value: "N", Short: "per-task max retries (0 = plan default)"},
 				{Name: "schedule", Value: "EXPR", Short: "recurring five-field cron schedule"},
 				{Name: "timezone", Value: "TZ", Short: "IANA timezone for the recurring schedule"},
 				{Name: "schedule-policy", Value: "JSON", Short: "versioned recurring schedule policy JSON"},
@@ -1012,6 +1028,14 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "info", Short: "Show one job", Positionals: []string{"<name>"}},
 			{Name: "update", Short: "Update one job", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "image", Value: "REF", Short: "new OCI image"},
+				{Name: "command", Value: "ARGV", Short: "new comma-separated entrypoint"},
+				{Name: "ram", Value: "MB", Short: "new RAM (MB)"},
+				{Name: "timeout", Value: "SECONDS", Short: "new per-task timeout"},
+				{Name: "parallelism", Value: "N", Short: "new max parallel tasks"},
+				{Name: "retries", Value: "N", Short: "new per-task max retries"},
+				{Name: "pause", Short: "halt future dispatches (status=paused)"},
+				{Name: "resume", Short: "resume dispatches (status=active)"},
 				{Name: "schedule", Value: "EXPR", Short: "replace recurring cron schedule"},
 				{Name: "timezone", Value: "TZ", Short: "replace schedule IANA timezone"},
 				{Name: "unschedule", Short: "remove recurring schedule"},
@@ -1020,6 +1044,9 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "rm", Short: "Soft-delete one job", Positionals: []string{"<name>"}},
 			{Name: "run", Short: "Dispatch a new run (fan-out N tasks)", Positionals: []string{"<job-name>"}, Flags: []cliFlag{
+				{Name: "tasks", Value: "N", Short: "number of tasks to fan out (or use --input)"},
+				{Name: "retries", Value: "N", Short: "override retry max for this run"},
+				{Name: "timeout", Value: "SECONDS", Short: "override task timeout for this run"},
 				{Name: "input", Value: "ID=REF", Short: "repeatable input binding"},
 				{Name: "input-manifest-uri", Value: "URI", Short: "account-readable input manifest object"},
 				{Name: "input-manifest-sha256", Value: "DIGEST", Short: "SHA-256 of exact manifest bytes"},
@@ -1068,6 +1095,7 @@ var cliCommands = []cliCommand{
 			{Name: "run", Short: "Trigger a new workflow run", Positionals: []string{"<workflow-name>"}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "input", Short: "JSON input payload (default {})", Value: "JSON"}}},
 			{Name: "status", Short: "Show details of a workflow run", Positionals: []string{"<run_id>"}},
 			{Name: "steps", Short: "List steps for a workflow run", Positionals: []string{"<run_id>"}},
+			{Name: "attempts", Short: "List retry attempts for one step of a workflow run", Positionals: []string{"<run_id>", "<step_name>"}},
 			{Name: "cancel", Short: "Cancel an active workflow run", Positionals: []string{"<run_id>"}},
 			{Name: "events", Short: "Send external event to a workflow run", Positionals: []string{"<run_id>", "<event_name>"}},
 		},
@@ -1172,7 +1200,7 @@ var cliCommands = []cliCommand{
 			"gregale deployment wait v42 --app my-api",
 		},
 		Subcommands: []cliSub{
-			{Name: "advance", Positionals: []string{"<ID>"}, Short: "Advance a canary by one stage with route enforcement", Examples: []string{"gregale deployment advance DEPLOYMENT_UUID --expected-step 1"}, Flags: []cliFlag{{Name: "expected-step", Value: "N", Short: "observed current canary step", Req: true}}},
+			{Name: "advance", Positionals: []string{"<ID|vN>"}, Short: "Advance a canary by one stage with route enforcement", Examples: []string{"gregale deployment advance DEPLOYMENT_UUID --expected-step 1", "gregale deployment advance v42 --app my-api --expected-step 1"}, Flags: []cliFlag{{Name: "expected-step", Value: "N", Short: "observed current canary step (see deployment summary)", Req: true}, {Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
 			{Name: "summary", Short: "Show the release diff and rollback target", Examples: []string{"gregale deployment summary v42 --app my-api", "gregale deployment summary v42 --app my-api --json"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
 			}},
@@ -1352,8 +1380,8 @@ var cliCommands = []cliCommand{
 		Short:   "Manage custom domains",
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List custom domain bindings"},
-			{Name: subAdd, Short: "Bind a custom domain to an app or project environment", Flags: []cliFlag{
-				{Name: "domain", Short: "domain to attach", Req: true, Value: "DOMAIN"},
+			{Name: subAdd, Short: "Bind a custom domain to an app or project environment", Positionals: []string{"[<domain>]"}, Flags: []cliFlag{
+				{Name: "domain", Short: "domain to attach (or the first argument)", Value: "DOMAIN"},
 				{Name: "app", Short: "app slug to attach to", Req: true, Value: "SLUG"},
 				{Name: "environment", Short: "project environment to route this domain to", Value: "SLUG"},
 			}},
@@ -2350,6 +2378,11 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed PostgreSQL databases"},
 			{Name: "usage", Short: "Show monthly managed PostgreSQL usage and guardrail state"},
+			{Name: "usage-import", Short: "Preview or apply retained usage evidence (operator only)", Positionals: []string{"<account_id>"}, Flags: []cliFlag{
+				{Name: "file", Short: "normalized retained evidence JSON file", Value: "FILE", Req: true},
+				{Name: "apply", Short: "apply with expected_revision from preview"},
+				{Name: "session-file", Short: "private operator session cookie file (required for apply)", Value: "FILE"},
+			}, Examples: []string{"gregale postgres usage-import ACCOUNT_ID --file retained-usage.json --json"}},
 			{Name: "diagnostics", Short: "Explain accounting blockers for an account (operator only)", Positionals: []string{"<account_id>"}, Flags: []cliFlag{
 				{Name: "after", Short: "resume after next_cursor", Value: "UUID"},
 				{Name: "limit", Short: "maximum databases in this page (1-100)", Value: "N"},
@@ -2412,7 +2445,7 @@ var cliCommands = []cliCommand{
 				{Name: "work-key", Short: "JSON scalar identifying related work", Value: "JSON"},
 				{Name: "work-fairness-key", Short: "JSON scalar shared by related work keys", Value: "JSON"},
 			}},
-			{Name: "receive", Short: "Receive a wake request", Positionals: []string{"<slug>"}},
+			{Name: "receive", Short: "Wait for the next queue row the platform delivers", Positionals: []string{"<slug>"}},
 			{Name: "state", Short: "Show queue state", Positionals: []string{"<slug>"}},
 			{Name: statusLiteral, Short: "Show queue depth, scaling, bindings, and liveness", Positionals: []string{"<slug>"}},
 			{Name: "peek", Short: "Peek at the next wake", Positionals: []string{"<slug>"}},

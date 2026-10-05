@@ -1923,12 +1923,80 @@ gregale bucket object-lock status <app> <bucket-id>
 gregale bucket object-lock clear-default <app> <bucket-id>
 ```
 
-This increment covers bucket configuration. Customer per-version retention,
-legal hold and governance bypass, per-write protection snapshots and qualified
-protected deletion/lifecycle/account cleanup remain separate implementation
-work. The gateway rejects unsupported per-object lock/bypass headers. Local
-HTTP/TLS and memory/PostgreSQL tests qualify the implementation; activation and
-production provider qualification remain deployment work.
+[ADR-584](adr/584-durable-object-version-protection.md) adds the per-version
+management described below. Per-write protection snapshots, event-hold changes,
+governance bypass and protected lifecycle deletion remain separate work. The
+gateway rejects unsupported per-object write protection/bypass headers. New
+Object Lock enrollment remains disabled for release. Local tests qualify the
+implementation; production provider activation remains deployment work.
+
+## Per-version retention and legal holds
+
+Select an explicit owned public version UUIDv4 from version listing or a write
+receipt. The literal `null` is accepted only in an Object Lock bucket with fresh
+Enabled native versioning. There is no implicit current selector. Foreign
+versions, cross-key references and native delete markers are rejected.
+
+Control routes use `?key=<url-encoded-key>&version_id=<public-version>`:
+
+- `GET`/`PUT .../objects/protection/retention`
+- `GET`/`PUT .../objects/protection/legal-hold`
+- `GET .../protection-operations/<operation-id>` for durable progress.
+
+The prefix is `/v1/apps/{slug}/buckets/{bucket}`. GET reads native policy and
+requires the bucket read grant. PUT requires the write grant, storage manage
+scope, existing MFA policy, ingress and explicit backend Object Lock enrollment.
+The capability response advertises `version_retention` and `version_legal_hold`.
+Inspection and accepted recovery remain available when enrollment is disabled.
+Receipt inspection also works while backend placement is unavailable.
+
+Create a canonical UUIDv4 operation ID and reuse it for retries:
+
+```json
+{"id":"<operation-id>","retention":{"mode":"COMPLIANCE","retain_until_date":"2027-01-01T00:00:00Z"}}
+```
+
+Legal hold uses `{"id":"<operation-id>","legal_hold":{"status":"ON"}}`
+or `OFF`. An explicit empty `retention:{}` clears expired/no fixed retention.
+Active retention cannot be shortened or cleared, and active COMPLIANCE cannot
+be downgraded. GOVERNANCE does not imply bypass. Dates round upward to native
+millisecond precision. Event-hold changes, governance bypass and fixed retention
+changes over existing event holds are rejected. Event-hold observations remain
+readable. Nulls, duplicate keys, unknown fields and bodies over 16 KiB fail.
+
+PUT returns 202 after durable acceptance. The receipt transitions through
+`waiting`/`applying` to `ready` or `failed`; it contains the public version and
+requested policy, without private provider IDs. Reusing an ID with different
+intent conflicts. An identical active request may return the existing operation
+ID, so retain the returned ID for status and retries.
+
+Standard S3 SDK `GetObjectRetention`, `PutObjectRetention`, `GetObjectLegalHold`
+and `PutObjectLegalHold` use `?retention` or `?legal-hold` plus explicit
+`versionId`. A signed `X-Gregale-Protection-Id` is optional; S3 responses identify
+accepted work through this header. PUT returns 200 only after readback verifies
+the requested policy. Pending/conflicting work returns `OperationAborted`;
+uncertain provider outcomes return `ServiceUnavailable`. Inspect the control
+receipt or retry identical intent. Each journal sends at most one native PUT.
+
+One active protection operation per bucket temporarily blocks competing writes,
+deletion, inventory reclamation, configuration and cleanup. Reads remain
+available. Recovery uses two-minute leases, 45-second deadlines, 30-second
+retries and at most 50 due operations per sweep. Unknown/mismatched readback
+keeps the fence, including after restart. Neither elapsed time nor absence
+proves failure. A positively parsed native rejection can end the operation;
+otherwise operators must investigate provider truth without resetting dispatch
+history. Native calls are metered and do not change object byte/key capacity.
+
+Go/Node/Python clients expose the five typed protection methods. CLI examples:
+
+```sh
+gregale bucket protection retention <app> <bucket-id> <key> <version-id>
+gregale bucket protection retention <app> <bucket-id> <key> <version-id> COMPLIANCE 2027-01-01T00:00:00Z <operation-id>
+gregale bucket protection retention <app> <bucket-id> <key> <version-id> clear <operation-id>
+gregale bucket protection legal-hold <app> <bucket-id> <key> <version-id> ON <operation-id>
+gregale bucket protection legal-hold <app> <bucket-id> <key> <version-id> OFF <operation-id>
+gregale bucket protection status <app> <bucket-id> <operation-id>
+```
 
 
 ## Owned bucket and expired-account cleanup
@@ -1956,8 +2024,8 @@ Bucket deletion must return a native 204 acknowledgment or a parsed
 `NoSuchBucket`; an empty listing cannot authorize a cascade. Inactive accounts
 cannot reserve more buckets, and restoration closes at the existing grace
 expiry. Account metadata is removed only after confirmed native cleanup. New
-Object Lock enrollment remains disabled pending the remaining per-version
-customer management/protection scope.
+Object Lock enrollment remains disabled pending per-write protection snapshots
+and qualified protected lifecycle deletion.
 
 Key custody does not revoke native URLs issued before tracking, out-of-band
 writers or provider lifecycle rules. Missing proof stays pending with its
