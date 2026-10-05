@@ -3496,6 +3496,7 @@ const (
 	AppWebhookEventIssueIgnored                     AppWebhookEvent = "issue.ignored"
 	AppWebhookEventIssueRegressed                   AppWebhookEvent = "issue.regressed"
 	AppWebhookEventIssueImpactThresholdReached      AppWebhookEvent = "issue.impact_threshold_reached"
+	AppWebhookEventWorkflowFinished                 AppWebhookEvent = "workflow.finished"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3537,6 +3538,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
+	AppWebhookEventWorkflowFinished,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed

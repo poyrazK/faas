@@ -2,10 +2,10 @@ asyncapi: 3.0.0
 id: urn:gregale:events
 info:
   title: Gregale event contracts
-  version: 1.11.0
+  version: 1.12.0
   description: |
     Gregale delivers selected app lifecycle and billing events to app-owned
-    subscriptions, and cross-app statement, hostname-verification,
+    subscriptions, including terminal durable workflow outcomes, and cross-app statement, hostname-verification,
     certificate-lifecycle, deployment-outcome, and customer-lifecycle events to platform-tenant-owned subscriptions. It accepts tenant-scoped events for
     the internal content-based router, accepts external events for durable
     workflow runs, and exposes per-app FIFO queue operations. Outbound webhook
@@ -82,6 +82,14 @@ channels:
     messages:
       rolloutAborted:
         $ref: '#/components/messages/RolloutAborted'
+  workflowFinished:
+    address: workflow.finished
+    description: Emitted after a workflow run reaches succeeded, failed, or dead; resumed runs can emit again after a later terminal transition.
+    servers:
+      - $ref: '#/servers/appWebhook'
+    messages:
+      workflowFinished:
+        $ref: '#/components/messages/WorkflowFinished'
   usageStatementFinalized:
     address: usage_statement.finalized
     description: Emitted when an API consumer usage statement becomes payable.
@@ -291,6 +299,17 @@ operations:
     summary: Deliver a rollout.aborted event to a subscribed webhook.
     messages:
       - $ref: '#/channels/rolloutAborted/messages/rolloutAborted'
+    bindings:
+      http:
+        method: POST
+        bindingVersion: '0.3.0'
+  deliverWorkflowFinished:
+    action: send
+    channel:
+      $ref: '#/channels/workflowFinished'
+    summary: Deliver a workflow.finished event to a subscribed app webhook.
+    messages:
+      - $ref: '#/channels/workflowFinished/messages/workflowFinished'
     bindings:
       http:
         method: POST
@@ -555,6 +574,18 @@ components:
       contentType: application/cloudevents+json
       payload:
         $ref: '#/components/schemas/RolloutAbortedEvent'
+      bindings:
+        http:
+          headers:
+            $ref: '#/components/schemas/WebhookHeaders'
+          bindingVersion: '0.3.0'
+    WorkflowFinished:
+      name: workflow.finished
+      title: Workflow finished
+      summary: A durable workflow run reached a terminal outcome.
+      contentType: application/cloudevents+json
+      payload:
+        $ref: '#/components/schemas/WorkflowFinishedEvent'
       bindings:
         http:
           headers:
@@ -1004,6 +1035,15 @@ components:
               enum: ['rollout.aborted']
             data:
               $ref: '#/components/schemas/RolloutAbortedData'
+    WorkflowFinishedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CloudEventBase'
+        - type: object
+          properties:
+            type:
+              enum: ['workflow.finished']
+            data:
+              $ref: '#/components/schemas/WorkflowFinishedData'
     UsageStatementFinalizedEvent:
       allOf:
         - $ref: '#/components/schemas/CloudEventBase'
@@ -1268,6 +1308,18 @@ components:
         traffic_percent: { type: integer, minimum: 0, maximum: 100 }
         reason: { type: string }
         aborted_at: { type: string, format: date-time }
+      additionalProperties: false
+    WorkflowFinishedData:
+      type: object
+      description: Safe run metadata only. Inputs, outputs, and error text are omitted; use run_id with the authorized workflow-run API to fetch details.
+      required: [app_id, run_id, workflow_name, status, finished_at, resume_count]
+      properties:
+        app_id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        workflow_name: { type: string }
+        status: { type: string, enum: [succeeded, failed, dead] }
+        finished_at: { type: string, format: date-time }
+        resume_count: { type: integer, minimum: 0, maximum: 16 }
       additionalProperties: false
     UsageStatementFinalizedData:
       type: object

@@ -37,6 +37,9 @@ type PublishedEventWork struct {
 // the event was accepted. The data filter is evaluated by the scheduler.
 type PublishedEventRecipient struct {
 	WebhookEndpointID string `json:"webhook_endpoint_id,omitempty"`
+	// WebhookProvider preserves provider-specific event-source identity in the
+	// immutable fanout snapshot. Empty legacy values mean Stripe.
+	WebhookProvider InboundWebhookProvider `json:"webhook_provider,omitempty"`
 	// Workflow is an acceptance-time definition; absent for ordinary subscriptions.
 	Workflow             json.RawMessage                    `json:"workflow,omitempty"`
 	DeploymentID         string                             `json:"deployment_id,omitempty"`

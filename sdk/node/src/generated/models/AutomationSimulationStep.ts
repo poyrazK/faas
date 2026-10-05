@@ -2,13 +2,14 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AutomationSimulationAttempt } from './AutomationSimulationAttempt.js';
 /**
  * One hypothetical root or loop item with resolved data and its control-flow decision.
  */
 export type AutomationSimulationStep = {
   step_name: string;
   kind: 'run' | 'path' | 'outbound' | 'for_each' | 'join' | 'event_wait' | 'callback_wait' | 'duration_wait' | 'condition_wait';
-  state: 'would_execute' | 'mocked' | 'would_wait' | 'resolved' | 'expanded' | 'skipped' | 'blocked' | 'error';
+  state: 'would_execute' | 'mocked' | 'would_wait' | 'resolved' | 'expanded' | 'skipped' | 'blocked' | 'would_retry' | 'timed_out' | 'failed' | 'dead' | 'error';
   /**
    * Stable decision reason with no referenced customer values.
    */
@@ -20,9 +21,13 @@ export type AutomationSimulationStep = {
    */
   input?: any;
   /**
-   * Supplied successful mock or a control output; omitted when no result is known.
+   * Supplied successful mock, timeout sentinel or control output; omitted when no result is known.
    */
   output?: any;
+  /**
+   * Safe summary of supplied action attempt outcomes; mocked error text is exposed only through eligible failure context.
+   */
+  attempts?: Array<AutomationSimulationAttempt>;
   run?: string;
   path?: string;
   method?: string;

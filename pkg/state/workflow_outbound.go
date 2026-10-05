@@ -76,10 +76,10 @@ func (m *MemStore) workflowOutboundTenantLinkActiveLocked(accountID, tenantID, a
 }
 
 func outboundBindingAllows(step api.WorkflowOutboundSpec, methods, paths, bindingMethods, bindingPaths []string) bool {
-	if !(routepolicy.Policy{AllowedMethods: methods, AllowedPathPrefixes: paths}).AllowsRequest(step.Method, step.Path) {
+	if !api.WorkflowOutboundPathAllowedByPolicy(step.Method, step.Path, routepolicy.Policy{AllowedMethods: methods, AllowedPathPrefixes: paths}) {
 		return false
 	}
-	return bindingMethods == nil && bindingPaths == nil || (routepolicy.Policy{AllowedMethods: bindingMethods, AllowedPathPrefixes: bindingPaths}).AllowsRequest(step.Method, step.Path)
+	return bindingMethods == nil && bindingPaths == nil || api.WorkflowOutboundPathAllowedByPolicy(step.Method, step.Path, routepolicy.Policy{AllowedMethods: bindingMethods, AllowedPathPrefixes: bindingPaths})
 }
 func invalidOutboundBinding(name string) error {
 	return fmt.Errorf("%w: step %q requires an enabled customer managed integration with a credential and app binding allowing its route", ErrAutomationInvalid, name)

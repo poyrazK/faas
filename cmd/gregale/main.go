@@ -504,8 +504,11 @@ func run(args []string) (status int) {
 		// lives in commands_jobs.go (cmdJobs).
 		return cmdJobs(args[1:])
 	case "workflows":
-		// ADR-081: durable execution workflows (list|run|status|steps|cancel|events).
+		// ADR-081: durable execution workflows (list|run|status|steps|resume|resumes|cancel|events).
 		return cmdWorkflows(args[1:])
+	case "automations":
+		// Manage declarative automation definitions: validate, save a draft, publish.
+		return cmdAutomations(args[1:])
 	case "commit":
 		return cmdCommit(args[1:])
 	case "events":

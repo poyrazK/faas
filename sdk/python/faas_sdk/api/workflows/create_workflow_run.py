@@ -16,8 +16,11 @@ def _get_kwargs(
     name: str,
     *,
     body: Any | Unset = UNSET,
+    idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(idempotency_key, Unset):
+        headers["Idempotency-Key"] = idempotency_key
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -107,17 +110,23 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
+    idempotency_key: str | Unset = UNSET,
 ) -> Response[Problem | WorkflowRunResponse]:
     """Start a durable workflow run.
 
      Snapshots the named effective workflow definition from the app's live
     default deployment and dashboard publications and creates a pending run. The optional request body
     is
-    retained as the workflow input and may be any valid JSON value.
+    retained as the workflow input and may be any valid JSON value. An
+    optional Idempotency-Key binds this request to its original run for as
+    long as that run is retained. A matching retry returns the original
+    run, including its original definition snapshot; reusing the key with
+    different input returns 409.
 
     Args:
         slug (str):
         name (str):
+        idempotency_key (str | Unset):
         body (Any | Unset):
 
     Raises:
@@ -132,6 +141,7 @@ def sync_detailed(
         slug=slug,
         name=name,
         body=body,
+        idempotency_key=idempotency_key,
     )
 
     response = client.get_httpx_client().request(
@@ -147,17 +157,23 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
+    idempotency_key: str | Unset = UNSET,
 ) -> Problem | WorkflowRunResponse | None:
     """Start a durable workflow run.
 
      Snapshots the named effective workflow definition from the app's live
     default deployment and dashboard publications and creates a pending run. The optional request body
     is
-    retained as the workflow input and may be any valid JSON value.
+    retained as the workflow input and may be any valid JSON value. An
+    optional Idempotency-Key binds this request to its original run for as
+    long as that run is retained. A matching retry returns the original
+    run, including its original definition snapshot; reusing the key with
+    different input returns 409.
 
     Args:
         slug (str):
         name (str):
+        idempotency_key (str | Unset):
         body (Any | Unset):
 
     Raises:
@@ -173,6 +189,7 @@ def sync(
         name=name,
         client=client,
         body=body,
+        idempotency_key=idempotency_key,
     ).parsed
 
 
@@ -182,17 +199,23 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
+    idempotency_key: str | Unset = UNSET,
 ) -> Response[Problem | WorkflowRunResponse]:
     """Start a durable workflow run.
 
      Snapshots the named effective workflow definition from the app's live
     default deployment and dashboard publications and creates a pending run. The optional request body
     is
-    retained as the workflow input and may be any valid JSON value.
+    retained as the workflow input and may be any valid JSON value. An
+    optional Idempotency-Key binds this request to its original run for as
+    long as that run is retained. A matching retry returns the original
+    run, including its original definition snapshot; reusing the key with
+    different input returns 409.
 
     Args:
         slug (str):
         name (str):
+        idempotency_key (str | Unset):
         body (Any | Unset):
 
     Raises:
@@ -207,6 +230,7 @@ async def asyncio_detailed(
         slug=slug,
         name=name,
         body=body,
+        idempotency_key=idempotency_key,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -220,17 +244,23 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
+    idempotency_key: str | Unset = UNSET,
 ) -> Problem | WorkflowRunResponse | None:
     """Start a durable workflow run.
 
      Snapshots the named effective workflow definition from the app's live
     default deployment and dashboard publications and creates a pending run. The optional request body
     is
-    retained as the workflow input and may be any valid JSON value.
+    retained as the workflow input and may be any valid JSON value. An
+    optional Idempotency-Key binds this request to its original run for as
+    long as that run is retained. A matching retry returns the original
+    run, including its original definition snapshot; reusing the key with
+    different input returns 409.
 
     Args:
         slug (str):
         name (str):
+        idempotency_key (str | Unset):
         body (Any | Unset):
 
     Raises:
@@ -247,5 +277,6 @@ async def asyncio(
             name=name,
             client=client,
             body=body,
+            idempotency_key=idempotency_key,
         )
     ).parsed

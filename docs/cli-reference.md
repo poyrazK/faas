@@ -28,6 +28,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`triggers`](#triggers) | Manage unified event triggers (broker mappings + cron-linked rows) |
 | [`workers`](#workers) | Inspect and manage background worker pools |
 | [`jobs`](#jobs) | Manage jobs (run-to-completion workloads) |
+| [`automations`](#automations) | Build, monitor and control customer-built automations |
 | [`workflows`](#workflows) | Manage durable execution workflows |
 | [`dashboard`](#dashboard) | Open the account dashboard in your browser |
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
@@ -2375,6 +2376,200 @@ Remove a registry credential from the job
 | `--registry <HOST>` | registry host | required |
 
 
+## automations
+
+Build, monitor and control customer-built automations
+
+`gregale automations [<subcommand>]`
+
+Examples:
+
+```sh
+gregale automations list --app billing
+gregale automations get --app billing --name paid-invoice
+gregale automations health --app billing --name paid-invoice
+gregale automations pause --app billing --name paid-invoice --expected-version 8
+gregale automations resume --app billing --name paid-invoice --expected-version 9
+gregale automations revisions list --app billing --name paid-invoice
+gregale automations revisions show --app billing --name paid-invoice --revision 42
+gregale automations validate --app billing --file automation.yaml
+gregale automations simulate --app billing --file automation.yaml --input-file sample.json
+gregale automations apply --app billing --file automation.yaml --expected-version 0
+gregale automations publish --app billing --name paid-invoice --expected-version 1
+gregale automations restore --app billing --name paid-invoice --revision 42 --expected-version 47
+gregale automations delete --app billing --name paid-invoice --expected-version 48 --yes
+```
+
+### automations list
+
+List automation versions and ownership for an app
+
+`gregale automations list --app <SLUG>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+
+### automations get
+
+Inspect automation state or export a definition
+
+`gregale automations get --app <SLUG> --name <NAME> [--definition-out <PATH>] [--published]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--definition-out <PATH>` | export the selected definition as JSON to a new file |  |
+| `--published` | export the published definition instead of the draft |  |
+
+### automations health
+
+Show bounded run reliability and failed-step metrics
+
+`gregale automations health --app <SLUG> --name <NAME> [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--created-after <RFC3339>` | inclusive RFC3339 window start (max 30 days) |  |
+| `--created-before <RFC3339>` | inclusive RFC3339 window end |  |
+
+### automations pause
+
+Stop future scheduled and event-triggered admissions
+
+`gregale automations pause --app <SLUG> --name <NAME> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--expected-version <N>` | current automation version | required |
+
+### automations resume
+
+Resume automatic scheduled and event-triggered admissions
+
+`gregale automations resume --app <SLUG> --name <NAME> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--expected-version <N>` | current automation version | required |
+
+### automations revisions
+
+Inspect immutable published snapshots
+
+#### automations revisions list
+
+List published revisions for an automation
+
+`gregale automations revisions list --app <SLUG> --name <NAME> [--limit <N>] [--offset <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--limit <N>` | page size (1..100, default 50) |  |
+| `--offset <N>` | number of revisions to skip |  |
+
+#### automations revisions show
+
+Inspect a revision or export its definition
+
+`gregale automations revisions show --app <SLUG> --name <NAME> --revision <N> [--definition-out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--revision <N>` | published revision number | required |
+| `--definition-out <PATH>` | export the definition as JSON to a new file |  |
+
+### automations restore
+
+Restore a published revision as a draft
+
+`gregale automations restore --app <SLUG> --name <NAME> --revision <N> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--revision <N>` | published revision number to restore | required |
+| `--expected-version <N>` | current version; use 0 if deleted | required |
+
+### automations delete
+
+Delete an automation using its current version
+
+`gregale automations delete --app <SLUG> --name <NAME> --expected-version <N> --yes [--restore-manifest]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--expected-version <N>` | current automation version | required |
+| `--yes` | required explicit confirmation of automation deletion | required |
+| `--restore-manifest` | allow the current YAML definition to own this automation again |  |
+
+### automations validate
+
+Validate an automation definition without saving it
+
+`gregale automations validate --app <SLUG> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | YAML or JSON definition file | required |
+
+### automations simulate
+
+Trace an automation using sample input and mocked outputs, without running steps
+
+`gregale automations simulate --app <SLUG> --file <PATH> [--input-file <PATH>] [--mock-outputs-file <PATH>] [--mock-item-outputs-file <PATH>] [--mock-attempts-file <PATH>] [--require-complete]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | YAML or JSON definition file | required |
+| `--input-file <PATH>` | sample workflow input JSON file |  |
+| `--mock-outputs-file <PATH>` | JSON object of action outputs keyed by step name |  |
+| `--mock-item-outputs-file <PATH>` | JSON object of for_each output arrays keyed by step name |  |
+| `--mock-attempts-file <PATH>` | JSON object of ordered attempt outcomes keyed by step name |  |
+| `--require-complete` | fail if mocks leave steps unresolved |  |
+
+### automations apply
+
+Save an automation definition as a draft
+
+`gregale automations apply --app <SLUG> --file <PATH> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | YAML or JSON definition file | required |
+| `--expected-version <N>` | current version; use 0 for a new draft | required |
+
+### automations publish
+
+Publish the current automation draft
+
+`gregale automations publish --app <SLUG> --name <NAME> --expected-version <N> [--take-over-manifest]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--expected-version <N>` | current version of the draft | required |
+| `--take-over-manifest` | explicitly take over YAML ownership |  |
+
+
 ## workflows
 
 Manage durable execution workflows
@@ -2384,6 +2579,25 @@ Manage durable execution workflows
 ### workflows list
 
 List workflow runs for an app
+
+`gregale workflows list --app <SLUG> [--limit <N>] [--offset <N>] [--status <STATUS>] [--workflow-name <NAME>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--limit <N>` | page size (1..100) |  |
+| `--offset <N>` | page offset |  |
+| `--status <STATUS>` | filter by workflow run status |  |
+| `--workflow-name <NAME>` | filter by exact workflow name |  |
+| `--created-after <RFC3339>` | inclusive RFC3339 creation-time start |  |
+| `--created-before <RFC3339>` | inclusive RFC3339 creation-time end |  |
+
+Examples:
+
+```sh
+gregale workflows list --app billing --workflow-name paid-invoice --status failed
+gregale workflows list --app billing --created-after 2026-10-01T00:00:00Z --created-before 2026-10-05T23:59:59Z
+```
 
 ### workflows schedules
 
@@ -2399,12 +2613,13 @@ Inspect recurring workflow schedules and their latest admission
 
 Trigger a new workflow run
 
-`gregale workflows run --app <slug> [--input <JSON>] <workflow-name>`
+`gregale workflows run --app <slug> [--input <JSON>] [--idempotency-key <KEY>] <workflow-name>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--input <JSON>` | JSON input payload (default {}) |  |
+| `--idempotency-key <KEY>` | stable key for retrying an uncertain run start |  |
 
 ### workflows status
 
@@ -2429,6 +2644,23 @@ List retry attempts and managed effect delivery status for a workflow step
 Retry one safely resumable failed HTTP step
 
 `gregale workflows retry <run_id> <step_name>`
+
+### workflows resume
+
+Resume eligible failed actions in a workflow run
+
+`gregale workflows resume --expected-resume-count <N> [--idempotency-key <KEY>] <run_id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-resume-count <N>` | current resume_count shown by workflows status | required |
+| `--idempotency-key <KEY>` | stable key for retrying the same resume request |  |
+
+### workflows resumes
+
+List continuation history for a workflow run
+
+`gregale workflows resumes <run_id>`
 
 ### workflows cancel
 

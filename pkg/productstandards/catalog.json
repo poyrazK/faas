@@ -8,8 +8,8 @@
       "category": "api-contract",
       "surface": "event, queue, and workflow contracts",
       "status": "partial",
-      "scope": "The published AsyncAPI 3.0 document describes outbound app-webhook channels for app.parked, app.woken, deployment.live, deployment.failed, rollout.completed, rollout.aborted, usage_statement.finalized, and the tenant-scoped platform_tenant.statement.finalized, platform_tenant.hostname.verified, platform_tenant.surface.certificate.changed, platform_tenant.surface.deployment.changed, platform_tenant.customer.linked, and platform_tenant.customer.offboarded events; the authenticated internal event publish ingress at POST /v1/events:publish; the workflow external-event injection channel at POST /v1/workflows/runs/{id}/events; per-app FIFO queue send/receive/ack channels; and explicitly addressed application inbox and outbox endpoints.",
-      "limitations": "Queue introspection/dead-letter/replay endpoints, the scheduler-internal subscription delivery path, trigger broker contracts, workflow lifecycle/audit events, and the remaining closed-vocabulary webhook events are not yet described; legacy JSON webhook delivery remains outside this CloudEvents contract.",
+      "scope": "The published AsyncAPI 3.0 document describes outbound app-webhook channels for app.parked, app.woken, deployment.live, deployment.failed, rollout.completed, rollout.aborted, workflow.finished, usage_statement.finalized, and the tenant-scoped platform_tenant.statement.finalized, platform_tenant.hostname.verified, platform_tenant.surface.certificate.changed, platform_tenant.surface.deployment.changed, platform_tenant.customer.linked, and platform_tenant.customer.offboarded events; the authenticated internal event publish ingress at POST /v1/events:publish; the workflow external-event injection channel at POST /v1/workflows/runs/{id}/events; per-app FIFO queue send/receive/ack channels; and explicitly addressed application inbox and outbox endpoints.",
+      "limitations": "Queue introspection/dead-letter/replay endpoints, the scheduler-internal subscription delivery path, trigger broker contracts, workflow lifecycle/audit event types other than workflow.finished, and the remaining closed-vocabulary webhook events are not yet described; legacy JSON webhook delivery remains outside this CloudEvents contract.",
       "docs_url": "https://www.asyncapi.com/docs/reference/specification/v3.0.0",
       "evidence": "api/asyncapi.yaml; api/openapi.yaml; pkg/productstandards/asyncapi_test.go; pkg/productstandards/asyncapi_schema.go (pinned official schema)",
       "conformance": [
@@ -232,7 +232,7 @@
       "scope": "The universal default protocol for deployed HTTP apps and the legacy bridge path.",
       "limitations": "The app must expose a reachable listener on the configured port; protocol upgrades are policy-controlled.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc9112",
-      "evidence": "docs/faas_implementation_spec.md §4.1; docs/ci-general-path.md",
+      "evidence": "docs/faas_implementation_spec.md \u00a74.1; docs/ci-general-path.md",
       "conformance": [
         {
           "fixture": "app-protocol-matrix",
@@ -251,7 +251,7 @@
       "scope": "Apps selecting http2 receive native HTTP/2 framing through the stream bridge.",
       "limitations": "The customer-facing selector is limited to the closed app_protocol set; HTTP/3 is not available.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc9113",
-      "evidence": "docs/faas_implementation_spec.md §4.1; docs/ops/h2c-rollback.md",
+      "evidence": "docs/faas_implementation_spec.md \u00a74.1; docs/ops/h2c-rollback.md",
       "conformance": [
         {
           "fixture": "app-protocol-matrix",
@@ -366,7 +366,7 @@
       "scope": "Google/GitHub sign-in and OIDC-backed deploy-token exchange use OAuth-shaped bearer flows.",
       "limitations": "Gregale does not currently expose a complete standards-based authorization-server surface for customer tenants.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc6749",
-      "evidence": "docs/STATUS.md §M5; api/openapi.yaml /v1/auth/oidc/exchange",
+      "evidence": "docs/STATUS.md \u00a7M5; api/openapi.yaml /v1/auth/oidc/exchange",
       "conformance": [
         {
           "fixture": "oauth-provider-config",
@@ -404,7 +404,7 @@
       "scope": "Gregale accepts digest-pinned OCI image references and converts image layers into its guest rootfs model.",
       "limitations": "The runtime contract remains a stateless app listener; OCI volumes and host mounts are not portable into a VM.",
       "docs_url": "https://github.com/opencontainers/image-spec",
-      "evidence": "docs/faas_implementation_spec.md §2 and §4.6; pkg/oci",
+      "evidence": "docs/faas_implementation_spec.md \u00a72 and \u00a74.6; pkg/oci",
       "conformance": [
         {
           "fixture": "oci-image-manifest",
@@ -495,7 +495,7 @@
       "scope": "Every daemon exposes Prometheus metrics for scrape-based operations and alerting.",
       "limitations": "The platform's customer API is not a generic PromQL proxy; metric names and labels are Gregale-owned contracts.",
       "docs_url": "https://prometheus.io/docs/instrumenting/exposition_formats/",
-      "evidence": "docs/faas_implementation_spec.md §4 and §12; deploy/ansible/roles/prometheus",
+      "evidence": "docs/faas_implementation_spec.md \u00a74 and \u00a712; deploy/ansible/roles/prometheus",
       "conformance": [
         {
           "fixture": "prometheus-metric-surface",
