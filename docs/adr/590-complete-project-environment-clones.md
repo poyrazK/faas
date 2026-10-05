@@ -6772,8 +6772,8 @@ actual migrated PostgreSQL persistence
 and synthetic provider replies; this does not qualify a live paid-provider common
 point. Targeted managed PostgreSQL lint passed with zero issues. Local build
 storage pressure required task-owned RAM build/cache storage; the passing APID
-run used unmodified production/test source files. No new PR is opened for this
-increment; PR #4251 is closed and the branch retains the work.
+run used unmodified production/test source files. At this checkpoint PR #4251
+was closed and the branch retained the work for further development.
 
 ### Composed source barrier preparation (2026-10-05)
 
@@ -6822,5 +6822,11 @@ tests do not qualify a live provider common point.
 
 State and APID lint passed separately with zero issues using the repository's
 pinned golangci-lint v2.4.0, built with Go 1.25.13. The newer system linter is
-not used for this qualification. This increment remains local; no new PR is
-opened and PR #4251 remains closed.
+not used for this qualification.
+
+The release increment combines original catalogue discovery, transaction
+drainage checks and private barrier preparation under ADR-590. It retains the
+data-bearing capture and public full-clone gates described above. Integrating
+current main also retains its shared-cluster test serialization and maintenance
+session authentication fixes. PR #4251 remains a closed historical proposal;
+the combined increment is prepared in a new release PR.
