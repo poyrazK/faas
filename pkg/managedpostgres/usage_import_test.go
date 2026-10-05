@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -322,5 +323,38 @@ func TestUsageImportEvidenceAllowsFinalAccountErasure(t *testing.T) {
 	var remaining int
 	if err := pg.pool.QueryRow(ctx, "SELECT count(*) FROM managed_postgres_usage_imports WHERE account_id=$1", database.AccountID).Scan(&remaining); err != nil || remaining != 0 {
 		t.Fatalf("retained after erasure: %d %v", remaining, err)
+	}
+}
+
+func TestUsageImportMigrationReplayPreservesAuditEvidence(t *testing.T) {
+	store, service, database, request, _ := usageImportFixture(t, "postgres")
+	ctx := context.Background()
+	preview, err := service.ImportUsage(ctx, database.AccountID, "operator", request, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ExpectedRevision = preview.Revision
+	applied, err := service.ImportUsage(ctx, database.AccountID, "operator", request, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pg := store.(*PostgresStore)
+	if _, err := pg.pool.Exec(ctx, "DELETE FROM goose_db_version WHERE version_id=20261004235029907"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MigrateUp(ctx, pg.pool); err != nil {
+		t.Fatalf("replay with retained evidence: %v", err)
+	}
+	replay, err := service.ImportUsage(ctx, database.AccountID, "operator", request, true)
+	if err != nil || !reflect.DeepEqual(applied, replay) {
+		t.Fatalf("receipt changed during migration replay: %+v %v", replay, err)
+	}
+	for _, query := range []string{
+		"UPDATE managed_postgres_usage_imports SET reason='changed' WHERE account_id=$1",
+		"DELETE FROM managed_postgres_usage_imports WHERE account_id=$1",
+	} {
+		if _, err := pg.pool.Exec(ctx, query, database.AccountID); err == nil {
+			t.Fatal("migration replay removed audit protection")
+		}
 	}
 }

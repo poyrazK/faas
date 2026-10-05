@@ -50,7 +50,9 @@ in one transaction. The receipt records actor, reason, evidence reference/hash,
 request/hash, price policy, preview revision, original/replacement rows and response.
 `(account_id, import_id)` durably deduplicates identical requests by the same actor;
 conflicting reuse is rejected. Replays return the original response without
-reapplying usage. Evidence is append-only while its account exists, and schema
+reapplying usage. Reapplying the schema migration preserves retained receipts and
+reinstalls their audit protection if the migration ledger has drifted.
+Evidence is append-only while its account exists, and schema
 rollback refuses to discard retained receipts.
 
 Expose `gregale postgres usage-import ACCOUNT_ID --file FILE --json` for preview,
