@@ -43,7 +43,6 @@ func TestPrimeStartupExtension(t *testing.T) {
 // its extended budget runs out. A Hobby prime (30 s deadline) and a Scale
 // wake of a live deployment keep the spec budget.
 func TestColdBootWatchdogHonoursPrimeStartupDeadline(t *testing.T) {
-	ctx := context.Background()
 	for _, tc := range []struct {
 		name    string
 		plan    api.Plan
@@ -59,16 +58,16 @@ func TestColdBootWatchdogHonoursPrimeStartupDeadline(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := state.NewMemStore()
 			_, app, dep := seedApp(t, store, tc.plan, 256, 5)
-			if err := store.UpdateDeploymentStatus(ctx, dep.ID, tc.status, ""); err != nil {
+			if err := store.UpdateDeploymentStatus(context.Background(), dep.ID, tc.status, ""); err != nil {
 				t.Fatal(err)
 			}
-			ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateColdBooting), 256, state.DefaultLocalNodeName, "")
+			ins, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateColdBooting), 256, state.DefaultLocalNodeName, "")
 			if err != nil {
 				t.Fatal(err)
 			}
 			engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 			now := time.Now()
-			NewWatchdog(store, engine, nil).WithClock(func() time.Time { return now.Add(tc.age) }).sweepRuns(ctx)
+			NewWatchdog(store, engine, nil).WithClock(func() time.Time { return now.Add(tc.age) }).sweepRuns(context.Background())
 			survived := rowState(t, store, ins.ID) == string(state.StateColdBooting)
 			if survived != tc.survive {
 				t.Fatalf("instance survived=%v at %s, want %v", survived, tc.age, tc.survive)
