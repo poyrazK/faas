@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -189,21 +190,22 @@ func writeProtectionControlE2E(t *testing.T, s *server, st state.Store, acct sta
 	if err := s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
-	var gateway http.Handler
-	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gateway.ServeHTTP(w, r) }))
+	var gateway atomic.Pointer[s3gateway.Handler]
+	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gateway.Load().ServeHTTP(w, r) }))
 	defer public.Close()
 	s.objectStorage.PublicEndpoint = public.URL
-	h, err := s3gateway.New(s3gateway.Config{Registry: s.objectStorage, Store: st.(s3gateway.Store), RequestMetrics: st.(state.ObjectStorageProviderUsageStore), SpoolDir: t.TempDir(), OpenSecret: func(blob []byte) (string, error) {
+	gatewayConfig := s3gateway.Config{Registry: s.objectStorage, Store: st.(s3gateway.Store), RequestMetrics: st.(state.ObjectStorageProviderUsageStore), SpoolDir: t.TempDir(), OpenSecret: func(blob []byte) (string, error) {
 		ns, plain, e := secretbox.OpenBytes(identity, blob)
 		if e != nil || ns != s3gateway.CredentialSecretNamespace {
 			return "", objectstorage.ErrConfiguration
 		}
 		return string(plain), nil
-	}})
+	}}
+	h, err := s3gateway.New(gatewayConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway = h
+	gateway.Store(h)
 	management := httptest.NewServer(s.handler())
 	defer management.Close()
 	client := api.NewClient(management.URL, bearer)
@@ -259,6 +261,12 @@ func writeProtectionControlE2E(t *testing.T, s *server, st state.Store, acct sta
 		t.Fatal(err)
 	}
 	s.WithObjectStorage(objectLockTestRegistry(t, upstream.URL, policy, objectstorage.ObjectLockConfig{}))
+	gatewayConfig.Registry = s.objectStorage
+	h, err = s3gateway.New(gatewayConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway.Store(h)
 	if got := send(signed, false); got != 200 {
 		t.Fatal("accepted URL under disabled enrollment", got)
 	}

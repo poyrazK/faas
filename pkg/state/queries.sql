@@ -4411,7 +4411,7 @@ WHERE id=$1 AND lease_token=$2 AND state='initiating' AND $3<>'';
 UPDATE object_storage_multipart_uploads SET state=$3,lease_token=NULL,lease_until=NULL,
 attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
 WHERE id=$1 AND lease_token=$2 AND
-(state IN ('completing','completing_conditional') AND $3='completed' AND NOT completion_dispatched AND encryption_snapshot='{}');
+(state IN ('completing','completing_conditional') AND $3='completed' AND NOT completion_dispatched AND encryption_snapshot='{}' AND protection_snapshot='{}');
 
 -- name: ObjectMultipartFinishVerifiedAbort :execrows
 UPDATE object_storage_multipart_uploads SET state='aborted',lease_token=NULL,lease_until=NULL,

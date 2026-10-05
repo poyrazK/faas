@@ -56,6 +56,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 590 | [Durable object write protection](590-durable-object-write-protection.md) | accepted | Immutable bounded write policies and exact native version verification for PUT, copy and multipart |
 | 589 | [Versioned business-key and customer routing for Commit](589-commit-customer-routing.md) | accepted; operator qualification only | Versioned customer-scoped business keys route unrelated Commit work independently and serialize matching work |
 | 588 | [In-place retry of a failed workflow step](588-in-place-workflow-step-retry.md) | accepted | Retry a failed step within its existing run while preserving attempt history and managed operation identity |
 | 587 | [Transactional managed HTTP workflow steps](587-transactional-workflow-http-steps.md) | accepted | Reuse customer transaction receipts and durably deliver workflow operation effects |

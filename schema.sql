@@ -18071,6 +18071,29 @@ CREATE TABLE public.workflow_events (
 
 
 --
+-- Name: workflow_operation_effects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_operation_effects (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    step_name text NOT NULL,
+    operation_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    name text NOT NULL,
+    payload jsonb NOT NULL,
+    webhook_id uuid NOT NULL,
+    event_type text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT workflow_operation_effects_event_type_check CHECK ((((octet_length(event_type) >= 1) AND (octet_length(event_type) <= 256)) AND (event_type ~ '^[a-z][a-z0-9_.-]*$'::text))),
+    CONSTRAINT workflow_operation_effects_generation_check CHECK ((generation > 0)),
+    CONSTRAINT workflow_operation_effects_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
 -- Name: workflow_run_resumes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18245,32 +18268,6 @@ CREATE TABLE public.workflow_webhook_receipts (
     CONSTRAINT workflow_webhook_receipts_status_check CHECK ((status = ANY (ARRAY['accepted'::text, 'ignored'::text]))),
     CONSTRAINT workflow_webhook_receipts_workflow_name_check CHECK (((octet_length(workflow_name) >= 1) AND (octet_length(workflow_name) <= 128)))
 );
-
---
--- Name: workflow_operation_effects; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.workflow_operation_effects (
-    id uuid NOT NULL,
-    account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
-    app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
-    run_id uuid NOT NULL,
-    step_name text NOT NULL,
-    operation_id uuid NOT NULL,
-    generation bigint NOT NULL,
-    name text NOT NULL,
-    payload jsonb NOT NULL,
-    webhook_id uuid NOT NULL,
-    event_type text NOT NULL,
-    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT workflow_operation_effects_pkey PRIMARY KEY (id),
-    CONSTRAINT workflow_operation_effects_operation_id_name_key UNIQUE (operation_id, name),
-    CONSTRAINT workflow_operation_effects_generation_check CHECK ((generation > 0)),
-    CONSTRAINT workflow_operation_effects_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
-    CONSTRAINT workflow_operation_effects_event_type_check CHECK (((octet_length(event_type) >= 1) AND (octet_length(event_type) <= 256) AND (event_type ~ '^[a-z][a-z0-9_.-]*$'::text))));
-
-CREATE INDEX workflow_operation_effects_attempt_idx
-    ON public.workflow_operation_effects USING btree (run_id, step_name, generation, name);
 
 
 --
@@ -22456,6 +22453,22 @@ ALTER TABLE ONLY public.workflow_events
 
 ALTER TABLE ONLY public.workflow_steps
     ADD CONSTRAINT workflow_foreach_position UNIQUE (run_id, foreach_parent, foreach_index);
+
+
+--
+-- Name: workflow_operation_effects workflow_operation_effects_operation_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_operation_effects
+    ADD CONSTRAINT workflow_operation_effects_operation_id_name_key UNIQUE (operation_id, name);
+
+
+--
+-- Name: workflow_operation_effects workflow_operation_effects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_operation_effects
+    ADD CONSTRAINT workflow_operation_effects_pkey PRIMARY KEY (id);
 
 
 --
@@ -27658,6 +27671,13 @@ CREATE INDEX workflow_event_receipts_run_idx ON public.workflow_event_receipts U
 --
 
 CREATE INDEX workflow_events_run_event_idx ON public.workflow_events USING btree (run_id, event_name);
+
+
+--
+-- Name: workflow_operation_effects_attempt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_operation_effects_attempt_idx ON public.workflow_operation_effects USING btree (run_id, step_name, generation, name);
 
 
 --
@@ -35438,6 +35458,22 @@ ALTER TABLE ONLY public.workflow_events
 
 ALTER TABLE ONLY public.workflow_steps
     ADD CONSTRAINT workflow_foreach_parent FOREIGN KEY (run_id, foreach_parent) REFERENCES public.workflow_steps(run_id, step_name) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_operation_effects workflow_operation_effects_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_operation_effects
+    ADD CONSTRAINT workflow_operation_effects_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_operation_effects workflow_operation_effects_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_operation_effects
+    ADD CONSTRAINT workflow_operation_effects_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

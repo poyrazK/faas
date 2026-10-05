@@ -2037,6 +2037,11 @@ bucket name while its cleanup journal is active.
 
 ### Protection on newly created S3 versions (ADR-590)
 
+Protected multipart parts share the configured aggregate upload spool and
+free-space floor with PUTs. Gregale verifies the incoming part, computes MD5
+from its bounded spool and signs the native Content-MD5 header. Insufficient
+staging capacity returns `SlowDown` before a native part write.
+
 Owned Object Lock buckets capture the verified fixed retention default and any
 explicit write protection when admitting each upload or copy. Standard signed
 `x-amz-object-lock-mode`, `x-amz-object-lock-retain-until-date` and

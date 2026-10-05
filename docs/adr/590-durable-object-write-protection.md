@@ -34,8 +34,11 @@ The native S3 adapter explicitly opts into consuming snapshots on all tracked
 write and proof paths. It stores a private SHA-256 policy proof alongside the
 private receipt/session metadata. Public metadata cannot supply or expose these
 proofs. Protected brokered PUTs sign a computed Content-MD5 and every protection
-header. Protected streaming route uploads use native SDK checksum trailers over
-TLS. No body is re-uploaded during receipt recovery.
+header. Protected multipart parts also stage under the existing aggregate disk
+and free-space budgets, verify client integrity and sign Content-MD5 before the
+native attempt. They do not change the initiation policy. Protected streaming
+route uploads use native SDK checksum trailers over TLS. No body is re-uploaded
+during receipt recovery.
 
 A mutation acknowledgment alone cannot settle a protected write. Read the exact
 non-null native version and require the receipt/session, size, ETag, private
@@ -76,6 +79,7 @@ mutation, governance bypass, or provider qualification against real services.
 
 Native protocol references: [PutObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html),
 [CreateMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html),
+[UploadPart](https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPart.html),
 and [CopyObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html).
 
 ## Validation
