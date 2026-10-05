@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/preflight"
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/realtime"
@@ -52,11 +53,18 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
-	devBridgeEnabled      bool
-	devBridgeURL          string
-	devBridgeObserver     *devbridge.Observer
-	featureFlagsEnabled   bool
-	flagsWorkloadVerifier *workloadidentity.Verifier
+	devBridgeEnabled  bool
+	devBridgeURL      string
+	devBridgeObserver *devbridge.Observer
+	// Private fixture fallback; startup always installs the scoped preview gate.
+	operationsAdmissionEnabled bool
+	operationsPreview          *operations.PreviewAdmission
+	operationsWorkloadVerifier *workloadidentity.Verifier
+	operationArtifactBudget    operationArtifactBudget
+	operationArtifactStorage   artifactstorage.StorageBackend
+	operationStreamHub         *operationStreamHub
+	featureFlagsEnabled        bool
+	flagsWorkloadVerifier      *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                             *totpGuard
 	objectStorage                    *objectstorage.Registry
@@ -1613,6 +1621,31 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.claimPlatformTenantStatement)))))
 	// Downstream tenants get a separate route namespace and an explicit
 	// special-scope gate; account keys cannot use these routes.
+	// ADR-521: customer Operations uses a distinct tenant-owned namespace.
+	mux.HandleFunc("PUT /v1/apps/{slug}/deployments/{deployment_id}/operation-definitions/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOperationDefinition))))
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment_id}/operation-doctor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOperationDoctor))))
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment_id}/operation-definitions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listOperationDefinitions))))
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment_id}/operation-definitions/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOperationDefinition))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAccountOperations))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAccountOperationEvents))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOperationExecutions))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/delivery", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOperationDelivery))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/delivery-attempts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOperationDeliveryAttempts))))
+	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/delivery-retries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryOperationDeliveryWithReceipt))))
+	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/retry-delivery", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryOperationDelivery))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOperation))))
+	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelOperation))))
+	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.startPlatformTenantSelfOperation)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/identity", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.getPlatformTenantSelfOperationIdentity)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.listPlatformTenantSelfOperations)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.getPlatformTenantSelfOperation)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}/events", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.getPlatformTenantSelfOperationEvents)))
+	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations/{id}/cancel", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.cancelPlatformTenantSelfOperation)))
+	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.recoverOperation))))
+	mux.Handle("POST /v1/runtime/operations/{id}/progress", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.reportOperationProgress)))
+	mux.Handle("POST /v1/runtime/operations/{id}/artifacts", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.attachOperationArtifact)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}/artifacts/{artifact}", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.downloadPlatformTenantOperationArtifact)))
+	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/artifacts/{artifact}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.downloadOwnedOperationArtifact))))
 	mux.HandleFunc("GET /v1/platform-tenant-self/invocations/{id}", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsRead)(s.getPlatformTenantSelfInvocation)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/invocations/{id}/cancel", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsManage)(s.cancelPlatformTenantSelfInvocation)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/invocations/{id}/replay", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsManage)(s.replayPlatformTenantSelfInvocation)))
@@ -3750,7 +3783,7 @@ func (s *server) handler() http.Handler {
 	// + JSON so the gate is unconditionally true.
 	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
-		s.observeWrap(apiContractHandler(mux)),
+		s.observeWrap(operationCustomerCORS(apiContractHandler(mux))),
 	)))
 }
 

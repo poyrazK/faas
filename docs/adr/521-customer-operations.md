@@ -93,3 +93,88 @@ proof. Ordinary HTTP definitions validate the complete handler response against
 their output schema. A managed result envelope requires an explicit adapter;
 an unexpected envelope preserves backend completion evidence and requests
 reconciliation instead of silently decoding or executing the handler again.
+
+## Bounded HTTP preview admission — 2026-10-05
+
+The local HTTP continuation uses an operator-owned JSON policy selected by
+`operations_preview_policy_path` in apid and gatewayd-internal TOML. Empty is
+closed. Enabled policies bind exact canonical account/app IDs, an environment,
+individual platform tenant IDs and a UTC window. Bounds are centralized at
+64 KiB, ten cohorts, ten customers per cohort and one hour. Authentication,
+ownership and plan quotas remain independent constraints. apid customer starts
+also require configured workload trust and private result storage.
+
+Admission reads the regular policy file on every decision; malformed, missing,
+expired or group/world-writable policy fails closed. Atomic replacement permits
+rollback without restarting daemons or dropping runtime trust. The durable
+gateway resolver remains installed while closed so declared operation routes
+cannot become ordinary handler requests. Protocol upgrades are rejected for
+matched operation routes. Source admission is checked before manifest mutations.
+
+Policy closure affects new admission and resubmission, including a duplicate
+idempotency key. It leaves accepted work, retained reads, reporting, delivery,
+cleanup and explicit recovery available. It is not a transaction barrier across
+nodes: an earlier admitted decision can still commit. Fleet rollout verifies
+each serving node and separately observes accepted executions. This mechanism
+does not qualify native lifecycle or fleet availability; those passes remain
+required before launch. See the [preview runbook](../ops/operations-http-preview.md).
+
+## Customer history continuation — 2026-10-05
+
+Customer discovery is a read projection above the existing operation ledger.
+The tenant self-service route requires explicit app and environment selectors,
+authenticated tenant ownership, bounded summaries and descending creation/ID
+keyset pages. Cursors bind identity and filters without granting authority.
+Input, results, storage locations, delivery errors and runtime capabilities stay
+out of the history projection. Existing result retention applies: active work
+remains visible, expired settled work does not. Pages are live views; progress
+updates cannot reorder work, while filter membership and retention can change.
+This read path stays available after admission rollback and uses the existing
+tenant creation index; it introduces no new state table or execution adapter.
+
+## Read-only submission diagnostics — 2026-10-05
+
+The owning account can inspect an exact deployment and tenant through the
+Operations doctor endpoint and CLI. Observations reuse the admission policy's
+current-file decision, existing account-wide pending count and immutable contract
+compiler. They reserve no slot, grant no admission and perform no external probe
+or state mutation. Responses contain sanitized reason codes, deployment and
+definition pins, an observation timestamp and responding-node scope. This is an
+advisory read across changing metadata, not an admission transaction.
+
+Submission blockers and unknown prerequisites determine the observed submission
+state. Completion delivery warnings remain independent. Configuration presence
+is distinguished from runtime usability; gateway, reporting, storage I/O, native
+lifecycle and fleet rollback qualification remain explicitly unverified. These
+reads stay available after admission closes and do not alter execution, recovery,
+idempotency or delivery semantics. Bounds remain centralized in pkg/api/limits.go.
+
+## Completion delivery evidence and decisions — 2026-10-05
+
+The owning account can read an operation-scoped delivery snapshot and bounded,
+newest-first attempt history with account read scope and MFA. Authorization
+checks the immutable operation/definition destination, delivery account/app,
+event and embedded operation identity. Attempts reuse the transport ledger;
+raw errors, URLs, secrets and bodies are omitted. Receiver cooldown is a separate
+ledger observation, not an external probe. Expired transport rows are reported as
+`delivery_expired`; retained business success is preserved.
+
+The additive `/delivery-retries` API accepts a stable retry ID, exact delivery ID
+and explicit expected replay generation. The operation row serializes retry
+decisions. A transaction commits the dead-to-pending reset, generation increment
+and immutable receipt together, without invocation/execution/result writes or
+subscription locks. A replay returns its original receipt before checking the
+current transport state or plan. Changed payloads conflict and distinct IDs at
+one observed generation have a single winner. At most 32 receipts are retained
+per operation, with a composite primary key and cascading parent retention.
+There is no delivery foreign key: confirmed decisions outlive transport cleanup.
+Receipt timestamps use PostgreSQL microsecond precision in both stores to retain
+exact replay equality. The legacy reset API retains its existing semantics.
+
+The account CLI records API origin, current account, operation and retry request
+in an immutable private fsynced file before mutation, then records a distinct
+acknowledgement bound to the request digest. Lost replies replay that request;
+identity/payload conflicts, unsafe files, invalid acknowledgements and expired
+unconfirmed receipts fail closed. `queued` describes the decision at its recorded
+time. Callers must inspect the delivery for live transport status. No decision
+repeats business work or relaxes receiver cooldown/delivery policy.

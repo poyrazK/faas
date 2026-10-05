@@ -1987,6 +1987,19 @@
     "kind": "configuration"
   },
   {
+    "table": "customer_operation_delivery_retries",
+    "columns": [
+      "delivery_id",
+      "expected_replay_generation",
+      "expires_at",
+      "operation_id",
+      "queued_at",
+      "replay_generation",
+      "retry_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_events",
     "columns": [
       "attempt",

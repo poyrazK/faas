@@ -57,6 +57,7 @@ func (m *MemStore) RecoverOperation(_ context.Context, accountID, tenantID, oper
 	if req.Resolution == "safe_to_retry" {
 		m.invocations[inv.ID] = inv
 		data.executions[inv.ID] = op.ID
+		data.generations[inv.ID] = op.Generation
 	} else {
 		if err := m.operationCompletionLocked(&op, def); err != nil {
 			return Operation{}, err
