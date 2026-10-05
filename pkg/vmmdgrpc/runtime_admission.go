@@ -133,11 +133,6 @@ func (s *Server) parseAdmittedRuntime(ctx context.Context, req *vmmdpb.CreateAdm
 	if err := runtimeadmission.CheckSnapshotRestorePayload(req, b, time.Now()); err != nil {
 		return empty, 0, "", err
 	}
-	// Verified input preparation is not a measured restore implementation.
-	// Keep the private envelope unavailable before any native allocation.
-	if req.SnapshotRestore != nil {
-		return empty, 0, "", runtimeadmission.ErrUnavailable
-	}
 	i, err := s.admittedRuntimeIdentity(vmm)
 	if err != nil {
 		return empty, 0, "", err
@@ -146,6 +141,9 @@ func (s *Server) parseAdmittedRuntime(ctx context.Context, req *vmmdpb.CreateAdm
 		return empty, 0, "", runtimeadmission.ErrStale
 	}
 	if b.ProtocolVersion > i.ProtocolVersion {
+		return empty, 0, "", runtimeadmission.ErrUnavailable
+	}
+	if req.SnapshotRestore != nil && i.SnapshotRestoreVersion != runtimeadmission.SnapshotRestoreVersion {
 		return empty, 0, "", runtimeadmission.ErrUnavailable
 	}
 	var wr fcvm.WakeRequest
@@ -190,6 +188,14 @@ func (s *Server) parseAdmittedRuntime(ctx context.Context, req *vmmdpb.CreateAdm
 			return empty, 0, "", runtimeadmission.ErrInvalid
 		}
 	}
+	if req.SnapshotRestore != nil {
+		evidence, err := runtimeadmission.SnapshotRestoreEvidenceFromProto(req.SnapshotRestore)
+		if err != nil {
+			return empty, 0, "", err
+		}
+		wr.SnapshotRestore = &evidence
+		wr.Snapshot.MemBytes = evidence.Capture.Memory.Bytes
+	}
 	nativeHash, err := fcvm.NativeWakeInputHash(wr)
 	if err != nil {
 		return empty, 0, "", err
@@ -220,6 +226,12 @@ func checkNativeReceipt(req fcvm.AdmittedWakeRequest, inst *fcvm.Instance, recei
 	}
 	if inst == nil || receipt.NativeInputHash != req.NativeInputHash || receipt.Netns != inst.Net.Netns || receipt.HostIP != inst.Lease.HostIP.String() || receipt.LeaseUID != int32(inst.Lease.UID) || inst.Lease.Instance != req.Binding.InstanceID || inst.AppID != req.Binding.AppID || inst.DeploymentID != req.Binding.DeploymentID || inst.AccountID != req.Binding.AccountID || receipt.Paused != inst.Paused || receipt.Paused != req.Request.KeepPaused || receipt.Method != wakeMethodFrom(inst.Method) {
 		return runtimeadmission.ErrInvalid
+	}
+	if !receipt.SnapshotConsumption.IsZero() {
+		if req.Request.SnapshotRestore == nil {
+			return runtimeadmission.ErrInvalid
+		}
+		return receipt.SnapshotConsumption.CheckEvidence(req.Binding, receipt.ArtifactConsumption, receipt.Paused, *req.Request.SnapshotRestore, time.Now())
 	}
 	return nil
 }

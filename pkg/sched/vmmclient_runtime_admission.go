@@ -120,6 +120,15 @@ func checkAdmittedRuntimeResponse(req *vmmdpb.CreateAdmittedRuntimeRequest, resp
 	if err := receipt.Check(binding, time.Now()); err != nil {
 		return err
 	}
+	if !receipt.SnapshotConsumption.IsZero() {
+		evidence, err := runtimeadmission.SnapshotRestoreEvidenceFromProto(req.SnapshotRestore)
+		if err != nil {
+			return err
+		}
+		if err := receipt.SnapshotConsumption.CheckEvidence(binding, receipt.ArtifactConsumption, receipt.Paused, evidence, time.Now()); err != nil {
+			return err
+		}
+	}
 	actual := resp.Runtime
 	paused := req.GetRestore() != nil && req.GetRestore().KeepPaused
 	method := vmmdpb.WakeMethod_WAKE_COLD_BOOT

@@ -2636,3 +2636,51 @@ updates and rollback, native/fleet recovery, dedicated KVM test-metal/leakcheck
 and the full release checklist remain open. Public activation stays disabled.
 Durable-store fixtures simulate native consumption; they do not certify a
 Firecracker restore.
+
+## Serving restore forwarding checkpoint (2026-10-06)
+
+The ordinary scheduler wake now retains the storage-owned capture token from
+its selected snapshot. A node that explicitly advertises the serving restore
+version receives the scoped catalog envelope inside the complete boot payload
+hash and fresh binding. Durable issuance still fences current application inputs,
+source identity, RAM, catalog/cache usability and expiry. Unsupported nodes keep
+the existing verified cold path without receiving a restore-bound grant. Local
+cache selection uses the catalog's canonical VM-state storage locator rather
+than an old host pathname. Companion RAM contributes to the same physical-memory
+check as native allocation.
+
+The generated client and RPC receiver preserve owned envelope copies and compare
+returned consumption with that exact selected capture. Manager forwards the
+current runtime specification and approved sources through protected native
+loading, retains the existing kernel/base backing check and cold fallback, then
+requests one coupled drive/memory witness for the target lease. Its serving
+receipt carries those facts through storage acknowledgment and publication.
+The replacement cold process's attempt is retained in the published lease and
+failed-boot cleanup; a retired restore attempt cannot identify its drive owner.
+The ordinary, unadmitted Wake entry point cannot accept catalog authority.
+Cancellation, expiry, replay or invalid consumption refuses the receipt and
+retires the runtime through the existing owner cleanup.
+
+A failed load still boots verified current sources. Its cold receipt contains no
+snapshot consumption, while retaining the fresh binding's catalog checks until
+publication. Scheduler cache retirement runs after that publication attempt;
+invalidating its own selected cache earlier would incorrectly reject a valid
+cold runtime. An externally invalidated capture still refuses acknowledgment or
+first publication. Cache retirement retains its existing best-effort policy after that attempt.
+
+Portable tests join real scheduler selection, both stores' durable grants,
+receipts and publication with explicit scanner/provider/native simulations.
+They cover serving restore, unsupported nodes, verified cold fallback and
+substituted proofs. Manager tests cover main/companion input forwarding, receipt
+ownership, malformed authority, failed load, altered witnesses, cancellation and
+retirement. A generated gRPC client talks to the actual receiver over a Unix
+socket; separate client tests refuse structurally valid substituted backing and
+clean up the target runtime. These tests do not certify a Firecracker guest.
+
+`JailerVMM.RuntimeSnapshotRestoreVersion` still returns zero. There is no runtime
+switch to advertise an unaccepted loader. Paused restore/promotion and capture
+from the actual serving promotion/restored parent remain implementation work.
+Named production environment scopes, remaining onboarding adapters, real native
+multi-service update/rollback, physical entropy/clock and resource isolation,
+fleet/migration recovery, dedicated Linux amd64 root/KVM test-metal/leakcheck and
+the full release checklist remain open. Public standard activation stays disabled.

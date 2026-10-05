@@ -420,7 +420,8 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	restoreCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput{haveSnap: true, snapKey: snap.StorageKey}))
 	out, err := e.createRuntimeWithStandards(restoreCtx, placement.NodeID, ins.ID, string(state.StateWaking), spec, &SnapshotRef{
 		DeploymentID: dep.ID, FCVersion: snap.FCVersion, StorageKey: snap.StorageKey,
-		VMStatePath: vmstatePath, VMStateStorageKey: vmstateStorageKey,
+		ApplicationStandardCaptureToken: snap.ApplicationStandardCaptureToken,
+		VMStatePath:                     vmstatePath, VMStateStorageKey: vmstateStorageKey,
 	}, true)
 	cancel()
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // CheckSnapshotRestorePayload validates a private wire envelope. Native
@@ -36,5 +37,15 @@ func CheckSnapshotRestorePayload(req *vmmdpb.CreateAdmittedRuntimeRequest, bindi
 	if err != nil {
 		return err
 	}
-	return evidence.Check(binding, sources, restore.Snapshot.StorageKey, restore.Snapshot.VmstateStorageKey, restore.Snapshot.FcVersion, int64(restore.App.MemSizeMib)<<20, now)
+	memoryMiB := int64(restore.App.MemSizeMib)
+	for _, sidecar := range restore.App.Sidecars {
+		if sidecar == nil || sidecar.RamMb < 0 {
+			return ErrInvalid
+		}
+		memoryMiB += int64(sidecar.RamMb)
+	}
+	if memoryMiB <= 0 || memoryMiB > api.ApplicationStandardSnapshotMaxArtifactBytes>>20 {
+		return ErrInvalid
+	}
+	return evidence.Check(binding, sources, restore.Snapshot.StorageKey, restore.Snapshot.VmstateStorageKey, restore.Snapshot.FcVersion, memoryMiB<<20, now)
 }

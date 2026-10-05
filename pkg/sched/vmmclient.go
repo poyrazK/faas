@@ -555,10 +555,12 @@ type AppSpec struct {
 // Networkless is reserved for the runtime snapshot catalog and is only
 // serialized by RestoreExecution; ordinary app wakes leave it false.
 type SnapshotRef struct {
-	DeploymentID string
-	VMStatePath  string
-	FCVersion    string
-	StorageKey   string
+	// Storage-owned capture reference; never inferred from a caller label.
+	ApplicationStandardCaptureToken string
+	DeploymentID                    string
+	VMStatePath                     string
+	FCVersion                       string
+	StorageKey                      string
 	// VMStateStorageKey is the canonical StorageBackend key for the
 	// vmstate blob (issue #121 / ADR-025 axis 2 slice 4). Empty on
 	// default-local; populated on remote compute nodes.

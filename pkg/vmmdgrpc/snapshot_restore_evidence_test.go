@@ -1,16 +1,23 @@
 package vmmdgrpc_test
 
-// Portable RPC refusal tests; the native backend is never invoked for restore.
+// Portable RPC tests use explicit simulations of native process/load facts.
 
 import (
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
+	"github.com/onebox-faas/faas/pkg/sched"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
 
@@ -47,6 +54,104 @@ func rpcSnapshotRestoreEnvelope(t *testing.T, req *vmmdpb.CreateAdmittedRuntimeR
 	b, _ = runtimeadmission.BindingFromProto(req.Binding)
 	if err := runtimeadmission.CheckSnapshotRestorePayload(req, b, time.Now()); err != nil {
 		t.Fatal("invalid refusal fixture", err)
+	}
+}
+
+func simulatedRPCSnapshotConsumption(v *admittedNativeVMM, inst *fcvm.Instance, r *runtimeadmission.Receipt) {
+	e := v.requests[len(v.requests)-1].Request.SnapshotRestore
+	r.ArtifactConsumption = e.Capture.Parent.ArtifactConsumption.Clone()
+	r.ArtifactConsumption.ConfigHash = runtimeadmission.SnapshotLoadCommandHash(false)
+	r.ArtifactConsumption.ProcessPID, r.ArtifactConsumption.ProcessStart = 4242, "202"
+	r.SnapshotConsumption = runtimeadmission.SnapshotConsumption{Version: runtimeadmission.SnapshotRestoreVersion,
+		CaptureToken: e.CaptureToken, EvidenceHash: r.Binding.SnapshotEvidenceHash, Memory: e.Capture.Memory, VMState: e.Capture.VMState,
+		PrivateDrive: e.Capture.PrivateDrive, MappedMemoryBytes: e.Capture.Memory.Bytes}
+}
+
+func TestSnapshotRestoreRPCForwardsOwnedEnvelopeAndValidatesConsumption(t *testing.T) {
+	for _, variant := range []string{"restore", "cold fallback", "substituted blob", "missing proof", "partial map", "wrong command"} {
+		t.Run(variant, func(t *testing.T) {
+			s, v, req := admittedRPCFixture(t)
+			rpcSnapshotRestoreEnvelope(t, req)
+			v.identity.ProtocolVersion, v.identity.SnapshotRestoreVersion = runtimeadmission.ArtifactProtocolVersion, runtimeadmission.SnapshotRestoreVersion
+			v.mutate = func(inst *fcvm.Instance, r *runtimeadmission.Receipt) {
+				simulatedRPCSnapshotConsumption(v, inst, r)
+				switch variant {
+				case "cold fallback":
+					inst.Method, r.Method = fcvm.WakeColdBoot, vmmdpb.WakeMethod_WAKE_COLD_BOOT
+					r.SnapshotConsumption = runtimeadmission.SnapshotConsumption{}
+				case "substituted blob":
+					r.SnapshotConsumption.Memory.Digest = "sha256:" + strings.Repeat("0", 64)
+				case "missing proof":
+					r.SnapshotConsumption = runtimeadmission.SnapshotConsumption{}
+				case "partial map":
+					r.SnapshotConsumption.MappedMemoryBytes--
+				case "wrong command":
+					r.ArtifactConsumption.ConfigHash = runtimeadmission.SnapshotLoadCommandHash(true)
+				}
+			}
+			resp, err := s.CreateAdmittedRuntime(admittedRPCContext(t), req)
+			valid := variant == "restore" || variant == "cold fallback"
+			if !valid {
+				if err == nil || resp != nil || len(v.destroyed) != 1 {
+					t.Fatal("invalid consumed snapshot survived RPC validation", err)
+				}
+				return
+			}
+			if err != nil || len(v.requests) != 1 || len(v.destroyed) != 0 {
+				t.Fatal("valid snapshot outcome refused", err)
+			}
+			r, err := runtimeadmission.ReceiptFromProto(resp.Receipt)
+			if err != nil || r.SnapshotConsumption.IsZero() != (variant == "cold fallback") {
+				t.Fatal("RPC lost consumption", err)
+			}
+			native := v.requests[0]
+			hash, err := fcvm.NativeWakeInputHash(native.Request)
+			if err != nil || hash != native.NativeInputHash || native.Request.Snapshot.MemBytes != 128<<20 {
+				t.Fatal("native payload omitted catalog facts", err)
+			}
+			req.SnapshotRestore.Capture.Memory.Digest = "caller-change"
+			if native.Request.SnapshotRestore.Capture.Memory.Digest == "caller-change" {
+				t.Fatal("RPC aliased the caller's catalog")
+			}
+		})
+	}
+}
+
+func TestSnapshotRestoreRPCGeneratedClientRetainsServingProof(t *testing.T) {
+	s, v, req := admittedRPCFixture(t)
+	rpcSnapshotRestoreEnvelope(t, req)
+	v.identity.ProtocolVersion, v.identity.SnapshotRestoreVersion = runtimeadmission.ArtifactProtocolVersion, runtimeadmission.SnapshotRestoreVersion
+	v.mutate = func(inst *fcvm.Instance, r *runtimeadmission.Receipt) { simulatedRPCSnapshotConsumption(v, inst, r) }
+	root, err := os.MkdirTemp("", "grg-restore-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	socket := filepath.Join(root, "rpc.sock")
+	lis, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	vmmdpb.RegisterVmmdServer(server, s)
+	go func() { _ = server.Serve(lis) }()
+	t.Cleanup(func() { server.Stop(); _ = lis.Close() })
+	conn, err := grpc.NewClient("unix://"+socket, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	client := sched.NewVMMClient(conn)
+	identity, err := client.RuntimeAdmissionIdentity(t.Context())
+	if err != nil || identity.SnapshotRestoreVersion != runtimeadmission.SnapshotRestoreVersion {
+		t.Fatal("generated client lost capability", err)
+	}
+	out, err := client.CreateAdmittedRuntime(t.Context(), req)
+	if err != nil || out == nil || out.RuntimeAdmissionReceipt == nil || out.RuntimeAdmissionReceipt.SnapshotConsumption.IsZero() || len(v.requests) != 1 {
+		t.Fatal("generated client lost restore proof", err)
+	}
+	if out.RuntimeAdmissionReceipt.SnapshotConsumption.Memory.StorageKey != req.GetRestore().Snapshot.StorageKey {
+		t.Fatal("wrong captured memory crossed RPC")
 	}
 }
 

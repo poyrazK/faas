@@ -18,11 +18,13 @@ import (
 
 type composedWaveNativeVMM struct {
 	*standardNativeTestVMM
-	store    composedWaveStore
-	policies map[string]runtimeadmission.EgressPolicy
-	receipts map[string]runtimeadmission.Receipt
-	serial   uint32
-	captures int
+	store                composedWaveStore
+	policies             map[string]runtimeadmission.EgressPolicy
+	receipts             map[string]runtimeadmission.Receipt
+	serial               uint32
+	captures             int
+	snapshotColdFallback bool
+	editSnapshotReceipt  func(*runtimeadmission.Receipt)
 }
 
 func newComposedWaveNativeVMM(t *testing.T, s composedWaveStore) *composedWaveNativeVMM {
@@ -66,6 +68,20 @@ func (v *composedWaveNativeVMM) CreateAdmittedRuntime(ctx context.Context, nodeI
 			drive.InjectedDigest = "sha256:" + strings.Repeat("d", 64)
 		}
 		r.ArtifactConsumption.Drives = append(r.ArtifactConsumption.Drives, drive)
+	}
+	if request.SnapshotRestore != nil && out.Method == vmmdpb.WakeMethod_WAKE_RESTORE {
+		evidence, err := runtimeadmission.SnapshotRestoreEvidenceFromProto(request.SnapshotRestore)
+		if err != nil {
+			return nil, err
+		}
+		r.ArtifactConsumption.ConfigHash = runtimeadmission.SnapshotLoadCommandHash(false)
+		r.SnapshotConsumption = runtimeadmission.SnapshotConsumption{Version: runtimeadmission.SnapshotRestoreVersion,
+			CaptureToken: evidence.CaptureToken, EvidenceHash: r.Binding.SnapshotEvidenceHash,
+			Memory: evidence.Capture.Memory, VMState: evidence.Capture.VMState, PrivateDrive: evidence.Capture.PrivateDrive,
+			MappedMemoryBytes: evidence.Capture.Memory.Bytes}
+		if v.editSnapshotReceipt != nil {
+			v.editSnapshotReceipt(r)
+		}
 	}
 	v.receipts[r.Binding.InstanceID] = r.Clone()
 	return out, nil

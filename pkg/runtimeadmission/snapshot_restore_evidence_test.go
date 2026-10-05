@@ -42,6 +42,31 @@ func snapshotRestorePayloadFixture(t *testing.T) (*vmmdpb.CreateAdmittedRuntimeR
 	return r, b
 }
 
+func TestSnapshotRestorePayloadIncludesCompanionMemory(t *testing.T) {
+	req, b := snapshotRestorePayloadFixture(t)
+	// This test isolates memory arithmetic; native source membership is checked
+	// separately at the admitted adapter, before allocation.
+	req.GetRestore().App.Sidecars = []*vmmdpb.SidecarSpec{{Name: "metrics", RamMb: 64}}
+	if CheckSnapshotRestorePayload(req, b, time.Now()) == nil {
+		t.Fatal("snapshot with only main RAM accepted for companion VM")
+	}
+	req.SnapshotRestore.Capture.Memory.Bytes = 192 << 20
+	e, err := SnapshotRestoreEvidenceFromProto(req.SnapshotRestore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.SnapshotEvidenceHash, err = e.Hash()
+	if err != nil || CheckSnapshotRestorePayload(req, b, time.Now()) != nil {
+		t.Fatal("complete companion memory refused", err)
+	}
+	for _, ram := range []int32{-1, 1 << 30} {
+		req.GetRestore().App.Sidecars[0].RamMb = ram
+		if CheckSnapshotRestorePayload(req, b, time.Now()) == nil {
+			t.Fatal("invalid companion memory accepted")
+		}
+	}
+}
+
 func TestSnapshotRestoreEvidenceRetainsHistoryAndOwnsNestedBytes(t *testing.T) {
 	e, b, sources := snapshotRestoreEvidenceFixture(t)
 	e.Capture.Parent.Binding.IssuedAtUnixNano -= int64(2 * time.Hour)

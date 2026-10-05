@@ -3228,7 +3228,8 @@ type WakeRequest struct {
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
-	ArtifactSources []runtimeadmission.ArtifactSource `json:"artifact_sources,omitempty"`
+	ArtifactSources []runtimeadmission.ArtifactSource         `json:"artifact_sources,omitempty"`
+	SnapshotRestore *runtimeadmission.SnapshotRestoreEvidence `json:"snapshot_restore,omitempty"`
 	// ExecutionOnly is an internal vmmd/schedd fence for the disposable
 	// one-shot path. Ordinary app wakes leave it false and can never be used by
 	// ExecuteExecution. It is not accepted from the public app wake proto.
@@ -3929,7 +3930,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// Registered before all effect/cleanup defers, so stop joins the complete
 	// unwind and cannot acknowledge absence before resources are released.
 	defer m.finishInstanceFlight(req.Instance, flight)
-	if req.admission == nil && len(req.ArtifactSources) != 0 {
+	if req.admission == nil && (len(req.ArtifactSources) != 0 || req.SnapshotRestore != nil) {
 		return nil, runtimeadmission.ErrInvalid
 	}
 	// Admitted wakes hold the same gate in their wrapper through native
@@ -4359,6 +4360,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	phases.mark("setup_network")
 	timings.prepare = phases.prepareTimings()
 	method, err = m.bringUp(ctx, lease, nc, req, &timings)
+	// Restore fallback replaces the process while retaining its physical lease.
+	// Receipt observation, later lifecycle calls and failed-boot cleanup must
+	// carry the actual attempt used by the replacement cold boot.
+	m.mu.Lock()
+	lease.processGeneration = m.processGenerations[lease.Instance]
+	m.mu.Unlock()
 	// Marked before the error check so a FAILED bringUp still reports
 	// how long it burned — that is the phase most likely to hold a
 	// hung Firecracker, and the one the defer most needs to name.
@@ -4792,7 +4799,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	if scanErr != nil {
 		return WakeColdBoot, scanErr
 	}
-	restorable := len(req.ArtifactSources) == 0 && PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req)
+	restorable := (len(req.ArtifactSources) == 0 || req.SnapshotRestore != nil) && PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req)
 	if restorable {
 		// ADR-510: never load a snapshot's RAM onto kernel/base images other
 		// than the ones it was captured with. The refusal happens before any
@@ -4875,7 +4882,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// it back via the optional bringUpTimings closure parameter
 		// (defined on Wake — non-breaking on internal bringUp).
 		restoreStart := time.Now()
-		rErr := m.vmm.Restore(ctx, lease, rs)
+		rErr := m.restoreWithAdmission(ctx, lease, nc, req, rs, serviceDiscoveryIP)
 		if rErr == nil && timings != nil {
 			timings.restoreMs = time.Since(restoreStart).Milliseconds()
 		}
@@ -4933,42 +4940,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		}
 	}
 
-	spec := ColdBootSpec{
-		KernelKey: m.paths.Kernel,
-		BaseKey:   req.BaseKey,
-		// LayerKey is the legacy single-workload path. When
-		// Workloads is non-empty (PR-B / sidecars present),
-		// buildWorkloadsForColdBoot copies req.LayerKey into
-		// Workloads[0].StorageKey; spec.LayerKey must be empty
-		// here so the ColdBootSpec.Validate() "LayerKey must be
-		// empty when Workloads is set" check doesn't reject
-		// the spec. The Validate contract is the load-bearing
-		// guard against double-spec'ing the main workload.
-		LayerKey:   layerKeyForColdBoot(req),
-		VcpuCount:  req.VcpuCount,
-		MemSizeMiB: wakeGuestMemoryMiB(req),
-		Tap:        nc.Tap,
-		// Per-deployment readiness action. The HTTP path and gRPC
-		// mode/service are forwarded together; both target :8080.
-		HealthcheckPath:        req.HealthcheckPath,
-		HealthcheckGRPC:        req.HealthcheckGRPC,
-		HealthcheckGRPCService: req.HealthcheckGRPCService,
-		StartupDeadlineS:       req.StartupDeadlineS,
-		ExecutionMode:          req.ExecutionMode,
-		// One-shot guests use a vsock dispatch protocol rather than the app
-		// HTTP listener. App tasks remain networked; executions do not.
-		SkipReady: req.ExportDir != "" || req.ExecutionOnly || req.AppTaskOnly,
-		// Issue #463 / ADR-069 / PR-B: per-workload drives
-		// (main + sidecars). buildWorkloadsForColdBoot emits an
-		// empty slice on the legacy single-workload path so
-		// BootColdBoot falls through to the LayerKey branch.
-		Workloads:          buildWorkloadsForColdBoot(req),
-		SecretsEnvJSON:     req.preparedSecretsEnvJSON,
-		APIEnvJSON:         req.preparedAPIEnvJSON,
-		ServiceDiscoveryIP: serviceDiscoveryIP,
-		Networkless:        req.ExecutionOnly,
-		AppTask:            req.AppTaskOnly,
-	}
+	spec := m.coldBootSpecForWake(nc, req, serviceDiscoveryIP)
 	coldBootStartedAt := time.Now()
 	coldBootErr := m.bootColdBootWithSources(ctx, lease, spec, req.ArtifactSources)
 	if timings != nil {

@@ -49,7 +49,7 @@ func (m *Manager) RuntimeAdmissionIdentity() (runtimeadmission.Identity, error) 
 	if m.runtimeAdmissionIncarnation == "" {
 		m.runtimeAdmissionIncarnation = uuid.NewString()
 	}
-	identity := runtimeadmission.Identity{ProtocolVersion: m.runtimeAdmissionProtocol(), NodeID: m.runtimeAdmissionNodeID, Incarnation: m.runtimeAdmissionIncarnation}
+	identity := runtimeadmission.Identity{ProtocolVersion: m.runtimeAdmissionProtocol(), NodeID: m.runtimeAdmissionNodeID, Incarnation: m.runtimeAdmissionIncarnation, SnapshotRestoreVersion: m.runtimeSnapshotRestoreVersion()}
 	if err := identity.Validate(); err != nil {
 		return runtimeadmission.Identity{}, err
 	}
@@ -129,9 +129,8 @@ func (m *Manager) WakeAdmitted(ctx context.Context, request AdmittedWakeRequest,
 
 func (m *Manager) prepareAdmittedInputs(request AdmittedWakeRequest, identity runtimeadmission.Identity) (WakeRequest, string, error) {
 	binding := request.Binding
-	// A restore-bound grant cannot silently enter the ordinary cold path.
-	// Remove this guard only with measured native snapshot consumption.
-	if binding.SnapshotCaptureToken != "" {
+	// Restore requires explicit measured backend support before consuming authority.
+	if binding.SnapshotCaptureToken != "" && identity.SnapshotRestoreVersion != runtimeadmission.SnapshotRestoreVersion {
 		return WakeRequest{}, "", runtimeadmission.ErrUnavailable
 	}
 	if binding.NodeID != identity.NodeID || binding.Incarnation != identity.Incarnation {
@@ -154,11 +153,14 @@ func (m *Manager) prepareAdmittedInputs(request AdmittedWakeRequest, identity ru
 	if err := checkAdmittedArtifactHash(binding, req); err != nil {
 		return WakeRequest{}, "", err
 	}
+	if err := checkAdmittedSnapshotRestore(binding, req); err != nil {
+		return WakeRequest{}, "", err
+	}
 	return req, hash, nil
 }
 
 func (m *Manager) finishAdmittedWake(ctx, flightCtx context.Context, binding runtimeadmission.Binding, hash string, req WakeRequest, inst *Instance, flight *runtimeAdmissionFlight) (*Instance, runtimeadmission.Receipt, error) {
-	consumption, err := m.admittedArtifactConsumption(flightCtx, binding, inst)
+	consumption, snapshot, err := m.admittedRuntimeConsumption(flightCtx, binding, req, inst)
 	// Cancellation/expiry after readiness still refuses a receipt and destroys
 	// the VM. Finish the flight first so cleanup cannot wait on its own caller.
 	m.mu.Lock()
@@ -173,6 +175,7 @@ func (m *Manager) finishAdmittedWake(ctx, flightCtx context.Context, binding run
 		err = runtimeadmission.ErrStale
 	}
 	receipt := admittedWakeReceipt(binding, hash, inst, consumption, completedAt)
+	receipt.SnapshotConsumption = snapshot
 	if err == nil {
 		err = receipt.Check(binding, completedAt)
 	}

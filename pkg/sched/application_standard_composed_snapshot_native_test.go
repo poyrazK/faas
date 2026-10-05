@@ -54,7 +54,16 @@ func (v *composedWaveNativeVMM) createComposedRuntime(ctx context.Context, node 
 		return nil, runtimeadmission.ErrInvalid
 	}
 	v.lastRequest = req
-	out, err := v.fakeVMM.CreateColdBoot(ctx, node, b.InstanceID, AppSpec{AppID: b.AppID, AccountID: b.AccountID, DeploymentID: b.DeploymentID})
+	var out *WakeOutcome
+	app := AppSpec{AppID: b.AppID, AccountID: b.AccountID, DeploymentID: b.DeploymentID}
+	if req.SnapshotRestore != nil && v.identity.SnapshotRestoreVersion == runtimeadmission.SnapshotRestoreVersion && !v.snapshotColdFallback {
+		if err := runtimeadmission.CheckSnapshotRestorePayload(req, b, time.Now()); err != nil {
+			return nil, err
+		}
+		out, err = v.fakeVMM.CreateFromSnapshot(ctx, node, b.InstanceID, app, SnapshotRef{DeploymentID: b.DeploymentID, StorageKey: req.GetRestore().Snapshot.StorageKey})
+	} else {
+		out, err = v.fakeVMM.CreateColdBoot(ctx, node, b.InstanceID, app)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -85,6 +85,10 @@ func (e *Engine) createRuntimeWithStandards(ctx context.Context, nodeID, instanc
 	if err != nil {
 		return nil, err
 	}
+	req, err = e.prepareStandardSnapshotRestore(ctx, identity, req, snap)
+	if err != nil {
+		return nil, err
+	}
 	binding, err = runtimeadmission.BindingFromProto(req.Binding)
 	if err != nil {
 		return nil, err
@@ -112,6 +116,13 @@ func (e *Engine) createRuntimeWithStandards(ctx context.Context, nodeID, instanc
 	if out == nil || out.RuntimeAdmissionReceipt == nil || out.RuntimeAdmissionReceipt.Check(binding, time.Now()) != nil || out.RuntimeAdmissionReceipt.Paused != paused || out.RuntimeAdmissionReceipt.Netns != out.Netns || out.RuntimeAdmissionReceipt.HostIP != out.HostIP || out.RuntimeAdmissionReceipt.LeaseUID != out.LeaseUID || out.RuntimeAdmissionReceipt.Method != out.Method {
 		e.bestEffortDestroy(ctx, nodeID, instanceID)
 		return nil, runtimeadmission.ErrInvalid
+	}
+	if !out.RuntimeAdmissionReceipt.SnapshotConsumption.IsZero() {
+		evidence, err := runtimeadmission.SnapshotRestoreEvidenceFromProto(req.SnapshotRestore)
+		if err != nil || out.RuntimeAdmissionReceipt.SnapshotConsumption.CheckEvidence(binding, out.RuntimeAdmissionReceipt.ArtifactConsumption, paused, evidence, time.Now()) != nil {
+			e.bestEffortDestroy(ctx, nodeID, instanceID)
+			return nil, runtimeadmission.ErrInvalid
+		}
 	}
 	return out, nil
 }

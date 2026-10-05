@@ -3502,7 +3502,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// CreateSnapshot guarantees non-empty; an empty value here
 		// means a buggy inserter slipped a row past the contract and
 		// Phase 3 will fall back to cold boot.
-		snapKey: snap.StorageKey,
+		snapKey:          snap.StorageKey,
+		snapCaptureToken: snap.ApplicationStandardCaptureToken,
 		// nodeID is the chosen compute_node from Phase 2. Phase 3
 		// threads it through every vmmd RPC so the router dials
 		// the right per-target client.
@@ -3739,11 +3740,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		bootCtx, createSpan := e.startCreateSpan(bootCtx, "vmmd.create_from_snapshot", bootInput.snapID, bootInput)
 		rpcStartedAt = time.Now()
 		out, err = e.createRuntimeWithStandards(bootCtx, bootInput.nodeID, bootInput.insID, string(bootInput.initState), bootInput.spec, &SnapshotRef{
-			DeploymentID:      bootInput.depID,
-			FCVersion:         bootInput.snapVer,
-			StorageKey:        bootInput.snapKey,
-			VMStatePath:       vmstatePath,
-			VMStateStorageKey: vmstateStorageKey,
+			DeploymentID:                    bootInput.depID,
+			FCVersion:                       bootInput.snapVer,
+			StorageKey:                      bootInput.snapKey,
+			ApplicationStandardCaptureToken: bootInput.snapCaptureToken,
+			VMStatePath:                     vmstatePath,
+			VMStateStorageKey:               vmstateStorageKey,
 		}, false)
 		rpcEndedAt = time.Now()
 		endSpan(createSpan)
@@ -3853,9 +3855,14 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// RUNNING transition (the stale snapshot also gets the next-park
 	// treatment from snapshotAndPark).
 	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
-		if err := e.store.MarkSnapshotStale(ctx, bootInput.snapID); err != nil {
-			e.log.Warn("wake: mark snapshot stale", "snapshot", bootInput.snapID, "wake_id", bootInput.wakeID, "err", err)
-		}
+		// A catalog-bound fallback still validates its selected capture through
+		// receipt acknowledgment and publication. Invalidate after that attempt
+		// so our own cache retirement cannot reject a verified cold runtime.
+		defer func() {
+			if err := e.store.MarkSnapshotStale(ctx, bootInput.snapID); err != nil {
+				e.log.Warn("wake: mark snapshot stale", "snapshot", bootInput.snapID, "wake_id", bootInput.wakeID, "err", err)
+			}
+		}()
 		e.log.Info("wake: restore fell back to cold boot", "app", bootInput.appID, "instance", bootInput.insID, "wake_id", bootInput.wakeID)
 	}
 
@@ -4154,7 +4161,8 @@ type bootInput struct {
 	// (issue #96, ADR-025 axis 2). Read from the snap row under
 	// Phase 2; consumed by Phase 3 to set SnapshotRef.StorageKey.
 	// Empty when haveSnap is false.
-	snapKey string
+	snapKey          string
+	snapCaptureToken string
 	// nodeID is the chosen compute_node for this wake (issue #97 /
 	// ADR-025 axis 3). Captured under the Phase 2 lock alongside
 	// the rest of bootInput so the unlocked Phase 3 vmmd call can
