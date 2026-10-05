@@ -2,32 +2,32 @@
 -- ADR-603: mutex and live-delivery identity are separate from retained receipts.
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE event_delivery_capacity (
+CREATE TABLE IF NOT EXISTS event_delivery_capacity (
  account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
  consumer_limit integer NOT NULL CHECK (consumer_limit > 0),
  app_limit integer NOT NULL CHECK (app_limit > 0),
  account_limit integer NOT NULL CHECK (account_limit > 0)
 );
-CREATE TABLE event_delivery_slots (
+CREATE TABLE IF NOT EXISTS event_delivery_slots (
  invocation_id uuid PRIMARY KEY REFERENCES invocations(id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES event_delivery_capacity(account_id) ON DELETE CASCADE,
  app_id uuid NOT NULL,
  subscription_id text NOT NULL
 );
-CREATE INDEX event_delivery_slots_consumer ON event_delivery_slots(account_id, app_id, subscription_id);
-CREATE TABLE event_routing_fairness (
+CREATE INDEX IF NOT EXISTS event_delivery_slots_consumer ON event_delivery_slots(account_id, app_id, subscription_id);
+CREATE TABLE IF NOT EXISTS event_routing_fairness (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  subscription_id text NOT NULL,
  last_claimed_at timestamptz NOT NULL,
  PRIMARY KEY (account_id, subscription_id)
 );
-ALTER TABLE event_fanout_recipients ADD COLUMN capacity_deferrals integer NOT NULL DEFAULT 0 CHECK (capacity_deferrals >= 0);
-ALTER TABLE event_fanout_recipients ADD COLUMN generation_capacity_deferrals integer NOT NULL DEFAULT 0 CHECK (generation_capacity_deferrals >= 0);
+ALTER TABLE event_fanout_recipients ADD COLUMN IF NOT EXISTS capacity_deferrals integer NOT NULL DEFAULT 0 CHECK (capacity_deferrals >= 0);
+ALTER TABLE event_fanout_recipients ADD COLUMN IF NOT EXISTS generation_capacity_deferrals integer NOT NULL DEFAULT 0 CHECK (generation_capacity_deferrals >= 0);
 
 -- Replays inherit authority from the stored parent, never event headers.
 -- Only entry into live work takes the mutex. Exits cannot invert admission's
 -- mutex -> pending invocation lock order, and an uncommitted exit still counts.
-CREATE FUNCTION guard_event_delivery_replay() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_event_delivery_replay() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE slot event_delivery_slots%ROWTYPE; caps event_delivery_capacity%ROWTYPE;
  consumer_count bigint; app_count bigint; account_count bigint; scope text;
 BEGIN
@@ -52,6 +52,7 @@ BEGIN
  INSERT INTO event_delivery_slots VALUES (NEW.id,slot.account_id,slot.app_id,slot.subscription_id) ON CONFLICT DO NOTHING;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS event_delivery_replay_capacity ON invocations;
 CREATE TRIGGER event_delivery_replay_capacity AFTER INSERT OR UPDATE OF state ON invocations
  FOR EACH ROW EXECUTE FUNCTION guard_event_delivery_replay();
 -- +goose StatementEnd

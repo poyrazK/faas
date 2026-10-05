@@ -3,7 +3,7 @@
 -- +goose Up
 -- +goose StatementBegin
 -- A metadata-only read model; routing checkpoints remain authoritative.
-CREATE TABLE event_routing_backlog (
+CREATE TABLE IF NOT EXISTS event_routing_backlog (
     outbox_id bigint NOT NULL REFERENCES event_fanout_outbox(id) ON DELETE CASCADE,
     subscription_id text NOT NULL,
     account_id uuid NOT NULL,
@@ -18,12 +18,12 @@ CREATE TABLE event_routing_backlog (
     lease_until timestamptz,
     PRIMARY KEY (outbox_id,subscription_id)
 );
-CREATE INDEX event_routing_backlog_account_age ON event_routing_backlog(account_id,accepted_at,outbox_id,subscription_id);
-CREATE INDEX event_routing_backlog_consumer_age ON event_routing_backlog(account_id,app_id,subscription_id,accepted_at,outbox_id);
-CREATE INDEX event_outbox_unattributed_age ON event_fanout_outbox(account_id,created_at,id)
+CREATE INDEX IF NOT EXISTS event_routing_backlog_account_age ON event_routing_backlog(account_id,accepted_at,outbox_id,subscription_id);
+CREATE INDEX IF NOT EXISTS event_routing_backlog_consumer_age ON event_routing_backlog(account_id,app_id,subscription_id,accepted_at,outbox_id);
+CREATE INDEX IF NOT EXISTS event_outbox_unattributed_age ON event_fanout_outbox(account_id,created_at,id)
     WHERE recipient_snapshot IS NULL AND state IN ('pending','processing');
 
-CREATE VIEW event_routing_backlog_source AS
+CREATE OR REPLACE VIEW event_routing_backlog_source AS
 SELECT o.id AS outbox_id, s.recipient->>'id' AS subscription_id, o.account_id,
        (s.recipient->>'app_id')::uuid AS app_id, o.created_at AS accepted_at,
        CASE WHEN o.recipient_claims THEN 'recipient' ELSE 'event' END::text AS routing_mode,
@@ -47,7 +47,7 @@ CROSS JOIN LATERAL (SELECT CASE WHEN o.recipient_claims THEN coalesce(r.state,p.
 WHERE o.state IN ('pending','processing') AND nullif(s.recipient->>'app_id','') IS NOT NULL
     AND (s.recipient->'workflow' IS NULL OR s.recipient->'workflow'='null'::jsonb);
 
-CREATE FUNCTION refresh_event_routing_backlog(p_outbox_id bigint,p_subscription_id text DEFAULT NULL)
+CREATE OR REPLACE FUNCTION refresh_event_routing_backlog(p_outbox_id bigint,p_subscription_id text DEFAULT NULL)
 RETURNS void LANGUAGE sql AS $$
 WITH candidates AS MATERIALIZED (
     SELECT * FROM event_routing_backlog_source
@@ -71,7 +71,7 @@ DELETE FROM event_routing_backlog b WHERE b.outbox_id=p_outbox_id
     AND NOT EXISTS (SELECT 1 FROM candidates c WHERE c.subscription_id=b.subscription_id);
 $$;
 
-CREATE FUNCTION project_event_routing_backlog_root() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION project_event_routing_backlog_root() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE sub text;
 BEGIN
     IF TG_OP='INSERT' THEN
@@ -89,10 +89,11 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS event_routing_backlog_root ON event_fanout_outbox;
 CREATE TRIGGER event_routing_backlog_root AFTER INSERT OR UPDATE OF recipient_snapshot,recipient_progress,state,available_at,lease_until,recipient_claims,created_at,account_id
     ON event_fanout_outbox FOR EACH ROW EXECUTE FUNCTION project_event_routing_backlog_root();
 
-CREATE FUNCTION project_event_routing_backlog_recipient() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION project_event_routing_backlog_recipient() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP='DELETE' THEN
         PERFORM refresh_event_routing_backlog(OLD.outbox_id,OLD.subscription_id);
@@ -102,10 +103,12 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS event_routing_backlog_recipient ON event_fanout_recipients;
 CREATE TRIGGER event_routing_backlog_recipient AFTER INSERT OR UPDATE OR DELETE
     ON event_fanout_recipients FOR EACH ROW EXECUTE FUNCTION project_event_routing_backlog_recipient();
 
-INSERT INTO event_routing_backlog SELECT * FROM event_routing_backlog_source WHERE routing_state IN ('pending','processing');
+INSERT INTO event_routing_backlog SELECT * FROM event_routing_backlog_source WHERE routing_state IN ('pending','processing')
+ON CONFLICT (outbox_id,subscription_id) DO NOTHING;
 -- +goose StatementEnd
 
 -- +goose Down
