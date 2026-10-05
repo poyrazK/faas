@@ -232,6 +232,26 @@ func TestAccountingReconciliationCollectorAndLedgerFences(t *testing.T) {
 			if _, err := service.ReconcileAccounting(canceled, database.AccountID, "operator", request, false); !errors.Is(err, context.Canceled) {
 				t.Fatalf("cancellation: %v", err)
 			}
+			// Older catalog data may have the right duration but a shifted grid.
+			// Retaining it and then collecting aligned windows would overlap money.
+			switch s := store.(type) {
+			case *MemoryStore:
+				s.mu.Lock()
+				for key, row := range s.usage {
+					if row.DatabaseID == database.ID {
+						row.WindowFrom, row.WindowTo = row.WindowFrom.Add(15*time.Minute), row.WindowTo.Add(15*time.Minute)
+						s.usage[key] = row
+					}
+				}
+				s.mu.Unlock()
+			case *PostgresStore:
+				if _, err := s.pool.Exec(ctx, "UPDATE managed_postgres_usage SET window_from=window_from+interval '15 minutes',window_to=window_to+interval '15 minutes' WHERE database_id=$1", database.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := service.ReconcileAccounting(ctx, database.AccountID, "operator", request, false); !errors.Is(err, ErrConflict) {
+				t.Fatalf("unaligned retained ledger accepted: %v", err)
+			}
 		})
 	}
 }

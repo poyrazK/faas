@@ -88,7 +88,7 @@ func memoryReconciliationLedger(records map[usageKey]UsageRecord, database Datab
 			ledger.LastObservation = row.ObservedAt.UTC()
 		}
 		if row.AccountID != database.AccountID || row.BackendID != database.BackendID || row.BackendFingerprint != database.BackendFingerprint ||
-			row.WindowTo.Sub(row.WindowFrom) != command.Policy.Window || !contains(command.Meters, row.Meter) {
+			row.WindowTo.Sub(row.WindowFrom) != command.Policy.Window || !row.WindowFrom.UTC().Truncate(command.Policy.Window).Equal(row.WindowFrom) || !contains(command.Meters, row.Meter) {
 			ledger.Invalid = true
 		}
 	}

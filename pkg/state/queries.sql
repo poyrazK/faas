@@ -10531,7 +10531,8 @@ SELECT count(*)::bigint AS records, min(window_from)::timestamptz AS first_windo
  max(window_to)::timestamptz AS last_window, max(observed_at)::timestamptz AS last_observation,
  COALESCE(bool_or(account_id <> sqlc.arg(account_id)::uuid OR backend_id <> sqlc.arg(backend_id)::text
  OR backend_fingerprint <> sqlc.arg(backend_fingerprint)::text OR meter <> ALL(sqlc.arg(meters)::text[])
- OR window_to - window_from <> sqlc.arg(window_seconds)::bigint * interval '1 second'),false)::boolean AS invalid
+ OR window_to - window_from <> sqlc.arg(window_seconds)::bigint * interval '1 second'
+ OR mod(extract(epoch FROM window_from),NULLIF(sqlc.arg(window_seconds)::bigint,0)) <> 0),false)::boolean AS invalid
 FROM managed_postgres_usage WHERE database_id = sqlc.arg(database_id)::uuid;
 
 -- name: ReconcileManagedPostgresLegacyResource :execrows
