@@ -130,6 +130,11 @@ from .app_health_check_status import AppHealthCheckStatus
 from .app_health_finding import AppHealthFinding
 from .app_health_finding_reason import AppHealthFindingReason
 from .app_health_finding_status import AppHealthFindingStatus
+from .app_health_history_entry import AppHealthHistoryEntry
+from .app_health_history_entry_kind import AppHealthHistoryEntryKind
+from .app_health_history_entry_previous_status import AppHealthHistoryEntryPreviousStatus
+from .app_health_history_page import AppHealthHistoryPage
+from .app_health_history_page_scope import AppHealthHistoryPageScope
 from .app_health_request_policy import AppHealthRequestPolicy
 from .app_health_requests import AppHealthRequests
 from .app_health_requests_coverage import AppHealthRequestsCoverage
@@ -2699,6 +2704,11 @@ __all__ = (
     "AppHealthFinding",
     "AppHealthFindingReason",
     "AppHealthFindingStatus",
+    "AppHealthHistoryEntry",
+    "AppHealthHistoryEntryKind",
+    "AppHealthHistoryEntryPreviousStatus",
+    "AppHealthHistoryPage",
+    "AppHealthHistoryPageScope",
     "AppHealthRequestPolicy",
     "AppHealthRequests",
     "AppHealthRequestsCoverage",

@@ -799,6 +799,22 @@ func (q *Queries) AppBySlug(ctx context.Context, db DBTX, slug string) (AppBySlu
 	return i, err
 }
 
+const appHealthHistoryTarget = `-- name: AppHealthHistoryTarget :one
+SELECT id::text FROM apps WHERE id = $1::text::uuid AND account_id = $2::text::uuid AND status <> 'deleted'
+`
+
+type AppHealthHistoryTargetParams struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) AppHealthHistoryTarget(ctx context.Context, db DBTX, arg AppHealthHistoryTargetParams) (string, error) {
+	row := db.QueryRow(ctx, appHealthHistoryTarget, arg.AppID, arg.AccountID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const appManagedPostgresBindingInventory = `-- name: AppManagedPostgresBindingInventory :many
 SELECT b.id AS binding_id, d.name AS database_name, b.scope, b.environment_key, b.access, b.state,
        b.credential_generation, (COALESCE(b.rotation_previous_generation, 0) > 0) AS rotation_pending,
@@ -2075,6 +2091,51 @@ func (q *Queries) CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg Ch
 	var i_id string
 	err := row.Scan(&i_id)
 	return i_id, err
+}
+
+const claimAppHealth = `-- name: ClaimAppHealth :one
+WITH candidate AS (
+ SELECT a.id, a.account_id FROM apps a
+ LEFT JOIN app_health_collection_state h ON h.app_id = a.id
+ WHERE a.status <> 'deleted' AND a.deleted_at IS NULL
+ AND COALESCE(a.manifest->>'execution_mode', '') IN ('', 'request', 'service')
+ AND (h.next_check_at IS NULL OR h.next_check_at <= $1::timestamptz)
+ AND (h.lease_until IS NULL OR h.lease_until <= $1::timestamptz)
+ ORDER BY COALESCE(h.next_check_at, '-infinity'::timestamptz), a.id
+ LIMIT 1 FOR UPDATE OF a SKIP LOCKED
+)
+INSERT INTO app_health_collection_state(app_id, account_id, next_check_at, lease_token, lease_started_at, lease_until)
+SELECT id, account_id, $1::timestamptz, $2::text, $1::timestamptz, $3::timestamptz FROM candidate
+ON CONFLICT (app_id) DO UPDATE SET lease_token = EXCLUDED.lease_token, lease_started_at = EXCLUDED.lease_started_at, lease_until = EXCLUDED.lease_until
+WHERE app_health_collection_state.lease_until IS NULL OR app_health_collection_state.lease_until <= $1::timestamptz
+RETURNING app_id::text, account_id::text, lease_token, lease_started_at, lease_until
+`
+
+type ClaimAppHealthParams struct {
+	CheckedNow pgtype.Timestamptz
+	Token      string
+	ExpiresAt  pgtype.Timestamptz
+}
+
+type ClaimAppHealthRow struct {
+	AppID          string
+	AccountID      string
+	LeaseToken     pgtype.Text
+	LeaseStartedAt pgtype.Timestamptz
+	LeaseUntil     pgtype.Timestamptz
+}
+
+func (q *Queries) ClaimAppHealth(ctx context.Context, db DBTX, arg ClaimAppHealthParams) (ClaimAppHealthRow, error) {
+	row := db.QueryRow(ctx, claimAppHealth, arg.CheckedNow, arg.Token, arg.ExpiresAt)
+	var i ClaimAppHealthRow
+	err := row.Scan(
+		&i.AppID,
+		&i.AccountID,
+		&i.LeaseToken,
+		&i.LeaseStartedAt,
+		&i.LeaseUntil,
+	)
+	return i, err
 }
 
 const claimAutomaticRouteCheck = `-- name: ClaimAutomaticRouteCheck :one
@@ -11706,6 +11767,32 @@ func (q *Queries) FindManagedPostgresLifecycleDatabase(ctx context.Context, db D
 	return i, err
 }
 
+const finishAppHealthCollection = `-- name: FinishAppHealthCollection :exec
+UPDATE app_health_collection_state SET assessment = $1::jsonb, assessment_key = $2::text,
+ checked_at = $3::timestamptz, next_check_at = $4::timestamptz,
+ lease_token = NULL, lease_started_at = NULL, lease_until = NULL
+WHERE app_id = $5::text::uuid
+`
+
+type FinishAppHealthCollectionParams struct {
+	Assessment    []byte
+	AssessmentKey string
+	CheckedAt     pgtype.Timestamptz
+	NextCheckAt   pgtype.Timestamptz
+	AppID         string
+}
+
+func (q *Queries) FinishAppHealthCollection(ctx context.Context, db DBTX, arg FinishAppHealthCollectionParams) error {
+	_, err := db.Exec(ctx, finishAppHealthCollection,
+		arg.Assessment,
+		arg.AssessmentKey,
+		arg.CheckedAt,
+		arg.NextCheckAt,
+		arg.AppID,
+	)
+	return err
+}
+
 const finishClonePostgresWriteFenceAbandonment = `-- name: FinishClonePostgresWriteFenceAbandonment :one
 UPDATE project_environment_clone_postgres_write_fences f SET state='released',remote_terminal_state=$1::text,
  remote_released_at=$2::timestamptz,released_at=clock_timestamp(),updated_at=clock_timestamp()
@@ -14571,6 +14658,35 @@ func (q *Queries) InsertAppErrorRequest(ctx context.Context, db DBTX, arg Insert
 		arg.DeploymentTag,
 		arg.DeploymentCreatedAt,
 		arg.ImageDigest,
+	)
+	return err
+}
+
+const insertAppHealthHistory = `-- name: InsertAppHealthHistory :exec
+INSERT INTO app_health_history(id, app_id, account_id, observed_at, kind, encoded_bytes, entry)
+VALUES($1::text::uuid, $2::text::uuid, $3::text::uuid,
+ $4::timestamptz, $5::text, $6::integer, $7::jsonb)
+`
+
+type InsertAppHealthHistoryParams struct {
+	ID           string
+	AppID        string
+	AccountID    string
+	ObservedAt   pgtype.Timestamptz
+	Kind         string
+	EncodedBytes int32
+	Entry        []byte
+}
+
+func (q *Queries) InsertAppHealthHistory(ctx context.Context, db DBTX, arg InsertAppHealthHistoryParams) error {
+	_, err := db.Exec(ctx, insertAppHealthHistory,
+		arg.ID,
+		arg.AppID,
+		arg.AccountID,
+		arg.ObservedAt,
+		arg.Kind,
+		arg.EncodedBytes,
+		arg.Entry,
 	)
 	return err
 }
@@ -20866,6 +20982,50 @@ func (q *Queries) ListAppErrorRequests(ctx context.Context, db DBTX, arg ListApp
 	return items, nil
 }
 
+const listAppHealthHistory = `-- name: ListAppHealthHistory :many
+SELECT entry FROM app_health_history
+WHERE app_id = $1::text::uuid AND account_id = $2::text::uuid
+AND observed_at >= $3::timestamptz
+AND ($4::text = '' OR (observed_at, id) < ($5::timestamptz, NULLIF($4::text, '')::uuid))
+ORDER BY observed_at DESC, id DESC LIMIT $6::integer
+`
+
+type ListAppHealthHistoryParams struct {
+	AppID     string
+	AccountID string
+	OldestAt  pgtype.Timestamptz
+	BeforeID  string
+	BeforeAt  pgtype.Timestamptz
+	PageLimit int32
+}
+
+func (q *Queries) ListAppHealthHistory(ctx context.Context, db DBTX, arg ListAppHealthHistoryParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, listAppHealthHistory,
+		arg.AppID,
+		arg.AccountID,
+		arg.OldestAt,
+		arg.BeforeID,
+		arg.BeforeAt,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var entry []byte
+		if err := rows.Scan(&entry); err != nil {
+			return nil, err
+		}
+		items = append(items, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAppSecretRevocationTargets = `-- name: ListAppSecretRevocationTargets :many
 SELECT instance_id::text, workload_name, runtime_state, reload_support,
        status, coalesce(ack_revision, ''), ack_at, coalesce(error_code, '')
@@ -26485,6 +26645,44 @@ func (q *Queries) LockAppEnvironmentSecretReferenceScope(ctx context.Context, db
 	row := db.QueryRow(ctx, lockAppEnvironmentSecretReferenceScope, arg.AppID, arg.AccountID, arg.Scope)
 	var i LockAppEnvironmentSecretReferenceScopeRow
 	err := row.Scan(&i.ID, &i.ProjectID)
+	return i, err
+}
+
+const lockAppHealthCollection = `-- name: LockAppHealthCollection :one
+SELECT h.assessment, h.assessment_key, h.checked_at FROM app_health_collection_state h
+JOIN apps a ON a.id = h.app_id AND a.account_id = h.account_id
+WHERE h.app_id = $1::text::uuid AND h.account_id = $2::text::uuid
+AND h.lease_token = $3::text AND h.lease_until > $4::timestamptz
+AND h.lease_started_at = $5::timestamptz
+AND a.status <> 'deleted' AND a.deleted_at IS NULL
+AND COALESCE(a.manifest->>'execution_mode', '') IN ('', 'request', 'service')
+FOR UPDATE OF h
+`
+
+type LockAppHealthCollectionParams struct {
+	AppID      string
+	AccountID  string
+	Token      string
+	CheckedNow pgtype.Timestamptz
+	StartedAt  pgtype.Timestamptz
+}
+
+type LockAppHealthCollectionRow struct {
+	Assessment    []byte
+	AssessmentKey pgtype.Text
+	CheckedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) LockAppHealthCollection(ctx context.Context, db DBTX, arg LockAppHealthCollectionParams) (LockAppHealthCollectionRow, error) {
+	row := db.QueryRow(ctx, lockAppHealthCollection,
+		arg.AppID,
+		arg.AccountID,
+		arg.Token,
+		arg.CheckedNow,
+		arg.StartedAt,
+	)
+	var i LockAppHealthCollectionRow
+	err := row.Scan(&i.Assessment, &i.AssessmentKey, &i.CheckedAt)
 	return i, err
 }
 
@@ -39527,6 +39725,33 @@ func (q *Queries) PruneAccountCustomerOperationStreams(ctx context.Context, db D
 	return err
 }
 
+const pruneAppHealthHistory = `-- name: PruneAppHealthHistory :exec
+DELETE FROM app_health_history WHERE app_id = $1::text::uuid AND id IN (
+ SELECT id FROM (
+ SELECT id, observed_at, row_number() OVER (ORDER BY observed_at DESC, id DESC) AS n,
+ sum(encoded_bytes) OVER (ORDER BY observed_at DESC, id DESC) AS total_bytes
+ FROM app_health_history WHERE app_id = $1::text::uuid
+ ) retained WHERE n > $2::integer OR total_bytes > $3::integer OR observed_at < $4::timestamptz
+)
+`
+
+type PruneAppHealthHistoryParams struct {
+	AppID      string
+	MaxEntries int32
+	MaxBytes   int32
+	OldestAt   pgtype.Timestamptz
+}
+
+func (q *Queries) PruneAppHealthHistory(ctx context.Context, db DBTX, arg PruneAppHealthHistoryParams) error {
+	_, err := db.Exec(ctx, pruneAppHealthHistory,
+		arg.AppID,
+		arg.MaxEntries,
+		arg.MaxBytes,
+		arg.OldestAt,
+	)
+	return err
+}
+
 const pruneCustomerOperationEvents = `-- name: PruneCustomerOperationEvents :execrows
 WITH doomed AS (SELECT e.operation_id,e.sequence FROM customer_operation_events e JOIN customer_operations o ON o.id=e.operation_id
  WHERE (o.record->>'event_expires_at')::timestamptz<=$1::timestamptz
@@ -39657,6 +39882,26 @@ type PruneEnvironmentGitOpsReportsParams struct {
 func (q *Queries) PruneEnvironmentGitOpsReports(ctx context.Context, db DBTX, arg PruneEnvironmentGitOpsReportsParams) error {
 	_, err := db.Exec(ctx, pruneEnvironmentGitOpsReports, arg.SourceID, arg.KeepCount, arg.BeforeAt)
 	return err
+}
+
+const pruneExpiredAppHealthHistory = `-- name: PruneExpiredAppHealthHistory :execrows
+DELETE FROM app_health_history WHERE id IN (
+ SELECT id FROM app_health_history WHERE observed_at < $1::timestamptz
+ ORDER BY observed_at, id LIMIT $2::integer
+)
+`
+
+type PruneExpiredAppHealthHistoryParams struct {
+	OldestAt   pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) PruneExpiredAppHealthHistory(ctx context.Context, db DBTX, arg PruneExpiredAppHealthHistoryParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneExpiredAppHealthHistory, arg.OldestAt, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const pruneRouteCheckHistory = `-- name: PruneRouteCheckHistory :exec
@@ -41617,6 +41862,53 @@ func (q *Queries) ReadAppEnvironmentSecretReferenceSnapshot(ctx context.Context,
 		&i.SuppressedKeys,
 		&i.Count,
 	)
+	return i, err
+}
+
+const readAppHealthCollection = `-- name: ReadAppHealthCollection :one
+SELECT h.assessment FROM app_health_collection_state h JOIN apps a ON a.id = h.app_id
+WHERE h.app_id = $1::text::uuid AND a.account_id = $2::text::uuid AND a.status <> 'deleted'
+`
+
+type ReadAppHealthCollectionParams struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) ReadAppHealthCollection(ctx context.Context, db DBTX, arg ReadAppHealthCollectionParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readAppHealthCollection, arg.AppID, arg.AccountID)
+	var assessment []byte
+	err := row.Scan(&assessment)
+	return assessment, err
+}
+
+const readAppHealthHistoryCursor = `-- name: ReadAppHealthHistoryCursor :one
+SELECT observed_at, id::text FROM app_health_history
+WHERE id = $1::text::uuid AND app_id = $2::text::uuid AND account_id = $3::text::uuid
+AND observed_at >= $4::timestamptz
+`
+
+type ReadAppHealthHistoryCursorParams struct {
+	ID        string
+	AppID     string
+	AccountID string
+	OldestAt  pgtype.Timestamptz
+}
+
+type ReadAppHealthHistoryCursorRow struct {
+	ObservedAt pgtype.Timestamptz
+	ID         string
+}
+
+func (q *Queries) ReadAppHealthHistoryCursor(ctx context.Context, db DBTX, arg ReadAppHealthHistoryCursorParams) (ReadAppHealthHistoryCursorRow, error) {
+	row := db.QueryRow(ctx, readAppHealthHistoryCursor,
+		arg.ID,
+		arg.AppID,
+		arg.AccountID,
+		arg.OldestAt,
+	)
+	var i ReadAppHealthHistoryCursorRow
+	err := row.Scan(&i.ObservedAt, &i.ID)
 	return i, err
 }
 

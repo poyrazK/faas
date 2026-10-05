@@ -39249,3 +39249,116 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 --
 
 
+
+--
+-- Name: app_health_collection_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_health_collection_state (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    next_check_at timestamp with time zone NOT NULL,
+    lease_token text,
+    lease_started_at timestamp with time zone,
+    lease_until timestamp with time zone,
+    checked_at timestamp with time zone,
+    assessment_key text,
+    assessment jsonb,
+    CONSTRAINT app_health_collection_state_assessment_key_check CHECK ((assessment_key ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT app_health_collection_state_check CHECK (((jsonb_typeof(assessment) = 'object'::text) AND ((assessment ->> 'app_id'::text) = (app_id)::text) AND ((assessment ->> 'scope'::text) = 'default'::text) AND (octet_length((assessment)::text) <= 131072))),
+    CONSTRAINT app_health_collection_state_check1 CHECK ((((lease_token IS NULL) = (lease_until IS NULL)) AND ((lease_token IS NULL) = (lease_started_at IS NULL)))),
+    CONSTRAINT app_health_collection_state_check2 CHECK (((lease_token IS NULL) OR ((length(lease_token) > 0) AND isfinite(lease_started_at) AND isfinite(lease_until) AND (lease_until > lease_started_at)))),
+    CONSTRAINT app_health_collection_state_check3 CHECK ((((checked_at IS NULL) = (assessment IS NULL)) AND ((assessment_key IS NULL) = (assessment IS NULL)))),
+    CONSTRAINT app_health_collection_state_checked_at_check CHECK (((checked_at IS NULL) OR isfinite(checked_at))),
+    CONSTRAINT app_health_collection_state_next_check_at_check CHECK (isfinite(next_check_at))
+);
+
+
+--
+-- Name: app_health_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_health_history (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    kind text NOT NULL,
+    encoded_bytes integer NOT NULL,
+    entry jsonb NOT NULL,
+    CONSTRAINT app_health_history_check CHECK (((jsonb_typeof(entry) = 'object'::text) AND ((entry ->> 'id'::text) = (id)::text) AND ((entry ->> 'kind'::text) = kind) AND (((entry -> 'assessment'::text) ->> 'app_id'::text) = (app_id)::text) AND (((entry -> 'assessment'::text) ->> 'scope'::text) = 'default'::text) AND (octet_length((entry)::text) <= 131072))),
+    CONSTRAINT app_health_history_encoded_bytes_check CHECK (((encoded_bytes >= 1) AND (encoded_bytes <= 65536))),
+    CONSTRAINT app_health_history_kind_check CHECK ((kind = ANY (ARRAY['baseline'::text, 'transition'::text, 'gap'::text]))),
+    CONSTRAINT app_health_history_observed_at_check CHECK (isfinite(observed_at))
+);
+
+
+--
+-- Name: app_health_collection_state app_health_collection_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_collection_state
+    ADD CONSTRAINT app_health_collection_state_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_health_history app_health_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_history
+    ADD CONSTRAINT app_health_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_health_collection_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_health_collection_due_idx ON public.app_health_collection_state USING btree (next_check_at, app_id);
+
+
+--
+-- Name: app_health_history_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_health_history_app_idx ON public.app_health_history USING btree (app_id, observed_at DESC, id DESC);
+
+
+--
+-- Name: app_health_history_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_health_history_retention_idx ON public.app_health_history USING btree (observed_at, id);
+
+
+--
+-- Name: app_health_collection_state app_health_collection_state_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_collection_state
+    ADD CONSTRAINT app_health_collection_state_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_health_collection_state app_health_collection_state_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_collection_state
+    ADD CONSTRAINT app_health_collection_state_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_health_history app_health_history_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_history
+    ADD CONSTRAINT app_health_history_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_health_history app_health_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_health_history
+    ADD CONSTRAINT app_health_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+

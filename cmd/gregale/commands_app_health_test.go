@@ -41,3 +41,23 @@ func TestAppHealth_CLIRejectsExtraArgs(t *testing.T) {
 		t.Fatalf("exit %d", code)
 	}
 }
+
+func TestAppHealth_CLIHistory(t *testing.T) {
+	resetJSONOut(t)
+	var output bytes.Buffer
+	previous := osStdout
+	osStdout = &output
+	t.Cleanup(func() { osStdout = previous })
+	f := authedFakeAPI(t, `{"app_id":"app","scope":"default","collector_fresh":false,"interval_seconds":30,"next_cursor":"12345678-1234-1234-1234-123456789abc","entries":[{"id":"entry","kind":"gap","observed_at":"2026-10-05T12:00:00Z","assessment":{"status":"unknown","phase":"unknown","summary":"Evidence expired"}}]}`, http.StatusOK)
+	if code := cmdAppHealth("demo", []string{"--history", "--limit", "5"}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if f.sawMethod != "GET" || f.sawPath != "/v1/apps/demo/health/history" {
+		t.Fatalf("%s %s", f.sawMethod, f.sawPath)
+	}
+	for _, expected := range []string{"Background collection is unconfirmed", "[gap] unknown", "Evidence expired", "Next page: --history --before", "not exact incident start/end"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("missing %q: %s", expected, output.String())
+		}
+	}
+}

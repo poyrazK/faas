@@ -565,6 +565,28 @@ type AppErrorRequest struct {
 	ImageDigest         string
 }
 
+type AppHealthCollectionState struct {
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	NextCheckAt    pgtype.Timestamptz
+	LeaseToken     pgtype.Text
+	LeaseStartedAt pgtype.Timestamptz
+	LeaseUntil     pgtype.Timestamptz
+	CheckedAt      pgtype.Timestamptz
+	AssessmentKey  pgtype.Text
+	Assessment     []byte
+}
+
+type AppHealthHistory struct {
+	ID           pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	ObservedAt   pgtype.Timestamptz
+	Kind         string
+	EncodedBytes int32
+	Entry        []byte
+}
+
 type AppIssue struct {
 	ID                       pgtype.UUID
 	AccountID                pgtype.UUID

@@ -8232,7 +8232,7 @@ paths:
       description: |
         Read-only assessment of default-scope HTTP serving deployments,
         replica readiness, node evidence and the last 5 minutes of request
-        telemetry. Request metrics aggregate all app scopes. It never wakes
+        telemetry scoped to current traffic-bearing default releases. It never wakes
         or probes a workload. Structural evidence is available on every plan;
         request telemetry follows the existing Hobby+ metrics entitlement.
         Missing, failed, stale or truncated evidence cannot confirm health.
@@ -8271,6 +8271,43 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/health/history:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listAppHealthHistory
+      summary: Read recorded app health changes.
+      description: |
+        Requires apps:read or admin; no MFA required. Background collection
+        records default HTTP serving assessments independently of dashboard
+        reads, without waking or probing workloads. Baseline, meaningful
+        changes and expired-evidence gaps are newest first. Times describe
+        observations or evidence expiry, not exact incident start/end times.
+        Retains up to 100 entries within 4 MiB and 30 days per app; each entry
+        is bounded to 64 KiB. Missing, foreign, aged or pruned cursors return
+        404. Latest retains its original time; collector_fresh is false when
+        unavailable or expired. Reads never create or refresh stored evidence.
+      parameters:
+        - name: limit
+          description: Maximum number of retained observations to return.
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: before
+          in: query
+          description: ID of the last retained entry from the preceding page.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Recorded observations and collection freshness; Cache-Control no-store.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppHealthHistoryPage' }
+        default:
+          description: Invalid page parameters, access denial, missing cursor, or unavailable storage.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/metrics:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -46944,6 +46981,44 @@ components:
           x-since: "2026-08"
           x-issue: "436"
 
+    AppHealthHistoryPage:
+      description: Retained default HTTP health observations with independent background collection freshness.
+      type: object
+      additionalProperties: false
+      required: [app_id, scope, entries, collector_fresh, interval_seconds]
+      properties:
+        app_id: { type: string }
+        scope: { type: string, enum: [default] }
+        entries:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/AppHealthHistoryEntry' }
+        next_cursor: { type: string, format: uuid }
+        latest:
+          description: Latest background assessment with its original timestamp; may be stale.
+          allOf: [{ $ref: '#/components/schemas/AppHealthResponse' }]
+        collector_fresh:
+          type: boolean
+          description: Latest background assessment exists and has not expired. This is collection freshness, not app health.
+        interval_seconds:
+          type: integer
+          description: Minimum target spacing per app; fleet load and failures can delay observations.
+    AppHealthHistoryEntry:
+      description: Original baseline, meaningful transition, or expired-evidence gap; times do not imply continuous incident duration.
+      type: object
+      additionalProperties: false
+      required: [id, kind, observed_at, assessment]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [baseline, transition, gap] }
+        observed_at:
+          type: string
+          format: date-time
+          description: Assessment time, or previous evidence expiry for a gap entry.
+        previous_status:
+          type: string
+          enum: [healthy, degraded, unhealthy, unknown]
+        assessment: { $ref: '#/components/schemas/AppHealthResponse' }
     AppHealthResponse:
       description: Read-only observed health of default-scope HTTP serving workloads.
       type: object
@@ -47020,7 +47095,7 @@ components:
       properties:
         code:
           type: string
-          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests]
+          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests, collection]
         status:
           type: string
           enum: [pass, warning, fail, unknown, not_applicable]
@@ -47029,7 +47104,7 @@ components:
           description: Safe explanation without raw backend errors or probe output.
         reason:
           type: string
-          enum: [capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed]
+          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed]
           description: Stable diagnostic reason, when available.
         action:
           type: string

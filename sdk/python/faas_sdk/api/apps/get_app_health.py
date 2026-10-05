@@ -79,7 +79,7 @@ def sync_detailed(
 
      Read-only assessment of default-scope HTTP serving deployments,
     replica readiness, node evidence and the last 5 minutes of request
-    telemetry. Request metrics aggregate all app scopes. It never wakes
+    telemetry scoped to current traffic-bearing default releases. It never wakes
     or probes a workload. Structural evidence is available on every plan;
     request telemetry follows the existing Hobby+ metrics entitlement.
     Missing, failed, stale or truncated evidence cannot confirm health.
@@ -119,7 +119,7 @@ def sync(
 
      Read-only assessment of default-scope HTTP serving deployments,
     replica readiness, node evidence and the last 5 minutes of request
-    telemetry. Request metrics aggregate all app scopes. It never wakes
+    telemetry scoped to current traffic-bearing default releases. It never wakes
     or probes a workload. Structural evidence is available on every plan;
     request telemetry follows the existing Hobby+ metrics entitlement.
     Missing, failed, stale or truncated evidence cannot confirm health.
@@ -154,7 +154,7 @@ async def asyncio_detailed(
 
      Read-only assessment of default-scope HTTP serving deployments,
     replica readiness, node evidence and the last 5 minutes of request
-    telemetry. Request metrics aggregate all app scopes. It never wakes
+    telemetry scoped to current traffic-bearing default releases. It never wakes
     or probes a workload. Structural evidence is available on every plan;
     request telemetry follows the existing Hobby+ metrics entitlement.
     Missing, failed, stale or truncated evidence cannot confirm health.
@@ -192,7 +192,7 @@ async def asyncio(
 
      Read-only assessment of default-scope HTTP serving deployments,
     replica readiness, node evidence and the last 5 minutes of request
-    telemetry. Request metrics aggregate all app scopes. It never wakes
+    telemetry scoped to current traffic-bearing default releases. It never wakes
     or probes a workload. Structural evidence is available on every plan;
     request telemetry follows the existing Hobby+ metrics entitlement.
     Missing, failed, stale or truncated evidence cannot confirm health.

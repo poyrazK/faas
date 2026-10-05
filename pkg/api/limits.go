@@ -8703,4 +8703,15 @@ const (
 	AppHealthMinServerErrors        = 5
 	AppHealthWarningErrorRatePct    = 5.0
 	AppHealthUnhealthyErrorRatePct  = 25.0
+	AppHealthCollectorInterval      = 30 * time.Second
+	AppHealthCollectorIdleInterval  = time.Second
+	AppHealthCollectorLease         = 30 * time.Second
+	AppHealthCollectorBatch         = 20
+	AppHealthHistoryPageSize        = 20
+	AppHealthHistoryMaxPage         = 100
+	AppHealthHistoryMaxEntries      = 100
+	AppHealthHistoryMaxBytes        = 4 * 1024 * 1024
+	AppHealthHistoryEntryMaxBytes   = 64 * 1024
+	AppHealthHistoryMaxAge          = 30 * 24 * time.Hour
+	AppHealthHistoryPruneBatch      = 100
 )

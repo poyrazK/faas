@@ -13784,3 +13784,75 @@ WHERE id = sqlc.arg(id)::uuid AND account_id = sqlc.arg(account_id)::uuid
 
 -- name: ResetManagedPostgresReconciliationCoverage :exec
 DELETE FROM managed_postgres_usage_coverage WHERE database_id = $1;
+
+-- name: ClaimAppHealth :one
+WITH candidate AS (
+ SELECT a.id, a.account_id FROM apps a
+ LEFT JOIN app_health_collection_state h ON h.app_id = a.id
+ WHERE a.status <> 'deleted' AND a.deleted_at IS NULL
+ AND COALESCE(a.manifest->>'execution_mode', '') IN ('', 'request', 'service')
+ AND (h.next_check_at IS NULL OR h.next_check_at <= sqlc.arg(checked_now)::timestamptz)
+ AND (h.lease_until IS NULL OR h.lease_until <= sqlc.arg(checked_now)::timestamptz)
+ ORDER BY COALESCE(h.next_check_at, '-infinity'::timestamptz), a.id
+ LIMIT 1 FOR UPDATE OF a SKIP LOCKED
+)
+INSERT INTO app_health_collection_state(app_id, account_id, next_check_at, lease_token, lease_started_at, lease_until)
+SELECT id, account_id, sqlc.arg(checked_now)::timestamptz, sqlc.arg(token)::text, sqlc.arg(checked_now)::timestamptz, sqlc.arg(expires_at)::timestamptz FROM candidate
+ON CONFLICT (app_id) DO UPDATE SET lease_token = EXCLUDED.lease_token, lease_started_at = EXCLUDED.lease_started_at, lease_until = EXCLUDED.lease_until
+WHERE app_health_collection_state.lease_until IS NULL OR app_health_collection_state.lease_until <= sqlc.arg(checked_now)::timestamptz
+RETURNING app_id::text, account_id::text, lease_token, lease_started_at, lease_until;
+
+-- name: LockAppHealthCollection :one
+SELECT h.assessment, h.assessment_key, h.checked_at FROM app_health_collection_state h
+JOIN apps a ON a.id = h.app_id AND a.account_id = h.account_id
+WHERE h.app_id = sqlc.arg(app_id)::text::uuid AND h.account_id = sqlc.arg(account_id)::text::uuid
+AND h.lease_token = sqlc.arg(token)::text AND h.lease_until > sqlc.arg(checked_now)::timestamptz
+AND h.lease_started_at = sqlc.arg(started_at)::timestamptz
+AND a.status <> 'deleted' AND a.deleted_at IS NULL
+AND COALESCE(a.manifest->>'execution_mode', '') IN ('', 'request', 'service')
+FOR UPDATE OF h;
+
+-- name: FinishAppHealthCollection :exec
+UPDATE app_health_collection_state SET assessment = sqlc.arg(assessment)::jsonb, assessment_key = sqlc.arg(assessment_key)::text,
+ checked_at = sqlc.arg(checked_at)::timestamptz, next_check_at = sqlc.arg(next_check_at)::timestamptz,
+ lease_token = NULL, lease_started_at = NULL, lease_until = NULL
+WHERE app_id = sqlc.arg(app_id)::text::uuid;
+
+-- name: InsertAppHealthHistory :exec
+INSERT INTO app_health_history(id, app_id, account_id, observed_at, kind, encoded_bytes, entry)
+VALUES(sqlc.arg(id)::text::uuid, sqlc.arg(app_id)::text::uuid, sqlc.arg(account_id)::text::uuid,
+ sqlc.arg(observed_at)::timestamptz, sqlc.arg(kind)::text, sqlc.arg(encoded_bytes)::integer, sqlc.arg(entry)::jsonb);
+
+-- name: PruneAppHealthHistory :exec
+DELETE FROM app_health_history WHERE app_id = sqlc.arg(app_id)::text::uuid AND id IN (
+ SELECT id FROM (
+ SELECT id, observed_at, row_number() OVER (ORDER BY observed_at DESC, id DESC) AS n,
+ sum(encoded_bytes) OVER (ORDER BY observed_at DESC, id DESC) AS total_bytes
+ FROM app_health_history WHERE app_id = sqlc.arg(app_id)::text::uuid
+ ) retained WHERE n > sqlc.arg(max_entries)::integer OR total_bytes > sqlc.arg(max_bytes)::integer OR observed_at < sqlc.arg(oldest_at)::timestamptz
+);
+
+-- name: ReadAppHealthCollection :one
+SELECT h.assessment FROM app_health_collection_state h JOIN apps a ON a.id = h.app_id
+WHERE h.app_id = sqlc.arg(app_id)::text::uuid AND a.account_id = sqlc.arg(account_id)::text::uuid AND a.status <> 'deleted';
+
+-- name: ReadAppHealthHistoryCursor :one
+SELECT observed_at, id::text FROM app_health_history
+WHERE id = sqlc.arg(id)::text::uuid AND app_id = sqlc.arg(app_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid
+AND observed_at >= sqlc.arg(oldest_at)::timestamptz;
+
+-- name: ListAppHealthHistory :many
+SELECT entry FROM app_health_history
+WHERE app_id = sqlc.arg(app_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid
+AND observed_at >= sqlc.arg(oldest_at)::timestamptz
+AND (sqlc.arg(before_id)::text = '' OR (observed_at, id) < (sqlc.arg(before_at)::timestamptz, NULLIF(sqlc.arg(before_id)::text, '')::uuid))
+ORDER BY observed_at DESC, id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: AppHealthHistoryTarget :one
+SELECT id::text FROM apps WHERE id = sqlc.arg(app_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid AND status <> 'deleted';
+
+-- name: PruneExpiredAppHealthHistory :execrows
+DELETE FROM app_health_history WHERE id IN (
+ SELECT id FROM app_health_history WHERE observed_at < sqlc.arg(oldest_at)::timestamptz
+ ORDER BY observed_at, id LIMIT sqlc.arg(batch_limit)::integer
+);

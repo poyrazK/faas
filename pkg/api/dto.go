@@ -11806,3 +11806,23 @@ type AppHealthRequestPolicy struct {
 	WarningErrorRatePct   float64 `json:"warning_error_rate_pct"`
 	UnhealthyErrorRatePct float64 `json:"unhealthy_error_rate_pct"`
 }
+
+// History contains sampled observations, not exact incident start/end times.
+// Latest retains its original timestamp; CollectorFresh never refreshes it.
+type AppHealthHistoryPage struct {
+	AppID           string                  `json:"app_id"`
+	Scope           string                  `json:"scope"`
+	Entries         []AppHealthHistoryEntry `json:"entries"`
+	NextCursor      string                  `json:"next_cursor,omitempty"`
+	Latest          *AppHealthResponse      `json:"latest,omitempty"`
+	CollectorFresh  bool                    `json:"collector_fresh"`
+	IntervalSeconds int                     `json:"interval_seconds"`
+}
+
+type AppHealthHistoryEntry struct {
+	ID             string            `json:"id"`
+	Kind           string            `json:"kind"`
+	ObservedAt     string            `json:"observed_at"`
+	PreviousStatus string            `json:"previous_status,omitempty"`
+	Assessment     AppHealthResponse `json:"assessment"`
+}

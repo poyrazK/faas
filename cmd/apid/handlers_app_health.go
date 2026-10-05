@@ -3,11 +3,9 @@ package main
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apphealth"
-	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -20,69 +18,6 @@ func (s *server) getAppHealth(w http.ResponseWriter, r *http.Request, acct state
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.AppHealthCollectionTimeout)
 	defer cancel()
-	evidence := apphealth.Evidence{App: app, MetricsAllowed: acct.Plan.PerAppMetricsAllowed()}
-	s.collectHealthDeployments(ctx, &evidence)
-	s.collectHealthInstances(ctx, &evidence)
-	if evidence.MetricsAllowed && evidence.DeploymentsKnown {
-		var ids []string
-		for _, d := range evidence.Live {
-			if (d.Scope == "" || d.Scope == "default") && d.Status == state.DeployLive && d.TrafficPercent > 0 {
-				ids = append(ids, d.ID)
-			}
-		}
-		evidence.Metrics = appmetrics.FetchRequestHealth(ctx, s.promqlClient, app.ID, ids)
-	}
-	evidence.Now = time.Now()
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, apphealth.Evaluate(evidence))
-}
-
-func (s *server) collectHealthDeployments(ctx context.Context, e *apphealth.Evidence) {
-	live, err := s.store.LiveDeployments(ctx, e.App.ID)
-	if err == nil {
-		e.Live = live
-		e.DeploymentsKnown = true
-	}
-	history, err := s.store.ListDeploymentsForApp(ctx, e.App.ID, api.AppHealthDeploymentHistoryLimit, 0)
-	if err != nil {
-		return
-	}
-	e.HistoryComplete = len(history) < api.AppHealthDeploymentHistoryLimit
-	for _, d := range history {
-		if d.Scope == "" || d.Scope == "default" {
-			e.Latest = &d
-			break
-		}
-	}
-}
-
-func (s *server) collectHealthInstances(ctx context.Context, e *apphealth.Evidence) {
-	lister, ok := s.store.(interface {
-		ListActiveInstancesForApp(context.Context, string, int) ([]state.Instance, error)
-	})
-	if !ok {
-		return
-	}
-	instances, err := lister.ListActiveInstancesForApp(ctx, e.App.ID, api.AppHealthInstanceLimit+1)
-	if err != nil || len(instances) > api.AppHealthInstanceLimit {
-		return
-	}
-	e.Instances, e.InstancesKnown = instances, true
-	ids := make([]string, 0, len(instances))
-	e.Nodes = make(map[string]state.ComputeNode)
-	seen := make(map[string]bool)
-	for _, i := range instances {
-		ids = append(ids, i.ID)
-		if seen[i.NodeID] || i.NodeID == "" {
-			continue
-		}
-		seen[i.NodeID] = true
-		node, err := s.store.ComputeNodeByID(ctx, i.NodeID)
-		if err == nil {
-			e.Nodes[i.NodeID] = node
-		}
-	}
-	if reader, ok := s.store.(state.InstanceReadinessBySourceReader); ok {
-		e.Readiness, _ = reader.LatestInstanceReadinessBySource(ctx, ids)
-	}
+	writeJSON(w, http.StatusOK, apphealth.Collect(ctx, s.store, s.promqlClient, app, acct.Plan.PerAppMetricsAllowed()))
 }

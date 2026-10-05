@@ -60,3 +60,5 @@ assessment explains its coverage instead of claiming public reachability.
 No database migration, routing change or VM lifecycle change is introduced.
 Health transitions, history, notifications, arbitrary environment selection,
 public probes and worker/job health remain subsequent slices.
+
+ADR-594 adds independent background observations and bounded app-health history.

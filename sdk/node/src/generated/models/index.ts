@@ -73,6 +73,8 @@ export type { AppErrorsSummaryResponse } from './AppErrorsSummaryResponse.js';
 export type { AppHealthCapacity } from './AppHealthCapacity.js';
 export type { AppHealthCheck } from './AppHealthCheck.js';
 export type { AppHealthFinding } from './AppHealthFinding.js';
+export type { AppHealthHistoryEntry } from './AppHealthHistoryEntry.js';
+export type { AppHealthHistoryPage } from './AppHealthHistoryPage.js';
 export type { AppHealthRequestPolicy } from './AppHealthRequestPolicy.js';
 export type { AppHealthRequests } from './AppHealthRequests.js';
 export type { AppHealthResponse } from './AppHealthResponse.js';

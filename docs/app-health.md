@@ -84,5 +84,57 @@ not exposed.
 
 This assessment does not prove public reachability, verify artifact existence,
 probe dependencies, or provide an uptime guarantee. It describes evidence that
-Gregale already has. Health history, automatic alerts, active public probes,
+Gregale already has. Automatic alerts, active public probes,
 arbitrary environment selection and worker/job checks are future slices.
+
+## Recorded health history
+
+Read retained background observations:
+
+```sh
+gregale app my-api health --history
+gregale app my-api health --history --limit 20 --before ENTRY_UUID
+gregale --json app my-api health --history
+```
+
+The API is `GET /v1/apps/{slug}/health/history`, with the same read scope and
+ownership checks as current health. History remains readable after a plan
+downgrade. Collection uses each account's current request-metrics entitlement.
+
+A background collector assesses eligible HTTP request and service apps without
+requiring an open dashboard. The target spacing is at least 30 seconds per app;
+fleet load and failures can delay it. It reuses recorded state and telemetry and
+never wakes or probes the app. Each app has a fenced lease, so an expired worker
+cannot overwrite a newer observation. API reads do not create or refresh history.
+
+The timeline records a first assessment and meaningful changes to status,
+phase, releases, diagnostic reasons, replica findings or severity policy.
+Changing counters and timestamps alone do not add events. Entries contain the
+original assessment and policy; the separate `latest` field contains the newest
+background assessment even when no event was added. `collector_fresh` indicates
+only that this background assessment has not expired, independently of health.
+Clients also expire cached collection freshness using `latest.evaluated_at` and
+`latest.valid_for_seconds`.
+
+After a collection gap longer than the prior assessment's validity, the next
+successful collection records an unknown `gap` entry at the old evidence's
+expiry and then the new observation. Until collection resumes, freshness is
+false and the last historical entry retains its original meaning and time.
+Unknown is not a confirmed outage or a confirmed recovery.
+
+History is newest first, with up to 100 entries within 4 MiB per app, each at
+most 64 KiB. Entries older than 30 days are excluded from reads and removed by
+bounded background cleanup. Pages default to 20 entries, with a maximum of
+100. `next_cursor` supplies `before` for the next page. An unavailable, foreign,
+aged or pruned cursor returns 404; refresh from the first page. History begins
+with collection after installation; older incidents are not backfilled.
+
+The console shows recorded release and replica links. These resources may have
+been retired since the observation. Times describe assessments or evidence
+expiry, not exact incident start/end, uninterrupted recovery or deployment
+causality. History does not establish current public reachability or uptime.
+
+Operators can inspect `app_health_collection_total{outcome="recorded"|"error"}`
+and `app_health_collection_duration_seconds`. A recorded unknown assessment
+counts as a recorded observation, never as healthy. Lease, batch, deadline,
+interval and retention bounds are centralized in `pkg/api/limits.go`.
