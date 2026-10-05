@@ -52,7 +52,7 @@ func (s *PgStore) GetFreshDeploymentArtifactScan(ctx context.Context, accountID,
 	if err != nil {
 		return DeploymentArtifactScan{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := lockArtifactEvidenceOwner(ctx, tx, accountID, appID, depID, workload); err != nil {
 		return DeploymentArtifactScan{}, err
 	}
@@ -96,7 +96,7 @@ func (s *PgStore) GetFreshDeploymentArtifactScanEvidence(ctx context.Context, ac
 	if err != nil {
 		return DeploymentArtifactScanEvidence{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	owner, err := readArtifactEvidenceOwner(ctx, tx, accountID, appID, depID)
 	if err != nil {
 		return DeploymentArtifactScanEvidence{}, err

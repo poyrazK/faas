@@ -54,7 +54,7 @@ func (m *MemStore) checkOwnedRuntimePublicationLocked(p RuntimeInstancePublicati
 	if err := m.requireInstanceLayerArtifactsLocked(instance.DeploymentID, p.targetState()); err != nil {
 		return Instance{}, err
 	}
-	if (instance.State != p.ExpectedState && !(p.PromotionReceipt != nil && instance.State == string(StateRunning))) || instance.WakeID != p.WakeID || instance.NodeID != p.NodeID {
+	if (instance.State != p.ExpectedState && (p.PromotionReceipt == nil || instance.State != string(StateRunning))) || instance.WakeID != p.WakeID || instance.NodeID != p.NodeID {
 		return Instance{}, ErrConflict
 	}
 	snapshot, err := m.runtimeAppValuesLocked(p.AccountID, p.AppID, instance.DeploymentID)

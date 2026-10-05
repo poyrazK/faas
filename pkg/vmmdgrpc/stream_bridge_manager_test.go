@@ -122,6 +122,15 @@ func TestStreamBridgeManagerPrewarmSharesStartupWithFirstAcquire(t *testing.T) {
 	if got := starts.Load(); got != 1 {
 		t.Fatalf("bridge starts after acquire = %d, want one", got)
 	}
+	if err := manager.reaperCtx.Err(); err != nil {
+		t.Fatalf("RPC cancellation stopped the persistent bridge manager: %v", err)
+	}
+	if err := manager.close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if manager.reaperCtx.Err() == nil {
+		t.Fatal("closing the manager did not cancel its lifetime context")
+	}
 }
 
 func TestStreamBridgeManagerRestartsWhenProtocolChanges(t *testing.T) {

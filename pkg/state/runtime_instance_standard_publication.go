@@ -44,7 +44,7 @@ func publishOwnedStandardRuntimeTx(ctx context.Context, tx pgx.Tx, p RuntimeInst
 	if pgUUIDString(owner.NodeID) != p.NodeID || pgUUIDString(owner.WakeID) != p.WakeID || pgUUIDString(owner.AppID) != p.AppID || pgUUIDString(owner.DeploymentID) != p.Fence.DeploymentID {
 		return Instance{}, ErrConflict
 	}
-	if owner.State != p.ExpectedState && !(p.PromotionReceipt != nil && owner.State == string(StateRunning)) || p.ExpectedState == string(StateWarm) && !owner.ProofMatches {
+	if owner.State != p.ExpectedState && (p.PromotionReceipt == nil || owner.State != string(StateRunning)) || p.ExpectedState == string(StateWarm) && !owner.ProofMatches {
 		return Instance{}, ErrConflict
 	}
 	if p.PromotionReceipt != nil {

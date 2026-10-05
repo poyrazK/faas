@@ -55,7 +55,7 @@ func (s *PgStore) PublishBaseImageProducer(ctx context.Context, input BaseImageP
 	if err != nil {
 		return BaseImageProducer{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	keys := []string{in.Artifact.StorageKey}
 	var parent BaseImageProducer

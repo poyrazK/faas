@@ -200,6 +200,8 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 // prewarm publishes a starting entry before returning, then performs the
 // process/socket startup in the background. A first request racing the startup
 // joins the same ready channel in acquire instead of spawning a second bridge.
+//
+//nolint:contextcheck // Startup uses the stored manager context derived by startReaper; it outlives RPC cancellation and manager.close cancels it.
 func (m *streamBridgeManager) prewarm(ctx context.Context, req *vmmdpb.ForwardHTTPRequestInit, netnsName string) {
 	if m == nil || req == nil || req.GetInstance() == "" || netnsName == "" {
 		return
