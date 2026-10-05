@@ -288,20 +288,22 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		sourceInstallationID = installID
 	}
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
-		Activity:             s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "source_ref", "scope": rollout.Scope}),
-		AppID:                app.ID,
-		Kind:                 state.DeploymentKindGitHub,
-		SourcePath:           spoolPath,
-		SourceBytes:          spoolBytes,
-		SourceRoot:           app.RootDir,
-		SourceURL:            fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
-		CommitSHA:            resolvedSHA,
-		GitHubSourceRef:      branchRef,
-		GitHubInstallationID: sourceInstallationID,
-		Scope:                rollout.Scope,
-		FunctionRuntime:      functionRuntimeForApp(app),
-		LogSpool:             spoolRoot(),
-		Log:                  s.log,
+		OperationDefinitions:      sourceOperationSpecs(manifest),
+		OperationAdmissionEnabled: s.operationDefinitionAdmission(app.AccountID, app.ID, rollout.Scope),
+		Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "source_ref", "scope": rollout.Scope}),
+		AppID:                     app.ID,
+		Kind:                      state.DeploymentKindGitHub,
+		SourcePath:                spoolPath,
+		SourceBytes:               spoolBytes,
+		SourceRoot:                app.RootDir,
+		SourceURL:                 fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
+		CommitSHA:                 resolvedSHA,
+		GitHubSourceRef:           branchRef,
+		GitHubInstallationID:      sourceInstallationID,
+		Scope:                     rollout.Scope,
+		FunctionRuntime:           functionRuntimeForApp(app),
+		LogSpool:                  spoolRoot(),
+		Log:                       s.log,
 		// Issue #606 / SAFE-RELEASES-E.1: server-stamped actor
 		// attribution. The source-ref path is the dashboard +
 		// CLI flow that streams a GH repo through the apid

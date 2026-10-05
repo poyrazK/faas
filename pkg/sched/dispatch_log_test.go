@@ -1,3 +1,4 @@
+// adr: 570 — traffic dispatch failures must not expose request data.
 package sched
 
 import (

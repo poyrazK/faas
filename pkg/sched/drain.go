@@ -796,6 +796,8 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// ClaimInvocation increments attempts atomically; keeping the pre-claim
 	// snapshot here would delay the terminal callback by one delivery cycle.
 	inv = claimed
+	claimCtx, stopClaim := d.operationClaimContext(ctx, inv)
+	defer stopClaim()
 	d.observeDelayedTaskClaim(inv)
 	// Debug replays are mirror-only work. They carry a small set of
 	// platform-owned metadata headers (the request body and credentials are
@@ -813,7 +815,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			}
 			return
 		}
-		dispatched, err := d.gateway.Invoke(ctx, inv.AppID, inv)
+		dispatched, err := d.gateway.Invoke(claimCtx, inv.AppID, inv)
 		if err != nil {
 			retryAfter := d.invocationRetryDelay(inv)
 			if errors.Is(err, ErrPermanentInvoke) {
@@ -831,7 +833,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			return
 		}
 		if dispatched.InstanceID != "" {
-			if err := d.store.StampInstanceInvocation(ctx, inv.ID, dispatched.InstanceID); err != nil {
+			if err := d.stampInvocationInstance(ctx, inv, dispatched.InstanceID); err != nil {
 				d.log.Warn("drain: stamp debug replay instance", "inv", inv.ID, "inst", dispatched.InstanceID, "err", err)
 			}
 		}
@@ -846,14 +848,14 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	var version state.InvocationVersion
 	var traffic *invocationTraffic
 	var deliveryCtx context.Context
-	deliveryCtx, inv, version, traffic, err = d.prepareInvocationTraffic(ctx, inv)
+	deliveryCtx, inv, version, traffic, err = d.prepareInvocationTraffic(claimCtx, inv)
 	if err != nil {
 		retryAfter := d.invocationRetryDelay(inv)
 		if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrConflict) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
-		if failErr := d.store.FailInvocation(ctx, inv.ID, "version pin: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts)); failErr == nil && retryAfter == 0 {
+		if failErr := d.store.FailInvocation(ctx, inv.ID, "version pin: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts), state.WithDispatchNotStarted()); failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
 		}
 		return
@@ -903,7 +905,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
-		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts))
+		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithClaimAttempt(inv.Attempts), state.WithDispatchNotStarted())
 		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
 			d.emitDeadLetter(ctx, inv, "dead_letter")
@@ -911,12 +913,16 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		d.log.Warn("drain: wake", "inv", logsanitize.Field(inv.ID), "err", logsanitize.FieldAny(err), "permanent", retryAfter == 0)
 		return
 	}
-	// 4. Stamp the live instance handle. Failure here is non-fatal —
-	// the dispatch can still proceed; the meter just under-counts
-	// for this row. Logged so a regression in the stamp path is
-	// visible without aborting the dispatch.
-	if err := d.store.StampInstanceInvocation(ctx, inv.ID, wakeRes.InstanceID); err != nil {
-		d.log.Warn("drain: stamp instance", "inv", logsanitize.Field(inv.ID), "inst", wakeRes.InstanceID, "err", err)
+	// Operation progress authority must be bound before customer code runs.
+	// Ordinary invocation stamps retain their metering-only behavior.
+	if err := d.stampInvocationInstance(deliveryCtx, inv, wakeRes.InstanceID); err != nil {
+		d.log.Warn("drain: stamp instance", "inv", logsanitize.Field(inv.ID), "inst", wakeRes.InstanceID, "err", dispatchErrorClass(err))
+		if state.InvocationHasOperation(inv) {
+			if failErr := d.store.FailInvocation(ctx, inv.ID, "bind operation instance: "+err.Error(), d.invocationRetryDelay(inv), d.invocationAttemptBudget(ctx, inv), failOutcome(err), state.WithClaimAttempt(inv.Attempts), state.WithDispatchNotStarted()); failErr != nil {
+				d.log.Warn("drain: settle operation binding failure", "inv", logsanitize.Field(inv.ID), "err", dispatchErrorClass(failErr))
+			}
+			return
+		}
 	}
 	// 5. Invoke (deliver envelope).
 	if d.gateway == nil && traffic == nil {
@@ -1065,7 +1071,7 @@ func (d *Drain) settleCronWorkPolicyUncertain(ctx context.Context, inv state.Inv
 }
 
 func completeClaimedInvocation(ctx context.Context, store state.Store, inv state.Invocation, result json.RawMessage) error {
-	if inv.WorkPolicyName != "" {
+	if inv.WorkPolicyName != "" || state.InvocationHasOperation(inv) {
 		return store.CompleteKeyedInvocation(ctx, inv.ID, inv.Attempts, result)
 	}
 	return store.CompleteInvocation(ctx, inv.ID, result)
@@ -1246,4 +1252,15 @@ func (d *Drain) accountAsyncCap(ctx context.Context, inv state.Invocation) int {
 		return 0
 	}
 	return api.MustLimitsFor(acct.Plan).MaxAsyncInvocationsPerAccount
+}
+
+func (d *Drain) stampInvocationInstance(ctx context.Context, inv state.Invocation, instanceID string) error {
+	if state.InvocationHasOperation(inv) {
+		fenced, ok := d.store.(state.OperationExecutionStampStore)
+		if !ok {
+			return state.ErrConflict
+		}
+		return fenced.StampOperationExecutionAttempt(ctx, inv.ID, instanceID, inv.Attempts)
+	}
+	return d.store.StampInstanceInvocation(ctx, inv.ID, instanceID)
 }

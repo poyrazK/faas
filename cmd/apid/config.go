@@ -39,6 +39,11 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	// Empty preview policy path keeps admission closed. No boolean/env override.
+	OperationsPreviewPolicyPath string `toml:"operations_preview_policy_path"`
+	// Runtime trust remains available independently of new admission.
+	OperationsWorkloadJWKSPath string `toml:"operations_workload_jwks_path"`
+	OperationsWorkloadIssuer   string `toml:"operations_workload_issuer"`
 	// OutboundProbeGatewayURL is the operator-trusted HTTPS origin reachable by task guests.
 	OutboundProbeGatewayURL string `toml:"outbound_probe_gateway_url"`
 	FlagsEnabled            bool   `toml:"flags_enabled"`

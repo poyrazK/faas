@@ -7,6 +7,11 @@ func (m *MemStore) forgetOperationLocked(id string) {
 	if data == nil {
 		return
 	}
+	for key, receipt := range data.deliveryRetries {
+		if receipt.OperationID == id {
+			delete(data.deliveryRetries, key)
+		}
+	}
 	delete(data.operations, id)
 	delete(data.events, id)
 	for key, lease := range data.streams {
@@ -17,6 +22,7 @@ func (m *MemStore) forgetOperationLocked(id string) {
 	for inv, op := range data.executions {
 		if op == id {
 			delete(data.executions, inv)
+			delete(data.generations, inv)
 		}
 	}
 	for key := range data.reports {
