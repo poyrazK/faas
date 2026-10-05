@@ -1,6 +1,6 @@
 package runtimeadmission
 
-// adr: 590. Catalog bytes are bound to fresh authority, not renewed by history.
+// adr: 592. Catalog bytes are bound to fresh authority, not renewed by history.
 
 import (
 	"crypto/sha256"

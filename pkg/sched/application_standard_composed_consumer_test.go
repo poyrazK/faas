@@ -1,4 +1,4 @@
-// adr: 590
+// adr: 592
 package sched
 
 // adr: 435, 581. All portable consumer facts remain process/revision bound.

@@ -1,6 +1,6 @@
 package state
 
-// adr: 590. Native authority and environment ownership govern one commit.
+// adr: 592. Native authority and environment ownership govern one commit.
 
 import (
 	"context"

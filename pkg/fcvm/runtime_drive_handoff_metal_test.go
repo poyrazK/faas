@@ -2,7 +2,7 @@
 
 // adr: 435. Requires the dedicated native KVM acceptance host.
 
-// adr: 590
+// adr: 592
 package fcvm
 
 import (

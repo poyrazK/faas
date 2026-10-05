@@ -1,6 +1,6 @@
 //go:build metal && linux && amd64
 
-// adr: 590
+// adr: 592
 package fcvm
 
 // adr: 435. These checks require the dedicated native KVM fixture and leakcheck.

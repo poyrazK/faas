@@ -1,6 +1,6 @@
 package state
 
-// adr: 590. Native and provider facts here are explicit simulated store evidence.
+// adr: 592. Native and provider facts here are explicit simulated store evidence.
 
 import (
 	"context"

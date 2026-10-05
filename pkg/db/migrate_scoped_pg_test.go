@@ -1,6 +1,6 @@
 package db_test
 
-// adr: 590
+// adr: 592
 
 import (
 	"testing"

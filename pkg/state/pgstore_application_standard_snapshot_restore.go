@@ -1,6 +1,6 @@
 package state
 
-// adr: 590. Restore authority uses the same current native input transaction.
+// adr: 592. Restore authority uses the same current native input transaction.
 
 import (
 	"context"

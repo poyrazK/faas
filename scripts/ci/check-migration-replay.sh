@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# adr: 590. Exercise both ordinary replay and reviewed frozen-SQL recovery.
+# adr: 592. Exercise both ordinary replay and reviewed frozen-SQL recovery.
 set -euo pipefail
 
 pg_bin="${FAAS_REPLAY_PG_BIN:-/usr/lib/postgresql/16/bin}"

@@ -1,4 +1,4 @@
-# ADR-590 · Versioned inherited application standards
+# ADR-592 · Versioned inherited application standards
 
 - **Status:** implementation in progress; acceptance required before release
 - **Date:** 2026-09-30
@@ -36,7 +36,8 @@ This decision moved to ADR-586; ADR-585 is reserved by the environment isolation
 PR. Frozen SQL files and their historical citations remain unchanged.
 
 Upstream assigned ADR-586 to the transactional operation handler SDK and added
-ADR-587 through ADR-589. This decision now uses ADR-590; frozen SQL files and
+ADR-587 through ADR-591, including ADR-590 for complete environment clones.
+This decision now uses ADR-592; frozen SQL files and
 their historical citations remain unchanged.
 
 ## Contract

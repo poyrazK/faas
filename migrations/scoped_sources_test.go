@@ -1,6 +1,6 @@
 package migrations
 
-// adr: 590
+// adr: 592
 
 import (
 	"bytes"

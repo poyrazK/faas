@@ -1,4 +1,4 @@
-// adr: 590
+// adr: 592
 package sched
 
 // Orchestration tests simulate native/captured-store consumers. Durable catalog

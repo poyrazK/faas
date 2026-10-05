@@ -1,4 +1,4 @@
-// adr: 590
+// adr: 592
 package fcvm
 
 // adr: 435. Exact staged bytes exercise handoff, not a live VM acknowledgement.

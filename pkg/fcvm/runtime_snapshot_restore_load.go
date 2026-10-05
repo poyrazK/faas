@@ -1,6 +1,6 @@
 package fcvm
 
-// adr: 590. Protected snapshot loading remains private until measured acceptance.
+// adr: 592. Protected snapshot loading remains private until measured acceptance.
 
 import (
 	"context"

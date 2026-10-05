@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 590
+// adr: 592
 package sched_test
 
 // adr: 435, 581. Real durable handoff and publication compose with PostgreSQL.

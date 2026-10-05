@@ -2,7 +2,7 @@
 
 package migrations_test
 
-// adr: 590
+// adr: 592
 
 import (
 	"slices"

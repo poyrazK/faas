@@ -1,4 +1,4 @@
-// adr: 590
+// adr: 592
 package sched
 
 // These tests prove scheduler orchestration with a simulated legacy native
