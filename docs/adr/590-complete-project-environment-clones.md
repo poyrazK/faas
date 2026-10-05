@@ -221,6 +221,28 @@ reuse, pinned stage execution mode, existing wake behavior, and warm pools.
 Scope-specific admission ledgers, pool counts, reaper floors, and reconciliation
 remain unfinished. These local checks do not replace native VM acceptance.
 
+### Deployed runtime policy corrections (2026-10-05)
+
+Ordinary production ingress now reads workload settings from the same active
+production graph or serving lane selected by scheduler wakes. Slug, custom-domain,
+and tenant-surface visibility checks use the deployed settings. Desired edits and
+dark production candidates preserve the serving release's policy; exact previews
+retain their own settings and ordinary traffic keeps its deployment weight table.
+Production graph publication and activation changes invalidate the app cache in
+the graph transaction, with a durable ledger entry for missed notifications.
+
+Runtime resolution starts from the legacy App projection and then applies the
+selected deployment's immutable settings. A deployment created before settings
+pins existed continues to wake and prime with its original runtime values after
+a desired-only edit. New builds still resolve the desired environment settings.
+
+Worker reconciliation resolves each selected deployment's execution mode,
+replica limits, scaling policy, and stop policy before changing any pool. Stage
+pools retain their deployed policy after desired edits or production mode changes.
+Regression coverage includes production cutover and cached graph changes, legacy
+runtime fences, and independent worker pools. These corrections do not complete
+request-specific retained-release settings or the full clone acceptance gates.
+
 ### Effective production values during cloning (2026-09-29)
 
 Cloning production now selects variables, customer secrets, and managed bindings
