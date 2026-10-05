@@ -129,12 +129,19 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 		return fmt.Errorf("sched: encode event invocation payload: %w", err)
 	}
 	now := time.Now().UTC()
+	if l.now != nil {
+		now = l.now().UTC()
+	}
 	var routeErrs []error
 	for _, recipient := range work.RecipientSnapshot {
 		previous := work.RecipientProgress[recipient.ID]
 		if previous.State == state.PublishedEventRecipientFiltered ||
 			previous.State == state.PublishedEventRecipientEnqueued ||
 			previous.State == state.PublishedEventRecipientFailed {
+			continue
+		}
+		if previous.NextAttemptAt != nil && previous.NextAttemptAt.After(now) {
+			routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
 			continue
 		}
 		var matched bool
@@ -146,13 +153,16 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 			if err == nil {
 				work.RecipientProgress[recipient.ID] = result.Progress
 				work.Delivered = result.ReceiptSettled
+				if result.Progress.State == state.PublishedEventRecipientPending {
+					routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
+				}
 				continue
 			}
 			matched, routeErr = result.Matched, err
 		} else {
 			matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, recipient, now, true)
 		}
-		outcome := state.PublishedEventRecipientProgress{Attempts: previous.Attempts + 1, UpdatedAt: now}
+		outcome := state.PublishedEventRecipientProgress{Attempts: previous.Attempts + 1, CapacityDeferrals: previous.CapacityDeferrals, UpdatedAt: now}
 		switch {
 		case routeErr == nil && matched:
 			outcome.State = state.PublishedEventRecipientEnqueued
@@ -162,7 +172,7 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 			outcome.State = state.PublishedEventRecipientFailed
 			outcome.FailureCode, outcome.Retryable = eventFanoutFailureDetails(routeErr)
 			outcome.LastError = routeErr.Error()
-		case outcome.Attempts >= eventFanoutRecipientMaxAttempts:
+		case outcome.Attempts-outcome.CapacityDeferrals >= eventFanoutRecipientMaxAttempts:
 			outcome.State = state.PublishedEventRecipientFailed
 			outcome.FailureCode, outcome.Retryable = eventFanoutFailureDetails(routeErr)
 			outcome.LastError = routeErr.Error()
@@ -184,7 +194,11 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 				"attempts", outcome.Attempts, "err", outcome.LastError)
 		}
 	}
-	return errors.Join(routeErrs...)
+	err = errors.Join(routeErrs...)
+	if eventFanoutCapacityWait(err) {
+		return state.ErrEventDeliveryCapacity
+	}
+	return err
 }
 
 func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, eventPayload []byte, row state.PublishedEventRecipient, now time.Time, requireActiveApp bool) (bool, error) {
@@ -396,6 +410,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		return
 	}
 	// Disabling adoption must still drain previously adopted receipts.
+	defer l.observeEventRoutingHealth(ctx)
 	defer l.runEventRecipientSweep(ctx)
 	now := time.Now().UTC()
 	if l.now != nil {
@@ -442,7 +457,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		} else {
 			routeErr = errors.New("sched: legacy event receipt requires subscription matcher")
 		}
-		if routeErr != nil && l.log != nil {
+		if routeErr != nil && !eventFanoutCapacityWait(routeErr) && l.log != nil {
 			l.log.Warn("sched: event fanout failed", "outbox_id", work.ID, "err", routeErr)
 		}
 		if work.Delivered {
@@ -509,13 +524,13 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 		if l.now != nil {
 			finishedAt = l.now().UTC()
 		}
-		progress := state.PublishedEventRecipientProgress{Attempts: work.TotalAttempts, UpdatedAt: finishedAt}
+		progress := state.PublishedEventRecipientProgress{Attempts: work.TotalAttempts, CapacityDeferrals: work.CapacityDeferrals, UpdatedAt: finishedAt}
 		switch {
 		case routeErr == nil && matched:
 			progress.State = state.PublishedEventRecipientEnqueued
 		case routeErr == nil:
 			progress.State = state.PublishedEventRecipientFiltered
-		case !matched && !eventFanoutRetryable(routeErr) || errors.Is(routeErr, state.ErrNotFound) || work.Attempts >= eventFanoutRecipientMaxAttempts:
+		case !matched && !eventFanoutRetryable(routeErr) || errors.Is(routeErr, state.ErrNotFound) || work.Attempts-work.GenerationCapacityDeferrals >= eventFanoutRecipientMaxAttempts:
 			progress.State = state.PublishedEventRecipientFailed
 			progress.FailureCode, progress.Retryable = eventFanoutFailureDetails(routeErr)
 			progress.LastError = routeErr.Error()
@@ -526,7 +541,7 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 		if len(progress.LastError) > 1024 {
 			progress.LastError = progress.LastError[:1024]
 		}
-		backoff := 5 * time.Second << min(work.Attempts-1, 6)
+		backoff := 5 * time.Second << min(max(0, work.Attempts-work.GenerationCapacityDeferrals-1), 6)
 		next := finishedAt.Add(min(backoff, 300*time.Second))
 		if err := store.FinishPublishedEventRecipient(ctx, work, progress, next); err != nil && l.log != nil {
 			l.log.Error("sched: finish event recipient failed", "outbox_id", work.OutboxID,
@@ -543,9 +558,45 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 // lost notification or an unknown commit response cannot lose admitted work.
 func (l *Loop) admitEventRecipient(ctx context.Context, store state.PublishedEventRecipientAdmissionStore, claim state.PublishedEventRoutingClaim) (state.PublishedEventRoutingResult, error) {
 	result, err := store.AdmitPublishedEventRecipient(ctx, claim)
+	if err == nil && result.CapacityDeferred {
+		l.ops.ObserveEventDeliveryCapacityDeferral(result.Progress.CapacityScope)
+	}
 	if err == nil && result.InvocationCreated && l.pool != nil {
 		_ = db.Notify(ctx, l.pool, db.NotifyInvocationDue,
 			fmt.Sprintf(`{"invocation_id":"%s","app_id":"%s","source":"%s"}`, result.DeliveryID, result.AppID, state.InvocationAsyncInvoke))
 	}
 	return result, err
+}
+
+func (l *Loop) observeEventRoutingHealth(ctx context.Context) {
+	if l.ops == nil {
+		return
+	}
+	if store, ok := l.engine.store.(state.EventRoutingHealthStore); ok {
+		h, err := store.EventRoutingHealth(ctx)
+		if err == nil {
+			l.ops.SetEventRoutingHealth(h.CapacityWaiting, h.OldestPendingSeconds)
+		}
+	}
+}
+
+// Inspect every joined error so a real failure alongside a capacity wait still
+// produces a failure warning. Single wrappers preserve the same classification.
+func eventFanoutCapacityWait(err error) bool {
+	if err == nil {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		children := joined.Unwrap()
+		for _, child := range children {
+			if !eventFanoutCapacityWait(child) {
+				return false
+			}
+		}
+		return len(children) > 0
+	}
+	if child := errors.Unwrap(err); child != nil {
+		return eventFanoutCapacityWait(child)
+	}
+	return errors.Is(err, state.ErrEventDeliveryCapacity)
 }

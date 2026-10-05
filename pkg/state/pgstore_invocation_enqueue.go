@@ -80,6 +80,11 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 		}
 		*input.target = pgtype.UUID{Bytes: id, Valid: true}
 	}
+	if inv.ReplayedFromInvocationID != "" {
+		if err := refreshEventReplayCapacity(ctx, db, inv.ReplayedFromInvocationID); err != nil {
+			return Invocation{}, err
+		}
+	}
 	row, err := sqlc.New().EnqueueInvocationRow(ctx, db, params)
 	if err != nil {
 		return Invocation{}, mapErr(err)

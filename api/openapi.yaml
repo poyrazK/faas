@@ -37976,8 +37976,12 @@ components:
       properties:
         state: { type: string, enum: [pending, processing, filtered, enqueued, failed] }
         attempts: { type: integer, minimum: 0, description: Lifetime routing attempts, including replay generations. }
+        generation_capacity_deferrals: { type: integer, minimum: 0, description: Capacity waits in this independent routing generation; subtract from generation_attempts for failure-budget use. }
+        capacity_deferrals: { type: integer, minimum: 0, description: Lifetime capacity waits; excluded from the routing failure budget. }
+        capacity_scope: { type: string, enum: [consumer, app, account], description: Active capacity wait reason; absent after admission. }
+        pending_age_seconds: { type: number, minimum: 0, description: Age since event acceptance while routing is pending or processing. }
         generation: { type: integer, format: int64, minimum: 1, description: Independent routing generation; absent on legacy whole-event receipts. }
-        generation_attempts: { type: integer, minimum: 0, description: Attempts used in the current independent routing budget. }
+        generation_attempts: { type: integer, minimum: 0, description: Claims in the current independent generation, including capacity waits; subtract generation_capacity_deferrals for failure-budget use. }
         next_attempt_at: { type: string, format: date-time, description: Scheduled pending routing retry, not a dispatch guarantee. }
         lease_until: { type: string, format: date-time, description: Independent routing claim expiry; no claim token is exposed. }
         updated_at: { type: string, format: date-time }

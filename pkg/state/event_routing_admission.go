@@ -31,6 +31,7 @@ type PublishedEventRoutingResult struct {
 	DeliveryID        string
 	AppID             string
 	InvocationCreated bool
+	CapacityDeferred  bool
 	Progress          PublishedEventRecipientProgress
 	ReceiptSettled    bool
 }

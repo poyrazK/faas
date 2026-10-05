@@ -17,16 +17,18 @@ import (
 // this replay generation; TotalAttempts preserves the lifetime attempt count.
 // Invocation identity remains independent of both the lease and generation.
 type PublishedEventRecipientWork struct {
-	OutboxID      int64
-	Recipient     PublishedEventRecipient
-	Payload       []byte
-	State         string
-	ClaimToken    string
-	Generation    int64
-	Attempts      int
-	TotalAttempts int
-	AvailableAt   time.Time
-	LeaseUntil    time.Time
+	OutboxID                    int64
+	Recipient                   PublishedEventRecipient
+	Payload                     []byte
+	State                       string
+	ClaimToken                  string
+	Generation                  int64
+	Attempts                    int
+	CapacityDeferrals           int
+	GenerationCapacityDeferrals int
+	TotalAttempts               int
+	AvailableAt                 time.Time
+	LeaseUntil                  time.Time
 }
 
 type PublishedEventRecipientWorkStore interface {
@@ -65,7 +67,7 @@ func (s *PgStore) InitializePublishedEventRecipients(ctx context.Context, work *
 		}
 		if err := q.EventRecipientInsert(ctx, tx, sqlc.EventRecipientInsertParams{
 			OutboxID: work.ID, SubscriptionID: recipient.ID, AppID: mustPgUUID(recipient.AppID),
-			Recipient: encoded, State: progress.State, TotalAttempts: int32(progress.Attempts), AvailableAt: pgtypeFromTime(now),
+			Recipient: encoded, State: progress.State, TotalAttempts: int32(progress.Attempts), CapacityDeferrals: int32(progress.CapacityDeferrals), AvailableAt: pgtypeFromTime(eventAdoptionAvailableAt(progress, now)),
 		}); err != nil {
 			return fmt.Errorf("initialize event recipient %s: %w", recipient.ID, err)
 		}
@@ -88,6 +90,7 @@ func (s *PgStore) ClaimDuePublishedEventRecipient(ctx context.Context, now time.
 		OutboxID: row.OutboxID, Payload: row.Payload, State: "processing",
 		ClaimToken: uuidFromPgtype(row.ClaimToken).String(), Generation: row.Generation,
 		Attempts: int(row.Attempts), TotalAttempts: int(row.TotalAttempts),
+		CapacityDeferrals: int(row.CapacityDeferrals), GenerationCapacityDeferrals: int(row.GenerationCapacityDeferrals),
 		AvailableAt: timeFromPgtype(row.AvailableAt), LeaseUntil: timeFromPgtype(row.LeaseUntil),
 	}
 	if err := json.Unmarshal(row.Recipient, &work.Recipient); err != nil {
@@ -190,7 +193,7 @@ func (m *MemStore) InitializePublishedEventRecipients(_ context.Context, claimed
 			}
 			work.routingRecipients[recipient.ID] = &PublishedEventRecipientWork{
 				OutboxID: work.ID, Recipient: recipient, Payload: work.Payload, State: progress.State,
-				Generation: 1, TotalAttempts: progress.Attempts, AvailableAt: now,
+				Generation: 1, TotalAttempts: progress.Attempts, CapacityDeferrals: progress.CapacityDeferrals, AvailableAt: eventAdoptionAvailableAt(progress, now),
 			}
 		}
 		work.RecipientClaims = true
@@ -212,9 +215,16 @@ func (m *MemStore) ClaimDuePublishedEventRecipient(_ context.Context, now time.T
 				(work.State != "processing" || work.LeaseUntil.After(now)) {
 				continue
 			}
-			if chosen == nil || work.AvailableAt.Before(chosen.AvailableAt) ||
+			account := canonicalMemUUID(work.Recipient.AccountID)
+			currentAccount, currentConsumer := m.eventFairTimeLocked(account, ""), m.eventFairTimeLocked(account, work.Recipient.ID)
+			chosenAccount, chosenConsumer := time.Time{}, time.Time{}
+			if chosen != nil {
+				a := canonicalMemUUID(chosen.Recipient.AccountID)
+				chosenAccount, chosenConsumer = m.eventFairTimeLocked(a, ""), m.eventFairTimeLocked(a, chosen.Recipient.ID)
+			}
+			if chosen == nil || currentAccount.Before(chosenAccount) || (currentAccount.Equal(chosenAccount) && (currentConsumer.Before(chosenConsumer) || (currentConsumer.Equal(chosenConsumer) && (work.AvailableAt.Before(chosen.AvailableAt) ||
 				(work.AvailableAt.Equal(chosen.AvailableAt) && (work.OutboxID < chosen.OutboxID ||
-					(work.OutboxID == chosen.OutboxID && work.Recipient.ID < chosen.Recipient.ID))) {
+					(work.OutboxID == chosen.OutboxID && work.Recipient.ID < chosen.Recipient.ID))))))) {
 				chosen = work
 			}
 		}
@@ -222,6 +232,7 @@ func (m *MemStore) ClaimDuePublishedEventRecipient(_ context.Context, now time.T
 	if chosen == nil {
 		return nil, ErrNotFound
 	}
+	m.recordEventFairClaimLocked(canonicalMemUUID(chosen.Recipient.AccountID), chosen.Recipient.ID)
 	chosen.State = "processing"
 	chosen.ClaimToken = uuid.NewString()
 	chosen.LeaseUntil = now.Add(PublishedEventLease)
@@ -280,6 +291,7 @@ func resetEventRecipientForReplay(receipt *PublishedEventWork, subscriptionID st
 	work.State = PublishedEventRecipientPending
 	work.Generation++
 	work.Attempts = 0
+	work.GenerationCapacityDeferrals = 0
 	work.AvailableAt = now
 	work.ClaimToken = ""
 	work.LeaseUntil = time.Time{}
@@ -343,7 +355,7 @@ func replayEventRecipientTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, out
 		return err
 	}
 	progress, err := json.Marshal(PublishedEventRecipientProgress{
-		State: PublishedEventRecipientPending, Attempts: prior.Attempts, UpdatedAt: now,
+		State: PublishedEventRecipientPending, Attempts: prior.Attempts, CapacityDeferrals: prior.CapacityDeferrals, UpdatedAt: now,
 	})
 	if err != nil {
 		return err

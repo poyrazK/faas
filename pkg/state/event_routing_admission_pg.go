@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -65,10 +66,21 @@ func (s *PgStore) AdmitPublishedEventRecipient(ctx context.Context, claim Publis
 			return PublishedEventRoutingResult{}, err
 		}
 	}
-	return admitEventRecipientTx(ctx, q, tx, claim, plan)
+	var limits api.EventDeliveryLimits
+	if eventAdmissionNeedsCapacity(plan) {
+		account, err := s.AccountByID(ctx, plan.recipient.AccountID)
+		if err != nil {
+			return PublishedEventRoutingResult{}, err
+		}
+		limits = api.MustLimitsFor(account.Plan).EventDeliveries
+		if err := lockEventCapacity(ctx, tx, plan.recipient.AccountID, limits); err != nil {
+			return PublishedEventRoutingResult{}, err
+		}
+	}
+	return admitEventRecipientTx(ctx, q, tx, claim, plan, limits)
 }
 
-func admitEventRecipientTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, claim PublishedEventRoutingClaim, p eventAdmissionPlan) (PublishedEventRoutingResult, error) {
+func admitEventRecipientTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, claim PublishedEventRoutingClaim, p eventAdmissionPlan, limits api.EventDeliveryLimits) (PublishedEventRoutingResult, error) {
 	row, err := q.EventRoutingLockReceipt(ctx, tx, claim.OutboxID)
 	if err != nil {
 		return PublishedEventRoutingResult{}, err
@@ -107,11 +119,32 @@ func admitEventRecipientTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, clai
 	if err := validateEventRoutingClaim(ctx, q, tx, claim); err != nil {
 		return PublishedEventRoutingResult{}, err
 	}
-	created, err := performEventAdmissionTx(ctx, tx, receipt, p)
+
+	var scope string
+	if eventAdmissionNeedsCapacity(p) {
+		scope, err = eventCapacityTx(ctx, tx, p, limits)
+		if err != nil {
+			return PublishedEventRoutingResult{}, err
+		}
+	}
+	var created bool
+	if scope == "" {
+		created, err = performEventAdmissionTx(ctx, tx, receipt, p)
+	}
 	if err != nil {
 		return eventAdmissionResult(p, PublishedEventRecipientProgress{}, false, false), admissionError(EventFanoutFailureCodeInvocationEnqueueFailed, true, err)
 	}
 	progress := eventAdmissionProgress(p, attempts)
+	preserveEventCapacityHistory(&progress, previous)
+	if scope != "" {
+		progress = eventCapacityProgress(previous, attempts, scope)
+	}
+	if created {
+		if err := q.EventDeliveryInsertSlot(ctx, tx, sqlc.EventDeliveryInsertSlotParams{InvocationID: mustPgUUID(p.invocation.ID),
+			AccountID: mustPgUUID(p.recipient.AccountID), AppID: mustPgUUID(p.recipient.AppID), SubscriptionID: p.recipient.ID}); err != nil {
+			return PublishedEventRoutingResult{}, err
+		}
+	}
 	if err := recordEventRecipientOutcome(ctx, q, tx, claim.OutboxID, p.recipient.AppID, claim.SubscriptionID, EventFanoutAttemptActionAttempt, progress); err != nil {
 		return PublishedEventRoutingResult{}, err
 	}
@@ -127,7 +160,9 @@ func admitEventRecipientTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, clai
 	if err := tx.Commit(ctx); err != nil {
 		return PublishedEventRoutingResult{}, err
 	}
-	return eventAdmissionResult(p, progress, created, settled), nil
+	result := eventAdmissionResult(p, progress, created, settled)
+	result.CapacityDeferred = scope != ""
+	return result, nil
 }
 
 func validateEventRoutingClaim(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, claim PublishedEventRoutingClaim) error {
@@ -171,7 +206,7 @@ func priorEventInvocationMatches(receipt *PublishedEventWork, p eventAdmissionPl
 func settleEventAdmissionTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, claim PublishedEventRoutingClaim, adopted bool, progress PublishedEventRecipientProgress) (bool, error) {
 	if adopted {
 		n, err := q.EventRecipientFinish(ctx, tx, sqlc.EventRecipientFinishParams{OutboxID: claim.OutboxID, SubscriptionID: claim.SubscriptionID,
-			ClaimToken: mustPgUUID(claim.ClaimToken), Generation: claim.Generation, State: progress.State, AvailableAt: pgtypeFromTime(progress.UpdatedAt)})
+			ClaimToken: mustPgUUID(claim.ClaimToken), Generation: claim.Generation, State: progress.State, CapacityDeferred: progress.CapacityScope != "", AvailableAt: pgtypeFromTime(eventProgressNext(progress))})
 		if err != nil {
 			return false, err
 		}

@@ -32,6 +32,9 @@ func retryTriggerReceiptTx(ctx context.Context, tx pgx.Tx, recordID, accountID, 
 		if err := lockInvocationReplayLaneTx(ctx, tx, row.ID, row.AccountID, row.AppID); err != nil {
 			return err
 		}
+		if err := refreshEventReplayCapacity(ctx, tx, uuidString(row.ID)); err != nil {
+			return err
+		}
 		_, err = q.RetryQueueDeadLetterInvocation(ctx, tx, sqlc.RetryQueueDeadLetterInvocationParams{ID: row.ID, AccountID: row.AccountID})
 		return mapErr(err)
 	}
@@ -104,6 +107,9 @@ func (m *MemStore) retryQueueDeadLetterLocked(accountID, invocationID string, no
 	inv, ok := m.invocations[invocationID]
 	if !ok || inv.AccountID != accountID || inv.State != InvocationDeadLetter {
 		return Invocation{}, ErrNotFound
+	}
+	if _, err := m.eventReplayCapacityLocked(invocationID); err != nil {
+		return Invocation{}, err
 	}
 	inv.State, inv.Attempts, inv.QuotaReserved = InvocationPending, 0, false
 	inv.ReplayGeneration++

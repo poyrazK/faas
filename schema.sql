@@ -4283,6 +4283,39 @@ END $$;
 
 
 --
+-- Name: guard_event_delivery_replay(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_event_delivery_replay() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE slot event_delivery_slots%ROWTYPE; caps event_delivery_capacity%ROWTYPE;
+ consumer_count bigint; app_count bigint; account_count bigint; scope text;
+BEGIN
+ IF NEW.state NOT IN ('pending','dispatching') THEN RETURN NEW; END IF;
+ IF TG_OP = 'UPDATE' AND OLD.state IN ('pending','dispatching') THEN RETURN NEW; END IF;
+ SELECT * INTO slot FROM event_delivery_slots WHERE invocation_id=NEW.id;
+ IF NOT FOUND AND NEW.replayed_from_invocation_id IS NOT NULL THEN
+  SELECT * INTO slot FROM event_delivery_slots WHERE invocation_id=NEW.replayed_from_invocation_id;
+ END IF;
+ IF slot.invocation_id IS NULL THEN RETURN NEW; END IF;
+ SELECT * INTO STRICT caps FROM event_delivery_capacity WHERE account_id=slot.account_id FOR UPDATE;
+ SELECT count(*), count(*) FILTER (WHERE s.app_id=slot.app_id),
+   count(*) FILTER (WHERE s.app_id=slot.app_id AND s.subscription_id=slot.subscription_id)
+ INTO account_count, app_count, consumer_count
+ FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
+ WHERE s.account_id=slot.account_id AND i.state IN ('pending','dispatching') AND i.id<>NEW.id;
+ scope := CASE WHEN consumer_count>=caps.consumer_limit THEN 'consumer'
+   WHEN app_count>=caps.app_limit THEN 'app' WHEN account_count>=caps.account_limit THEN 'account' END;
+ IF scope IS NOT NULL THEN
+  RAISE EXCEPTION 'event delivery capacity exhausted: %',scope USING ERRCODE='23514', CONSTRAINT='event_delivery_capacity', DETAIL=scope;
+ END IF;
+ INSERT INTO event_delivery_slots VALUES (NEW.id,slot.account_id,slot.app_id,slot.subscription_id) ON CONFLICT DO NOTHING;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_held_queue_consumer_receipt(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11497,6 +11530,33 @@ CREATE TABLE public.environment_workload_graphs (
 
 
 --
+-- Name: event_delivery_capacity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_delivery_capacity (
+    account_id uuid NOT NULL,
+    consumer_limit integer NOT NULL,
+    app_limit integer NOT NULL,
+    account_limit integer NOT NULL,
+    CONSTRAINT event_delivery_capacity_account_limit_check CHECK ((account_limit > 0)),
+    CONSTRAINT event_delivery_capacity_app_limit_check CHECK ((app_limit > 0)),
+    CONSTRAINT event_delivery_capacity_consumer_limit_check CHECK ((consumer_limit > 0))
+);
+
+
+--
+-- Name: event_delivery_slots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_delivery_slots (
+    invocation_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    subscription_id text NOT NULL
+);
+
+
+--
 -- Name: event_fanout_attempt_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11592,12 +11652,27 @@ CREATE TABLE public.event_fanout_recipients (
     available_at timestamp with time zone DEFAULT now() NOT NULL,
     claim_token uuid,
     lease_until timestamp with time zone,
+    capacity_deferrals integer DEFAULT 0 NOT NULL,
+    generation_capacity_deferrals integer DEFAULT 0 NOT NULL,
     CONSTRAINT event_fanout_recipients_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT event_fanout_recipients_capacity_deferrals_check CHECK ((capacity_deferrals >= 0)),
     CONSTRAINT event_fanout_recipients_check CHECK ((total_attempts >= attempts)),
     CONSTRAINT event_fanout_recipients_check1 CHECK ((((state = 'processing'::text) AND (claim_token IS NOT NULL) AND (lease_until IS NOT NULL)) OR ((state <> 'processing'::text) AND (claim_token IS NULL) AND (lease_until IS NULL)))),
+    CONSTRAINT event_fanout_recipients_generation_capacity_deferrals_check CHECK ((generation_capacity_deferrals >= 0)),
     CONSTRAINT event_fanout_recipients_generation_check CHECK ((generation > 0)),
     CONSTRAINT event_fanout_recipients_recipient_check CHECK ((jsonb_typeof(recipient) = 'object'::text)),
     CONSTRAINT event_fanout_recipients_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'filtered'::text, 'enqueued'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: event_routing_fairness; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_routing_fairness (
+    account_id uuid NOT NULL,
+    subscription_id text NOT NULL,
+    last_claimed_at timestamp with time zone NOT NULL
 );
 
 
@@ -19083,6 +19158,22 @@ ALTER TABLE ONLY public.environment_workload_qualification_requests
 
 
 --
+-- Name: event_delivery_capacity event_delivery_capacity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_delivery_capacity
+    ADD CONSTRAINT event_delivery_capacity_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: event_delivery_slots event_delivery_slots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_delivery_slots
+    ADD CONSTRAINT event_delivery_slots_pkey PRIMARY KEY (invocation_id);
+
+
+--
 -- Name: event_fanout_attempt_history event_fanout_attempt_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19112,6 +19203,14 @@ ALTER TABLE ONLY public.event_fanout_outbox
 
 ALTER TABLE ONLY public.event_fanout_recipients
     ADD CONSTRAINT event_fanout_recipients_pkey PRIMARY KEY (outbox_id, subscription_id);
+
+
+--
+-- Name: event_routing_fairness event_routing_fairness_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_routing_fairness
+    ADD CONSTRAINT event_routing_fairness_pkey PRIMARY KEY (account_id, subscription_id);
 
 
 --
@@ -23528,6 +23627,13 @@ CREATE UNIQUE INDEX environment_qualification_reserved_instance_unique_idx ON pu
 
 
 --
+-- Name: event_delivery_slots_consumer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_delivery_slots_consumer ON public.event_delivery_slots USING btree (account_id, app_id, subscription_id);
+
+
+--
 -- Name: event_fanout_attempt_history_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -27903,6 +28009,13 @@ CREATE TRIGGER environment_workload_intent_guard BEFORE INSERT OR DELETE OR UPDA
 
 
 --
+-- Name: invocations event_delivery_replay_capacity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_delivery_replay_capacity AFTER INSERT OR UPDATE OF state ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.guard_event_delivery_replay();
+
+
+--
 -- Name: events events_enqueue_fanout; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -31288,6 +31401,30 @@ ALTER TABLE ONLY public.environment_workload_qualification_requests
 
 
 --
+-- Name: event_delivery_capacity event_delivery_capacity_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_delivery_capacity
+    ADD CONSTRAINT event_delivery_capacity_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_delivery_slots event_delivery_slots_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_delivery_slots
+    ADD CONSTRAINT event_delivery_slots_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.event_delivery_capacity(account_id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_delivery_slots event_delivery_slots_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_delivery_slots
+    ADD CONSTRAINT event_delivery_slots_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: event_fanout_attempt_history event_fanout_attempt_history_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -31309,6 +31446,14 @@ ALTER TABLE ONLY public.event_fanout_outbox
 
 ALTER TABLE ONLY public.event_fanout_recipients
     ADD CONSTRAINT event_fanout_recipients_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_routing_fairness event_routing_fairness_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_routing_fairness
+    ADD CONSTRAINT event_routing_fairness_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

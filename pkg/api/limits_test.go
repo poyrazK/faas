@@ -167,6 +167,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// "feature not offered" contract.
 			MaxQueueAttempts: 0,
 			// ADR-134 PR-B: Free's per-account cap ladder.
+			EventDeliveries:                   EventDeliveryLimits{64, 256, 1024},
 			MaxAsyncInvocationsPerAccount:     100,
 			MaxAsyncInvocationDeadlineSeconds: 300,
 			MaxAsyncResultRetentionSeconds:    86400,
@@ -325,6 +326,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// without thrashing the worker for long.
 			MaxQueueAttempts: 3,
 			// ADR-134 PR-B: Hobby 1k / 1h / 7d.
+			EventDeliveries:                   EventDeliveryLimits{256, 1024, 4096},
 			MaxAsyncInvocationsPerAccount:     1000,
 			MaxAsyncInvocationDeadlineSeconds: 3600,
 			MaxAsyncResultRetentionSeconds:    604800,
@@ -492,6 +494,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// the "permanently bad payload" worker cost.
 			MaxQueueAttempts: 10,
 			// ADR-134 PR-B: Pro 10k / 6h / 30d.
+			EventDeliveries:                   EventDeliveryLimits{1024, 4096, 16384},
 			MaxAsyncInvocationsPerAccount:     10000,
 			MaxAsyncInvocationDeadlineSeconds: 21600,
 			MaxAsyncResultRetentionSeconds:    2592000,
@@ -653,6 +656,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// the worker's hourly budget window.
 			MaxQueueAttempts: 25,
 			// ADR-134 PR-B: Scale 100k / 24h / 90d.
+			EventDeliveries:                   EventDeliveryLimits{4096, 16384, 65536},
 			MaxAsyncInvocationsPerAccount:     100000,
 			MaxAsyncInvocationDeadlineSeconds: 86400,
 			MaxAsyncResultRetentionSeconds:    7776000,

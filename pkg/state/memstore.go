@@ -663,6 +663,8 @@ type MemStore struct {
 	// fan-out. Legacy snapshots without an entry remain globally eligible.
 	snapshotOrigins          map[string]snapshotOriginRow
 	events                   []Event
+	eventDeliverySlots       map[string]eventDeliverySlot
+	eventRoutingFairness     map[string]time.Time
 	eventFanout              map[string]*PublishedEventWork
 	eventFanoutNextID        int64
 	eventFanoutAttempts      []EventFanoutAttempt
@@ -6514,6 +6516,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, v := range m.invocations {
 		if v.AppID == id {
 			delete(m.invocations, key)
+			delete(m.eventDeliverySlots, key)
 			m.deleteInvocationAttemptsLocked(key)
 			delete(m.keyedReplayChildren, key)
 			delete(m.plainReplayChildren, key)
@@ -12696,6 +12699,15 @@ func (m *MemStore) enqueueInvocationLocked(inv Invocation) (Invocation, error) {
 		}
 		if sameMemUUID(inv.ID, inv.ReplayRootInvocationID) {
 			return Invocation{}, ErrInvalidArgument
+		}
+	}
+	if inv.ReplayedFromInvocationID != "" {
+		slot, err := m.eventReplayCapacityLocked(inv.ReplayedFromInvocationID)
+		if err != nil {
+			return Invocation{}, err
+		}
+		if slot.AccountID != "" {
+			m.recordEventDeliverySlotLocked(inv.ID, slot)
 		}
 	}
 	m.setInvocationLocked(inv.ID, inv)
@@ -25474,6 +25486,7 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 	for _, id := range ids {
 		if _, ok := m.invocations[id]; ok {
 			delete(m.invocations, id)
+			delete(m.eventDeliverySlots, id)
 			m.deleteInvocationAttemptsLocked(id)
 			delete(m.keyedReplayChildren, id)
 			delete(m.plainReplayChildren, id)

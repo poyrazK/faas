@@ -19,9 +19,10 @@ SELECT s.position::bigint, s.recipient::jsonb,
        coalesce(o.recipient_progress -> (s.recipient->>'id'), '{}'::jsonb)::jsonb AS progress,
        coalesce(r.state, o.recipient_progress -> (s.recipient->>'id') ->>'state', 'pending')::text AS routing_state,
        coalesce(r.total_attempts, (o.recipient_progress -> (s.recipient->>'id') ->>'attempts')::integer, 0)::integer AS routing_attempts,
+       coalesce(r.generation_capacity_deferrals,0)::integer AS generation_capacity_deferrals,
        coalesce(r.generation, 0)::bigint AS generation, coalesce(r.attempts, 0)::integer AS generation_attempts,
        CASE WHEN coalesce(r.state, o.recipient_progress -> (s.recipient->>'id') ->>'state', 'pending')='pending'
-            THEN CASE WHEN o.recipient_claims THEN r.available_at ELSE CASE WHEN o.state='pending' THEN o.available_at END END END::timestamptz AS next_attempt_at,
+            THEN CASE WHEN o.recipient_claims THEN r.available_at ELSE coalesce((o.recipient_progress -> (s.recipient->>'id')->>'next_attempt_at')::timestamptz,CASE WHEN o.state='pending' THEN o.available_at END) END END::timestamptz AS next_attempt_at,
        r.lease_until,
        (SELECT count(*) FROM event_fanout_attempt_history h WHERE h.outbox_id=o.id AND h.subscription_id=s.recipient->>'id' AND h.action='operator_replay')::bigint AS replay_count,
        (SELECT max(h.occurred_at) FROM event_fanout_attempt_history h WHERE h.outbox_id=o.id AND h.subscription_id=s.recipient->>'id' AND h.action='operator_replay')::timestamptz AS last_replayed_at

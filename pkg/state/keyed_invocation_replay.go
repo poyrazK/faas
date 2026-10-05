@@ -248,8 +248,15 @@ func (m *MemStore) ReplayKeyedInvocation(_ context.Context, accountID, parentID 
 	if m.keyedReplayChildren == nil {
 		m.keyedReplayChildren = make(map[string]string)
 	}
-	m.keyedReplayChildren[parentID] = inv.ID
+	slot, err := m.eventReplayCapacityLocked(parent.ID)
+	if err != nil {
+		return Invocation{}, err
+	}
 	m.setInvocationLocked(inv.ID, inv)
+	if slot.AccountID != "" {
+		m.recordEventDeliverySlotLocked(inv.ID, slot)
+	}
+	m.keyedReplayChildren[parentID] = inv.ID
 	return cloneInvocationReplay(inv), nil
 }
 

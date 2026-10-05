@@ -11769,18 +11769,22 @@ type EventReceiptRecipientResponse struct {
 }
 
 type EventReceiptRoutingResponse struct {
-	State              string     `json:"state"`
-	Attempts           int        `json:"attempts"`
-	Generation         *int64     `json:"generation,omitempty"`
-	GenerationAttempts *int       `json:"generation_attempts,omitempty"`
-	NextAttemptAt      *time.Time `json:"next_attempt_at,omitempty"`
-	LeaseUntil         *time.Time `json:"lease_until,omitempty"`
-	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
-	LastError          string     `json:"last_error,omitempty"`
-	FailureCode        string     `json:"failure_code,omitempty"`
-	Retryable          bool       `json:"retryable"`
-	ReplayCount        int64      `json:"replay_count"`
-	LastReplayedAt     *time.Time `json:"last_replayed_at,omitempty"`
+	GenerationCapacityDeferrals *int       `json:"generation_capacity_deferrals,omitempty"`
+	CapacityDeferrals           int        `json:"capacity_deferrals"`
+	CapacityScope               string     `json:"capacity_scope,omitempty"`
+	PendingAgeSeconds           *float64   `json:"pending_age_seconds,omitempty"`
+	State                       string     `json:"state"`
+	Attempts                    int        `json:"attempts"`
+	Generation                  *int64     `json:"generation,omitempty"`
+	GenerationAttempts          *int       `json:"generation_attempts,omitempty"`
+	NextAttemptAt               *time.Time `json:"next_attempt_at,omitempty"`
+	LeaseUntil                  *time.Time `json:"lease_until,omitempty"`
+	UpdatedAt                   *time.Time `json:"updated_at,omitempty"`
+	LastError                   string     `json:"last_error,omitempty"`
+	FailureCode                 string     `json:"failure_code,omitempty"`
+	Retryable                   bool       `json:"retryable"`
+	ReplayCount                 int64      `json:"replay_count"`
+	LastReplayedAt              *time.Time `json:"last_replayed_at,omitempty"`
 }
 
 type EventReceiptExecutionResponse struct {

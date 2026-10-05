@@ -37,18 +37,22 @@ type EventReceipt struct {
 }
 
 type EventReceiptRouting struct {
-	State              string     `json:"state"`
-	Attempts           int        `json:"attempts"`
-	Generation         *int64     `json:"generation,omitempty"`
-	GenerationAttempts *int       `json:"generation_attempts,omitempty"`
-	NextAttemptAt      *time.Time `json:"next_attempt_at,omitempty"`
-	LeaseUntil         *time.Time `json:"lease_until,omitempty"`
-	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
-	LastError          string     `json:"last_error,omitempty"`
-	FailureCode        string     `json:"failure_code,omitempty"`
-	Retryable          bool       `json:"retryable"`
-	ReplayCount        int64      `json:"replay_count"`
-	LastReplayedAt     *time.Time `json:"last_replayed_at,omitempty"`
+	GenerationCapacityDeferrals *int       `json:"generation_capacity_deferrals,omitempty"`
+	CapacityDeferrals           int        `json:"capacity_deferrals"`
+	CapacityScope               string     `json:"capacity_scope,omitempty"`
+	PendingAgeSeconds           *float64   `json:"pending_age_seconds,omitempty"`
+	State                       string     `json:"state"`
+	Attempts                    int        `json:"attempts"`
+	Generation                  *int64     `json:"generation,omitempty"`
+	GenerationAttempts          *int       `json:"generation_attempts,omitempty"`
+	NextAttemptAt               *time.Time `json:"next_attempt_at,omitempty"`
+	LeaseUntil                  *time.Time `json:"lease_until,omitempty"`
+	UpdatedAt                   *time.Time `json:"updated_at,omitempty"`
+	LastError                   string     `json:"last_error,omitempty"`
+	FailureCode                 string     `json:"failure_code,omitempty"`
+	Retryable                   bool       `json:"retryable"`
+	ReplayCount                 int64      `json:"replay_count"`
+	LastReplayedAt              *time.Time `json:"last_replayed_at,omitempty"`
 }
 
 type EventReceiptExecution struct {
@@ -150,11 +154,14 @@ func (s *PgStore) EventReceipt(ctx context.Context, accountID, source, eventID s
 		entry := EventReceiptRecipient{Position: row.SPosition, SubscriptionID: recipient.ID, AppID: recipient.AppID, AppSlug: row.AppSlug, TargetAvailable: row.TargetAvailable,
 			Routing:               receiptRouting(progress, row.RoutingState, int(row.RoutingAttempts)),
 			RoutingReplayEligible: row.TargetAvailable && row.RoutingState == PublishedEventRecipientFailed && (meta.RecipientClaims || meta.State == "delivered")}
+		setEventReceiptPendingAge(&entry.Routing, receipt.AcceptedAt)
 		entry.Routing.NextAttemptAt, entry.Routing.LeaseUntil = timestamptzToTimePtr(row.NextAttemptAt), timestamptzToTimePtr(row.LeaseUntil)
 		entry.Routing.ReplayCount, entry.Routing.LastReplayedAt = row.ReplayCount, timestamptzToTimePtr(row.LastReplayedAt)
 		if meta.RecipientClaims {
 			cycle := int(row.GenerationAttempts)
 			entry.Routing.Generation, entry.Routing.GenerationAttempts = &row.Generation, &cycle
+			deferrals := int(row.GenerationCapacityDeferrals)
+			entry.Routing.GenerationCapacityDeferrals = &deferrals
 		}
 		receipt.Recipients = append(receipt.Recipients, entry)
 		ids = append(ids, mustPgUUID(PublishedEventInvocationID(meta.InvocationAccountID, source, eventID, recipient.ID)))
@@ -169,7 +176,7 @@ func (s *PgStore) EventReceipt(ctx context.Context, accountID, source, eventID s
 }
 
 func receiptRouting(progress PublishedEventRecipientProgress, status string, attempts int) EventReceiptRouting {
-	routing := EventReceiptRouting{State: status, Attempts: attempts, LastError: progress.LastError, FailureCode: progress.FailureCode, Retryable: progress.Retryable}
+	routing := EventReceiptRouting{State: status, Attempts: attempts, CapacityDeferrals: progress.CapacityDeferrals, CapacityScope: progress.CapacityScope, NextAttemptAt: cloneEventReceiptTime(progress.NextAttemptAt), LastError: progress.LastError, FailureCode: progress.FailureCode, Retryable: progress.Retryable}
 	if !progress.UpdatedAt.IsZero() {
 		at := progress.UpdatedAt
 		routing.UpdatedAt = &at
@@ -312,6 +319,7 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 			continue
 		}
 		entry := EventReceiptRecipient{Position: position, SubscriptionID: recipient.ID, AppID: recipient.AppID, Routing: receiptRouting(progress, status, attempts)}
+		setEventReceiptPendingAge(&entry.Routing, receipt.AcceptedAt)
 		app, exists := m.eventSubscriptionAppLocked(recipient.AppID)
 		owned := exists && sameMemUUID(app.AccountID, accountID)
 		if owned {
@@ -322,6 +330,8 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 		if own != nil {
 			generation, cycle := own.Generation, own.Attempts
 			entry.Routing.Generation, entry.Routing.GenerationAttempts = &generation, &cycle
+			deferrals := own.GenerationCapacityDeferrals
+			entry.Routing.GenerationCapacityDeferrals = &deferrals
 			if own.State == PublishedEventRecipientPending {
 				at := own.AvailableAt
 				entry.Routing.NextAttemptAt = &at
@@ -332,6 +342,9 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 			}
 		} else if status == PublishedEventRecipientPending && !work.Delivered && work.ClaimToken == "" {
 			at := work.AvailableAt
+			if progress.NextAttemptAt != nil {
+				at = *progress.NextAttemptAt
+			}
 			entry.Routing.NextAttemptAt = &at
 		}
 		for _, attempt := range m.eventFanoutAttempts {
@@ -397,4 +410,11 @@ func (m *MemStore) EventReceiptAcceptedAt(_ context.Context, accountID, source, 
 		return time.Time{}, ErrNotFound
 	}
 	return work.CreatedAt, nil
+}
+
+func setEventReceiptPendingAge(r *EventReceiptRouting, accepted time.Time) {
+	if r.State == PublishedEventRecipientPending || r.State == "processing" {
+		age := max(0, time.Since(accepted).Seconds())
+		r.PendingAgeSeconds = &age
+	}
 }

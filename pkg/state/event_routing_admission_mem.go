@@ -76,11 +76,21 @@ func (m *MemStore) admitEventRecipientLocked(claim PublishedEventRoutingClaim, p
 	if !eventRoutingClaimValidLocked(receipt, r, claim) {
 		return PublishedEventRoutingResult{}, ErrConflict
 	}
+
+	var scope string
+	slot := eventDeliverySlot{p.recipient.AccountID, p.recipient.AppID, p.recipient.ID}
+	if eventAdmissionNeedsCapacity(p) {
+		scope = m.eventCapacityLocked(slot, &p)
+	}
 	// Stage the maps changed by enqueue, supersession and cancellation. Restore
 	// them if a helper fails or the lease expires while applying its mutations.
 	invocations, cancellations, history, next := m.invocations, m.workCancellations, m.invocationAttemptHistory, m.nextInvocationAttemptID
 	m.invocations, m.workCancellations, m.invocationAttemptHistory = maps.Clone(invocations), maps.Clone(cancellations), maps.Clone(history)
-	created, err := m.performEventAdmissionLocked(receipt, p)
+	var created bool
+	var err error
+	if scope == "" {
+		created, err = m.performEventAdmissionLocked(receipt, p)
+	}
 	if err == nil && !eventRoutingClaimValidLocked(receipt, r, claim) {
 		err = ErrConflict
 	}
@@ -93,6 +103,13 @@ func (m *MemStore) admitEventRecipientLocked(claim PublishedEventRoutingClaim, p
 		attempts = r.TotalAttempts
 	}
 	progress := eventAdmissionProgress(p, attempts)
+	preserveEventCapacityHistory(&progress, previous)
+	if scope != "" {
+		progress = eventCapacityProgress(previous, attempts, scope)
+	}
+	if created {
+		m.recordEventDeliverySlotLocked(p.invocation.ID, slot)
+	}
 	if receipt.RecipientProgress == nil {
 		receipt.RecipientProgress = make(map[string]PublishedEventRecipientProgress)
 	}
@@ -100,7 +117,11 @@ func (m *MemStore) admitEventRecipientLocked(claim PublishedEventRoutingClaim, p
 	m.appendEventFanoutAttemptLocked(receipt, claim.SubscriptionID, EventFanoutAttemptActionAttempt, progress)
 	if receipt.RecipientClaims {
 		r.State, r.ClaimToken, r.LeaseUntil = progress.State, "", time.Time{}
-		r.AvailableAt = progress.UpdatedAt
+		r.AvailableAt = eventProgressNext(progress)
+		if scope != "" {
+			r.CapacityDeferrals++
+			r.GenerationCapacityDeferrals++
+		}
 		settleEventRecipientsLocked(receipt, progress.UpdatedAt)
 	} else {
 		receipt.Delivered = true
@@ -117,7 +138,9 @@ func (m *MemStore) admitEventRecipientLocked(claim PublishedEventRoutingClaim, p
 			receipt.LeaseUntil = time.Time{}
 		}
 	}
-	return eventAdmissionResult(p, progress, created, receipt.Delivered), nil
+	result := eventAdmissionResult(p, progress, created, receipt.Delivered)
+	result.CapacityDeferred = scope != ""
+	return result, nil
 }
 
 func eventRoutingClaimValidLocked(receipt *PublishedEventWork, r *PublishedEventRecipientWork, claim PublishedEventRoutingClaim) bool {

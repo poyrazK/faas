@@ -25398,6 +25398,9 @@ func mapErr(err error) error {
 			}
 			return err
 		case pgerrcode.CheckViolation:
+			if pgErr.ConstraintName == "event_delivery_capacity" {
+				return &EventDeliveryCapacityError{Scope: pgErr.Detail}
+			}
 			if pgErr.ConstraintName == "queue_binding_environment_unavailable" {
 				return ErrQueueBindingEnvironmentUnavailable
 			}
@@ -30153,6 +30156,9 @@ func (s *PgStore) RetryQueueDeadLetter(ctx context.Context, accountID, invocatio
 	if err := lockInvocationReplayLaneTx(ctx, tx, id, account, pgtype.UUID{}); err != nil {
 		return Invocation{}, err
 	}
+	if err := refreshEventReplayCapacity(ctx, tx, invocationID); err != nil {
+		return Invocation{}, err
+	}
 	row, err := sqlc.New().RetryQueueDeadLetterInvocation(ctx, tx, sqlc.RetryQueueDeadLetterInvocationParams{ID: id, AccountID: account})
 	if err != nil {
 		return Invocation{}, fmt.Errorf("state: retry queue dead_letter %s: %w", invocationID, mapErr(err))
@@ -30608,9 +30614,12 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 	switch ev.Source {
 	case "invocation":
 		if err := lockInvocationReplayLaneTx(ctx, tx, mustPgUUID(ev.SourceID), mustPgUUID(accountID), mustPgUUID(appID)); err != nil {
-			return time.Time{}, err
+			return time.Time{}, mapErr(err)
 		}
 		var affected int64
+		if err := refreshEventReplayCapacity(ctx, tx, ev.SourceID); err != nil {
+			return time.Time{}, mapErr(err)
+		}
 		affected, err = sqlc.New().ReplayDeadLetterInvocation(ctx, tx, sqlc.ReplayDeadLetterInvocationParams{ID: mustPgUUID(ev.SourceID), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)})
 		if affected > 0 {
 			tag = pgconn.NewCommandTag("UPDATE 1")
@@ -30667,14 +30676,14 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 		return time.Time{}, fmt.Errorf("state: unsupported dead-letter source %q", ev.Source)
 	}
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return time.Time{}, ErrNotFound
 	}
 	now := time.Now().UTC()
 	if _, err = tx.Exec(ctx, `update dead_letter_events set replayed_at = $1 where id = $2`, now, ev.ID); err != nil {
-		return time.Time{}, err
+		return time.Time{}, mapErr(err)
 	}
 	return now, nil
 }

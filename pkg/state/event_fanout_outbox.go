@@ -103,12 +103,15 @@ func (snapshot PublishedEventWorkPolicySnapshot) EffectivePolicy(name string) (w
 // PublishedEventRecipientProgress records scheduler-side fanout progress for
 // one candidate. Invocation execution retries are tracked on the invocation.
 type PublishedEventRecipientProgress struct {
-	State       string    `json:"state"`
-	Attempts    int       `json:"attempts"`
-	FailureCode string    `json:"failure_code,omitempty"`
-	Retryable   bool      `json:"retryable,omitempty"`
-	LastError   string    `json:"last_error,omitempty"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	CapacityDeferrals int        `json:"capacity_deferrals,omitempty"`
+	CapacityScope     string     `json:"capacity_scope,omitempty"`
+	NextAttemptAt     *time.Time `json:"next_attempt_at,omitempty"`
+	State             string     `json:"state"`
+	Attempts          int        `json:"attempts"`
+	FailureCode       string     `json:"failure_code,omitempty"`
+	Retryable         bool       `json:"retryable,omitempty"`
+	LastError         string     `json:"last_error,omitempty"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 // EventFanoutFailure is a terminal routing failure recorded before an
@@ -241,18 +244,12 @@ func (s *PgStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*P
 	var payload []byte
 	var snapshot []byte
 	var progress []byte
-	err := s.pool.QueryRow(ctx, `WITH candidate AS (
-		SELECT id FROM event_fanout_outbox
-		WHERE NOT recipient_claims AND ((state = 'pending' AND available_at <= $1)
-		   OR (state = 'processing' AND lease_until <= $1))
-		ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
-	) UPDATE event_fanout_outbox AS o
-	SET state = 'processing', claim_token = gen_random_uuid(),
-	    lease_until = $1 + interval '5 minutes', attempts = attempts + 1
-	FROM candidate WHERE o.id = candidate.id
-	RETURNING o.id, o.payload, o.recipient_snapshot, o.recipient_progress,
-	          o.claim_token::text, o.attempts, o.lease_until, o.created_at`, now.UTC()).Scan(
-		&work.ID, &payload, &snapshot, &progress, &work.ClaimToken, &work.Attempts, &work.LeaseUntil, &work.CreatedAt)
+	row, err := sqlc.New().EventRoutingClaimReceipt(ctx, s.pool, pgtypeFromTime(now))
+	if err == nil {
+		work.ID, work.ClaimToken, work.Attempts = row.ID, uuidString(row.ClaimToken), int(row.Attempts)
+		work.LeaseUntil, work.CreatedAt = timeFromPgtype(row.LeaseUntil), timeFromPgtype(row.CreatedAt)
+		payload, snapshot, progress = row.Payload, row.RecipientSnapshot, row.RecipientProgress
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -313,7 +310,7 @@ func validatePublishedEventRecipientProgress(progress PublishedEventRecipientPro
 	default:
 		return fmt.Errorf("state: invalid published event recipient state %q", progress.State)
 	}
-	if progress.Attempts < 0 {
+	if progress.Attempts < 0 || progress.CapacityDeferrals < 0 {
 		return fmt.Errorf("state: published event recipient attempts cannot be negative")
 	}
 	return nil
@@ -333,6 +330,16 @@ func (s *PgStore) FinishPublishedEvent(ctx context.Context, id int64, token stri
 			return err
 		}
 		if result.RowsAffected() == 0 {
+			return ErrConflict
+		}
+		return nil
+	}
+	if errors.Is(routeErr, ErrEventDeliveryCapacity) {
+		n, err := sqlc.New().EventRoutingDeferReceipt(ctx, s.pool, sqlc.EventRoutingDeferReceiptParams{ID: id, ClaimToken: mustPgUUID(token)})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
 			return ErrConflict
 		}
 		return nil
@@ -679,12 +686,28 @@ func (m *MemStore) ClaimDuePublishedEvent(_ context.Context, now time.Time) (*Pu
 		if work.RecipientClaims || work.Delivered || (work.ClaimToken != "" && work.LeaseUntil.After(now)) || work.AvailableAt.After(now) {
 			continue
 		}
-		if chosen == nil || work.ID < chosen.ID {
+		currentFair := m.eventFairTimeLocked(eventRoutingAccount(work), "")
+		chosenFair := time.Time{}
+		if chosen != nil {
+			chosenFair = m.eventFairTimeLocked(eventRoutingAccount(chosen), "")
+		}
+		consumerFair := m.eventReceiptConsumerFairTimeLocked(work, now)
+		chosenConsumerFair := time.Time{}
+		if chosen != nil {
+			chosenConsumerFair = m.eventReceiptConsumerFairTimeLocked(chosen, now)
+		}
+		if chosen == nil || currentFair.Before(chosenFair) || (currentFair.Equal(chosenFair) && (consumerFair.Before(chosenConsumerFair) || (consumerFair.Equal(chosenConsumerFair) && work.ID < chosen.ID))) {
 			chosen = work
 		}
 	}
 	if chosen == nil {
 		return nil, ErrNotFound
+	}
+	m.recordEventFairClaimLocked(eventRoutingAccount(chosen), "")
+	for _, r := range chosen.RecipientSnapshot {
+		if eventRecipientDue(chosen.RecipientProgress[r.ID], now) {
+			m.recordEventFairClaimLocked(eventRoutingAccount(chosen), r.ID)
+		}
 	}
 	chosen.ClaimToken = uuid.NewString()
 	chosen.LeaseUntil = now.Add(PublishedEventLease)
@@ -725,7 +748,7 @@ func (m *MemStore) RecordPublishedEventRecipientProgress(_ context.Context, id i
 		if work.ID != id {
 			continue
 		}
-		if work.ClaimToken != token || token == "" || work.Delivered || work.RecipientClaims || !work.LeaseUntil.After(time.Now().UTC()) || routingAdmissionRecorded(work.RecipientProgress[recipientID]) {
+		if work.ClaimToken != token || token == "" || work.Delivered || work.RecipientClaims || !work.LeaseUntil.After(time.Now().UTC()) || routingAdmissionRecorded(work.RecipientProgress[recipientID]) || progress.CapacityDeferrals < work.RecipientProgress[recipientID].CapacityDeferrals {
 			return ErrConflict
 		}
 		found := false
@@ -765,6 +788,25 @@ func (m *MemStore) FinishPublishedEvent(_ context.Context, id int64, token strin
 			work.DeliveredAt = time.Now().UTC()
 		} else {
 			work.AvailableAt = time.Now().Add(5 * time.Second)
+			if errors.Is(routeErr, ErrEventDeliveryCapacity) {
+				var next time.Time
+				for _, r := range work.RecipientSnapshot {
+					p := work.RecipientProgress[r.ID]
+					if p.State != PublishedEventRecipientPending && p.State != "" {
+						continue
+					}
+					at := time.Now().Add(5 * time.Second)
+					if p.NextAttemptAt != nil {
+						at = *p.NextAttemptAt
+					}
+					if next.IsZero() || at.Before(next) {
+						next = at
+					}
+				}
+				if !next.IsZero() {
+					work.AvailableAt = next
+				}
+			}
 		}
 		return nil
 	}
@@ -916,6 +958,8 @@ func (m *MemStore) ReplayFailedPublishedEventRecipientForApp(_ context.Context, 
 		progress.FailureCode = ""
 		progress.Retryable = false
 		progress.LastError = ""
+		progress.CapacityScope = ""
+		progress.NextAttemptAt = nil
 		progress.UpdatedAt = time.Now().UTC()
 		work.RecipientProgress[subscriptionID] = progress
 		if work.RecipientClaims {
@@ -985,6 +1029,8 @@ func (m *MemStore) ReplayRetryablePublishedEventRecipientsForApp(_ context.Conte
 		progress.FailureCode = ""
 		progress.Retryable = false
 		progress.LastError = ""
+		progress.CapacityScope = ""
+		progress.NextAttemptAt = nil
 		progress.UpdatedAt = now
 		item.work.RecipientProgress[item.subscriptionID] = progress
 		if item.work.RecipientClaims {

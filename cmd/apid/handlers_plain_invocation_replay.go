@@ -62,6 +62,8 @@ func plainReplayProblem(err error, id string) *api.Problem {
 	switch {
 	case err == nil:
 		return nil
+	case errors.Is(err, state.ErrEventDeliveryCapacity):
+		return eventDeliveryReplayProblem(err, "")
 	case errors.Is(err, state.ErrNotFound):
 		return api.ErrInvocationNotFound(id)
 	case errors.Is(err, state.ErrPlainReplayNotAllowed):

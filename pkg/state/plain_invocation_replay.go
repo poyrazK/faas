@@ -216,7 +216,14 @@ func (m *MemStore) ReplayPlainInvocation(_ context.Context, accountID, parentID 
 	if m.plainReplayChildren == nil {
 		m.plainReplayChildren = make(map[string]plainReplayIdentity)
 	}
+	slot, err := m.eventReplayCapacityLocked(parent.ID)
+	if err != nil {
+		return Invocation{}, err
+	}
 	m.setInvocationLocked(inv.ID, inv)
+	if slot.AccountID != "" {
+		m.recordEventDeliverySlotLocked(inv.ID, slot)
+	}
 	m.plainReplayChildren[parent.ID] = plainReplayIdentity{ChildID: inv.ID, CreatedAt: inv.CreatedAt}
 	return cloneInvocationReplay(inv), nil
 }

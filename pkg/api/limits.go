@@ -661,9 +661,14 @@ const (
 // Limits is the full quota/limit set for one plan. Every field has a spec
 // reference. Add a field here (never a literal elsewhere) when a new limit
 // appears, and cover it in limits_test.go.
+// EventDeliveryLimits bounds live application-event deliveries (pending plus
+// dispatching), including retained replay descendants. ADR-589.
+type EventDeliveryLimits struct{ PerConsumer, PerApp, PerAccount int }
+
 type Limits struct {
-	Operations OperationPlanLimits
-	Plan       Plan
+	EventDeliveries EventDeliveryLimits
+	Operations      OperationPlanLimits
+	Plan            Plan
 
 	// Deploy-time quotas (enforced by apid before work happens, spec §4.2).
 	DeployedApps int // max apps in state active|evicted_cold
@@ -2213,6 +2218,7 @@ var planLimits = map[Plan]Limits{
 		// the documented Hobby-customer-trying-Free path; tighter than
 		// Hobby so a customer mid-upgrade sees the cap before the
 		// plan flips. Deadline defaults to 5m, retention to 1d.
+		EventDeliveries:                   EventDeliveryLimits{64, 256, 1024},
 		MaxAsyncInvocationsPerAccount:     100,
 		MaxAsyncInvocationDeadlineSeconds: 300,
 		MaxAsyncResultRetentionSeconds:    86400,
@@ -2596,6 +2602,7 @@ var planLimits = map[Plan]Limits{
 		MaxQueueAttempts: 3,
 		// ADR-134 PR-B: Hobby 1k / 1h / 7d. Matches the doubling
 		// from Free's 100/5m/1d.
+		EventDeliveries:                   EventDeliveryLimits{256, 1024, 4096},
 		MaxAsyncInvocationsPerAccount:     1000,
 		MaxAsyncInvocationDeadlineSeconds: 3600,
 		MaxAsyncResultRetentionSeconds:    604800,
@@ -3012,6 +3019,7 @@ var planLimits = map[Plan]Limits{
 		MaxQueueAttempts: 10,
 		// ADR-134 PR-B: Pro 10k / 6h / 30d. Decadal bumps from
 		// Hobby track the Doubling pattern (1k->10k, 1h->6h, 7d->30d).
+		EventDeliveries:                   EventDeliveryLimits{1024, 4096, 16384},
 		MaxAsyncInvocationsPerAccount:     10000,
 		MaxAsyncInvocationDeadlineSeconds: 21600,
 		MaxAsyncResultRetentionSeconds:    2592000,
@@ -3393,6 +3401,7 @@ var planLimits = map[Plan]Limits{
 		// matches the cron-handler SLA spec ("must finish by 09:00"
 		// pattern); 90d retention matches the audit-grade trace
 		// retention target.
+		EventDeliveries:                   EventDeliveryLimits{4096, 16384, 65536},
 		MaxAsyncInvocationsPerAccount:     100000,
 		MaxAsyncInvocationDeadlineSeconds: 86400,
 		MaxAsyncResultRetentionSeconds:    7776000,

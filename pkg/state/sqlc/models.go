@@ -2110,6 +2110,20 @@ type Event struct {
 	OutboxID       pgtype.Int8
 }
 
+type EventDeliveryCapacity struct {
+	AccountID     pgtype.UUID
+	ConsumerLimit int32
+	AppLimit      int32
+	AccountLimit  int32
+}
+
+type EventDeliverySlot struct {
+	InvocationID   pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID string
+}
+
 type EventFanoutAttemptHistory struct {
 	ID             int64
 	OutboxID       int64
@@ -2147,17 +2161,25 @@ type EventFanoutOutbox struct {
 }
 
 type EventFanoutRecipient struct {
-	OutboxID       int64
+	OutboxID                    int64
+	SubscriptionID              string
+	AppID                       pgtype.UUID
+	Recipient                   []byte
+	State                       string
+	Generation                  int64
+	Attempts                    int32
+	TotalAttempts               int32
+	AvailableAt                 pgtype.Timestamptz
+	ClaimToken                  pgtype.UUID
+	LeaseUntil                  pgtype.Timestamptz
+	CapacityDeferrals           int32
+	GenerationCapacityDeferrals int32
+}
+
+type EventRoutingFairness struct {
+	AccountID      pgtype.UUID
 	SubscriptionID string
-	AppID          pgtype.UUID
-	Recipient      []byte
-	State          string
-	Generation     int64
-	Attempts       int32
-	TotalAttempts  int32
-	AvailableAt    pgtype.Timestamptz
-	ClaimToken     pgtype.UUID
-	LeaseUntil     pgtype.Timestamptz
+	LastClaimedAt  pgtype.Timestamptz
 }
 
 type EventSchema struct {

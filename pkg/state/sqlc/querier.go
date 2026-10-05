@@ -384,6 +384,10 @@ type Querier interface {
 	EnvironmentWorkloadQualificationInputsCurrent(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	EnvironmentWorkloadQualificationSourceForUpdate(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentGitSource, error)
 	EnvironmentWorkloadQualificationsByGraph(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentWorkloadQualificationRequest, error)
+	EventDeliveryCounts(ctx context.Context, db DBTX, arg EventDeliveryCountsParams) (EventDeliveryCountsRow, error)
+	EventDeliveryInsertSlot(ctx context.Context, db DBTX, arg EventDeliveryInsertSlotParams) error
+	EventDeliveryLockCapacity(ctx context.Context, db DBTX, arg EventDeliveryLockCapacityParams) error
+	EventDeliveryReplayAccount(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EventDeliveryReplayAccountRow, error)
 	EventReceiptAcceptedAt(ctx context.Context, db DBTX, arg EventReceiptAcceptedAtParams) (pgtype.Timestamptz, error)
 	EventReceiptAttemptHistory(ctx context.Context, db DBTX, arg EventReceiptAttemptHistoryParams) ([]InvocationAttemptHistory, error)
 	EventReceiptCancellations(ctx context.Context, db DBTX, arg EventReceiptCancellationsParams) ([]EventReceiptCancellationsRow, error)
@@ -406,8 +410,11 @@ type Querier interface {
 	EventRecipientReplayReceipt(ctx context.Context, db DBTX, arg EventRecipientReplayReceiptParams) (EventRecipientReplayReceiptRow, error)
 	EventRecipientSettleReceipt(ctx context.Context, db DBTX, id int64) error
 	EventRecipientUpdateProgress(ctx context.Context, db DBTX, arg EventRecipientUpdateProgressParams) error
+	EventRoutingClaimReceipt(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (EventRoutingClaimReceiptRow, error)
 	// Evaluate the wall clock only after all admission locks have been acquired.
 	EventRoutingClaimValid(ctx context.Context, db DBTX, arg EventRoutingClaimValidParams) (bool, error)
+	EventRoutingDeferReceipt(ctx context.Context, db DBTX, arg EventRoutingDeferReceiptParams) (int64, error)
+	EventRoutingHealth(ctx context.Context, db DBTX) (EventRoutingHealthRow, error)
 	EventRoutingLockApp(ctx context.Context, db DBTX, arg EventRoutingLockAppParams) (pgtype.UUID, error)
 	EventRoutingLockReceipt(ctx context.Context, db DBTX, id int64) (EventFanoutOutbox, error)
 	EventRoutingLockRecipient(ctx context.Context, db DBTX, arg EventRoutingLockRecipientParams) (EventFanoutRecipient, error)
