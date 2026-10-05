@@ -177,7 +177,7 @@ func writeProtectionSuite(t *testing.T, st accountingStore, pool *pgxpool.Pool, 
 
 func writeProtectionMigration(t *testing.T) (string, string) {
 	t.Helper()
-	data, err := fs.ReadFile(migrations.FS, "20261005101500000_object_write_protection.sql")
+	data, err := fs.ReadFile(migrations.FS, "20261005111654942_object_write_protection.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

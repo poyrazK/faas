@@ -1,4 +1,4 @@
--- filename: 20261005101500000_object_write_protection.sql
+-- filename: 20261005111654942_object_write_protection.sql
 -- +goose Up
 -- +goose StatementBegin
 CREATE FUNCTION valid_object_write_protection(p jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE STRICT AS $$
