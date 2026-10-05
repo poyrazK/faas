@@ -68,7 +68,7 @@ func (c Contract) Validate() error {
 		return fmt.Errorf("MCP contract format 1 cannot contain capabilities, resources, templates or prompts")
 	}
 	if c.Version == 2 {
-		if c.Capabilities == nil || len(c.Capabilities) == 0 {
+		if len(c.Capabilities) == 0 {
 			return fmt.Errorf("MCP contract format 2 must include advertised capabilities")
 		}
 		seenCapabilities := make(map[string]bool, len(c.Capabilities))
