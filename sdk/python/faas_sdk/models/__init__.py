@@ -1319,6 +1319,10 @@ from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
 from .managed_postgres_binding_state import ManagedPostgresBindingState
+from .managed_postgres_capabilities import ManagedPostgresCapabilities
+from .managed_postgres_capabilities_availability_item import ManagedPostgresCapabilitiesAvailabilityItem
+from .managed_postgres_capabilities_credential_access_item import ManagedPostgresCapabilitiesCredentialAccessItem
+from .managed_postgres_capabilities_service_classes_item import ManagedPostgresCapabilitiesServiceClassesItem
 from .managed_postgres_cutover import ManagedPostgresCutover
 from .managed_postgres_cutover_member import ManagedPostgresCutoverMember
 from .managed_postgres_cutover_member_access import ManagedPostgresCutoverMemberAccess
@@ -3925,6 +3929,10 @@ __all__ = (
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",
     "ManagedPostgresBindingState",
+    "ManagedPostgresCapabilities",
+    "ManagedPostgresCapabilitiesAvailabilityItem",
+    "ManagedPostgresCapabilitiesCredentialAccessItem",
+    "ManagedPostgresCapabilitiesServiceClassesItem",
     "ManagedPostgresCutover",
     "ManagedPostgresCutoverMember",
     "ManagedPostgresCutoverMemberAccess",

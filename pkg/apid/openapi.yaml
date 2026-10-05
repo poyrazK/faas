@@ -1028,6 +1028,30 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/postgres/capabilities:
+    get:
+      operationId: getManagedPostgresCapabilities
+      summary: Show plan and region PostgreSQL feature support
+      description: Returns configured provider-neutral support after plan limits without provider calls. provisioning_enabled includes qualification and canary gates. Current usage, budget, and quota admission are checked separately at reservation. Existing databases remain pinned to their original backend.
+      tags: [managed_postgres]
+      parameters:
+        - name: region
+          in: query
+          required: false
+          description: Portable region name; defaults to the configured region.
+          schema: { type: string, maxLength: 255 }
+      responses:
+        '200':
+          description: Effective regional capability contract
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresCapabilities' }
+        default:
+          description: Authentication or capability lookup error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/postgres/databases:
     get:
       operationId: listManagedPostgresDatabases
@@ -32268,6 +32292,25 @@ components:
         degraded: { type: boolean }
         as_of: { type: string, format: date-time }
         source: { type: string }
+    ManagedPostgresCapabilities:
+      description: Versioned PostgreSQL support for the default backend in a region, intersected with customer plan limits. Provider identities, costs, endpoints and credentials are excluded. Capabilities remain visible while the rollout gate is closed.
+      type: object
+      required: [contract_version, region, provisioning_enabled, database_limit, postgres_majors, service_classes, availability, credential_access, scale_to_zero, always_on, pooled_connections, point_in_time_restore, storage_limit_bytes, restore_window_seconds]
+      properties:
+        contract_version: { type: integer, minimum: 1 }
+        region: { type: string }
+        provisioning_enabled: { type: boolean }
+        database_limit: { type: integer, minimum: 0 }
+        postgres_majors: { type: array, items: { type: integer, minimum: 12, maximum: 99 } }
+        service_classes: { type: array, items: { type: string, enum: [development, burstable, production] } }
+        availability: { type: array, items: { type: string, enum: [single_zone, high_availability] } }
+        credential_access: { type: array, items: { type: string, enum: [read_write, read_only, migration] } }
+        scale_to_zero: { type: boolean }
+        always_on: { type: boolean }
+        pooled_connections: { type: boolean }
+        point_in_time_restore: { type: boolean }
+        storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
+        restore_window_seconds: { type: integer, format: int64, minimum: 0 }
     ManagedPostgresDatabase:
       description: Managed PostgreSQL metadata. Provider IDs and credentials are never returned.
       type: object

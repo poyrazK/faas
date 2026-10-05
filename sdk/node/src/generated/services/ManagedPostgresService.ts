@@ -6,6 +6,7 @@ import type { CreateManagedPostgresBindingRequest } from '../models/CreateManage
 import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
 import type { ManagedPostgresBinding } from '../models/ManagedPostgresBinding.js';
 import type { ManagedPostgresBindingList } from '../models/ManagedPostgresBindingList.js';
+import type { ManagedPostgresCapabilities } from '../models/ManagedPostgresCapabilities.js';
 import type { ManagedPostgresCutover } from '../models/ManagedPostgresCutover.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
 import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
@@ -17,6 +18,29 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ManagedPostgresService {
+  /**
+   * Show plan and region PostgreSQL feature support
+   * Returns configured provider-neutral support after plan limits without provider calls. provisioning_enabled includes qualification and canary gates. Current usage, budget, and quota admission are checked separately at reservation. Existing databases remain pinned to their original backend.
+   * @returns ManagedPostgresCapabilities Effective regional capability contract
+   * @returns Problem Authentication or capability lookup error
+   * @throws ApiError
+   */
+  public static getManagedPostgresCapabilities({
+    region,
+  }: {
+    /**
+     * Portable region name; defaults to the configured region.
+     */
+    region?: string,
+  }): CancelablePromise<ManagedPostgresCapabilities | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/capabilities',
+      query: {
+        'region': region,
+      },
+    });
+  }
   /**
    * List managed PostgreSQL databases
    * @returns ManagedPostgresDatabaseList Account databases

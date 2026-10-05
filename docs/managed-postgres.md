@@ -37,7 +37,7 @@ Keep `provisioning_enabled` false outside an isolated provider qualification
 environment. The lifecycle service and background discovery also require all
 of the following runtime gates before they will provision: `FAAS_ENVIRONMENT`
 must be `staging`, `FAAS_MANAGED_POSTGRES_QUALIFIED=true`,
-`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=3`,
+`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=4`,
 `FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL` must be a future RFC3339 timestamp,
 and the exact qualified backend ID and fingerprint must be supplied through
 `FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` and
@@ -122,9 +122,13 @@ attempts cleanup after an intermediate failure and emits a JSON report with
 only stable check codes and restore evidence (without provider IDs). The
 command also emits a versioned `approval`
 envelope, an `approval_env` block when all rollout checks pass, and a
-machine-readable `readiness` result. Version 3 requires SQL permission probes,
-data recovery, and rejection of inherited source logins on the restore target.
-Versions 1 and 2 must be replaced by a new qualification run.
+machine-readable `readiness` result. Version 4 requires SQL permission probes,
+data recovery, rejection of inherited source logins on the restore target,
+and read-only credential evidence when the adapter advertises that access mode.
+Reader qualification exercises existing and future object access, write/DDL
+denials with client read-only settings disabled, RLS, password recovery on retry,
+data-preserving rotation, and rejection of retired sessions and fresh logins.
+Versions 1–3 must be replaced by a new qualification run.
 The approval is bound to the report digest, exact backend fingerprint, expiry,
 and the current canary allowlist. A provider-only run remains useful evidence
 but is not rollout-ready until the lifecycle smoke has passed.
@@ -260,7 +264,7 @@ codes without response bodies, connection strings, endpoint hosts, or API keys.
 | --- | --- | --- |
 | `read_write` (default) | Pooled, with direct fallback | Public-schema SELECT, INSERT, UPDATE, DELETE; sequence usage; RLS enforced |
 | `migration` | Direct required; release tasks only | Schema changes through a stable non-login schema owner; no role/database administration or replication |
-| `read_only` | Read-only endpoint required | Not advertised by the current Neon adapter |
+| `read_only` | Replica when available, otherwise pooled/direct primary | Public-schema SELECT and sequence inspection; no sequence advancement, DML, DDL, administration or RLS bypass |
 
 Runtime logins cannot create tables, temporary objects, schemas, or roles,
 truncate tables, or bypass row-level security. Runtime grants cover existing
@@ -269,6 +273,33 @@ Custom schemas and function execution require explicit migration-owner grants.
 Existing PUBLIC-executable SECURITY DEFINER functions block credential issuance;
 review their execution grants before adoption. New owner functions do not
 receive PUBLIC execution privileges by default.
+
+Reader issuance and cutover verification reject observed write grants through
+columns, PUBLIC, other customer schemas, sequences, SECURITY DEFINER functions,
+or default privileges. They preserve customer grants and return a conflict
+instead of weakening or silently rewriting them. Owners must keep their grants
+compatible: a later privileged migration can change permissions after issuance.
+Read-only primary connections have primary consistency; this access mode does
+not promise replica compute or offload. Attach a separate reader URL with:
+
+```sh
+gregale postgres attach DATABASE APP_SLUG --access read_only --env READ_DATABASE_URL
+```
+
+Discover configured support for your plan and the region's default placement:
+
+```sh
+gregale postgres capabilities --region eu-central-1 --json
+# API/SDK: GET /v1/postgres/capabilities?region=eu-central-1
+```
+
+The versioned response lists PostgreSQL versions, service classes, access modes,
+availability, pooling, scale-to-zero and restore/storage limits. It exposes no
+backend identity, credentials or provider costs. `provisioning_enabled` describes
+the qualification/canary gate separately from configured support; usage, budget
+and current quota admission are checked when reserving a resource. Discovery
+does not contact the provider. Existing databases and bindings stay pinned to
+their original backend, whose capabilities remain authoritative for operations.
 
 Use a separate environment key for migration tooling:
 

@@ -126,8 +126,8 @@ func TestNewValidatesBackendAndAdvertisesConservativeCapabilities(t *testing.T) 
 	if err := capabilities.SupportsCredentialAccess(managedpostgres.CredentialMigration); err != nil {
 		t.Fatalf("migration capability: %v", err)
 	}
-	if err := capabilities.SupportsCredentialAccess(managedpostgres.CredentialReadOnly); !errors.Is(err, managedpostgres.ErrUnsupported) {
-		t.Fatalf("read-only binding support = %v, want ErrUnsupported", err)
+	if err := capabilities.SupportsCredentialAccess(managedpostgres.CredentialReadOnly); err != nil {
+		t.Fatalf("read-only binding support = %v", err)
 	}
 	ha := testDatabaseSpec()
 	ha.Availability = managedpostgres.AvailabilityHighlyAvailable
@@ -487,7 +487,8 @@ func TestIssueCredentialsIsIdempotentAndRevokeDeletesRole(t *testing.T) {
 		t.Fatalf("migration separation: %v", err)
 	}
 	request.Access = managedpostgres.CredentialReadOnly
-	if _, err := provider.IssueCredentials(context.Background(), request); !errors.Is(err, managedpostgres.ErrUnsupported) {
+	reader, err := provider.IssueCredentials(context.Background(), request)
+	if err != nil || !strings.HasPrefix(reader.Username, "gregale_ro_") || reader.Username == first.Username || reader.Username == migration.Username || len(reader.Endpoints) != 2 {
 		t.Fatalf("read-only: %v", err)
 	}
 }
