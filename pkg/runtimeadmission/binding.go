@@ -28,7 +28,7 @@ var (
 type Identity struct {
 	ProtocolVersion        uint32
 	NodeID, Incarnation    string
-	SnapshotRestoreVersion uint32
+	SnapshotRestoreVersion uint32 `json:"SnapshotRestoreVersion,omitempty"`
 }
 
 func (i Identity) Validate() error {

@@ -1993,7 +1993,6 @@ type Deployment struct {
 	CanaryStages               []byte
 	SnapshotMissCount          int32
 	SnapshotMissLastAt         pgtype.Timestamptz
-	ServingEndedAt             pgtype.Timestamptz
 	SnapshotMissBackoffUntil   pgtype.Timestamptz
 	Workflows                  []byte
 	SourceRoot                 pgtype.Text
@@ -2014,6 +2013,7 @@ type Deployment struct {
 	GithubSourceRef            pgtype.Text
 	GithubInstallationID       pgtype.Int8
 	EnvironmentWorkloadRuntime []byte
+	ServingEndedAt             pgtype.Timestamptz
 }
 
 type DeploymentAlias struct {

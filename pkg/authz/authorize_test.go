@@ -432,18 +432,22 @@ func TestOrgActionString(t *testing.T) {
 // matching slice (or this test fails).
 func TestAllOrgActions_Complete(t *testing.T) {
 	want := map[OrgAction]bool{
-		OrgActionView:              true,
-		OrgActionManageMembers:     true,
-		OrgActionInviteMembers:     true,
-		OrgActionRemoveMembers:     true,
-		OrgActionChangeRole:        true,
-		OrgActionTransferOwnership: true,
-		OrgActionManageBilling:     true,
-		OrgActionChangePlan:        true,
-		OrgActionDelete:            true,
-		OrgActionCreateApiKey:      true,
-		OrgActionRevokeApiKey:      true,
-		OrgActionCreateApp:         true,
+		OrgActionView:                              true,
+		OrgActionManageMembers:                     true,
+		OrgActionInviteMembers:                     true,
+		OrgActionRemoveMembers:                     true,
+		OrgActionChangeRole:                        true,
+		OrgActionTransferOwnership:                 true,
+		OrgActionManageBilling:                     true,
+		OrgActionChangePlan:                        true,
+		OrgActionDelete:                            true,
+		OrgActionCreateApiKey:                      true,
+		OrgActionRevokeApiKey:                      true,
+		OrgActionCreateApp:                         true,
+		OrgActionViewApplicationStandards:          true,
+		OrgActionManageApplicationStandards:        true,
+		OrgActionApproveApplicationStandards:       true,
+		OrgActionSetApplicationStandardLocalIntent: true,
 	}
 	got := map[OrgAction]bool{}
 	for _, a := range AllOrgActions {

@@ -37,7 +37,28 @@ SELECT (SELECT count(*) FROM apps)::bigint AS application_count,
 LOCK TABLE goose_db_version IN EXCLUSIVE MODE;
 
 -- name: LockMigrationRecoveryBackfills :exec
-LOCK TABLE apps,app_application_standards IN SHARE MODE;
+LOCK TABLE apps,app_application_standards,snapshots,application_standard_snapshot_captures,
+ application_standard_log_consumers,application_standard_log_consumer_sessions,
+ compute_nodes,application_standard_native_incarnations IN SHARE MODE;
+
+-- name: CheckMigrationRecoveryRuntimeBackfills :one
+SELECT NOT EXISTS (
+ SELECT 1 FROM snapshots s LEFT JOIN application_standard_snapshot_captures c ON c.token=s.application_standard_capture_token
+ WHERE s.application_standard_capture_token IS NOT NULL AND
+  (c.token IS NULL OR NOT application_standard_snapshot_catalog_matches(s,c)
+   OR NOT EXISTS(SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
+    WHERE d.id=s.deployment_id AND a.id=c.app_id AND a.account_id=c.account_id)))
+ AND NOT EXISTS (
+  SELECT 1 FROM snapshots s WHERE s.application_standard_capture_token IS NULL AND NOT s.stale
+   AND EXISTS(SELECT 1 FROM application_standard_snapshot_captures c WHERE c.memory_key=s.storage_key))
+ AND NOT EXISTS (
+  SELECT 1 FROM application_standard_log_consumers c
+  LEFT JOIN application_standard_log_consumer_sessions h USING(node_id,session_id)
+  WHERE h.node_id IS NULL OR h.generation<>c.generation OR h.registered_at<>c.registered_at)
+ AND NOT EXISTS (
+  SELECT 1 FROM compute_nodes n LEFT JOIN application_standard_native_incarnations h
+   ON h.node_id=n.id AND h.incarnation=n.vmmd_incarnation
+  WHERE n.vmmd_incarnation IS NOT NULL AND (h.node_id IS NULL OR h.protocol_version<>n.vmmd_admission_protocol)) AS valid;
 
 -- name: ExportMigrationRecoverySnapshot :one
 SELECT pg_export_snapshot()::text AS snapshot;

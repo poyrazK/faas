@@ -18,6 +18,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // seedTailCountInstanceRow inserts a single instance row in the
@@ -27,8 +29,12 @@ import (
 func seedTailCountInstanceRow(t *testing.T, m *MemStore) Instance {
 	t.Helper()
 	ctx := context.Background()
+	account, err := m.CreateAccount(ctx, "tail-count@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := m.CreateApp(ctx, App{
-		ID: "00000000-0000-0000-0000-0000000000d1", AccountID: "00000000-0000-0000-0000-0000000000a1",
+		ID: "00000000-0000-0000-0000-0000000000d1", AccountID: account.ID,
 		Slug: "tail-count-app", Type: AppTypeApp, RAMMB: 256, MaxConcurrency: 1,
 		Status: AppActive, CreatedAt: time.Now(),
 	}); err != nil {

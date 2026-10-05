@@ -12,6 +12,7 @@ import (
 
 type Querier interface {
 	CheckMigrationRecoveryBackfills(ctx context.Context, db DBTX) (CheckMigrationRecoveryBackfillsRow, error)
+	CheckMigrationRecoveryRuntimeBackfills(ctx context.Context, db DBTX) (pgtype.Bool, error)
 	CheckMigrationRecoveryWriters(ctx context.Context, db DBTX) (pgtype.Bool, error)
 	ExportMigrationRecoverySnapshot(ctx context.Context, db DBTX) (string, error)
 	GetMigrationRecoveryReceipt(ctx context.Context, db DBTX, approvalHash string) (ApplicationStandardLedgerRecovery, error)

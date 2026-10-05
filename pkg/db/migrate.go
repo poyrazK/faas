@@ -87,11 +87,7 @@ func MigrateUp(ctx context.Context, pool *pgxpool.Pool) error {
 	if len(outOfOrder) > 0 {
 		log.Printf("db: applying permitted out-of-order migrations: %v", outOfOrder)
 	}
-	var options []goose.OptionsFunc
-	if option != nil {
-		options = append(options, option)
-	}
-	if err := goose.UpContext(ctx, sqlDB, ".", options...); err != nil {
+	if err := applyScopedMigrations(ctx, sqlDB, option != nil); err != nil {
 		return fmt.Errorf("db: goose up: %w", annotateSchemaDrift(err))
 	}
 	return nil

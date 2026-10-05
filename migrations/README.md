@@ -36,6 +36,27 @@ any content change or new invalid timestamp fails validation. This compatibility
 set must not be extended to new migrations. Continue using the generator and
 valid UTC timestamps for every new file.
 
+Two already-applied source-rootfs migrations were issued with round millisecond
+IDs: `20261003210400000` and `20261003212646000`. The migration-version hygiene
+gate preserves only their exact filenames and SHA-256 contents, read from the
+PR head commit. Renaming them or changing their SQL invalidates that exception;
+their versions still undergo the open-PR collision check. This is a frozen
+compatibility set. New migrations must use the generator.
+
+For a non-public migration target, the runner scopes five frozen
+application-standard function declarations and their composite argument types
+to the current schema. It uses a per-run read-only filesystem view; embedded
+SQL bytes, source fingerprints, and public-schema execution remain unchanged.
+New declarations should use the migration target's search path.
+
+The replay gate exercises the exact frozen filename/content manifest in
+`application_standard_recovery_sources.json` through explicit ledger recovery
+on a private PostgreSQL 16 database. Recovery verifies the complete canonical
+schema, enrollment, snapshot catalog, logging sessions and native incarnation
+backfills, binds approval to the current ledger, and records an
+immutable receipt. Every added file outside that manifest still replays through
+Goose against its existing effects. CI also runs the recovery refusal tests.
+
 ## Authoring contract
 
 - Prefer additive expand migrations. Backfill separately, deploy compatible

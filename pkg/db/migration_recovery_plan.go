@@ -82,6 +82,9 @@ func migrationRecoveryVerifySchema(ctx context.Context, tx pgx.Tx, cfg *pgx.Conn
 	if !backfill.Valid.Valid || !backfill.Valid.Bool {
 		return ErrMigrationRecoveryBackfill
 	}
+	if err := migrationRecoveryVerifyRuntimeBackfills(ctx, tx); err != nil {
+		return err
+	}
 	plan.ApplicationCount = backfill.ApplicationCount
 	snapshot, err := q.ExportMigrationRecoverySnapshot(ctx, tx)
 	if err != nil {
@@ -95,5 +98,16 @@ func migrationRecoveryVerifySchema(ctx context.Context, tx pgx.Tx, cfg *pgx.Conn
 		return ErrMigrationRecoverySchema
 	}
 	plan.SchemaHash = migrationRecoveryHash(raw)
+	return nil
+}
+
+func migrationRecoveryVerifyRuntimeBackfills(ctx context.Context, tx pgx.Tx) error {
+	valid, err := migrationsqlc.New().CheckMigrationRecoveryRuntimeBackfills(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if !valid.Valid || !valid.Bool {
+		return ErrMigrationRecoveryBackfill
+	}
 	return nil
 }

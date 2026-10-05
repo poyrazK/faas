@@ -59,15 +59,8 @@ func newImagedFixture(t *testing.T) *imagedFixture {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	// The builder base is NOT stubbable. imaged validates the staged ext4 and
-	// requires railpack, buildctl, runc and guest-init inside it
-	// (pkg/e2etest/builderbase.go), so pointing imaged at a one-layer stub
-	// makes it exit at boot — which is exactly what happened here first.
-	//
-	// A CI runner has no real base, so use the boot-contract recipe instead:
-	// pre-provision the staged base and its digest sidecar, then point
-	// FAAS_BUILDER_BASE_REF at a ref the registry will not serve. imaged takes
-	// its normal registry-outage fallback and accepts what is already staged.
+	// The portable harness models a staged base and its producer record.
+	// Native ext4 validation remains covered by the rootfs acceptance tests.
 	storageRoot := t.TempDir()
 	t.Setenv("FAAS_STORAGE_BACKEND", "local")
 	t.Setenv("FAAS_STORAGE_ROOT", storageRoot)
@@ -80,7 +73,7 @@ func newImagedFixture(t *testing.T) *imagedFixture {
 		t.Fatalf("write guest-init: %v", err)
 	}
 	t.Setenv("FAAS_GUEST_INIT", guestInit)
-	seedBootContractBuilderBase(t, storageRoot, guestInitBody)
+	builderRef := seedBootContractBuilderBase(t, pool, storageRoot, guestInitBody)
 
 	// imaged validates an existing base read-only through debugfs. The
 	// pipeline is what is under test, not ext4 mechanics, so shim it rather
@@ -105,9 +98,8 @@ func newImagedFixture(t *testing.T) *imagedFixture {
 	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Imaged, []string{
 		"FAAS_STORAGE_BACKEND=local",
 		"FAAS_STORAGE_ROOT=" + storageRoot,
-		// Digest-pinned (imaged refuses a tag and exits) and unservable, so the
-		// staged base above is what imaged falls back to.
-		"FAAS_BUILDER_BASE_REF=" + registry.Host() + "/onebox-faas/builder-base@sha256:" + repeatChar("0", 64),
+		// Digest-pinned producer identity matches the staged base.
+		"FAAS_BUILDER_BASE_REF=" + builderRef,
 		// Passed directly rather than through OverrideDeployBase, which
 		// deliberately no-ops once a host "has a real base" — and the staged
 		// fixture above makes that true. Its caution is aimed at clobbering a

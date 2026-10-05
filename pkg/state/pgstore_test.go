@@ -2958,8 +2958,8 @@ func TestPg_CountLiveInstancesByDeployment(t *testing.T) {
 	// The seedLiveDeploy helper takes email + slug suffixes; pass
 	// both so we don't collide on the global apps.slug UNIQUE key
 	// (the first seed created "pg-app").
-	_, _, otherDepID := seedLiveDeploy(t, s, ctx, "555-other", "other")
-	otherRunning, err := s.CreateInstance(ctx, appID, otherDepID, string(state.StateRunning), 256, nodeID, "")
+	_, otherAppID, otherDepID := seedLiveDeploy(t, s, ctx, "555-other", "other")
+	otherRunning, err := s.CreateInstance(ctx, otherAppID, otherDepID, string(state.StateRunning), 256, nodeID, "")
 	if err != nil {
 		t.Fatalf("CreateInstance other: %v", err)
 	}

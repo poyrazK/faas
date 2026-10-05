@@ -30,8 +30,16 @@ func (*fakeVmmdClient) UpdateAppEgressPolicy(context.Context, *vmmdpb.UpdateAppE
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not install runtime egress policies")
 }
 
+func (*fakeVmmdClient) UpdateAdmittedAppEgressPolicy(context.Context, *vmmdpb.UpdateAdmittedAppEgressPolicyRequest, ...grpc.CallOption) (*vmmdpb.UpdateAdmittedAppEgressPolicyAck, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not install admitted runtime egress policies")
+}
+
 func (*fakeVmmdClient) MaterializeVerifiedParentExt4(context.Context, *vmmdpb.MaterializeVerifiedParentExt4Request, ...grpc.CallOption) (*vmmdpb.MaterializeVerifiedParentExt4Response, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not materialize verified parents")
+}
+
+func (*fakeVmmdClient) MaterializeRuntimeScan(context.Context, *vmmdpb.MaterializeRuntimeScanRequest, ...grpc.CallOption) (*vmmdpb.MaterializeRuntimeScanResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not materialize runtime scans")
 }
 
 var _ vmmdpb.VmmdClient = (*fakeVmmdClient)(nil)

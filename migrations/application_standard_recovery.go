@@ -42,7 +42,8 @@ func ApplicationStandardRecoverySources() (map[int64]ApplicationStandardRecovery
 			return nil, errors.New("standards recovery source does not match frozen migration")
 		}
 		switch candidate.Postcondition {
-		case "ddl-only", "enrollment-coverage", "materialized-source-coverage":
+		case "ddl-only", "enrollment-coverage", "materialized-source-coverage",
+			"snapshot-catalog-coverage", "log-session-coverage", "native-incarnation-coverage":
 		default:
 			return nil, errors.New("unknown standards recovery postcondition")
 		}

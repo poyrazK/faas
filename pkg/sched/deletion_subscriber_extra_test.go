@@ -1,3 +1,4 @@
+// adr: 590
 package sched
 
 // Extra coverage for the deletion subscriber's internal helpers.

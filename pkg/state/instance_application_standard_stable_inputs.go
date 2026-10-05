@@ -36,6 +36,11 @@ func compareStandardRuntimeInputs(captured, current []byte, allowUnmanagedPlan b
 	if allowUnmanagedPlan && unmanagedStandardRuntimeInputs(inputs[0]) && unmanagedStandardRuntimeInputs(inputs[1]) {
 		delete(inputs[0], "account_plan")
 		delete(inputs[1], "account_plan")
+		ordinary := func(value any) bool { return value == "normal" || value == "mirror" }
+		if ordinary(inputs[0]["instance_mode"]) && ordinary(inputs[1]["instance_mode"]) {
+			delete(inputs[0], "instance_mode")
+			delete(inputs[1], "instance_mode")
+		}
 	}
 	return reflect.DeepEqual(inputs[0], inputs[1]), nil
 }

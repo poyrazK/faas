@@ -1832,6 +1832,7 @@ func tailStreamOnce(ctx context.Context, client *Client, filter tailFilter) (att
 	dec := api.NewDecoder(body)
 	dec.SetCloseFn(body.Close)
 	defer func() { _ = dec.Close() }()
+	streamErrors := dec.Errors()
 	for {
 		select {
 		case <-ctx.Done():
@@ -1843,14 +1844,16 @@ func tailStreamOnce(ctx context.Context, client *Client, filter tailFilter) (att
 			if writeErr := writeTailFrame(e, filter); writeErr != nil {
 				return true, printErr("Could not write event", writeErr)
 			}
-		case err := <-dec.Errors():
+		case err := <-streamErrors:
 			if err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
 				PrintWarn(os.Stderr, "stream closed: %v", err)
 			}
 			if ctx.Err() != nil {
 				return true, 130
 			}
-			return true, -1
+			// The decoder can report EOF while Events still holds buffered
+			// frames. Drain those frames before reconnecting.
+			streamErrors = nil
 		}
 	}
 }

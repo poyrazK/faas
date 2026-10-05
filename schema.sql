@@ -2676,6 +2676,12 @@ BEGIN
   AND NOT application_standard_runtime_requires_native(current_input)
   AND captured ? 'account_plan' AND current_input ? 'account_plan' THEN
   captured:=captured-'account_plan'; current_input:=current_input-'account_plan';
+  -- Mirror classification changes billing, but conveys no worker or native
+  -- authority. Preserve the pre-standards normal/mirror retrofit contract.
+  IF captured->>'instance_mode' IN ('normal','mirror')
+   AND current_input->>'instance_mode' IN ('normal','mirror') THEN
+   captured:=captured-'instance_mode'; current_input:=current_input-'instance_mode';
+  END IF;
  END IF;
  RETURN captured=current_input;
 END;
@@ -2787,7 +2793,6 @@ CREATE TABLE public.deployments (
     canary_stages jsonb,
     snapshot_miss_count integer DEFAULT 0 NOT NULL,
     snapshot_miss_last_at timestamp with time zone,
-    serving_ended_at timestamp with time zone,
     snapshot_miss_backoff_until timestamp with time zone,
     workflows jsonb DEFAULT '[]'::jsonb NOT NULL,
     source_root text,
@@ -2808,6 +2813,7 @@ CREATE TABLE public.deployments (
     github_source_ref text,
     github_installation_id bigint,
     environment_workload_runtime jsonb,
+    serving_ended_at timestamp with time zone,
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -8750,6 +8756,21 @@ $$;
 
 
 --
+-- Name: keep_failed_rollback_target(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.keep_failed_rollback_target() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status = 'failed' AND OLD.status = 'snapshotting' AND OLD.serving_ended_at IS NOT NULL THEN
+  NEW.status := 'superseded';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: lock_build_export_publication(jsonb, text, boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11534,6 +11555,23 @@ CREATE FUNCTION public.source_build_rootfs_owner_erasing(deployment uuid) RETURN
  OR EXISTS(SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
   WHERE d.id=deployment AND a.status='deleted' AND a.delete_grace_until<=clock_timestamp() AND a.purge_claimed_at IS NOT NULL);
 $$;
+
+
+--
+-- Name: stamp_deployment_serving_ended_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_deployment_serving_ended_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status = 'live' AND NEW.traffic_percent > 0 THEN
+  NEW.serving_ended_at := NULL;
+ ELSIF OLD.status = 'live' AND OLD.traffic_percent > 0 AND NEW.status <> 'snapshotting' THEN
+  NEW.serving_ended_at := now();
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -22014,6 +22052,29 @@ CREATE TABLE public.workflow_events (
 
 
 --
+-- Name: workflow_operation_effects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_operation_effects (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    step_name text NOT NULL,
+    operation_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    name text NOT NULL,
+    payload jsonb NOT NULL,
+    webhook_id uuid NOT NULL,
+    event_type text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT workflow_operation_effects_event_type_check CHECK ((((octet_length(event_type) >= 1) AND (octet_length(event_type) <= 256)) AND (event_type ~ '^[a-z][a-z0-9_.-]*$'::text))),
+    CONSTRAINT workflow_operation_effects_generation_check CHECK ((generation > 0)),
+    CONSTRAINT workflow_operation_effects_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
 -- Name: workflow_run_resumes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -22188,32 +22249,6 @@ CREATE TABLE public.workflow_webhook_receipts (
     CONSTRAINT workflow_webhook_receipts_status_check CHECK ((status = ANY (ARRAY['accepted'::text, 'ignored'::text]))),
     CONSTRAINT workflow_webhook_receipts_workflow_name_check CHECK (((octet_length(workflow_name) >= 1) AND (octet_length(workflow_name) <= 128)))
 );
-
---
--- Name: workflow_operation_effects; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.workflow_operation_effects (
-    id uuid NOT NULL,
-    account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
-    app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
-    run_id uuid NOT NULL,
-    step_name text NOT NULL,
-    operation_id uuid NOT NULL,
-    generation bigint NOT NULL,
-    name text NOT NULL,
-    payload jsonb NOT NULL,
-    webhook_id uuid NOT NULL,
-    event_type text NOT NULL,
-    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT workflow_operation_effects_pkey PRIMARY KEY (id),
-    CONSTRAINT workflow_operation_effects_operation_id_name_key UNIQUE (operation_id, name),
-    CONSTRAINT workflow_operation_effects_generation_check CHECK ((generation > 0)),
-    CONSTRAINT workflow_operation_effects_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
-    CONSTRAINT workflow_operation_effects_event_type_check CHECK (((octet_length(event_type) >= 1) AND (octet_length(event_type) <= 256) AND (event_type ~ '^[a-z][a-z0-9_.-]*$'::text))));
-
-CREATE INDEX workflow_operation_effects_attempt_idx
-    ON public.workflow_operation_effects USING btree (run_id, step_name, generation, name);
 
 
 --
@@ -26871,6 +26906,22 @@ ALTER TABLE ONLY public.workflow_events
 
 ALTER TABLE ONLY public.workflow_steps
     ADD CONSTRAINT workflow_foreach_position UNIQUE (run_id, foreach_parent, foreach_index);
+
+
+--
+-- Name: workflow_operation_effects workflow_operation_effects_operation_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_operation_effects
+    ADD CONSTRAINT workflow_operation_effects_operation_id_name_key UNIQUE (operation_id, name);
+
+
+--
+-- Name: workflow_operation_effects workflow_operation_effects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_operation_effects
+    ADD CONSTRAINT workflow_operation_effects_pkey PRIMARY KEY (id);
 
 
 --
@@ -32202,6 +32253,13 @@ CREATE INDEX workflow_events_run_event_idx ON public.workflow_events USING btree
 
 
 --
+-- Name: workflow_operation_effects_attempt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_operation_effects_attempt_idx ON public.workflow_operation_effects USING btree (run_id, step_name, generation, name);
+
+
+--
 -- Name: workflow_runs_app_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -33728,6 +33786,13 @@ CREATE TRIGGER deployment_aliases_app_changed AFTER INSERT OR DELETE OR UPDATE O
 
 
 --
+-- Name: deployments deployment_failed_rollback_keeps_target; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_failed_rollback_keeps_target BEFORE UPDATE OF status ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.keep_failed_rollback_target();
+
+
+--
 -- Name: deployment_openapi_docs deployment_openapi_docs_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -33746,6 +33811,13 @@ CREATE TRIGGER deployment_registry_verification_immutable BEFORE INSERT OR DELET
 --
 
 CREATE TRIGGER deployment_scope_exclusions_set_updated_at_trg BEFORE UPDATE ON public.deployment_scope_exclusions FOR EACH ROW EXECUTE FUNCTION public.deployment_scope_exclusions_set_updated_at();
+
+
+--
+-- Name: deployments deployment_serving_ended_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_serving_ended_at BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.stamp_deployment_serving_ended_at();
 
 
 --
@@ -41100,6 +41172,22 @@ ALTER TABLE ONLY public.workflow_steps
 
 
 --
+-- Name: workflow_operation_effects workflow_operation_effects_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_operation_effects
+    ADD CONSTRAINT workflow_operation_effects_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_operation_effects workflow_operation_effects_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_operation_effects
+    ADD CONSTRAINT workflow_operation_effects_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: workflow_run_resumes workflow_run_resumes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -41189,3 +41277,5 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
+
+

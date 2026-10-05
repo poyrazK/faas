@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Hermetic tests for check_migration_version_hygiene.sh. No GitHub API is
-# contacted: the collision half needs credentials and is exercised in CI,
-# so these cover the generator-shape half and the plumbing around it.
+# contacted: a fake curl also verifies that frozen issued IDs still undergo
+# the collision check.
 
 set -euo pipefail
 
@@ -108,5 +108,60 @@ git -C "${edited}" add migrations/20260909160000000_thing.sql
 git -C "${edited}" commit -q -m 'fix: edit existing migration'
 make_event "${edited}"
 expect_pass 'editing an existing migration' "${edited}"
+
+# Issued round timestamps require both the original filename and SQL bytes.
+for name in \
+  20261003210400000_application_standard_source_build_rootfs.sql \
+  20261003212646000_application_standard_source_rootfs_fences.sql; do
+  issued="${test_root}/${name}"
+  git_init "${issued}"
+  git -C "${issued}" checkout -q -b feature
+  cp "${repo_root}/migrations/${name}" "${issued}/migrations/${name}"
+  git -C "${issued}" add migrations
+  git -C "${issued}" commit -q -m 'feat: preserve issued migration'
+  make_event "${issued}"
+  expect_pass 'exact issued migration' "${issued}"
+
+  # Hash the head commit, not an uncommitted or merge-checkout copy.
+  printf '\n' >> "${issued}/migrations/${name}"
+  expect_pass 'head commit remains exact' "${issued}"
+  git -C "${issued}" add migrations
+  git -C "${issued}" commit -q -m 'test: alter issued bytes'
+  make_event "${issued}"
+  expect_fail 'altered issued migration' "${issued}" 'end in 000 milliseconds'
+
+  git -C "${issued}" checkout -q HEAD~1 -- migrations
+  git -C "${issued}" mv "migrations/${name}" "migrations/${name%%_*}_renamed.sql"
+  git -C "${issued}" commit -q -m 'test: rename issued migration'
+  make_event "${issued}"
+  expect_fail 'renamed issued migration' "${issued}" 'end in 000 milliseconds'
+done
+
+collision="${test_root}/collision"
+git_init "${collision}"
+git -C "${collision}" checkout -q -b feature
+name=20261003210400000_application_standard_source_build_rootfs.sql
+cp "${repo_root}/migrations/${name}" "${collision}/migrations/${name}"
+git -C "${collision}" add migrations
+git -C "${collision}" commit -q -m 'feat: preserve issued migration'
+make_event "${collision}"
+mkdir "${test_root}/bin"
+cat > "${test_root}/bin/curl" <<'EOF_CURL'
+#!/usr/bin/env bash
+case "${*: -1}" in
+  */pulls\?*) printf '[{"number":7},{"number":8}]\n' ;;
+  */pulls/8/files\?*) printf '[{"status":"added","filename":"migrations/20261003210400000_other.sql"}]\n' ;;
+  *) exit 1 ;;
+esac
+EOF_CURL
+chmod +x "${test_root}/bin/curl"
+if (cd "${collision}" && PATH="${test_root}/bin:${PATH}" \
+  GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="${collision}/event.json" \
+  GITHUB_REPOSITORY=test/repo GITHUB_TOKEN=fake bash "${checker}") >"${collision}/out" 2>&1; then
+  echo 'FAIL: frozen issued version bypassed the collision check' >&2; exit 1
+fi
+grep -Fq 'already claimed by open pull request #8' "${collision}/out" || {
+  cat "${collision}/out" >&2; exit 1
+}
 
 echo "check_migration_version_hygiene: OK"

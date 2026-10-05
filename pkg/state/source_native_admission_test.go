@@ -51,6 +51,7 @@ func sourceNativeFixture(t *testing.T, s sourceNativeTestStore, runtime string, 
 func sourceNativeBinding(t *testing.T, s sourceNativeTestStore, b runtimeadmission.Binding, capture InstanceApplicationStandardAdmission) runtimeadmission.Binding {
 	t.Helper()
 	b.ProtocolVersion = runtimeadmission.ArtifactProtocolVersion
+	b.Incarnation = uuid.NewString()
 	var err error
 	b.ArtifactSourcesHash, err = standardCapturedArtifactSourceHash(capture)
 	if err != nil {
@@ -104,6 +105,7 @@ func sourceNativeRefusesCapabilityDowngrade(t *testing.T, s sourceNativeTestStor
 	t.Helper()
 	_, ins, b, _ := sourceNativeFixture(t, s, "node22", true)
 	b.ProtocolVersion, b.ArtifactSourcesHash = runtimeadmission.ProtocolVersion, ""
+	b.Incarnation = uuid.NewString()
 	registerConsumedNativeIdentity(t, s, b, runtimeadmission.ProtocolVersion)
 	if _, err := s.IssueInstanceApplicationStandardBoot(t.Context(), ins.State, b); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
 		t.Fatal("source producer admitted a consumer without byte capability", err)

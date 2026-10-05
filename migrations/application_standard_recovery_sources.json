@@ -246,6 +246,198 @@
       "filename": "20261002010720501_application_standard_stable_artifact_admission.sql",
       "sha256": "e2e801b57b706ce16586eddffd391eab9b591951e7f24c08b482cd662024b4ab",
       "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261002191404222,
+      "filename": "20261002191404222_application_standard_artifact_consumption.sql",
+      "sha256": "16d5f01fc500fbdb0b5b0e98fd0f1ca132900cbbc16ad86b914c57b20259f745",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261002192949557,
+      "filename": "20261002192949557_application_standard_consumption_integer_fence.sql",
+      "sha256": "0f89393da01acb88d4c03d91daee75b31a1e4e924ae49a859207d6a93d7256e4",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261002204249137,
+      "filename": "20261002204249137_application_standard_snapshot_capture_catalog.sql",
+      "sha256": "d3618026c00786a336224408ae1cb0927c63e5eb31c072e8393124844770b33b",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261002210210135,
+      "filename": "20261002210210135_application_standard_snapshot_capture_scalar_parity.sql",
+      "sha256": "62b5cd90ff69427d1248df86ff7bcb17e72029be4c205c7a3e67efc4731aa913",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261002224615713,
+      "filename": "20261002224615713_application_standard_snapshot_publication_link.sql",
+      "sha256": "eea77db96d35c01b51b3748219d8861f420743e8d78eb56cc6083fec94485501",
+      "postcondition": "snapshot-catalog-coverage"
+    },
+    {
+      "version": 20261003130842001,
+      "filename": "20261003130842001_deployment_runtime_scans.sql",
+      "sha256": "3a3bc9177f1b58ce43e1b7b428320348cef161256cab41f76760af00fe3bf6f6",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261003134209001,
+      "filename": "20261003134209001_application_standard_composed_scan_authority.sql",
+      "sha256": "a40d1c7eb00c39d19f1024f0f14eeabf1d648edc6f1d8cc37e86928b5edd1419",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261003141527001,
+      "filename": "20261003141527001_application_standard_composed_scan_json_precedence.sql",
+      "sha256": "8a4193b8f7e90b1b5093d9e87fda50265ab0b61b4dc60ce1f22a4c83b27a9188",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261003160458628,
+      "filename": "20261003160458628_application_standard_runtime_default_base.sql",
+      "sha256": "42308a4b82c70d8ed58c85bcc33950630dc1d0e9e97d248da98c2fed4cbf9f87",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261003172810200,
+      "filename": "20261003172810200_application_standard_build_export_publications.sql",
+      "sha256": "f913daaa29ab3dadca8fd369cd761f930592680b4ea9aa8047facc6ff18dcddf",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261003210400000,
+      "filename": "20261003210400000_application_standard_source_build_rootfs.sql",
+      "sha256": "7ddafc93c75c5aba21379ad1c0c495c087d2b25a45286078d9e331ff9ac8b17d",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261003212646000,
+      "filename": "20261003212646000_application_standard_source_rootfs_fences.sql",
+      "sha256": "12d2153c4a83c000d96f8af94b701fa1aa258ebf96bda2e7606c0b7ad1185298",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261003221055458,
+      "filename": "20261003221055458_application_standard_source_runtime_inputs.sql",
+      "sha256": "cf7cdc44fbae5b3962255a09f81b5d1ef948aa9394ee9923cd4ef92ce93bb67e",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261003231014244,
+      "filename": "20261003231014244_application_standard_source_native_authority.sql",
+      "sha256": "23ac5629d769a8e59dec4d4b38c1682250815dd8444a19da35931ec596681ec1",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261003232510425,
+      "filename": "20261003232510425_application_standard_source_native_error_codes.sql",
+      "sha256": "15762a7de4ee4f45c5ed79ba6ee3efbe58464dd07d53961bb9e4459c7c29e0ec",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261003233525610,
+      "filename": "20261003233525610_application_standard_source_native_protocol.sql",
+      "sha256": "0efacb36da3e8399f24e3026d573a8c3320a59e722e7064e2feed85462742049",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261004011116969,
+      "filename": "20261004011116969_application_standard_publisher_identity.sql",
+      "sha256": "4bf12c76f00bdfadf944afb4f14f49fe13feb1043319c926cc3d8f4b68018f05",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261004043519306,
+      "filename": "20261004043519306_application_standard_exception_authority.sql",
+      "sha256": "b835593faa6d0e926a634e84d3727666a530e5ca728cbb4621e65089f6af8a08",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261004061225002,
+      "filename": "20261004061225002_application_standard_log_delivery_observations.sql",
+      "sha256": "47801cb54ceddd9e83104dd4fedbbf4f9f62afcd19377597d26cb3e1f155ae10",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261004073132135,
+      "filename": "20261004073132135_application_standard_log_inventory.sql",
+      "sha256": "d8c4a1ee84d911c8d60c76eb7346eb33d287382640d494195fce74a59e6e7786",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261004075254590,
+      "filename": "20261004075254590_application_standard_log_consumer_sessions.sql",
+      "sha256": "b792a78ea3a953b628b07832ed5b3f708ff54156339212381365087d41d4ecee",
+      "postcondition": "log-session-coverage"
+    },
+    {
+      "version": 20261004121303705,
+      "filename": "20261004121303705_application_standard_native_incarnation_history.sql",
+      "sha256": "86175462842233c684c2275da03d646284f2d4da65cd457c9581e402959525e7",
+      "postcondition": "native-incarnation-coverage"
+    },
+    {
+      "version": 20261004135324521,
+      "filename": "20261004135324521_application_standard_egress_observations.sql",
+      "sha256": "451a8bcd72e72fa55696fc24807a4444f691864a4c43075f87e81a497e37d0e4",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261004141805537,
+      "filename": "20261004141805537_application_standard_egress_protocol.sql",
+      "sha256": "425d12fe88e1685b84ad680863b43994893dd095bd931187f0aeb15cdbe58d4b",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261004164819478,
+      "filename": "20261004164819478_application_standard_log_health.sql",
+      "sha256": "bbfd2d82f489d5e239c80cb600df8079b90696ffa4af0f31a4ee1e673f9e16db",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261004181612764,
+      "filename": "20261004181612764_application_standard_consumer_roster.sql",
+      "sha256": "2fabf830de6b7604125a00732ec4b5c7c6b844a93fa8a8f3584453c8fa182c8c",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261004232943929,
+      "filename": "20261004232943929_application_standard_retained_native_admission.sql",
+      "sha256": "e36bdb6529cd950c9839fa419fe4a7110fbcc756a9768f4e13f85794e8c066cb",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261004234710285,
+      "filename": "20261004234710285_application_standard_retained_native_protocol.sql",
+      "sha256": "cc4602ca83e54590ab3d87c2fc7554329b5044c56304b807af4f35404e5dcd87",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261005112130001,
+      "filename": "20261005112130001_application_standard_observation_fences.sql",
+      "sha256": "2df0967d16a9b9cd3a2f774954590a47ca54e71b58dc85f971fd0a7a7a0fd3d6",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261005131530001,
+      "filename": "20261005131530001_application_standard_observation_evidence.sql",
+      "sha256": "042bc031cc775f27365f2b5956a325c178d1d89270b27d58b185f45db29b94bb",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261005143030001,
+      "filename": "20261005143030001_application_standard_observation_child_compatibility.sql",
+      "sha256": "0ad7aff1bab623ab188ead439a6e94e36f795338e43512ddeb3829686c1eb31a",
+      "postcondition": "ddl-only"
+    },
+    {
+      "version": 20261005170030001,
+      "filename": "20261005170030001_application_standard_automatic_observation.sql",
+      "sha256": "49b6d563da7e327ec35a5a183f366c3bfdb9c9450c34479537b9939582bdff8f",
+      "postcondition": "ddl-only"
     }
   ]
 }

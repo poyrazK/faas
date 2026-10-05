@@ -2017,7 +2017,10 @@ jobs:
       - name: migrations replay-safety (new migrations only)
         env:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
-        run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-16
+          scripts/ci/check-migration-replay.sh
 
       - name: migration full-suite impact checker tests
         run: scripts/ci/migration-full-suite-needed_test.sh

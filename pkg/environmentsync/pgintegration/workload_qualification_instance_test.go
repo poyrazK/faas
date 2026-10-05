@@ -301,7 +301,7 @@ func TestPgEnvironmentGitOpsQualificationInstanceSQLFencesAndReplay(t *testing.T
 		t.Fatalf("admit: %+v %v", admitted, err)
 	}
 	for _, assignment := range []string{`id=gen_random_uuid()`, `deployment_id='` + serving.ID + `'`, `node_id=gen_random_uuid()`, `wake_id=gen_random_uuid()`, `ram_mb=ram_mb+1`, `mode='mirror'`} {
-		if _, err := pool.Exec(t.Context(), `update instances set `+assignment+` where id=$1`, admitted.Instance.ID); err == nil || (!strings.Contains(err.Error(), "identity is immutable") && !strings.Contains(err.Error(), "placement survives parent removal")) {
+		if _, err := pool.Exec(t.Context(), `update instances set `+assignment+` where id=$1`, admitted.Instance.ID); err == nil || (!strings.Contains(err.Error(), "identity is immutable") && !strings.Contains(err.Error(), "identity are immutable") && !strings.Contains(err.Error(), "placement survives parent removal")) {
 			t.Fatalf("SQL reassigned active reservation: %s %v", assignment, err)
 		}
 	}

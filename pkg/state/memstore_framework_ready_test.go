@@ -13,6 +13,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // seedFrameworkReadyInstanceRow inserts a single instance row in the
@@ -24,8 +26,12 @@ import (
 func seedFrameworkReadyInstanceRow(t *testing.T, m *MemStore) Instance {
 	t.Helper()
 	ctx := context.Background()
+	account, err := m.CreateAccount(ctx, "framework-ready@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := m.CreateApp(ctx, App{
-		ID: "00000000-0000-0000-0000-0000000000d0", AccountID: "00000000-0000-0000-0000-0000000000a0",
+		ID: "00000000-0000-0000-0000-0000000000d0", AccountID: account.ID,
 		Slug: "framework-ready-app", Type: AppTypeApp, RAMMB: 256, MaxConcurrency: 1,
 		Status: AppActive, CreatedAt: time.Now(),
 	}); err != nil {

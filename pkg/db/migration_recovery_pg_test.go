@@ -192,6 +192,26 @@ func TestApplicationStandardLedgerRecoveryRefusesUnverifiedState(t *testing.T) {
 		{"missing enrollment", "DELETE FROM app_application_standards", db.ErrMigrationRecoveryBackfill},
 		{"missing captured original", "UPDATE app_application_standards SET base_settings=base_settings-'require_signed'", db.ErrMigrationRecoveryBackfill},
 		{"missing materialized context", `UPDATE app_application_standards SET effective='{"sources":{"require_signed":[{}]}}'::jsonb`, db.ErrMigrationRecoveryBackfill},
+		{"missing native history", `UPDATE compute_nodes SET vmmd_incarnation=gen_random_uuid();
+ALTER TABLE application_standard_native_incarnations DISABLE TRIGGER USER;
+DELETE FROM application_standard_native_incarnations;
+ALTER TABLE application_standard_native_incarnations ENABLE TRIGGER USER;`, db.ErrMigrationRecoveryBackfill},
+		{"missing logging session", `INSERT INTO application_standard_log_consumers(node_id,session_id,generation,registered_at)
+SELECT id,gen_random_uuid(),1,clock_timestamp() FROM compute_nodes WHERE active AND role IS DISTINCT FROM 'control-plane';
+ALTER TABLE application_standard_log_consumer_sessions DISABLE TRIGGER USER;
+DELETE FROM application_standard_log_consumer_sessions;
+ALTER TABLE application_standard_log_consumer_sessions ENABLE TRIGGER USER;`, db.ErrMigrationRecoveryBackfill},
+		{"unfenced unmatched snapshot", `DO $$ DECLARE a apps; d uuid; BEGIN
+SELECT * INTO a FROM apps WHERE org_id IS NOT NULL LIMIT 1;
+INSERT INTO deployments(app_id,kind,image_digest,status) VALUES(a.id,'image','sha256:recovery','pending') RETURNING id INTO d;
+ALTER TABLE application_standard_snapshot_captures DISABLE TRIGGER USER;
+ALTER TABLE snapshots DISABLE TRIGGER USER;
+INSERT INTO application_standard_snapshot_captures(token,instance_id,app_id,deployment_id,account_id,node_id,parent_token,memory_key,expected_state,grant_data,input_snapshot)
+VALUES(gen_random_uuid(),gen_random_uuid(),a.id,d,a.account_id,gen_random_uuid(),gen_random_uuid(),'recovery/unmatched.mem','running','{}','{}');
+INSERT INTO snapshots(deployment_id,fc_version,mem_bytes,disk_bytes,storage_key) VALUES(d,'fixture',1,1,'recovery/unmatched.mem');
+ALTER TABLE snapshots ENABLE TRIGGER USER;
+ALTER TABLE application_standard_snapshot_captures ENABLE TRIGGER USER;
+END $$;`, db.ErrMigrationRecoveryBackfill},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
