@@ -76,8 +76,19 @@ func TestCheckedRollbackSnapshotSmokeStagesHistoricalGitWithoutCutover(t *testin
 			if passed && (r.Status != "ready" || candidate.Status != state.DeployLive) {
 				t.Fatalf("historical Git target rejected by latest/branch gate: %+v %+v", r, candidate)
 			}
-			if !passed && candidate.Status != state.DeployFailed {
-				t.Fatalf("failed smoke admitted target: %+v", candidate)
+			if !passed {
+				// Previously served releases remain available for another rollback
+				// attempt, while the failed smoke still prevents this cutover.
+				if candidate.Status != state.DeploySuperseded || candidate.ErrorCode != api.CodeDeploymentSmokeFailed || candidate.RolloutState != "aborted" {
+					t.Fatalf("failed smoke lost recovery state: status=%s code=%s rollout=%s", candidate.Status, candidate.ErrorCode, candidate.RolloutState)
+				}
+				if err := store.MarkDeploymentLive(ctx, target.ID); err == nil {
+					t.Fatal("failed smoke target became ready for checked rollback")
+				}
+				old, _ = store.DeploymentByID(ctx, current.ID)
+				if old.TrafficPercent != 100 {
+					t.Fatal("failed historical smoke changed the serving route")
+				}
 			}
 		})
 	}
