@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/cmd/gregale/templates"
 )
 
 func TestMergeAppFlag(t *testing.T) {
@@ -116,5 +118,26 @@ func TestNormalizeFlagDiagnostic(t *testing.T) {
 		if got := normalizeFlagDiagnostic(in); got != want {
 			t.Errorf("normalizeFlagDiagnostic(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestCustomerPlatformDoctorSkipsOwnerTools reproduces production-us hunt
+// #4: `gregale init --template customer-platform` followed by `gregale
+// doctor` flagged FAAS_API and FAAS_TOKEN, which only the owner-machine
+// tools/ scripts read, and advised `gregale secrets set --app <slug>
+// FAAS_TOKEN=<value>`: an account-owner credential in the app runtime.
+func TestCustomerPlatformDoctorSkipsOwnerTools(t *testing.T) {
+	dir := t.TempDir()
+	if err := templates.Materialize("customer-platform", dir); err != nil {
+		t.Fatal(err)
+	}
+	refs := scanEnvRefs(dir, envVarRefRegex)
+	for _, owner := range []string{"FAAS_TOKEN", "FAAS_API"} {
+		if slices.Contains(refs, owner) {
+			t.Errorf("doctor env scan reports owner-tool variable %s: %v", owner, refs)
+		}
+	}
+	if !slices.Contains(refs, "DATABASE_URL") {
+		t.Errorf("doctor env scan lost the app's own DATABASE_URL: %v", refs)
 	}
 }
