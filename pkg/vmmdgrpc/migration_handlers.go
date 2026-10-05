@@ -269,7 +269,7 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 	}
 	source, sourceErr := regionalRuntimeFromProto(req.GetRegionalRuntime())
 	if sourceErr == nil && source != nil {
-		sourceErr = s.validateRegionalMigrationPrepare(req.GetInstanceId(), *source)
+		sourceErr = s.validateRegionalMigrationPrepare(ctx, req.GetInstanceId(), *source)
 	}
 	if sourceErr != nil {
 		s.ops.Observe(op, time.Since(start), sourceErr)

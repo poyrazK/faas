@@ -18,7 +18,11 @@ type regionalMigrationResumer interface {
 	ResumeRegionalMigration(context.Context, string, string, runtimequota.Placement) error
 }
 
-func (s *Server) validateRegionalMigrationPrepare(instance string, p runtimequota.Placement) error {
+type regionalMigrationPreflighter interface {
+	PreflightRegionalMigration(context.Context, string, runtimequota.Placement) error
+}
+
+func (s *Server) validateRegionalMigrationPrepare(ctx context.Context, instance string, p runtimequota.Placement) error {
 	if p.Seat == nil || !runtimequota.MatchesID(p.Permit.InstanceID, instance) {
 		return runtimequota.ErrBinding
 	}
@@ -28,7 +32,11 @@ func (s *Server) validateRegionalMigrationPrepare(instance string, p runtimequot
 	if _, ok := s.vmm.(regionalMigrationResumer); !ok {
 		return fmt.Errorf("regional migration rollback unavailable: %w", runtimequota.ErrBinding)
 	}
-	return nil
+	preflight, ok := s.vmm.(regionalMigrationPreflighter)
+	if !ok {
+		return fmt.Errorf("regional migration capture preflight unavailable: %w", runtimequota.ErrBinding)
+	}
+	return preflight.PreflightRegionalMigration(ctx, instance, p.Clone())
 }
 
 // Never interpret an unavailable journal or an unresolved source as a legacy

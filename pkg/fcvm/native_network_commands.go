@@ -57,6 +57,9 @@ func (m *Manager) stampNativeInstanceGeneration(inst *Instance) error {
 	if !sameNativeJournalLease(owner.Lease, inst.Lease) || owner.Revoked || owner.ResourcesRemoved || r.generation(inst.Lease.Instance) != owner.Generation {
 		return errors.New("native network: publication has no matching original VM owner")
 	}
+	if p := admissionForInstance(inst).RegionalRuntime; p != nil && (owner.RegionalRuntime == nil || owner.RegionalRuntime.Permit != p.Permit || !sameNativePhysicalLease(owner.Lease, inst.Lease)) {
+		return errors.New("native regional publication: original physical binding differs")
+	}
 	inst.nativeGeneration = owner.Generation
 	return nil
 }

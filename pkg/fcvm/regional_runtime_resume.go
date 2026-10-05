@@ -42,6 +42,9 @@ func (m *Manager) resumeRegionalRuntime(ctx context.Context, instance string, p 
 	if err := m.authorizeRuntimeOwner(ctx, admission); err != nil {
 		return err
 	}
+	if err := m.checkNativeRegionalInstance(inst, p); err != nil {
+		return err
+	}
 	var finish func()
 	if migrationToken == "" {
 		finish, err = m.runtimeHostJournal.BeginResume(ctx, p)

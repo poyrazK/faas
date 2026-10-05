@@ -13,6 +13,32 @@ func sameMigrationPlacement(a, b *runtimequota.Placement) bool {
 	return a != nil && b != nil && a.Permit == b.Permit && a.Seat != nil && b.Seat != nil && *a.Seat == *b.Seat
 }
 
+// PreflightRegionalMigration performs no capture, fence or journal mutation.
+// The RPC owner calls it before reserving a lease; capture repeats these checks
+// inside its own instance flight before any durable migration side effect.
+func (m *Manager) PreflightRegionalMigration(ctx context.Context, instance string, p runtimequota.Placement) error {
+	if m == nil {
+		return runtimequotahost.ErrStorage
+	}
+	p = p.Clone()
+	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
+	if err != nil {
+		return err
+	}
+	defer m.finishInstanceFlight(instance, flight)
+	if err := m.checkLiveAdmission(ctx, inst); err != nil {
+		return err
+	}
+	a := admissionForInstance(inst)
+	if inst.AppTaskOnly || inst.primeOnly || !sameMigrationPlacement(a.RegionalRuntime, &p) {
+		return runtimequotahost.ErrBinding
+	}
+	if err := m.authorizeRuntime(ctx, a); err != nil {
+		return err
+	}
+	return m.preflightRegionalMigrationCapture(ctx, inst, SnapshotSpec{RegionalMigrationSource: &p})
+}
+
 // Called inside SnapshotKeepAlive's instance flight. The seat is fenced before
 // capture, and uncertain capture never resumes implicitly or drops its binding.
 func (m *Manager) snapshotRegionalMigration(ctx context.Context, inst *Instance, spec SnapshotSpec) (SnapshotInfo, error) {
@@ -25,6 +51,9 @@ func (m *Manager) snapshotRegionalMigration(ctx context.Context, inst *Instance,
 	}
 	if m.runtimeHostJournal == nil {
 		return SnapshotInfo{}, runtimequotahost.ErrStorage
+	}
+	if err := m.preflightRegionalMigrationCapture(ctx, inst, spec); err != nil {
+		return SnapshotInfo{}, err
 	}
 	finish, err := m.runtimeHostJournal.BeginMigrationCapture(ctx, inst.Lease.Instance, spec.MigrationLeaseToken, *a.RegionalRuntime, spec.StorageKey, spec.VMStateStorageKey)
 	if err != nil {

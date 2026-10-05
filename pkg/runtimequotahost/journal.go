@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 	"syscall"
 
@@ -40,6 +41,51 @@ type SeatRecord struct {
 	Seat       runtimequota.ServingSeat
 	Registered bool
 	FenceID    string
+}
+
+// PermitInventory retains fenced and historical physical ownership without
+// granting execution or claiming native absence. Recovery joins this inventory
+// to original native frames even when mutable cell rows have disappeared.
+func (j *Journal) PermitInventory() ([]PermitRecord, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if err := j.ready(); err != nil {
+		return nil, err
+	}
+	rows := make([]PermitRecord, 0, len(j.permits))
+	for _, r := range j.permits {
+		rows = append(rows, r)
+	}
+	sort.Slice(rows, func(i, k int) bool { return rows[i].Permit.ID < rows[k].Permit.ID })
+	return rows, nil
+}
+
+// CheckRetainedPlacement joins original native provenance to registered
+// physical and initial seat records, including fences and historical epochs.
+// It grants no execution, drain acknowledgement or capacity release.
+func (j *Journal) CheckRetainedPlacement(p runtimequota.Placement) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if err := j.ready(); err != nil {
+		return err
+	}
+	if p.Validate() != nil {
+		return runtimequota.ErrInvalid
+	}
+	if err := j.checkPermit(p.Permit, false); err != nil {
+		return err
+	}
+	r, ok := j.permits[p.Permit.ID]
+	if !ok || !r.Registered || r.Permit != p.Permit {
+		return ErrBinding
+	}
+	if p.Seat != nil {
+		s, ok := j.seats[p.Seat.ID]
+		if !ok || !s.Registered || s.Seat != *p.Seat {
+			return ErrBinding
+		}
+	}
+	return nil
 }
 
 // Journal has one daemon owner. Failed durable writes poison this owner until

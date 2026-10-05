@@ -21,8 +21,50 @@ type regionalMigrationVMM struct {
 	migrationHandlerVMM
 	record                *runtimequotahost.MigrationRecord
 	captureErr, deleteErr error
+	preflightErr          error
 	regionalResumes       int
 	skipCompletion        bool
+}
+
+func (v *regionalMigrationVMM) PreflightRegionalMigration(context.Context, string, runtimequota.Placement) error {
+	return v.preflightErr
+}
+
+func TestRegionalMigrationPreflightFailureDoesNotReserveLeaseOrCapture(t *testing.T) {
+	v := &regionalMigrationVMM{preflightErr: errors.New("native publication unavailable")}
+	s := New(v, wire.NewOpsMetrics("regional_migration_preflight_test"), "1.10.0", nil)
+	p := regionalMigrationPlacement(t)
+	raw, _ := json.Marshal(p)
+	if _, err := s.PrepareLiveMigration(t.Context(), &vmmdpb.PrepareLiveMigrationRequest{InstanceId: p.Permit.InstanceID, SnapshotStorageKey: "snap/source/mem", RegionalRuntime: raw}); err == nil {
+		t.Fatal("known unsupported capture reserved a lease")
+	}
+	if len(s.migrations.state) != 0 || v.snapshots != 0 || v.record != nil {
+		t.Fatal("preflight refusal performed migration effects")
+	}
+}
+
+type migrationWithoutPreflight struct {
+	migrationHandlerVMM
+}
+
+func (v *migrationWithoutPreflight) RegionalMigrationSource(context.Context, string, string) (runtimequotahost.MigrationRecord, error) {
+	return runtimequotahost.MigrationRecord{}, runtimequotahost.ErrMigrationNotFound
+}
+func (v *migrationWithoutPreflight) ResumeRegionalMigration(context.Context, string, string, runtimequota.Placement) error {
+	return nil
+}
+
+func TestRegionalMigrationMissingPreflightCapabilityDoesNotReserveLease(t *testing.T) {
+	v := &migrationWithoutPreflight{}
+	s := New(v, wire.NewOpsMetrics("regional_migration_missing_preflight_test"), "1.10.0", nil)
+	p := regionalMigrationPlacement(t)
+	raw, _ := json.Marshal(p)
+	if _, err := s.PrepareLiveMigration(t.Context(), &vmmdpb.PrepareLiveMigrationRequest{InstanceId: p.Permit.InstanceID, SnapshotStorageKey: "snap/source/mem", RegionalRuntime: raw}); err == nil {
+		t.Fatal("missing producer preflight became capture authority")
+	}
+	if v.snapshots != 0 || len(s.migrations.state) != 0 {
+		t.Fatal("missing capability reserved lease or called native capture")
+	}
 }
 
 func (v *regionalMigrationVMM) SnapshotKeepAlive(_ context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error) {

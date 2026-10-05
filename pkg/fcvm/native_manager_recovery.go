@@ -64,6 +64,9 @@ func (m *Manager) RecoverNativeProcesses(ctx context.Context) error {
 	m.mu.Unlock()
 	leases, err := v.nativeRecoveryLeases(ctx)
 	if err == nil {
+		err = m.checkNativeRegionalRecovery(ctx, v)
+	}
+	if err == nil {
 		err = m.alloc.reserveRecovered(leases)
 	}
 	m.mu.Lock()

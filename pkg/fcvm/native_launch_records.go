@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
 )
 
 func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord, error) {
@@ -90,7 +91,7 @@ func (j *nativeLaunchJournal) confirmResourcesRemoved(ctx context.Context, expec
 	if err != nil {
 		return err
 	}
-	if !record.Revoked || !record.ExitConfirmed || record.Generation != expected.Generation || record.KernelBootID != expected.KernelBootID || record.PID != expected.PID || record.StartTime != expected.StartTime || record.Authorized != expected.Authorized || !sameNativeJournalLease(record.Lease, expected.Lease) {
+	if !record.Revoked || !record.ExitConfirmed || record.Generation != expected.Generation || record.KernelBootID != expected.KernelBootID || record.PID != expected.PID || record.StartTime != expected.StartTime || record.Authorized != expected.Authorized || !sameNativeJournalLease(record.Lease, expected.Lease) || !sameNativeRegionalBinding(record, expected) {
 		return errors.New("native journal: resource acknowledgement identity changed")
 	}
 	helpers := nativeHostHelperJournal{owner: j}
@@ -120,6 +121,11 @@ func (j *nativeLaunchJournal) confirmResourcesRemoved(ctx context.Context, expec
 // but only the daemon holding this exact retired generation can replace it.
 // Completed prior generations remain immutable in the private archive.
 func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expectedGeneration string, requireResourcesRemoved bool) (record nativeLaunchRecord, err error) {
+	return j.replaceWithPlacement(ctx, lease, expectedGeneration, requireResourcesRemoved, nil)
+}
+
+func (j *nativeLaunchJournal) replaceWithPlacement(ctx context.Context, lease Lease, expectedGeneration string, requireResourcesRemoved bool, placement *runtimequota.Placement) (record nativeLaunchRecord, err error) {
+	placement = cloneRuntimePlacement(placement)
 	qualificationLock, incoming, err := j.lockQualificationProducer(ctx, lease.Instance)
 	if err != nil {
 		return record, err
@@ -144,6 +150,17 @@ func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expected
 	}
 	if !old.Revoked || !old.ExitConfirmed || old.Generation != expectedGeneration || requireResourcesRemoved && !old.ResourcesRemoved || !requireResourcesRemoved && !sameNativeJournalLease(old.Lease, lease) {
 		return record, errors.New("native journal: prior launch is not replaceable by this owner")
+	}
+	if !requireResourcesRemoved {
+		if placement != nil && !sameOptionalRuntimePlacement(placement, old.RegionalRuntime) || old.RegionalRuntime != nil && !sameNativePhysicalLease(old.Lease, lease) {
+			return record, errors.New("native journal: fallback cannot replace its regional binding or full lease")
+		}
+		placement = cloneRuntimePlacement(old.RegionalRuntime)
+	} else if old.RegionalRuntime != nil && placement == nil {
+		return record, errors.New("native journal: regional ownership cannot be downgraded to an unbound launch")
+	}
+	if err := validateNativeRegionalPlacement(lease, placement); err != nil {
+		return record, err
 	}
 	helpers := nativeHostHelperJournal{owner: j}
 	if err := helpers.requireRetired(old); err != nil {
@@ -185,10 +202,10 @@ func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expected
 		if err != nil {
 			return record, err
 		}
-		if archived.Generation != old.Generation || archived.KernelBootID != old.KernelBootID || archived.Authorized != old.Authorized || archived.PID != old.PID || archived.StartTime != old.StartTime || !archived.Revoked || !archived.ExitConfirmed || archived.ResourcesRemoved && !old.ResourcesRemoved || !sameNativePhysicalLease(archived.Lease, old.Lease) {
+		if archived.Generation != old.Generation || archived.KernelBootID != old.KernelBootID || archived.Authorized != old.Authorized || archived.PID != old.PID || archived.StartTime != old.StartTime || !archived.Revoked || !archived.ExitConfirmed || archived.ResourcesRemoved && !old.ResourcesRemoved || !sameNativePhysicalLease(archived.Lease, old.Lease) || !sameNativeRegionalBinding(archived, old) {
 			return record, errors.New("native journal: prior generation archive differs from retired ownership")
 		}
 	}
-	record = nativeLaunchRecord{Version: 1, Generation: uuid.NewString(), KernelBootID: old.KernelBootID, Lease: lease}
+	record = newNativeLaunchRecord(lease, uuid.NewString(), old.KernelBootID, placement)
 	return record, j.write(record)
 }

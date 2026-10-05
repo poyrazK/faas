@@ -15,6 +15,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
 )
 
 // Boots use the ordinary orchestration fake. Native retirement, admission and
@@ -95,6 +96,12 @@ func (v *recoveryVMMFixture) nativeRecoveryLeases(ctx context.Context) ([]Lease,
 }
 func (v *recoveryVMMFixture) prepareNativeLease(ctx context.Context, l Lease) error {
 	return v.jailer.prepareNativeLease(ctx, l)
+}
+func (v *recoveryVMMFixture) prepareNativeRegionalLease(ctx context.Context, l Lease, p runtimequota.Placement) error {
+	return v.jailer.prepareNativeRegionalLease(ctx, l, p)
+}
+func (v *recoveryVMMFixture) preflightSnapshotKeepAlive(ctx context.Context, l Lease, spec SnapshotSpec) error {
+	return v.jailer.preflightSnapshotKeepAlive(ctx, l, spec)
 }
 func (v *recoveryVMMFixture) confirmNativeCleanup(ctx context.Context, l Lease, nc netns.Config) error {
 	return v.jailer.confirmNativeCleanup(ctx, l, nc)
