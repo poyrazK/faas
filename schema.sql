@@ -11230,6 +11230,25 @@ CREATE TABLE public.customer_operation_definitions (
 
 
 --
+-- Name: customer_operation_delivery_retries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_delivery_retries (
+    operation_id uuid NOT NULL,
+    retry_id text NOT NULL,
+    delivery_id uuid NOT NULL,
+    expected_replay_generation integer NOT NULL,
+    replay_generation integer NOT NULL,
+    queued_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_delivery_re_expected_replay_generation_check CHECK (((expected_replay_generation >= 0) AND (expected_replay_generation < 2147483647))),
+    CONSTRAINT customer_operation_delivery_retries_check CHECK ((replay_generation = (expected_replay_generation + 1))),
+    CONSTRAINT customer_operation_delivery_retries_check1 CHECK ((expires_at > queued_at)),
+    CONSTRAINT customer_operation_delivery_retries_retry_id_check CHECK (((octet_length(retry_id) >= 1) AND (octet_length(retry_id) <= 128)))
+);
+
+
+--
 -- Name: customer_operation_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21414,6 +21433,14 @@ ALTER TABLE ONLY public.customer_operation_definitions
 
 
 --
+-- Name: customer_operation_delivery_retries customer_operation_delivery_retries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_delivery_retries
+    ADD CONSTRAINT customer_operation_delivery_retries_pkey PRIMARY KEY (operation_id, retry_id);
+
+
+--
 -- Name: customer_operation_events customer_operation_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26838,6 +26865,13 @@ CREATE INDEX customer_operation_stream_leases_account_idx ON public.customer_ope
 --
 
 CREATE INDEX customer_operation_stream_leases_retention_idx ON public.customer_operation_stream_leases USING btree (expires_at);
+
+
+--
+-- Name: customer_operations_account_app_creation_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_account_app_creation_idx ON public.customer_operations USING btree (account_id, app_id, created_at DESC, id DESC);
 
 
 --
@@ -35081,6 +35115,14 @@ ALTER TABLE ONLY public.customer_operation_definitions
 
 ALTER TABLE ONLY public.customer_operation_definitions
     ADD CONSTRAINT customer_operation_definitions_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_delivery_retries customer_operation_delivery_retries_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_delivery_retries
+    ADD CONSTRAINT customer_operation_delivery_retries_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
 
 
 --

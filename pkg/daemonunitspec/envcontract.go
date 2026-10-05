@@ -364,6 +364,8 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_OCI_TIMEOUT_SECONDS", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_OCI_USERNAME", Owners: []string{"shared"}, Source: EnvSourceEnvFile, Note: "read-only runtime identity in /etc/faas/storage.env; imaged and vmmd lifecycle override in /etc/faas/imaged-storage.env"},
 	{Name: "FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG", Owners: []string{"postgres"}, Source: EnvSourceScript, Note: "LoadCredential= path on the postgresql@.service drop-in; consumed by the archive_command shell in the postgres role"},
+	{Name: "FAAS_OPERATIONS_WORKLOAD_ISSUER", Owners: []string{"apid"}, Source: EnvSourceDefault, Validate: EnvValidationURL, Note: "optional Operations workload issuer override; configures runtime trust without enabling customer admission"},
+	{Name: "FAAS_OPERATIONS_WORKLOAD_JWKS_PATH", Owners: []string{"apid"}, Source: EnvSourceDefault, Validate: EnvValidationPathExists, Note: "optional public Operations workload JWKS override; missing trust denies runtime reports; customer admission remains closed"},
 	{Name: "FAAS_OTEL_FLUSH_INTERVAL", Owners: []string{"gatewayd-internal", "gatewayd-public", "outboundd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_OTEL_SPANS_WRITER_ENABLED", Owners: []string{"apid", "gatewayd-internal", "gatewayd-public", "outboundd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_OUTBOUNDD_ROLE", Owners: []string{"outboundd", "shared"}, Source: EnvSourceDropin},

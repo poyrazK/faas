@@ -109,7 +109,11 @@ def sync_detailed(
     The tenant must be actively linked to the app. Requires the
     platform_tenant:invocations:manage scope. Managed operation effects are
     delivered only to an explicitly subscribed receiver owned by this
-    tenant. Event waits, callbacks, and outbound steps remain unsupported.
+    tenant. Outbound steps can use an existing app-bound customer-managed
+    integration; the signed run identity and active tenant-to-app link are
+    checked at dispatch and outbound authorization. Integration credentials
+    and route policies remain app-scoped and shared across tenants. Event
+    waits and callbacks remain unsupported.
 
     Args:
         slug (str):
@@ -150,7 +154,11 @@ def sync(
     The tenant must be actively linked to the app. Requires the
     platform_tenant:invocations:manage scope. Managed operation effects are
     delivered only to an explicitly subscribed receiver owned by this
-    tenant. Event waits, callbacks, and outbound steps remain unsupported.
+    tenant. Outbound steps can use an existing app-bound customer-managed
+    integration; the signed run identity and active tenant-to-app link are
+    checked at dispatch and outbound authorization. Integration credentials
+    and route policies remain app-scoped and shared across tenants. Event
+    waits and callbacks remain unsupported.
 
     Args:
         slug (str):
@@ -186,7 +194,11 @@ async def asyncio_detailed(
     The tenant must be actively linked to the app. Requires the
     platform_tenant:invocations:manage scope. Managed operation effects are
     delivered only to an explicitly subscribed receiver owned by this
-    tenant. Event waits, callbacks, and outbound steps remain unsupported.
+    tenant. Outbound steps can use an existing app-bound customer-managed
+    integration; the signed run identity and active tenant-to-app link are
+    checked at dispatch and outbound authorization. Integration credentials
+    and route policies remain app-scoped and shared across tenants. Event
+    waits and callbacks remain unsupported.
 
     Args:
         slug (str):
@@ -225,7 +237,11 @@ async def asyncio(
     The tenant must be actively linked to the app. Requires the
     platform_tenant:invocations:manage scope. Managed operation effects are
     delivered only to an explicitly subscribed receiver owned by this
-    tenant. Event waits, callbacks, and outbound steps remain unsupported.
+    tenant. Outbound steps can use an existing app-bound customer-managed
+    integration; the signed run identity and active tenant-to-app link are
+    checked at dispatch and outbound authorization. Integration credentials
+    and route policies remain app-scoped and shared across tenants. Event
+    waits and callbacks remain unsupported.
 
     Args:
         slug (str):

@@ -118,8 +118,12 @@ def sync_detailed(
     active API consumer or active tenant surface. The tenant ID is persisted
     and propagated through trusted internal step dispatch metadata. Managed
     operation steps may deliver effects only to an explicitly subscribed
-    receiver owned by that same tenant. Event waits, callbacks, and outbound
-    steps remain unsupported for tenant-bound workflows.
+    receiver owned by that same tenant. Outbound steps can use an existing
+    app-bound customer-managed integration; the signed run identity and
+    active tenant-to-app link are checked at dispatch and outbound
+    authorization. Integration credentials and route policies remain
+    app-scoped and shared across tenants. Event waits and callbacks remain
+    unsupported for tenant-bound workflows.
 
     Args:
         tenant_id (UUID):
@@ -163,8 +167,12 @@ def sync(
     active API consumer or active tenant surface. The tenant ID is persisted
     and propagated through trusted internal step dispatch metadata. Managed
     operation steps may deliver effects only to an explicitly subscribed
-    receiver owned by that same tenant. Event waits, callbacks, and outbound
-    steps remain unsupported for tenant-bound workflows.
+    receiver owned by that same tenant. Outbound steps can use an existing
+    app-bound customer-managed integration; the signed run identity and
+    active tenant-to-app link are checked at dispatch and outbound
+    authorization. Integration credentials and route policies remain
+    app-scoped and shared across tenants. Event waits and callbacks remain
+    unsupported for tenant-bound workflows.
 
     Args:
         tenant_id (UUID):
@@ -203,8 +211,12 @@ async def asyncio_detailed(
     active API consumer or active tenant surface. The tenant ID is persisted
     and propagated through trusted internal step dispatch metadata. Managed
     operation steps may deliver effects only to an explicitly subscribed
-    receiver owned by that same tenant. Event waits, callbacks, and outbound
-    steps remain unsupported for tenant-bound workflows.
+    receiver owned by that same tenant. Outbound steps can use an existing
+    app-bound customer-managed integration; the signed run identity and
+    active tenant-to-app link are checked at dispatch and outbound
+    authorization. Integration credentials and route policies remain
+    app-scoped and shared across tenants. Event waits and callbacks remain
+    unsupported for tenant-bound workflows.
 
     Args:
         tenant_id (UUID):
@@ -246,8 +258,12 @@ async def asyncio(
     active API consumer or active tenant surface. The tenant ID is persisted
     and propagated through trusted internal step dispatch metadata. Managed
     operation steps may deliver effects only to an explicitly subscribed
-    receiver owned by that same tenant. Event waits, callbacks, and outbound
-    steps remain unsupported for tenant-bound workflows.
+    receiver owned by that same tenant. Outbound steps can use an existing
+    app-bound customer-managed integration; the signed run identity and
+    active tenant-to-app link are checked at dispatch and outbound
+    authorization. Integration credentials and route policies remain
+    app-scoped and shared across tenants. Event waits and callbacks remain
+    unsupported for tenant-bound workflows.
 
     Args:
         tenant_id (UUID):

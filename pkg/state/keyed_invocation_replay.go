@@ -217,6 +217,9 @@ func (m *MemStore) ReplayKeyedInvocation(_ context.Context, accountID, parentID 
 	if !ok || !sameMemUUID(parent.AccountID, accountID) || !sameMemUUID(m.apps[parent.AppID].AccountID, accountID) {
 		return Invocation{}, ErrNotFound
 	}
+	if _, _, linked := m.operationForInvocationLocked(parent.ID); linked {
+		parent.OperationID = "owned"
+	}
 	if !keyedReplayAllowed(parent) {
 		return Invocation{}, ErrKeyedReplayNotAllowed
 	}

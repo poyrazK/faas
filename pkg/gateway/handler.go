@@ -1238,6 +1238,7 @@ type Handler struct {
 	// asyncRoutes persists requests matched by kind=async. Nil is a fail-closed
 	// runtime wiring error only when such a rule actually matches.
 	asyncRoutes AsyncRouteEnqueuer
+	operations  OperationRouteEnqueuer
 	// geoReader is the country lookup used by applyEdgeRuleGeo and
 	// country-keyed throttles (ADR-091 D21). A nil reader is allowed
 	// at boot, but a matched policy that needs geography fails closed.
@@ -5629,6 +5630,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the response and gateway-private context, leaving cold-wake timelines
 	// without the customer-visible correlation handle.
 	r.Header.Set(api.RequestIDHeader, rid)
+	if !isSyntheticInvocation(r.Context()) {
+		for name := range r.Header {
+			if api.IsReservedOperationHeader(name) {
+				delete(r.Header, name)
+			}
+		}
+	}
 	// Direct HTTP calls do not have a scheduler invocation row. Give function
 	// adapters the same public-safe correlation id returned to the caller,
 	// while preserving the durable id already attached to synthetic work.
@@ -6501,6 +6509,10 @@ haveApp:
 	if r.Body != nil && r.Body != http.NoBody && !isUpgradeRequest(r) {
 		admittedBody := r.Body
 		defer func() { _ = admittedBody.Close() }()
+	}
+	if h.applyOperationRoute(w, r, app, sidecarName) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
 	}
 	if h.applyEdgeRuleAsync(w, r, app, asyncRule) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})

@@ -91,6 +91,9 @@ func enqueueKeyedInvocationTx(ctx context.Context, tx pgx.Tx, inv Invocation, po
 		return Invocation{}, false, err
 	}
 	out, err := enqueueInvocationRow(ctx, tx, inv)
+	if err == nil && inv.EnvironmentID != "" {
+		out.CreatedAt = inv.CreatedAt.Truncate(time.Microsecond)
+	}
 	return out, err == nil, err
 }
 
