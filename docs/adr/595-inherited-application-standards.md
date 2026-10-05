@@ -2563,3 +2563,39 @@ Account mismatch is rejected before installation. Accepted builds retain
 observed revision zero: these portable checks do not establish image, log or
 native consumer convergence. The full native, fleet recovery, named-environment
 and operational acceptance gates remain open, with public activation disabled.
+
+## Private snapshot memory-mapping observation checkpoint (2026-10-05)
+
+Protected native restore now observes the expected memory file in the same live
+process whose drive handles were verified. Linux procfs supplies device/inode,
+private writable mapping permissions, file offsets and virtual ranges. The
+observer requires complete, page-aligned coverage of the pinned memory file
+exactly once; partial mappings, file or address overlap, aliases, shared mappings
+and a different file identity are refused. A process's open memory-file
+descriptor alone is insufficient. PID/start time and jail UID are checked around
+observation; immutable pinned memory and VM-state bytes are remeasured, and the
+mapping is rechecked before retaining the private observation.
+
+The file backend is supported by this check because Firecracker uses a private
+copy-on-write mapping of snapshot memory. Guest writes need not change the
+immutable captured backing. VM state is released after loading, so no persistent
+VM-state descriptor is invented. See the
+[pinned Firecracker snapshot contract](https://github.com/firecracker-microvm/firecracker/blob/v1.12.1/docs/snapshotting/snapshot-support.md)
+and [Linux maps contract](https://man7.org/linux/man-pages/man5/proc_pid_maps.5.html).
+
+The observation retains the exact capture/evidence, load-command hash,
+PID/start, verified blob identities and mapped ranges. Its accessor refreshes
+native observations and returns an owned copy. It does not attest guest CPU
+state, page residency or readiness, and is not yet a durable restore receipt.
+The existing native/Manager boundary still refuses restore-bound grants and
+advertises restore version zero. Receipt protocol/storage and Manager/RPC/
+scheduler forwarding, paused promotion, capture after promotion, dedicated KVM
+test-metal/leakcheck and the full release checklist remain open.
+
+Portable regressions cover complete and split file ranges, memory holes,
+permissions, aliases, overflow and omissions, plus refusal to manufacture a
+mapping from a simulated load acknowledgment. Linux tests use an actual private
+mmap, close the mapping descriptor while retaining an observer pin, verify
+copy-on-write backing preservation, and refuse wrong UID, cancellation, unmap
+and a shared mapping. These process tests require no KVM and do not certify an
+actual Firecracker guest.

@@ -776,6 +776,22 @@ blocked entitlement, project detach and account mismatch. A successful build
 leaves observed revision at zero. Builder execution, registry verification,
 provider delivery and native runtime acceptance remain separate release gates.
 
+## Private snapshot memory observation
+
+The protected restore loader checks that the expected pinned memory file backs
+the live process through complete private, writable Linux mappings. Device and
+inode identity, exact file coverage, PID/start time and jail UID are verified;
+partial, shared, overlapping or aliased mappings are refused. An open file
+descriptor or a successful load API response cannot substitute for this check.
+Immutable memory and VM-state bytes are remeasured, and mapping identity is
+checked again before a private observation is returned.
+
+This matches Firecracker's private copy-on-write file backend; it does not
+require all guest pages to be resident or a persistent VM-state descriptor.
+The observation is not a durable restore receipt. Native/Manager restore-bound
+admission remains disabled while receipt forwarding, paused promotion, physical
+KVM acceptance and the remaining release gates are incomplete.
+
 
 ## Live egress acknowledgment binding
 

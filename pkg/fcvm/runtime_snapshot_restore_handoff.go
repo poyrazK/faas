@@ -139,5 +139,8 @@ func (v *JailerVMM) observeVerifiedSnapshotDrives(ctx context.Context, lease Lea
 	if err := v.checkVerifiedSnapshotLoad(ctx, lease, spec); err != nil {
 		return err
 	}
-	return v.observeApprovedRuntimeDrives(ctx, lease)
+	if err := v.observeApprovedRuntimeDrives(ctx, lease); err != nil {
+		return err
+	}
+	return v.observeVerifiedSnapshotMemory(ctx, lease, spec)
 }

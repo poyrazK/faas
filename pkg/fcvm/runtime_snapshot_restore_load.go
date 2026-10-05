@@ -18,6 +18,7 @@ type verifiedSnapshotRestore struct {
 	request            SnapshotRestoreInputs
 	inputs             VerifiedSnapshotInputs
 	accepted           bool // API acknowledgment only; never a native consumption receipt.
+	observation        *RuntimeSnapshotHandoffObservation
 	keepPaused         bool
 	started, attempted bool
 }

@@ -223,6 +223,9 @@ func TestProtectedSnapshotLoadUsesPinnedBytesAndActualCommandHash(t *testing.T) 
 			if _, err := f.vmm.ObservedRuntimeDrives(f.ctx, f.lease); err == nil {
 				t.Fatal("an HTTP acknowledgment fabricated native consumption")
 			}
+			if _, err := f.vmm.ObservedRuntimeSnapshot(f.ctx, f.lease); err == nil || plan.observation != nil {
+				t.Fatal("an HTTP acknowledgment fabricated a snapshot memory mapping")
+			}
 			if err := f.vmm.loadRestoredSnapshot(f.ctx, f.lease, f.root, f.spec, body); !errors.Is(err, runtimeadmission.ErrReplay) || transport.calls.Load() != 1 {
 				t.Fatal("accepted load replay reached the API", err)
 			}
