@@ -68,11 +68,13 @@ func (s *PgStore) AdmitPublishedEventRecipient(ctx context.Context, claim Publis
 	}
 	var limits api.EventDeliveryLimits
 	if eventAdmissionNeedsCapacity(plan) {
-		account, err := s.AccountByID(ctx, plan.recipient.AccountID)
+		// Reuse the held connection: a second pool acquisition can deadlock
+		// concurrent admissions when every connection belongs to a transaction.
+		account, err := q.AccountByID(ctx, tx, mustPgUUID(plan.recipient.AccountID))
 		if err != nil {
-			return PublishedEventRoutingResult{}, err
+			return PublishedEventRoutingResult{}, mapErr(err)
 		}
-		limits = api.MustLimitsFor(account.Plan).EventDeliveries
+		limits = api.MustLimitsFor(api.Plan(account.Plan)).EventDeliveries
 		if err := lockEventCapacity(ctx, tx, plan.recipient.AccountID, limits); err != nil {
 			return PublishedEventRoutingResult{}, err
 		}

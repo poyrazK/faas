@@ -226,6 +226,30 @@ func TestEventDeliveryCapacityIsolationAndRecovery(t *testing.T) {
 	})
 }
 
+func TestPgEventDeliveryAdmissionSingleConnection(t *testing.T) {
+	for _, adopted := range []bool{false, true} {
+		t.Run(fmt.Sprint(adopted), func(t *testing.T) {
+			pg, pool, ctx := pgStoreWithPool(t)
+			f := newCapacityFixture(t, pg, adopted)
+			receipt, _ := f.publish(t, "single-connection")
+			claim := f.claim(t, receipt, f.sub)
+			cfg := pool.Config()
+			cfg.MaxConns = 1
+			limited, err := pgxpool.NewWithConfig(ctx, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(limited.Close)
+			admissionCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			result, err := state.NewPgStore(limited).AdmitPublishedEventRecipient(admissionCtx, claim)
+			if err != nil || !result.InvocationCreated || !result.ReceiptSettled {
+				t.Fatalf("single-connection admission=%+v,%v", result, err)
+			}
+		})
+	}
+}
+
 func TestPgEventDeliveryCapacityConcurrentAdmission(t *testing.T) {
 	for _, adopted := range []bool{false, true} {
 		t.Run(fmt.Sprint(adopted), func(t *testing.T) {
@@ -237,6 +261,8 @@ func TestPgEventDeliveryCapacityConcurrentAdmission(t *testing.T) {
 				receipt, _ := f.publish(t, "race")
 				claims = append(claims, f.claim(t, receipt, f.sub))
 			}
+			ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
 			var wg sync.WaitGroup
 			results := make(chan state.PublishedEventRoutingResult, 16)
 			errs := make(chan error, 16)
