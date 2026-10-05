@@ -193,16 +193,28 @@ func TestPublicRoutingSnapshotPostgresBoundsRosterAndIncompleteGraph(t *testing.
 	f := newPublicRoutingPGFixture(t)
 	deployment := f.deployment(t, "production", "sha256:current")
 	release := f.publish(t, deployment.ID)
+	before := f.routingApp()
 	if _, err := f.pool.Exec(t.Context(), `DELETE FROM project_release_members WHERE release_id=$1 AND app_id=$2`, release.ID, f.app.ID); err != nil {
 		t.Fatal(err)
 	}
 	pin := newPublicRoutingPinner(f.store)
 	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production", ResolveRelease: true}
-	snapshot, err := pin(t.Context(), f.routingApp(), inputs)
-	if err != nil || snapshot.ReleaseVerdict != "conflict" {
+	if _, _, err := (pgRouter{store: f.store}).resolvePublicAppSlug(t.Context(), f.app.Slug); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("incomplete production graph resolved host settings: %v", err)
+	}
+	snapshot, err := pin(t.Context(), before, inputs)
+	if !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("incomplete graph accepted: %+v %v", snapshot, err)
 	}
-	before := f.routingApp()
+	if err := f.store.WithPublicRoutingSnapshot(t.Context(), func(reader state.PublicRoutingPolicyReader) error {
+		_, _, err := reader.ResolvePublicProjectRelease(t.Context(), f.app.ID, "production", "")
+		return err
+	}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("incomplete graph was not refused at the release reader: %v", err)
+	}
+	// Restore a complete graph before independently exercising roster bounds.
+	f.publish(t, deployment.ID)
+	before = f.routingApp()
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO deployments (id,app_id,kind,scope,image_digest,status,traffic_percent,traffic_percent_explicit)
 		SELECT gen_random_uuid(),$1,'image','production','sha256:bounded-'||n,'live',1,true FROM generate_series(1,$2) n`, f.app.ID, api.TrafficPolicyMaxDeployments); err != nil {
 		t.Fatal(err)

@@ -2722,7 +2722,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// redeploy must continue resolving the old live row for customer traffic.
 		// Load only the app/account envelope here; the explicit candidate below
 		// is the deployment this private verification request may wake.
-		app, acct, limits, err = e.resolveAppForDeploy(ctx, appID)
+		app, acct, limits, err = e.resolveAppAccount(ctx, appID)
 	} else {
 		app, acct, limits, dep, err = e.resolveApp(ctx, appID)
 	}
@@ -5851,7 +5851,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		return err
 	}
 
-	app, acct, limits, err := e.resolveAppForDeploy(ctx, appID)
+	app, acct, limits, err := e.resolveAppAccount(ctx, appID)
 	if err != nil {
 		return err
 	}
@@ -7760,7 +7760,7 @@ func (e *Engine) hasEphemeralSecretForInstance(ctx context.Context, ins state.In
 // ctx stamped by WithScope at Wake / AdmitInstance /
 // AdmitInstanceForDeployment entry points — see engine_scope.go.
 func (e *Engine) resolveApp(ctx context.Context, appID string) (state.App, state.Account, api.Limits, state.Deployment, error) {
-	app, acct, limits, err := e.resolveAppForDeploy(ctx, appID)
+	app, acct, limits, err := e.resolveAppAccount(ctx, appID)
 	if err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, state.Deployment{}, err
 	}
@@ -7790,13 +7790,24 @@ func (e *Engine) resolveApp(ctx context.Context, appID string) (state.App, state
 }
 
 func (e *Engine) resolveAppForDeploy(ctx context.Context, appID string) (state.App, state.Account, api.Limits, error) {
-	app, err := e.store.AppByID(ctx, appID)
+	app, acct, limits, err := e.resolveAppAccount(ctx, appID)
 	if err != nil {
-		return state.App{}, state.Account{}, api.Limits{}, fmt.Errorf("sched: resolve app: %w", err)
+		return state.App{}, state.Account{}, api.Limits{}, err
 	}
 	app, err = state.ResolveAppForEnvironment(ctx, e.store, app, ScopeFrom(ctx))
 	if err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, fmt.Errorf("sched: resolve environment settings: %w", err)
+	}
+	return app, acct, limits, nil
+}
+
+// Runtime paths start with the legacy App projection before applying their
+// deployment's immutable pin. Loading a desired head first would also change
+// historical deployments without a pin, before the next revision is deployed.
+func (e *Engine) resolveAppAccount(ctx context.Context, appID string) (state.App, state.Account, api.Limits, error) {
+	app, err := e.store.AppByID(ctx, appID)
+	if err != nil {
+		return state.App{}, state.Account{}, api.Limits{}, fmt.Errorf("sched: resolve app: %w", err)
 	}
 	acct, err := e.store.AccountByID(ctx, app.AccountID)
 	if err != nil {

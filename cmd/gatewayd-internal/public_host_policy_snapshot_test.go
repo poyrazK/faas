@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -17,6 +18,72 @@ import (
 type publicHostAfterAppStore struct {
 	*state.PgStore
 	after func()
+}
+
+func TestPublicHostSnapshotPostgresProductionSettingsFollowCommittedRelease(t *testing.T) {
+	f := newPublicRoutingPGFixture(t)
+	settings, err := state.WorkloadSettingsFromApp(f.app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revision int64
+	create := func(id string, authn bool) state.Deployment {
+		t.Helper()
+		settings.RequireAuthn = authn
+		spec, err := f.store.PutProjectEnvironmentWorkloadSpec(t.Context(), f.app.AccountID, f.project.ID, "production", f.app.ID, revision, settings)
+		if err != nil {
+			t.Fatal(err)
+		}
+		revision = spec.Revision
+		deployment, err := f.store.CreateDeployment(t.Context(), state.Deployment{ID: id, AppID: f.app.ID,
+			Scope: "production", Status: state.DeployPending, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.store.MarkDeploymentLive(t.Context(), deployment.ID); err != nil {
+			t.Fatal(err)
+		}
+		return deployment
+	}
+	first := create("00000000-0000-4000-8000-000000000010", true)
+	next := create("00000000-0000-4000-8000-000000000020", false)
+	// The timestamp order deliberately disagrees with the UUID order. Both
+	// candidates serve traffic, so the ordinary fallback must retain CreatedAt.
+	at := time.Now().UTC().Add(-time.Minute)
+	if _, err := f.pool.Exec(t.Context(), `UPDATE deployments SET traffic_percent=50, traffic_percent_explicit=true,
+		created_at=CASE WHEN id=$1 THEN $3::timestamptz ELSE $3::timestamptz-interval '1 minute' END
+		WHERE id IN ($1,$2)`, first.ID, next.ID, at); err != nil {
+		t.Fatal(err)
+	}
+	router := pgRouter{store: f.store, appsSuffix: ".apps.gregale.dev", tenantSurfacesEnabled: func() bool { return false }}
+	host := f.app.Slug + router.appsSuffix
+	fallback, found, err := router.ResolveHost(t.Context(), host)
+	if err != nil || !found || !fallback.RequireAuthn {
+		t.Fatalf("production fallback lost deployment timestamp/settings: authn=%v found=%v err=%v", fallback.RequireAuthn, found, err)
+	}
+	f.publish(t, next.ID)
+	before, found, err := router.ResolveHost(t.Context(), host)
+	if err != nil || !found || before.RequireAuthn {
+		t.Fatalf("active graph did not override newer traffic: authn=%v found=%v err=%v", before.RequireAuthn, found, err)
+	}
+	var cutover atomic.Bool
+	duringRouter := router
+	duringRouter.store = publicHostAfterAppStore{PgStore: f.store, after: func() {
+		if !cutover.Swap(true) {
+			f.publish(t, first.ID)
+		}
+	}}
+	during, found, err := duringRouter.ResolveHost(t.Context(), host)
+	if err != nil || !found || during.RequireAuthn || during.PublicPolicySource.Revision != before.PublicPolicySource.Revision {
+		t.Fatalf("production settings escaped the committed host view: authn=%v found=%v err=%v", during.RequireAuthn, found, err)
+	}
+	fresh, found, err := router.ResolveHost(t.Context(), host)
+	if err != nil || !found || !fresh.RequireAuthn || fresh.PublicPolicySource.Revision == before.PublicPolicySource.Revision {
+		t.Fatalf("new production graph/settings missing: authn=%v found=%v err=%v", fresh.RequireAuthn, found, err)
+	}
+	if _, err := newPublicRoutingPinner(f.store)(t.Context(), during, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
+		t.Fatal("production cutover between resolution and dispatch was accepted")
+	}
 }
 
 func (s publicHostAfterAppStore) WithPublicHostPolicySnapshot(ctx context.Context, read func(state.PublicHostPolicyReader) error) error {

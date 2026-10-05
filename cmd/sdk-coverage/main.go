@@ -540,6 +540,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/admin/managed-postgres/accounting/{account_id}/reconciliations":         "ApplyManagedPostgresAccountingReconciliation",
 	"GET /v1/account/realtime-history-usage":                                          "GetManagedRealtimeHistoryUsage",
 	"GET /v1/account/usage":                                                           "AccountUsage",
+	"GET /v1/postgres/capabilities":                                                   "GetManagedPostgresCapabilities",
 	"GET /v1/postgres/databases":                                                      "ListManagedPostgresDatabases",
 	"POST /v1/postgres/databases":                                                     "CreateManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}":                                                 "GetManagedPostgresDatabase",

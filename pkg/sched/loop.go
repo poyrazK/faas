@@ -4635,7 +4635,7 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	}
 	enq, err := l.engine.Store().EnqueueInvocation(ctx, inv)
 	if err != nil {
-		l.log.Warn("cron: enqueue invocation", "cron_id", c.ID, "err", err)
+		l.log.Warn("cron: enqueue invocation", "cron_id", logsanitize.Field(c.ID), "error_class", dispatchErrorClass(err))
 		return CronRun{}, true
 	}
 	// Enqueue mints the durable invocation ID. Dispatch that persisted row;

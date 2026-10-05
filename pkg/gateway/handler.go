@@ -5784,6 +5784,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.matchAndSubstituteRoute(r, appHost, &app) {
 		goto haveApp
 	}
+	// Substitution can discover an unavailable source claim or target policy
+	// after the readiness lookup. That failure also fences the cached source
+	// app; it must not become a fallback admission.
+	if _, failed := r.Context().Value(hostPolicyLookupFailureKey{}).(error); failed {
+		if !handleForwardRequestCancellation(w, r, true) {
+			h.writeTrafficPolicyUnavailable(w, r)
+		}
+		h.observe(r, rec.status, "", "", false, Target{})
+		return
+	}
 	if !ok {
 		markTrafficPhase(r.Context(), trafficOwnership)
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,

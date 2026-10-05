@@ -12,6 +12,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -59,6 +60,28 @@ type Tool struct {
 	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
 	Annotations  json.RawMessage `json:"annotations,omitempty"`
 }
+
+// InputRequest is one form request returned with a modern input_required
+// result. The request ID is opaque and must be sent back unchanged.
+type InputRequest struct {
+	Tool    string
+	ID      string
+	Message string
+	Schema  map[string]any
+}
+
+// InputResponse contains the user's decision for one form request.
+type InputResponse struct {
+	Action  string         `json:"action"`
+	Content map[string]any `json:"content,omitempty"`
+}
+
+// InputResponder gathers one form response. Return decline or cancel without
+// Content to stop the tool's requested work.
+type InputResponder func(context.Context, InputRequest) (InputResponse, error)
+
+const maxInteractiveInputRounds = 3
+const maxInteractiveInputRequests = 16
 
 func NewClient(endpoint, token, version string) (*Client, error) {
 	u, err := url.Parse(endpoint)
@@ -327,6 +350,29 @@ func (c *Client) Tools(ctx context.Context) ([]Tool, Exchange, error) {
 }
 
 func (c *Client) Call(ctx context.Context, tool Tool, args map[string]any, progress bool) (Exchange, error) {
+	return c.call(ctx, tool, args, progress, nil)
+}
+
+// CallInteractive opts in to bounded modern elicitation form requests. Calls
+// without this explicit method retain Call's no-retry behavior.
+func (c *Client) CallInteractive(ctx context.Context, tool Tool, args map[string]any, progress bool, respond InputResponder) (Exchange, error) {
+	if c.Version != ProtocolVersion {
+		return Exchange{}, fmt.Errorf("interactive input requires protocol %s", ProtocolVersion)
+	}
+	if respond == nil {
+		return Exchange{}, fmt.Errorf("interactive input requires a response handler")
+	}
+	x, err := c.call(ctx, tool, args, progress, respond)
+	if err != nil {
+		// An input_required result can contain opaque continuation state and
+		// server-provided form data. Do not surface that partial result as CLI
+		// output when an interactive exchange fails.
+		x.Result = nil
+	}
+	return x, err
+}
+
+func (c *Client) call(ctx context.Context, tool Tool, args map[string]any, progress bool, respond InputResponder) (Exchange, error) {
 	headers, err := parameterHeaders(tool.InputSchema, args)
 	if err != nil {
 		return Exchange{}, err
@@ -335,31 +381,110 @@ func (c *Client) Call(ctx context.Context, tool Tool, args map[string]any, progr
 	if progress {
 		params["_meta"] = map[string]any{"progressToken": "gregale-doctor"}
 	}
-	x, err := c.request(ctx, "tools/call", params, headers, false)
-	if err != nil {
-		return x, err
+	if respond != nil {
+		meta, _ := params["_meta"].(map[string]any)
+		if meta == nil {
+			meta = make(map[string]any)
+			params["_meta"] = meta
+		}
+		meta["io.modelcontextprotocol/clientCapabilities"] = map[string]any{
+			"elicitation": map[string]any{"form": map[string]any{}},
+		}
 	}
-	if x.SessionID != "" {
-		return x, fmt.Errorf("stateful MCP session detected")
+	inputRounds := 0
+	for {
+		x, err := c.request(ctx, "tools/call", params, headers, false)
+		if err != nil {
+			return x, err
+		}
+		if x.SessionID != "" {
+			return x, fmt.Errorf("stateful MCP session detected")
+		}
+		var result struct {
+			IsError       bool               `json:"isError"`
+			ResultType    string             `json:"resultType"`
+			Content       *[]json.RawMessage `json:"content"`
+			RequestState  *string            `json:"requestState"`
+			InputRequests map[string]struct {
+				Method string `json:"method"`
+				Params struct {
+					Mode            string         `json:"mode"`
+					Message         string         `json:"message"`
+					RequestedSchema map[string]any `json:"requestedSchema"`
+				} `json:"params"`
+			} `json:"inputRequests"`
+		}
+		if err := json.Unmarshal(x.Result, &result); err != nil {
+			return x, fmt.Errorf("decode tool result: %w", err)
+		}
+		if result.IsError {
+			return x, fmt.Errorf("MCP tool returned isError=true")
+		}
+		if result.ResultType == "input_required" && respond != nil {
+			if inputRounds >= maxInteractiveInputRounds {
+				return x, fmt.Errorf("MCP tool exceeded the %d interactive input round limit", maxInteractiveInputRounds)
+			}
+			if (result.RequestState != nil && len(*result.RequestState) > 64<<10) || len(result.InputRequests) > maxInteractiveInputRequests {
+				return x, fmt.Errorf("MCP tool returned an invalid interactive input request")
+			}
+			ids := make([]string, 0, len(result.InputRequests))
+			for id := range result.InputRequests {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			responses := make(map[string]InputResponse, len(ids))
+			for _, id := range ids {
+				form := result.InputRequests[id]
+				if id == "" || len(id) > 256 || form.Method != "elicitation/create" || form.Params.Mode != "form" || form.Params.RequestedSchema["type"] != "object" {
+					return x, fmt.Errorf("MCP tool returned an unsupported interactive input form")
+				}
+				properties, ok := form.Params.RequestedSchema["properties"].(map[string]any)
+				if !ok || len(properties) == 0 || len(properties) > 100 {
+					return x, fmt.Errorf("MCP tool returned an invalid interactive form schema")
+				}
+				schemaBytes, err := json.Marshal(form.Params.RequestedSchema)
+				if err != nil || len(schemaBytes) > 64<<10 || len(form.Params.Message) > 16<<10 {
+					return x, fmt.Errorf("MCP tool returned an oversized interactive form")
+				}
+				response, err := respond(ctx, InputRequest{Tool: tool.Name, ID: id, Message: form.Params.Message, Schema: form.Params.RequestedSchema})
+				if err != nil {
+					return x, err
+				}
+				switch response.Action {
+				case "accept":
+					if response.Content == nil {
+						return x, fmt.Errorf("interactive form %q was accepted without an object response", id)
+					}
+				case "decline", "cancel":
+					if response.Content != nil {
+						return x, fmt.Errorf("declined interactive form %q must not include content", id)
+					}
+				default:
+					return x, fmt.Errorf("interactive form %q returned an invalid action", id)
+				}
+				responses[id] = response
+			}
+			if len(responses) == 0 {
+				delete(params, "inputResponses")
+			} else {
+				params["inputResponses"] = responses
+			}
+			if result.RequestState == nil {
+				delete(params, "requestState")
+			} else {
+				params["requestState"] = *result.RequestState
+			}
+			inputRounds++
+			continue
+		}
+		if result.ResultType != "" && result.ResultType != "complete" {
+			return x, fmt.Errorf("tool requires %s handling; use an MCP SDK client for Tasks and input requests", result.ResultType)
+		}
+		if result.Content == nil {
+			return x, fmt.Errorf("MCP tool result must contain a content array")
+		}
+		return x, nil
 	}
-	var result struct {
-		IsError    bool               `json:"isError"`
-		ResultType string             `json:"resultType"`
-		Content    *[]json.RawMessage `json:"content"`
-	}
-	if err := json.Unmarshal(x.Result, &result); err != nil {
-		return x, fmt.Errorf("decode tool result: %w", err)
-	}
-	if result.IsError {
-		return x, fmt.Errorf("MCP tool returned isError=true")
-	}
-	if result.ResultType != "" && result.ResultType != "complete" {
-		return x, fmt.Errorf("tool requires %s handling; use an MCP SDK client for Tasks and input requests", result.ResultType)
-	}
-	if result.Content == nil {
-		return x, fmt.Errorf("MCP tool result must contain a content array")
-	}
-	return x, nil
 }
 
 func (c *Client) RejectsUntrustedOrigin(ctx context.Context) error {

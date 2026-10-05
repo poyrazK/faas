@@ -201,9 +201,9 @@ gregale mcp tools --app my-mcp
 
 ### mcp call
 
-Execute one discovered tool without automatic retries
+Execute one discovered tool; resume input requests only when explicitly enabled
 
-`gregale mcp call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--interactive] [--input-responses-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -217,12 +217,15 @@ Execute one discovered tool without automatic retries
 | `--arguments <JSON>` | tool arguments as a JSON object |  |
 | `--arguments-file <PATH>` | JSON file containing tool arguments |  |
 | `--name <NAME>` | connection name (config) |  |
-| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+| `--timeout <DURATION>` | total request timeout (default 30s; interactive 5m) |  |
+| `--interactive` | answer modern MCP input forms in the terminal |  |
+| `--input-responses-file <PATH>` | JSON file with elicitation responses keyed by request ID |  |
 
 Examples:
 
 ```sh
 gregale mcp call --app my-mcp --tool add --arguments '{"a":7,"b":5}'
+gregale mcp call --app my-mcp --tool report_preview --interactive
 ```
 
 ### mcp config
@@ -3280,7 +3283,7 @@ Review deployment route changes, gateway rule drift, and available test/traffic 
 | `--customer-details` | include observed consumer and tenant IDs in the report |  |
 | `--baseline-deployment <ID>` | explicit parent deployment ID |  |
 | `--test-report <PATH>` | JSON receipts from gregale test |  |
-| `--source-impact <PATH>` | version 2 JSON report from gregale routes impact |  |
+| `--source-impact <PATH>` | route impact report from gregale routes impact |  |
 | `--requirements <PATH>` | versioned route requirements YAML or JSON file |  |
 | `--fail-on-breaking` | exit 1 for known response-contract breaks |  |
 | `--fail-on-request-breaking` | exit 1 for known request-contract restrictions |  |
@@ -3298,6 +3301,36 @@ gregale preview report pr-42-my-api --test-report results.json --json
 gregale preview report pr-42-my-api --source-impact impact.json --test-report results.json --format markdown
 gregale preview report pr-42-my-api --fail-on-request-breaking --format markdown
 gregale preview report pr-42-my-api --fail-on-policy-drift --format markdown
+```
+
+### preview review
+
+Review route risk across multiple app previews in one release
+
+`gregale preview review [--format <FORMAT>] [--since <DURATION>] [--customer-details] [--baseline-deployment <PREVIEW=ID>] [--test-report <PREVIEW=PATH>] [--source-impact <PREVIEW=PATH>] [--requirements <PREVIEW=PATH>] [--fail-on-breaking] [--fail-on-request-breaking] [--fail-on-security-regression] [--fail-on-policy-drift] [--fail-on-incomplete] [--fail-on-requirements] <preview-slug>...`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--format <FORMAT>` | report format: text or markdown (or use --json) |  |
+| `--since <DURATION>` | traffic lookback duration (default 24h) |  |
+| `--customer-details` | include observed consumer and tenant IDs in each app report |  |
+| `--baseline-deployment <PREVIEW=ID>` | explicit parent deployment as PREVIEW=ID; repeat per preview |  |
+| `--test-report <PREVIEW=PATH>` | test receipts as PREVIEW=PATH; repeat per preview |  |
+| `--source-impact <PREVIEW=PATH>` | route impact report as PREVIEW=PATH; repeat per preview |  |
+| `--requirements <PREVIEW=PATH>` | route requirements as PREVIEW=PATH; repeat per preview |  |
+| `--fail-on-breaking` | exit 1 if any app has known response-contract breaks |  |
+| `--fail-on-request-breaking` | exit 1 if any app has known request restrictions |  |
+| `--fail-on-security-regression` | exit 1 if any app reduces declared authentication requirements |  |
+| `--fail-on-policy-drift` | exit 1 if any app has changed or incomplete route policy comparison |  |
+| `--fail-on-incomplete` | exit 1 if any app report is unavailable or needs review |  |
+| `--fail-on-requirements` | exit 1 unless every app has satisfied route requirements |  |
+
+Examples:
+
+```sh
+gregale preview review pr-42-api pr-42-worker --format markdown
+gregale preview review pr-42-api pr-42-worker --source-impact pr-42-api=api-impact.json --source-impact pr-42-worker=worker-impact.json --json
+gregale preview review pr-42-api pr-42-worker --test-report pr-42-api=api-tests.json --fail-on-breaking --fail-on-incomplete
 ```
 
 ### preview wait
@@ -3859,6 +3892,30 @@ Inspect saved incident windows, request links and dependency timings
 | `--incident <ID>` | saved incident UUID | required |
 | `--out <PATH>` | save incident evidence JSON to a new file |  |
 
+### routes lifecycle
+
+Review deployed routes for carefully evidenced retirement candidates
+
+#### routes lifecycle review
+
+Compare captured routes, observed usage, source and requirements
+
+`gregale routes lifecycle review --deployment <ID> [--since <WINDOW>] [--source-impact <PATH>] [--out <PATH>] [--fail-on-incomplete] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <ID>` | immutable deployed contract UUID | required |
+| `--since <WINDOW>` | route-usage window (default 14d; plan retention may clamp it) |  |
+| `--source-impact <PATH>` | complete source impact report whose candidate revision matches the deployment commit |  |
+| `--out <PATH>` | save full JSON review to a new file |  |
+| `--fail-on-incomplete` | exit nonzero when any route remains inconclusive |  |
+
+Examples:
+
+```sh
+gregale routes lifecycle review api --deployment DEPLOYMENT_UUID --since 14d --source-impact impact.json --out lifecycle-review.json
+```
+
 ### routes health
 
 Compare critical route errors and optional p95 latency to gate canary progression
@@ -3881,6 +3938,50 @@ Save exact normalized telemetry route selectors
 | `--mode <MODE>` | report (enforcement unavailable in preview) | required; one of `report` · `enforce` |
 | `--on-regression <ACTION>` | hold (default) or automatically abort on confirmed route 5xx regression | one of `hold` · `abort` |
 | `--expected-revision <N>` | current revision; 0 initially | required |
+
+#### routes health suggest
+
+Rank observed routes by customer reach and traffic; emit reviewable canary selectors
+
+`gregale routes health suggest --deployment <ID> [--since <WINDOW>] [--customer-group-by <DIMENSION>] [--limit <N>] [--preview-report <PATH>] [--out <PATH>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <ID>` | immutable baseline deployment UUID; must match --preview-report when supplied | required |
+| `--since <WINDOW>` | observed usage window (default 168h; accepts 7d or RFC3339) |  |
+| `--customer-group-by <DIMENSION>` | rank by distinct tenant (default) or consumer count | one of `tenant` · `consumer` |
+| `--limit <N>` | number of route selectors (default 10; maximum 20) |  |
+| `--preview-report <PATH>` | restrict suggestions to source-affected routes in a bound preview report for this app and deployment |  |
+| `--out <PATH>` | save a JSON selector array ready for routes health set |  |
+
+#### routes health review
+
+Join source-affected routes to configured canary coverage and candidate health evidence
+
+`gregale routes health review --deployment <ID> --preview-report <PATH> [--fail-on-incomplete] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <ID>` | candidate deployment UUID currently receiving canary traffic | required |
+| `--preview-report <PATH>` | bound preview report containing source-affected routes | required |
+| `--fail-on-incomplete` | exit nonzero unless source impact is complete and all affected route health is ready |  |
+
+#### routes health review-release
+
+Gate every app in an aggregate preview review on source-affected canary route health
+
+`gregale routes health review-release --release-report <PATH> [--fail-on-incomplete]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--release-report <PATH>` | aggregate JSON report from gregale preview review | required |
+| `--fail-on-incomplete` | exit nonzero unless every app has complete, healthy affected-route coverage |  |
+
+Examples:
+
+```sh
+gregale routes health review-release --release-report release-review.json --fail-on-incomplete --json
+```
 
 #### routes health report
 
@@ -4047,15 +4148,16 @@ gregale routes apply my-api --plan route-plan.json --confirm
 
 ### routes impact
 
-Explain FastAPI route impact between a Git baseline and candidate source
+Explain FastAPI, Go HTTP, Express, or Hono route impact between Git revisions
 
-`gregale routes impact --base <REF> [--head <REF>] [--path <DIR>] [--entrypoint <MODULE:VARIABLE>] [--format <text|markdown>] [--out <PATH>] [--fail-on-impact] [--fail-on-incomplete] [<slug>]`
+`gregale routes impact --base <REF> [--head <REF>] [--path <DIR>] [--framework <FRAMEWORK>] [--entrypoint <MODULE:VARIABLE>] [--format <text|markdown>] [--out <PATH>] [--fail-on-impact] [--fail-on-incomplete] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--base <REF>` | baseline Git revision | required |
 | `--head <REF>` | candidate Git revision (defaults to working tree) |  |
 | `--path <DIR>` | application source directory inside the repository |  |
+| `--framework <FRAMEWORK>` | source framework: auto, fastapi, go-nethttp, or node-http | one of `auto` · `fastapi` · `go-nethttp` · `node-http` |
 | `--entrypoint <MODULE:VARIABLE>` | FastAPI module:variable (inferred when exactly one exists) |  |
 | `--format <text|markdown>` | report format | one of `text` · `markdown` |
 | `--out <PATH>` | save JSON report to a new owner-readable file |  |
@@ -4067,7 +4169,39 @@ Examples:
 ```sh
 gregale routes impact my-api --base origin/main --path . --entrypoint main:app
 gregale routes impact --base HEAD~1 --head HEAD --format markdown
+gregale routes impact --base origin/main --framework go-nethttp --path services/api --json
+gregale routes impact --base origin/main --framework node-http --path services/node-api --json
 gregale routes impact --base origin/main --fail-on-impact --fail-on-incomplete --json
+```
+
+### routes contract
+
+Check statically discovered source routes against a local OpenAPI contract
+
+#### routes contract check
+
+Find source-only and contract-only routes with conservative parameter matching
+
+`gregale routes contract check --openapi <FILE> --base <REF> [--head <REF>] [--path <DIR>] [--framework <FRAMEWORK>] [--entrypoint <MODULE:VARIABLE>] [--format <text|markdown>] [--out <PATH>] [--fail-on-drift] [--fail-on-incomplete] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--openapi <FILE>` | local OpenAPI 3.0 or 3.1 document | required |
+| `--base <REF>` | baseline Git revision | required |
+| `--head <REF>` | candidate Git revision (defaults to working tree) |  |
+| `--path <DIR>` | application source directory inside the repository |  |
+| `--framework <FRAMEWORK>` | source framework: auto, fastapi, go-nethttp, or node-http | one of `auto` · `fastapi` · `go-nethttp` · `node-http` |
+| `--entrypoint <MODULE:VARIABLE>` | FastAPI module:variable (inferred when exactly one exists) |  |
+| `--format <text|markdown>` | report format | one of `text` · `markdown` |
+| `--out <PATH>` | save JSON report to a new owner-readable file |  |
+| `--fail-on-drift` | exit 1 for confirmed source-only or contract-only routes |  |
+| `--fail-on-incomplete` | exit 1 when route or OpenAPI analysis is inconclusive |  |
+
+Examples:
+
+```sh
+gregale routes contract check my-api --openapi openapi.yaml --base origin/main --fail-on-drift --json
+gregale routes contract check --openapi openapi.yaml --base HEAD --path services/api --framework go-nethttp --format markdown
 ```
 
 

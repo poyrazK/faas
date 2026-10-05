@@ -49,12 +49,16 @@ Verification is read-only: it checks the report digest, expiry, lifecycle
 checks, provider-neutral spec, exact configured backend fingerprint, and
 canary allowlist without contacting Neon. A non-zero exit or any readiness
 reason blocks rollout. Treat the artifact as expired when its `expires_at`
-passes; rerun qualification instead of extending it by hand. Version 3
+passes; rerun qualification instead of extending it by hand. Version 4
 artifacts require runtime DML and RLS enforcement, denied DDL/administration,
 stable migration ownership, and preserved data after migration login retirement.
+When read-only access is advertised, approval also requires actual existing and
+future table/sequence reads, denied mutations/DDL/administration and RLS bypass,
+stable recovered passwords, rotation preserving data, and revoked old sessions
+and fresh logins. A capability declaration alone is insufficient.
 They also require a restore timestamp inside the disposable source's lifetime,
 target readiness, earlier committed data, rejection of source credentials on
-the target, and completed deletion. Versions 1 and 2 cannot authorize this release.
+the target, and completed deletion. Versions 1–3 cannot authorize this release.
 
 When `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` is configured on `apid`,
 the provisioning gate loads that artifact at startup and validates it against
@@ -62,7 +66,7 @@ the configured backend and current canary list. The artifact is authoritative:
 missing, malformed, stale, tampered, or mismatched approval keeps provisioning
 disabled even if the legacy `FAAS_MANAGED_POSTGRES_QUALIFIED*` variables look
 valid. Those variables are a fallback only when no approval path is set and
-`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=3` matches the current contract.
+`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=4` matches the current contract.
 Unversioned environment approvals remain blocked.
 Restart `apid` after replacing the artifact so the new document is loaded.
 
@@ -168,8 +172,19 @@ settle missing windows, final corrections, budget headroom, or provider invoices
 
 Apply `20261001105914375_managed_postgres_migration_credentials.sql` before
 using `migration` bindings. Keep the staging provisioning gate closed until a
-fresh version 3 live Neon qualification passes. Local PostgreSQL tests establish
+fresh version 4 live Neon qualification passes. Local PostgreSQL tests establish
 SQL behavior; they do not establish Neon password recovery or branch isolation.
+
+Version 4 replaces prior approvals, including version 3; keep provisioning
+closed until the new disposable live run and lifecycle smoke pass. Inspect
+`gregale postgres capabilities --json` before adoption: `read_only` is configured
+support, while `provisioning_enabled` reflects the current rollout gate.
+After qualification, attach a distinct `READ_DATABASE_URL` binding with
+`--access read_only`. Reader permissions are enforced on primary pooled/direct
+connections; no replica endpoint is required. Review PUBLIC, column, function
+and future-object grants; later privileged migrations remain responsible for
+preserving the reader boundary. Native SQL regressions cover inherited reader
+login retirement during restore, but do not replace live branch qualification.
 
 Rotate existing preview administrator bindings deliberately. The new runtime
 login receives public-schema data access, while migrations use a separate direct
@@ -217,5 +232,5 @@ to that parent. With a disposable local `DATABASE_URL`, run
 `go test ./pkg/managedpostgres/neon -run TestPostgresStartersUseMigrationRolesAndSerializeReleases`.
 This exercises the actual migration scripts against restricted SQL roles,
 concurrent release locking, runtime data access, and retained schema after
-migration-login retirement. Keep the existing live version-3 Neon qualification
+migration-login retirement. Keep the existing live version-4 Neon qualification
 and rollout gates; local PostgreSQL evidence does not replace them.

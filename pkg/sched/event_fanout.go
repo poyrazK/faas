@@ -170,7 +170,7 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 		if outcome.State == state.PublishedEventRecipientFailed && l.log != nil {
 			l.log.Error("sched: event recipient fanout permanently failed", "event_id", envelope.ID,
 				"source", envelope.Source, "subscription_id", recipient.ID, "app_id", recipient.AppID,
-				"attempts", outcome.Attempts, "err", outcome.LastError)
+				"attempts", outcome.Attempts, "error_class", dispatchErrorClass(routeErr))
 		}
 	}
 	return errors.Join(routeErrs...)
@@ -393,7 +393,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		if retention, ok := l.engine.store.(state.PublishedEventRetentionStore); ok {
 			if _, err := retention.PruneDeliveredPublishedEvents(ctx, now.Add(-state.PublishedEventIdentityRetention), 5000); err != nil {
 				if l.log != nil {
-					l.log.Warn("sched: prune delivered event identities failed", "err", err)
+					l.log.Warn("sched: prune delivered event identities failed", "error_class", dispatchErrorClass(err))
 				}
 			} else {
 				l.eventFanoutLastPrune = now
@@ -411,7 +411,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		}
 		if err != nil {
 			if l.log != nil {
-				l.log.Warn("sched: claim event fanout failed", "err", err)
+				l.log.Warn("sched: claim event fanout failed", "error_class", dispatchErrorClass(err))
 			}
 			return
 		}
@@ -426,10 +426,10 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 			routeErr = errors.New("sched: legacy event receipt requires subscription matcher")
 		}
 		if routeErr != nil && l.log != nil {
-			l.log.Warn("sched: event fanout failed", "outbox_id", work.ID, "err", routeErr)
+			l.log.Warn("sched: event fanout failed", "outbox_id", work.ID, "error_class", dispatchErrorClass(routeErr))
 		}
 		if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, routeErr); err != nil && l.log != nil {
-			l.log.Warn("sched: finish event fanout failed", "outbox_id", work.ID, "err", err)
+			l.log.Warn("sched: finish event fanout failed", "outbox_id", work.ID, "error_class", dispatchErrorClass(err))
 		}
 	}
 }
