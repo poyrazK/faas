@@ -114,11 +114,15 @@ func migrateUpTo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, version 
 	}
 	defer func() { _ = sqlDB.Close() }()
 
-	goose.SetBaseFS(migrations.FS)
-	if err := goose.SetDialect("postgres"); err != nil {
-		t.Fatalf("migrateUpTo: set goose dialect: %v", err)
+	var schema string
+	if err := sqlDB.QueryRowContext(ctx, "SELECT current_schema()").Scan(&schema); err != nil {
+		t.Fatalf("migrateUpTo: target schema: %v", err)
 	}
-	if err := goose.UpToContext(ctx, sqlDB, ".", version); err != nil {
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations.SourcesForSchema(schema), goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		t.Fatalf("migrateUpTo: provider: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, version); err != nil {
 		t.Fatalf("migrateUpTo(%d): %v", version, err)
 	}
 

@@ -56,3 +56,32 @@ func TestRuntimeConfigStaleAnchorsOnWakeAdmission(t *testing.T) {
 		t.Fatal("non-v7 wake id must fall back to started_at")
 	}
 }
+
+// adr: 590
+func TestStageSnapshotFreshnessKeepsAdmissionClockAndEnvironmentOwner(t *testing.T) {
+	ctx := t.Context()
+	f := seedStageSnapshotPolicy(t, 0, false)
+	e := newEngine(t, f.store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	admitted, err := uuid.NewV7()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.MarkAppRuntimeConfigChanged(ctx, f.app.ID); err != nil {
+		t.Fatal(err)
+	}
+	ins := state.Instance{ID: "stage-boot", AppID: f.app.ID, DeploymentID: f.stage.ID, WakeID: admitted.String(), StartedAt: time.Now()}
+	if !e.runtimeConfigStale(ctx, ins) {
+		t.Fatal("stage capture revived configuration removed after admission")
+	}
+	// Legacy admission IDs use readiness, while the deployment must still
+	// retain its environment ownership for snapshot publication.
+	ins.WakeID = uuid.NewString()
+	if e.runtimeConfigStale(ctx, ins) {
+		t.Fatal("fresh owned stage configuration rejected")
+	}
+	f.recreateStage(ctx, t)
+	ins.StartedAt = time.Now() // The clock is fresh; only the retired owner can reject it.
+	if !e.runtimeConfigStale(ctx, ins) {
+		t.Fatal("recreated stage accepted a snapshot from its retired owner")
+	}
+}

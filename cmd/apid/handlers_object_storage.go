@@ -166,6 +166,8 @@ func viewBucket(b state.ObjectBucket) bucketView {
 func bucketProblem(w http.ResponseWriter, err error) {
 	status, code, detail := 503, "object_storage_unavailable", "Object storage is unavailable; retry later."
 	switch {
+	case errors.Is(err, state.ErrObjectBucketWriteFenced):
+		status, code, detail = 503, "object_storage_checkpoint_active", "Bucket writes are temporarily paused for checkpoint capture."
 	case errors.Is(err, state.ErrObjectUsageStale):
 		status, code, detail = 503, "object_storage_usage_stale", "Storage accounting is not configured or usage data is stale; new URLs are blocked."
 	case errors.Is(err, state.ErrObjectBudget):

@@ -561,7 +561,13 @@ func apidConfigPath(lookup func(string) *flag.Flag) string {
 }
 
 func main() {
-	wire.Daemon("apid", run)
+	cloneWorker := flag.Bool("clone-worker", false, "run the bounded project-environment clone worker without API listeners")
+	wire.Daemon("apid", func(ctx context.Context, log *slog.Logger) error {
+		if *cloneWorker {
+			return runProjectEnvironmentCloneWorker(ctx, log)
+		}
+		return run(ctx, log)
+	})
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
@@ -716,6 +722,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedPostgresReconciler(ctx)
 		go srv.runManagedPostgresBindingReconciler(ctx)
 		go srv.runProjectEnvironmentCleanupReconciler(ctx)
+		go srv.runProjectEnvironmentCloneCoordinator(ctx)
 		go srv.runManagedPostgresUsageCollector(ctx)
 		go srv.runManagedPostgresHealthCollector(ctx)
 		go srv.runManagedRealtimeEndpointReconciler(ctx)

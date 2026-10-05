@@ -990,6 +990,10 @@ type DeploymentActivationLocker interface {
 // narrow keeps the ownership rules enforceable — apid only touches
 // customer-intent tables through the methods it is given.
 type Store interface {
+	// Boot and restore read one owned configuration/secret snapshot.
+	RuntimeAppValuesStore
+	RuntimeScalingStateStore
+	LayerArtifactRetentionStore
 	// ADR-420: fenced durable retries for continuously managed services.
 	// Discovery leaves saturated candidates due. Claims honor failure cooldown
 	// unless desired revision changes; completion requires the current token.
@@ -4241,11 +4245,15 @@ type Store interface {
 	//
 	// QueueState returns the per-app live counters — depth
 	// (pending+dispatching), in_flight (dispatching with lease_expires_at
-	// either NULL or in the future), oldest pending created_at, and the
+	// in the future), oldest pending created_at, and the
 	// terminal dead-letter count.
 	// Used by the queueStats handler. OldestPendingAt is the zero-time
 	// when the app has no pending rows; callers translate to nil.
+	// Legacy queue reads/counts exclude stage rows; stage queue APIs remain gated.
 	QueueState(ctx context.Context, appID string) (QueueStats, error)
+
+	// ProductionQueueInvocationByID excludes stage ownership and non-queue sources.
+	ProductionQueueInvocationByID(ctx context.Context, id string) (Invocation, error)
 
 	// --- ADR-202 custom application metrics -------------------------
 	//
@@ -4644,12 +4652,14 @@ type Store interface {
 	// calls this between a successful vmmd boot and the RUNNING transition so the
 	// gateway can route to host_ip:8080 (spec §7).
 	SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error
-	// PublishInstanceRuntime atomically records vmmd's runtime identity and
-	// moves an instance from expectedState to RUNNING. The successful wake
-	// path uses this single compare-and-swap instead of a read, runtime write,
-	// second read, and state write. It returns ErrConflict when the watchdog or
-	// another reconciler changed/deleted the row during the vmmd call.
+	// PublishInstanceRuntime is the compatibility runtime/state CAS. Modern
+	// scheduler boots use PublishOwnedInstanceRuntime below to retain their
+	// original deployment/environment and exact wake attempt as well.
+	// It returns ErrConflict when another reconciler changed/deleted the row.
 	PublishInstanceRuntime(ctx context.Context, id, expectedState, netns, hostIP string, guestUID int) (Instance, error)
+	// Modern scheduler boots retain their original owner and sealed input
+	// fence through the same atomic runtime/state publication.
+	RuntimeInstancePublicationStore
 	// SetInstanceStartupCPUBoostUntil persists the temporary peak-quota
 	// reservation deadline. A nil deadline clears the reservation. The batch
 	// reader is used during scheduler startup to rebuild in-flight boost CPU
@@ -4672,10 +4682,10 @@ type Store interface {
 	// stale on a failed restore, ADR-005).
 	CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, error)
 	// PublishSnapshotIfRuntimeFresh checks the captured instance start time
-	// and app config stamp atomically with insertion. The captured time matters
-	// because the instance row's started_at can advance on a later wake. Empty
-	// sourceInstanceID is accepted only for legacy notifications when the app
-	// has no config-change stamp.
+	// and app config stamp atomically with insertion, retaining the original
+	// environment lifetime. The source start must still match the same runtime
+	// attempt. Empty sourceInstanceID is accepted only for production/default
+	// notifications when the app has no config-change stamp.
 	PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapshot, sourceInstanceID string, sourceStartedAt time.Time) (Snapshot, error)
 	LatestSnapshot(ctx context.Context, deploymentID string) (Snapshot, error)
 	// LatestSnapshotForTier (issue #470 / ADR-055) returns the freshest
@@ -4700,7 +4710,7 @@ type Store interface {
 	//
 	// ListSnapshotsForGC returns every non-stale snapshot joined with its
 	// deployment + app + account, plus stale snapshots belonging to a
-	// soft-deleted app or an unusable terminal deployment so imaged can remove
+	// soft-deleted app, unusable deployment or invalid original owner so imaged can remove
 	// their rows and storage artifacts immediately.
 	ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error)
 	// ListSnapshotsStaleOlderThan returns stale snapshots whose retention

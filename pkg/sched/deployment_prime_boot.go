@@ -15,25 +15,24 @@ type deploymentPrimeBoot struct {
 	Inputs           state.RuntimeConfigInputs
 	SecretDeliveries []state.AppSecretDeliveryCandidate
 	RejectionReason  string
+	SecretFence      state.RuntimeAppSecretFence
+	ConfigFence      state.RuntimeAppConfigFence
 }
 
 func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, acct state.Account, limits api.Limits, dep state.Deployment, placement Placement, ins state.Instance) (deploymentPrimeBoot, error) {
 	result := deploymentPrimeBoot{}
 	appID, primeLayer := app.ID, layerKey(dep.RootfsKey, dep.ID)
-	runtimeInputs, runtimeAPIEnv, err := e.prepareRuntimeConfigInputs(ctx, acct.ID, appID, dep.Scope)
+	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
+	runtimeInputs := runtimeValues.Inputs
 	if err != nil {
 		result.RejectionReason = "prime_runtime_inputs_invalid"
 		return result, fmt.Errorf("sched: prime: load runtime inputs: %w", err)
 	}
-	sealedEnv, err := e.loadDeploymentSealedEnvDelivery(ctx, acct.ID, appID, dep)
+	sealedEnv := runtimeValues.MainSecrets
+	sidecars, sidecarSecretCandidates, err := e.sidecarsForDeploymentWithValues(ctx, dep, acct.ID, &runtimeValues.Snapshot)
 	if err != nil {
 		result.RejectionReason = "prime_sealed_env_invalid"
 		return result, fmt.Errorf("sched: prime: load sealed env: %w", err)
-	}
-	sidecars, sidecarSecretCandidates, err := e.sidecarsForDeployment(ctx, dep, acct.ID)
-	if err != nil {
-		result.RejectionReason = "prime_sidecars_invalid"
-		return result, fmt.Errorf("sched: prime: load sidecars: %w", err)
 	}
 	sealedEnv.Candidates, err = mergeSecretDeliveryCandidates(sealedEnv.Candidates, sidecarSecretCandidates)
 	if err != nil {
@@ -69,7 +68,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
 		APIEnv: appendPlatformIdentity(
-			runtimeAPIEnv,
+			runtimeValues.APIEnv,
 			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
 		),
 		// ADR-031: see the Wake builder above. Prime is the
@@ -109,5 +108,6 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		AppProtocol: app.AppProtocol,
 	}
 	result.Spec, result.Inputs, result.SecretDeliveries = spec, runtimeInputs, sealedEnv.Candidates
+	result.SecretFence, result.ConfigFence = sealedEnv.Fence, runtimeValues.ConfigFence
 	return result, nil
 }

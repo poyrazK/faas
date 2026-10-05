@@ -1821,7 +1821,7 @@ func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChange
 	if dep.Status != state.DeployPending {
 		return nil
 	}
-	app, err := h.store.AppByID(ctx, p.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: load app: %w", err)
 	}
@@ -3155,15 +3155,14 @@ func (h *Handler) handleDeploymentReady(ctx context.Context, p deploymentReadyPa
 }
 
 func hasEphemeralSecretForDeployment(ctx context.Context, store state.Store, app state.App, dep state.Deployment) (bool, error) {
-	scope := dep.Scope
-	if scope == "" {
-		scope = api.DefaultEnvScope
-	}
-	secrets, err := store.ListAppSecretsInScope(ctx, app.AccountID, app.ID, scope)
+	values, err := store.RuntimeAppValuesForDeployment(ctx, app.AccountID, app.ID, dep.ID)
 	if err != nil {
 		return false, err
 	}
-	for _, secret := range secrets {
+	if values.AccountID != app.AccountID || values.AppID != app.ID || values.DeploymentID != dep.ID {
+		return false, state.ErrConflict
+	}
+	for _, secret := range values.Secrets {
 		if secret.SecretClass == state.SecretClassEphemeral {
 			return true, nil
 		}
@@ -3232,10 +3231,17 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	if err != nil {
 		return fmt.Errorf("imaged: load deployment: %w", err)
 	}
+	if ready == nil && (dep.Status == state.DeployFailed || dep.Status == state.DeployCancelled) {
+		// Failed/cancelled attempts cannot publish or read runtime values. Ack
+		// their outbox redelivery before policy lookup, preserving referenced
+		// artifacts while discarding an unused modern capture.
+		h.log.Info("imaged: snapshot publication skipped for inactive deployment", "deployment_id", dep.ID, "status", dep.Status)
+		return h.discardStaleSnapshotCapture(ctx, state.Snapshot{DeploymentID: dep.ID, StorageKey: snapshot.StorageKey, Tier: snapshot.Tier})
+	}
 	if dep.EnvironmentWorkloadHeld() {
 		return fmt.Errorf("imaged: %w: environment workload graph is not qualified", state.ErrInvalidArgument)
 	}
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: load app for deployment activation: %w", err)
 	}
@@ -3493,7 +3499,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	}
 	if hostingReceiptEnabled {
 		var appErr error
-		hostingApp, appErr = h.store.AppByID(ctx, dep.AppID)
+		hostingApp, appErr = state.AppForDeployment(ctx, h.store, dep)
 		if appErr != nil {
 			return fmt.Errorf("imaged: load app for hosting receipt: %w", appErr)
 		}
@@ -3802,7 +3808,7 @@ func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPa
 	// while the snapshot_prime notifier fails, and the deployment
 	// row would otherwise be left in DeployBuilding indefinitely.
 	defer h.markFailedOnUnhandledError(ctx, dep.ID, &err)
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: load app: %w", err)
 	}
@@ -4387,7 +4393,7 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 	if err != nil {
 		return fmt.Errorf("imaged: cleanup load deployment: %w", err)
 	}
-	app, err := h.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: cleanup load app: %w", err)
 	}
@@ -4404,9 +4410,8 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 		h.log.Warn("imaged: cleanup storageFor", "deployment", dep.ID, "err", err)
 		return err
 	}
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
-	if err := be.Delete(ctx, appsKey); err != nil {
-		h.log.Warn("imaged: cleanup ext4", "key", appsKey, "err", err)
+	if err := h.deleteDeploymentLayers(ctx, be, dep, app.Slug); err != nil {
+		h.log.Warn("imaged: cleanup layers", "deployment", dep.ID, "err", err)
 	}
 	if !keepSnap {
 		h.cleanupSnapshotCaptures(ctx, be, dep.ID)
@@ -4423,7 +4428,7 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 }
 
 // cleanupAppFiles walks every deployment for the app, drops the per-app ext4
-// AND the snap blobs for each, then unlinks the per-app directory entirely.
+// and snapshot blobs for each through the storage backend.
 //
 // A missing app row is treated as a silent no-op (logs at Info level when
 // the store surfaces ErrNotFound). app_changed notifications can fire on
@@ -4439,6 +4444,11 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 		}
 		return fmt.Errorf("imaged: cleanup load app: %w", err)
 	}
+	// Notifications are hints. A delayed or replayed delete must not remove
+	// snapshot captures for an app that is still active in the store.
+	if app.Status != state.AppDeleted {
+		return nil
+	}
 	deps, err := h.store.ListDeploymentsForApp(ctx, appID, 0, 0)
 	if err != nil {
 		return fmt.Errorf("imaged: cleanup list deployments: %w", err)
@@ -4451,29 +4461,8 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 		return fmt.Errorf("imaged: app cleanup storageFor: %w", err)
 	}
 	for _, d := range deps {
-		appsKey := sched.AppLayerKey(app.Slug, d.ID)
-		if err := be.Delete(ctx, appsKey); err != nil {
-			h.log.Warn("imaged: app cleanup ext4", "key", appsKey, "err", err)
-		}
-		// Issue #463 / ADR-069 / PR-B: walk the deployment's
-		// per-workload sidecar ext4 set and delete each. The
-		// store-side FK CASCADE on `deployment_sidecar_layers`
-		// keeps the row consistent; this loop removes the
-		// storage artifact that the row used to reference.
-		// We swallow List errors as Warn (the FK-side cascade
-		// means the row goes with the deployment even if the
-		// storage sweep fails, and a future rebuild would
-		// generate fresh keys).
-		if layers, listErr := h.store.ListDeploymentSidecarLayers(ctx, d.ID); listErr == nil {
-			for _, l := range layers {
-				if delErr := be.Delete(ctx, l.StorageKey); delErr != nil {
-					h.log.Warn("imaged: app cleanup sidecar ext4",
-						"key", l.StorageKey, "sidecar", l.SidecarName, "err", delErr)
-				}
-			}
-		} else {
-			h.log.Warn("imaged: app cleanup list sidecar layers",
-				"deployment", d.ID, "err", listErr)
+		if err := h.deleteDeploymentLayers(ctx, be, d, app.Slug); err != nil {
+			h.log.Warn("imaged: app cleanup layers", "deployment", d.ID, "err", err)
 		}
 		h.cleanupSnapshotCaptures(ctx, be, d.ID)
 		memKey := state.SnapMemKey(d.ID)

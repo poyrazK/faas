@@ -29,12 +29,13 @@ func (m *Manager) lockAppEgressPolicyForWake(ctx context.Context, appID string) 
 	return m.acquireAppEgressPolicy(ctx, appID, 1)
 }
 
+//nolint:contextcheck // Legacy cache-only callers may supply nil; only that path has no parent context.
 func (m *Manager) acquireAppEgressPolicy(ctx context.Context, appID string, weight int64) (func(), error) {
 	if appID == "" {
 		return func() {}, nil
 	}
 	if ctx == nil { // Legacy cache-only callers predate context use.
-		ctx = context.Background() //nolint:contextcheck // Legacy nil-context cache writes have no parent to inherit.
+		ctx = context.Background()
 	}
 	gate, _ := m.appEgressPolicyLocks.LoadOrStore(appID, semaphore.NewWeighted(math.MaxInt64))
 	sem := gate.(*semaphore.Weighted)

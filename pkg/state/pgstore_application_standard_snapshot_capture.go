@@ -61,7 +61,7 @@ func (s *PgStore) IssueApplicationStandardSnapshotCapture(ctx context.Context, e
 	if err != nil {
 		return runtimeadmission.SnapshotGrant{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	g, err := issueStandardSnapshotCaptureTx(ctx, tx, expectedState, req)
 	if err != nil {
 		return runtimeadmission.SnapshotGrant{}, err
@@ -123,7 +123,7 @@ func (s *PgStore) PublishApplicationStandardSnapshotCapture(ctx context.Context,
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := publishStandardSnapshotCaptureTx(ctx, tx, ack); err != nil {
 		return err
 	}

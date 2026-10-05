@@ -1871,7 +1871,7 @@ func waitForNormalPathInvocationState(t *testing.T, store *state.PgStore, id str
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("invocation %s state=%q, want %q within %s", id, last.State, want, timeout)
+	t.Fatalf("invocation %s state=%q outcome=%v last_error=%q result=%s, want %q within %s", id, last.State, last.Outcome, last.LastError, last.Result, want, timeout)
 	return last
 }
 

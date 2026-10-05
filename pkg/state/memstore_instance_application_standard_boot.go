@@ -257,6 +257,7 @@ func (m *MemStore) guardNativeRuntimeReceiptLocked(ins Instance, capture Instanc
 }
 
 func (m *MemStore) deleteNativeInstanceInputsLocked(id string) {
+	delete(m.runtimeInstanceConfigProofs, id)
 	delete(m.instanceApplicationStandardPromotionTokens, id)
 	for token, promotion := range m.instanceApplicationStandardPromotions {
 		if promotion.Grant.Binding.InstanceID == id {

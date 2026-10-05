@@ -20,9 +20,14 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 	if app.Status != state.AppActive || app.WarmPoolSize <= 0 || !instanceModeUsesSnapshots(mode) || !api.Plan(acct.Plan).WarmPoolAllowed() {
 		return WakeResult{}, false, nil
 	}
-	if e.ledger.Concurrency(app.ID) >= effectiveMaxConcurrency(app, limits) {
-		// The existing admission gate owns the at-capacity result; do not
-		// consume a warm row or emit a misleading "missing" outcome.
+	values, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
+	if err != nil {
+		return WakeResult{}, false, fmt.Errorf("sched: warm pool: owned promotion inputs: %w", err)
+	}
+	environmentKey := runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID)
+	production := reaperProductionScope(values.Snapshot.Scope)
+	if _, _, refused := e.wakeServingCapacity(app, limits, dep.ID, environmentKey, production).refusal(); refused {
+		// The ordinary admission gate owns the capacity result.
 		return WakeResult{}, false, nil
 	}
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
@@ -36,7 +41,13 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			continue
 		}
 		warmCount++
-		if ins.DeploymentID != dep.ID || !instanceModeMatchesApp(app, ins) {
+		if ins.DeploymentID != dep.ID {
+			continue
+		}
+		if ins.RAMMB != app.RAMMB || !instanceModeMatchesApp(app, ins) {
+			if e.discardWarmPromotion(ctx, ins, "resource_shape_changed") {
+				warmCount--
+			}
 			continue
 		}
 		candidates = append(candidates, ins)
@@ -52,12 +63,31 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 		e.observeWarmResume("missing")
 		return WakeResult{}, false, nil
 	}
+	if runtimeValuesHaveEphemeralSecrets(values.Snapshot) {
+		for _, warm := range candidates {
+			if e.discardWarmPromotion(ctx, warm, "ephemeral_secret") {
+				warmCount--
+			}
+		}
+		return WakeResult{}, false, nil
+	}
 
 	for _, warm := range candidates {
 		// A paused row without runtime identity cannot be resumed safely;
 		// destroy and park it so it cannot consume resident capacity forever.
 		if warm.Netns == "" || warm.HostIP == "" {
 			if e.discardWarmPromotion(ctx, warm, "runtime_identity_missing") {
+				warmCount--
+			}
+			e.observeWarmResume("stale")
+			continue
+		}
+		captured, proofErr := e.store.InstanceRuntimeConfigFence(ctx, acct.ID, app.ID, warm.ID)
+		if proofErr != nil && !errors.Is(proofErr, state.ErrNotFound) {
+			return WakeResult{}, false, fmt.Errorf("sched: warm pool: captured config: %w", proofErr)
+		}
+		if proofErr != nil || captured != values.ConfigFence {
+			if e.discardWarmPromotion(ctx, warm, "captured_config_changed") {
 				warmCount--
 			}
 			e.observeWarmResume("stale")
@@ -71,7 +101,9 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			}
 			if admitErr := e.ledger.Admit(Request{
 				Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
-				RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
+				EnvironmentKey:        runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID),
+				ProductionEnvironment: production,
+				RAMMB:                 app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 				NodeID: warm.NodeID, NodeCeilingMB: ceiling, VCPUBudget: vcpuBudget, CPUBudgetMillicores: cpuBudgetMillicores, Kind: KindWarmPool,
 			}); admitErr != nil {
 				if e.discardWarmPromotion(ctx, warm, "ledger_repair_failed") {
@@ -106,7 +138,11 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			continue
 		}
 
-		fresh, publishErr := e.publishWarmWithStandards(ctx, warm, receipt)
+		fresh, publishErr := e.publishOwnedWarmWithStandards(ctx, receipt, state.RuntimeInstancePublication{
+			AccountID: acct.ID, AppID: app.ID, InstanceID: warm.ID, NodeID: warm.NodeID, WakeID: warm.WakeID,
+			ExpectedState: string(state.StateWarm), Fence: captured.SecretFence, ConfigFence: captured,
+			Netns: warm.Netns, HostIP: warm.HostIP, GuestUID: warm.GuestUID,
+		})
 		if publishErr != nil {
 			e.ledger.Release(warm.ID)
 			if !errors.Is(publishErr, state.ErrConflict) {

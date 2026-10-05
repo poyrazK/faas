@@ -122,34 +122,3 @@ func canonicalStandardNativeUUID(value string) string {
 	}
 	return value
 }
-
-func (e *Engine) publishRuntimeWithStandards(ctx context.Context, instanceID, expectedState string, next state.State, out *WakeOutcome) (state.Instance, error) {
-	if out == nil {
-		return state.Instance{}, runtimeadmission.ErrInvalid
-	}
-	if out.RuntimeAdmissionReceipt != nil {
-		store, ok := e.store.(state.InstanceApplicationStandardBootStore)
-		if !ok {
-			return state.Instance{}, runtimeadmission.ErrUnavailable
-		}
-		if out.RuntimeAdmissionReceipt.Binding.InstanceID != instanceID || out.RuntimeAdmissionReceipt.Netns != out.Netns || out.RuntimeAdmissionReceipt.HostIP != out.HostIP || out.RuntimeAdmissionReceipt.LeaseUID != out.LeaseUID {
-			return state.Instance{}, runtimeadmission.ErrInvalid
-		}
-		return store.PublishInstanceApplicationStandardRuntime(ctx, expectedState, next, *out.RuntimeAdmissionReceipt)
-	}
-	// The durable guard refuses a managed row even when a caller omits its
-	// receipt. Legacy ungoverned rows retain their existing publication path.
-	if next == state.StateRunning {
-		return e.store.PublishInstanceRuntime(ctx, instanceID, expectedState, out.Netns, out.HostIP, int(out.LeaseUID))
-	}
-	if next != state.StateWarm {
-		return state.Instance{}, runtimeadmission.ErrInvalid
-	}
-	if err := e.store.SetInstanceRuntime(ctx, instanceID, out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
-		return state.Instance{}, err
-	}
-	if err := e.store.UpdateInstanceStateIf(ctx, instanceID, expectedState, string(next)); err != nil {
-		return state.Instance{}, err
-	}
-	return e.store.InstanceByID(ctx, instanceID)
-}

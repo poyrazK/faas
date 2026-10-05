@@ -59,7 +59,7 @@ func TestPerAppRollbackEvictionCandidates_ProtectsWindow(t *testing.T) {
 			state.SnapshotTierWarm, true, t0.Add(time.Duration(i)*time.Minute), 1, 1))
 	}
 
-	candidates := perAppRollbackEvictionCandidates(rows, true, 3)
+	candidates := perAppRollbackEvictionCandidates(rows, 3)
 	if len(candidates) != 1 || candidates[0].ID != "snap-dep-1" {
 		t.Fatalf("pressure candidates = %v, want only oldest protected-window miss", candidates)
 	}
@@ -73,7 +73,7 @@ func TestPerAppRollbackEvictionCandidates_DropsTerminalRowsInsideWindow(t *testi
 		row("live-1", "app", "dep-1", "acct", "app", state.SnapshotTierInit, true, t0, 1, 1),
 	}
 	rows[0].DeploymentStatus = state.DeployFailed
-	candidates := perAppRollbackEvictionCandidates(rows, true, 3)
+	candidates := perAppRollbackEvictionCandidates(rows, 3)
 	if len(candidates) != 1 || candidates[0].ID != "failed" {
 		t.Fatalf("terminal pressure candidates = %v, want failed row", candidates)
 	}

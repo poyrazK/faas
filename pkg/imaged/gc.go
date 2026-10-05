@@ -13,7 +13,6 @@ package imaged
 
 import (
 	"sort"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -29,28 +28,28 @@ import (
 // init-tier targets delete SnapMemKey + SnapVMStateKey. The shared per-app
 // ext4 is deleted only after the deployment has no remaining snapshot tier.
 type deleteTarget struct {
-	StorageKey       string
-	ID               string
-	DeploymentID     string
-	AppID            string
-	AccountID        string
-	AppSlug          string
-	DeploymentStatus state.DeploymentStatus
-	Tier             string
+	StorageKey          string
+	ID                  string
+	DeploymentID        string
+	AppID               string
+	AccountID           string
+	AppSlug             string
+	DeploymentStatus    state.DeploymentStatus
+	DeploymentRootfsKey string
+	Tier                string
 }
 
 // perAppKeepTierFloor (issue #470 / PR C / ADR-074) returns the
 // snapshot IDs that fall outside the per-tier retention window.
 // The function is pure; it does not mutate the input slice.
 //
-// Algorithm: per (appID), partition rows by tier. For each app, the
-// floor depends on apps.warm_snapshot_enabled:
+// Algorithm: per app and original environment lifetime, partition by tier.
+// Each deployment uses its own pinned warm policy:
 //
 //   - enabled: keep the 2 newest warm-tier rows + the 2 newest
 //     init-tier rows. Drop everything older in either tier.
-//   - disabled: keep the 2 newest init-tier rows only. Drop every
-//     warm-tier row (the app is not opted in to warm; those rows
-//     are vestigial from a previous opt-in) plus the older init rows.
+//   - disabled: warm-tier rows from that deployment are vestigial and
+//     dropped. Init rows still participate in the 2-row init floor.
 //
 // F-09: identical-CreatedAt ties used to be resolved by sort.Slice,
 // which is unstable on ties. Replaced with sort.SliceStable plus an
@@ -71,19 +70,13 @@ func perAppKeepTierFloor(rows []state.SnapshotForGC) []deleteTarget {
 	byApp := make(map[string][]state.SnapshotForGC, len(rows))
 	var drop []deleteTarget
 	for _, r := range rows {
-		if r.AppStatus == state.AppDeleted ||
-			r.DeploymentStatus == state.DeployFailed ||
-			r.DeploymentStatus == state.DeployCancelled {
+		if snapshotCleanupDebt(r) {
 			drop = append(drop, targetForSnapshot(r))
 			continue
 		}
-		byApp[r.AppID] = append(byApp[r.AppID], r)
+		byApp[snapshotRetentionKey(r)] = append(byApp[snapshotRetentionKey(r)], r)
 	}
 	for _, appRows := range byApp {
-		// Pick the warm-tier policy from the first row's
-		// AppWarmSnapshotEnabled (denormalised into the JOIN
-		// projection; same flag for every row of an app).
-		warmEnabled := len(appRows) > 0 && appRows[0].AppWarmSnapshotEnabled
 		// Sort newest-first.
 		sort.SliceStable(appRows, func(i, j int) bool {
 			if appRows[i].CreatedAt.Equal(appRows[j].CreatedAt) {
@@ -94,7 +87,7 @@ func perAppKeepTierFloor(rows []state.SnapshotForGC) []deleteTarget {
 		var warmKept, initKept int
 		for _, r := range appRows {
 			switch {
-			case r.Tier == state.SnapshotTierWarm && warmEnabled && warmKept < 2:
+			case r.Tier == state.SnapshotTierWarm && r.AppWarmSnapshotEnabled && warmKept < 2:
 				warmKept++
 				continue
 			case r.Tier == state.SnapshotTierInit && initKept < 2:
@@ -114,8 +107,9 @@ func perAppKeepTierFloor(rows []state.SnapshotForGC) []deleteTarget {
 // tier: the newest keepDeployments deployments keep their non-stale snapshots
 // so an operator rollback can restore the target without a cold boot.
 //
-// Warm-enabled apps retain both the warm and init snapshot for each protected
-// deployment. Warm-disabled apps retain only init rows; vestigial warm rows
+// Each environment lifetime has its own generation window. Warm-enabled
+// deployments retain both tiers; warm-disabled deployments retain only init.
+// Vestigial warm rows
 // are still eligible for cleanup. The input is never mutated and output order
 // is deterministic for equal timestamps.
 func perAppKeepRollbackWindow(rows []state.SnapshotForGC, keepDeployments int) []deleteTarget {
@@ -138,16 +132,14 @@ func perAppKeepRollbackWindow(rows []state.SnapshotForGC, keepDeployments int) [
 		// deployments are included in the projection specifically so their
 		// storage can be reclaimed immediately. They must not consume a
 		// rollback slot for a healthy deployment generation.
-		if r.AppStatus == state.AppDeleted ||
-			r.DeploymentStatus == state.DeployFailed ||
-			r.DeploymentStatus == state.DeployCancelled {
+		if snapshotCleanupDebt(r) {
 			drop = append(drop, targetForSnapshot(r))
 			continue
 		}
-		byDeployment := byApp[r.AppID]
+		byDeployment := byApp[snapshotRetentionKey(r)]
 		if byDeployment == nil {
 			byDeployment = make(map[string]*deploymentGroup)
-			byApp[r.AppID] = byDeployment
+			byApp[snapshotRetentionKey(r)] = byDeployment
 		}
 		group := byDeployment[r.DeploymentID]
 		if group == nil {
@@ -209,14 +201,15 @@ func perAppKeepRollbackWindow(rows []state.SnapshotForGC, keepDeployments int) [
 
 func targetForSnapshot(r state.SnapshotForGC) deleteTarget {
 	return deleteTarget{
-		ID:               r.ID,
-		DeploymentID:     r.DeploymentID,
-		AppID:            r.AppID,
-		AccountID:        r.AccountID,
-		StorageKey:       r.StorageKey,
-		AppSlug:          r.AppSlug,
-		DeploymentStatus: r.DeploymentStatus,
-		Tier:             r.Tier,
+		ID:                  r.ID,
+		DeploymentID:        r.DeploymentID,
+		AppID:               r.AppID,
+		AccountID:           r.AccountID,
+		StorageKey:          r.StorageKey,
+		AppSlug:             r.AppSlug,
+		DeploymentStatus:    r.DeploymentStatus,
+		DeploymentRootfsKey: r.DeploymentRootfsKey,
+		Tier:                r.Tier,
 	}
 }
 
@@ -251,13 +244,6 @@ func targetForSnapshot(r state.SnapshotForGC) deleteTarget {
 // evict a snapshot for a protected deployment unless the policy has no older
 // candidate left.
 //
-// F-06: the per-app floor previously used `appRows[skip:]` after sorting
-// OLDEST-first, which kept the NEWEST len-skip rows instead of the
-// OLDEST. Fixed: use `appRows[:len(appRows)-skip]` to drop the newest
-// skip, keep the oldest len-skip, then pick the single oldest of that.
-//
-// F-09: same stable-sort tiebreaker as perAppKeepCurrentPrevious.
-//
 // Pure function. Deterministic given identical input.
 func evictOldestFromHeaviestAccount(rows []state.SnapshotForGC) []deleteTarget {
 	if len(rows) == 0 {
@@ -290,111 +276,26 @@ func evictOldestFromHeaviestAccount(rows []state.SnapshotForGC) []deleteTarget {
 			heavyRows = append(heavyRows, r)
 		}
 	}
-	// Per app, keep the newest rollback window of deployment generations and
-	// from the remainder take the single oldest snapshot. Warm-enabled apps
-	// keep both tiers for every protected deployment; warm-disabled apps keep
-	// only init rows.
-	evictable := make(map[string][]state.SnapshotForGC, len(heavyRows))
-	for _, r := range heavyRows {
-		evictable[r.AppID] = append(evictable[r.AppID], r)
-	}
-	var oldest *state.SnapshotForGC
-	var oldestTier string
-	for appID, appRows := range evictable {
-		sort.SliceStable(appRows, func(i, j int) bool {
-			if appRows[i].CreatedAt.Equal(appRows[j].CreatedAt) {
-				return appRows[i].ID < appRows[j].ID
-			}
-			return appRows[i].CreatedAt.Before(appRows[j].CreatedAt)
-		})
-		warmEnabled := len(appRows) > 0 && appRows[0].AppWarmSnapshotEnabled
-		// Build the eviction candidate pool by deployment-generation ranking.
-		candidates := perAppRollbackEvictionCandidates(appRows, warmEnabled,
-			api.SnapshotRollbackRetentionDeployments)
-		if len(candidates) == 0 {
-			continue
-		}
-		cand := candidates[0] // already oldest-first
-		if oldest == nil || cand.CreatedAt.Before(oldest.CreatedAt) ||
-			(cand.CreatedAt.Equal(oldest.CreatedAt) && cand.ID < oldest.ID) {
-			r := cand
-			oldest = &r
-			oldestTier = cand.Tier
-		}
-		_ = appID
-	}
-	if oldest == nil {
+	candidates := perAppRollbackEvictionCandidates(heavyRows, api.SnapshotRollbackRetentionDeployments)
+	if len(candidates) == 0 {
 		return nil
 	}
-	// B1.1: AppSlug is on SnapshotForGC (issue #195); no lookup
-	// against the input rows required.
-	return []deleteTarget{{
-		ID:           oldest.ID,
-		DeploymentID: oldest.DeploymentID,
-		StorageKey:   oldest.StorageKey,
-		AppSlug:      oldest.AppSlug,
-		Tier:         oldestTier,
-	}}
+	return []deleteTarget{targetForSnapshot(candidates[0])}
 }
 
-// perAppRollbackEvictionCandidates returns snapshots that are outside the
-// protected deployment-generation window, sorted oldest-first. It is the
-// pressure-GC counterpart to perAppKeepRollbackWindow and deliberately keeps
-// the same warm-disabled cleanup rule.
-func perAppRollbackEvictionCandidates(appRows []state.SnapshotForGC, warmEnabled bool, keepDeployments int) []state.SnapshotForGC {
-	if keepDeployments < 1 {
-		keepDeployments = 1
+// Pressure GC uses exactly the same environment and generation protection as
+// the regular sweep. Account byte totals still account for all stages together.
+func perAppRollbackEvictionCandidates(rows []state.SnapshotForGC, keepDeployments int) []state.SnapshotForGC {
+	drops := perAppKeepRollbackWindow(rows, keepDeployments)
+	eligible := make(map[string]struct{}, len(drops))
+	for _, target := range drops {
+		eligible[target.ID] = struct{}{}
 	}
-	type deploymentGroup struct {
-		id     string
-		rows   []state.SnapshotForGC
-		newest time.Time
-	}
-	byDeployment := make(map[string]*deploymentGroup, len(appRows))
-	for _, r := range appRows {
-		group := byDeployment[r.DeploymentID]
-		if group == nil {
-			group = &deploymentGroup{id: r.DeploymentID, newest: r.CreatedAt}
-			byDeployment[r.DeploymentID] = group
+	candidates := make([]state.SnapshotForGC, 0, len(drops))
+	for _, row := range rows {
+		if _, ok := eligible[row.ID]; ok {
+			candidates = append(candidates, row)
 		}
-		group.rows = append(group.rows, r)
-		if r.CreatedAt.After(group.newest) {
-			group.newest = r.CreatedAt
-		}
-	}
-	groups := make([]*deploymentGroup, 0, len(byDeployment))
-	for _, group := range byDeployment {
-		groups = append(groups, group)
-	}
-	sort.SliceStable(groups, func(i, j int) bool {
-		if groups[i].newest.Equal(groups[j].newest) {
-			return groups[i].id < groups[j].id
-		}
-		return groups[i].newest.After(groups[j].newest)
-	})
-	protected := make(map[string]struct{}, keepDeployments)
-	for i, group := range groups {
-		if i >= keepDeployments {
-			break
-		}
-		protected[group.id] = struct{}{}
-	}
-
-	candidates := make([]state.SnapshotForGC, 0, len(appRows))
-	for _, r := range appRows {
-		// Terminal rows are cleanup debt, not rollback material. They remain
-		// evictable even when their deployment ID happens to fall inside the
-		// newest-generation window.
-		if r.AppStatus == state.AppDeleted ||
-			r.DeploymentStatus == state.DeployFailed ||
-			r.DeploymentStatus == state.DeployCancelled {
-			candidates = append(candidates, r)
-			continue
-		}
-		if _, ok := protected[r.DeploymentID]; ok && (warmEnabled || r.Tier != state.SnapshotTierWarm) {
-			continue
-		}
-		candidates = append(candidates, r)
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		if candidates[i].CreatedAt.Equal(candidates[j].CreatedAt) {
@@ -403,6 +304,27 @@ func perAppRollbackEvictionCandidates(appRows []state.SnapshotForGC, warmEnabled
 		return candidates[i].CreatedAt.Before(candidates[j].CreatedAt)
 	})
 	return candidates
+}
+
+// An environment UUID distinguishes deleted/recreated stages with the same
+// slug. Legacy default and production share one retention window.
+func snapshotRetentionKey(row state.SnapshotForGC) string {
+	owner := row.EnvironmentID
+	if owner == "" {
+		scope := row.Scope
+		if scope == "" || scope == "default" {
+			scope = "production"
+		}
+		owner = "scope:" + scope
+	} else {
+		owner = "environment:" + owner
+	}
+	return row.AppID + ":" + owner
+}
+
+func snapshotCleanupDebt(row state.SnapshotForGC) bool {
+	return row.RuntimeOwnerInvalid || row.AppStatus == state.AppDeleted ||
+		row.DeploymentStatus == state.DeployFailed || row.DeploymentStatus == state.DeployCancelled
 }
 
 // perAppEvictionCandidates (issue #470 / PR C / ADR-074) ranks the

@@ -636,14 +636,15 @@ const (
 	CodeUndeclaredRoute = "undeclared_route"
 	// CodeDeclaredRoutePolicyUnavailable is a fail-closed 503 used when the
 	// gateway cannot load or compile the contract required by an enabled app.
-	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
-	CodeValidation                     = "validation_failed"
-	CodeAppAdmissionUnavailable        = "app_admission_unavailable"
-	CodeDatabaseCutoverFenced          = "database_cutover_fenced"
-	CodeAutomationVersionConflict      = "automation_version_conflict"
-	CodeAutomationOwnershipConflict    = "automation_ownership_conflict"
-	CodeAutomationInvalid              = "automation_invalid"
-	CodeConflict                       = "conflict"
+	CodeDeclaredRoutePolicyUnavailable  = "declared_route_policy_unavailable"
+	CodeValidation                      = "validation_failed"
+	CodeAppAdmissionUnavailable         = "app_admission_unavailable"
+	CodeDatabaseCutoverFenced           = "database_cutover_fenced"
+	CodeAutomationVersionConflict       = "automation_version_conflict"
+	CodeAutomationOwnershipConflict     = "automation_ownership_conflict"
+	CodeAutomationInvalid               = "automation_invalid"
+	CodeConflict                        = "conflict"
+	CodeFullEnvironmentCloneUnavailable = "environment_full_clone_unavailable"
 	// ADR-568: the original private VM attempt cannot yet acknowledge its
 	// ownership or complete physical retirement. Keep its reservation charged.
 	CodeEnvironmentQualificationUnconfirmed = "environment_qualification_unconfirmed"
@@ -1936,7 +1937,7 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeDatabaseCutoverFenced, CodeConflict, CodeEnvironmentQualificationUnconfirmed,
+	case CodeDatabaseCutoverFenced, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
 		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
 		CodeWebhookAutomationConflict, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,

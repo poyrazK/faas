@@ -679,6 +679,8 @@ export type { ManagedOperationEffect } from './models/ManagedOperationEffect.js'
 export type { ManagedOperationResult } from './models/ManagedOperationResult.js';
 export type { ManagedPostgresAccountingDiagnostic } from './models/ManagedPostgresAccountingDiagnostic.js';
 export type { ManagedPostgresAccountingDiagnosticsResponse } from './models/ManagedPostgresAccountingDiagnosticsResponse.js';
+export type { ManagedPostgresAccountingReconciliationRequest } from './models/ManagedPostgresAccountingReconciliationRequest.js';
+export type { ManagedPostgresAccountingReconciliationResult } from './models/ManagedPostgresAccountingReconciliationResult.js';
 export type { ManagedPostgresBinding } from './models/ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './models/ManagedPostgresBindingList.js';
 export type { ManagedPostgresCutover } from './models/ManagedPostgresCutover.js';
@@ -955,6 +957,8 @@ export type { ProjectEnvironmentApprovalResponse } from './models/ProjectEnviron
 export type { ProjectEnvironmentApprovalStatusResponse } from './models/ProjectEnvironmentApprovalStatusResponse.js';
 export type { ProjectEnvironmentBindingChangeResponse } from './models/ProjectEnvironmentBindingChangeResponse.js';
 export type { ProjectEnvironmentBindingResponse } from './models/ProjectEnvironmentBindingResponse.js';
+export type { ProjectEnvironmentCloneOperationResponse } from './models/ProjectEnvironmentCloneOperationResponse.js';
+export type { ProjectEnvironmentCloneResourceResponse } from './models/ProjectEnvironmentCloneResourceResponse.js';
 export type { ProjectEnvironmentCloneResponse } from './models/ProjectEnvironmentCloneResponse.js';
 export type { ProjectEnvironmentConfigChange } from './models/ProjectEnvironmentConfigChange.js';
 export type { ProjectEnvironmentConfigDiffResponse } from './models/ProjectEnvironmentConfigDiffResponse.js';
@@ -977,6 +981,8 @@ export type { ProjectEnvironmentPromotionWorkloadResponse } from './models/Proje
 export type { ProjectEnvironmentQualificationCheck } from './models/ProjectEnvironmentQualificationCheck.js';
 export type { ProjectEnvironmentQualificationResponse } from './models/ProjectEnvironmentQualificationResponse.js';
 export type { ProjectEnvironmentQualificationResult } from './models/ProjectEnvironmentQualificationResult.js';
+export type { ProjectEnvironmentQueueBinding } from './models/ProjectEnvironmentQueueBinding.js';
+export type { ProjectEnvironmentQueueBindingsResponse } from './models/ProjectEnvironmentQueueBindingsResponse.js';
 export type { ProjectEnvironmentReleaseDiffResponse } from './models/ProjectEnvironmentReleaseDiffResponse.js';
 export type { ProjectEnvironmentReleaseListResponse } from './models/ProjectEnvironmentReleaseListResponse.js';
 export type { ProjectEnvironmentReleaseWorkloadResponse } from './models/ProjectEnvironmentReleaseWorkloadResponse.js';
@@ -1051,6 +1057,7 @@ export type { RegisterScenarioTestRequest } from './models/RegisterScenarioTestR
 export type { RekeyProgress } from './models/RekeyProgress.js';
 export type { RemoveEnvironmentGitOpsOverrideRequest } from './models/RemoveEnvironmentGitOpsOverrideRequest.js';
 export type { RenameAppRequest } from './models/RenameAppRequest.js';
+export type { ReplaceProjectEnvironmentQueueBindingsRequest } from './models/ReplaceProjectEnvironmentQueueBindingsRequest.js';
 export type { ReplayDevBridgeWebhookRequest } from './models/ReplayDevBridgeWebhookRequest.js';
 export type { ReplayEventFanoutFailureRequest } from './models/ReplayEventFanoutFailureRequest.js';
 export type { ReplayEventFanoutFailureResponse } from './models/ReplayEventFanoutFailureResponse.js';

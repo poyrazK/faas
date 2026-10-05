@@ -55,7 +55,7 @@ func (s *PgStore) materializeStandardTargetAttempt(ctx context.Context, c Applic
 	if err != nil {
 		return ApplicationStandardOperation{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	if _, err := q.LockApplicationStandardWorkerOperation(ctx, tx, sqlc.LockApplicationStandardWorkerOperationParams{OperationID: mustPgUUID(c.OperationID), OrgID: mustPgUUID(c.OrgID), Owner: c.Owner, Generation: c.Generation}); errors.Is(err, pgx.ErrNoRows) {
 		return ApplicationStandardOperation{}, ErrApplicationStandardLeaseLost

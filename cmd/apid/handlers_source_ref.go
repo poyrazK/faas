@@ -32,12 +32,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -549,12 +551,12 @@ func (s *server) auditSourceRefDeploy(r *http.Request, acct state.Account, app s
 	s.log.Info("source-ref deployment enqueued",
 		"deployment", res.DeploymentID,
 		"app", app.ID,
-		"repo", req.Repo,
-		"ref", req.Ref,
-		"source_sha", resolvedSHA,
-		"deployed_by", ann.DeployedBy,
-		"pr_number", ann.PRNumber,
-		"tag", ann.Tag,
+		"repo", logsanitize.Field(req.Repo),
+		"ref", logsanitize.Field(req.Ref),
+		"source_sha", logsanitize.Field(resolvedSHA),
+		"deployed_by", logsanitize.Field(ann.DeployedBy),
+		slog.Int("pr_number", ann.PRNumber),
+		"tag", logsanitize.Field(ann.Tag),
 	)
 	// Re-read the just-written deployment row to pick up the
 	// actor columns (apidsource.Enqueue stamped them in its tx).

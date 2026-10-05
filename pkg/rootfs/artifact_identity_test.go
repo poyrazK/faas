@@ -34,11 +34,11 @@ func TestArtifactPublicationRequiresCompleteOutput(t *testing.T) {
 			if err := os.WriteFile(path, payload, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			f, err := os.Open(path)
+			f, err := os.Open(path) //nolint:forbidigo // This regular artifact was created in the test-owned temporary directory.
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var published []byte

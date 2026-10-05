@@ -558,6 +558,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	restoreTargetProviderResourceID := ""
 	restoreAttempted := false
 	restoreDeleted := false
+	restorePointInTime := time.Time{}
 	deleted := false
 	credentialIssued := false
 	restoreCredentialIssued := false
@@ -597,6 +598,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 				ResourceID:              restoreResourceID,
 				ProviderResourceID:      restoreTargetProviderResourceID,
 				RestoreSourceResourceID: providerResourceID,
+				RestorePointInTime:      restorePointInTime,
 				IdempotencyKey:          qualificationKey("restore-delete", options.ResourceID),
 			})
 			if cleanupErr == nil && !cleanupResult.Done {
@@ -730,11 +732,12 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		if !record("restore_prepare", prepareErr) {
 			return report, resultErr
 		}
+		restorePointInTime = probe.PointInTime
 		restored, restoreErr := provider.Restore(ctx, RestoreRequest{
 			ResourceID:       restoreResourceID,
 			SourceResourceID: providerResourceID,
 			Spec:             options.Spec,
-			PointInTime:      probe.PointInTime,
+			PointInTime:      restorePointInTime,
 			IdempotencyKey:   qualificationKey("restore", options.ResourceID),
 		})
 		restoreTargetProviderResourceID = restored.ProviderResourceID
@@ -787,6 +790,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			ResourceID:              restoreResourceID,
 			ProviderResourceID:      restoreTargetProviderResourceID,
 			RestoreSourceResourceID: providerResourceID,
+			RestorePointInTime:      restorePointInTime,
 			IdempotencyKey:          qualificationKey("restore-delete", options.ResourceID),
 		})
 		if !record("restore_delete", deleteRestoreErr) {

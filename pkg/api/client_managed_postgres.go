@@ -42,6 +42,18 @@ func (c *Client) GetManagedPostgresUsage(ctx context.Context) (ManagedPostgresUs
 	return out, err
 }
 
+func (c *Client) PreviewManagedPostgresAccountingReconciliation(ctx context.Context, accountID string, request ManagedPostgresAccountingReconciliationRequest) (ManagedPostgresAccountingReconciliationResult, error) {
+	var out ManagedPostgresAccountingReconciliationResult
+	err := c.do(ctx, http.MethodPost, "/v1/admin/managed-postgres/accounting/"+url.PathEscape(accountID)+"/reconciliations/preview", request, &out)
+	return out, err
+}
+
+func (c *Client) ApplyManagedPostgresAccountingReconciliation(ctx context.Context, accountID string, request ManagedPostgresAccountingReconciliationRequest) (ManagedPostgresAccountingReconciliationResult, error) {
+	var out ManagedPostgresAccountingReconciliationResult
+	err := c.do(ctx, http.MethodPost, "/v1/admin/managed-postgres/accounting/"+url.PathEscape(accountID)+"/reconciliations", request, &out)
+	return out, err
+}
+
 func (c *Client) ListManagedPostgresDatabases(ctx context.Context) (ManagedPostgresDatabaseList, error) {
 	var out ManagedPostgresDatabaseList
 	err := c.do(ctx, http.MethodGet, "/v1/postgres/databases", nil, &out)

@@ -3,6 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ManagedPostgresAccountingDiagnosticsResponse } from '../models/ManagedPostgresAccountingDiagnosticsResponse.js';
+import type { ManagedPostgresAccountingReconciliationRequest } from '../models/ManagedPostgresAccountingReconciliationRequest.js';
+import type { ManagedPostgresAccountingReconciliationResult } from '../models/ManagedPostgresAccountingReconciliationResult.js';
 import type { ManagedPostgresUsageImportRequest } from '../models/ManagedPostgresUsageImportRequest.js';
 import type { ManagedPostgresUsageImportResult } from '../models/ManagedPostgresUsageImportResult.js';
 import type { ManagedPostgresUsageOperatorResponse } from '../models/ManagedPostgresUsageOperatorResponse.js';
@@ -134,6 +136,74 @@ export class OperatorService {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/admin/managed-postgres/accounting/{account_id}/usage-imports',
+      path: {
+        'account_id': accountId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Preview legacy PostgreSQL identity and shutdown reconciliation
+   * Operator allowlist and admin scope with existing MFA read policy required. Validates retained evidence against local catalog and ledger state without provider calls or writes. Only deleted accountable resources with unknown identities are eligible. Returns the revision required for apply.
+   * @returns ManagedPostgresAccountingReconciliationResult Reconciliation preview with no catalog or accounting changes; Cache-Control no-store
+   * @returns Problem Access denied, invalid evidence, incompatible ledger, conflicting identity, or unavailable backend
+   * @throws ApiError
+   */
+  public static previewManagedPostgresAccountingReconciliation({
+    accountId,
+    requestBody,
+  }: {
+    /**
+     * Account owning the legacy database being reconciled.
+     */
+    accountId: string,
+    /**
+     * Operator-verified identity and actual shutdown evidence; maximum 32 KiB.
+     */
+    requestBody: ManagedPostgresAccountingReconciliationRequest,
+  }): CancelablePromise<ManagedPostgresAccountingReconciliationResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/managed-postgres/accounting/{account_id}/reconciliations/preview',
+      path: {
+        'account_id': accountId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Reconcile a legacy PostgreSQL identity and confirmed shutdown
+   * Allowlisted operator session with recent MFA step-up, same-origin checks and Idempotency-Key required. Bearer keys cannot apply. Requires a current expected_revision. Atomically attaches the evidence-backed identity and actual shutdown boundary, resets derived coverage and retains immutable before/after evidence. Existing usage quantities and accounting obligations remain intact. Recovery and final corrections remain required; this does not settle an invoice. reconciliation_id permanently deduplicates identical requests by the same actor.
+   * @returns ManagedPostgresAccountingReconciliationResult Committed reconciliation or original durable response; Cache-Control no-store
+   * @returns Problem Access denied, invalid evidence, stale preview, conflicting identity/replay, or unavailable backend
+   * @throws ApiError
+   */
+  public static applyManagedPostgresAccountingReconciliation({
+    accountId,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Account owning the reviewed legacy database.
+     */
+    accountId: string,
+    /**
+     * Request replay key; reconciliation_id also provides permanent deduplication.
+     */
+    idempotencyKey: string,
+    /**
+     * Reviewed identity and shutdown evidence with preview revision; maximum 32 KiB.
+     */
+    requestBody: ManagedPostgresAccountingReconciliationRequest,
+  }): CancelablePromise<ManagedPostgresAccountingReconciliationResult | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/managed-postgres/accounting/{account_id}/reconciliations',
       path: {
         'account_id': accountId,
       },

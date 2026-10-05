@@ -210,6 +210,12 @@ func (m *MemStore) queueConsumerCanClaimLocked(triggerID string) bool {
 // effect. An empty binding ID remains explicit legacy work, never auto-adopted
 // later merely because someone creates or renames a binding.
 func (m *MemStore) captureInvocationQueueBindingLocked(inv *Invocation) error {
+	if inv.EnvironmentID != "" && inv.Source == InvocationQueue {
+		if inv.QueueBindingID != "" {
+			return ErrInvalidArgument
+		}
+		return nil
+	}
 	if inv.QueueBindingID != "" {
 		if inv.Source != InvocationQueue {
 			return ErrInvalidArgument

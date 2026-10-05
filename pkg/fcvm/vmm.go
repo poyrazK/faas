@@ -2903,7 +2903,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		return SnapshotInfo{}, err
 	}
 	if capture != nil {
-		ctx = capture.ctx
+		ctx = capture.ctx //nolint:contextcheck // beginNativeSnapshot derives this cancellable flight context from the incoming ctx.
 		defer capture.finish()
 	}
 	defer func() {

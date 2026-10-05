@@ -74,7 +74,7 @@ func (s *PostgresStore) ImportUsage(ctx context.Context, command UsageImportComm
 			BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint, WindowFrom: r.WindowFrom.Time.UTC(),
 			WindowTo: r.WindowTo.Time.UTC(), ObservedAt: r.ObservedAt.Time.UTC(), Meter: Meter(r.Meter), Quantity: r.Quantity, CostMillicents: r.CostMillicents})
 	}
-	plan, err := planUsageImport(command, databaseFromRow(row), progress, existing)
+	plan, err := planUsageImport(command, usageDatabaseFromRow(row), progress, existing)
 	if err != nil {
 		return UsageImportResult{}, err
 	}

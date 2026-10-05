@@ -1,33 +1,33 @@
-// adr: 590 — compose native admission and configuration readiness publication.
+// adr: 590 — publish owned runtime configuration and native receipts atomically.
 package sched
 
 import (
 	"context"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (e *Engine) publishRuntimeWithStandardConfig(ctx context.Context, id, expected string, out *WakeOutcome, wakeID string, inputs *state.RuntimeConfigInputs, appID string) (state.Instance, error) {
+func (e *Engine) publishOwnedRuntimeWithStandards(ctx context.Context, out *WakeOutcome, p state.RuntimeInstancePublication) (state.Instance, error) {
 	if out == nil {
 		return state.Instance{}, runtimeadmission.ErrInvalid
 	}
-	if out.RuntimeAdmissionReceipt == nil {
-		return e.publishRuntimeConfigReceipt(ctx, id, expected, out.Netns, out.HostIP, int(out.LeaseUID), wakeID, inputs, appID)
-	}
-	if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
+	if err := e.checkManagedPostgresAdmission(ctx, p.AppID); err != nil {
 		return state.Instance{}, err
 	}
-	receipt := out.RuntimeAdmissionReceipt
-	if receipt.Binding.InstanceID != id || receipt.Netns != out.Netns || receipt.HostIP != out.HostIP || receipt.LeaseUID != out.LeaseUID {
-		return state.Instance{}, runtimeadmission.ErrInvalid
+	p.AdmissionReceipt = out.RuntimeAdmissionReceipt
+	return e.store.PublishOwnedInstanceRuntime(ctx, p)
+}
+
+func (e *Engine) publishOwnedWarmWithStandards(ctx context.Context, receipt *runtimeadmission.Receipt, p state.RuntimeInstancePublication) (state.Instance, error) {
+	p.PromotionReceipt = receipt
+	fresh, err := e.store.PublishOwnedInstanceRuntime(ctx, p)
+	if err == nil || receipt == nil {
+		return fresh, err
 	}
-	if inputs == nil {
-		return e.publishRuntimeWithStandards(ctx, id, expected, state.StateRunning, out)
-	}
-	publisher, ok := e.store.(state.InstanceApplicationStandardConfigPublisher)
-	if !ok {
-		return state.Instance{}, runtimeadmission.ErrUnavailable
-	}
-	return publisher.PublishInstanceApplicationStandardRuntimeWithConfig(ctx, expected, state.StateRunning, *receipt, wakeID, *inputs)
+	// Retry the exact retained receipt after a lost commit acknowledgment.
+	retryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ApplicationStandardRuntimeCleanupTimeout)
+	defer cancel()
+	return e.store.PublishOwnedInstanceRuntime(retryCtx, p)
 }

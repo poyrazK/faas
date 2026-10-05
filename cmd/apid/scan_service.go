@@ -44,6 +44,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/githubd"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
@@ -987,7 +988,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			if manifestProblem != nil {
 				_ = os.Remove(staged)
 				res.Error = "release declaration invalid (server logs carry the detail)"
-				s.log.Warn("apid: apply release manifest invalid", "app_id", app.ID, "project_id", project.ID, "detail", manifestProblem.Detail)
+				s.log.Warn("apid: apply release manifest invalid", "app_id", app.ID, "project_id", project.ID, "detail", logsanitize.Field(manifestProblem.Detail))
 				out = append(out, res)
 				continue
 			}

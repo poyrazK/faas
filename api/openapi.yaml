@@ -2911,6 +2911,70 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/accounting/{account_id}/reconciliations/preview:
+    post:
+      operationId: previewManagedPostgresAccountingReconciliation
+      summary: Preview legacy PostgreSQL identity and shutdown reconciliation
+      description: Operator allowlist and admin scope with existing MFA read policy required. Validates retained evidence against local catalog and ledger state without provider calls or writes. Only deleted accountable resources with unknown identities are eligible. Returns the revision required for apply.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account owning the legacy database being reconciled.
+          schema: { type: string, format: uuid }
+      requestBody:
+        description: Operator-verified identity and actual shutdown evidence; maximum 32 KiB.
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresAccountingReconciliationRequest' }
+      responses:
+        '200':
+          description: Reconciliation preview with no catalog or accounting changes; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresAccountingReconciliationResult' }
+        default:
+          description: Access denied, invalid evidence, incompatible ledger, conflicting identity, or unavailable backend
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/accounting/{account_id}/reconciliations:
+    post:
+      operationId: applyManagedPostgresAccountingReconciliation
+      security: [{ cookieAuth: [] }]
+      summary: Reconcile a legacy PostgreSQL identity and confirmed shutdown
+      description: Allowlisted operator session with recent MFA step-up, same-origin checks and Idempotency-Key required. Bearer keys cannot apply. Requires a current expected_revision. Atomically attaches the evidence-backed identity and actual shutdown boundary, resets derived coverage and retains immutable before/after evidence. Existing usage quantities and accounting obligations remain intact. Recovery and final corrections remain required; this does not settle an invoice. reconciliation_id permanently deduplicates identical requests by the same actor.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account owning the reviewed legacy database.
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Request replay key; reconciliation_id also provides permanent deduplication.
+          schema: { type: string, minLength: 1, maxLength: 256 }
+      requestBody:
+        description: Reviewed identity and shutdown evidence with preview revision; maximum 32 KiB.
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresAccountingReconciliationRequest' }
+      responses:
+        '200':
+          description: Committed reconciliation or original durable response; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresAccountingReconciliationResult' }
+        default:
+          description: Access denied, invalid evidence, stale preview, conflicting identity/replay, or unavailable backend
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/admin/object-storage/usage-reports:
     post:
       operationId: recordObjectStorageUsage
@@ -5223,14 +5287,28 @@ paths:
       tags: [apps]
       operationId: getApp
       summary: Fetch one app.
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          description: Read or edit desired settings in this project environment. New deployments pin the revision; existing deployments keep their settings. Omit for legacy app settings.
+          schema: { type: string }
       responses:
         '200':
           description: The app.
+          headers:
+            X-Gregale-Workload-Revision:
+              description: Desired workload settings revision for an environment-scoped request.
+              schema: { type: integer, format: int64, minimum: 0 }
+            X-Gregale-Workload-Config-Hash:
+              description: SHA-256 of the immutable desired configuration, present when a revision exists.
+              schema: { type: string }
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AppResponse'
                 example: {"id":"0123456789abcdef0123456789abcdef","slug":"hello-world","type":"app","runtime":"","ram_mb":256,"max_concurrency":2,"concurrency_per_vm":5,"idle_timeout_s":60,"min_instances":0,"state":"running","last_deployment_id":"0123456789abcdef0123456789abcdef","created_at":"2026-07-01T08:00:00Z","updated_at":"2026-07-23T11:25:00Z","require_authn":false}
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -5238,6 +5316,17 @@ paths:
       tags: [apps]
       operationId: updateApp
       summary: Partial-update an app.
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          description: Edit desired workload settings in a registered project environment; deploy again to test the revision. Omit to update legacy app settings.
+          schema: { type: string }
+        - name: If-Workload-Revision
+          in: header
+          required: false
+          description: Optional expected desired revision when editing an environment; zero means no revision exists. Protected environments require an approved plan or promotion.
+          schema: { type: integer, format: int64, minimum: 0 }
       requestBody:
         required: true
         description: "Patch payload — every field is optional; omitted fields are unchanged. See UpdateAppRequest."
@@ -5249,6 +5338,13 @@ paths:
       responses:
         '200':
           description: The updated app.
+          headers:
+            X-Gregale-Workload-Revision:
+              description: New desired revision saved by an environment-scoped edit.
+              schema: { type: integer, format: int64, minimum: 0 }
+            X-Gregale-Workload-Config-Hash:
+              description: SHA-256 identifying the desired configuration saved by this edit.
+              schema: { type: string }
           content:
             application/json:
               schema:
@@ -5258,6 +5354,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/PlanLimit' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/InvalidMinInstances' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     delete:
@@ -18157,6 +18254,63 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environment-clones:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project whose production or stage environment will be cloned.
+        schema: { type: string }
+    post:
+      tags: [projects]
+      operationId: createFullProjectEnvironmentClone
+      summary: Request a complete isolated environment clone.
+      description: |
+        This dedicated route never falls back to partial cloning. Full admission
+        currently returns environment_full_clone_unavailable with named blockers
+        until complete coverage and coordinated data-copy proofs are available.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectEnvironmentRequest' }
+      responses:
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Full-copy capability unavailable; no partial target is created.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/projects/{slug}/environment-clones/{clone}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project owning the durable environment clone operation.
+        schema: { type: string }
+      - name: clone
+        in: path
+        required: true
+        description: Durable clone operation identifier returned when capture begins.
+        schema: { type: string }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentCloneOperation
+      summary: Read account- and project-scoped durable clone progress.
+      description: Status is available before the target environment is registered. Private captures, values and worker lease tokens are excluded.
+      responses:
+        '200':
+          description: Non-secret clone operation receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentCloneOperationResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments:
     parameters:
       - name: slug
@@ -18258,10 +18412,14 @@ paths:
       summary: Delete an unused project environment.
       description: |
         Deletes only an unprotected, non-production environment that has no
-        live releases. Configuration and approval history for the registry
-        entry is removed with it. Production, protected environments, and
-        environments still serving a live release return 409. If managed
-        resources cannot be revoked immediately, cleanup is durably queued and
+        live releases. Configuration, approval history, and owned pending or
+        finished asynchronous work are removed atomically. Production, protected
+        environments, and environments still serving a live release return 409.
+        Running work or an unreleased execution reservation returns 409 with
+        code environment_work_busy; wait for completion or claim recovery and
+        retry. Inconsistent work ownership returns environment_work_ownership_conflict
+        without deleting the environment. Cancellation receipts are retained.
+        If managed resources cannot be revoked immediately, cleanup is durably queued and
         retried; the deleted environment returns 202 while cleanup is pending.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -19073,6 +19231,74 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project containing the workload and stage.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: Registered stage. Production is managed through the app queue-bindings API.
+        schema: { type: string }
+      - name: workload
+        in: path
+        required: true
+        description: Workload application slug belonging to this project.
+        schema: { type: string }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentQueueBindings
+      summary: Read a stage workload's complete desired queue configuration.
+      description: |
+        Returns logical definitions and the current workload revision. A missing
+        collection returns 409 environment_queue_collection_unavailable and never
+        inherits production queues. X-Gregale-Workload-Revision identifies the
+        head to use when initializing or replacing the collection.
+        Consumer activation is currently unavailable; saved definitions do not
+        activate delivery or qualify the stage for promotion.
+      responses:
+        '200':
+          description: Complete stage-owned desired queue collection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentQueueBindingsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [projects]
+      operationId: replaceProjectEnvironmentQueueBindings
+      summary: Replace a stage workload's complete desired queue configuration.
+      description: |
+        Requires expected_revision to match the complete workload settings head,
+        with zero for an uninitialized workload. An explicit empty bindings list
+        removes all stage definitions. Stale revisions and protected stages
+        return 409, including protected no-op writes. Definitions have logical
+        names and no production consumer IDs. Existing deployments retain their
+        pinned definitions. Consumer activation is currently unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReplaceProjectEnvironmentQueueBindingsRequest' }
+      responses:
+        '200':
+          description: Stored desired queue definitions and their workload revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentQueueBindingsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environments/{environment}/diff:
@@ -22245,20 +22471,40 @@ paths:
       tags: [invocations]
       operationId: listAppWorkPolicies
       summary: List named work policies for an app.
+      description: Stage reads return the complete desired policy collection from immutable workload settings. An uninitialized stage collection returns 409 and never inherits production policies. Stage policy execution remains unavailable until work lanes and producers are isolated.
       parameters:
         - $ref: '#/components/parameters/Slug'
+        - name: environment
+          in: query
+          required: false
+          description: Registered project environment. Omit for legacy production policies. An explicit production selection uses the legacy collection.
+          schema: { type: string }
       responses:
         '200':
           description: App work policies.
+          headers:
+            X-Gregale-Workload-Revision:
+              description: Desired workload configuration revision for a stage.
+              schema: { type: integer, format: int64, minimum: 1 }
+            X-Gregale-Workload-Config-Hash:
+              description: SHA-256 of the stage's immutable desired configuration.
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkPolicyListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/apps/{slug}/work-policies/{name}:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: false
+        description: Edit the complete desired collection in a registered stage. Omit for legacy production policies. Protected environments reject direct edits.
+        schema: { type: string }
       - in: path
         name: name
         required: true
@@ -22268,7 +22514,13 @@ paths:
       tags: [invocations]
       operationId: upsertAppWorkPolicy
       summary: Create or update a named app work policy.
-      description: Policy changes affect new work only. Existing invocations retain their admission settings and policy revision.
+      description: Legacy production changes affect new work only. Stage edits create immutable desired workload configuration and subsequent deployments pin it; existing deployments keep their policies. Stage policy execution and qualification remain unavailable until work lanes and producers are isolated.
+      parameters:
+        - name: If-Workload-Revision
+          in: header
+          required: false
+          description: Expected complete desired workload revision for a stage edit. Zero means no revision exists; concurrent edits return 409.
+          schema: { type: integer, format: int64, minimum: 0 }
       requestBody:
         required: true
         content:
@@ -22277,29 +22529,60 @@ paths:
       responses:
         '200':
           description: Saved policy.
+          headers:
+            X-Gregale-Workload-Revision:
+              description: Desired complete workload configuration revision for a stage.
+              schema: { type: integer, format: int64, minimum: 1 }
+            X-Gregale-Workload-Config-Hash:
+              description: Configuration hash containing the saved stage policy definition.
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkPolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
     delete:
       tags: [invocations]
       operationId: deleteAppWorkPolicy
       summary: Delete a policy after removing event subscription bindings.
+      description: A stage deletion preserves an explicit empty collection and its collection revision clock after the last policy is removed. Production producer bindings retain their existing deletion checks.
+      parameters:
+        - name: If-Workload-Revision
+          in: header
+          required: false
+          description: Expected complete desired workload revision for a stage edit.
+          schema: { type: integer, format: int64, minimum: 0 }
       responses:
-        '204': { description: Policy deleted. }
+        '204':
+          description: Policy deleted.
+          headers:
+            X-Gregale-Workload-Revision:
+              description: Desired workload revision after removing the stage policy.
+              schema: { type: integer, format: int64, minimum: 1 }
+            X-Gregale-Workload-Config-Hash:
+              description: Configuration hash containing the remaining stage policy collection.
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/apps/{slug}/work-policies/{name}/cancel-pending:
     post:
       tags: [invocations]
       operationId: cancelPendingAppWork
       summary: Cancel pending work for one policy and application key.
-      description: Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work.
+      description: Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work. A stage selection cancels only its isolated environment lane, including work admitted under a policy that has since been deleted from desired settings. Cancellation receipts are independent per environment. Omitting environment preserves the production API.
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: environment
+          in: query
+          required: false
+          description: Registered project environment whose pending work should be cancelled. Stage lanes and receipts are isolated by the environment's immutable identity.
+          schema: { type: string }
         - in: path
           name: name
           required: true
@@ -22316,8 +22599,10 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CancelPendingWorkResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/apps/{slug}/queues/send:
     post:
@@ -22597,6 +22882,7 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/queue-workload:
+    description: Production queue workload profile. Stage environment or scope queries are rejected before changing production resources; stage definitions use the project environment workload queue-bindings endpoint.
     put:
       tags: [queues]
       operationId: configureQueueWorkload
@@ -22632,6 +22918,7 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/queue-bindings:
+    description: Production queue bindings. Stage environment or scope queries are rejected before production access or idempotent replay. Stage definitions use the project environment workload queue-bindings endpoint.
     get:
       tags: [queues]
       operationId: listQueueBindings
@@ -22657,7 +22944,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/QueueBindingResponse' }
-        '400': { $ref: '#/components/responses/BadRequest' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -22686,6 +22973,7 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/queue-bindings/{id}:
+    description: Production queue binding identity. Stage environment or scope queries are rejected; stage definitions use logical names in the project environment workload queue-bindings endpoint.
     parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/Id32'
@@ -22699,6 +22987,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/QueueBindingResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -22728,11 +23017,13 @@ paths:
       summary: Delete one queue binding.
       responses:
         '204': { description: Queue binding deleted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/queue-bindings/{id}/status:
+    description: Production consumer status. Stage environment or scope queries are rejected before reading production counters.
     parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/Id32'
@@ -22753,6 +23044,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/QueueBindingStatusResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -32098,6 +32390,37 @@ components:
         correction_observed_at: { type: [string, "null"], format: date-time }
         correction_required_at: { type: [string, "null"], format: date-time }
         lease_until: { type: [string, "null"], format: date-time }
+    ManagedPostgresAccountingReconciliationRequest:
+      type: object
+      description: Operator-attested immutable backend identity and actual provider shutdown for one unresolved legacy tombstone. The operator verifies artifact ownership and lineage; the server does not fetch or authenticate the source. Missing lookup results are not shutdown evidence.
+      additionalProperties: false
+      required: [reconciliation_id, database_id, backend_id, backend_fingerprint, provider_resource_id, shutdown_at, observed_at, evidence_reference, evidence_sha256, reason]
+      properties:
+        reconciliation_id: { type: string, format: uuid, description: "Durable reconciliation identity." }
+        database_id: { type: string, format: uuid, description: "Deleted accountable database with no provider identity." }
+        backend_id: { type: string, minLength: 1, maxLength: 128, description: "Exact immutable catalog backend ID." }
+        backend_fingerprint: { type: string, pattern: '^[a-f0-9]{64}$', description: "Exact immutable catalog backend fingerprint." }
+        provider_resource_id: { type: string, minLength: 1, maxLength: 1024, description: "Verified opaque provider identity; include branch identity where required by the adapter." }
+        shutdown_at: { type: string, format: date-time, description: "Actual confirmed provider shutdown at or after catalog creation; microsecond precision." }
+        observed_at: { type: string, format: date-time, description: "Actual evidence observation at or after shutdown and retained ledger observations; no future timestamps." }
+        evidence_reference: { type: string, minLength: 1, maxLength: 256, description: "Retained nonsecret artifact reference; no credentials or signed URLs." }
+        evidence_sha256: { type: string, pattern: '^[a-f0-9]{64}$', description: "SHA-256 of the operator-verified source artifact." }
+        reason: { type: string, minLength: 1, maxLength: 512, description: "Audited reason for reconciliation." }
+        expected_revision: { type: string, pattern: '^[a-f0-9]{64}$', description: "Omit for preview; required for apply using the returned revision." }
+    ManagedPostgresAccountingReconciliationResult:
+      type: object
+      description: Preview or original committed repair response. Requires usage recovery describes the post-repair state; receipt replay is not a live admission or coverage read. Use accounting diagnostics for current status.
+      required: [reconciliation_id, database_id, revision, applied, shutdown_at, observed_at, shared_accounting, requires_usage_recovery]
+      properties:
+        reconciliation_id: { type: string, format: uuid, description: "Identity of the previewed or committed repair receipt." }
+        database_id: { type: string, format: uuid, description: "Reconciled catalog database." }
+        revision: { type: string, pattern: '^[a-f0-9]{64}$', description: "Revision fencing the reviewed request and relevant catalog/ledger/coverage state." }
+        applied: { type: boolean, description: "True for a committed repair or durable replay." }
+        previous_deleted_at: { type: string, format: date-time, description: "Previous logical deletion timestamp retained in the audit; it did not prove shutdown." }
+        shutdown_at: { type: string, format: date-time, description: "Attested actual shutdown boundary." }
+        observed_at: { type: string, format: date-time, description: "Preserved evidence observation time." }
+        shared_accounting: { type: boolean, description: "Restore descendant still shares its existing accounting root." }
+        requires_usage_recovery: { type: boolean, description: "Coverage resets on apply; recovery and final correction evidence must satisfy admission." }
     ManagedPostgresUsageImportReading:
       description: One normalized integer meter quantity from retained provider evidence.
       type: object
@@ -42585,6 +42908,7 @@ components:
         updated_at: { type: string, format: date-time }
         cloned_from: { type: string }
         clone: { $ref: '#/components/schemas/ProjectEnvironmentCloneResponse' }
+        clone_operation: { $ref: '#/components/schemas/ProjectEnvironmentCloneOperationResponse' }
 
     PutAppSecretReferenceRequest:
       description: Named sealed source selected within the exact registered project environment; contains no secret value.
@@ -42708,6 +43032,7 @@ components:
       type: object
       required: [workload_slug, workload_name, status]
       properties:
+        workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         workload_slug: { type: string }
         workload_name: { type: string }
         status: { type: string, enum: [live, not_deployed] }
@@ -42768,6 +43093,8 @@ components:
       type: object
       required: [workload_slug, workload_name, release, variables, secrets, bindings, domains, routes, policies]
       properties:
+        workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        workload_config_revision: { type: integer, format: int64, minimum: 1 }
         app_id: { type: string, format: uuid }
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -42851,6 +43178,46 @@ components:
           maxItems: 50
           items: { $ref: '#/components/schemas/DeclaredRoute' }
 
+    ProjectEnvironmentQueueBinding:
+      description: Desired logical queue binding without runtime consumer identity or messages. HTTP consumers require push mode and a function workload.
+      type: object
+      required: [name, queue_name, mode, workload_class, enabled, max_concurrency]
+      additionalProperties: false
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        mode: { type: string, enum: [pull, push] }
+        workload_class: { type: string, enum: [worker, job, http] }
+        enabled: { type: boolean }
+        max_concurrency: { type: integer, minimum: 1, maximum: 10000 }
+        retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
+
+    ReplaceProjectEnvironmentQueueBindingsRequest:
+      description: Complete stage queue replacement fenced by the workload revision, not the queue collection clock.
+      type: object
+      required: [expected_revision, bindings]
+      additionalProperties: false
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        bindings:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentQueueBinding' }
+
+    ProjectEnvironmentQueueBindingsResponse:
+      description: Desired stage queue definitions. Consumer activation is currently unavailable and these definitions do not enable delivery or qualify promotion.
+      type: object
+      required: [environment, workload, revision, workload_revision, config_hash, activation_state, bindings]
+      properties:
+        environment: { type: string }
+        workload: { type: string }
+        revision: { type: integer, format: int64, minimum: 1, description: Queue collection clock. }
+        workload_revision: { type: integer, format: int64, minimum: 1, description: Complete workload revision to use as expected_revision on replacement. }
+        config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        activation_state: { type: string, enum: [unavailable] }
+        bindings:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentQueueBinding' }
+
     ProjectEnvironmentSharedResourceResponse:
       description: Application-scoped resource that is shared by all environments.
       type: object
@@ -42865,6 +43232,10 @@ components:
       type: object
       required: [project_slug, environment, protected, configuration, workloads, shared_resources, generated_at]
       properties:
+        feature_flags_hash:
+          description: Fingerprint of the environment identity, current flag version, and configuration observed before qualification probes. Omitted only for the legacy identity with no published flags. Combine with each released workload settings hash when submitting workload_config_hashes.
+          type: string
+          pattern: '^[a-f0-9]{64}$'
         active_release_set:
           description: Active graph, or null when no graph has been published. Its selected members may differ from the per-workload live deployments below.
           oneOf:
@@ -43060,6 +43431,9 @@ components:
       type: object
       required: [workload_slug, workload_name, kind]
       properties:
+        source_workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        target_workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        promoted_workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         workload_slug: { type: string }
         workload_name: { type: string }
         kind:
@@ -43131,6 +43505,11 @@ components:
       additionalProperties: false
       required: [release_set_id, configuration_version, configuration_hash, secret_revision_hashes, checks]
       properties:
+        workload_config_hashes:
+          description: Configuration fingerprints observed before probes; environment-owned settings require an exact match to deployed revisions.
+          type: object
+          propertyNames: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+          additionalProperties: { type: string, pattern: '^[a-f0-9]{64}$' }
         release_set_id: { type: string, format: uuid }
         configuration_version: { type: integer, minimum: 0 }
         configuration_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
@@ -43175,6 +43554,11 @@ components:
       type: object
       required: [id, environment, release_set_id, configuration_version, configuration_hash, secret_revision_hashes, status, checks, created_at, expires_at]
       properties:
+        workload_config_hashes:
+          description: Immutable per-workload fingerprints bound to this qualification receipt.
+          type: object
+          propertyNames: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+          additionalProperties: { type: string, pattern: '^[a-f0-9]{64}$' }
         id: { type: string, format: uuid }
         environment: { type: string }
         release_set_id: { type: string, format: uuid }
@@ -43198,6 +43582,39 @@ components:
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
 
+    ProjectEnvironmentCloneOperationResponse:
+      description: Durable clone progress within one account and project, excluding private source configuration and worker credentials.
+      type: object
+      required: [operation_id, project_slug, source_environment, target_environment, source_revision_hash, status, revision, resources, created_at, updated_at]
+      properties:
+        operation_id: { type: string }
+        project_slug: { type: string }
+        source_environment: { type: string }
+        target_environment: { type: string }
+        source_revision_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        source_release_set_id: { type: string }
+        target_release_set_id: { type: string }
+        status: { type: string, enum: [pending, capturing, copying, publishing, ready, failed, compensating, compensated] }
+        revision: { type: integer, format: int64, minimum: 1 }
+        resources:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentCloneResourceResponse' }
+        error_code: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ProjectEnvironmentCloneResourceResponse:
+      description: Progress and named blockers for an individual resource in a complete environment clone.
+      type: object
+      required: [kind, name, status]
+      properties:
+        kind: { type: string }
+        name: { type: string }
+        source_id: { type: string }
+        source_version: { type: string }
+        target_id: { type: string }
+        capture_point: { type: string }
+        status: { type: string, enum: [planned, capturing, captured, copying, verifying, ready, failed, unsupported, compensating, compensated] }
+
     CreateProjectEnvironmentRequest:
       description: Request to register or clone a named project environment.
       type: object
@@ -43214,6 +43631,10 @@ components:
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
           not: { const: default }
           description: Source environment whose scoped configuration and values are copied.
+        full:
+          type: boolean
+          default: false
+          description: Require a complete isolated copy; use the dedicated environment-clones route. Admission remains closed while complete coverage is unavailable.
         share_resources:
           type: boolean
           default: false
@@ -50266,7 +50687,7 @@ components:
         expires_after_ms: { type: integer, minimum: 0, maximum: 2592000000, default: 0 }
 
     WorkPolicyResponse:
-      description: Saved app policy and revision used for subsequent work admissions.
+      description: Saved policy definition and revision. For stage desired settings, created_at and updated_at identify the containing immutable workload configuration revision; stage execution remains gated.
       type: object
       additionalProperties: false
       required: [name, revision, max_running_per_key, max_running_per_fairness_key, pending_updates, debounce_ms, expires_after_ms, created_at, updated_at]
@@ -55223,6 +55644,12 @@ components:
 
     ApplicationStandardsPending:
       description: "code: application_standards_pending. Inherited application controls must be persisted before this service accepts a deployment. Retry after enrollment completes."
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    FullEnvironmentCloneUnavailable:
+      description: 'code: environment_full_clone_unavailable — complete isolated resource coverage and coordinated data copies are unavailable.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

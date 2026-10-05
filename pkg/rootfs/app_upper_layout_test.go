@@ -64,7 +64,7 @@ type inspectSidecarRootRunner struct {
 	t *testing.T
 }
 
-func (r inspectSidecarRootRunner) Run(_ context.Context, argv []string) error {
+func (r inspectSidecarRootRunner) Run(ctx context.Context, argv []string) error {
 	r.t.Helper()
 	var root string
 	for i, arg := range argv {
@@ -85,7 +85,7 @@ func (r inspectSidecarRootRunner) Run(_ context.Context, argv []string) error {
 			r.t.Fatal("sidecar changed customer content", name, err)
 		}
 	}
-	if _, err := scanview.Snapshot(r.t.Context(), filepath.Join(root, "upper")); err != nil {
+	if _, err := scanview.Snapshot(ctx, filepath.Join(root, "upper")); err != nil {
 		r.t.Fatal("sidecar root contains unsupported scanner entries", err)
 	}
 	return os.WriteFile(argv[len(argv)-2], []byte("TEST-EXT4"), 0o600)

@@ -166,6 +166,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_CANARY_PROGRESSION_TOKEN", Owners: []string{"apid", "meterd"}, Source: EnvSourceSecretsEnv, Note: "distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_SAFEDEPLOY_TOKEN"},
 	{Name: "FAAS_CERT_EXPIRY_REFRESHER_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_CLI_AUTH_URL_BASE", Owners: []string{"apid"}, Source: EnvSourceDefault},
+	{Name: "FAAS_CLONE_WORKER_SPOOL_DIR", Owners: []string{"apid"}, Source: EnvSourceUnit, Note: "dedicated APID clone-worker mode; private 0700 spool with one OS-locked owner"},
 	{Name: "FAAS_COMMIT_API_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "opt-in Gregale Commit qualification gate; disabled unless explicitly set to true"},
 	{Name: "FAAS_COMMIT_DATABASE_CIDRS", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "operator-approved database address prefixes; required when the Commit relay is enabled"},
 	{Name: "FAAS_COMMIT_DATABASE_HOSTS", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "exact operator-approved database hostnames; required when the Commit relay is enabled"},

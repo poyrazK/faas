@@ -635,7 +635,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.recoverClaimAfterLookupFailure(ctx, build, "load deployment", err)
 		return BuildResult{}, fmt.Errorf("builderd: load deployment: %w", err)
 	}
-	app, err := b.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, b.store, dep)
 	if err != nil {
 		b.recoverClaimAfterLookupFailure(ctx, build, "load app", err)
 		return BuildResult{}, fmt.Errorf("builderd: load app: %w", err)

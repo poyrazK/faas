@@ -1,6 +1,7 @@
 package faas
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 )
 
 func TestApplicationStandardSDKMutations(t *testing.T) {
+	ctx := context.Background()
 	const id = "00000000-0000-4000-8000-000000000001"
 	expires := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	local := SetApplicationStandardLocalIntentRequest{ExpectedRevision: 1, Settings: json.RawMessage(`{}`), AdditionalLogDestinations: []string{}}
@@ -59,15 +61,15 @@ func TestApplicationStandardSDKMutations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := client.SetApplicationStandardLocalIntent(t.Context(), "acme", id, local)
+	enrollment, err := client.SetApplicationStandardLocalIntent(ctx, "acme", id, local)
 	if err != nil || enrollment.DesiredRevision != 2 || enrollment.PersistedRevision != 1 || enrollment.ObservedRevision != 0 {
 		t.Fatalf("intent: %+v %v", enrollment, err)
 	}
-	x, err := client.ApproveApplicationStandardException(t.Context(), "acme", id, approval)
+	x, err := client.ApproveApplicationStandardException(ctx, "acme", id, approval)
 	if err != nil || x.Status != "active" || string(x.Value) != `false` || !x.ExpiresAt.Equal(expires) {
 		t.Fatalf("approval: %+v %v", x, err)
 	}
-	x, err = client.RevokeApplicationStandardException(t.Context(), "acme", id, id, revoke)
+	x, err = client.RevokeApplicationStandardException(ctx, "acme", id, id, revoke)
 	if err != nil || x.Status != "revoked" {
 		t.Fatalf("revocation: %+v %v", x, err)
 	}

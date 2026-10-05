@@ -98,6 +98,10 @@ func (m *MemStore) PublishInstanceApplicationStandardPromotion(ctx context.Conte
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.publishStandardPromotionLocked(ctx, r)
+}
+
+func (m *MemStore) publishStandardPromotionLocked(ctx context.Context, r runtimeadmission.Receipt) (Instance, error) {
 	ins, capture, parent, err := m.lockNativePromotionLocked(r.Binding.InstanceID, true)
 	if err != nil {
 		return Instance{}, err

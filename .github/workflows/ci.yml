@@ -117,10 +117,10 @@ jobs:
   test:
     name: lint + build
     runs-on: ubuntu-latest
-    # golangci-lint alone has an 8-minute cold-cache budget. Cold builds
-    # plus the real nftables and remaining policy gates can exceed 15
-    # minutes; keep a bounded budget that lets every gate finish.
-    timeout-minutes: 30
+    # Cold package loading exceeded eight minutes with bounded memory.
+    # Allow full lint, cold builds, nftables and all remaining policy gates
+    # to finish within a bounded job budget.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -183,15 +183,17 @@ jobs:
         run: make regression-pin-check-test
       - name: lint (golangci-lint v8)
         uses: golangci/golangci-lint-action@v9
+        env:
+          # Bound analysis memory after repeated hosted-runner shutdowns.
+          GOMEMLIMIT: 3GiB
+          GOGC: 75
+          GOMAXPROCS: 2
         with:
           version: v2.4.0
-          # The full repository lint is clean but its runtime keeps growing
-          # with the tree: on 2026-10-04 passing runs took 430-476 s and
-          # main itself failed at the old 8 m deadline (484-509 s). Keep the
-          # linter deadline well above the observed cold-cache runtime so
-          # timing is not reported as a lint failure; the job-level
-          # timeout-minutes (30) still bounds the step.
-          args: --timeout=15m
+          # Full cold-cache analysis needed over fourteen minutes under
+          # these memory bounds. Leave headroom while retaining every rule
+          # and a bounded deadline for the complete repository analysis.
+          args: --timeout=20m
           # The action's own cache is keyed per 7-day interval and never re-saved
           # on a hit (it restored 10 MB on run 34166672535); use the job cache above.
           skip-cache: true
@@ -533,7 +535,8 @@ jobs:
       id-token: write
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        # ADR-531 checkpoint contracts require PostgreSQL 16 or newer.
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -554,7 +557,7 @@ jobs:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi
@@ -636,7 +639,7 @@ jobs:
       id-token: write
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -713,14 +716,14 @@ jobs:
       matrix:
         include:
           - id: a
-            label: state/reconcile/reposcan
+            label: parity/operations/reconcile/reposcan
             # Bridge, GitOps, and customer-operation acceptance require PostgreSQL.
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
+            package_pattern: '/(pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
             coverage_file: cover-shard2a.out
             gitops_acceptance: true
             state_coverage: true
             test_timeout: 30m
-            job_timeout_minutes: 40
+            job_timeout_minutes: 45
           - id: b
             label: gregale/gregalectl/daemons
             # Packages with pgtest-backed tests must run in a Postgres shard:
@@ -743,11 +746,15 @@ jobs:
       id-token: write
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        # Keep state and provider SQL contracts on the supported version.
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
           POSTGRES_DB: faas
+          # Parallel packages create/drop the full migrated schema. Give their
+          # relation locks headroom without reducing race-test concurrency.
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports:
           - 5432:5432
         options: >-
@@ -762,7 +769,7 @@ jobs:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi
@@ -909,6 +916,29 @@ jobs:
           python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard2a.out
       - name: coverage floor (ship-blocking packages)
         run: make coverage-floor COVERDIR=coverage
+
+  # Branch protection matches this historical name exactly. Keep it stable
+  # while its original state/PostgreSQL inventory runs in parallel above.
+  unit-tests-pg-2a-gate:
+    name: unit tests (pg shard 2a — state/reconcile/reposcan)
+    if: always()
+    needs: [unit-tests-state, unit-tests-pg-2, state-coverage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: require every state and PostgreSQL shard
+        env:
+          STATE_RESULT: ${{ needs.unit-tests-state.result }}
+          POSTGRES_RESULT: ${{ needs.unit-tests-pg-2.result }}
+          COVERAGE_RESULT: ${{ needs.state-coverage.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$STATE_RESULT" != success || "$POSTGRES_RESULT" != success || "$COVERAGE_RESULT" != success ]]; then
+            echo "::error::Required state/PostgreSQL tests or coverage did not pass: state=$STATE_RESULT postgres=$POSTGRES_RESULT coverage=$COVERAGE_RESULT"
+            exit 1
+          fi
 
   # Shard 3 (pure Go heavy): pkg/sched, pkg/fcvm, pkg/gateway, pkg/imaged, etc. No Postgres needed.
   unit-tests-pure-1:
@@ -1719,7 +1749,7 @@ jobs:
       contents: read
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -1892,7 +1922,7 @@ jobs:
     # flakes before the retry.
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -1920,7 +1950,7 @@ jobs:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi
@@ -2121,7 +2151,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -2171,7 +2201,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -2193,7 +2223,7 @@ jobs:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi
@@ -2265,7 +2295,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -2287,7 +2317,7 @@ jobs:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi
@@ -2344,7 +2374,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -2366,7 +2396,7 @@ jobs:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi
@@ -2423,7 +2453,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:15
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
@@ -2445,7 +2475,7 @@ jobs:
       - name: pre-pull postgres image
         run: |
           for attempt in 1 2 3; do
-            if docker pull mirror.gcr.io/library/postgres:15; then
+            if docker pull mirror.gcr.io/library/postgres:16; then
               echo "pulled on attempt ${attempt}"
               break
             fi

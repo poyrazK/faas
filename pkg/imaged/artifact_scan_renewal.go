@@ -100,7 +100,7 @@ func producedRuntimeRenewalDue(ctx context.Context, scans state.DeploymentRuntim
 	}
 	// A failed current binding cannot be reused; schedule fresh evidence.
 	due := err != nil || producedEvidenceRenewalDue(current.ScannedAt, fresh.ExpiresAt, now)
-	return due, nil
+	return due, nil //nolint:nilerr // An invalid retained binding schedules fresh scan evidence instead of reusing it.
 }
 
 func producedEvidenceRenewalDue(at, expires, now time.Time) bool {

@@ -1229,10 +1229,11 @@ Delete one app (positional: &lt;slug&gt;)
 
 Get/update one app or run a deployment-attached command
 
-`gregale app <slug> [<subcommand>] [--visibility <public|internal>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--idle <SEC>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--basic-user <USER>] [--basic-pass <PASS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--eviction-priority <best_effort|reserved>] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode <optional|required>] [--only-declared-routes] [--no-only-declared-routes] [--head-wakes] [--crawler-policy <wake|cached|block>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <http1|http2|grpc>] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]... [--overflow-node <NAME>]`
+`gregale app <slug> [<subcommand>] [--environment <SLUG>] [--visibility <public|internal>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--idle <SEC>] [--request-timeout <SEC>] [--require-signed <value>] [--security-policy <value>] [--basic-user <USER>] [--basic-pass <PASS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--eviction-priority <best_effort|reserved>] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode <optional|required>] [--only-declared-routes] [--no-only-declared-routes] [--head-wakes] [--crawler-policy <wake|cached|block>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <http1|http2|grpc>] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]... [--overflow-node <NAME>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--environment <SLUG>` | read or edit desired workload settings in a project environment |  |
 | `--visibility <public|internal>` | set public edge exposure | one of `public` · `internal` |
 | `--profile <micro|small|medium|large|xlarge>` | set a named RAM/CPU profile |  |
 | `--ram <MB>` | set RAM in MB |  |
@@ -1288,6 +1289,7 @@ Examples:
 
 ```sh
 gregale app my-api --maintenance
+gregale app my-api --environment staging --ram 512
 gregale app my-api --no-maintenance --streaming-enabled --websocket-enabled --route-metrics
 gregale app my-api --consumer-auth-mode required --json
 ```
@@ -1296,7 +1298,11 @@ gregale app my-api --consumer-auth-mode required --json
 
 Set max_concurrency / resource profile / RAM / CPU
 
-`gregale app <slug> scale`
+`gregale app <slug> scale [--environment <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--environment <SLUG>` | edit desired workload settings in a project environment |  |
 
 ### app rename
 
@@ -4071,9 +4077,9 @@ Clone project environments or manage app runtime env/secrets
 
 ### env create
 
-Clone a project environment with isolated managed data by default
+Clone a project environment with isolated managed data by default; full-copy admission currently returns environment_full_clone_unavailable with named blockers
 
-`gregale env create --from <ENV> [--project <SLUG>] [--protected] [--share-resources] <environment>`
+`gregale env create --from <ENV> [--project <SLUG>] [--protected] [--share-resources] [--full] [--wait] [--timeout <SECONDS>] <stage>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4081,6 +4087,33 @@ Clone a project environment with isolated managed data by default
 | `--project <SLUG>` | project slug (defaults to linked project) |  |
 | `--protected` | protect the new environment |  |
 | `--share-resources` | use source managed data with fresh target credentials instead of isolating it |  |
+| `--full` | require complete configuration, workloads, policies and isolated data coverage; never fall back to a partial clone |  |
+| `--wait` | wait for a full clone operation to finish (requires --full) |  |
+| `--timeout <SECONDS>` | maximum local wait time; the durable server operation continues after timeout |  |
+
+Examples:
+
+```sh
+gregale env create staging --from production --full --wait
+```
+
+### env clone-status
+
+Read durable clone progress before or after the target exists; timeout exits 3 with a resume command, failed or compensated operations exit 1
+
+`gregale env clone-status [--project <SLUG>] [--wait] [--timeout <SECONDS>] <operation-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--project <SLUG>` | project slug (defaults to linked project) |  |
+| `--wait` | wait for the same durable clone operation to finish |  |
+| `--timeout <SECONDS>` | maximum local wait time |  |
+
+Examples:
+
+```sh
+gregale env clone-status <operation-id> --project shop --wait
+```
 
 ### env pull
 
@@ -5993,7 +6026,7 @@ Show a project and its workloads
 
 ### projects environments
 
-Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config [set]|routes set|diff|preview|promote|status|rollback); qualify binds probes to release, config, and secret revisions
+Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config [set]|routes set|queues get|queues set|diff|preview|promote|status|rollback); qualify binds probes to release, config, and secret revisions
 
 #### projects environments list
 
@@ -6088,6 +6121,53 @@ Manage environment routes
 Manage environment policies
 
 `gregale projects environments policies`
+
+#### projects environments queues
+
+Read or replace a stage workload&#39;s complete desired queue collection; consumer activation is unavailable. Set input contains expected_revision and bindings; [] removes all definitions
+
+`gregale projects environments queues [--file <PATH>] [--stdin] <get|set> <project> <stage> <workload>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | set reads this JSON file (choose --file or --stdin) |  |
+| `--stdin` | set reads JSON from stdin |  |
+
+Examples:
+
+```sh
+gregale projects environments queues get shop staging shop-worker
+gregale projects environments queues set shop staging shop-worker --file queues.json
+```
+
+##### projects environments queues get
+
+Read queue definitions and their workload revision as JSON
+
+`gregale projects environments queues get <project> <stage> <workload>`
+
+Examples:
+
+```sh
+gregale projects environments queues get shop staging shop-worker
+```
+
+##### projects environments queues set
+
+Replace queue definitions from JSON containing expected_revision and bindings; [] removes all stage bindings
+
+`gregale projects environments queues set [--file <PATH>] [--stdin] <project> <stage> <workload>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | JSON queue configuration file (choose --file or --stdin) |  |
+| `--stdin` | read JSON queue configuration from stdin |  |
+
+Examples:
+
+```sh
+gregale projects environments queues set shop staging shop-worker --file queues.json
+```
 
 #### projects environments gitops
 

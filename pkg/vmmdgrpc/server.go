@@ -636,8 +636,8 @@ func (s *Server) wakeWithBridgePrewarm(ctx context.Context, wr fcvm.WakeRequest,
 	if s.streamBridges == nil {
 		s.streamBridges = newStreamBridgeManager(s.log)
 	}
-	inst, err := fastVMM.WakeWithNetworkReady(ctx, wr, func(ready fcvm.WakeNetworkReady) { //nolint:contextcheck // The persistent bridge follows vmmd's lifecycle, not the short wake RPC.
-		s.streamBridges.prewarm(&vmmdpb.ForwardHTTPRequestInit{
+	inst, err := fastVMM.WakeWithNetworkReady(ctx, wr, func(ready fcvm.WakeNetworkReady) {
+		s.streamBridges.prewarm(ctx, &vmmdpb.ForwardHTTPRequestInit{
 			Instance:    ready.Instance,
 			Port:        uint32(wr.Port),
 			AppProtocol: appProtocol,

@@ -50,7 +50,7 @@ func (s *PgStore) GetInstanceApplicationStandardWarmParent(ctx context.Context, 
 	if err != nil {
 		return runtimeadmission.Receipt{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	input, err := lockStandardNativePromotion(ctx, tx, id, false)
 	if err != nil {
 		return runtimeadmission.Receipt{}, err
@@ -66,7 +66,7 @@ func (s *PgStore) IssueInstanceApplicationStandardPromotion(ctx context.Context,
 	if err != nil {
 		return runtimeadmission.Promotion{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	input, err := lockStandardNativePromotion(ctx, tx, p.Binding.InstanceID, false)
 	if err != nil {
 		return runtimeadmission.Promotion{}, err
@@ -119,7 +119,18 @@ func (s *PgStore) PublishInstanceApplicationStandardPromotion(ctx context.Contex
 	if err != nil {
 		return Instance{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
+	instance, err := publishStandardPromotionTx(ctx, tx, r)
+	if err != nil {
+		return Instance{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Instance{}, mapErr(err)
+	}
+	return instance, nil
+}
+
+func publishStandardPromotionTx(ctx context.Context, tx pgx.Tx, r runtimeadmission.Receipt) (Instance, error) {
 	input, err := lockStandardNativePromotion(ctx, tx, r.Binding.InstanceID, true)
 	if err != nil {
 		return Instance{}, err
@@ -136,34 +147,13 @@ func (s *PgStore) PublishInstanceApplicationStandardPromotion(ctx context.Contex
 	if err != nil {
 		return Instance{}, err
 	}
-	if !p.Grant.Parent.Equal(input.Parent) || p.Grant.CheckReceipt(r, time.Unix(0, r.CompletedAtUnixNano)) != nil {
-		return Instance{}, ErrApplicationStandardRuntimeStale
+	if err := checkStandardPromotionPublication(input, p, r); err != nil {
+		return Instance{}, err
 	}
-	if input.State == string(StateRunning) {
-		if input.PromotionToken == nil || *input.PromotionToken != r.Binding.Token || p.Receipt == nil || !p.Receipt.Equal(r) {
-			return Instance{}, ErrConflict
-		}
-	} else {
-		if !standardNativeGrantWithinArtifactLease(r.Binding.ExpiresAtUnixNano, input.artifactDeadline()) {
-			return Instance{}, ErrApplicationStandardRuntimeStale
-		}
-		if p.Grant.CheckReceipt(r, time.Unix(0, input.ClockUnixNano)) != nil {
-			return Instance{}, ErrApplicationStandardRuntimeStale
-		}
-		if p.Receipt != nil && !p.Receipt.Equal(r) {
-			return Instance{}, ErrConflict
-		}
+	if input.State != string(StateRunning) {
 		if p.Receipt == nil {
-			raw, err := json.Marshal(r)
-			if err != nil {
+			if err := recordStandardPromotionReceipt(ctx, tx, r); err != nil {
 				return Instance{}, err
-			}
-			count, err := q.RecordInstanceApplicationStandardPromotionReceipt(ctx, tx, sqlc.RecordInstanceApplicationStandardPromotionReceiptParams{Token: mustPgUUID(r.Binding.Token), Receipt: raw})
-			if err != nil {
-				return Instance{}, fmt.Errorf("save native promotion receipt: %w", mapErr(err))
-			}
-			if count != 1 {
-				return Instance{}, ErrConflict
 			}
 		}
 		count, err := q.PublishInstanceApplicationStandardPromotion(ctx, tx, sqlc.PublishInstanceApplicationStandardPromotionParams{Token: mustPgUUID(r.Binding.Token), InstanceID: mustPgUUID(r.Binding.InstanceID)})
@@ -178,8 +168,42 @@ func (s *PgStore) PublishInstanceApplicationStandardPromotion(ctx context.Contex
 	if err != nil {
 		return Instance{}, mapErr(err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return Instance{}, mapErr(err)
-	}
 	return standardPublishedInstance(actual), nil
+}
+
+func checkStandardPromotionPublication(input nativePromotionLockedInputs, p instanceStandardPromotion, r runtimeadmission.Receipt) error {
+	if !p.Grant.Parent.Equal(input.Parent) || p.Grant.CheckReceipt(r, time.Unix(0, r.CompletedAtUnixNano)) != nil {
+		return ErrApplicationStandardRuntimeStale
+	}
+	if input.State == string(StateRunning) {
+		if input.PromotionToken == nil || *input.PromotionToken != r.Binding.Token || p.Receipt == nil || !p.Receipt.Equal(r) {
+			return ErrConflict
+		}
+		return nil
+	}
+	if !standardNativeGrantWithinArtifactLease(r.Binding.ExpiresAtUnixNano, input.artifactDeadline()) {
+		return ErrApplicationStandardRuntimeStale
+	}
+	if p.Grant.CheckReceipt(r, time.Unix(0, input.ClockUnixNano)) != nil {
+		return ErrApplicationStandardRuntimeStale
+	}
+	if p.Receipt != nil && !p.Receipt.Equal(r) {
+		return ErrConflict
+	}
+	return nil
+}
+
+func recordStandardPromotionReceipt(ctx context.Context, tx pgx.Tx, r runtimeadmission.Receipt) error {
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	count, err := sqlc.New().RecordInstanceApplicationStandardPromotionReceipt(ctx, tx, sqlc.RecordInstanceApplicationStandardPromotionReceiptParams{Token: mustPgUUID(r.Binding.Token), Receipt: raw})
+	if err != nil {
+		return fmt.Errorf("save native promotion receipt: %w", mapErr(err))
+	}
+	if count != 1 {
+		return ErrConflict
+	}
+	return nil
 }

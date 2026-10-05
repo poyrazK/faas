@@ -67,25 +67,3 @@ func (e *Engine) resumeWarmWithStandards(ctx context.Context, warm state.Instanc
 	}
 	return &r, nil
 }
-
-func (e *Engine) publishWarmWithStandards(ctx context.Context, warm state.Instance, r *runtimeadmission.Receipt) (state.Instance, error) {
-	if r == nil {
-		return e.store.PublishInstanceRuntime(ctx, warm.ID, string(state.StateWarm), warm.Netns, warm.HostIP, warm.GuestUID)
-	}
-	store, ok := e.store.(state.InstanceApplicationStandardPromotionStore)
-	if !ok {
-		return state.Instance{}, runtimeadmission.ErrUnavailable
-	}
-	if r.Binding.InstanceID != warm.ID || r.Netns != warm.Netns || r.HostIP != warm.HostIP || int(r.LeaseUID) != warm.GuestUID {
-		return state.Instance{}, runtimeadmission.ErrInvalid
-	}
-	fresh, err := store.PublishInstanceApplicationStandardPromotion(ctx, *r)
-	if err == nil {
-		return fresh, nil
-	}
-	// Publication is idempotent for this exact saved receipt. Recover a lost
-	// commit acknowledgment without invoking native resume a second time.
-	retryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ApplicationStandardRuntimeCleanupTimeout)
-	defer cancel()
-	return store.PublishInstanceApplicationStandardPromotion(retryCtx, *r)
-}

@@ -1,6 +1,7 @@
 package faas
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 )
 
 func TestApplicationStandardSDKAssignmentInventory(t *testing.T) {
+	ctx := context.Background()
 	const id = "00000000-0000-4000-8000-000000000001"
 	stamp, err := time.Parse(time.RFC3339Nano, "2026-10-04T12:00:00.123456Z")
 	if err != nil {
@@ -34,11 +36,11 @@ func TestApplicationStandardSDKAssignmentInventory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := client.GetApplicationStandardAssignment(t.Context(), "acme", id)
+	got, err := client.GetApplicationStandardAssignment(ctx, "acme", id)
 	if err != nil || !reflect.DeepEqual(got, record) {
 		t.Fatalf("retained assignment: %+v %v", got, err)
 	}
-	list, err := client.ListApplicationStandardAssignments(t.Context(), "acme", id, 1)
+	list, err := client.ListApplicationStandardAssignments(ctx, "acme", id, 1)
 	if err != nil || len(list.Assignments) != 1 || !reflect.DeepEqual(list.Assignments[0], record) || list.NextPageAfter != id {
 		t.Fatalf("paged inventory: %+v %v", list, err)
 	}

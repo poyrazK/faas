@@ -56,9 +56,8 @@ func TestWakeBurstSpreadsSnapshotRestoresAcrossPgEngines(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateDeployment %d: %v", i, err)
 		}
-		// PostgreSQL creation always stages a pending deployment. Activate it
-		// explicitly so the wake exercises restore placement rather than an
-		// absent live deployment.
+		// PgStore creates pending deployment intent; publish it before an
+		// unscoped wake asks for the production serving deployment.
 		if err := firstStore.MarkDeploymentLive(ctx, dep.ID); err != nil {
 			t.Fatalf("MarkDeploymentLive %d: %v", i, err)
 		}

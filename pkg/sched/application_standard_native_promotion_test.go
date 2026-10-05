@@ -25,9 +25,9 @@ type lostPromotionPublicationAckStore struct {
 	publications int
 }
 
-func (s *lostPromotionPublicationAckStore) PublishInstanceApplicationStandardPromotion(ctx context.Context, r runtimeadmission.Receipt) (state.Instance, error) {
-	actual, err := s.MemStore.PublishInstanceApplicationStandardPromotion(ctx, r)
-	if err != nil {
+func (s *lostPromotionPublicationAckStore) PublishOwnedInstanceRuntime(ctx context.Context, p state.RuntimeInstancePublication) (state.Instance, error) {
+	actual, err := s.MemStore.PublishOwnedInstanceRuntime(ctx, p)
+	if err != nil || p.PromotionReceipt == nil {
 		return actual, err
 	}
 	s.publications++

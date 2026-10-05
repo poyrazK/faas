@@ -133,16 +133,22 @@ export class InvocationsService {
   }
   /**
    * List named work policies for an app.
+   * Stage reads return the complete desired policy collection from immutable workload settings. An uninitialized stage collection returns 409 and never inherits production policies. Stage policy execution remains unavailable until work lanes and producers are isolated.
    * @returns WorkPolicyListResponse App work policies.
    * @throws ApiError
    */
   public static listAppWorkPolicies({
     slug,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Registered project environment. Omit for legacy production policies. An explicit production selection uses the legacy collection.
+     */
+    environment?: string,
   }): CancelablePromise<WorkPolicyListResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -150,15 +156,20 @@ export class InvocationsService {
       path: {
         'slug': slug,
       },
+      query: {
+        'environment': environment,
+      },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }
   /**
    * Create or update a named app work policy.
-   * Policy changes affect new work only. Existing invocations retain their admission settings and policy revision.
+   * Legacy production changes affect new work only. Stage edits create immutable desired workload configuration and subsequent deployments pin it; existing deployments keep their policies. Stage policy execution and qualification remain unavailable until work lanes and producers are isolated.
    * @returns WorkPolicyResponse Saved policy.
    * @throws ApiError
    */
@@ -166,6 +177,8 @@ export class InvocationsService {
     slug,
     name,
     requestBody,
+    environment,
+    ifWorkloadRevision,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -176,6 +189,14 @@ export class InvocationsService {
      */
     name: string,
     requestBody: UpsertWorkPolicyRequest,
+    /**
+     * Edit the complete desired collection in a registered stage. Omit for legacy production policies. Protected environments reject direct edits.
+     */
+    environment?: string,
+    /**
+     * Expected complete desired workload revision for a stage edit. Zero means no revision exists; concurrent edits return 409.
+     */
+    ifWorkloadRevision?: number,
   }): CancelablePromise<WorkPolicyResponse> {
     return __request(OpenAPI, {
       method: 'PUT',
@@ -184,22 +205,33 @@ export class InvocationsService {
         'slug': slug,
         'name': name,
       },
+      headers: {
+        'If-Workload-Revision': ifWorkloadRevision,
+      },
+      query: {
+        'environment': environment,
+      },
       body: requestBody,
       mediaType: 'application/json',
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }
   /**
    * Delete a policy after removing event subscription bindings.
+   * A stage deletion preserves an explicit empty collection and its collection revision clock after the last policy is removed. Production producer bindings retain their existing deletion checks.
    * @returns void
    * @throws ApiError
    */
   public static deleteAppWorkPolicy({
     slug,
     name,
+    environment,
+    ifWorkloadRevision,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -209,6 +241,14 @@ export class InvocationsService {
      * Named app work policy.
      */
     name: string,
+    /**
+     * Edit the complete desired collection in a registered stage. Omit for legacy production policies. Protected environments reject direct edits.
+     */
+    environment?: string,
+    /**
+     * Expected complete desired workload revision for a stage edit.
+     */
+    ifWorkloadRevision?: number,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
       method: 'DELETE',
@@ -217,15 +257,23 @@ export class InvocationsService {
         'slug': slug,
         'name': name,
       },
+      headers: {
+        'If-Workload-Revision': ifWorkloadRevision,
+      },
+      query: {
+        'environment': environment,
+      },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }
   /**
    * Cancel pending work for one policy and application key.
-   * Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work.
+   * Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work. A stage selection cancels only its isolated environment lane, including work admitted under a policy that has since been deleted from desired settings. Cancellation receipts are independent per environment. Omitting environment preserves the production API.
    * @returns CancelPendingWorkResponse Durable cancellation receipt.
    * @throws ApiError
    */
@@ -234,6 +282,7 @@ export class InvocationsService {
     name,
     requestBody,
     idempotencyKey,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -250,6 +299,10 @@ export class InvocationsService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Registered project environment whose pending work should be cancelled. Stage lanes and receipts are isolated by the environment's immutable identity.
+     */
+    environment?: string,
   }): CancelablePromise<CancelPendingWorkResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -261,11 +314,16 @@ export class InvocationsService {
       headers: {
         'Idempotency-Key': idempotencyKey,
       },
+      query: {
+        'environment': environment,
+      },
       body: requestBody,
       mediaType: 'application/json',
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }

@@ -108,6 +108,8 @@ type Unit struct {
 	// Empty omits the directive.
 	MemoryHigh            string
 	MemoryMax             string
+	CPUQuota              string // aggregate process and subprocess CPU ceiling
+	TasksMax              string // aggregate process/thread ceiling
 	Delegate              bool
 	CapabilityBoundingSet []string
 	AmbientCapabilities   []string
@@ -154,7 +156,7 @@ func BoolPtr(b bool) *bool { return &b }
 // then [Service], then [Install] — matching every shipped faas unit.
 // Inside [Service], field ordering is fixed (Type → User → Group →
 // ExecStartPre → ExecStart → Restart → RestartSec →
-// TimeoutStartSec → WatchdogSec → Slice → MemoryHigh → MemoryMax → Delegate →
+// TimeoutStartSec → WatchdogSec → Slice → MemoryHigh → MemoryMax → CPUQuota → TasksMax → Delegate →
 // CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
 // Environment entries → LoadCredential entries → NoNewPrivileges →
 // ProtectSystem → ProtectHome → PrivateTmp → PrivateDevices →\n →
@@ -208,6 +210,8 @@ func (u Unit) Render() []byte {
 	writeStringKV(&buf, "Slice", u.Slice)
 	writeStringKV(&buf, "MemoryHigh", u.MemoryHigh)
 	writeStringKV(&buf, "MemoryMax", u.MemoryMax)
+	writeStringKV(&buf, "CPUQuota", u.CPUQuota)
+	writeStringKV(&buf, "TasksMax", u.TasksMax)
 	if u.Delegate {
 		buf.WriteString("Delegate=yes\n")
 	}
@@ -516,6 +520,10 @@ func apply(u *Unit, section, key, val string) error {
 		u.MemoryHigh = val
 	case "[Service]/MemoryMax":
 		u.MemoryMax = val
+	case "[Service]/CPUQuota":
+		u.CPUQuota = val
+	case "[Service]/TasksMax":
+		u.TasksMax = val
 	case "[Service]/Delegate":
 		u.Delegate = parseYes(val)
 	case "[Service]/CapabilityBoundingSet":
@@ -691,6 +699,8 @@ func Diff(a, b Unit) []string {
 	add("[Service]", "Slice", a.Slice, b.Slice)
 	add("[Service]", "MemoryHigh", a.MemoryHigh, b.MemoryHigh)
 	add("[Service]", "MemoryMax", a.MemoryMax, b.MemoryMax)
+	add("[Service]", "CPUQuota", a.CPUQuota, b.CPUQuota)
+	add("[Service]", "TasksMax", a.TasksMax, b.TasksMax)
 	add("[Service]", "Delegate", boolStr(a.Delegate), boolStr(b.Delegate))
 	add("[Service]", "CapabilityBoundingSet",
 		fmt.Sprintf("%v|%d", sortClone(a.CapabilityBoundingSet), len(a.CapabilityBoundingSet)),

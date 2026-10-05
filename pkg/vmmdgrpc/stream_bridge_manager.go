@@ -109,7 +109,7 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 	}
 	// The reaper belongs to the VMMD server, not to this request. It is
 	// canceled by Server.Close, so it intentionally outlives ctx.
-	m.startReaper() //nolint:contextcheck // manager lifetime is longer than one RPC
+	m.startReaper(ctx)
 	m.mu.Lock()
 	// A persistent bridge is owned by this manager, not by the request that
 	// happened to start it. Passing ctx here would make exec.CommandContext
@@ -200,11 +200,11 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 // prewarm publishes a starting entry before returning, then performs the
 // process/socket startup in the background. A first request racing the startup
 // joins the same ready channel in acquire instead of spawning a second bridge.
-func (m *streamBridgeManager) prewarm(req *vmmdpb.ForwardHTTPRequestInit, netnsName string) {
+func (m *streamBridgeManager) prewarm(ctx context.Context, req *vmmdpb.ForwardHTTPRequestInit, netnsName string) {
 	if m == nil || req == nil || req.GetInstance() == "" || netnsName == "" {
 		return
 	}
-	m.startReaper() //nolint:contextcheck // Bridge manager lifetime extends beyond the wake RPC.
+	m.startReaper(ctx)
 	port := req.GetPort()
 	if port == 0 {
 		port = netns.AppPort
@@ -443,32 +443,33 @@ func (m *streamBridgeManager) stopWatchedEntry(ctx context.Context, entry *strea
 	}
 }
 
-func (m *streamBridgeManager) startReaper() {
+func (m *streamBridgeManager) startReaper(ctx context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return
 	}
 	m.reaperOnce.Do(func() {
-		m.reaperCtx, m.cancel = context.WithCancel(context.Background())
-		go m.reapLoop()
+		reaperCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		m.reaperCtx, m.cancel = reaperCtx, cancel
+		go m.reapLoop(reaperCtx)
 	})
 }
 
-func (m *streamBridgeManager) reapLoop() {
+func (m *streamBridgeManager) reapLoop(ctx context.Context) {
 	ticker := time.NewTicker(m.reapInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			m.reapIdle()
-		case <-m.reaperCtx.Done():
+			m.reapIdle(ctx)
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-func (m *streamBridgeManager) reapIdle() {
+func (m *streamBridgeManager) reapIdle(ctx context.Context) {
 	now := m.now()
 	var expired []*streamBridgeEntry
 	m.mu.Lock()
@@ -482,7 +483,7 @@ func (m *streamBridgeManager) reapIdle() {
 	}
 	m.mu.Unlock()
 	for _, entry := range expired {
-		m.closeEntry(context.Background(), entry)
+		m.closeEntry(ctx, entry)
 	}
 }
 

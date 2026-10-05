@@ -37,7 +37,7 @@ func (m *MemStore) objectURLCredentialLiveLocked(c ObjectS3Credential) bool {
 		return true
 	}
 	b, ok := m.objectBuckets[c.BucketID]
-	if !ok || b.AccountID != c.AccountID || b.State != "ready" {
+	if !ok || b.AccountID != c.AccountID || b.State != "ready" || !m.cloneBucketAccessibleLocked(b) {
 		return false
 	}
 	if c.Status != ObjectS3CredentialStatusActive || !c.URL.ExpiresAt.After(m.clock()) {
@@ -62,6 +62,9 @@ func (m *MemStore) IssueObjectURLCredential(_ context.Context, c ObjectS3Credent
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrNotFound
 	}
 	if c.URL.Request.Method == http.MethodPut {
+		if _, fenced := m.objectWriteFences[b.ID]; fenced {
+			return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrObjectBucketWriteFenced
+		}
 		var captureErr error
 		receipt.Encryption, receipt.EncryptionDefaultRevision, captureErr = m.captureObjectBucketDefaultLocked(receipt.BucketID, receipt.Encryption)
 		if captureErr != nil {

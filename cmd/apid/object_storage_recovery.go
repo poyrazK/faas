@@ -227,6 +227,9 @@ func (s *server) runObjectStorageRecovery(ctx context.Context) {
 		if err := s.reconcileObjectMultipartUploads(ctx, observe); err != nil && ctx.Err() == nil {
 			s.log.Warn("object storage multipart recovery sweep failed")
 		}
+		if err := s.pruneObjectUploadGrants(ctx); err != nil && ctx.Err() == nil {
+			s.log.Warn("object upload grant pruning failed")
+		}
 		if err := s.reconcileObjectUploads(ctx, observe); err != nil && ctx.Err() == nil {
 			s.log.Warn("object upload recovery sweep failed")
 		}
