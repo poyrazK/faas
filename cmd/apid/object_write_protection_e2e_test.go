@@ -131,8 +131,11 @@ func TestWriteProtectionControlE2EMem(t *testing.T) {
 	writeProtectionControlE2E(t, e.s, e.store, e.acct, e.key, nil, func(reset bool) {
 		if reset {
 			now = time.Now().UTC()
+			// Signed URL admission must follow its wall-clock expiry source.
+			e.store.SetClockForTest(nil)
 		} else {
 			now = now.Add(16 * time.Minute)
+			e.store.SetClockForTest(func() time.Time { return now })
 		}
 	})
 }
@@ -158,8 +161,11 @@ func TestEventWriteProtectionControlE2EMem(t *testing.T) {
 	writeProtectionControlE2E(t, e.s, e.store, e.acct, e.key, nil, func(reset bool) {
 		if reset {
 			now = time.Now().UTC()
+			// Signed URL admission must follow its wall-clock expiry source.
+			e.store.SetClockForTest(nil)
 		} else {
 			now = now.Add(16 * time.Minute)
+			e.store.SetClockForTest(func() time.Time { return now })
 		}
 	}, true)
 }
