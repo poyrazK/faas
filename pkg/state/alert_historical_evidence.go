@@ -83,7 +83,11 @@ func qualifyHistoricalAlertEvidence(r api.AlertRollback, requests, errors int64,
 		return alertRollbackProgress(r, "failed", "alert_rollback_evidence_missing", nil), false
 	}
 	now = now.UTC()
-	e.CheckedAt, e.LastSampleAt = &now, last
+	e.CheckedAt, e.LastSampleAt = &now, nil
+	if last != nil {
+		sampleAt := last.UTC()
+		e.LastSampleAt = &sampleAt
+	}
 	e.Requests, e.ServerErrors, e.ErrorRatePct = requests, errors, 0
 	if requests > 0 && errors >= 0 && errors <= requests {
 		e.ErrorRatePct = float64(errors) / float64(requests) * 100

@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE app_binding_promotion_revisions ADD COLUMN service_revision bigint NOT NULL DEFAULT 1 CHECK (service_revision > 0);
+ALTER TABLE app_binding_promotion_revisions ADD COLUMN IF NOT EXISTS service_revision bigint NOT NULL DEFAULT 1 CHECK (service_revision > 0);
 -- Reinstallation must not reuse tokens issued before a rollback.
 UPDATE app_binding_promotion_revisions SET epoch=gen_random_uuid(),revision=revision+1
  WHERE app_id IN (SELECT id FROM apps WHERE COALESCE(manifest->'service_bindings','[]'::jsonb)<>'[]'::jsonb);
@@ -10,7 +10,7 @@ UPDATE app_binding_promotion_revisions SET epoch=gen_random_uuid(),revision=revi
 -- A logical name may resolve to production, a project PR sibling or a test-run
 -- workload. Account-wide invalidation avoids duplicating the gateway resolver.
 -- Probe completion and runtime heartbeats never increment this revision.
-CREATE FUNCTION capture_service_binding_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION capture_service_binding_revision() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
  old_row jsonb := CASE WHEN TG_OP='INSERT' THEN '{}'::jsonb ELSE to_jsonb(OLD) END;
  new_row jsonb := CASE WHEN TG_OP='DELETE' THEN '{}'::jsonb ELSE to_jsonb(NEW) END;
@@ -35,11 +35,11 @@ BEGIN
  END LOOP;
  IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
 END $$;
-CREATE TRIGGER service_binding_revision AFTER INSERT OR UPDATE OR DELETE ON apps
+CREATE OR REPLACE TRIGGER service_binding_revision AFTER INSERT OR UPDATE OR DELETE ON apps
  FOR EACH ROW EXECUTE FUNCTION capture_service_binding_revision('id,account_id,slug,status,manifest,project_id,preview_of_slug,preview_pr_number,preview_pr_state,preview_expires_at,app_protocol,websocket_enabled');
-CREATE TRIGGER service_binding_revision AFTER INSERT OR UPDATE OR DELETE ON github_deploy_policies
+CREATE OR REPLACE TRIGGER service_binding_revision AFTER INSERT OR UPDATE OR DELETE ON github_deploy_policies
  FOR EACH ROW EXECUTE FUNCTION capture_service_binding_revision('project_id,account_id,preview_service_policy');
-CREATE TRIGGER service_binding_revision AFTER INSERT OR UPDATE OR DELETE ON scenario_test_members
+CREATE OR REPLACE TRIGGER service_binding_revision AFTER INSERT OR UPDATE OR DELETE ON scenario_test_members
  FOR EACH ROW EXECUTE FUNCTION capture_service_binding_revision('account_id,run_id,workload_name,app_id');
 -- +goose StatementEnd
 

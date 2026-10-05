@@ -69,7 +69,8 @@ func TestRecoverExactServiceRolloutAcceptanceAndStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := t.Context()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	receipt, err := client.RecoverExactRollout(ctx, "api", candidate, predecessor, "incident")
 	if err != nil || receipt.ServiceRecovery == nil || receipt.Recovery != nil || receipt.ServiceRecovery.RequestID != requestID || receipt.Deployment.RolloutState != "rolling_out" || receipt.Deployment.ServiceRolloutHandoff.BindingsCheck.Status != "pending" {
 		t.Fatalf("acceptance: %+v %v", receipt, err)

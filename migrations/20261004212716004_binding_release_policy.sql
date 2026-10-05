@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE app_binding_release_policies (
+CREATE TABLE IF NOT EXISTS app_binding_release_policies (
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  scope text NOT NULL CHECK(scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'),
  mode text NOT NULL CHECK(mode IN ('off','enforce')),
@@ -11,7 +11,7 @@ CREATE TABLE app_binding_release_policies (
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  PRIMARY KEY(app_id,scope)
 );
-CREATE TABLE app_binding_release_policy_history (
+CREATE TABLE IF NOT EXISTS app_binding_release_policy_history (
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  scope text NOT NULL CHECK(scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'),
  revision bigint NOT NULL CHECK(revision BETWEEN 1 AND 9007199254740991),
@@ -19,7 +19,7 @@ CREATE TABLE app_binding_release_policy_history (
  changed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  PRIMARY KEY(app_id,scope,revision)
 );
-CREATE FUNCTION capture_binding_release_policy() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION capture_binding_release_policy() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='UPDATE' AND (NEW.app_id<>OLD.app_id OR NEW.scope<>OLD.scope OR NEW.revision<>OLD.revision+1) THEN
   RAISE EXCEPTION 'release policy revision changed' USING ERRCODE='23514',CONSTRAINT='binding_release_policy_revision';
@@ -32,12 +32,12 @@ BEGIN
  VALUES(NEW.app_id,NEW.scope,NEW.revision,to_jsonb(NEW));
  RETURN NEW;
 END $$;
-CREATE TRIGGER binding_release_policy_changed AFTER INSERT OR UPDATE ON app_binding_release_policies
+CREATE OR REPLACE TRIGGER binding_release_policy_changed AFTER INSERT OR UPDATE ON app_binding_release_policies
  FOR EACH ROW EXECUTE FUNCTION capture_binding_release_policy();
 
 -- APID supplies internally evaluated fences, never client request fields.
 -- Compare evidence under the same revision lock that catalog changes take.
-CREATE FUNCTION authorize_binding_release_traffic(fences jsonb) RETURNS boolean LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION authorize_binding_release_traffic(fences jsonb) RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE f jsonb; observed text; d deployments%ROWTYPE; p app_binding_release_policies%ROWTYPE;
 BEGIN
  FOR f IN SELECT value FROM jsonb_array_elements(fences) LOOP
@@ -63,7 +63,7 @@ BEGIN
  RETURN true;
 END $$;
 
-CREATE FUNCTION enforce_binding_release_traffic() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION enforce_binding_release_traffic() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE prior_percent integer:=0; p app_binding_release_policies%ROWTYPE; f jsonb; granted boolean:=false;
 BEGIN
  IF TG_OP='UPDATE' AND OLD.status='live' AND OLD.app_id=NEW.app_id AND OLD.scope=NEW.scope THEN prior_percent:=OLD.traffic_percent; END IF;
@@ -84,12 +84,12 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER binding_release_traffic BEFORE INSERT OR UPDATE OF traffic_percent,status,scope,app_id ON deployments
+CREATE OR REPLACE TRIGGER binding_release_traffic BEFORE INSERT OR UPDATE OF traffic_percent,status,scope,app_id ON deployments
  FOR EACH ROW EXECUTE FUNCTION enforce_binding_release_traffic();
 
 -- Switching a project graph can route to zero-weight members without changing
 -- deployments. Until graph-wide binding fences exist, fail closed as well.
-CREATE FUNCTION enforce_binding_release_graph() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION enforce_binding_release_graph() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE app uuid;
 BEGIN
  IF (TG_OP='UPDATE' AND NEW.active=OLD.active) OR (TG_OP='INSERT' AND NOT NEW.active) THEN RETURN NEW; END IF;
@@ -101,7 +101,7 @@ BEGIN
  END LOOP;
  RETURN NEW;
 END $$;
-CREATE TRIGGER binding_release_graph BEFORE INSERT OR UPDATE OF active ON project_release_sets
+CREATE OR REPLACE TRIGGER binding_release_graph BEFORE INSERT OR UPDATE OF active ON project_release_sets
  FOR EACH ROW EXECUTE FUNCTION enforce_binding_release_graph();
 -- +goose StatementEnd
 

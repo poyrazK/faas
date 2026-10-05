@@ -1,13 +1,43 @@
 package state
 
 import (
+	"encoding/json"
 	"math"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestHistoricalAlertEvidenceSampleSurvivesReceiptRoundTrip(t *testing.T) {
+	fired := time.Date(2026, 10, 5, 18, 10, 45, 0, time.UTC)
+	facts := alertRollbackFacts{Metric: AlertMetricErrorRate, Comparison: AlertGt, Threshold: 5, WindowSpec: AlertWindow5m}
+	for _, zone := range []*time.Location{time.UTC, time.FixedZone("runner-utc", 0), time.FixedZone("runner-local", 3*60*60)} {
+		t.Run(zone.String(), func(t *testing.T) {
+			r := api.AlertRollback{Historical: true, CandidateDeploymentID: uuid.NewString(), FiredAt: fired}
+			r.DeploymentEvidence = newHistoricalAlertEvidence(r, facts, fired.Add(-4*time.Minute))
+			last := r.DeploymentEvidence.WindowEnd.Add(-time.Minute).In(zone)
+			got, qualified := qualifyHistoricalAlertEvidence(r, 20, 2, &last, true, fired)
+			if !qualified || got.DeploymentEvidence.LastSampleAt == nil || got.DeploymentEvidence.LastSampleAt.Location() != time.UTC || !got.DeploymentEvidence.LastSampleAt.Equal(last) {
+				t.Fatalf("sample timestamp was not preserved in UTC: %+v", got.DeploymentEvidence)
+			}
+			raw, err := json.Marshal(got.DeploymentEvidence)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var retained api.AlertRollbackDeploymentEvidence
+			if err := json.Unmarshal(raw, &retained); err != nil || !reflect.DeepEqual(&retained, got.DeploymentEvidence) {
+				t.Fatalf("accepted evidence changed after receipt round trip: %+v %v", retained, err)
+			}
+			last = last.Add(time.Hour)
+			if !reflect.DeepEqual(&retained, got.DeploymentEvidence) {
+				t.Fatal("accepted sample still aliases the caller timestamp")
+			}
+		})
+	}
+}
 
 func TestHistoricalAlertEvidenceBoundaries(t *testing.T) {
 	fired := time.Date(2026, 10, 5, 18, 10, 45, 0, time.UTC)
