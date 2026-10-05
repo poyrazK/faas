@@ -40,7 +40,7 @@ func (s *PgStore) PublishDeploymentRuntimeScan(ctx context.Context, input Deploy
 	if err != nil {
 		return DeploymentRuntimeScan{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	current, err := readRuntimeProducerInputsTx(ctx, tx, in.AccountID, in.AppID, in.DeploymentID)
 	if err != nil {
 		return DeploymentRuntimeScan{}, err
@@ -145,7 +145,7 @@ func (s *PgStore) GetFreshDeploymentRuntimeScan(ctx context.Context, accountID, 
 	if err != nil {
 		return DeploymentRuntimeScanEvidence{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	evidence, err := freshRuntimeScanTx(ctx, tx, accountID, appID, depID)
 	if err != nil {
 		return DeploymentRuntimeScanEvidence{}, err

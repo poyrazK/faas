@@ -80,7 +80,7 @@ func (s *PgStore) PublishDeploymentRegistryRootfs(ctx context.Context, input Dep
 	if err != nil {
 		return DeploymentRegistryRootfs{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	value, err := publishDeploymentRegistryRootfsTx(ctx, tx, in, hash)
 	if err != nil {
 		return DeploymentRegistryRootfs{}, err

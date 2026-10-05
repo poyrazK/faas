@@ -120,7 +120,7 @@ func (s *PgStore) PublishDeploymentArtifactScan(ctx context.Context, input Deplo
 	if err != nil {
 		return DeploymentArtifactScan{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := lockArtifactScanParent(ctx, tx, in); err != nil {
 		return DeploymentArtifactScan{}, err
 	}

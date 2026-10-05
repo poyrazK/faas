@@ -22,7 +22,7 @@ func (s *PgStore) GetFreshDeploymentRuntimeProducerInputs(ctx context.Context, a
 	if err != nil {
 		return DeploymentRuntimeProducerInputs{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	inputs, err := readRuntimeProducerInputsTx(ctx, tx, accountID, appID, depID)
 	if err != nil {
 		return DeploymentRuntimeProducerInputs{}, err

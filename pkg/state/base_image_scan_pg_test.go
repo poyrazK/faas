@@ -98,10 +98,15 @@ func TestPgBaseScanAtomicImmutableAndNonwaiting(t *testing.T) {
 	}
 	if _, err := s.PublishBaseImageScan(t.Context(), in); err == nil {
 		t.Fatal("injected selection failure accepted")
+	} else {
+		var pgerr *pgconn.PgError
+		if !errors.As(err, &pgerr) || pgerr.Message != "injected base selection failure" {
+			t.Fatalf("rollback masked the selection failure: %v", err)
+		}
 	}
-	var count int
-	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM base_image_scans`).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("partial base scan: %d %v", count, err)
+	var records, pointers int
+	if err := pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM base_image_scans),(SELECT count(*) FROM base_image_scan_current)`).Scan(&records, &pointers); err != nil || records != 0 || pointers != 0 {
+		t.Fatalf("partial base scan: %d records, %d pointers, %v", records, pointers, err)
 	}
 	if _, err := pool.Exec(t.Context(), `DROP TRIGGER reject_base_scan_selection ON base_image_scan_current; DROP FUNCTION reject_base_scan_selection()`); err != nil {
 		t.Fatal(err)

@@ -63,7 +63,7 @@ func (s *PgStore) RecordDeploymentRegistryVerification(ctx context.Context, inpu
 	if err != nil {
 		return DeploymentRegistryVerification{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	// The legacy SQL argument name is retained; publisher identity is a key hash.
 	raw, err := q.LockDeploymentRegistryVerification(ctx, tx, sqlc.LockDeploymentRegistryVerificationParams{

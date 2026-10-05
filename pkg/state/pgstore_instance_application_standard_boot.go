@@ -69,7 +69,7 @@ func (s *PgStore) IssueInstanceApplicationStandardBoot(ctx context.Context, expe
 	if err != nil {
 		return runtimeadmission.Binding{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	input, err := lockStandardNativeBoot(ctx, tx, binding.InstanceID, expectedState)
 	if err != nil {
 		return runtimeadmission.Binding{}, fmt.Errorf("lock native boot inputs: %w", err)

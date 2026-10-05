@@ -48,7 +48,7 @@ func (s *PgStore) PublishBaseImageScan(ctx context.Context, input BaseImageScanI
 	if err != nil {
 		return BaseImageScan{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := lockBaseImageProducerKeys(ctx, tx, in.Artifact.StorageKey); err != nil {
 		return BaseImageScan{}, err
 	}

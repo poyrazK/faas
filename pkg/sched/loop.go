@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/httpjson"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched/floor"
@@ -3920,7 +3921,7 @@ func (l *Loop) runJobsReaperTick(ctx context.Context) {
 func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 	l.submitWork(workWorkflowSchedules, "tick", func() {
 		if err := l.runWorkflowSchedulesTick(ctx); err != nil && l.log != nil {
-			l.log.Warn("schedd: workflow schedule tick failed", "error_type", fmt.Sprintf("%T", err))
+			l.log.Warn("schedd: workflow schedule tick failed", "error_type", logsanitize.Field(fmt.Sprintf("%T", err)))
 		}
 	})
 	key := fmt.Sprintf("%d", l.workflowDispatchCursor.Add(1)%4)

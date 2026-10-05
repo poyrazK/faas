@@ -3151,7 +3151,7 @@ func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
 		if len(m.hostIdentities) == 0 {
 			return ErrNoHostKey
 		}
-		merged := make(map[string]string, len(entries)+len(secretEntries))
+		merged := make(map[string]string)
 		for _, entry := range entries {
 			namespace, plaintext, err := secretbox.OpenBytesMulti(m.hostIdentities, entry.Ciphertext)
 			if err != nil {
@@ -7475,7 +7475,7 @@ func buildWorkloadsForColdBoot(req WakeRequest) []WorkloadSpec {
 	// test cannot bypass it. We skip the offending sidecar so a
 	// single bad entry doesn't fail the whole deployment; the
 	// apid gate's error message is the user-facing surface.
-	out := make([]WorkloadSpec, 0, 1+len(req.Sidecars))
+	out := make([]WorkloadSpec, 0, len(req.Sidecars))
 	// Workloads[0] is always the main workload.
 	out = append(out, WorkloadSpec{
 		Name:       WorkloadNameMain,
@@ -7603,7 +7603,7 @@ func workloadNamesFor(sidecars []WorkloadSpec) []string {
 	if len(sidecars) == 0 {
 		return nil
 	}
-	out := make([]string, 0, 1+len(sidecars))
+	out := make([]string, 0, len(sidecars))
 	out = append(out, WorkloadNameMain)
 	for _, sc := range sidecars {
 		out = append(out, sc.Name)
