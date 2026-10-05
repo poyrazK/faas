@@ -1,4 +1,4 @@
-// adr: 593 — real SQL reconnect and marker/reader enforcement evidence.
+// adr: 595 — real SQL reconnect and marker/reader enforcement evidence.
 package neon
 
 import (

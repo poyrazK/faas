@@ -1,4 +1,4 @@
-// adr: 593 — provider capability claims require data and credential proof.
+// adr: 595 — provider capability claims require data and credential proof.
 package managedpostgres
 
 import (

@@ -1,4 +1,4 @@
-// adr: 593 — portable compute resize and durable UUID transport.
+// adr: 595 — portable compute resize and durable UUID transport.
 package faas_test
 
 import (

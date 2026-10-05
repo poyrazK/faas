@@ -1,4 +1,4 @@
-// adr: 593 — stable resize UUID and safe CLI output.
+// adr: 595 — stable resize UUID and safe CLI output.
 package main
 
 import (

@@ -1,4 +1,4 @@
-// adr: 593 — customer admission, durable progress and secret-free projections.
+// adr: 595 — customer admission, durable progress and secret-free projections.
 package main
 
 import (
@@ -29,7 +29,7 @@ func (resizeAPIProvider) Update(_ context.Context, r managedpostgres.UpdateReque
 func resizeAPIService(t *testing.T, account string) (*managedpostgres.Service, managedpostgres.Database, *bool) {
 	t.Helper()
 	enabled := true
-	registry, err := managedpostgres.NewRegistry(managedpostgres.Config{DefaultRegion: "us-east-1", MaxDatabasesPerAccount: 3, Defaults: map[string]string{"us-east-1": "PRIVATE_BACKEND"}, Backends: []managedpostgres.BackendConfig{{ID: "PRIVATE_BACKEND", Driver: "fixture", Region: "us-east-1", Namespace: "private"}}}, func(string) string { return "PRIVATE_SECRET" }, map[string]managedpostgres.Factory{"fixture": func(managedpostgres.BackendConfig, func(string) string) (managedpostgres.Provider, error) {
+	registry, err := managedpostgres.NewRegistry(managedpostgres.Config{DefaultRegion: "us-east-1", MaxDatabasesPerAccount: 3, Defaults: map[string]string{"us-east-1": "private-backend"}, Backends: []managedpostgres.BackendConfig{{ID: "private-backend", Driver: "fixture", Region: "us-east-1", Namespace: "private"}}}, func(string) string { return "PRIVATE_SECRET" }, map[string]managedpostgres.Factory{"fixture": func(managedpostgres.BackendConfig, func(string) string) (managedpostgres.Provider, error) {
 		return resizeAPIProvider{}, nil
 	}})
 	if err != nil {
@@ -75,7 +75,7 @@ func TestManagedPostgresResizeRoutesAndReplay(t *testing.T) {
 	if rec.Code != http.StatusAccepted || !strings.HasSuffix(rec.Header().Get("Location"), "/resizes/"+id) {
 		t.Fatal("reservation", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "PRIVATE_") {
+	if strings.Contains(rec.Body.String(), "PRIVATE_") || strings.Contains(rec.Body.String(), "private-backend") {
 		t.Fatal("private evidence leaked")
 	}
 	if _, err := service.Reconcile(t.Context(), e.acct.ID, d.ID); err != nil {
