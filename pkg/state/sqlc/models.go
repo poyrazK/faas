@@ -6807,6 +6807,7 @@ type WorkflowRun struct {
 	LeaseUntil         pgtype.Timestamptz
 	ResumeCount        int32
 	CancelledAt        pgtype.Timestamptz
+	PlatformTenantID   pgtype.UUID
 }
 
 type WorkflowRunResume struct {

@@ -1,3 +1,4 @@
+// adr: 595. Preview enrollment and address allocation share batch rollback.
 package state
 
 import (

@@ -162,12 +162,14 @@ rather than the protocol envelope. The resolved step input is also persisted
 before dispatch, keeping the request fingerprint stable across retries.
 
 The wrapper may also return named webhook effects. Before the step is marked
-succeeded, Gregale verifies that each `webhook_id` is an enabled webhook owned
-by the workflow app and explicitly subscribed to `operation.effect`. It then
-records the effect, queues its signed delivery, and completes the step in one
-platform transaction. Delivery uses the ordinary at-least-once webhook
-dispatcher. Register the receiver under `POST /v1/apps/{slug}/webhooks`; tenant
-receivers are not supported for workflow effects. See
+succeeded, Gregale verifies that each `webhook_id` is enabled and explicitly
+subscribed to `operation.effect`, then records the effect, queues its signed
+delivery, and completes the step in one platform transaction. Account-scoped
+runs target an app receiver under `POST /v1/apps/{slug}/webhooks`. Tenant-bound
+runs target a receiver owned by that same tenant under
+`POST /v1/platform-tenants/{tenant_id}/webhooks`; the active tenant-to-app link
+is checked when the result is committed and before each delivery attempt.
+Delivery uses the ordinary at-least-once webhook dispatcher. See
 [`managed-operation-effects.md`](managed-operation-effects.md) for the handler
 envelope and event payload.
 

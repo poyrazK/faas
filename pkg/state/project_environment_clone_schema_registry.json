@@ -7746,6 +7746,7 @@
       "last_error",
       "lease_until",
       "output",
+      "platform_tenant_id",
       "resume_count",
       "scheduled_for",
       "started_at",

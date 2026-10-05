@@ -1,5 +1,6 @@
 //go:build !no_pg
 
+// adr: 595. PostgreSQL and memory previews retain captured admission versions.
 package state
 
 import (

@@ -154,3 +154,24 @@ PostgreSQL tests are skipped. Native
 managed-operation qualification remains a separate rollout gate under ADR-585.
 CI runs this gate and the existing Commit SDK transaction acceptance with real
 PostgreSQL in the `operation-sdk-acceptance` job.
+
+On the native x86_64 KVM acceptance host, run the guest-runtime recovery gate
+with:
+
+```sh
+DATABASE_URL='postgresql://...' \
+FAAS_TEST_KERNEL=/path/to/vmlinux \
+FAAS_BUILDER_BASE_PATH=/path/to/builder-base.ext4 \
+make test-managed-operation-native
+```
+
+The `e2e-native` workflow exposes the same acceptance as the
+`managed-operation-only` dispatch lane.
+
+This deploys a source app into Firecracker, kills its handler after a local
+recovery receipt is saved but before the response arrives, retries the same
+workflow step, and checks generation 2, the stable operation ID, and one signed
+`operation.effect` delivery. The fixture's receipt is local to the guest and
+does not claim a PostgreSQL write; the SDK gate above supplies real PostgreSQL
+commit and process-death evidence. ADR-585 promotion remains pending until this
+native gate passes on the acceptance host.

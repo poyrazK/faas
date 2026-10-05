@@ -38,6 +38,12 @@ duration, and outcome; exclude arguments, results, tokens, and customer identity
 Tool calls are never retried automatically: external side effects may have occurred.
 If post-deployment verification fails, put the app in maintenance and require
 explicit review before resuming public traffic. A probe does not roll back code.
+
+`mcp call` may opt in to bounded form-mode Multi Round-Trip Requests (SEP-2322)
+with `--interactive` or `--input-responses-file`. The default call remains
+single-request; the CLI handles at most three input rounds and 16 form requests
+per round. This does not add sampling, roots, URL elicitation, or Tasks input
+handling.
 Doctor discovers tools without invoking them; an explicit call or stream probe
 authorizes execution. Preserve lockfiles and suppress entropy only for valid
 dependency-integrity digests while retaining provider credential detection.

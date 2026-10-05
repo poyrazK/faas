@@ -104,6 +104,15 @@ printf '%s\n' "$(native_e2e_phase_tests wake "${repo_root}")" | grep -qx \
   'TestExclusiveOperationFencesRestoredKVMOwnerMetal' ||
   fail "exclusive-owner KVM test is no longer included in the wake phase"
 native_e2e_is_lane exclusive-operations-only || fail "exclusive-operations-only is not recognised as a lane"
+# The managed workflow recovery lane stays isolated and blocking so the new
+# Firecracker qualification can run without dispatching the full metal matrix.
+managed_operation_tests="$(native_e2e_lane_tests managed-operation-only "${repo_root}")"
+[[ "${managed_operation_tests}" == "TestManagedOperationWorkflowMetal" ]] ||
+  fail "managed-operation-only must select exactly the managed workflow recovery test"
+[[ "$(native_e2e_lane_regex managed-operation-only "${repo_root}")" == \
+  '^(TestManagedOperationWorkflowMetal)$' ]] ||
+  fail "managed-operation-only does not build an anchored test filter"
+native_e2e_is_lane managed-operation-only || fail "managed-operation-only is not recognised as a lane"
 # The assert must actually bite: a bogus name fails it.
 ( NATIVE_E2E_SMOKE_TESTS+=(TestDoesNotExistAnywhere); native_e2e_assert_lanes "${repo_root}" ) 2>/dev/null &&
   fail "native_e2e_assert_lanes accepted a lane naming a nonexistent test"

@@ -15,7 +15,7 @@ import (
 // workflow delivery. The callback must verify that the referenced run and
 // step are still running at the supplied attempt. It is intentionally a
 // narrow callback so gateway does not own workflow persistence.
-type WorkflowAdmissionFunc func(ctx context.Context, appID, runID, stepName string, attempt int) error
+type WorkflowAdmissionFunc func(ctx context.Context, appID, runID, platformTenantID, stepName string, attempt int) error
 
 // ManagedWorkflowOperationIdentityFunc confirms opt-in in the immutable run
 // definition and returns the app owner's account ID for a managed step.
@@ -40,7 +40,7 @@ func (s *SynthServer) WithManagedWorkflowOperationIdentity(resolve ManagedWorkfl
 // mode. The run/step/attempt metadata is checked before the invocation can
 // reach the customer instance, which makes a replay after a terminal state a
 // harmless conflict rather than a second side effect.
-func (s *SynthServer) applyWorkflowAdmission(w http.ResponseWriter, r *http.Request, appID string, headers map[string]string) bool {
+func (s *SynthServer) applyWorkflowAdmission(w http.ResponseWriter, r *http.Request, appID, platformTenantID string, headers map[string]string) bool {
 	if s.internalSvcVerifier == nil {
 		http.Error(w, "workflow admission verifier is not configured", http.StatusInternalServerError)
 		return true
@@ -70,7 +70,7 @@ func (s *SynthServer) applyWorkflowAdmission(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "workflow invocation metadata is invalid", http.StatusBadRequest)
 		return true
 	}
-	if err := s.workflowAdmission(r.Context(), appID, runID, stepName, attempt); err != nil {
+	if err := s.workflowAdmission(r.Context(), appID, runID, platformTenantID, stepName, attempt); err != nil {
 		if s.log != nil {
 			s.log.Info("gateway synth: workflow delivery rejected", "app_id", logsanitize.Field(appID), "run_id", logsanitize.Field(runID), "step", logsanitize.Field(stepName), "attempt", attempt, "err", logsanitize.FieldAny(err))
 		}

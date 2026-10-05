@@ -16,18 +16,19 @@ import (
 
 func workflowRunResponse(r *state.WorkflowRun) api.WorkflowRunResponse {
 	resp := api.WorkflowRunResponse{
-		ResumeCount:  r.ResumeCount,
-		ID:           r.ID,
-		AppID:        r.AppID,
-		WorkflowName: r.WorkflowName,
-		Status:       r.Status,
-		CurrentStep:  r.CurrentStep,
-		Input:        r.Input,
-		Output:       r.Output,
-		ScheduledFor: r.ScheduledFor.UTC().Format(time.RFC3339),
-		LastError:    r.LastError,
-		CreatedAt:    r.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:    r.UpdatedAt.UTC().Format(time.RFC3339),
+		ResumeCount:      r.ResumeCount,
+		ID:               r.ID,
+		AppID:            r.AppID,
+		PlatformTenantID: r.PlatformTenantID,
+		WorkflowName:     r.WorkflowName,
+		Status:           r.Status,
+		CurrentStep:      r.CurrentStep,
+		Input:            r.Input,
+		Output:           r.Output,
+		ScheduledFor:     r.ScheduledFor.UTC().Format(time.RFC3339),
+		LastError:        r.LastError,
+		CreatedAt:        r.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:        r.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 	if r.CancelledAt != nil {
 		v := r.CancelledAt.UTC().Format(time.RFC3339)
@@ -99,6 +100,93 @@ func workflowStepAttemptResponse(a *state.WorkflowStepAttempt) api.WorkflowStepA
 
 // createWorkflowRun handles POST /v1/apps/{slug}/workflows/{name}/runs
 func (s *server) createWorkflowRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.createWorkflowRunWithTenant(w, r, acct, "")
+}
+
+func (s *server) createTenantWorkflowRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	tenantID := r.PathValue("tenant_id")
+	if tenantID == "" {
+		api.WriteProblem(w, api.ErrValidation("platform tenant ID is required"))
+		return
+	}
+	s.createWorkflowRunWithTenant(w, r, acct, tenantID)
+}
+
+func (s *server) createPlatformTenantSelfWorkflowRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	tenantID, ok := platformTenantSelfID(w, r)
+	if !ok {
+		return
+	}
+	r.SetPathValue("tenant_id", tenantID)
+	s.createTenantWorkflowRun(w, r, acct)
+}
+
+func (s *server) loadPlatformTenantSelfWorkflowRun(w http.ResponseWriter, r *http.Request, acct state.Account) (*state.WorkflowRun, bool) {
+	tenantID, ok := platformTenantSelfID(w, r)
+	if !ok {
+		return nil, false
+	}
+	run, err := s.store.GetWorkflowRun(r.Context(), r.PathValue("id"))
+	if err != nil || run.PlatformTenantID != tenantID {
+		api.WriteProblem(w, api.ErrWorkflowRunNotFound())
+		return nil, false
+	}
+	app, err := s.store.AppByID(r.Context(), run.AppID)
+	if err != nil || app.AccountID != acct.ID {
+		api.WriteProblem(w, api.ErrWorkflowRunNotFound())
+		return nil, false
+	}
+	tenants, ok := s.store.(state.PlatformTenantStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("platform tenant store unavailable"))
+		return nil, false
+	}
+	if err := state.ValidatePlatformTenantAppBinding(r.Context(), tenants, acct.ID, tenantID, app.ID); err != nil {
+		api.WriteProblem(w, api.ErrWorkflowRunNotFound())
+		return nil, false
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	return run, true
+}
+
+func (s *server) getPlatformTenantSelfWorkflowRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	run, ok := s.loadPlatformTenantSelfWorkflowRun(w, r, acct)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, workflowRunResponse(run))
+}
+
+func (s *server) cancelPlatformTenantSelfWorkflowRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	run, ok := s.loadPlatformTenantSelfWorkflowRun(w, r, acct)
+	if !ok {
+		return
+	}
+	if run.Status != state.WorkflowRunStatusSucceeded && run.Status != state.WorkflowRunStatusFailed && run.Status != state.WorkflowRunStatusDead {
+		var err error
+		run, err = s.store.CancelWorkflowRun(r.Context(), run.ID, "cancelled by platform tenant")
+		if err != nil {
+			s.log.Error("cancel tenant workflow run failed", "run_id", run.ID, "err", err)
+			api.WriteProblem(w, api.ErrCapacity("failed to cancel workflow run"))
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, workflowRunResponse(run))
+}
+
+func tenantWorkflowDefinitionSupported(definition api.WorkflowSpec) bool {
+	for _, step := range definition.Steps {
+		// Event waits and callbacks accept externally supplied continuations and
+		// still need tenant-scoped admission. Outbound steps use the persisted run
+		// identity, a fixed app-bound integration, and live tenant-link checks.
+		if step.WaitForEvent != "" || step.WaitForCallback {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Request, acct state.Account, tenantID string) {
 	slug := r.PathValue("slug")
 	workflowName := r.PathValue("name")
 	if workflowName == "" {
@@ -110,7 +198,6 @@ func (s *server) createWorkflowRun(w http.ResponseWriter, r *http.Request, acct 
 	if !ok {
 		return
 	}
-
 	// Gating: check plan allows workflows
 	if !acct.Plan.WorkflowsAllowed() {
 		api.WriteProblem(w, api.ErrPlanWorkflowsNotAllowed(acct.Plan))
@@ -119,6 +206,25 @@ func (s *server) createWorkflowRun(w http.ResponseWriter, r *http.Request, acct 
 	if !s.workflowRuntimeEnabled {
 		api.WriteProblem(w, api.ErrWorkflowDeploymentUnavailable())
 		return
+	}
+	if app.PlatformTenantRequired && tenantID == "" || tenantID != "" && !app.PlatformTenantRequired {
+		api.WriteProblem(w, api.ErrWorkflowTenantIdentityUnavailable())
+		return
+	}
+	if tenantID != "" {
+		tenants, ok := s.store.(state.PlatformTenantStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("platform tenant store unavailable"))
+			return
+		}
+		if err := state.ValidatePlatformTenantAppBinding(r.Context(), tenants, acct.ID, tenantID, app.ID); err != nil {
+			if errors.Is(err, state.ErrPlatformTenantSuspended) || errors.Is(err, state.ErrNotFound) {
+				api.WriteProblem(w, api.ErrWorkflowDefinitionNotFound())
+				return
+			}
+			api.WriteProblem(w, api.ErrCapacity("failed to verify workflow tenant access"))
+			return
+		}
 	}
 
 	// Runs must snapshot a definition from the current live deployment.
@@ -150,6 +256,10 @@ func (s *server) createWorkflowRun(w http.ResponseWriter, r *http.Request, acct 
 	}
 	if definition == nil {
 		api.WriteProblem(w, api.ErrWorkflowDefinitionNotFound())
+		return
+	}
+	if tenantID != "" && !tenantWorkflowDefinitionSupported(*definition) {
+		api.WriteProblem(w, api.ErrValidation("tenant-scoped workflow runs currently do not support event waits or callbacks"))
 		return
 	}
 	defSnapshot, err := json.Marshal(definition)
@@ -184,6 +294,7 @@ func (s *server) createWorkflowRun(w http.ResponseWriter, r *http.Request, acct 
 
 	run := &state.WorkflowRun{
 		AppID:              app.ID,
+		PlatformTenantID:   tenantID,
 		WorkflowName:       workflowName,
 		Input:              inputRaw,
 		DefinitionSnapshot: defSnapshot,
