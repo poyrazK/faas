@@ -109,7 +109,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 480 | [Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md) | proposed | App, preview and custom-domain hosts own /v1, /status, /docs, /login, /oauth/* and the edge well-known documents |
 | 460 | [Prepared network policy retention](460-prepared-network-policy-retention.md) | proposed | Preserve fresh unused exact-policy spares within ADR-149's existing global capacity |
 | 499 | [Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) | accepted | Opt-in tenant/consumer budgets, redacted identity details, aggregate impact counts, and a bounded recovery inventory |
-| 592 | [Versioned inherited application standards](592-inherited-application-standards.md) | implementation in progress | Organization-owned versions, automatic enrollment, reviewed rollouts, field provenance and bounded exceptions; runtime acceptance pending |
+| 592 | [Versioned inherited application standards](593-inherited-application-standards.md) | implementation in progress | Organization-owned versions, automatic enrollment, reviewed rollouts, field provenance and bounded exceptions; runtime acceptance pending |
 
 | 424 | [Managed outbound integrations for stateless Runs](424-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
 | 427 | [Exclusive operation policy retirement](427-exclusive-operation-policy-retirement.md) | accepted | Idle retirement preserves ownership history and releases the active policy quota slot |

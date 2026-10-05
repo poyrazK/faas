@@ -1,4 +1,4 @@
-// adr: 592 — publish owned runtime configuration and native receipts atomically.
+// adr: 593 — publish owned runtime configuration and native receipts atomically.
 package sched
 
 import (

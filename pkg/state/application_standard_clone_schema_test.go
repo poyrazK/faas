@@ -1,6 +1,6 @@
 package state
 
-// adr: 592. Standards configuration needs isolation; runtime authority resets.
+// adr: 593. Standards configuration needs isolation; runtime authority resets.
 
 import "testing"
 

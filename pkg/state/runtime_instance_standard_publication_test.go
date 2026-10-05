@@ -1,6 +1,6 @@
 package state
 
-// adr: 592. Native publication must retain original owner and config fences.
+// adr: 593. Native publication must retain original owner and config fences.
 
 import (
 	"strings"

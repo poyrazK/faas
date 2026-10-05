@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# adr: 592. Run commands against a private PostgreSQL 16 Unix-socket cluster.
+# adr: 593. Run commands against a private PostgreSQL 16 Unix-socket cluster.
 set -euo pipefail
 
 pg_bin="${FAAS_REPLAY_PG_BIN:-/usr/lib/postgresql/16/bin}"

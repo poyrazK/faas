@@ -1,4 +1,4 @@
-// adr: 592 — installing a revision durably hands runtime convergence to schedd.
+// adr: 593 — installing a revision durably hands runtime convergence to schedd.
 package state
 
 import (

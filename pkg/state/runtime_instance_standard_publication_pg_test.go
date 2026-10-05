@@ -2,7 +2,7 @@
 
 package state
 
-// adr: 592. PostgreSQL commits native authority and owned config together.
+// adr: 593. PostgreSQL commits native authority and owned config together.
 
 import "testing"
 

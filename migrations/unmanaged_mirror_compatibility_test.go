@@ -2,7 +2,7 @@
 
 package migrations_test
 
-// adr: 592
+// adr: 593
 
 import (
 	"encoding/json"
