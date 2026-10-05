@@ -120,6 +120,15 @@ type Anchor struct {
 }
 type Trust struct{ keys map[string]Anchor }
 
+// CheckSigner checks configuration without creating an operational assertion.
+func (t Trust) CheckSigner(s Signer, role string) error {
+	a, ok := t.keys[s.KeyID()]
+	if !s.Available() || !ok || a.Role != role || a.IssuerID != s.IssuerID() {
+		return ErrTrust
+	}
+	return nil
+}
+
 func NewTrust(anchors []Anchor) (Trust, error) {
 	t := Trust{keys: make(map[string]Anchor, len(anchors))}
 	for _, a := range anchors {

@@ -35,9 +35,11 @@ type RegionalRuntimeCapacityStore interface {
 	ReserveRegionalRuntimeCapacity(context.Context, runtimequota.CapacityPermit) (RegionalRuntimeCapacityReceipt, error)
 	IssueRegionalRuntimeCapacity(context.Context, string, string) (RegionalRuntimeCapacityReceipt, error)
 	FenceRegionalRuntimeCapacity(context.Context, string, string, string) (RegionalRuntimeCapacityReceipt, error)
+	BeginRegionalRuntimeRetirement(context.Context, runtimequota.CapacityPermit, string) (RegionalRuntimeCapacityReceipt, error)
 	ListRegionalRuntimeCapacity(context.Context, string, string, string, int) ([]RegionalRuntimeCapacityReceipt, error)
 	RegionalRuntimeCapacityUsage(context.Context, string, string) (RegionalRuntimeCapacityUsage, error)
 	applyRegionalRuntimeCapacityStop(context.Context, runtimequota.CapacityStop, runtimequota.Envelope) (RegionalRuntimeCapacityReceipt, error)
+	completeRegionalRuntimeRetirement(context.Context, runtimequota.CapacityStop, runtimequota.Signer, runtimequota.Trust) (RegionalRuntimeCapacityReceipt, error)
 }
 
 // Usage counts durable holds only. Zero does not prove that every legacy or

@@ -39,6 +39,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/executionproto"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // RoutedVMM is the multi-node vmmd surface schedd's engine consumes.
@@ -229,7 +230,8 @@ type VMMRouter struct {
 	tls     *tls.Config
 	// outboundRelay is the schedd-local path to outboundd. It is attached to
 	// every per-node execution stream and never travels to vmmd or the guest.
-	outboundRelay ExecutionOutboundRelay
+	outboundRelay        ExecutionOutboundRelay
+	regionalRuntimePeers wire.NodeIdentityResolver
 }
 
 // NewVMMRouter builds a router pre-populated with the (nodeID →

@@ -43,6 +43,7 @@ const (
 	Vmmd_DeleteWarmSnapshot_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
 	Vmmd_FrameworkReady_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
 	Vmmd_Destroy_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/Destroy"
+	Vmmd_RetireRegionalRuntime_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/RetireRegionalRuntime"
 	Vmmd_StopInstance_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/StopInstance"
 	Vmmd_Stats_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/Stats"
 	Vmmd_Ping_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/Ping"
@@ -199,6 +200,9 @@ type VmmdClient interface {
 	FrameworkReady(ctx context.Context, in *FrameworkReadyRequest, opts ...grpc.CallOption) (*FrameworkReadyResponse, error)
 	// Destroy tears down a running instance. Idempotent on unknown instances.
 	Destroy(ctx context.Context, in *DestroyRequest, opts ...grpc.CallOption) (*DestroyResponse, error)
+	// ADR-631: exact original physical ownership, authenticated schedd only.
+	// A response is unsigned native stop evidence, never cell capacity release.
+	RetireRegionalRuntime(ctx context.Context, in *RetireRegionalRuntimeRequest, opts ...grpc.CallOption) (*RetireRegionalRuntimeResponse, error)
 	// StopInstance is the M-2 / ADR-138 graceful stop sequence: send
 	// `signal` to the guest's PID 1, wait up to `grace_period_s`
 	// seconds for it to exit cleanly, then SIGKILL on deadline.
@@ -747,6 +751,16 @@ func (c *vmmdClient) Destroy(ctx context.Context, in *DestroyRequest, opts ...gr
 	return out, nil
 }
 
+func (c *vmmdClient) RetireRegionalRuntime(ctx context.Context, in *RetireRegionalRuntimeRequest, opts ...grpc.CallOption) (*RetireRegionalRuntimeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RetireRegionalRuntimeResponse)
+	err := c.cc.Invoke(ctx, Vmmd_RetireRegionalRuntime_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) StopInstance(ctx context.Context, in *StopInstanceRequest, opts ...grpc.CallOption) (*StopInstanceResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StopInstanceResponse)
@@ -1165,6 +1179,9 @@ type VmmdServer interface {
 	FrameworkReady(context.Context, *FrameworkReadyRequest) (*FrameworkReadyResponse, error)
 	// Destroy tears down a running instance. Idempotent on unknown instances.
 	Destroy(context.Context, *DestroyRequest) (*DestroyResponse, error)
+	// ADR-631: exact original physical ownership, authenticated schedd only.
+	// A response is unsigned native stop evidence, never cell capacity release.
+	RetireRegionalRuntime(context.Context, *RetireRegionalRuntimeRequest) (*RetireRegionalRuntimeResponse, error)
 	// StopInstance is the M-2 / ADR-138 graceful stop sequence: send
 	// `signal` to the guest's PID 1, wait up to `grace_period_s`
 	// seconds for it to exit cleanly, then SIGKILL on deadline.
@@ -1544,6 +1561,9 @@ func (UnimplementedVmmdServer) FrameworkReady(context.Context, *FrameworkReadyRe
 }
 func (UnimplementedVmmdServer) Destroy(context.Context, *DestroyRequest) (*DestroyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Destroy not implemented")
+}
+func (UnimplementedVmmdServer) RetireRegionalRuntime(context.Context, *RetireRegionalRuntimeRequest) (*RetireRegionalRuntimeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetireRegionalRuntime not implemented")
 }
 func (UnimplementedVmmdServer) StopInstance(context.Context, *StopInstanceRequest) (*StopInstanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StopInstance not implemented")
@@ -1996,6 +2016,24 @@ func _Vmmd_Destroy_Handler(srv interface{}, ctx context.Context, dec func(interf
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).Destroy(ctx, req.(*DestroyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_RetireRegionalRuntime_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetireRegionalRuntimeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RetireRegionalRuntime(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RetireRegionalRuntime_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RetireRegionalRuntime(ctx, req.(*RetireRegionalRuntimeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2513,6 +2551,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Destroy",
 			Handler:    _Vmmd_Destroy_Handler,
+		},
+		{
+			MethodName: "RetireRegionalRuntime",
+			Handler:    _Vmmd_RetireRegionalRuntime_Handler,
 		},
 		{
 			MethodName: "StopInstance",

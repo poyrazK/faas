@@ -155,6 +155,10 @@ service Vmmd {
   // Destroy tears down a running instance. Idempotent on unknown instances.
   rpc Destroy(DestroyRequest) returns (DestroyResponse);
 
+  // ADR-631: exact original physical ownership, authenticated schedd only.
+  // A response is unsigned native stop evidence, never cell capacity release.
+  rpc RetireRegionalRuntime(RetireRegionalRuntimeRequest) returns (RetireRegionalRuntimeResponse);
+
   // StopInstance is the M-2 / ADR-138 graceful stop sequence: send
   // `signal` to the guest's PID 1, wait up to `grace_period_s`
   // seconds for it to exit cleanly, then SIGKILL on deadline.
@@ -2475,4 +2479,18 @@ message ForwardUDPResponse {
 message RegionalRuntimeHostEpoch {
   string node_id = 1;
   string host_epoch_id = 2;
+}
+
+message RetireRegionalRuntimeRequest {
+  // Actual retained native lookup key; may be a compact UUID.
+  string instance = 1;
+  // Bounded canonical CapacityPermit JSON, retaining all historical pins.
+  bytes permit = 2;
+  string fence_id = 3;
+}
+
+message RetireRegionalRuntimeResponse {
+  string instance = 1;
+  // Bounded canonical unsigned CapacityStop JSON with the host's first fence.
+  bytes stop = 2;
 }
