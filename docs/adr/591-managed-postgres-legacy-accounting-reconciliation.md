@@ -1,4 +1,4 @@
-# ADR-587: Managed PostgreSQL legacy accounting reconciliation
+# ADR-591: Managed PostgreSQL legacy accounting reconciliation
 
 Status: accepted · 2026-10-05
 

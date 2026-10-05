@@ -10500,7 +10500,7 @@ ON CONFLICT (database_id, window_seconds) DO UPDATE SET
  collected_from = EXCLUDED.collected_from, collected_until = EXCLUDED.collected_until,
  observed_at = EXCLUDED.observed_at, updated_at = now();
 
--- ADR-587: operator reconciliation only repairs an unresolved deleted catalog row.
+-- ADR-591: operator reconciliation only repairs an unresolved deleted catalog row.
 -- name: GetManagedPostgresAccountingReconciliation :one
 SELECT request_sha256, result FROM managed_postgres_accounting_reconciliations
 WHERE account_id = $1 AND reconciliation_id = $2;

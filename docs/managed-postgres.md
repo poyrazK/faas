@@ -572,7 +572,7 @@ complete history and final correction observations. Shared restore children
 continue to use their root's aggregate; import quantities against that root.
 Recheck `gregale postgres diagnostics ACCOUNT_ID --json` after recovery. A repair
 receipt reports the committed repair, not current admission or final invoice
-settlement. See [ADR-587](adr/587-managed-postgres-legacy-accounting-reconciliation.md).
+settlement. See [ADR-591](adr/591-managed-postgres-legacy-accounting-reconciliation.md).
 
 Operators with the admin scope and MFA can inspect the same account through
 `GET /v1/admin/managed-postgres/usage/{account_id}`. This bounded view adds the

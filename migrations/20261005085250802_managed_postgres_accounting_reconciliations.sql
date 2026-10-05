@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-587: catalog repair and coverage reset retain the operator's evidence.
+-- ADR-591: catalog repair and coverage reset retain the operator's evidence.
 CREATE TABLE IF NOT EXISTS managed_postgres_accounting_reconciliations (
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     reconciliation_id uuid NOT NULL,

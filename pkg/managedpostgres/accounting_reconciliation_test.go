@@ -1,4 +1,4 @@
-// adr: 587 — legacy repair retains money and requires evidence-backed recovery.
+// adr: 591 — legacy repair retains money and requires evidence-backed recovery.
 package managedpostgres
 
 import (

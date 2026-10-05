@@ -1,4 +1,4 @@
-// adr: 587 — repair remains atomic, append-only, and rooted in shared accounting.
+// adr: 591 — repair remains atomic, append-only, and rooted in shared accounting.
 package managedpostgres
 
 import (

@@ -1,4 +1,4 @@
-// adr: 587 — preview is the default; applying requires reviewed revision evidence.
+// adr: 591 — preview is the default; applying requires reviewed revision evidence.
 package main
 
 import (

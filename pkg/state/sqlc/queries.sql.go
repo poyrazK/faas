@@ -10434,7 +10434,7 @@ type GetManagedPostgresAccountingReconciliationRow struct {
 	Result        []byte
 }
 
-// ADR-587: operator reconciliation only repairs an unresolved deleted catalog row.
+// ADR-591: operator reconciliation only repairs an unresolved deleted catalog row.
 func (q *Queries) GetManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg GetManagedPostgresAccountingReconciliationParams) (GetManagedPostgresAccountingReconciliationRow, error) {
 	row := db.QueryRow(ctx, getManagedPostgresAccountingReconciliation, arg.AccountID, arg.ReconciliationID)
 	var i GetManagedPostgresAccountingReconciliationRow

@@ -1,4 +1,4 @@
-// adr: 587 — legacy accounting repairs use strict mutation authentication.
+// adr: 591 — legacy accounting repairs use strict mutation authentication.
 package main
 
 import (
