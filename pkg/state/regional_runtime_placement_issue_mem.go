@@ -8,17 +8,24 @@ import (
 )
 
 func (s *MemStore) IssueRegionalRuntimePlacement(ctx context.Context, p runtimequota.Placement) error {
-	return s.issueRegionalRuntimePlacement(ctx, p, nil)
+	return s.issueRegionalRuntimePlacement(ctx, p, nil, RegionalRuntimeResources{})
 }
 
 func (s *MemStore) IssueRegionalRuntimeLaunch(ctx context.Context, p runtimequota.Placement, source runtimequota.LaunchSource) error {
 	if source.Validate() != nil || source.Permit != p.Permit {
 		return ErrInvalidArgument
 	}
-	return s.issueRegionalRuntimePlacement(ctx, p, &source)
+	return s.issueRegionalRuntimePlacement(ctx, p, &source, RegionalRuntimeResources{})
 }
 
-func (s *MemStore) issueRegionalRuntimePlacement(ctx context.Context, p runtimequota.Placement, source *runtimequota.LaunchSource) error {
+func (s *MemStore) IssueRegionalRuntimeLaunchResources(ctx context.Context, p runtimequota.Placement, source runtimequota.LaunchSource, resources RegionalRuntimeResources) error {
+	if source.Validate() != nil || source.Permit != p.Permit || !resources.Valid() {
+		return ErrInvalidArgument
+	}
+	return s.issueRegionalRuntimePlacement(ctx, p, &source, resources)
+}
+
+func (s *MemStore) issueRegionalRuntimePlacement(ctx context.Context, p runtimequota.Placement, source *runtimequota.LaunchSource, resources RegionalRuntimeResources) error {
 	if !validIssuedRegionalPlacement(p) {
 		return ErrInvalidArgument
 	}
@@ -44,6 +51,9 @@ func (s *MemStore) issueRegionalRuntimePlacement(ctx context.Context, p runtimeq
 		if err := checkRegionalLaunchSource(*source, launch, physical); err != nil {
 			return err
 		}
+		if err := regionalResourceRetry(launch, resources); err != nil {
+			return err
+		}
 	}
 	var seat RegionalRuntimeServingSeatReceipt
 	if p.Seat != nil {
@@ -59,7 +69,7 @@ func (s *MemStore) issueRegionalRuntimePlacement(ctx context.Context, p runtimeq
 	// retries; no failure above has created a new physical or concurrency hold.
 	now := regionalCapacityNow()
 	if source != nil && launch.Source.Permit.ID == "" {
-		s.regionalRuntimeLaunchSources[key] = RegionalRuntimeLaunchSource{Source: *source, CreatedAt: now}
+		s.regionalRuntimeLaunchSources[key] = RegionalRuntimeLaunchSource{Source: *source, CreatedAt: now, Resources: resources}
 	}
 	if physical.IssuedAt == nil {
 		physical.IssuedAt = &now

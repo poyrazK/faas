@@ -18937,6 +18937,20 @@ CREATE TABLE public.regional_runtime_launch_sources (
     instance_key text NOT NULL,
     permit_claims jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    resource_claims jsonb,
+    CONSTRAINT regional_launch_resources_shape CHECK (((resource_claims IS NULL) OR ((jsonb_typeof(resource_claims) = 'object'::text) AND (octet_length((resource_claims)::text) <= 512) AND (resource_claims ?& ARRAY['RAMMB'::text, 'VCPU'::text, 'CPUMillicores'::text]) AND ((resource_claims - ARRAY['RAMMB'::text, 'VCPU'::text, 'CPUMillicores'::text]) = '{}'::jsonb) AND
+CASE
+    WHEN (jsonb_typeof((resource_claims -> 'RAMMB'::text)) = 'number'::text) THEN (((((resource_claims ->> 'RAMMB'::text))::numeric >= (1)::numeric) AND (((resource_claims ->> 'RAMMB'::text))::numeric <= (2147483647)::numeric)) AND ((resource_claims ->> 'RAMMB'::text) ~ '^[1-9][0-9]*$'::text))
+    ELSE false
+END AND
+CASE
+    WHEN (jsonb_typeof((resource_claims -> 'VCPU'::text)) = 'number'::text) THEN (((((resource_claims ->> 'VCPU'::text))::numeric >= (1)::numeric) AND (((resource_claims ->> 'VCPU'::text))::numeric <= (2147483647)::numeric)) AND ((resource_claims ->> 'VCPU'::text) ~ '^[1-9][0-9]*$'::text))
+    ELSE false
+END AND
+CASE
+    WHEN (jsonb_typeof((resource_claims -> 'CPUMillicores'::text)) = 'number'::text) THEN (((((resource_claims ->> 'CPUMillicores'::text))::numeric >= (1)::numeric) AND (((resource_claims ->> 'CPUMillicores'::text))::numeric <= (2147483647)::numeric)) AND ((resource_claims ->> 'CPUMillicores'::text) ~ '^[1-9][0-9]*$'::text))
+    ELSE false
+END))),
     CONSTRAINT regional_runtime_launch_sources_instance_key_check CHECK (((instance_key ~ '^([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$'::text) AND ((instance_key)::uuid <> '00000000-0000-0000-0000-000000000000'::uuid))),
     CONSTRAINT regional_runtime_launch_sources_permit_claims_check CHECK (((jsonb_typeof(permit_claims) = 'object'::text) AND (octet_length((permit_claims)::text) <= 4096)))
 );
@@ -29783,10 +29797,24 @@ CREATE INDEX regional_runtime_capacity_held ON public.regional_runtime_capacity_
 
 
 --
+-- Name: regional_runtime_capacity_inventory_scan; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX regional_runtime_capacity_inventory_scan ON public.regional_runtime_capacity_receipts USING btree (((((permit_claims -> 'Grant'::text) -> 'Binding'::text) ->> 'CellID'::text)), app_id, permit_id) WHERE ((issued_at IS NOT NULL) AND (released_at IS NULL));
+
+
+--
 -- Name: regional_runtime_capacity_retirement_scan; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX regional_runtime_capacity_retirement_scan ON public.regional_runtime_capacity_receipts USING btree (app_id, permit_id) WHERE ((issued_at IS NOT NULL) AND (fence_id IS NOT NULL) AND (released_at IS NULL));
+
+
+--
+-- Name: regional_runtime_inventory_seat_scan; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX regional_runtime_inventory_seat_scan ON public.regional_runtime_serving_seats USING btree (app_id, permit_id) WHERE ((issued_at IS NOT NULL) AND (released_at IS NULL));
 
 
 --

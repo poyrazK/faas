@@ -13728,15 +13728,16 @@ func (q *Queries) InsertRegionalRuntimeCapacity(ctx context.Context, db DBTX, ar
 }
 
 const insertRegionalRuntimeLaunchSource = `-- name: InsertRegionalRuntimeLaunchSource :one
-INSERT INTO regional_runtime_launch_sources(app_id,permit_id,instance_key,permit_claims)
-VALUES ($1,$2,$3,$4) RETURNING app_id, permit_id, instance_key, permit_claims, created_at
+INSERT INTO regional_runtime_launch_sources(app_id,permit_id,instance_key,permit_claims,resource_claims)
+VALUES ($1,$2,$3,$4,$5) RETURNING app_id, permit_id, instance_key, permit_claims, created_at, resource_claims
 `
 
 type InsertRegionalRuntimeLaunchSourceParams struct {
-	AppID        pgtype.UUID
-	PermitID     pgtype.UUID
-	InstanceKey  string
-	PermitClaims []byte
+	AppID          pgtype.UUID
+	PermitID       pgtype.UUID
+	InstanceKey    string
+	PermitClaims   []byte
+	ResourceClaims []byte
 }
 
 func (q *Queries) InsertRegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg InsertRegionalRuntimeLaunchSourceParams) (RegionalRuntimeLaunchSource, error) {
@@ -13745,6 +13746,7 @@ func (q *Queries) InsertRegionalRuntimeLaunchSource(ctx context.Context, db DBTX
 		arg.PermitID,
 		arg.InstanceKey,
 		arg.PermitClaims,
+		arg.ResourceClaims,
 	)
 	var i RegionalRuntimeLaunchSource
 	err := row.Scan(
@@ -13753,6 +13755,7 @@ func (q *Queries) InsertRegionalRuntimeLaunchSource(ctx context.Context, db DBTX
 		&i.InstanceKey,
 		&i.PermitClaims,
 		&i.CreatedAt,
+		&i.ResourceClaims,
 	)
 	return i, err
 }
@@ -21002,6 +21005,101 @@ func (q *Queries) ListRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg 
 			&i.ReleasedAt,
 			&i.StopClaims,
 			&i.StopEnvelope,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRegionalRuntimeInventory = `-- name: ListRegionalRuntimeInventory :many
+SELECT c.app_id, c.allocation_id, c.permit_id, c.generation, c.instance_id, c.run_id, c.deployment_id, c.node_id, c.host_epoch_id, c.kind, c.permit_claims, c.created_at, c.issued_at, c.fence_id, c.released_at, c.stop_claims, c.stop_envelope, s.instance_key AS source_instance_key, s.permit_claims AS source_permit_claims,
+  s.resource_claims,
+  (SELECT count(*) FROM regional_runtime_serving_seats seat
+    WHERE seat.app_id=c.app_id AND seat.permit_id=c.permit_id
+      AND seat.issued_at IS NOT NULL AND seat.released_at IS NULL)::bigint AS serving_seats_held
+FROM regional_runtime_capacity_receipts c
+LEFT JOIN regional_runtime_launch_sources s USING (app_id,permit_id)
+WHERE c.issued_at IS NOT NULL AND c.released_at IS NULL
+  AND c.permit_claims->'Grant'->'Binding'->>'CellID'=$1::text
+  AND ($2::boolean OR (c.app_id,c.permit_id)>($3::uuid,$4::uuid))
+ORDER BY c.app_id,c.permit_id LIMIT $5::int
+`
+
+type ListRegionalRuntimeInventoryParams struct {
+	CellID      string
+	FirstPage   bool
+	AfterApp    pgtype.UUID
+	AfterPermit pgtype.UUID
+	BatchLimit  int32
+}
+
+type ListRegionalRuntimeInventoryRow struct {
+	AppID              pgtype.UUID
+	AllocationID       pgtype.UUID
+	PermitID           pgtype.UUID
+	Generation         int64
+	InstanceID         pgtype.UUID
+	RunID              pgtype.UUID
+	DeploymentID       pgtype.UUID
+	NodeID             pgtype.UUID
+	HostEpochID        pgtype.UUID
+	Kind               string
+	PermitClaims       []byte
+	CreatedAt          pgtype.Timestamptz
+	IssuedAt           pgtype.Timestamptz
+	FenceID            pgtype.UUID
+	ReleasedAt         pgtype.Timestamptz
+	StopClaims         []byte
+	StopEnvelope       []byte
+	SourceInstanceKey  pgtype.Text
+	SourcePermitClaims []byte
+	ResourceClaims     []byte
+	ServingSeatsHeld   int64
+}
+
+// ADR-635: issued capacity survives app/instance collection and grant replacement.
+func (q *Queries) ListRegionalRuntimeInventory(ctx context.Context, db DBTX, arg ListRegionalRuntimeInventoryParams) ([]ListRegionalRuntimeInventoryRow, error) {
+	rows, err := db.Query(ctx, listRegionalRuntimeInventory,
+		arg.CellID,
+		arg.FirstPage,
+		arg.AfterApp,
+		arg.AfterPermit,
+		arg.BatchLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRegionalRuntimeInventoryRow{}
+	for rows.Next() {
+		var i ListRegionalRuntimeInventoryRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.AllocationID,
+			&i.PermitID,
+			&i.Generation,
+			&i.InstanceID,
+			&i.RunID,
+			&i.DeploymentID,
+			&i.NodeID,
+			&i.HostEpochID,
+			&i.Kind,
+			&i.PermitClaims,
+			&i.CreatedAt,
+			&i.IssuedAt,
+			&i.FenceID,
+			&i.ReleasedAt,
+			&i.StopClaims,
+			&i.StopEnvelope,
+			&i.SourceInstanceKey,
+			&i.SourcePermitClaims,
+			&i.ResourceClaims,
+			&i.ServingSeatsHeld,
 		); err != nil {
 			return nil, err
 		}
@@ -37283,7 +37381,7 @@ func (q *Queries) RegionalRuntimeCapacityUsage(ctx context.Context, db DBTX, arg
 }
 
 const regionalRuntimeLaunchSource = `-- name: RegionalRuntimeLaunchSource :one
-SELECT app_id, permit_id, instance_key, permit_claims, created_at FROM regional_runtime_launch_sources WHERE app_id=$1 AND permit_id=$2
+SELECT app_id, permit_id, instance_key, permit_claims, created_at, resource_claims FROM regional_runtime_launch_sources WHERE app_id=$1 AND permit_id=$2
 `
 
 type RegionalRuntimeLaunchSourceParams struct {
@@ -37300,6 +37398,7 @@ func (q *Queries) RegionalRuntimeLaunchSource(ctx context.Context, db DBTX, arg 
 		&i.InstanceKey,
 		&i.PermitClaims,
 		&i.CreatedAt,
+		&i.ResourceClaims,
 	)
 	return i, err
 }

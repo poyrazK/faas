@@ -1211,6 +1211,8 @@ type Querier interface {
 	ListRecentEventsForAccount(ctx context.Context, db DBTX, arg ListRecentEventsForAccountParams) ([]ListRecentEventsForAccountRow, error)
 	ListRecoveryDelegations(ctx context.Context, db DBTX, arg ListRecoveryDelegationsParams) ([]GlobalReleaseDelegation, error)
 	ListRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg ListRegionalRuntimeCapacityParams) ([]RegionalRuntimeCapacityReceipt, error)
+	// ADR-635: issued capacity survives app/instance collection and grant replacement.
+	ListRegionalRuntimeInventory(ctx context.Context, db DBTX, arg ListRegionalRuntimeInventoryParams) ([]ListRegionalRuntimeInventoryRow, error)
 	ListRegionalRuntimeRetirements(ctx context.Context, db DBTX, arg ListRegionalRuntimeRetirementsParams) ([]ListRegionalRuntimeRetirementsRow, error)
 	ListRegionalRuntimeServingSeats(ctx context.Context, db DBTX, arg ListRegionalRuntimeServingSeatsParams) ([]RegionalRuntimeServingSeat, error)
 	// Canonical read pattern: "give me the last N requests for this app".

@@ -12,6 +12,7 @@ import (
 type RegionalRuntimeLaunchSource struct {
 	Source    runtimequota.LaunchSource
 	CreatedAt time.Time
+	Resources RegionalRuntimeResources // Zero means historical resource provenance is unknown.
 }
 
 // The cursor is composite: permit IDs are unique only within an app journal.
@@ -25,6 +26,8 @@ type RegionalRuntimeRetirementCandidate struct {
 type RegionalRuntimeLaunchStore interface {
 	// Persist the exact source before issuance in the same app journal transaction.
 	IssueRegionalRuntimeLaunch(context.Context, runtimequota.Placement, runtimequota.LaunchSource) error
+	// Dispatch retains actual resource dimensions atomically before issuance.
+	IssueRegionalRuntimeLaunchResources(context.Context, runtimequota.Placement, runtimequota.LaunchSource, RegionalRuntimeResources) error
 	RegionalRuntimeLaunchSource(context.Context, string, string) (RegionalRuntimeLaunchSource, error)
 	// Fence a failed initial launch only before any durable serving resume.
 	BeginRegionalRuntimeLaunchFailure(context.Context, runtimequota.LaunchSource, string) (RegionalRuntimeCapacityReceipt, error)
@@ -32,6 +35,8 @@ type RegionalRuntimeLaunchStore interface {
 	FailRegionalRuntimeAttempt(context.Context, runtimequota.LaunchSource, string) error
 	// Read original fenced sources, including accepted stops awaiting row cleanup.
 	ListRegionalRuntimeRetirements(context.Context, string, RegionalRuntimeRetirementCursor, int) ([]RegionalRuntimeRetirementCandidate, error)
+	// Inventory includes every issued hold, across historical allocations and collected apps.
+	ListRegionalRuntimeInventory(context.Context, string, RegionalRuntimeRetirementCursor, int) ([]RegionalRuntimeInventoryEntry, error)
 }
 
 func validRegionalRetirementPage(cell string, after RegionalRuntimeRetirementCursor, limit int) bool {

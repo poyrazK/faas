@@ -35,19 +35,25 @@ func TestRegionalRuntimeSchedulerInitialIssuance(t *testing.T) {
 			}}
 			// The mandatory Store interface carries issuance through decorators.
 			engine := &Engine{store: struct{ state.Store }{store}, vmm: vmm}
-			spec := AppSpec{AppID: app.ID, AccountID: account.ID, DeploymentID: dep.ID, Plan: account.Plan, PrimeOnly: purpose == runtimequota.CapacityPrime}
+			spec := AppSpec{MemSizeMiB: int32(app.RAMMB), VCPUCount: 1, CPUMillicores: api.DefaultAppCPUMillicores, AppID: app.ID, AccountID: account.ID, DeploymentID: dep.ID, Plan: account.Plan, PrimeOnly: purpose == runtimequota.CapacityPrime}
 			instance, run := strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()
 			issued, err := engine.issueRegionalRuntimeLaunch(t.Context(), node.ID, instance, run, purpose, spec, head.Grant)
 			if err != nil || issued.RegionalRuntime == nil {
 				t.Fatal("initial bookkeeping was not issued", err)
 			}
 			source, err := store.RegionalRuntimeLaunchSource(t.Context(), app.ID, issued.RegionalRuntime.Permit.ID)
-			if err != nil || source.Source.InstanceKey != instance || source.Source.Permit != issued.RegionalRuntime.Permit {
+			if err != nil || source.Source.InstanceKey != instance || source.Source.Permit != issued.RegionalRuntime.Permit || source.Resources != (state.RegionalRuntimeResources{RAMMB: app.RAMMB, VCPU: 1, CPUMillicores: api.DefaultAppCPUMillicores}) {
 				t.Fatal("scheduler lost actual compact runtime key", source, err)
 			}
 			again, err := engine.issueRegionalRuntimeLaunch(t.Context(), node.ID, instance, run, purpose, issued, head.Grant)
 			if err != nil || again.RegionalRuntime.Permit != issued.RegionalRuntime.Permit || !sameInitialServingSeat(again.RegionalRuntime.Seat, issued.RegionalRuntime.Seat) {
 				t.Fatal("retry minted another attempt", err)
+			}
+			missingResources := issued
+			missingResources.MemSizeMiB = 0
+			refused, err := engine.issueRegionalRuntimeLaunch(t.Context(), node.ID, instance, run, purpose, missingResources, head.Grant)
+			if !errors.Is(err, runtimequota.ErrBinding) || refused.RegionalRuntime == nil || *refused.RegionalRuntime != *issued.RegionalRuntime {
+				t.Fatal("invalid resource retry lost original cleanup identity", refused.RegionalRuntime, err)
 			}
 			usage, err := store.RegionalRuntimeCapacityUsage(t.Context(), app.ID, head.Grant.AllocationID)
 			if err != nil || usage.TotalHeld != 1 || usage.IssuedHeld != 1 {
@@ -76,8 +82,8 @@ type unavailableAfterRegionalIssue struct {
 	err           error
 }
 
-func (s unavailableAfterRegionalIssue) IssueRegionalRuntimeLaunch(ctx context.Context, p runtimequota.Placement, source runtimequota.LaunchSource) error {
-	if err := s.Store.IssueRegionalRuntimeLaunch(ctx, p, source); err != nil {
+func (s unavailableAfterRegionalIssue) IssueRegionalRuntimeLaunchResources(ctx context.Context, p runtimequota.Placement, source runtimequota.LaunchSource, resources state.RegionalRuntimeResources) error {
+	if err := s.Store.IssueRegionalRuntimeLaunchResources(ctx, p, source, resources); err != nil {
 		return err
 	}
 	if s.commitUnknown {
@@ -110,7 +116,7 @@ func TestRegionalRuntimeLaunchRetainsSourceOnUncertainIssuance(t *testing.T) {
 			unavailable := errors.New("issuance reply unavailable")
 			e := &Engine{store: unavailableAfterRegionalIssue{Store: store, commitUnknown: commitUnknown, err: unavailable}, vmm: vmm}
 			instance := strings.ReplaceAll(uuid.NewString(), "-", "")
-			spec := AppSpec{AppID: app.ID, AccountID: account.ID, DeploymentID: dep.ID, Plan: account.Plan}
+			spec := AppSpec{MemSizeMiB: int32(app.RAMMB), VCPUCount: 1, CPUMillicores: api.DefaultAppCPUMillicores, AppID: app.ID, AccountID: account.ID, DeploymentID: dep.ID, Plan: account.Plan}
 			retained, err := e.issueRegionalRuntimeLaunch(t.Context(), node.ID, instance, uuid.NewString(), runtimequota.CapacityServing, spec, head.Grant)
 			if !errors.Is(err, unavailable) || retained.RegionalRuntime == nil {
 				t.Fatal("uncertain issuance discarded original permit", err)
@@ -154,7 +160,7 @@ func TestRegionalRuntimeSchedulerLaunchRefusesUnknownEpochAndIdentity(t *testing
 				decorated = failingRegionalPlacementWriter{Store: decorated, err: unavailable}
 			}
 			engine := &Engine{store: decorated, vmm: vmm}
-			spec := AppSpec{AppID: app.ID, AccountID: account.ID, DeploymentID: dep.ID, Plan: account.Plan}
+			spec := AppSpec{MemSizeMiB: int32(app.RAMMB), VCPUCount: 1, CPUMillicores: api.DefaultAppCPUMillicores, AppID: app.ID, AccountID: account.ID, DeploymentID: dep.ID, Plan: account.Plan}
 			switch fail {
 			case "unknown-node":
 				node.ID = uuid.NewString()
@@ -185,7 +191,7 @@ type failingRegionalPlacementWriter struct {
 	err error
 }
 
-func (s failingRegionalPlacementWriter) IssueRegionalRuntimeLaunch(context.Context, runtimequota.Placement, runtimequota.LaunchSource) error {
+func (s failingRegionalPlacementWriter) IssueRegionalRuntimeLaunchResources(context.Context, runtimequota.Placement, runtimequota.LaunchSource, state.RegionalRuntimeResources) error {
 	return s.err
 }
 
@@ -196,7 +202,7 @@ func TestIndependentSchedulerLaunchSkipsRegionalDiscovery(t *testing.T) {
 		return nil, nil
 	}}
 	engine := &Engine{store: struct{ state.Store }{store}, vmm: vmm}
-	spec := AppSpec{AppID: app.ID, AccountID: account.ID, DeploymentID: dep.ID, Plan: account.Plan}
+	spec := AppSpec{MemSizeMiB: int32(app.RAMMB), VCPUCount: 1, CPUMillicores: api.DefaultAppCPUMillicores, AppID: app.ID, AccountID: account.ID, DeploymentID: dep.ID, Plan: account.Plan}
 	prepared, err := engine.prepareRegionalRuntimeLaunch(t.Context(), "default-local", "opaque-instance", "", runtimequota.CapacityServing, spec)
 	if err != nil || prepared.RegionalRuntime != nil || prepared.AppID != spec.AppID {
 		t.Fatal("independent launch changed", err)

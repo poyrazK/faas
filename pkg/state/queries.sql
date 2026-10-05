@@ -9629,8 +9629,8 @@ WHERE id=sqlc.arg(instance_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
   AND wake_id=sqlc.arg(run_id)::uuid AND state=sqlc.arg(expected_state)::text;
 
 -- name: InsertRegionalRuntimeLaunchSource :one
-INSERT INTO regional_runtime_launch_sources(app_id,permit_id,instance_key,permit_claims)
-VALUES ($1,$2,$3,$4) RETURNING *;
+INSERT INTO regional_runtime_launch_sources(app_id,permit_id,instance_key,permit_claims,resource_claims)
+VALUES ($1,$2,$3,$4,$5) RETURNING *;
 
 -- name: RegionalRuntimeLaunchSource :one
 SELECT * FROM regional_runtime_launch_sources WHERE app_id=$1 AND permit_id=$2;
@@ -11194,3 +11194,17 @@ WHERE r.app_id=sqlc.arg(app_id) AND p.instance_id=sqlc.arg(instance_id)
  AND p.node_id=sqlc.arg(node_id) AND p.run_id=sqlc.arg(run_id)
  AND s.issued_at IS NOT NULL AND s.released_at IS NULL
 ORDER BY r.resume_id LIMIT 2;
+
+-- ADR-635: issued capacity survives app/instance collection and grant replacement.
+-- name: ListRegionalRuntimeInventory :many
+SELECT c.*, s.instance_key AS source_instance_key, s.permit_claims AS source_permit_claims,
+  s.resource_claims,
+  (SELECT count(*) FROM regional_runtime_serving_seats seat
+    WHERE seat.app_id=c.app_id AND seat.permit_id=c.permit_id
+      AND seat.issued_at IS NOT NULL AND seat.released_at IS NULL)::bigint AS serving_seats_held
+FROM regional_runtime_capacity_receipts c
+LEFT JOIN regional_runtime_launch_sources s USING (app_id,permit_id)
+WHERE c.issued_at IS NOT NULL AND c.released_at IS NULL
+  AND c.permit_claims->'Grant'->'Binding'->>'CellID'=sqlc.arg(cell_id)::text
+  AND (sqlc.arg(first_page)::boolean OR (c.app_id,c.permit_id)>(sqlc.arg(after_app)::uuid,sqlc.arg(after_permit)::uuid))
+ORDER BY c.app_id,c.permit_id LIMIT sqlc.arg(batch_limit)::int;

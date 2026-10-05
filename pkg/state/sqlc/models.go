@@ -4860,11 +4860,12 @@ type RegionalRuntimeCapacityReceipt struct {
 }
 
 type RegionalRuntimeLaunchSource struct {
-	AppID        pgtype.UUID
-	PermitID     pgtype.UUID
-	InstanceKey  string
-	PermitClaims []byte
-	CreatedAt    pgtype.Timestamptz
+	AppID          pgtype.UUID
+	PermitID       pgtype.UUID
+	InstanceKey    string
+	PermitClaims   []byte
+	CreatedAt      pgtype.Timestamptz
+	ResourceClaims []byte
 }
 
 type RegionalRuntimeQuotaHead struct {

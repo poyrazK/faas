@@ -11,17 +11,24 @@ import (
 )
 
 func (s *PgStore) IssueRegionalRuntimePlacement(ctx context.Context, p runtimequota.Placement) error {
-	return s.issueRegionalRuntimePlacement(ctx, p, nil)
+	return s.issueRegionalRuntimePlacement(ctx, p, nil, RegionalRuntimeResources{})
 }
 
 func (s *PgStore) IssueRegionalRuntimeLaunch(ctx context.Context, p runtimequota.Placement, source runtimequota.LaunchSource) error {
 	if source.Validate() != nil || source.Permit != p.Permit {
 		return ErrInvalidArgument
 	}
-	return s.issueRegionalRuntimePlacement(ctx, p, &source)
+	return s.issueRegionalRuntimePlacement(ctx, p, &source, RegionalRuntimeResources{})
 }
 
-func (s *PgStore) issueRegionalRuntimePlacement(ctx context.Context, p runtimequota.Placement, source *runtimequota.LaunchSource) error {
+func (s *PgStore) IssueRegionalRuntimeLaunchResources(ctx context.Context, p runtimequota.Placement, source runtimequota.LaunchSource, resources RegionalRuntimeResources) error {
+	if source.Validate() != nil || source.Permit != p.Permit || !resources.Valid() {
+		return ErrInvalidArgument
+	}
+	return s.issueRegionalRuntimePlacement(ctx, p, &source, resources)
+}
+
+func (s *PgStore) issueRegionalRuntimePlacement(ctx context.Context, p runtimequota.Placement, source *runtimequota.LaunchSource, resources RegionalRuntimeResources) error {
 	if !validIssuedRegionalPlacement(p) {
 		return ErrInvalidArgument
 	}
@@ -42,7 +49,7 @@ func (s *PgStore) issueRegionalRuntimePlacement(ctx context.Context, p runtimequ
 			}
 		}
 		if source != nil {
-			if err := prepareRegionalLaunchSource(ctx, tx, q, *source, physical); err != nil {
+			if err := prepareRegionalLaunchSource(ctx, tx, q, *source, physical, resources); err != nil {
 				return struct{}{}, err
 			}
 		}

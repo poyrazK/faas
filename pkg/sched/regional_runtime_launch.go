@@ -88,8 +88,15 @@ func (e *Engine) issueRegionalRuntimeLaunch(ctx context.Context, node, instance,
 	if source.Validate() != nil {
 		return AppSpec{}, runtimequota.ErrBinding
 	}
+	resources := state.RegionalRuntimeResources{RAMMB: int(spec.MemSizeMiB), VCPU: int(spec.VCPUCount), CPUMillicores: int(spec.CPUMillicores)}
+	if !spec.DisableStartupCPUBoost {
+		resources.CPUMillicores = startupCPUBoostQuota(spec.Plan, resources.CPUMillicores)
+	}
+	if !resources.Valid() {
+		return spec, runtimequota.ErrBinding // A retry must retain any already escaped original placement.
+	}
 	spec.RegionalRuntime = &placement
-	if err := e.store.IssueRegionalRuntimeLaunch(ctx, placement, source); err != nil {
+	if err := e.store.IssueRegionalRuntimeLaunchResources(ctx, placement, source, resources); err != nil {
 		return spec, fmt.Errorf("sched: issue regional launch: %w", err)
 	}
 	if err := e.store.CheckRegionalRuntimeIssuedPlacement(ctx, placement); err != nil {

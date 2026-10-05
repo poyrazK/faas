@@ -17,6 +17,11 @@ func regionalLaunchSourceRow(row sqlc.RegionalRuntimeLaunchSource) (RegionalRunt
 	if err := json.Unmarshal(row.PermitClaims, &r.Source.Permit); err != nil {
 		return RegionalRuntimeLaunchSource{}, regionalCapacityError(err)
 	}
+	if row.ResourceClaims != nil {
+		if err := json.Unmarshal(row.ResourceClaims, &r.Resources); err != nil || !r.Resources.Valid() {
+			return RegionalRuntimeLaunchSource{}, ErrConflict
+		}
+	}
 	if r.Source.Validate() != nil {
 		return RegionalRuntimeLaunchSource{}, ErrConflict
 	}
@@ -31,13 +36,16 @@ func readRegionalLaunchSource(ctx context.Context, db sqlc.DBTX, app, permit str
 	return regionalLaunchSourceRow(row)
 }
 
-func prepareRegionalLaunchSource(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, source runtimequota.LaunchSource, physical RegionalRuntimeCapacityReceipt) error {
+func prepareRegionalLaunchSource(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, source runtimequota.LaunchSource, physical RegionalRuntimeCapacityReceipt, resources RegionalRuntimeResources) error {
 	app := source.Permit.Grant.Binding.RegionalAppID
 	old, err := readRegionalLaunchSource(ctx, tx, app, source.Permit.ID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return err
 	}
 	if err := checkRegionalLaunchSource(source, old, physical); err != nil {
+		return err
+	}
+	if err := regionalResourceRetry(old, resources); err != nil {
 		return err
 	}
 	if old.Source.Permit.ID != "" {
@@ -47,7 +55,14 @@ func prepareRegionalLaunchSource(ctx context.Context, tx pgx.Tx, q *sqlc.Queries
 	if err != nil {
 		return err
 	}
-	_, err = q.InsertRegionalRuntimeLaunchSource(ctx, tx, sqlc.InsertRegionalRuntimeLaunchSourceParams{AppID: uuidToPgtype(app), PermitID: uuidToPgtype(source.Permit.ID), InstanceKey: source.InstanceKey, PermitClaims: claims})
+	var resourceClaims []byte
+	if resources.Valid() {
+		resourceClaims, err = json.Marshal(resources)
+		if err != nil {
+			return err
+		}
+	}
+	_, err = q.InsertRegionalRuntimeLaunchSource(ctx, tx, sqlc.InsertRegionalRuntimeLaunchSourceParams{AppID: uuidToPgtype(app), PermitID: uuidToPgtype(source.Permit.ID), InstanceKey: source.InstanceKey, PermitClaims: claims, ResourceClaims: resourceClaims})
 	return err
 }
 

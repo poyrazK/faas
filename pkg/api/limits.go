@@ -23,29 +23,31 @@ import (
 // ADR-602 directory/proof protocol bounds. These do not grant runtime capacity.
 const (
 	// ADR-612: protocol bounds; plan concurrency comes from the plan table below.
-	GlobalRuntimeQuotaTargetsMax               = 32
-	GlobalRuntimeQuotaGenerationMax      int64 = 9007199254740991
-	RegionalRuntimeQuotaEnvelopeMaxBytes       = 8192
-	RegionalRuntimeQuotaPayloadMaxBytes        = 4096
-	RegionalRuntimeCapacityPageMax             = 1000
-	RegionalRuntimeRetirementBatch             = 64 // ADR-633: bounded cell recovery, not execution admission.
-	RegionalRuntimeRetirementInterval          = 30 * time.Second
-	RegionalRuntimeRetirementTimeout           = 30 * time.Second
-	RegionalRuntimeFailureCleanupTimeout       = 2 * RegionalRuntimeRetirementTimeout // ADR-634: native proof plus bounded row completion.
-	RegionalRuntimeHostRecordMaxBytes          = 16384
-	RegionalRuntimeSigningKeyMaxBytes          = 4096 // ADR-632: one PKCS#8 Ed25519 key.
-	RegionalRuntimeTrustBundleMaxBytes         = 65536
-	RegionalRuntimeTrustAnchorsMax             = 128
-	RegionalMigrationLeaseTokenBytes           = 32 // ADR-628: existing 128-bit lowercase hex lease.
-	GlobalDirectoryRequestMaxBytes             = 4096
-	GlobalDirectoryProofMaxBytes               = 4096
-	GlobalDirectoryAPIOriginMaxBytes           = 2048
-	GlobalDirectoryOriginPortMax               = 65535
-	GlobalDirectoryOriginHostMaxBytes          = 253
-	GlobalDirectoryOriginLabelMaxBytes         = 63
-	GlobalDirectoryProofTimeoutSeconds         = 10
-	GlobalDirectorySlugMinBytes                = 3
-	GlobalDirectorySlugMaxBytes                = 40
+	GlobalRuntimeQuotaTargetsMax                = 32
+	GlobalRuntimeQuotaGenerationMax       int64 = 9007199254740991
+	RegionalRuntimeQuotaEnvelopeMaxBytes        = 8192
+	RegionalRuntimeQuotaPayloadMaxBytes         = 4096
+	RegionalRuntimeCapacityPageMax              = 1000
+	RegionalRuntimeRetirementBatch              = 64 // ADR-633: bounded cell recovery, not execution admission.
+	RegionalRuntimeRetirementInterval           = 30 * time.Second
+	RegionalRuntimeRetirementTimeout            = 30 * time.Second
+	RegionalRuntimeFailureCleanupTimeout        = 2 * RegionalRuntimeRetirementTimeout // ADR-634: native proof plus bounded row completion.
+	RegionalRuntimeResourceClaimsMaxBytes       = 512                                  // ADR-635: three immutable native resource dimensions.
+	RegionalRuntimeResourceValueMax             = 1<<31 - 1                            // Native AppSpec resource fields are positive int32 values.
+	RegionalRuntimeHostRecordMaxBytes           = 16384
+	RegionalRuntimeSigningKeyMaxBytes           = 4096 // ADR-632: one PKCS#8 Ed25519 key.
+	RegionalRuntimeTrustBundleMaxBytes          = 65536
+	RegionalRuntimeTrustAnchorsMax              = 128
+	RegionalMigrationLeaseTokenBytes            = 32 // ADR-628: existing 128-bit lowercase hex lease.
+	GlobalDirectoryRequestMaxBytes              = 4096
+	GlobalDirectoryProofMaxBytes                = 4096
+	GlobalDirectoryAPIOriginMaxBytes            = 2048
+	GlobalDirectoryOriginPortMax                = 65535
+	GlobalDirectoryOriginHostMaxBytes           = 253
+	GlobalDirectoryOriginLabelMaxBytes          = 63
+	GlobalDirectoryProofTimeoutSeconds          = 10
+	GlobalDirectorySlugMinBytes                 = 3
+	GlobalDirectorySlugMaxBytes                 = 40
 )
 
 // ADR-604 bounds immutable image-release input and receipt projections.
