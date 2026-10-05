@@ -168,10 +168,34 @@ func writeProtectionSuite(t *testing.T, st accountingStore, pool *pgxpool.Pool, 
 		t.Fatal(err)
 	}
 	if pool != nil {
+		assertWriteProtectionReplayPreservesHistory(t, pool)
 		_, down := writeProtectionMigration(t)
 		if _, err = pool.Exec(t.Context(), down); err == nil || !strings.Contains(err.Error(), "Preserve write protection history") {
 			t.Fatal("rollback discarded protected history", err)
 		}
+	}
+}
+
+func assertWriteProtectionReplayPreservesHistory(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	snapshot := func() string {
+		t.Helper()
+		var value string
+		const query = `SELECT jsonb_build_object(
+ 'writes',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM object_upload_completions c),
+ 'multipart',(SELECT jsonb_agg(to_jsonb(u) ORDER BY id) FROM object_storage_multipart_uploads u))::text`
+		if err := pool.QueryRow(t.Context(), query).Scan(&value); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	before := snapshot()
+	up, _ := writeProtectionMigration(t)
+	if _, err := pool.Exec(t.Context(), up); err != nil {
+		t.Fatal("replay with protected history", err)
+	}
+	if after := snapshot(); after != before {
+		t.Fatal("replay changed protection snapshots or write progress")
 	}
 }
 

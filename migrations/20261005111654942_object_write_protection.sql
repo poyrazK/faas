@@ -1,7 +1,7 @@
 -- filename: 20261005111654942_object_write_protection.sql
 -- +goose Up
 -- +goose StatementBegin
-CREATE FUNCTION valid_object_write_protection(p jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+CREATE OR REPLACE FUNCTION valid_object_write_protection(p jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE STRICT AS $$
 DECLARE r jsonb; d jsonb; t timestamptz;
 BEGIN
  IF p='{}' THEN RETURN true; END IF;
@@ -23,23 +23,35 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN RETURN false;
 END $$;
 -- +goose StatementEnd
-ALTER TABLE object_upload_completions ADD COLUMN protection_snapshot jsonb NOT NULL DEFAULT '{}' CHECK(valid_object_write_protection(protection_snapshot));
-ALTER TABLE object_upload_completions ADD COLUMN protection_dispatched boolean NOT NULL DEFAULT false;
-ALTER TABLE object_upload_completions ADD COLUMN protection_verified boolean NOT NULL DEFAULT false;
-ALTER TABLE object_upload_completions ADD CONSTRAINT object_upload_protection_phase CHECK(
+ALTER TABLE object_upload_completions ADD COLUMN IF NOT EXISTS protection_snapshot jsonb NOT NULL DEFAULT '{}' CHECK(valid_object_write_protection(protection_snapshot));
+ALTER TABLE object_upload_completions ADD COLUMN IF NOT EXISTS protection_dispatched boolean NOT NULL DEFAULT false;
+ALTER TABLE object_upload_completions ADD COLUMN IF NOT EXISTS protection_verified boolean NOT NULL DEFAULT false;
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='object_upload_completions'::regclass AND conname='object_upload_protection_phase') THEN
+  ALTER TABLE object_upload_completions ADD CONSTRAINT object_upload_protection_phase CHECK(
  (protection_snapshot='{}' OR write_phase IN ('prepared','dispatched','settled')) AND
  (NOT protection_dispatched OR protection_snapshot<>'{}' AND write_phase IN ('dispatched','settled')) AND
  (NOT protection_verified OR protection_dispatched AND status='completed' AND write_phase='settled' AND version_id<>'' AND version_id<>'null') AND
  (protection_snapshot='{}' OR status<>'completed' OR protection_verified));
-ALTER TABLE object_storage_multipart_uploads ADD COLUMN protection_snapshot jsonb NOT NULL DEFAULT '{}' CHECK(valid_object_write_protection(protection_snapshot));
-ALTER TABLE object_storage_multipart_uploads ADD COLUMN protection_lease_token text NOT NULL DEFAULT '' CHECK(octet_length(protection_lease_token)<=128);
-ALTER TABLE object_storage_multipart_uploads ADD COLUMN protection_verified boolean NOT NULL DEFAULT false;
-ALTER TABLE object_storage_multipart_uploads ADD CONSTRAINT object_multipart_protection_phase CHECK(
+ END IF;
+END $$;
+-- +goose StatementEnd
+ALTER TABLE object_storage_multipart_uploads ADD COLUMN IF NOT EXISTS protection_snapshot jsonb NOT NULL DEFAULT '{}' CHECK(valid_object_write_protection(protection_snapshot));
+ALTER TABLE object_storage_multipart_uploads ADD COLUMN IF NOT EXISTS protection_lease_token text NOT NULL DEFAULT '' CHECK(octet_length(protection_lease_token)<=128);
+ALTER TABLE object_storage_multipart_uploads ADD COLUMN IF NOT EXISTS protection_verified boolean NOT NULL DEFAULT false;
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='object_storage_multipart_uploads'::regclass AND conname='object_multipart_protection_phase') THEN
+  ALTER TABLE object_storage_multipart_uploads ADD CONSTRAINT object_multipart_protection_phase CHECK(
  (protection_lease_token='' OR protection_snapshot<>'{}' AND lease_token IS NOT NULL AND protection_lease_token=lease_token) AND
  (NOT protection_verified OR protection_snapshot<>'{}' AND state='completed' AND completion_dispatched AND completion_version_id<>'' AND completion_version_id<>'null') AND
  (protection_snapshot='{}' OR state<>'completed' OR protection_verified));
+ END IF;
+END $$;
+-- +goose StatementEnd
 -- +goose StatementBegin
-CREATE FUNCTION protect_object_write_protection() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION protect_object_write_protection() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE j object_bucket_object_lock; protected boolean; url_request jsonb;
 BEGIN
  IF TG_OP='INSERT' THEN
@@ -88,11 +100,13 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_upload_protection_guard ON object_upload_completions;
 CREATE TRIGGER object_upload_protection_guard BEFORE INSERT OR UPDATE ON object_upload_completions FOR EACH ROW EXECUTE FUNCTION protect_object_write_protection();
+DROP TRIGGER IF EXISTS object_multipart_protection_guard ON object_storage_multipart_uploads;
 CREATE TRIGGER object_multipart_protection_guard BEFORE INSERT OR UPDATE ON object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION protect_object_write_protection();
 -- +goose StatementEnd
 -- +goose StatementBegin
-CREATE FUNCTION fence_untracked_object_lock_write() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION fence_untracked_object_lock_write() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_TABLE_NAME='object_storage_key_grants' THEN
   IF NEW.last_write_id IS NOT NULL THEN RETURN NEW; END IF;
@@ -106,14 +120,16 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS object_lock_legacy_key_fence ON object_storage_key_grants;
 CREATE TRIGGER object_lock_legacy_key_fence BEFORE INSERT ON object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION fence_untracked_object_lock_write();
+DROP TRIGGER IF EXISTS object_lock_legacy_write_fence ON object_storage_write_admissions;
 CREATE TRIGGER object_lock_legacy_write_fence BEFORE INSERT ON object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION fence_untracked_object_lock_write();
 -- +goose StatementEnd
 -- +goose StatementBegin
 -- Keep the historical URL validator intact: older S3 migrations replace it
 -- during an allowed out-of-order replay. This validator and its constraint
 -- must retain protection checks independently of those historical definitions.
-CREATE FUNCTION valid_object_protected_url_request(r jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+CREATE OR REPLACE FUNCTION valid_object_protected_url_request(r jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE STRICT AS $$
 DECLARE method text;
 BEGIN
  IF jsonb_typeof(r)<>'object' OR octet_length(r::text)>32768 OR
@@ -141,7 +157,7 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN RETURN false;
 END $$;
 -- +goose StatementEnd
-ALTER TABLE object_storage_s3_credentials DROP CONSTRAINT object_storage_s3_credentials_url_request_check;
+ALTER TABLE object_storage_s3_credentials DROP CONSTRAINT IF EXISTS object_storage_s3_credentials_url_request_check;
 ALTER TABLE object_storage_s3_credentials ADD CONSTRAINT object_storage_s3_credentials_url_request_check CHECK(url_request IS NULL OR valid_object_protected_url_request(url_request));
 -- +goose Down
 -- +goose StatementBegin
