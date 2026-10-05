@@ -107,7 +107,7 @@ def sync_detailed(
     body: EnvironmentGitSourceUpdate,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[EnvironmentGitSource | Problem]:
-    """Update report, enforce, pruning, and suspension controls.
+    """Update report, pruning, and suspension controls. Enforce is unavailable in preview.
 
     Args:
         slug (str):
@@ -146,7 +146,7 @@ def sync(
     body: EnvironmentGitSourceUpdate,
     idempotency_key: str | Unset = UNSET,
 ) -> EnvironmentGitSource | Problem | None:
-    """Update report, enforce, pruning, and suspension controls.
+    """Update report, pruning, and suspension controls. Enforce is unavailable in preview.
 
     Args:
         slug (str):
@@ -180,7 +180,7 @@ async def asyncio_detailed(
     body: EnvironmentGitSourceUpdate,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[EnvironmentGitSource | Problem]:
-    """Update report, enforce, pruning, and suspension controls.
+    """Update report, pruning, and suspension controls. Enforce is unavailable in preview.
 
     Args:
         slug (str):
@@ -217,7 +217,7 @@ async def asyncio(
     body: EnvironmentGitSourceUpdate,
     idempotency_key: str | Unset = UNSET,
 ) -> EnvironmentGitSource | Problem | None:
-    """Update report, enforce, pruning, and suspension controls.
+    """Update report, pruning, and suspension controls. Enforce is unavailable in preview.
 
     Args:
         slug (str):

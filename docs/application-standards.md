@@ -9,7 +9,7 @@ The implementation is in progress. Immutable candidates, resource management,
 automatic enrollment, assignment inventory, reviewed approval/operator controls,
 local intent and bounded exception APIs are implemented. Mutation APIs share a
 default-off release gate. Runtime consumer convergence and controlled rollout
-must pass the acceptance checklist in [ADR-581](adr/581-inherited-application-standards.md)
+must pass the acceptance checklist in [ADR-586](adr/586-inherited-application-standards.md)
 before this feature is declared available.
 
 ## Enrollment boundary

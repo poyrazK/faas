@@ -7,7 +7,7 @@
  */
 export type EnvironmentGitSourceUpdate = {
   expected_generation: number;
-  mode?: 'report' | 'enforce';
+  mode?: 'report';
   prune?: boolean;
   suspended?: boolean;
 };

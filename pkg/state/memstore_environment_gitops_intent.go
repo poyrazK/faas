@@ -15,6 +15,9 @@ var _ EnvironmentGitOpsIntentStore = (*MemStore)(nil)
 
 func (m *MemStore) gitOpsGuardScopedWriteLocked(accountID, appID, scope string, paths []string) (*environmentGitOpsMemory, error) {
 	for _, memory := range m.environmentGitOps {
+		if memory.source.Detached {
+			continue
+		}
 		if memory.source.AccountID != accountID || memory.source.EnvironmentSlug != scope {
 			continue
 		}
@@ -47,6 +50,9 @@ func touchGitOpsMemoryIntent(memory *environmentGitOpsMemory) {
 func (m *MemStore) gitOpsGuardAppRemovalLocked(appID string) ([]*environmentGitOpsMemory, error) {
 	var sources []*environmentGitOpsMemory
 	for _, memory := range m.environmentGitOps {
+		if memory.source.Detached {
+			continue
+		}
 		for resource, id := range memory.resources {
 			if id != appID {
 				continue
@@ -63,6 +69,9 @@ func (m *MemStore) gitOpsGuardAppRemovalLocked(appID string) ([]*environmentGitO
 
 func (m *MemStore) gitOpsGuardConfigurationLocked(config ProjectEnvironmentConfig) (*environmentGitOpsMemory, error) {
 	for _, memory := range m.environmentGitOps {
+		if memory.source.Detached {
+			continue
+		}
 		source := memory.source
 		if source.AccountID != config.AccountID || source.ProjectID != config.ProjectID || source.EnvironmentSlug != config.EnvironmentSlug {
 			continue
@@ -100,6 +109,11 @@ func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsI
 	for key, id := range memory.queues {
 		resource, path, _ := strings.Cut(key, "#")
 		snapshot.QueueBindings = append(snapshot.QueueBindings, gitOpsQueueIdentity{Resource: resource, Path: path, BindingID: id})
+	}
+	for _, owner := range m.environmentExternalOwners {
+		if owner.EnvironmentID == source.EnvironmentID {
+			snapshot.ExternalOwners = append(snapshot.ExternalOwners, owner)
+		}
 	}
 	for _, owner := range memory.owners {
 		owner.Value = append(json.RawMessage(nil), owner.Value...)

@@ -31,12 +31,12 @@ func (s *PostgresStore) ListUsageDatabases(ctx context.Context, after UsageDatab
 	}
 	items := make([]Database, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, usageDatabaseFromRow(row))
+		items = append(items, databaseFromRow(row))
 	}
 	return items, nil
 }
 
-func usageDatabaseFromRow(row sqlc.ManagedPostgresDatabase) Database {
+func databaseFromRow(row sqlc.ManagedPostgresDatabase) Database {
 	database := Database{
 		ID: cutoverUUID(row.ID), AccountID: cutoverUUID(row.AccountID), Name: row.Name,
 		Spec: Spec{Region: row.Region, PostgresMajor: int(row.PostgresMajor), Class: ServiceClass(row.ServiceClass),
@@ -44,6 +44,7 @@ func usageDatabaseFromRow(row sqlc.ManagedPostgresDatabase) Database {
 			StorageLimitBytes: row.StorageLimitBytes, RestoreWindowSeconds: row.RestoreWindowSeconds},
 		BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint,
 		ProviderResourceID: row.ProviderResourceID.String, RestoreSourceResourceID: row.RestoreSourceResourceID.String,
+		AccountingRequired: row.AccountingRequired,
 		RestorePointInTime: row.RestorePointInTime.Time, State: State(row.State),
 		DesiredGeneration: row.DesiredGeneration, ObservedGeneration: row.ObservedGeneration,
 		LastErrorCode: row.LastErrorCode.String, LeaseToken: row.LeaseToken.String, LeaseUntil: row.LeaseUntil.Time,
@@ -120,7 +121,7 @@ func (s *PostgresStore) RecordUsage(ctx context.Context, records []UsageRecord) 
 	if err != nil {
 		return mapPostgresError(err)
 	}
-	resource := usageDatabaseFromRow(row)
+	resource := databaseFromRow(row)
 	if resource.AccountID != first.AccountID || resource.BackendID != first.BackendID || resource.BackendFingerprint != first.BackendFingerprint {
 		return ErrConflict
 	}
@@ -231,17 +232,12 @@ func (s *PostgresStore) UsageSnapshot(ctx context.Context, accountID string, per
 	if err != nil {
 		return UsageSnapshot{}, mapPostgresError(err)
 	}
-	rows, err := sqlc.New().ListManagedPostgresAccountingCoverage(ctx, tx, account)
+	rows, err := sqlc.New().ListManagedPostgresAccountingCoverage(ctx, tx, sqlc.ListManagedPostgresAccountingCoverageParams{AccountID: account})
 	if err != nil {
 		return UsageSnapshot{}, mapPostgresError(err)
 	}
 	for _, row := range rows {
-		progress := usageProgressFromColumns(time.Duration(row.WindowSeconds)*time.Second,
-			row.CollectedFrom, row.CollectedUntil, row.ObservedAt,
-			pgtype.Text{String: row.SourceDatabaseID, Valid: row.SourceDatabaseID != ""})
-		progress.CorrectionObservedAt = row.CorrectionObservedAt.Time
-		progress.Terminal = row.AccountingState == string(StateDeleted)
-		progress.EndedAt = row.EndedAt.Time
+		progress := accountingCoverageFromRow(row).Progress
 		if len(snapshot.Databases) == 0 || progress.ObservedAt.Before(snapshot.LastObservedAt) {
 			snapshot.LastObservedAt = progress.ObservedAt
 		}

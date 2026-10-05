@@ -2067,6 +2067,126 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/objects/protection/retention:
+    parameters:
+      - { name: slug, in: path, required: true, description: Application owning this retention target., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Owned logical bucket for retention management., schema: { type: string, format: uuid } }
+      - { name: key, in: query, required: true, description: Logical object key whose retention is selected., schema: { type: string, minLength: 1, maxLength: 1024 } }
+      - { name: version_id, in: query, required: true, description: Exact owned version for retention; current selection is unsupported., schema: { type: string, minLength: 1 } }
+    get:
+      operationId: getObjectVersionRetention
+      summary: Read exact version retention
+      description: Read fresh native retention for an explicit owned version with storage manage scope and a bucket read grant. Available with enrollment disabled.
+      tags: [storage]
+      responses:
+        '200':
+          description: Verified native version retention policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionRetentionResult' }
+        default:
+          description: Retention read rejected by validation, capability, ownership or mutation fencing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      operationId: putObjectVersionRetention
+      summary: Request a durable exact version retention change
+      description: Accept durable retention intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Event hold changes and governance bypass are unsupported.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectVersionRetentionRequest' }
+      responses:
+        '200':
+          description: Existing retention operation receipt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionProtection' }
+        '202':
+          description: Durable retention intent accepted for operation inspection
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionProtection' }
+        default:
+          description: Retention mutation rejected by validation, capability, ownership or mutation fencing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/objects/protection/legal-hold:
+    parameters:
+      - { name: slug, in: path, required: true, description: Application owning this legal hold target., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Owned logical bucket for legal hold management., schema: { type: string, format: uuid } }
+      - { name: key, in: query, required: true, description: Logical object key whose legal hold is selected., schema: { type: string, minLength: 1, maxLength: 1024 } }
+      - { name: version_id, in: query, required: true, description: Exact owned version for legal hold; current selection is unsupported., schema: { type: string, minLength: 1 } }
+    get:
+      operationId: getObjectVersionLegalHold
+      summary: Read exact version legal hold
+      description: Read fresh native legal hold for an explicit owned version with storage manage scope and a bucket read grant. Available with enrollment disabled.
+      tags: [storage]
+      responses:
+        '200':
+          description: Verified native version legal hold policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionLegalHoldResult' }
+        default:
+          description: Legal hold read rejected by validation, capability, ownership or mutation fencing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      operationId: putObjectVersionLegalHold
+      summary: Request a durable exact version legal hold change
+      description: Accept durable legal hold intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Event hold changes and governance bypass are unsupported.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectVersionLegalHoldRequest' }
+      responses:
+        '200':
+          description: Existing legal hold operation receipt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionProtection' }
+        '202':
+          description: Durable legal hold intent accepted for operation inspection
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionProtection' }
+        default:
+          description: Legal hold mutation rejected by validation, capability, ownership or mutation fencing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/protection-operations/{operation}:
+    parameters:
+      - { name: slug, in: path, required: true, description: Application owning this protection operation target., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Owned logical bucket for protection operation management., schema: { type: string, format: uuid } }
+      - { name: operation, in: path, required: true, description: Durable protection operation identity., schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectVersionProtection
+      summary: Inspect an owned version protection operation
+      description: Requires storage manage scope and a bucket read grant. Available with ingress or enrollment disabled. Provider identities and worker leases are private.
+      tags: [storage]
+      responses:
+        '200':
+          description: Durable operation status and accepted policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionProtection' }
+        default:
+          description: Protection operation inspection rejected by validation, capability, ownership or mutation fencing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/object-lock-capabilities:
     parameters:
       - { name: slug, in: path, required: true, description: App whose enrolled Object Lock capabilities are being discovered., schema: { type: string } }
@@ -2693,6 +2813,101 @@ paths:
               schema: { $ref: '#/components/schemas/ManagedPostgresUsageOperatorResponse' }
         default:
           description: Access denied, account not found, or accounting unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/accounting/{account_id}:
+    get:
+      operationId: listManagedPostgresAccountingDiagnostics
+      summary: Explain managed PostgreSQL accounting blockers
+      description: Operator allowlist and admin scope required, with the existing session MFA gate (bearer API keys follow IAM policy). Reads local catalog and ledger evidence only. Each page is one database snapshot; pages are live views, not a frozen account snapshot. No provider requests, opaque provider IDs, or credentials.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account whose local accounting evidence is requested.
+          schema: { type: string, format: uuid }
+        - name: after
+          in: query
+          description: Resume after the database ID returned as next_cursor.
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          description: Maximum databases returned in this page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Bounded per-database accounting evidence; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresAccountingDiagnosticsResponse' }
+        default:
+          description: Access denied, invalid pagination, account not found, or accounting unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/accounting/{account_id}/usage-imports/preview:
+    post:
+      operationId: previewManagedPostgresUsageImport
+      summary: Preview retained managed PostgreSQL usage evidence
+      description: Operator allowlist and admin scope required, with the existing session MFA gate. Validates normalized complete windows against local catalog and ledger evidence. Makes no provider calls or writes. Returns the revision required for apply; concurrent ledger or lifecycle changes invalidate it.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account whose retained usage evidence will be previewed.
+          schema: { type: string, format: uuid }
+      requestBody:
+        description: Normalized retained readings and source attestation for preview.
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresUsageImportRequest' }
+      responses:
+        '200':
+          description: Validated preview, without accounting changes; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresUsageImportResult' }
+        default:
+          description: Access denied, invalid evidence, conflicting ledger, or unavailable backend
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/accounting/{account_id}/usage-imports:
+    post:
+      operationId: applyManagedPostgresUsageImport
+      security: [{ cookieAuth: [] }]
+      summary: Apply retained managed PostgreSQL usage evidence
+      description: Allowlisted operator session with recent MFA step-up, same-origin checks, and Idempotency-Key required. Bearer API keys cannot apply imports. Requires expected_revision from preview. Commits normalized ledger windows, contiguous coverage, and immutable before/after evidence atomically. import_id durably deduplicates an identical request by the same actor; conflicting reuse is rejected. Evidence observation times are preserved. This neither establishes missing identities or shutdown nor reconciles a final provider invoice.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account owning the reviewed database and imported usage.
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Request replay key; import_id additionally provides permanent receipt deduplication.
+          schema: { type: string, minLength: 1, maxLength: 256 }
+      requestBody:
+        description: Reviewed retained readings with the revision returned by preview.
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresUsageImportRequest' }
+      responses:
+        '200':
+          description: Applied import or original committed response on identical durable replay; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresUsageImportResult' }
+        default:
+          description: Access denied, invalid evidence, expired preview, conflicting replay, or unavailable backend
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -18081,7 +18296,7 @@ paths:
       tags:
       - projects
       operationId: updateEnvironmentGitSource
-      summary: Update report, enforce, pruning, and suspension controls.
+      summary: Update report, pruning, and suspension controls. Enforce is unavailable in preview.
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -18098,6 +18313,139 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EnvironmentGitSource'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      tags: [projects]
+      operationId: detachEnvironmentGitSource
+      summary: Release Git ownership while preserving values and retired binding history.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DetachEnvironmentGitSourceRequest'
+      responses:
+        '204':
+          description: The binding was retired; values and audit evidence are preserved.
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/source/rebind:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags: [projects]
+      operationId: rebindEnvironmentGitSource
+      summary: Retire the binding and create a verified report source requiring fresh approval.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RebindEnvironmentGitSourceRequest'
+      responses:
+        '201':
+          description: Replacement source requiring a new definition review and ownership adoption.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentGitSource'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/environment-field-ownership:
+    put:
+      tags: [projects]
+      operationId: claimEnvironmentFieldOwnership
+      summary: Reserve scoped Terraform variable, source or configuration fields against Git adoption.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvironmentFieldOwnershipRequest'
+      responses:
+        '200':
+          description: Scoped fields were reserved, or the request targets legacy unscoped intent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentFieldOwnershipResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      tags: [projects]
+      operationId: releaseEnvironmentFieldOwnership
+      summary: Release scoped Terraform field ownership without changing values.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvironmentFieldOwnershipRequest'
+      responses:
+        '200':
+          description: The specified ownership claims were released; values were preserved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentFieldOwnershipResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -28189,6 +28537,62 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    DetachEnvironmentGitSourceRequest:
+      type: object
+      description: Release this binding's Git ownership at the supplied generation while retaining its history.
+      additionalProperties: false
+      required: [expected_generation]
+      properties:
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 0
+    RebindEnvironmentGitSourceRequest:
+      type: object
+      description: Replace a Git binding with a fresh report-only source that requires a new approval.
+      additionalProperties: false
+      required: [expected_generation, manifest_path]
+      properties:
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 0
+        ref:
+          type: string
+        manifest_path:
+          type: string
+        approval_policy:
+          type: string
+          enum: [manual, protected_branch]
+    EnvironmentFieldOwnershipRequest:
+      type: object
+      additionalProperties: false
+      required: [environment, paths, manager]
+      description: Specify exactly one of app or project. App fields use variables/KEY or source; project fields use configuration/KEY. Terraform must claim before writes and release after deletion. Claims contain no values.
+      properties:
+        app:
+          type: string
+        project:
+          type: string
+        environment:
+          type: string
+        paths:
+          type: array
+          minItems: 1
+          maxItems: 1024
+          items:
+            type: string
+        manager:
+          type: string
+          enum: [terraform]
+    EnvironmentFieldOwnershipResponse:
+      type: object
+      description: Result of claiming or releasing Terraform ownership of environment fields.
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [claimed, released, unscoped]
     CreateEnvironmentGitSourceRequest:
       type: object
       description: Select a Git definition in the project repository; repository identities are verified by
@@ -28204,7 +28608,6 @@ components:
           type: string
           enum:
           - report
-          - enforce
           default: report
         approval_policy:
           type: string
@@ -28491,6 +28894,9 @@ components:
           type: string
         source:
           $ref: '#/components/schemas/EnvironmentGitSourceSpec'
+        detached:
+          type: boolean
+          description: Retired binding; excluded from current source lookup and controllers.
         suspended:
           type: boolean
         generation:
@@ -28633,7 +29039,6 @@ components:
           type: string
           enum:
           - report
-          - enforce
         prune:
           type: boolean
         suspended:
@@ -31597,6 +32002,97 @@ components:
         max_monthly_history_byte_seconds: { type: integer, format: int64, minimum: 0 }
         max_monthly_egress_bytes: { type: integer, format: int64, minimum: 0 }
         line_items: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresUsageLineItem' } }
+    ManagedPostgresAccountingDiagnostic:
+      description: Local evidence for one accountable database. Shared restores refer to their accounting root. Reasons explain stale admission only; an empty list does not establish invoice settlement or remaining budget. An unknown legacy tombstone has no confirmed terminal deadline.
+      type: object
+      required: [database_id, name, state, accounting_required, identity_known, accounting_database_id, blocking, reasons, collected_window_seconds]
+      properties:
+        database_id: { type: string, format: uuid }
+        name: { type: string }
+        state: { type: string, enum: [provisioning, ready, updating, deleting, failed, deleted] }
+        accounting_required: { type: boolean }
+        identity_known: { type: boolean }
+        accounting_database_id: { type: string, format: uuid }
+        blocking: { type: boolean, description: This resource blocks admission due to stale accounting under the enabled policy. False when the policy is disabled. }
+        reasons:
+          type: array
+          items: { type: string, enum: [identity_unknown, legacy_identity_unknown, coverage_missing, window_mismatch, shutdown_unconfirmed, coverage_incomplete, observation_stale, final_correction_pending] }
+        collected_window_seconds: { type: integer, format: int64, minimum: 0 }
+        required_from: { type: [string, "null"], format: date-time }
+        required_until: { type: [string, "null"], format: date-time }
+        collected_from: { type: [string, "null"], format: date-time }
+        collected_until: { type: [string, "null"], format: date-time }
+        observed_at: { type: [string, "null"], format: date-time }
+        correction_observed_at: { type: [string, "null"], format: date-time }
+        correction_required_at: { type: [string, "null"], format: date-time }
+        lease_until: { type: [string, "null"], format: date-time }
+    ManagedPostgresUsageImportReading:
+      description: One normalized integer meter quantity from retained provider evidence.
+      type: object
+      additionalProperties: false
+      required: [meter, quantity]
+      properties:
+        meter: { type: string, enum: [active_seconds, compute_unit_seconds, storage_byte_seconds, history_byte_seconds, egress_bytes, operations] }
+        quantity: { type: integer, format: int64, minimum: 0 }
+    ManagedPostgresUsageImportWindow:
+      description: A complete policy-sized usage window with its actual source observation time.
+      type: object
+      additionalProperties: false
+      required: [from, to, observed_at, readings]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time, description: "Actual export observation time, at or after the closed window and no later than the server clock; microsecond precision maximum. Import time is never substituted." }
+        readings:
+          type: array
+          minItems: 1
+          maxItems: 6
+          items: { $ref: '#/components/schemas/ManagedPostgresUsageImportReading' }
+    ManagedPostgresUsageImportRequest:
+      description: Operator-attested retained usage for a known independently accounted database.
+      type: object
+      additionalProperties: false
+      required: [import_id, database_id, evidence_reference, evidence_sha256, reason, windows]
+      properties:
+        import_id: { type: string, format: uuid, description: "Durable request identity; preserve across retries." }
+        database_id: { type: string, format: uuid, description: "Independently accounted database; shared restores must import against their root." }
+        evidence_reference: { type: string, minLength: 1, maxLength: 256, description: "Non-secret retained evidence locator; never a credential or signed URL." }
+        evidence_sha256: { type: string, pattern: '^[a-f0-9]{64}$', description: "SHA-256 of the retained source artifact, attested by the operator; no artifact is fetched by this API." }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+        windows:
+          type: array
+          minItems: 1
+          maxItems: 256
+          description: Ascending contiguous complete policy-sized windows with exactly the backend's advertised meters. Costs are calculated from the current server policy. Maximum request size 1 MiB.
+          items: { $ref: '#/components/schemas/ManagedPostgresUsageImportWindow' }
+        expected_revision: { type: string, pattern: '^[a-f0-9]{64}$', description: "Omit for preview; required for apply." }
+    ManagedPostgresUsageImportResult:
+      description: Cost changes and resulting coverage from preview or an immutable applied import receipt.
+      type: object
+      required: [import_id, database_id, revision, applied, window_count, previous_cost_millicents, imported_cost_millicents, cost_delta_millicents, collected_from, collected_until, observed_at]
+      properties:
+        import_id: { type: string, format: uuid }
+        database_id: { type: string, format: uuid }
+        revision: { type: string, pattern: '^[a-f0-9]{64}$' }
+        applied: { type: boolean }
+        window_count: { type: integer, minimum: 1, maximum: 256 }
+        previous_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        imported_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        cost_delta_millicents: { type: integer, format: int64 }
+        collected_from: { type: string, format: date-time }
+        collected_until: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+    ManagedPostgresAccountingDiagnosticsResponse:
+      description: One live account-scoped page of local accounting evidence.
+      type: object
+      required: [account_id, evaluated_at, policy_enabled, window_seconds, items]
+      properties:
+        account_id: { type: string, format: uuid }
+        evaluated_at: { type: string, format: date-time }
+        policy_enabled: { type: boolean }
+        window_seconds: { type: integer, format: int64, minimum: 0 }
+        items: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/ManagedPostgresAccountingDiagnostic' } }
+        next_cursor: { type: [string, "null"], format: uuid }
     CreateManagedPostgresDatabaseRequest:
       description: Customer request to reserve a managed PostgreSQL database.
       type: object
@@ -32141,14 +32637,81 @@ components:
         encryption: { $ref: '#/components/schemas/ObjectEncryption', description: Verified active default for new implicit writes. }
         desired_encryption: { $ref: '#/components/schemas/ObjectEncryption', description: Requested default awaiting native verification. }
         updated_at: { type: string, format: date-time }
+    ObjectVersionRetention:
+      type: object
+      additionalProperties: false
+      description: Verified native retention, or a fixed-retention intent. An empty object requests a clear; active retention cannot be shortened without bypass, which is unsupported. Event hold fields are observation only for this contract.
+      properties:
+        mode: { type: string, enum: [GOVERNANCE, COMPLIANCE] }
+        retain_until_date: { type: string, format: date-time }
+        event_hold: { type: string, enum: [ON, OFF] }
+        event_hold_duration: { $ref: '#/components/schemas/ObjectRetentionPeriod' }
+    ObjectVersionLegalHold:
+      type: object
+      description: Independent exact-version legal hold status.
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [ON, OFF] }
+    ObjectVersionRetentionRequest:
+      type: object
+      description: Stable identity and fixed retention intent for an owned version.
+      additionalProperties: false
+      required: [id, retention]
+      properties:
+        id: { type: string, format: uuid, description: Stable caller-generated UUID v4; reuse only for the identical intent. }
+        retention: { $ref: '#/components/schemas/ObjectVersionRetention' }
+    ObjectVersionLegalHoldRequest:
+      type: object
+      description: Stable identity and desired independent legal hold for an owned version.
+      additionalProperties: false
+      required: [id, legal_hold]
+      properties:
+        id: { type: string, format: uuid, description: Caller-generated UUID v4 for this legal-hold intent; retain it when retrying. }
+        legal_hold: { $ref: '#/components/schemas/ObjectVersionLegalHold' }
+    ObjectVersionRetentionResult:
+      type: object
+      description: Selected public version and its observed native retention.
+      additionalProperties: false
+      required: [version_id, retention]
+      properties:
+        version_id: { type: string }
+        retention: { $ref: '#/components/schemas/ObjectVersionRetention' }
+    ObjectVersionLegalHoldResult:
+      type: object
+      description: Selected public version and its observed independent legal hold.
+      additionalProperties: false
+      required: [version_id, legal_hold]
+      properties:
+        version_id: { type: string }
+        legal_hold: { $ref: '#/components/schemas/ObjectVersionLegalHold' }
+    ObjectVersionProtection:
+      type: object
+      description: Durable public protection receipt containing immutable intent and bounded reconciliation progress.
+      additionalProperties: false
+      required: [id, bucket_id, key, version_id, kind, state, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        bucket_id: { type: string, format: uuid }
+        key: { type: string }
+        version_id: { type: string }
+        kind: { type: string, enum: [retention, legal_hold] }
+        state: { type: string, enum: [waiting, applying, ready, failed] }
+        retention: { $ref: '#/components/schemas/ObjectVersionRetention' }
+        legal_hold: { $ref: '#/components/schemas/ObjectVersionLegalHold' }
+        last_error_code: { type: string, enum: [provider_uncertain, provider_unsupported, provider_mismatch, preparation_failed, provider_rejected] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     ObjectLockCapabilities:
       type: object
-      description: Enrolled bucket configuration and default event hold capabilities, without a native health check.
+      description: Enrolled bucket configuration, default event holds, fixed version retention and legal-hold capabilities without a native health check.
       additionalProperties: false
-      required: [bucket_configuration, default_event_hold]
+      required: [bucket_configuration, default_event_hold, version_retention, version_legal_hold]
       properties:
         bucket_configuration: { type: boolean }
         default_event_hold: { type: boolean }
+        version_retention: { type: boolean }
+        version_legal_hold: { type: boolean }
     ObjectRetentionPeriod:
       type: object
       description: Exactly one positive days or years duration must be present. Null values are rejected.

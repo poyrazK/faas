@@ -1,6 +1,6 @@
 package fcvm
 
-// adr: 581. A protected load cannot re-resolve a mutable artifact locator.
+// adr: 586. A protected load cannot re-resolve a mutable artifact locator.
 
 import (
 	"context"

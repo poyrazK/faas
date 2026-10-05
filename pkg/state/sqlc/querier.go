@@ -103,6 +103,8 @@ type Querier interface {
 	AuthorizeWorkflowOutbound(ctx context.Context, db DBTX, arg AuthorizeWorkflowOutboundParams) (bool, error)
 	AutomationManifest(ctx context.Context, db DBTX, appID pgtype.UUID) (AutomationManifestRow, error)
 	BeginImagePreparation(ctx context.Context, db DBTX, arg BeginImagePreparationParams) (DeploymentImagePreparation, error)
+	// ADR-581: persist an irreversible accounting obligation before provider I/O.
+	BeginManagedPostgresAccounting(ctx context.Context, db DBTX, arg BeginManagedPostgresAccountingParams) (int64, error)
 	BindEnvironmentGitOpsQueue(ctx context.Context, db DBTX, arg BindEnvironmentGitOpsQueueParams) (int64, error)
 	BindEnvironmentGitOpsResource(ctx context.Context, db DBTX, arg BindEnvironmentGitOpsResourceParams) (int64, error)
 	BindExclusiveWorkSubmission(ctx context.Context, db DBTX, arg BindExclusiveWorkSubmissionParams) error
@@ -353,6 +355,7 @@ type Querier interface {
 	// apps → data_upstreams).
 	DeleteDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteDeploymentAlias(ctx context.Context, db DBTX, arg DeleteDeploymentAliasParams) (int64, error)
+	DeleteEnvironmentExternalFieldOwner(ctx context.Context, db DBTX, arg DeleteEnvironmentExternalFieldOwnerParams) (int64, error)
 	DeleteEnvironmentGitOpsOverride(ctx context.Context, db DBTX, arg DeleteEnvironmentGitOpsOverrideParams) (int64, error)
 	DeleteEnvironmentGitOpsPolicies(ctx context.Context, db DBTX, arg DeleteEnvironmentGitOpsPoliciesParams) error
 	DeleteEnvironmentGitOpsRoutes(ctx context.Context, db DBTX, arg DeleteEnvironmentGitOpsRoutesParams) error
@@ -397,6 +400,7 @@ type Querier interface {
 	// expired rows preserves the miss count for the next backoff stamp.
 	// The partial index `deployments_snapshot_backoff_idx` covers this lookup.
 	DeploymentSnapshotBackoffActive(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentSnapshotBackoffActiveRow, error)
+	DetachEnvironmentGitSource(ctx context.Context, db DBTX, arg DetachEnvironmentGitSourceParams) (int64, error)
 	DevBridgeByID(ctx context.Context, db DBTX, arg DevBridgeByIDParams) (DevBridgeByIDRow, error)
 	DevBridgeWebhookReplayByID(ctx context.Context, db DBTX, arg DevBridgeWebhookReplayByIDParams) (DevBridgeWebhookReplay, error)
 	DevBridgeWebhookReplayByKey(ctx context.Context, db DBTX, arg DevBridgeWebhookReplayByKeyParams) (DevBridgeWebhookReplay, error)
@@ -409,8 +413,11 @@ type Querier interface {
 	EnsureAppSecretRuntimeProcess(ctx context.Context, db DBTX, arg EnsureAppSecretRuntimeProcessParams) (int64, error)
 	EnsureExclusiveWorkKey(ctx context.Context, db DBTX, arg EnsureExclusiveWorkKeyParams) (ExclusiveWorkKey, error)
 	EnsureExclusiveWorkQuota(ctx context.Context, db DBTX, arg EnsureExclusiveWorkQuotaParams) error
+	EnvironmentFieldGitOwned(ctx context.Context, db DBTX, arg EnvironmentFieldGitOwnedParams) (bool, error)
+	EnvironmentFieldOwnershipLegacyApp(ctx context.Context, db DBTX, arg EnvironmentFieldOwnershipLegacyAppParams) (bool, error)
 	EnvironmentGitOpsCandidateByInput(ctx context.Context, db DBTX, arg EnvironmentGitOpsCandidateByInputParams) (pgtype.UUID, error)
 	EnvironmentGitOpsImageCandidate(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (EnvironmentGitOpsImageCandidateRow, error)
+	EnvironmentGitOpsLifecyclePending(ctx context.Context, db DBTX, sourceID pgtype.UUID) (pgtype.Bool, error)
 	// The approved-intent transaction holds source/app/account before this row.
 	EnvironmentGitOpsQueueForUpdate(ctx context.Context, db DBTX, arg EnvironmentGitOpsQueueForUpdateParams) (QueueBinding, error)
 	EnvironmentGitOpsUnqualifiedWorkloads(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitOpsUnqualifiedWorkloadsRow, error)
@@ -624,6 +631,8 @@ type Querier interface {
 	GetLatestOwnedBuildExportPublication(ctx context.Context, db DBTX, arg GetLatestOwnedBuildExportPublicationParams) (BuildExportPublication, error)
 	GetLatestScopedBuildExportPublication(ctx context.Context, db DBTX, arg GetLatestScopedBuildExportPublicationParams) (BuildExportPublication, error)
 	GetManagedPostgresCutover(ctx context.Context, db DBTX, arg GetManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
+	GetManagedPostgresRawUsageCoverage(ctx context.Context, db DBTX, arg GetManagedPostgresRawUsageCoverageParams) (ManagedPostgresUsageCoverage, error)
+	GetManagedPostgresUsageImport(ctx context.Context, db DBTX, arg GetManagedPostgresUsageImportParams) (GetManagedPostgresUsageImportRow, error)
 	GetManagedPostgresUsageProgress(ctx context.Context, db DBTX, arg GetManagedPostgresUsageProgressParams) (GetManagedPostgresUsageProgressRow, error)
 	// Bearer hot-path lookup. Filters past-TTL rows out at the SQL
 	// layer so the pg contract is "WHERE expires_at > NOW()". The
@@ -687,6 +696,7 @@ type Querier interface {
 	HasApplicationStandardQueuedTarget(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
 	HasEnvironmentGitOpsRuntimeDrift(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
 	HasExclusiveSnapshotOwner(ctx context.Context, db DBTX, instanceID string) (bool, error)
+	HasManagedPostgresIncompatibleUsageWindow(ctx context.Context, db DBTX, arg HasManagedPostgresIncompatibleUsageWindowParams) (bool, error)
 	HasPendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
 	HasPendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
 	HasScopedBuildExportPublication(ctx context.Context, db DBTX, arg HasScopedBuildExportPublicationParams) (bool, error)
@@ -812,6 +822,9 @@ type Querier interface {
 	InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error)
 	InsertManagedPostgresCutover(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverParams) error
 	InsertManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverCredentialParams) (int64, error)
+	// ADR-581: only a validated new reservation can prove provider I/O has not begun.
+	InsertManagedPostgresReservation(ctx context.Context, db DBTX, arg InsertManagedPostgresReservationParams) (ManagedPostgresDatabase, error)
+	InsertManagedPostgresUsageImport(ctx context.Context, db DBTX, arg InsertManagedPostgresUsageImportParams) error
 	// Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 	// Returns the full row (with created_at server-stamped).
 	InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg InsertOIDCExchangedTokenParams) (InsertOIDCExchangedTokenRow, error)
@@ -977,6 +990,11 @@ type Querier interface {
 	// Gateway hydration keeps each required readiness source independent so one
 	// recovered probe cannot override another probe that is still unready.
 	LatestInstanceReadinessBySource(ctx context.Context, db DBTX, instanceIds []string) ([]LatestInstanceReadinessBySourceRow, error)
+	// Most recently serving first (serving_ended_at, migration
+	// 20261004234807528); rows superseded before it fall back to created_at.
+	// A live 0% deployment that served before (a release demoted by `traffic
+	// promote` or `traffic set`) is a rollback target; one that never served
+	// (a dark deploy) needs a retention pin.
 	LatestRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LatestRetainedRollbackDeploymentParams) (pgtype.UUID, error)
 	LatestSnapshot(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (Snapshot, error)
 	LatestSnapshotForTier(ctx context.Context, db DBTX, arg LatestSnapshotForTierParams) (Snapshot, error)
@@ -1235,8 +1253,9 @@ type Querier interface {
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
 	ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error)
 	ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]Deployment, error)
-	ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListManagedPostgresAccountingCoverageRow, error)
+	ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, arg ListManagedPostgresAccountingCoverageParams) ([]ListManagedPostgresAccountingCoverageRow, error)
 	ListManagedPostgresCutoverCredentials(ctx context.Context, db DBTX, id string) ([]ManagedPostgresCutoverCredential, error)
+	ListManagedPostgresImportRecords(ctx context.Context, db DBTX, arg ListManagedPostgresImportRecordsParams) ([]ManagedPostgresUsage, error)
 	// ADR-569: known resources remain accountable through lifecycle shutdown.
 	ListManagedPostgresUsageResources(ctx context.Context, db DBTX, arg ListManagedPostgresUsageResourcesParams) ([]ManagedPostgresDatabase, error)
 	// Candidate lookup for schedd fan-out. The final JSON filter matcher remains
@@ -1369,7 +1388,9 @@ type Querier interface {
 	LockDeploymentRegistryVerification(ctx context.Context, db DBTX, arg LockDeploymentRegistryVerificationParams) ([]byte, error)
 	LockDevBridgeAccount(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
 	LockDevBridgeReplaySession(ctx context.Context, db DBTX, arg LockDevBridgeReplaySessionParams) (string, error)
+	LockEnvironmentFieldOwnershipScope(ctx context.Context, db DBTX, environmentID string) error
 	LockEnvironmentGitOpsCandidateApps(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]pgtype.UUID, error)
+	LockEnvironmentGitOpsEnvironment(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsEnvironmentParams) (pgtype.UUID, error)
 	LockEnvironmentGitOpsIntentApps(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]pgtype.UUID, error)
 	LockEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsLeaseParams) (EnvironmentGitopsJob, error)
 	LockEnvironmentGitOpsRuntimeEffect(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsRuntimeEffectParams) (EnvironmentGitopsRuntimeEffect, error)
@@ -1728,6 +1749,11 @@ type Querier interface {
 	ObjectVersionInventoryCursorsDelete(ctx context.Context, db DBTX, jobID pgtype.UUID) error
 	ObjectVersionInventoryEntriesDelete(ctx context.Context, db DBTX, jobID pgtype.UUID) error
 	ObjectVersionInventoryEntriesInsert(ctx context.Context, db DBTX, arg ObjectVersionInventoryEntriesInsertParams) (int64, error)
+	ObjectVersionProtectionActive(ctx context.Context, db DBTX, bucketID pgtype.UUID) (pgtype.UUID, error)
+	ObjectVersionProtectionDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error)
+	ObjectVersionProtectionGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectVersionProtection, error)
+	ObjectVersionProtectionInsert(ctx context.Context, db DBTX, arg ObjectVersionProtectionInsertParams) error
+	ObjectVersionProtectionUpdate(ctx context.Context, db DBTX, arg ObjectVersionProtectionUpdateParams) error
 	ObjectVersionReferenceResolve(ctx context.Context, db DBTX, arg ObjectVersionReferenceResolveParams) (string, error)
 	ObjectVersionReferencesRecord(ctx context.Context, db DBTX, arg ObjectVersionReferencesRecordParams) ([]ObjectVersionReferencesRecordRow, error)
 	ObjectVersioningDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error)
@@ -1790,6 +1816,7 @@ type Querier interface {
 	// the current month that are older than cutoff).
 	PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error
 	PruneDevBridgeSessions(ctx context.Context, db DBTX, arg PruneDevBridgeSessionsParams) error
+	PruneEnvironmentGitOpsReports(ctx context.Context, db DBTX, arg PruneEnvironmentGitOpsReportsParams) error
 	PruneRouteCheckHistory(ctx context.Context, db DBTX, arg PruneRouteCheckHistoryParams) error
 	PruneRouteHealthHistory(ctx context.Context, db DBTX, arg PruneRouteHealthHistoryParams) error
 	PruneRouteMonitorIncidents(ctx context.Context, db DBTX, arg PruneRouteMonitorIncidentsParams) error
@@ -1805,6 +1832,7 @@ type Querier interface {
 	PublishInstanceApplicationStandardRuntime(ctx context.Context, db DBTX, arg PublishInstanceApplicationStandardRuntimeParams) (int64, error)
 	PublishInstanceRuntimeConfig(ctx context.Context, db DBTX, arg PublishInstanceRuntimeConfigParams) (Instance, error)
 	PutCustomerOperationIdempotency(ctx context.Context, db DBTX, arg PutCustomerOperationIdempotencyParams) error
+	PutEnvironmentExternalFieldOwner(ctx context.Context, db DBTX, arg PutEnvironmentExternalFieldOwnerParams) (int64, error)
 	PutEnvironmentGitOpsOverride(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsOverrideParams) (int64, error)
 	PutEnvironmentGitOpsPolicies(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsPoliciesParams) error
 	PutEnvironmentGitOpsRoutes(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsRoutesParams) error
@@ -1978,6 +2006,8 @@ type Querier interface {
 	// $6 = expires_at (nullable — null means suppression is permanent
 	//      until operator override; non-null is the TTL deadline)
 	RecordMailSuppression(ctx context.Context, db DBTX, arg RecordMailSuppressionParams) (bool, error)
+	RecordManagedPostgresDiscoveredResource(ctx context.Context, db DBTX, arg RecordManagedPostgresDiscoveredResourceParams) (int64, error)
+	RecordManagedPostgresProviderResource(ctx context.Context, db DBTX, arg RecordManagedPostgresProviderResourceParams) (int64, error)
 	RecordManagedPostgresSharedUsage(ctx context.Context, db DBTX, arg RecordManagedPostgresSharedUsageParams) (int64, error)
 	// The request-ID journal is independent from sampled request telemetry. Only
 	// insert when the app is still owned by the authenticated account. The
@@ -2008,6 +2038,8 @@ type Querier interface {
 	ReleaseEdgeRuleMutationLock(ctx context.Context, db DBTX, appID string) (bool, error)
 	ReleaseEnvironmentGitOpsField(ctx context.Context, db DBTX, arg ReleaseEnvironmentGitOpsFieldParams) error
 	ReleaseEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg ReleaseEnvironmentGitOpsLeaseParams) (int64, error)
+	ReleaseEnvironmentGitSourceOverrides(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
+	ReleaseEnvironmentGitSourceOwners(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	ReleaseManagedPostgresCutover(ctx context.Context, db DBTX, arg ReleaseManagedPostgresCutoverParams) (int64, error)
 	ReleaseMirrorSlotLease(ctx context.Context, db DBTX, arg ReleaseMirrorSlotLeaseParams) error
 	ReleaseUnownedNotification(ctx context.Context, db DBTX, arg ReleaseUnownedNotificationParams) (int64, error)
@@ -2097,6 +2129,7 @@ type Querier interface {
 	ResetManagedPostgresCutoverVerification(ctx context.Context, db DBTX, id string) error
 	ResetWorkflowResumeStep(ctx context.Context, db DBTX, arg ResetWorkflowResumeStepParams) error
 	ResetWorkflowRunningSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error
+	ResolveEnvironmentFieldOwnershipScope(ctx context.Context, db DBTX, arg ResolveEnvironmentFieldOwnershipScopeParams) (ResolveEnvironmentFieldOwnershipScopeRow, error)
 	// Public release selectors retain their configured access window. Private
 	// execution retention is resolved only through an owned operation/workload.
 	ResolvePublicProjectRelease(ctx context.Context, db DBTX, arg ResolvePublicProjectReleaseParams) (ResolvePublicProjectReleaseRow, error)
@@ -2421,6 +2454,8 @@ type Querier interface {
 	// audit trail.
 	UpsertGithubWebhookSecret(ctx context.Context, db DBTX, arg UpsertGithubWebhookSecretParams) (int64, error)
 	UpsertInvoiceSnapshot(ctx context.Context, db DBTX, arg UpsertInvoiceSnapshotParams) (UpsertInvoiceSnapshotRow, error)
+	UpsertManagedPostgresUsageCoverage(ctx context.Context, db DBTX, arg UpsertManagedPostgresUsageCoverageParams) error
+	UpsertManagedPostgresUsageRecord(ctx context.Context, db DBTX, arg UpsertManagedPostgresUsageRecordParams) error
 	// PK conflict on (account_id, issuer_url) updates the mutable
 	// columns (audience, subject_pattern, algorithms, required_claims,
 	// updated_at, audit_login) and preserves created_at. Returns the

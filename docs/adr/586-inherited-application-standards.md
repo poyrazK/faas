@@ -1,4 +1,4 @@
-# ADR-581 · Versioned inherited application standards
+# ADR-586 · Versioned inherited application standards
 
 - **Status:** implementation in progress; acceptance required before release
 - **Date:** 2026-09-30
@@ -29,8 +29,11 @@ migration citations remain unchanged.
 Upstream assigned ADR-430 to the managed PostgreSQL Commit outbox. This decision
 moved to ADR-431; frozen SQL files and their historical citations remain unchanged.
 
-Upstream assigned ADR-431 to bounded gateway trace retention. This decision now
-uses ADR-581; frozen SQL files and their historical citations remain unchanged.
+Upstream assigned ADR-431 to bounded gateway trace retention. This decision moved to ADR-581; frozen SQL files and their historical citations remain unchanged.
+
+Upstream assigned ADR-581 to managed PostgreSQL uncertain accounting intent.
+This decision now uses ADR-586; ADR-585 is reserved by the environment isolation
+PR. Frozen SQL files and their historical citations remain unchanged.
 
 ## Contract
 

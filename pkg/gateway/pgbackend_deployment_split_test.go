@@ -149,6 +149,76 @@ func TestPGBackend_PickWeighted_AcrossTwoDeployments(t *testing.T) {
 	}
 }
 
+// TestPGBackend_PickWeighted_InterleavesDeployments pins the production-us
+// fix: a split used to fill one deployment's slot range before the next, so a
+// 50/50 split served 50 requests in a row from one deployment and a 10% canary
+// got its whole share in one block. Every 100 picks must still match the
+// weights exactly, and neither deployment may run long.
+func TestPGBackend_PickWeighted_InterleavesDeployments(t *testing.T) {
+	cases := []struct {
+		name                string
+		small, large        int
+		maxRun, maxSmallGap int
+	}{
+		{name: "50/50", small: 50, large: 50, maxRun: 1, maxSmallGap: 1},
+		{name: "10/90 canary", small: 10, large: 90, maxRun: 9, maxSmallGap: 9},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sched := &rotatingDeployScheduler{
+				FakeScheduler: gateway.NewFakeScheduler("node-A"),
+				deployments:   []string{"dep-small", "dep-large"},
+			}
+			b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, sched, nil).
+				WithStore(&fakeWeightsStore{rows: map[string][]gateway.DeploymentWeightsRow{
+					"app-1": {
+						{ID: "dep-small", TrafficPercent: tc.small},
+						{ID: "dep-large", TrafficPercent: tc.large},
+					},
+				}})
+			if err := b.RefreshDeploymentWeights(context.Background(), "app-1"); err != nil {
+				t.Fatalf("RefreshDeploymentWeights: %v", err)
+			}
+			for i := 0; i < 2; i++ {
+				if _, _, _, err := b.Admit(context.Background(), "app-1", "", "", "", 10); err != nil {
+					t.Fatalf("Admit #%d: %v", i+1, err)
+				}
+			}
+			small, run, longestRun, gap, longestSmallGap := 0, 0, 0, 0, 0
+			last := ""
+			for i := 0; i < 300; i++ {
+				pick := b.Pick("app-1")
+				if !pick.OK {
+					t.Fatalf("Pick #%d: !ok", i)
+				}
+				dep := pick.Target.DeploymentID
+				if dep == last {
+					run++
+				} else {
+					run, last = 1, dep
+				}
+				longestRun = max(longestRun, run)
+				if dep == "dep-small" {
+					small++
+					gap = 0
+				} else {
+					gap++
+					longestSmallGap = max(longestSmallGap, gap)
+				}
+				if (i+1)%100 == 0 && small != tc.small*(i+1)/100 {
+					t.Fatalf("after %d picks dep-small got %d, want exactly %d", i+1, small, tc.small*(i+1)/100)
+				}
+			}
+			if tc.small == tc.large && longestRun > tc.maxRun {
+				t.Errorf("longest run of one deployment = %d, want <= %d", longestRun, tc.maxRun)
+			}
+			if longestSmallGap > tc.maxSmallGap {
+				t.Errorf("longest gap between dep-small picks = %d, want <= %d", longestSmallGap, tc.maxSmallGap)
+			}
+		})
+	}
+}
+
 func TestPGBackend_PickForDeploymentNeverFallsBackAcrossWeights(t *testing.T) {
 	sched := gateway.NewFakeScheduler("node-A").WithDeploymentID("dep-stable")
 	b := gateway.NewPGBackend(&fakeRouter{byID: map[string]gateway.App{}}, sched, nil).

@@ -23,7 +23,7 @@ func (s *MemoryStore) ListUsageDatabases(_ context.Context, after UsageDatabaseC
 	defer s.mu.Unlock()
 	items := make([]Database, 0)
 	for _, database := range s.databases {
-		if database.ProviderResourceID == "" {
+		if database.ProviderResourceID == "" && !database.AccountingRequired {
 			continue
 		}
 		if !after.isZero() && (database.UpdatedAt.Before(after.UpdatedAt) ||
@@ -42,6 +42,28 @@ func (s *MemoryStore) ListUsageDatabases(_ context.Context, after UsageDatabaseC
 		items = items[:limit]
 	}
 	return items, nil
+}
+
+func (s *MemoryStore) RecordDiscoveredResource(ctx context.Context, expected Database, providerResourceID string, now time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if expected.ID == "" || expected.AccountID == "" || providerResourceID == "" || now.IsZero() {
+		return ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	database, ok := s.databases[expected.ID]
+	if !ok || database.AccountID != expected.AccountID || database.BackendID != expected.BackendID ||
+		database.BackendFingerprint != expected.BackendFingerprint || !database.AccountingRequired ||
+		database.State == StateDeleted || database.LeaseUntil.After(now) ||
+		(database.ProviderResourceID != "" && database.ProviderResourceID != providerResourceID) {
+		return ErrConflict
+	}
+	database.ProviderResourceID = providerResourceID
+	database.UpdatedAt = now
+	s.databases[database.ID] = database
+	return nil
 }
 
 func (s *MemoryStore) RecordUsage(_ context.Context, records []UsageRecord) error {
@@ -146,29 +168,11 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 	var snapshot UsageSnapshot
 	snapshot.PeriodStart = periodStart
 	for _, database := range s.databases {
-		if database.AccountID == accountID && (database.State == StateReady || database.ProviderResourceID != "") {
+		if database.AccountID == accountID && (database.State == StateReady || database.ProviderResourceID != "" || database.AccountingRequired) {
 			if database.State == StateReady {
 				snapshot.ReadyDatabases++
 			}
-			var progress UsageProgress
-			accountingDatabase := database
-			for key, candidate := range s.usageProgress {
-				if key.databaseID == database.ID && candidate.UpdatedAt.After(progress.UpdatedAt) {
-					progress = candidate
-				}
-			}
-			if progress.SourceDatabaseID != "" {
-				if source, ok := s.databases[progress.SourceDatabaseID]; ok {
-					accountingDatabase = source
-				}
-				progress = s.usageProgressLocked(progress.SourceDatabaseID, progress.Window)
-			} else {
-				progress = s.usageProgressLocked(database.ID, progress.Window)
-			}
-			progress.Terminal = accountingDatabase.State == StateDeleted
-			if accountingDatabase.DeletedAt != nil {
-				progress.EndedAt = *accountingDatabase.DeletedAt
-			}
+			progress := s.accountingCoverageLocked(database).Progress
 			snapshot.Databases = append(snapshot.Databases, progress)
 		}
 	}

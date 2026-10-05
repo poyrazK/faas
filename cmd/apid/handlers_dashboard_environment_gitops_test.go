@@ -126,9 +126,10 @@ func TestEnvironmentGitOpsDashboardReviewAdoptionAndHistory(t *testing.T) {
 	}
 	get = dashboardGet(handler, target, cookie)
 	post = gitOpsDashboardPost(t, handler, cookie, get, "controls", url.Values{"expected_generation": {strconv.FormatInt(source.Generation, 10)}, "mode": {"enforce"}})
-	if post.Code != http.StatusSeeOther {
+	if post.Code != http.StatusConflict || !strings.Contains(post.Body.String(), "environment_git_enforcement_unavailable") {
 		t.Fatalf("controls: %d %s", post.Code, post.Body.String())
 	}
+	enableEnvironmentGitOpsTestExecutor(t, store, account.ID, project.ID)
 	worker := environmentgitops.Worker{Store: store, Backend: environmentgitops.IntentBackend{Store: store}, LeaseDuration: time.Minute, CheckInterval: time.Minute, RetryInterval: time.Second}
 	if _, err := worker.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
@@ -142,7 +143,7 @@ func TestEnvironmentGitOpsDashboardReviewAdoptionAndHistory(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		values := url.Values{"expected_generation": {strconv.FormatInt(source.Generation, 10)}, "mode": {"enforce"}}
+		values := url.Values{"expected_generation": {strconv.FormatInt(source.Generation, 10)}}
 		if suspended {
 			values.Set("suspended", "true")
 		}

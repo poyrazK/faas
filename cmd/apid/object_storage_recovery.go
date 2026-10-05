@@ -239,6 +239,9 @@ func (s *server) runObjectStorageRecovery(ctx context.Context) {
 		if err := s.reconcileObjectBucketObjectLock(ctx, observe); err != nil && ctx.Err() == nil {
 			s.log.Warn("object bucket Object Lock recovery sweep failed")
 		}
+		if err := s.reconcileObjectVersionProtection(ctx, observe); err != nil && ctx.Err() == nil {
+			s.log.Warn("object version protection recovery sweep failed")
+		}
 		if err := s.reconcileObjectBucketEncryption(ctx, observe); err != nil && ctx.Err() == nil {
 			s.log.Warn("object bucket encryption recovery sweep failed")
 		}

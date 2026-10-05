@@ -3914,7 +3914,7 @@ func ErrJobTaskNotRetriable(runID, taskIndex, status string) *Problem {
 func ErrJobTaskMaxRetriesReached(runID, taskIndex string, attempts, maxRetries int) *Problem {
 	return NewProblem(http.StatusConflict, CodeJobTaskMaxRetriesReached,
 		"Job task retry budget exhausted",
-		fmt.Sprintf("task %s in run %s has used %d attempts; retry_max is %d.", taskIndex, runID, attempts, maxRetries)).
+		fmt.Sprintf("task %s in run %s has used %d attempts; retry_max is %d. Re-run its input in a linked run with `gregale jobs replay-failed <job> %s`.", taskIndex, runID, attempts, maxRetries, runID)).
 		WithDocs(docsBase + "/jobs#retry")
 }
 
@@ -4584,6 +4584,23 @@ func ErrNoRollbackTarget() *Problem {
 	return NewProblem(http.StatusConflict, CodeNoRollbackTarget,
 		"No previous deployment",
 		"there's no superseded deployment to roll back to; deploy at least twice.").
+		WithDocs(docsBase + "/deploys#rollback")
+}
+
+// ErrNoRollbackTargetWithCandidates is ErrNoRollbackTarget for an app whose
+// earlier deployments are still live at 0% traffic. That is the state a
+// traffic split leaves after `traffic promote`. Those deployments can be
+// rolled back to explicitly, but a default rollback won't pick one: it cannot
+// tell a former production deployment from a staged preview that never served.
+// The detail names them, newest first, and gives the explicit command.
+func ErrNoRollbackTargetWithCandidates(appSlug string, revisions []string) *Problem {
+	if len(revisions) == 0 {
+		return ErrNoRollbackTarget()
+	}
+	return NewProblem(http.StatusConflict, CodeNoRollbackTarget,
+		"Choose a rollback target",
+		fmt.Sprintf("no deployment was superseded, but these deployments are live at 0%% traffic: %s. Roll back to one explicitly: gregale rollback %s --to %s",
+			strings.Join(revisions, ", "), appSlug, revisions[0])).
 		WithDocs(docsBase + "/deploys#rollback")
 }
 

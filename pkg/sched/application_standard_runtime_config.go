@@ -1,4 +1,4 @@
-// adr: 581 — compose native admission and configuration readiness publication.
+// adr: 586 — compose native admission and configuration readiness publication.
 package sched
 
 import (

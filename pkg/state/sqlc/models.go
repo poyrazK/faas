@@ -127,6 +127,34 @@ type AccountSpendSnapshot struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type ActiveEnvironmentGitSource struct {
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	ProjectID              pgtype.UUID
+	EnvironmentID          pgtype.UUID
+	RepositoryID           int64
+	InstallationID         int64
+	Repository             string
+	SourceRef              string
+	ManifestPath           string
+	Mode                   string
+	ApprovalPolicy         string
+	Prune                  bool
+	Suspended              bool
+	Generation             int64
+	IntentVersion          int64
+	ApprovedRevisionID     pgtype.UUID
+	AppliedRevisionID      pgtype.UUID
+	SourceCheckedAt        pgtype.Timestamptz
+	SourceErrorCode        string
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	SourceCommitSha        string
+	SourceDefinitionDigest string
+	SourceVerifiedAt       pgtype.Timestamptz
+	Detached               bool
+}
+
 type AgentExecutionWorkflow struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID
@@ -1962,6 +1990,7 @@ type Deployment struct {
 	CanaryStages               []byte
 	SnapshotMissCount          int32
 	SnapshotMissLastAt         pgtype.Timestamptz
+	ServingEndedAt             pgtype.Timestamptz
 	SnapshotMissBackoffUntil   pgtype.Timestamptz
 	Workflows                  []byte
 	SourceRoot                 pgtype.Text
@@ -2281,6 +2310,13 @@ type EnvironmentDesiredRevision struct {
 	ApprovedAt       pgtype.Timestamptz
 }
 
+type EnvironmentExternalFieldOwner struct {
+	EnvironmentID pgtype.UUID
+	Resource      string
+	FieldPath     string
+	ManagerID     string
+}
+
 type EnvironmentGitRevisionApproval struct {
 	ID                 pgtype.UUID
 	SourceID           pgtype.UUID
@@ -2317,6 +2353,7 @@ type EnvironmentGitSource struct {
 	SourceCommitSha        string
 	SourceDefinitionDigest string
 	SourceVerifiedAt       pgtype.Timestamptz
+	Detached               bool
 }
 
 type EnvironmentGitSourcePoll struct {
@@ -3576,6 +3613,7 @@ type ManagedPostgresDatabase struct {
 	RestoreSourceResourceID pgtype.Text
 	RestorePointInTime      pgtype.Timestamptz
 	CutoverID               pgtype.UUID
+	AccountingRequired      bool
 }
 
 type ManagedPostgresHealth struct {
@@ -3617,6 +3655,24 @@ type ManagedPostgresUsageCoverage struct {
 	ObservedAt       pgtype.Timestamptz
 	SourceDatabaseID pgtype.UUID
 	UpdatedAt        pgtype.Timestamptz
+}
+
+type ManagedPostgresUsageImport struct {
+	AccountID         pgtype.UUID
+	ImportID          pgtype.UUID
+	DatabaseID        pgtype.UUID
+	ActorID           string
+	Reason            string
+	EvidenceReference string
+	EvidenceSha256    string
+	RequestSha256     string
+	PreviewRevision   string
+	Request           []byte
+	Policy            []byte
+	BeforeRecords     []byte
+	AfterRecords      []byte
+	Result            []byte
+	CreatedAt         pgtype.Timestamptz
 }
 
 type ManagedRealtimeChannelHead struct {
@@ -4334,6 +4390,25 @@ type ObjectUploadRoute struct {
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
 	EncryptionSnapshot  []byte
+}
+
+type ObjectVersionProtection struct {
+	ID              pgtype.UUID
+	BucketID        pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	ObjectKey       string
+	PublicVersionID string
+	NativeVersionID string
+	Intent          []byte
+	State           string
+	LeaseToken      string
+	LeaseUntil      pgtype.Timestamptz
+	RetryAt         pgtype.Timestamptz
+	Dispatched      bool
+	LastErrorCode   string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type ObjectVersionReference struct {

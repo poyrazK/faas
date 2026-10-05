@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 )
 
@@ -52,6 +53,10 @@ func (m *MemStore) CreateEnvironmentGitSource(_ context.Context, accountID, proj
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createEnvironmentGitSourceLocked(accountID, projectID, environment, spec)
+}
+
+func (m *MemStore) createEnvironmentGitSourceLocked(accountID, projectID, environment string, spec EnvironmentGitSourceSpec) (EnvironmentGitSource, error) {
 	project, ok := m.projects[projectID]
 	if !ok || project.AccountID != accountID || project.RepoFullName != spec.Repository || project.InstallID != spec.InstallationID {
 		return EnvironmentGitSource{}, ErrNotFound
@@ -60,13 +65,19 @@ func (m *MemStore) CreateEnvironmentGitSource(_ context.Context, accountID, proj
 	if err != nil {
 		return EnvironmentGitSource{}, err
 	}
+	generation := int64(0)
 	for _, memory := range m.environmentGitOps {
 		if memory.source.EnvironmentID == env.ID {
-			return EnvironmentGitSource{}, ErrConflict
+			if !memory.source.Detached {
+				return EnvironmentGitSource{}, ErrConflict
+			}
+			if memory.source.Generation >= generation {
+				generation = memory.source.Generation + 1
+			}
 		}
 	}
 	now := time.Now().UTC()
-	source := EnvironmentGitSource{ID: newID(), AccountID: accountID, ProjectID: projectID, EnvironmentID: env.ID, EnvironmentSlug: env.Slug, Spec: spec, CreatedAt: now, UpdatedAt: now}
+	source := EnvironmentGitSource{Generation: generation, ID: newID(), AccountID: accountID, ProjectID: projectID, EnvironmentID: env.ID, EnvironmentSlug: env.Slug, Spec: spec, CreatedAt: now, UpdatedAt: now}
 	if m.environmentGitOps == nil {
 		m.environmentGitOps = make(map[string]*environmentGitOpsMemory)
 	}
@@ -82,7 +93,7 @@ func (m *MemStore) EnvironmentGitSource(_ context.Context, accountID, projectID,
 		return EnvironmentGitSource{}, ErrNotFound
 	}
 	for _, memory := range m.environmentGitOps {
-		if memory.source.AccountID == accountID && memory.source.ProjectID == projectID && memory.source.EnvironmentSlug == environment {
+		if !memory.source.Detached && memory.source.AccountID == accountID && memory.source.ProjectID == projectID && memory.source.EnvironmentSlug == environment {
 			if _, err := m.projectEnvironmentBySlugLocked(projectID, environment); err != nil {
 				return EnvironmentGitSource{}, err
 			}
@@ -200,6 +211,7 @@ func (m *MemStore) claimEnvironmentGitOps(_ context.Context, mode, token string,
 			memory.runs[id] = run
 		}
 	}
+	pruneGitOpsMemoryReports(memory, now)
 	memory.attempts++
 	revision := memory.revisions[memory.source.ApprovedRevisionID]
 	lease := EnvironmentGitOpsLease{RunID: newID(), Source: memory.source, Revision: cloneEnvironmentRevision(revision), LeaseToken: token, LeaseUntil: now.UTC().Add(duration), AttemptCount: memory.attempts}
@@ -282,6 +294,7 @@ func (m *MemStore) FinishEnvironmentGitOps(_ context.Context, lease EnvironmentG
 	}
 	run.Status, run.Plan, run.Steps, run.ErrorCode, run.CompletedAt = status, append(json.RawMessage(nil), plan...), append(json.RawMessage(nil), steps...), errorCode, &completed
 	memory.runs[run.ID] = run
+	pruneGitOpsMemoryReports(memory, now)
 	memory.lease, memory.next = nil, next.UTC()
 	if status == "converged" {
 		memory.source.AppliedRevisionID = memory.source.ApprovedRevisionID
@@ -314,4 +327,25 @@ func (m *MemStore) ListEnvironmentGitOpsRuns(_ context.Context, accountID, sourc
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func pruneGitOpsMemoryReports(memory *environmentGitOpsMemory, now time.Time) {
+	completed := []EnvironmentGitOpsRun{}
+	for _, run := range memory.runs {
+		if run.CompletedAt != nil {
+			completed = append(completed, run)
+		}
+	}
+	sort.Slice(completed, func(i, j int) bool {
+		if completed[i].CompletedAt.Equal(*completed[j].CompletedAt) {
+			return completed[i].ID > completed[j].ID
+		}
+		return completed[i].CompletedAt.After(*completed[j].CompletedAt)
+	})
+	for i, run := range completed {
+		if i > 0 && (i >= api.EnvironmentGitOpsReportRunsMaxPerSource || run.CompletedAt.Before(now.Add(-api.EnvironmentGitOpsReportRetention))) {
+			delete(memory.runs, run.ID)
+			delete(memory.runTokens, run.ID)
+		}
+	}
 }

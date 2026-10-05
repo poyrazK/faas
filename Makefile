@@ -1018,12 +1018,15 @@ sqlc-generate: sqlc ## (re)generate pkg/state/sqlc/*.go from queries.sql + schem
 sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be regenerated
 	@set -e; tmp=$$(mktemp -d); \
 	  trap 'rm -rf "$$tmp"' EXIT; \
-	  mkdir -p "$$tmp/pkg/state"; \
+	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/db"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
 	  cp pkg/state/queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/db/migration_recovery_queries.sql "$$tmp/pkg/db/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
 	  diff -r pkg/state/sqlc "$$tmp/pkg/state/sqlc" || \
-	    { echo "sqlc-check: generated pkg/state/sqlc/*.go is out of sync with queries.sql or schema.sql; run 'make sqlc-generate' and commit the diff"; exit 1; }
+	    { echo "sqlc-check: generated pkg/state/sqlc/*.go is out of sync with queries.sql or schema.sql; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
+	  diff -r pkg/db/migrationsqlc "$$tmp/pkg/db/migrationsqlc" || \
+	    { echo "sqlc-check: generated pkg/db/migrationsqlc/*.go is out of sync with migration_recovery_queries.sql or schema.sql; run 'make sqlc-generate' and commit the diff"; exit 1; }
 	@echo "sqlc-check: OK"
 
 .PHONY: migrate-up

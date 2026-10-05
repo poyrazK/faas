@@ -890,10 +890,11 @@ func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) b
 //
 // The picker algorithm:
 //
-//  1. Pick a deployment via weighted stride: cursor.Add(1) mod 100
-//     gives the slot index; binary-search cum for the smallest i with
-//     cum[i] > slot. cum is the cumulative-weight array (last entry
-//     = 100 once UpdateDeploymentTraffic stamps Σ=100).
+//  1. Pick a deployment: sequence[cursor mod 100] when the weights sum
+//     to 100 (smooth weighted round-robin, see smoothWeightSequence);
+//     otherwise binary-search cum for the smallest i with cum[i] > slot.
+//     cum is the cumulative-weight array (last entry = 100 once
+//     UpdateDeploymentTraffic stamps Σ=100).
 //  2. Look up the chosen targetSet. If empty (cold deployment), fall
 //     through to the largest-weight deployment's targetSet — biases
 //     warm deployments but never deadlocks the request.
@@ -911,6 +912,7 @@ type appPicker struct {
 	affinityWeights      []deploymentWeight
 	affinityCum          []int
 	affinityNamespace    string
+	sequence             []uint8               // weights index per pick slot; nil unless Σ weights = 100
 	cursor               atomic.Uint64         // Pick increments; (cursor-1) mod 100 is the slot
 	sets                 map[string]*targetSet // deploymentID → targetSet
 }
@@ -1190,6 +1192,9 @@ func (b *PGBackend) Pick(appID string) PickResult {
 	}
 	// Multi-deployment weighted stride.
 	slot := int(picker.cursor.Add(1)-1) % 100
+	if len(picker.sequence) == 100 {
+		return pickDeploymentLocked(picker, picker.weights[picker.sequence[slot]].DeploymentID, warmHint, "")
+	}
 	chosen := picker.weights[0].DeploymentID // safe fallback if binary search misses
 	// Binary search cum for smallest i with cum[i] > slot.
 	lo, hi := 0, len(picker.cum)

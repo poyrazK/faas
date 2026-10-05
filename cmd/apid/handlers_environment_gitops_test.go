@@ -84,7 +84,7 @@ func TestEnvironmentGitOpsHandlersApproveReviewedGitBytesAndAdopt(t *testing.T) 
 	sha := strings.Repeat("a", 40)
 	client := &environmentGitOpsClient{repositories: []Repo{{ID: 123, FullName: "example/shop"}}, archive: environmentGitOpsArchive(t), resolvedSHA: sha}
 	srv.githubd = client
-	rec := gitOpsHandlerRequest(t, srv, account, http.MethodPost, "source", map[string]any{"manifest_path": "environments/production.yaml", "mode": "enforce"}, srv.createEnvironmentGitSource)
+	rec := gitOpsHandlerRequest(t, srv, account, http.MethodPost, "source", map[string]any{"manifest_path": "environments/production.yaml", "mode": "report"}, srv.createEnvironmentGitSource)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("source: %d %s", rec.Code, rec.Body.String())
 	}
@@ -122,6 +122,11 @@ func TestEnvironmentGitOpsHandlersApproveReviewedGitBytesAndAdopt(t *testing.T) 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("adopt: %d %s", rec.Code, rec.Body.String())
 	}
+	rec = gitOpsHandlerRequest(t, srv, account, http.MethodPut, "", api.EnvironmentFieldOwnershipRequest{App: app.Slug, Environment: "production", Paths: []string{"variables/MODE"}, Manager: "terraform"}, srv.claimEnvironmentFieldOwnership)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "environment_field_ownership_conflict") {
+		t.Fatalf("Terraform claimed a Git-owned report field: %d %s", rec.Code, rec.Body.String())
+	}
+	enableEnvironmentGitOpsTestExecutor(t, store, account.ID, project.ID)
 	worker := environmentgitops.Worker{Store: store, Backend: environmentgitops.IntentBackend{Store: store}, LeaseDuration: time.Minute, CheckInterval: time.Minute, RetryInterval: time.Second}
 	if _, err := worker.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
@@ -158,7 +163,7 @@ func TestEnvironmentGitOpsHandlersStageScopedWorkloadWithoutClaimingServing(t *t
 	image := "registry.example/shop@sha256:" + strings.Repeat("d", 64)
 	srv.githubd = &environmentGitOpsClient{repositories: []Repo{{ID: 123, FullName: "example/shop"}}, resolvedSHA: sha,
 		archive: environmentGitOpsArchiveDefinition(t, "api_version: gregale.dev/environment/v1\nproject: shop\nenvironment: production\nworkloads:\n  api:\n    app: shop-api\n    source:\n      kind: image\n      image: "+image+"\n    runtime:\n      port: 8080\n")}
-	rec := gitOpsHandlerRequest(t, srv, account, http.MethodPost, "source", map[string]string{"manifest_path": "environments/production.yaml", "mode": "enforce"}, srv.createEnvironmentGitSource)
+	rec := gitOpsHandlerRequest(t, srv, account, http.MethodPost, "source", map[string]string{"manifest_path": "environments/production.yaml", "mode": "report"}, srv.createEnvironmentGitSource)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("source: %d %s", rec.Code, rec.Body.String())
 	}
@@ -194,6 +199,7 @@ func TestEnvironmentGitOpsHandlersStageScopedWorkloadWithoutClaimingServing(t *t
 	if err != nil || string(baseline.Runtime["port"]) != "8079" || baseline.Source != nil {
 		t.Fatalf("API adoption did not preserve existing intent: %+v %v", baseline, err)
 	}
+	enableEnvironmentGitOpsTestExecutor(t, store, account.ID, project.ID)
 	if worked, err := gitOpsBackendWorker(srv, store).RunOnce(t.Context()); err != nil || !worked {
 		t.Fatalf("apid worker: %v %v", worked, err)
 	}
@@ -279,7 +285,7 @@ func TestEnvironmentGitOpsHTTPScopedConfigWorkflow(t *testing.T) {
 	httpServer := httptest.NewServer(srv.handler())
 	defer httpServer.Close()
 	client := api.NewClient(httpServer.URL, key)
-	if _, err := client.CreateEnvironmentGitSource(t.Context(), "shop", "production", api.CreateEnvironmentGitSourceRequest{ManifestPath: "environments/production.yaml", Mode: "enforce"}); err != nil {
+	if _, err := client.CreateEnvironmentGitSource(t.Context(), "shop", "production", api.CreateEnvironmentGitSourceRequest{ManifestPath: "environments/production.yaml", Mode: "report"}); err != nil {
 		t.Fatal(err)
 	}
 	review, err := client.PreviewEnvironmentGitRevision(t.Context(), "shop", "production", api.PreviewEnvironmentGitRevisionRequest{CommitSHA: sha})
@@ -296,6 +302,7 @@ func TestEnvironmentGitOpsHTTPScopedConfigWorkflow(t *testing.T) {
 	if _, err := client.AdoptEnvironmentGitOps(t.Context(), "shop", "production", api.AdoptEnvironmentGitOpsRequest{PlanHash: plan.Hash}); err != nil {
 		t.Fatal(err)
 	}
+	enableEnvironmentGitOpsTestExecutor(t, store, account.ID, project.ID)
 	worker := environmentgitops.Worker{Store: store, Backend: environmentgitops.IntentBackend{Store: store}, LeaseDuration: time.Minute, CheckInterval: time.Minute, RetryInterval: time.Second}
 	if _, err := worker.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
@@ -362,10 +369,24 @@ func TestEnvironmentGitOpsHTTPScopedConfigWorkflow(t *testing.T) {
 	if _, err := readClient.GetEnvironmentGitOps(t.Context(), "shop", "production"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readClient.UpdateEnvironmentGitSource(t.Context(), "shop", "production", api.EnvironmentGitSourceUpdate{ExpectedGeneration: status.Source.Generation, Mode: "enforce"}); err == nil {
+	if _, err := readClient.UpdateEnvironmentGitSource(t.Context(), "shop", "production", api.EnvironmentGitSourceUpdate{ExpectedGeneration: status.Source.Generation, Mode: "report"}); err == nil {
 		t.Fatal("read-only key mutated source controls")
 	}
 	if _, err := api.NewClient(httpServer.URL, "").GetEnvironmentGitOps(t.Context(), "shop", "production"); err == nil {
 		t.Fatal("unauthenticated source read succeeded")
+	}
+}
+
+// Customer controls cannot enable the preview executor. Internal backend tests
+// explicitly opt into enforce mode through the store.
+func enableEnvironmentGitOpsTestExecutor(t *testing.T, store state.Store, accountID, projectID string) {
+	t.Helper()
+	source, err := store.(state.EnvironmentGitOpsStore).EnvironmentGitSource(t.Context(), accountID, projectID, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.(state.EnvironmentGitOpsControlStore).UpdateEnvironmentGitSource(t.Context(), accountID, source.ID, state.EnvironmentGitSourceUpdate{ExpectedGeneration: source.Generation, Mode: "enforce"})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

@@ -1165,7 +1165,7 @@ func cmdDashboard(args []string) int {
 //
 //	tail         long-poll /v1/events for queue rows (existing)
 //	send         enqueue one payload via POST /v1/apps/{slug}/queues/send
-//	receive      drain the next row via POST .../queues/receive
+//	receive      wait for the next delivered row via POST .../queues/receive
 //	state        depth + cap via GET .../queues/state
 //	status       queue doctor view (depth, scaling, bindings, and liveness)
 //	peek         inspect up to N rows without draining
@@ -1179,7 +1179,7 @@ func cmdQueueDispatch(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale queue <subcommand> <slug> [args]\n\n"+
 			"  tail <slug>            long-poll the unified event stream (queue drain signals)\n"+
 			"  send <slug> --payload J [--queue-name Q] enqueue one row\n"+
-			"  receive <slug>         drain the next row (blocks)\n"+
+			"  receive <slug>         wait for the next delivered row (blocks)\n"+
 			"  state <slug>            depth + cap (no lease)\n"+
 			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
 			"  peek <slug> [--limit N] inspect up to N rows without draining\n"+
@@ -1216,7 +1216,7 @@ func cmdQueueDispatch(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale queue <subcommand> <slug> [args]\n\n"+
 			"  tail <slug>            long-poll the unified event stream\n"+
 			"  send <slug> --payload J [--queue-name Q] enqueue one row\n"+
-			"  receive <slug>         drain the next row\n"+
+			"  receive <slug>         wait for the next delivered row\n"+
 			"  state <slug>            depth + cap\n"+
 			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
 			"  peek <slug> [--limit N] inspect without draining\n"+
@@ -1361,9 +1361,16 @@ func cmdQueueSend(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	warning := ""
+	if *environment == "" {
+		warning = unconsumedQueueWarning(context.Background(), client, slug, *queueName)
+	}
 	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Environment: *environment, Payload: body, QueueName: *queueName, Work: work})
 	if err != nil {
 		return printErr("Queue send failed", err)
+	}
+	if warning != "" && resp.QueueBindingID == "" {
+		PrintWarn(osStderr, "%s", warning)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))

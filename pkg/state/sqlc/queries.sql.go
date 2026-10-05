@@ -1349,6 +1349,27 @@ func (q *Queries) BeginImagePreparation(ctx context.Context, db DBTX, arg BeginI
 	return i, err
 }
 
+const beginManagedPostgresAccounting = `-- name: BeginManagedPostgresAccounting :execrows
+UPDATE managed_postgres_databases SET accounting_required = true, updated_at = $1::timestamptz
+WHERE id = $2::uuid AND state = 'provisioning'
+  AND lease_token = $3::text AND lease_until > $1::timestamptz
+`
+
+type BeginManagedPostgresAccountingParams struct {
+	Now        pgtype.Timestamptz
+	ID         pgtype.UUID
+	LeaseToken string
+}
+
+// ADR-581: persist an irreversible accounting obligation before provider I/O.
+func (q *Queries) BeginManagedPostgresAccounting(ctx context.Context, db DBTX, arg BeginManagedPostgresAccountingParams) (int64, error) {
+	result, err := db.Exec(ctx, beginManagedPostgresAccounting, arg.Now, arg.ID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const bindEnvironmentGitOpsQueue = `-- name: BindEnvironmentGitOpsQueue :execrows
 INSERT INTO environment_gitops_queue_bindings(source_id, resource, field_path, binding_id)
 VALUES ($1::uuid, $2::text, $3::text, $4::uuid)
@@ -2505,7 +2526,7 @@ func (q *Queries) ClaimManagedPostgresCutover(ctx context.Context, db DBTX, arg 
 
 const claimManagedPostgresHealthCheck = `-- name: ClaimManagedPostgresHealthCheck :one
 WITH candidate AS (
- SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id FROM managed_postgres_databases d
+ SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.accounting_required FROM managed_postgres_databases d
  LEFT JOIN managed_postgres_health h ON h.database_id = d.id
  WHERE d.state = 'ready' AND d.provider_resource_id IS NOT NULL
  AND (h.database_id IS NULL OR h.next_check_at <= $1::timestamptz
@@ -4679,16 +4700,17 @@ func (q *Queries) CreateEnvironmentGitOpsWorkloadCandidate(ctx context.Context, 
 const createEnvironmentGitSource = `-- name: CreateEnvironmentGitSource :one
 INSERT INTO environment_git_sources
     (account_id, project_id, environment_id, repository_id, installation_id,
-     repository, source_ref, manifest_path, mode, approval_policy, prune)
+     repository, source_ref, manifest_path, mode, approval_policy, prune, generation)
 SELECT p.account_id, p.id, e.id, $1::bigint,
        $2::bigint, $3::text,
        $4::text, $5::text,
-       $6::text, $7::text, $8::boolean
+       $6::text, $7::text, $8::boolean,
+       coalesce((SELECT max(old.generation)+1 FROM environment_git_sources old WHERE old.environment_id=e.id),0)
 FROM projects p JOIN project_environments e ON e.project_id = p.id AND e.account_id = p.account_id
 WHERE p.account_id = $9::uuid AND p.id = $10::uuid
   AND e.slug = $11::text
   AND p.repo_full_name = $3::text AND p.install_id = $2::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
 `
 
 type CreateEnvironmentGitSourceParams struct {
@@ -4745,6 +4767,7 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 		&i.SourceCommitSha,
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
+		&i.Detached,
 	)
 	return i, err
 }
@@ -6061,6 +6084,25 @@ func (q *Queries) DeleteDeploymentAlias(ctx context.Context, db DBTX, arg Delete
 	return result.RowsAffected(), nil
 }
 
+const deleteEnvironmentExternalFieldOwner = `-- name: DeleteEnvironmentExternalFieldOwner :execrows
+DELETE FROM environment_external_field_owners WHERE environment_id=$1::uuid AND resource=$2::text
+ AND field_path=$3::text AND manager_id='terraform'
+`
+
+type DeleteEnvironmentExternalFieldOwnerParams struct {
+	EnvironmentID pgtype.UUID
+	Resource      string
+	FieldPath     string
+}
+
+func (q *Queries) DeleteEnvironmentExternalFieldOwner(ctx context.Context, db DBTX, arg DeleteEnvironmentExternalFieldOwnerParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteEnvironmentExternalFieldOwner, arg.EnvironmentID, arg.Resource, arg.FieldPath)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteEnvironmentGitOpsOverride = `-- name: DeleteEnvironmentGitOpsOverride :execrows
 DELETE FROM environment_management_overrides o USING environment_git_sources s
 WHERE o.environment_id = s.environment_id AND s.id = $1::uuid
@@ -6456,6 +6498,24 @@ func (q *Queries) DeploymentSnapshotBackoffActive(ctx context.Context, db DBTX, 
 	var i DeploymentSnapshotBackoffActiveRow
 	err := row.Scan(&i.SnapshotMissCount, &i.SnapshotMissBackoffUntil)
 	return i, err
+}
+
+const detachEnvironmentGitSource = `-- name: DetachEnvironmentGitSource :execrows
+UPDATE environment_git_sources SET detached=true,suspended=true,generation=generation+1,intent_version=intent_version+1,updated_at=now()
+ WHERE id=$1::uuid AND NOT detached AND mode='report' AND generation=$2::bigint
+`
+
+type DetachEnvironmentGitSourceParams struct {
+	SourceID           pgtype.UUID
+	ExpectedGeneration int64
+}
+
+func (q *Queries) DetachEnvironmentGitSource(ctx context.Context, db DBTX, arg DetachEnvironmentGitSourceParams) (int64, error) {
+	result, err := db.Exec(ctx, detachEnvironmentGitSource, arg.SourceID, arg.ExpectedGeneration)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const devBridgeByID = `-- name: DevBridgeByID :one
@@ -6884,6 +6944,45 @@ func (q *Queries) EnsureExclusiveWorkQuota(ctx context.Context, db DBTX, arg Ens
 	return err
 }
 
+const environmentFieldGitOwned = `-- name: EnvironmentFieldGitOwned :one
+SELECT EXISTS(SELECT 1 FROM environment_managed_fields f JOIN active_environment_git_sources s ON s.id=f.source_id
+ LEFT JOIN environment_gitops_resources r ON r.source_id=s.id AND r.logical_name=f.resource
+ WHERE s.environment_id=$1::uuid
+ AND (($2::text='environment' AND f.resource='environment') OR $2::text='app/'||r.app_id::text)
+ AND (f.field_path=$3::text OR (starts_with($3::text,'variables/') AND f.field_path='secret_refs/'||substring($3::text FROM 11)))) AS owned
+`
+
+type EnvironmentFieldGitOwnedParams struct {
+	EnvironmentID pgtype.UUID
+	Resource      string
+	FieldPath     string
+}
+
+func (q *Queries) EnvironmentFieldGitOwned(ctx context.Context, db DBTX, arg EnvironmentFieldGitOwnedParams) (bool, error) {
+	row := db.QueryRow(ctx, environmentFieldGitOwned, arg.EnvironmentID, arg.Resource, arg.FieldPath)
+	var owned bool
+	err := row.Scan(&owned)
+	return owned, err
+}
+
+const environmentFieldOwnershipLegacyApp = `-- name: EnvironmentFieldOwnershipLegacyApp :one
+SELECT EXISTS(SELECT 1 FROM apps WHERE account_id=$1::uuid AND slug=$2::text AND status<>'deleted'
+ AND (project_id IS NULL OR $3::text='default')) AS legacy
+`
+
+type EnvironmentFieldOwnershipLegacyAppParams struct {
+	AccountID   pgtype.UUID
+	App         string
+	Environment string
+}
+
+func (q *Queries) EnvironmentFieldOwnershipLegacyApp(ctx context.Context, db DBTX, arg EnvironmentFieldOwnershipLegacyAppParams) (bool, error) {
+	row := db.QueryRow(ctx, environmentFieldOwnershipLegacyApp, arg.AccountID, arg.App, arg.Environment)
+	var legacy bool
+	err := row.Scan(&legacy)
+	return legacy, err
+}
+
 const environmentGitOpsCandidateByInput = `-- name: EnvironmentGitOpsCandidateByInput :one
 SELECT id FROM deployments WHERE environment_workload_runtime->>'source_id'=$1::text
  AND environment_workload_runtime->>'generation'=$2::text
@@ -6936,6 +7035,20 @@ func (q *Queries) EnvironmentGitOpsImageCandidate(ctx context.Context, db DBTX, 
 		&i.RootfsKey,
 	)
 	return i, err
+}
+
+const environmentGitOpsLifecyclePending = `-- name: EnvironmentGitOpsLifecyclePending :one
+SELECT EXISTS(SELECT 1 FROM environment_gitops_effects WHERE source_id=$1::uuid AND completed_at IS NULL)
+ OR EXISTS(SELECT 1 FROM environment_gitops_runtime_effects WHERE source_id=$1::uuid AND completed_at IS NULL)
+ OR EXISTS(SELECT 1 FROM environment_workload_graphs WHERE source_id=$1::uuid AND phase='preparing')
+ OR EXISTS(SELECT 1 FROM environment_workload_qualification_requests q JOIN environment_workload_graphs g ON g.id=q.graph_id WHERE g.source_id=$1::uuid) AS pending
+`
+
+func (q *Queries) EnvironmentGitOpsLifecyclePending(ctx context.Context, db DBTX, sourceID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, environmentGitOpsLifecyclePending, sourceID)
+	var pending pgtype.Bool
+	err := row.Scan(&pending)
+	return pending, err
 }
 
 const environmentGitOpsQueueForUpdate = `-- name: EnvironmentGitOpsQueueForUpdate :one
@@ -7023,7 +7136,7 @@ SELECT count(*) FILTER (WHERE NOT s.suspended)::bigint AS active,
     count(*) FILTER (WHERE NOT s.suspended AND s.approved_revision_id IS NOT NULL AND s.approved_revision_id IS DISTINCT FROM s.applied_revision_id)::bigint AS approved_pending_apply,
     greatest(coalesce(max(extract(epoch FROM ($2::timestamptz - coalesce(s.source_checked_at, s.created_at)))) FILTER (WHERE NOT s.suspended), 0), 0)::double precision AS oldest_check_age_seconds,
     greatest(coalesce(max(extract(epoch FROM ($2::timestamptz - coalesce(s.source_verified_at, s.created_at)))) FILTER (WHERE NOT s.suspended), 0), 0)::double precision AS oldest_verification_age_seconds
-FROM environment_git_sources s LEFT JOIN environment_desired_revisions r ON r.source_id = s.id AND r.id = s.approved_revision_id
+FROM active_environment_git_sources s LEFT JOIN environment_desired_revisions r ON r.source_id = s.id AND r.id = s.approved_revision_id
 `
 
 type EnvironmentGitSourceHealthParams struct {
@@ -7380,7 +7493,7 @@ func (q *Queries) EnvironmentWorkloadIntentContext(ctx context.Context, db DBTX,
 }
 
 const environmentWorkloadIntentLockSource = `-- name: EnvironmentWorkloadIntentLockSource :many
-SELECT id FROM environment_git_sources WHERE account_id=$1::uuid AND environment_id=$2::uuid FOR UPDATE
+SELECT id FROM active_environment_git_sources WHERE account_id=$1::uuid AND environment_id=$2::uuid FOR UPDATE
 `
 
 type EnvironmentWorkloadIntentLockSourceParams struct {
@@ -7480,7 +7593,7 @@ func (q *Queries) EnvironmentWorkloadQualificationInputsCurrent(ctx context.Cont
 }
 
 const environmentWorkloadQualificationSourceForUpdate = `-- name: EnvironmentWorkloadQualificationSourceForUpdate :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at FROM environment_workload_qualification_requests q
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id JOIN environment_git_sources s ON s.id=g.source_id
 WHERE q.id=$1::uuid FOR UPDATE OF s
 `
@@ -7513,6 +7626,7 @@ func (q *Queries) EnvironmentWorkloadQualificationSourceForUpdate(ctx context.Co
 		&i.SourceCommitSha,
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
+		&i.Detached,
 	)
 	return i, err
 }
@@ -10167,7 +10281,7 @@ func (q *Queries) FinishManagedPostgresCutoverVerification(ctx context.Context, 
 
 const finishManagedPostgresHealthCheck = `-- name: FinishManagedPostgresHealthCheck :execrows
 WITH target AS (
- SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id FROM managed_postgres_databases d
+ SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.accounting_required FROM managed_postgres_databases d
  WHERE d.id = $7::text::uuid AND d.state = 'ready' FOR SHARE
 )
 UPDATE managed_postgres_health h SET
@@ -11611,10 +11725,10 @@ func (q *Queries) GetEnvironmentGitRevisionApproval(ctx context.Context, db DBTX
 }
 
 const getEnvironmentGitSource = `-- name: GetEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_git_sources s
 JOIN project_environments e ON e.id = s.environment_id
 WHERE s.account_id = $1::uuid AND s.project_id = $2::uuid
-  AND e.slug = $3::text
+  AND e.slug = $3::text AND NOT s.detached
 `
 
 type GetEnvironmentGitSourceParams struct {
@@ -11651,12 +11765,13 @@ func (q *Queries) GetEnvironmentGitSource(ctx context.Context, db DBTX, arg GetE
 		&i.SourceCommitSha,
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
+		&i.Detached,
 	)
 	return i, err
 }
 
 const getEnvironmentGitSourceByID = `-- name: GetEnvironmentGitSourceByID :one
-SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at FROM environment_git_sources WHERE id = $1::uuid
+SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached FROM environment_git_sources WHERE id = $1::uuid
 `
 
 func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sourceID pgtype.UUID) (EnvironmentGitSource, error) {
@@ -11687,6 +11802,7 @@ func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sour
 		&i.SourceCommitSha,
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
+		&i.Detached,
 	)
 	return i, err
 }
@@ -12148,6 +12264,52 @@ func (q *Queries) GetManagedPostgresCutover(ctx context.Context, db DBTX, arg Ge
 		&i.UpdatedAt,
 		&i.VerifiedAt,
 	)
+	return i, err
+}
+
+const getManagedPostgresRawUsageCoverage = `-- name: GetManagedPostgresRawUsageCoverage :one
+SELECT database_id, window_seconds, collected_from, collected_until, observed_at, source_database_id, updated_at FROM managed_postgres_usage_coverage WHERE database_id = $1 AND window_seconds = $2
+`
+
+type GetManagedPostgresRawUsageCoverageParams struct {
+	DatabaseID    pgtype.UUID
+	WindowSeconds int64
+}
+
+func (q *Queries) GetManagedPostgresRawUsageCoverage(ctx context.Context, db DBTX, arg GetManagedPostgresRawUsageCoverageParams) (ManagedPostgresUsageCoverage, error) {
+	row := db.QueryRow(ctx, getManagedPostgresRawUsageCoverage, arg.DatabaseID, arg.WindowSeconds)
+	var i ManagedPostgresUsageCoverage
+	err := row.Scan(
+		&i.DatabaseID,
+		&i.WindowSeconds,
+		&i.CollectedFrom,
+		&i.CollectedUntil,
+		&i.ObservedAt,
+		&i.SourceDatabaseID,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getManagedPostgresUsageImport = `-- name: GetManagedPostgresUsageImport :one
+SELECT request_sha256, result FROM managed_postgres_usage_imports
+WHERE account_id = $1 AND import_id = $2
+`
+
+type GetManagedPostgresUsageImportParams struct {
+	AccountID pgtype.UUID
+	ImportID  pgtype.UUID
+}
+
+type GetManagedPostgresUsageImportRow struct {
+	RequestSha256 string
+	Result        []byte
+}
+
+func (q *Queries) GetManagedPostgresUsageImport(ctx context.Context, db DBTX, arg GetManagedPostgresUsageImportParams) (GetManagedPostgresUsageImportRow, error) {
+	row := db.QueryRow(ctx, getManagedPostgresUsageImport, arg.AccountID, arg.ImportID)
+	var i GetManagedPostgresUsageImportRow
+	err := row.Scan(&i.RequestSha256, &i.Result)
 	return i, err
 }
 
@@ -12870,6 +13032,23 @@ AND o.lease_expires_at>clock_timestamp() AND o.attempt_deadline>clock_timestamp(
 
 func (q *Queries) HasExclusiveSnapshotOwner(ctx context.Context, db DBTX, instanceID string) (bool, error) {
 	row := db.QueryRow(ctx, hasExclusiveSnapshotOwner, instanceID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const hasManagedPostgresIncompatibleUsageWindow = `-- name: HasManagedPostgresIncompatibleUsageWindow :one
+SELECT EXISTS (SELECT 1 FROM managed_postgres_usage
+ WHERE database_id = $1 AND window_to - window_from <> $2::bigint * interval '1 second')
+`
+
+type HasManagedPostgresIncompatibleUsageWindowParams struct {
+	DatabaseID    pgtype.UUID
+	WindowSeconds int64
+}
+
+func (q *Queries) HasManagedPostgresIncompatibleUsageWindow(ctx context.Context, db DBTX, arg HasManagedPostgresIncompatibleUsageWindowParams) (bool, error) {
+	row := db.QueryRow(ctx, hasManagedPostgresIncompatibleUsageWindow, arg.DatabaseID, arg.WindowSeconds)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -14719,6 +14898,152 @@ func (q *Queries) InsertManagedPostgresCutoverCredential(ctx context.Context, db
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const insertManagedPostgresReservation = `-- name: InsertManagedPostgresReservation :one
+INSERT INTO managed_postgres_databases
+(id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero,
+ storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint,
+ restore_source_database_id, restore_source_resource_id, restore_point_in_time, state,
+ desired_generation, observed_generation, retry_at, created_at, updated_at, accounting_required)
+VALUES
+($1, $2, $3, $4, $5,
+ $6, $7, $8, $9,
+ $10, $11, $12,
+ $13, $14, $15,
+ $16, $17, $18, $19,
+ $20, $21, false)
+RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, accounting_required
+`
+
+type InsertManagedPostgresReservationParams struct {
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	Name                    string
+	Region                  string
+	PostgresMajor           int16
+	ServiceClass            string
+	Availability            string
+	ScaleToZero             bool
+	StorageLimitBytes       int64
+	RestoreWindowSeconds    int64
+	BackendID               string
+	BackendFingerprint      string
+	RestoreSourceDatabaseID pgtype.UUID
+	RestoreSourceResourceID pgtype.Text
+	RestorePointInTime      pgtype.Timestamptz
+	State                   string
+	DesiredGeneration       int64
+	ObservedGeneration      int64
+	RetryAt                 pgtype.Timestamptz
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+}
+
+// ADR-581: only a validated new reservation can prove provider I/O has not begun.
+func (q *Queries) InsertManagedPostgresReservation(ctx context.Context, db DBTX, arg InsertManagedPostgresReservationParams) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, insertManagedPostgresReservation,
+		arg.ID,
+		arg.AccountID,
+		arg.Name,
+		arg.Region,
+		arg.PostgresMajor,
+		arg.ServiceClass,
+		arg.Availability,
+		arg.ScaleToZero,
+		arg.StorageLimitBytes,
+		arg.RestoreWindowSeconds,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.RestoreSourceDatabaseID,
+		arg.RestoreSourceResourceID,
+		arg.RestorePointInTime,
+		arg.State,
+		arg.DesiredGeneration,
+		arg.ObservedGeneration,
+		arg.RetryAt,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.CutoverID,
+		&i.AccountingRequired,
+	)
+	return i, err
+}
+
+const insertManagedPostgresUsageImport = `-- name: InsertManagedPostgresUsageImport :exec
+INSERT INTO managed_postgres_usage_imports (
+ account_id, import_id, database_id, actor_id, reason, evidence_reference, evidence_sha256,
+ request_sha256, preview_revision, request, policy, before_records, after_records, result, created_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+`
+
+type InsertManagedPostgresUsageImportParams struct {
+	AccountID         pgtype.UUID
+	ImportID          pgtype.UUID
+	DatabaseID        pgtype.UUID
+	ActorID           string
+	Reason            string
+	EvidenceReference string
+	EvidenceSha256    string
+	RequestSha256     string
+	PreviewRevision   string
+	Request           []byte
+	Policy            []byte
+	BeforeRecords     []byte
+	AfterRecords      []byte
+	Result            []byte
+	CreatedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) InsertManagedPostgresUsageImport(ctx context.Context, db DBTX, arg InsertManagedPostgresUsageImportParams) error {
+	_, err := db.Exec(ctx, insertManagedPostgresUsageImport,
+		arg.AccountID,
+		arg.ImportID,
+		arg.DatabaseID,
+		arg.ActorID,
+		arg.Reason,
+		arg.EvidenceReference,
+		arg.EvidenceSha256,
+		arg.RequestSha256,
+		arg.PreviewRevision,
+		arg.Request,
+		arg.Policy,
+		arg.BeforeRecords,
+		arg.AfterRecords,
+		arg.Result,
+		arg.CreatedAt,
+	)
+	return err
 }
 
 const insertOIDCExchangedToken = `-- name: InsertOIDCExchangedToken :one
@@ -17423,9 +17748,10 @@ SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid
 AND ($2::text IS NULL OR d.scope=$2::text)
 AND ($3::uuid IS NULL OR d.id<>$3::uuid)
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
-    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    d.serving_ended_at IS NOT NULL
+    OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))))
-ORDER BY d.created_at DESC,d.id DESC LIMIT 1
+ORDER BY coalesce(d.serving_ended_at,d.created_at) DESC,d.created_at DESC,d.id DESC LIMIT 1
 `
 
 type LatestRetainedRollbackDeploymentParams struct {
@@ -17434,6 +17760,11 @@ type LatestRetainedRollbackDeploymentParams struct {
 	CurrentDeploymentID pgtype.UUID
 }
 
+// Most recently serving first (serving_ended_at, migration
+// 20261004234807528); rows superseded before it fall back to created_at.
+// A live 0% deployment that served before (a release demoted by `traffic
+// promote` or `traffic set`) is a rollback target; one that never served
+// (a dark deploy) needs a retention pin.
 func (q *Queries) LatestRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LatestRetainedRollbackDeploymentParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, latestRetainedRollbackDeployment, arg.AppID, arg.Scope, arg.CurrentDeploymentID)
 	var id pgtype.UUID
@@ -21254,7 +21585,7 @@ func (q *Queries) ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInv
 }
 
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
-select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.serving_ended_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime
 from deployments d
 join apps a on a.id = d.app_id
 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
@@ -21347,6 +21678,7 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.CanaryStages,
 			&i.SnapshotMissCount,
 			&i.SnapshotMissLastAt,
+			&i.ServingEndedAt,
 			&i.SnapshotMissBackoffUntil,
 			&i.Workflows,
 			&i.SourceRoot,
@@ -21379,7 +21711,10 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 }
 
 const listManagedPostgresAccountingCoverage = `-- name: ListManagedPostgresAccountingCoverage :many
-SELECT d.state, COALESCE(source.state, d.state)::text AS accounting_state,
+SELECT d.id AS database_id, d.name, d.state, d.accounting_required,
+(NULLIF(d.provider_resource_id, '') IS NOT NULL)::boolean AS identity_known, d.lease_until,
+COALESCE(source.id, d.id)::uuid AS accounting_database_id, COALESCE(source.created_at, d.created_at)::timestamptz AS accounting_created_at, (d.accounting_required AND NULLIF(d.provider_resource_id, '') IS NULL)::boolean AS unresolved,
+COALESCE(source.state, d.state)::text AS accounting_state,
 (CASE WHEN source.id IS NULL THEN d.deleted_at ELSE source.deleted_at END)::timestamptz AS ended_at, COALESCE(c.window_seconds, 0)::bigint AS window_seconds,
 COALESCE(s.collected_from, c.collected_from)::timestamptz AS collected_from,
 COALESCE(s.collected_until, c.collected_until)::timestamptz AS collected_until,
@@ -21394,12 +21729,27 @@ LEFT JOIN LATERAL (SELECT database_id, window_seconds, collected_from, collected
  ORDER BY updated_at DESC, window_seconds DESC LIMIT 1) c ON true
 LEFT JOIN managed_postgres_databases source ON source.id = c.source_database_id
 LEFT JOIN managed_postgres_usage_coverage s ON s.database_id = c.source_database_id AND s.window_seconds = c.window_seconds
-WHERE d.account_id = $1::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL)
-ORDER BY d.id
+WHERE d.account_id = $1::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL OR d.accounting_required)
+AND ($2::uuid IS NULL OR d.id > $2::uuid)
+ORDER BY d.id LIMIT $3::integer
 `
 
+type ListManagedPostgresAccountingCoverageParams struct {
+	AccountID pgtype.UUID
+	AfterID   pgtype.UUID
+	PageLimit pgtype.Int4
+}
+
 type ListManagedPostgresAccountingCoverageRow struct {
+	DatabaseID           pgtype.UUID
+	Name                 string
 	State                string
+	AccountingRequired   bool
+	IdentityKnown        bool
+	LeaseUntil           pgtype.Timestamptz
+	AccountingDatabaseID pgtype.UUID
+	AccountingCreatedAt  pgtype.Timestamptz
+	Unresolved           bool
 	AccountingState      string
 	EndedAt              pgtype.Timestamptz
 	WindowSeconds        int64
@@ -21410,8 +21760,8 @@ type ListManagedPostgresAccountingCoverageRow struct {
 	SourceDatabaseID     string
 }
 
-func (q *Queries) ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListManagedPostgresAccountingCoverageRow, error) {
-	rows, err := db.Query(ctx, listManagedPostgresAccountingCoverage, accountID)
+func (q *Queries) ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, arg ListManagedPostgresAccountingCoverageParams) ([]ListManagedPostgresAccountingCoverageRow, error) {
+	rows, err := db.Query(ctx, listManagedPostgresAccountingCoverage, arg.AccountID, arg.AfterID, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -21420,7 +21770,15 @@ func (q *Queries) ListManagedPostgresAccountingCoverage(ctx context.Context, db 
 	for rows.Next() {
 		var i ListManagedPostgresAccountingCoverageRow
 		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.Name,
 			&i.State,
+			&i.AccountingRequired,
+			&i.IdentityKnown,
+			&i.LeaseUntil,
+			&i.AccountingDatabaseID,
+			&i.AccountingCreatedAt,
+			&i.Unresolved,
 			&i.AccountingState,
 			&i.EndedAt,
 			&i.WindowSeconds,
@@ -21478,9 +21836,52 @@ func (q *Queries) ListManagedPostgresCutoverCredentials(ctx context.Context, db 
 	return items, nil
 }
 
+const listManagedPostgresImportRecords = `-- name: ListManagedPostgresImportRecords :many
+SELECT account_id, database_id, backend_id, backend_fingerprint, window_from, window_to, observed_at, meter, quantity, cost_millicents FROM managed_postgres_usage
+WHERE database_id = $1 AND window_from < $2 AND window_to > $3
+ORDER BY window_from, meter
+`
+
+type ListManagedPostgresImportRecordsParams struct {
+	DatabaseID pgtype.UUID
+	WindowTo   pgtype.Timestamptz
+	WindowFrom pgtype.Timestamptz
+}
+
+func (q *Queries) ListManagedPostgresImportRecords(ctx context.Context, db DBTX, arg ListManagedPostgresImportRecordsParams) ([]ManagedPostgresUsage, error) {
+	rows, err := db.Query(ctx, listManagedPostgresImportRecords, arg.DatabaseID, arg.WindowTo, arg.WindowFrom)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ManagedPostgresUsage{}
+	for rows.Next() {
+		var i ManagedPostgresUsage
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.DatabaseID,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.WindowFrom,
+			&i.WindowTo,
+			&i.ObservedAt,
+			&i.Meter,
+			&i.Quantity,
+			&i.CostMillicents,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listManagedPostgresUsageResources = `-- name: ListManagedPostgresUsageResources :many
-SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id FROM managed_postgres_databases d
-WHERE NULLIF(d.provider_resource_id, '') IS NOT NULL
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.accounting_required FROM managed_postgres_databases d
+WHERE (NULLIF(d.provider_resource_id, '') IS NOT NULL OR d.accounting_required)
   AND ($1::timestamptz IS NULL
        OR (d.updated_at, d.id) > ($1::timestamptz, $2::uuid))
 ORDER BY d.updated_at, d.id LIMIT $3
@@ -21531,6 +21932,7 @@ func (q *Queries) ListManagedPostgresUsageResources(ctx context.Context, db DBTX
 			&i.RestoreSourceResourceID,
 			&i.RestorePointInTime,
 			&i.CutoverID,
+			&i.AccountingRequired,
 		); err != nil {
 			return nil, err
 		}
@@ -24321,6 +24723,15 @@ func (q *Queries) LockDevBridgeReplaySession(ctx context.Context, db DBTX, arg L
 	return id, err
 }
 
+const lockEnvironmentFieldOwnershipScope = `-- name: LockEnvironmentFieldOwnershipScope :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text,31))
+`
+
+func (q *Queries) LockEnvironmentFieldOwnershipScope(ctx context.Context, db DBTX, environmentID string) error {
+	_, err := db.Exec(ctx, lockEnvironmentFieldOwnershipScope, environmentID)
+	return err
+}
+
 const lockEnvironmentGitOpsCandidateApps = `-- name: LockEnvironmentGitOpsCandidateApps :many
 SELECT a.id FROM environment_gitops_resources r JOIN apps a ON a.id=r.app_id
 JOIN environment_git_sources s ON s.id=r.source_id
@@ -24346,6 +24757,24 @@ func (q *Queries) LockEnvironmentGitOpsCandidateApps(ctx context.Context, db DBT
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockEnvironmentGitOpsEnvironment = `-- name: LockEnvironmentGitOpsEnvironment :one
+SELECT e.id FROM project_environments e WHERE e.account_id=$1::uuid
+ AND e.project_id=$2::uuid AND e.slug=$3::text FOR NO KEY UPDATE
+`
+
+type LockEnvironmentGitOpsEnvironmentParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) LockEnvironmentGitOpsEnvironment(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsEnvironmentParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockEnvironmentGitOpsEnvironment, arg.AccountID, arg.ProjectID, arg.Environment)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockEnvironmentGitOpsIntentApps = `-- name: LockEnvironmentGitOpsIntentApps :many
@@ -24443,7 +24872,7 @@ func (q *Queries) LockEnvironmentGitOpsRuntimeEffect(ctx context.Context, db DBT
 }
 
 const lockEnvironmentGitSource = `-- name: LockEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_git_sources s
 WHERE s.account_id = $1::uuid AND s.id = $2::uuid
 FOR UPDATE
 `
@@ -24481,12 +24910,13 @@ func (q *Queries) LockEnvironmentGitSource(ctx context.Context, db DBTX, arg Loc
 		&i.SourceCommitSha,
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
+		&i.Detached,
 	)
 	return i, err
 }
 
 const lockEnvironmentGitSourceForQueueMutation = `-- name: LockEnvironmentGitSourceForQueueMutation :many
-SELECT s.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+SELECT s.id FROM active_environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
 WHERE a.account_id=$1::uuid AND a.id=$2::uuid
 AND s.environment_id=coalesce($3::uuid,
     (SELECT b.environment_id FROM queue_bindings b WHERE b.id=$4::uuid AND b.app_id=a.id AND b.account_id=a.account_id),
@@ -24529,7 +24959,7 @@ func (q *Queries) LockEnvironmentGitSourceForQueueMutation(ctx context.Context, 
 }
 
 const lockEnvironmentGitSourceForScope = `-- name: LockEnvironmentGitSourceForScope :many
-SELECT s.id FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+SELECT s.id FROM active_environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
 WHERE s.account_id = $1::uuid AND s.project_id = $2::uuid
 AND e.slug = $3::text FOR UPDATE OF s
 `
@@ -24561,7 +24991,7 @@ func (q *Queries) LockEnvironmentGitSourceForScope(ctx context.Context, db DBTX,
 }
 
 const lockEnvironmentGitSourceForSecretMutation = `-- name: LockEnvironmentGitSourceForSecretMutation :many
-SELECT s.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+SELECT s.id FROM active_environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
  JOIN project_environments e ON e.id=s.environment_id
  WHERE a.id=$1::uuid AND a.account_id=$2::uuid AND e.slug=$3::text
  FOR UPDATE OF s
@@ -25076,7 +25506,7 @@ func (q *Queries) LockManagedPostgresCutoverBindings(ctx context.Context, db DBT
 }
 
 const lockManagedPostgresCutoverDatabases = `-- name: LockManagedPostgresCutoverDatabases :many
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id FROM managed_postgres_databases
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, accounting_required FROM managed_postgres_databases
 WHERE id::text=ANY($1::text[]) ORDER BY id FOR UPDATE
 `
 
@@ -25118,6 +25548,7 @@ func (q *Queries) LockManagedPostgresCutoverDatabases(ctx context.Context, db DB
 			&i.RestoreSourceResourceID,
 			&i.RestorePointInTime,
 			&i.CutoverID,
+			&i.AccountingRequired,
 		); err != nil {
 			return nil, err
 		}
@@ -25219,7 +25650,7 @@ func (q *Queries) LockManagedPostgresCutoverLease(ctx context.Context, db DBTX, 
 }
 
 const lockManagedPostgresUsageResource = `-- name: LockManagedPostgresUsageResource :one
-SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id FROM managed_postgres_databases d WHERE d.id = $1::uuid FOR UPDATE
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.accounting_required FROM managed_postgres_databases d WHERE d.id = $1::uuid FOR UPDATE
 `
 
 func (q *Queries) LockManagedPostgresUsageResource(ctx context.Context, db DBTX, id pgtype.UUID) (ManagedPostgresDatabase, error) {
@@ -25254,6 +25685,7 @@ func (q *Queries) LockManagedPostgresUsageResource(ctx context.Context, db DBTX,
 		&i.RestoreSourceResourceID,
 		&i.RestorePointInTime,
 		&i.CutoverID,
+		&i.AccountingRequired,
 	)
 	return i, err
 }
@@ -25410,7 +25842,7 @@ func (q *Queries) LockProjectEnvironmentCloneApps(ctx context.Context, db DBTX, 
 }
 
 const lockProjectEnvironmentCloneGitSources = `-- name: LockProjectEnvironmentCloneGitSources :many
-SELECT s.id FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+SELECT s.id FROM active_environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
 WHERE s.account_id=$1::uuid AND s.project_id=$2::uuid
  AND e.slug IN ($3::text,$4::text)
 ORDER BY s.id FOR UPDATE OF s
@@ -25454,9 +25886,10 @@ SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.scope=$2::text
 AND d.id<>$3::uuid
 AND d.environment_workload_runtime IS NULL
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
-    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    d.serving_ended_at IS NOT NULL
+    OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))))
-ORDER BY d.created_at DESC,d.id DESC LIMIT 1 FOR UPDATE OF d
+ORDER BY coalesce(d.serving_ended_at,d.created_at) DESC,d.created_at DESC,d.id DESC LIMIT 1 FOR UPDATE OF d
 `
 
 type LockRetainedRollbackDeploymentParams struct {
@@ -27347,6 +27780,7 @@ last_error_code = CASE WHEN state <> $1 THEN '' ELSE last_error_code END, retry_
 WHERE object_buckets.account_id = $4 AND object_buckets.app_id = $5 AND object_buckets.id = $6
 AND object_buckets.state <> 'deleted' AND (object_buckets.lease_until IS NULL OR object_buckets.lease_until < now())
 AND ($1 = 'deleting' OR object_buckets.state = 'provisioning')
+AND ($1 <> 'deleting' OR NOT EXISTS(SELECT 1 FROM object_version_protection p WHERE p.bucket_id=object_buckets.id AND p.state IN ('waiting','applying')))
 AND ($1 <> 'deleting' OR NOT EXISTS (
   SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id = object_buckets.id
   AND m.state IN ('initiating','active','completing','completing_conditional','aborting')
@@ -28165,7 +28599,7 @@ func (q *Queries) ObjectCapacityDue(ctx context.Context, db DBTX, limit int32) (
 }
 
 const objectCapacityFenced = `-- name: ObjectCapacityFenced :one
-SELECT (EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=$1 AND l.state<>'ready') OR EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1 AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning')))::boolean AS fenced
+SELECT (EXISTS(SELECT 1 FROM object_version_protection p WHERE p.bucket_id=$1 AND p.state IN ('waiting','applying')) OR EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=$1 AND l.state<>'ready') OR EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1 AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning')))::boolean AS fenced
 `
 
 func (q *Queries) ObjectCapacityFenced(ctx context.Context, db DBTX, bucketID pgtype.UUID) (bool, error) {
@@ -28369,7 +28803,7 @@ func (q *Queries) ObjectCapacityLockBucket(ctx context.Context, db DBTX, arg Obj
 
 const objectCapacityReadiness = `-- name: ObjectCapacityReadiness :one
 SELECT
- ((SELECT count(*) FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) + (SELECT count(*) FROM object_storage_write_admissions w LEFT JOIN object_storage_multipart_uploads m ON m.id=w.multipart_upload_id
+ ((SELECT count(*) FROM object_version_protection WHERE object_version_protection.bucket_id=$1 AND object_version_protection.state IN ('waiting','applying')) + (SELECT count(*) FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) + (SELECT count(*) FROM object_storage_write_admissions w LEFT JOIN object_storage_multipart_uploads m ON m.id=w.multipart_upload_id
   WHERE w.bucket_id=$1 AND ((w.kind='proxy' AND w.state='pending') OR (w.kind='multipart' AND m.state NOT IN ('completed','aborted')))))::bigint AS pending,
  EXISTS (SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1 AND NOT reclaimable) AS unsafe,
  EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=$1 AND
@@ -28810,7 +29244,7 @@ func (q *Queries) ObjectCopySourcesList(ctx context.Context, db DBTX, arg Object
 }
 
 const objectDeletionActive = `-- name: ObjectDeletionActive :one
-SELECT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=$1 AND state IN ('prepared','dispatched'))::boolean AS active
+SELECT (EXISTS(SELECT 1 FROM object_deletions WHERE object_deletions.bucket_id=$1 AND object_deletions.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_version_protection WHERE object_version_protection.bucket_id=$1 AND object_version_protection.state IN ('waiting','applying')))::boolean AS active
 `
 
 func (q *Queries) ObjectDeletionActive(ctx context.Context, db DBTX, bucketID pgtype.UUID) (bool, error) {
@@ -33280,6 +33714,126 @@ func (q *Queries) ObjectVersionInventoryEntriesInsert(ctx context.Context, db DB
 	return result.RowsAffected(), nil
 }
 
+const objectVersionProtectionActive = `-- name: ObjectVersionProtectionActive :one
+SELECT id FROM object_version_protection WHERE bucket_id=$1 AND state IN ('waiting','applying')
+`
+
+func (q *Queries) ObjectVersionProtectionActive(ctx context.Context, db DBTX, bucketID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectVersionProtectionActive, bucketID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const objectVersionProtectionDue = `-- name: ObjectVersionProtectionDue :many
+SELECT id FROM object_version_protection WHERE state IN ('waiting','applying') AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,id LIMIT $1
+`
+
+func (q *Queries) ObjectVersionProtectionDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, objectVersionProtectionDue, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectVersionProtectionGet = `-- name: ObjectVersionProtectionGet :one
+SELECT id, bucket_id, account_id, app_id, object_key, public_version_id, native_version_id, intent, state, lease_token, lease_until, retry_at, dispatched, last_error_code, created_at, updated_at FROM object_version_protection WHERE id=$1
+`
+
+func (q *Queries) ObjectVersionProtectionGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectVersionProtection, error) {
+	row := db.QueryRow(ctx, objectVersionProtectionGet, id)
+	var i ObjectVersionProtection
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.AccountID,
+		&i.AppID,
+		&i.ObjectKey,
+		&i.PublicVersionID,
+		&i.NativeVersionID,
+		&i.Intent,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.Dispatched,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const objectVersionProtectionInsert = `-- name: ObjectVersionProtectionInsert :exec
+INSERT INTO object_version_protection(id,bucket_id,account_id,app_id,object_key,public_version_id,native_version_id,intent)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+`
+
+type ObjectVersionProtectionInsertParams struct {
+	ID              pgtype.UUID
+	BucketID        pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	ObjectKey       string
+	PublicVersionID string
+	NativeVersionID string
+	Intent          []byte
+}
+
+func (q *Queries) ObjectVersionProtectionInsert(ctx context.Context, db DBTX, arg ObjectVersionProtectionInsertParams) error {
+	_, err := db.Exec(ctx, objectVersionProtectionInsert,
+		arg.ID,
+		arg.BucketID,
+		arg.AccountID,
+		arg.AppID,
+		arg.ObjectKey,
+		arg.PublicVersionID,
+		arg.NativeVersionID,
+		arg.Intent,
+	)
+	return err
+}
+
+const objectVersionProtectionUpdate = `-- name: ObjectVersionProtectionUpdate :exec
+UPDATE object_version_protection SET state=$2,lease_token=$3,lease_until=$4,retry_at=$5,dispatched=$6,last_error_code=$7,updated_at=now() WHERE id=$1
+`
+
+type ObjectVersionProtectionUpdateParams struct {
+	ID            pgtype.UUID
+	State         string
+	LeaseToken    string
+	LeaseUntil    pgtype.Timestamptz
+	RetryAt       pgtype.Timestamptz
+	Dispatched    bool
+	LastErrorCode string
+}
+
+func (q *Queries) ObjectVersionProtectionUpdate(ctx context.Context, db DBTX, arg ObjectVersionProtectionUpdateParams) error {
+	_, err := db.Exec(ctx, objectVersionProtectionUpdate,
+		arg.ID,
+		arg.State,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+		arg.Dispatched,
+		arg.LastErrorCode,
+	)
+	return err
+}
+
 const objectVersionReferenceResolve = `-- name: ObjectVersionReferenceResolve :one
 SELECT v.native_version_id FROM object_version_references v JOIN object_buckets b ON b.id=v.bucket_id
 WHERE v.id=$1 AND b.account_id=$2 AND v.bucket_id=$3 AND v.object_key=$4 AND v.native_version_id<>'null' AND b.state='ready'
@@ -33792,6 +34346,7 @@ SELECT jsonb_build_object(
             FROM project_environment_route_policies r WHERE r.app_id = a.id AND r.environment_slug = e.slug),
         'policies', (SELECT rules FROM project_environment_edge_policies r WHERE r.app_id = a.id AND r.environment_slug = e.slug)
         )) FROM apps a WHERE a.project_id = s.project_id AND a.account_id = s.account_id AND a.status <> 'deleted'), '[]'::jsonb),
+    'external_owners',coalesce((SELECT jsonb_agg(jsonb_build_object('resource',f.resource,'path',f.field_path,'manager',f.manager_id)) FROM environment_external_field_owners f WHERE f.environment_id=s.environment_id),'[]'::jsonb),
     'owners', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', f.resource, 'path', f.field_path,
         'value', f.desired_value, 'manager', f.manager_id)) FROM environment_managed_fields f
         WHERE f.environment_id = s.environment_id), '[]'::jsonb),
@@ -34625,6 +35180,26 @@ func (q *Queries) PruneDevBridgeSessions(ctx context.Context, db DBTX, arg Prune
 	return err
 }
 
+const pruneEnvironmentGitOpsReports = `-- name: PruneEnvironmentGitOpsReports :exec
+DELETE FROM environment_gitops_runs r USING (
+ SELECT id, completed_at, row_number() OVER (ORDER BY completed_at DESC,id DESC) AS position
+ FROM environment_gitops_runs WHERE source_id=$1::uuid AND completed_at IS NOT NULL
+) old
+WHERE r.id=old.id AND old.position>1
+ AND (old.position>$2::integer OR old.completed_at<$3::timestamptz)
+`
+
+type PruneEnvironmentGitOpsReportsParams struct {
+	SourceID  pgtype.UUID
+	KeepCount int32
+	BeforeAt  pgtype.Timestamptz
+}
+
+func (q *Queries) PruneEnvironmentGitOpsReports(ctx context.Context, db DBTX, arg PruneEnvironmentGitOpsReportsParams) error {
+	_, err := db.Exec(ctx, pruneEnvironmentGitOpsReports, arg.SourceID, arg.KeepCount, arg.BeforeAt)
+	return err
+}
+
 const pruneRouteCheckHistory = `-- name: PruneRouteCheckHistory :exec
 DELETE FROM route_check_history WHERE id IN (
     SELECT id FROM (
@@ -35096,6 +35671,25 @@ func (q *Queries) PutCustomerOperationIdempotency(ctx context.Context, db DBTX, 
 		arg.ExpiresAt,
 	)
 	return err
+}
+
+const putEnvironmentExternalFieldOwner = `-- name: PutEnvironmentExternalFieldOwner :execrows
+INSERT INTO environment_external_field_owners(environment_id,resource,field_path,manager_id)
+VALUES($1::uuid,$2::text,$3::text,'terraform') ON CONFLICT DO NOTHING
+`
+
+type PutEnvironmentExternalFieldOwnerParams struct {
+	EnvironmentID pgtype.UUID
+	Resource      string
+	FieldPath     string
+}
+
+func (q *Queries) PutEnvironmentExternalFieldOwner(ctx context.Context, db DBTX, arg PutEnvironmentExternalFieldOwnerParams) (int64, error) {
+	result, err := db.Exec(ctx, putEnvironmentExternalFieldOwner, arg.EnvironmentID, arg.Resource, arg.FieldPath)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const putEnvironmentGitOpsOverride = `-- name: PutEnvironmentGitOpsOverride :execrows
@@ -38469,6 +39063,68 @@ func (q *Queries) RecordMailSuppression(ctx context.Context, db DBTX, arg Record
 	return inserted, err
 }
 
+const recordManagedPostgresDiscoveredResource = `-- name: RecordManagedPostgresDiscoveredResource :execrows
+UPDATE managed_postgres_databases
+SET provider_resource_id = $1::text, updated_at = $2::timestamptz
+WHERE id = $3::uuid AND account_id = $4::uuid
+  AND backend_id = $5::text AND backend_fingerprint = $6::text
+  AND accounting_required AND state <> 'deleted'
+  AND (lease_until IS NULL OR lease_until <= $2::timestamptz)
+  AND (NULLIF(provider_resource_id, '') IS NULL OR provider_resource_id = $1::text)
+`
+
+type RecordManagedPostgresDiscoveredResourceParams struct {
+	ProviderResourceID string
+	Now                pgtype.Timestamptz
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+}
+
+func (q *Queries) RecordManagedPostgresDiscoveredResource(ctx context.Context, db DBTX, arg RecordManagedPostgresDiscoveredResourceParams) (int64, error) {
+	result, err := db.Exec(ctx, recordManagedPostgresDiscoveredResource,
+		arg.ProviderResourceID,
+		arg.Now,
+		arg.ID,
+		arg.AccountID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordManagedPostgresProviderResource = `-- name: RecordManagedPostgresProviderResource :execrows
+UPDATE managed_postgres_databases
+SET provider_resource_id = $1::text, accounting_required = true, updated_at = $2::timestamptz
+WHERE id = $3::uuid AND state IN ('provisioning', 'deleting')
+  AND lease_token = $4::text AND lease_until > $2::timestamptz
+  AND (NULLIF(provider_resource_id, '') IS NULL OR provider_resource_id = $1::text)
+`
+
+type RecordManagedPostgresProviderResourceParams struct {
+	ProviderResourceID string
+	Now                pgtype.Timestamptz
+	ID                 pgtype.UUID
+	LeaseToken         string
+}
+
+func (q *Queries) RecordManagedPostgresProviderResource(ctx context.Context, db DBTX, arg RecordManagedPostgresProviderResourceParams) (int64, error) {
+	result, err := db.Exec(ctx, recordManagedPostgresProviderResource,
+		arg.ProviderResourceID,
+		arg.Now,
+		arg.ID,
+		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recordManagedPostgresSharedUsage = `-- name: RecordManagedPostgresSharedUsage :execrows
 WITH RECURSIVE ancestry AS (
  SELECT restore_source_database_id AS id FROM managed_postgres_databases
@@ -38904,6 +39560,25 @@ func (q *Queries) ReleaseEnvironmentGitOpsLease(ctx context.Context, db DBTX, ar
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const releaseEnvironmentGitSourceOverrides = `-- name: ReleaseEnvironmentGitSourceOverrides :exec
+DELETE FROM environment_management_overrides o USING environment_managed_fields f
+ WHERE f.source_id=$1::uuid AND o.environment_id=f.environment_id AND o.resource=f.resource AND o.field_path=f.field_path
+`
+
+func (q *Queries) ReleaseEnvironmentGitSourceOverrides(ctx context.Context, db DBTX, sourceID pgtype.UUID) error {
+	_, err := db.Exec(ctx, releaseEnvironmentGitSourceOverrides, sourceID)
+	return err
+}
+
+const releaseEnvironmentGitSourceOwners = `-- name: ReleaseEnvironmentGitSourceOwners :exec
+DELETE FROM environment_managed_fields WHERE source_id=$1::uuid
+`
+
+func (q *Queries) ReleaseEnvironmentGitSourceOwners(ctx context.Context, db DBTX, sourceID pgtype.UUID) error {
+	_, err := db.Exec(ctx, releaseEnvironmentGitSourceOwners, sourceID)
+	return err
 }
 
 const releaseManagedPostgresCutover = `-- name: ReleaseManagedPostgresCutover :execrows
@@ -40827,6 +41502,46 @@ FROM workflow_runs r WHERE s.run_id=r.id AND r.id=$1 AND s.status='running'
 func (q *Queries) ResetWorkflowRunningSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error {
 	_, err := db.Exec(ctx, resetWorkflowRunningSteps, runID)
 	return err
+}
+
+const resolveEnvironmentFieldOwnershipScope = `-- name: ResolveEnvironmentFieldOwnershipScope :one
+SELECT e.id AS environment_id,e.project_id,p.account_id,
+ CASE WHEN $1::text='' THEN 'environment' ELSE 'app/'||a.id::text END::text AS resource
+FROM project_environments e JOIN projects p ON p.id=e.project_id AND p.account_id=e.account_id
+LEFT JOIN apps a ON a.project_id=p.id AND a.account_id=p.account_id AND a.slug=$1::text AND a.status<>'deleted'
+WHERE p.account_id=$2::uuid AND e.slug=$3::text
+ AND (($1::text<>'' AND a.id IS NOT NULL) OR ($1::text='' AND p.slug=$4::text))
+`
+
+type ResolveEnvironmentFieldOwnershipScopeParams struct {
+	App         string
+	AccountID   pgtype.UUID
+	Environment string
+	Project     string
+}
+
+type ResolveEnvironmentFieldOwnershipScopeRow struct {
+	EnvironmentID pgtype.UUID
+	ProjectID     pgtype.UUID
+	AccountID     pgtype.UUID
+	Resource      string
+}
+
+func (q *Queries) ResolveEnvironmentFieldOwnershipScope(ctx context.Context, db DBTX, arg ResolveEnvironmentFieldOwnershipScopeParams) (ResolveEnvironmentFieldOwnershipScopeRow, error) {
+	row := db.QueryRow(ctx, resolveEnvironmentFieldOwnershipScope,
+		arg.App,
+		arg.AccountID,
+		arg.Environment,
+		arg.Project,
+	)
+	var i ResolveEnvironmentFieldOwnershipScopeRow
+	err := row.Scan(
+		&i.EnvironmentID,
+		&i.ProjectID,
+		&i.AccountID,
+		&i.Resource,
+	)
+	return i, err
 }
 
 const resolvePublicProjectRelease = `-- name: ResolvePublicProjectRelease :one
@@ -43224,7 +43939,7 @@ UPDATE environment_git_sources
 SET approved_revision_id = $1::uuid,
     generation = generation + 1, updated_at = now()
 WHERE id = $2::uuid AND generation = $3::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
 `
 
 type SetEnvironmentApprovedRevisionParams struct {
@@ -43261,6 +43976,7 @@ func (q *Queries) SetEnvironmentApprovedRevision(ctx context.Context, db DBTX, a
 		&i.SourceCommitSha,
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
+		&i.Detached,
 	)
 	return i, err
 }
@@ -44733,7 +45449,7 @@ func (q *Queries) UpdateDeploymentStatus(ctx context.Context, db DBTX, arg Updat
 const updateEnvironmentGitSourceControl = `-- name: UpdateEnvironmentGitSourceControl :one
 UPDATE environment_git_sources SET mode = $1::text, prune = $2::boolean,
     suspended = $3::boolean, generation = generation + 1, intent_version = intent_version + 1, updated_at = now()
-WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at
+WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
 `
 
 type UpdateEnvironmentGitSourceControlParams struct {
@@ -44778,6 +45494,7 @@ func (q *Queries) UpdateEnvironmentGitSourceControl(ctx context.Context, db DBTX
 		&i.SourceCommitSha,
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
+		&i.Detached,
 	)
 	return i, err
 }
@@ -45291,6 +46008,71 @@ func (q *Queries) UpsertInvoiceSnapshot(ctx context.Context, db DBTX, arg Upsert
 		&i.DetailLifecycle,
 	)
 	return i, err
+}
+
+const upsertManagedPostgresUsageCoverage = `-- name: UpsertManagedPostgresUsageCoverage :exec
+INSERT INTO managed_postgres_usage_coverage (database_id, window_seconds, collected_from, collected_until, observed_at)
+VALUES ($1,$2,$3,$4,$5)
+ON CONFLICT (database_id, window_seconds) DO UPDATE SET
+ collected_from = EXCLUDED.collected_from, collected_until = EXCLUDED.collected_until,
+ observed_at = EXCLUDED.observed_at, updated_at = now()
+`
+
+type UpsertManagedPostgresUsageCoverageParams struct {
+	DatabaseID     pgtype.UUID
+	WindowSeconds  int64
+	CollectedFrom  pgtype.Timestamptz
+	CollectedUntil pgtype.Timestamptz
+	ObservedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) UpsertManagedPostgresUsageCoverage(ctx context.Context, db DBTX, arg UpsertManagedPostgresUsageCoverageParams) error {
+	_, err := db.Exec(ctx, upsertManagedPostgresUsageCoverage,
+		arg.DatabaseID,
+		arg.WindowSeconds,
+		arg.CollectedFrom,
+		arg.CollectedUntil,
+		arg.ObservedAt,
+	)
+	return err
+}
+
+const upsertManagedPostgresUsageRecord = `-- name: UpsertManagedPostgresUsageRecord :exec
+INSERT INTO managed_postgres_usage (
+ account_id, database_id, backend_id, backend_fingerprint, window_from, window_to, observed_at, meter, quantity, cost_millicents
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ON CONFLICT (database_id, window_from, window_to, meter) DO UPDATE SET
+ observed_at = EXCLUDED.observed_at, quantity = EXCLUDED.quantity, cost_millicents = EXCLUDED.cost_millicents
+WHERE managed_postgres_usage.observed_at <= EXCLUDED.observed_at
+`
+
+type UpsertManagedPostgresUsageRecordParams struct {
+	AccountID          pgtype.UUID
+	DatabaseID         pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	WindowFrom         pgtype.Timestamptz
+	WindowTo           pgtype.Timestamptz
+	ObservedAt         pgtype.Timestamptz
+	Meter              string
+	Quantity           int64
+	CostMillicents     int64
+}
+
+func (q *Queries) UpsertManagedPostgresUsageRecord(ctx context.Context, db DBTX, arg UpsertManagedPostgresUsageRecordParams) error {
+	_, err := db.Exec(ctx, upsertManagedPostgresUsageRecord,
+		arg.AccountID,
+		arg.DatabaseID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.WindowFrom,
+		arg.WindowTo,
+		arg.ObservedAt,
+		arg.Meter,
+		arg.Quantity,
+		arg.CostMillicents,
+	)
+	return err
 }
 
 const upsertOIDCTrustPolicy = `-- name: UpsertOIDCTrustPolicy :one

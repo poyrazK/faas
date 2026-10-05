@@ -56,7 +56,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 568 | [Git-owned environment intent and continuous reconciliation](568-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, field ownership, durable effects, and scoped runtime convergence |
+| 568 | [Git-owned environment intent and continuous reconciliation](568-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, scoped ownership and binding retirement, bounded reports, durable effects, and scoped runtime convergence |
 | 576 | [Private TCP addressing between services](576-private-tcp-service-addressing.md) | proposed | Account-scoped service addresses in 198.19.0.0/16 give non-HTTP protocols natural-port private reachability through a node-local TCP proxy |
 | 520 | [Self-hosted TLS for customer custom domains](520-self-hosted-custom-domain-tls.md) | proposed | Caddy on-demand certificates gated by gatewayd-public's ask endpoint; durable per-wildcard issuance budget; no CDN in the customer-domain path |
 | 580 | [Control-plane role convergence in CD](580-control-plane-convergence-in-cd.md) | proposed | CD runs the control-plane bootstrap play before release activation whenever a hash of its inputs (roles, inventory, operator vars) changes |
@@ -66,6 +66,9 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 566 | [Financial visibility and scoped spending controls](566-financial-visibility-and-scoped-budgets.md) | visibility preview; enforcement pending | Retained compute/egress costs, forecasts and disabled budget drafts; runtime enforcement has separate acceptance gates |
 | 565 | [Managed PostgreSQL fleet usage recovery](565-managed-postgres-fleet-usage-recovery.md) | accepted | Recover one window per database per round across the fleet before correction replay, using durable observation order |
 | 569 | [Managed PostgreSQL terminal usage coverage](569-managed-postgres-terminal-usage-coverage.md) | accepted | Retain known resources through shutdown, recover finite final windows, and require every final correction before completing automatic accounting |
+- [ADR-581: Managed PostgreSQL uncertain accounting intent](581-managed-postgres-uncertain-accounting-intent.md) — durable provider-attempt ownership and identity recovery before deletion
+- [ADR-582: Managed PostgreSQL accounting diagnostics](582-managed-postgres-accounting-diagnostics.md) — operator-only per-database evidence and admission blockers
+- [ADR-583: Managed PostgreSQL retained usage import](583-managed-postgres-retained-usage-import.md) — previewed, atomic accounting repairs with immutable evidence
 | 529 | [Bindings gate at traffic promotion](529-binding-gated-promotion.md) | accepted | Require evidence and atomically fence traffic promotion on observed revisions |
 | 528 | [Deployment selection for bindings verification](528-deployment-binding-verification.md) | accepted | Probe the exact deployment artifact with its scoped runtime configuration |
 | 527 | [Bindings preflight policy](527-binding-preflight-policy.md) | accepted | Apply configurable readiness, age, rotation and runtime gates |
@@ -99,7 +102,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 480 | [Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md) | proposed | App, preview and custom-domain hosts own /v1, /status, /docs, /login, /oauth/* and the edge well-known documents |
 | 460 | [Prepared network policy retention](460-prepared-network-policy-retention.md) | proposed | Preserve fresh unused exact-policy spares within ADR-149's existing global capacity |
 | 499 | [Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) | accepted | Opt-in tenant/consumer budgets, redacted identity details, aggregate impact counts, and a bounded recovery inventory |
-| 581 | [Versioned inherited application standards](581-inherited-application-standards.md) | implementation in progress | Organization-owned versions, automatic enrollment, reviewed rollouts, field provenance and bounded exceptions; runtime acceptance pending |
+| 586 | [Versioned inherited application standards](586-inherited-application-standards.md) | implementation in progress | Organization-owned versions, automatic enrollment, reviewed rollouts, field provenance and bounded exceptions; runtime acceptance pending |
 
 | 424 | [Managed outbound integrations for stateless Runs](424-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
 | 427 | [Exclusive operation policy retirement](427-exclusive-operation-policy-retirement.md) | accepted | Idle retirement preserves ownership history and releases the active policy quota slot |

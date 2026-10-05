@@ -15,23 +15,30 @@ func cmdDeploymentAdvance(args []string) int {
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("deployment advance", flag.ContinueOnError)
 	step := fs.Int("expected-step", -1, "current observed canary step")
+	// Like summary and wait, accept the `v42` revision with --app (or a
+	// linked checkout). advance rejected --app outright on production-us.
+	app := fs.String("app", "", "app slug, to resolve a vN revision")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) != 1 || !deploymentIDPattern.MatchString(positional[0]) || *step < 0 {
-		return printErr("Invalid canary advance", errors.New("usage: gregale deployment advance <ID> --expected-step N"))
+	if len(positional) != 1 || !validDeploymentRef(positional[0]) || *step < 0 {
+		return printErr("Invalid canary advance", errors.New("usage: gregale deployment advance <ID|vN> --expected-step N [--app SLUG]"))
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	deploymentID, err := resolveDeploymentArg(context.Background(), client, *app, positional[0])
+	if err != nil {
+		return printErr("Could not resolve deployment", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), api.RouteCheckTimeout)
 	defer cancel()
-	result, err := client.AdvanceCanary(ctx, positional[0], *step)
+	result, err := client.AdvanceCanary(ctx, deploymentID, *step)
 	if err != nil {
 		return printErr("Could not advance canary", err)
 	}
-	want, _ := uuid.Parse(positional[0])
+	want, _ := uuid.Parse(deploymentID)
 	got, parseErr := uuid.Parse(result.Deployment.ID)
 	if parseErr != nil || got != want || result.Deployment.CanaryStep <= *step || result.AuditID == "" {
 		return printErr("Invalid canary result", errors.New("deployment, step or audit does not match the advance"))
