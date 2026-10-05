@@ -1,160 +1,223 @@
-import { parseFrame } from './sse.js';
+// ADR-586: customer PostgreSQL business writes and replayable handler responses.
+import { createHash } from "node:crypto";
+import type { ManagedOperationEffect } from "./generated/models/ManagedOperationEffect.js";
+import {
+  OPERATION_REQUEST_BYTES, OPERATION_IDENTITY_BYTES, OPERATION_RESPONSE_BYTES,
+  OPERATION_EFFECTS, OPERATION_PAYLOAD_BYTES, OPERATION_TYPE_BYTES,
+} from "./operation-contract.js";
 
-export type OperationState = 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
-export interface OperationProgress { stage: string; completed: number; total: number; attempt: number; updated_at: string }
-export interface OperationDelivery { state: string; delivery_id?: string; attempts: number; last_error?: string; next_attempt_at?: string }
-export interface OperationArtifact { id: string; name: string; uri: string; size_bytes: number; sha256: string; expires_at?: string }
-export interface OperationArtifactReport { report_id: string; name: string; uri: string; size_bytes: number; sha256: string }
-export interface Operation<T = unknown> {
-  id: string; name: string; generation: number; state: OperationState;
-  progress?: OperationProgress; result?: T; artifacts?: OperationArtifact[]; completion_delivery: OperationDelivery;
-  cancellation_requested: boolean; failure_code?: string; latest_sequence: number;
-  created_at: string; updated_at: string; expires_at: string;
-}
-export interface OperationReceipt { id: string; status_url: string; events_url: string }
-export type OperationSummary = Omit<Operation, 'result' | 'artifacts' | 'failure_code' | 'completion_delivery'> & { completion_delivery: Pick<OperationDelivery, 'state' | 'attempts' | 'next_attempt_at'> };
-export interface OperationList { operations: OperationSummary[]; next_cursor?: string }
-export interface OperationListOptions { appID: string; scope: string; name?: string; state?: OperationState; limit?: number; cursor?: string }
-export interface OperationEvent { operation_id: string; sequence: number; type: string; execution_id?: string; attempt?: number; data: unknown; created_at: string }
-export interface OperationEvents { events: OperationEvent[]; latest_sequence: number; resync_required: boolean }
-export interface OperationReport { report_id: string; stage: string; completed: number; total: number }
-export interface OperationClientOptions {
-  apiURL: string;
-  /** Obtain a current tenant-bound token from your application's authenticated backend.
-   * Called again on every reconnect. Account API keys must stay on your server. */
-  credential: () => string | Promise<string>;
-  fetch?: typeof globalThis.fetch;
-}
-export class OperationHTTPError extends Error {
-  constructor(public readonly status: number, public readonly code: string) { super(`Operation request failed (${status}: ${code})`); this.name = 'OperationHTTPError'; }
+const supportedOperation: unique symbol = Symbol("Gregale managed operation support");
+
+export interface OperationRequest {
+  readonly [supportedOperation]: true;
+  operationId: string;
+  accountId: string;
+  appId: string;
+  platformTenantId?: string;
+  generation: string;
+  method: string;
+  path: string;
+  body: Uint8Array;
 }
 
-class OperationProtocolError extends Error {}
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const MAX_BODY = 2 * 1024 * 1024;
-export function operationAPIBase(value: string): URL {
-  const url = new URL(value);
-  if (url.username || url.password || url.search || url.hash || (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) throw new Error('Operations API requires HTTPS or loopback HTTP');
-  return url;
-}
-export async function operationJSON(response: Response): Promise<unknown> {
-  if (!response.body) throw new Error('Missing operation response');
-  const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
-  try {
-    for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > MAX_BODY) throw new Error('Operation response exceeds its bound'); chunks.push(value); }
-    const bytes = new Uint8Array(size); let offset = 0;
-    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-    return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
-  } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
-}
-export async function operationResponse<T>(response: Response): Promise<T> {
-  const data = await operationJSON(response) as { code?: string };
-  if (!response.ok) throw new OperationHTTPError(response.status, typeof data?.code === 'string' ? data.code : 'operation_request_failed');
-  return data as T;
-}
-function operationPath(id: string): string {
-  if (!UUID.test(id)) throw new Error('Invalid operation identity');
-  return `/v1/platform-tenant-self/customer-operations/${id}`;
+export interface OperationOutcome {
+  result: unknown;
+  effects?: readonly ManagedOperationEffect[];
 }
 
-/** Browser-safe customer status/progress client. Business and delivery state
- * remain separate, including after reconnect or notification failure. */
-export class GregaleOperationClient {
-  private readonly base: URL;
-  private readonly fetchImpl: typeof globalThis.fetch;
-  constructor(private readonly options: OperationClientOptions) { this.base = operationAPIBase(options.apiURL); this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis); }
-  private async request<T>(path: string, method: string, body?: unknown, headers?: HeadersInit, signal?: AbortSignal): Promise<T> {
-    const auth = await this.options.credential();
-    if (!auth || /[\r\n]/.test(auth)) throw new Error('Operation credential unavailable');
-    const h = new Headers(headers); h.set('Authorization', `Bearer ${auth}`); h.set('Content-Type', 'application/json');
-    const response = await this.fetchImpl(new URL(path, this.base), { method, headers: h, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal, redirect: 'error', cache: 'no-store' });
-    return operationResponse<T>(response);
+export interface OperationTransaction {
+  query(sql: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
+}
+export interface OperationConnection extends OperationTransaction {
+  release(discard?: boolean): void;
+}
+export interface OperationPool {
+  connect(): Promise<OperationConnection>;
+}
+export interface OperationTransactionResult {
+  /** Send these exact JSON bytes using res.type('application/json').send(body). */
+  body: string;
+  replayed: boolean;
+}
+
+export class OperationConflictError extends Error {
+  readonly code = "operation_receipt_conflict";
+  constructor() { super("operation receipt scope or input differs"); this.name = "OperationConflictError"; }
+}
+export class OperationCommitUnknownError extends Error {
+  readonly code = "operation_commit_unknown";
+  constructor(cause: unknown) {
+    super("operation commit outcome unknown; retry with the same operation identity", { cause });
+    this.name = "OperationCommitUnknownError";
   }
-  start(definition: string, input: unknown, idempotencyKey: string, signal?: AbortSignal): Promise<OperationReceipt> {
-    if (!UUID.test(definition) || !idempotencyKey || new TextEncoder().encode(idempotencyKey).length > 128 || /[\r\n\0]/.test(idempotencyKey)) throw new Error('Definition and bounded idempotency key required');
-    return this.request('/v1/platform-tenant-self/customer-operations', 'POST', { definition_id: definition, input }, { 'Idempotency-Key': idempotencyKey }, signal);
+}
+
+function uuid(value: string): string {
+  if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+      || /^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(value)) throw new TypeError("operation identity must be a nonzero UUID");
+  return value.toLowerCase();
+}
+
+function normalize(request: OperationRequest): OperationRequest {
+  if (request[supportedOperation] !== true) throw new TypeError("use operationRequestFromHeaders with negotiated support");
+  if (typeof request.generation !== "string" || !/^[1-9][0-9]{0,18}$/.test(request.generation)
+      || BigInt(request.generation) > 9223372036854775807n) throw new TypeError("operation generation must be a positive int64");
+  if (typeof request.method !== "string" || !/^[A-Z]+$/.test(request.method) || request.method.length > OPERATION_IDENTITY_BYTES
+      || typeof request.path !== "string" || !request.path.startsWith("/") || /[\r\n\0]/.test(request.path)
+      || Buffer.from(request.path).toString("utf8") !== request.path || !(request.body instanceof Uint8Array)
+      || Buffer.byteLength(request.method) + Buffer.byteLength(request.path) + request.body.byteLength > OPERATION_REQUEST_BYTES) {
+    throw new TypeError("invalid or oversized operation request");
   }
-  get<T = unknown>(id: string, signal?: AbortSignal): Promise<Operation<T>> { return this.request(operationPath(id), 'GET', undefined, undefined, signal); }
-  list(options: OperationListOptions, signal?: AbortSignal): Promise<OperationList> {
-    if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
-    if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 100)) throw new Error('Invalid operation page size');
-    if (options.name !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.name)) throw new Error('Invalid operation name');
-    if (options.state !== undefined && !['accepted', 'running', 'succeeded', 'failed', 'cancelled', 'requires_reconciliation'].includes(options.state)) throw new Error('Invalid operation state');
-    if (options.cursor !== undefined && (!options.cursor || options.cursor.length > 512)) throw new Error('Invalid operation page cursor');
-    const query = new URLSearchParams({ app_id: options.appID, scope: options.scope });
-    if (options.name !== undefined) query.set('name', options.name);
-    if (options.state !== undefined) query.set('state', options.state);
-    if (options.limit !== undefined) query.set('limit', String(options.limit));
-    if (options.cursor !== undefined) query.set('cursor', options.cursor);
-    return this.request('/v1/platform-tenant-self/customer-operations?' + query, 'GET', undefined, undefined, signal);
-  }
-  async download(id: string, artifactID: string, signal?: AbortSignal): Promise<Response> {
-    if (!UUID.test(artifactID)) throw new Error('Invalid operation artifact identity');
-    const token = await this.options.credential();
-    if (!token || /[\r\n]/.test(token)) throw new Error('Operation credential unavailable');
-    const response = await this.fetchImpl(new URL(operationPath(id) + `/artifacts/${artifactID}`, this.base), { headers: { Authorization: `Bearer ${token}` }, signal, cache: 'no-store', redirect: 'error' });
-    if (!response.ok) await operationResponse(response);
-    return response;
-  }
-  cancel(id: string, generation: number, signal?: AbortSignal): Promise<Operation> {
-    if (!Number.isSafeInteger(generation) || generation < 1) throw new Error('Current operation generation required');
-    return this.request(operationPath(id) + '/cancel', 'POST', { expected_generation: generation }, undefined, signal);
-  }
-  events(id: string, after = 0, signal?: AbortSignal): Promise<OperationEvents> {
-    if (!Number.isSafeInteger(after) || after < 0) throw new Error('Invalid operation cursor');
-    return this.request(operationPath(id) + `/events?after=${after}`, 'GET', undefined, undefined, signal);
-  }
-  async *subscribe<T = unknown>(id: string, options: { after?: number; signal: AbortSignal }): AsyncGenerator<{ event?: OperationEvent; snapshot?: Operation<T>; resync?: boolean }> {
-    let after = options.after ?? 0;
-    if (!Number.isSafeInteger(after) || after < 0) throw new Error('Invalid operation cursor');
-    const path = operationPath(id) + '/events'; let failures = 0;
-    while (!options.signal.aborted) {
-      let response: Response;
-      try {
-        const token = await this.options.credential();
-        if (!token || /[\r\n]/.test(token)) throw new OperationProtocolError('Operation credential unavailable');
-        response = await this.fetchImpl(new URL(path, this.base), { headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream', 'Last-Event-ID': String(after) }, signal: options.signal, cache: 'no-store', redirect: 'error' });
-        if (response.status === 401) { await response.body?.cancel(); throw new Error('Operation credential needs refresh'); }
-        if (!response.ok) { await operationResponse(response); throw new Error('Unreachable operation response'); }
-        if (!response.headers.get('content-type')?.startsWith('text/event-stream') || !response.body) throw new OperationProtocolError('Operation stream unavailable');
-        const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''; failures = 0;
-        try {
-          for (;;) {
-            const { value, done } = await reader.read(); if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            if (buffer.length > MAX_BODY) throw new OperationProtocolError('Operation frame exceeds its bound');
-            let frame: ReturnType<typeof parseFrame>;
-            while ((frame = parseFrame(buffer)) !== null) {
-              buffer = buffer.slice(frame.consumed);
-              if (!frame.event.data) continue;
-              if (frame.event.event === 'auth_expired') throw new Error('Operation credential needs refresh');
-              if (frame.event.event === 'unavailable') throw new OperationHTTPError(410, 'operation_unavailable');
-              if (frame.event.event === 'snapshot' || frame.event.event === 'resync') {
-                const snapshot = JSON.parse(frame.event.data) as Operation<T>;
-                if (snapshot.id !== id || !Number.isSafeInteger(snapshot.latest_sequence) || snapshot.latest_sequence < 0) throw new OperationProtocolError('Invalid operation snapshot');
-                if (frame.event.event === 'resync') after = snapshot.latest_sequence;
-                yield { snapshot, resync: frame.event.event === 'resync' };
-              } else if (frame.event.event === 'operation') {
-                const event = JSON.parse(frame.event.data) as OperationEvent;
-                if (event.operation_id !== id || !Number.isSafeInteger(event.sequence) || frame.event.id !== String(event.sequence) || event.sequence > after + 1) throw new OperationProtocolError('Invalid operation event cursor');
-                if (event.sequence <= after) continue;
-                // Advance only when the consumer resumes after applying this event.
-                yield { event }; after = event.sequence;
-              }
-            }
-          }
-        } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
-      } catch (err) {
-        if (options.signal.aborted) return;
-        if (err instanceof OperationHTTPError || err instanceof OperationProtocolError || err instanceof SyntaxError) throw err;
-        if (++failures >= 5) throw err;
-      }
-      await new Promise<void>(resolve => {
-        const onAbort = (): void => { clearTimeout(timer); resolve(); };
-        const timer = setTimeout(() => { options.signal.removeEventListener('abort', onAbort); resolve(); }, Math.min(5000, 250 * 2 ** failures));
-        options.signal.addEventListener('abort', onAbort, { once: true });
-      });
+  return Object.freeze({ ...request, operationId: uuid(request.operationId), accountId: uuid(request.accountId),
+    appId: uuid(request.appId), platformTenantId: request.platformTenantId ? uuid(request.platformTenantId) : undefined,
+    body: Buffer.from(request.body) });
+}
+
+/** Use only behind Gregale ingress, which strips and authors these headers. */
+export function operationRequestFromHeaders(
+  headers: Record<string, string | readonly string[] | undefined>, method: string, path: string, body: Uint8Array,
+): OperationRequest {
+  const read = (name: string, optional = false): string => {
+    const values = Object.entries(headers).filter(([key]) => key.toLowerCase() === name)
+      .flatMap(([, value]) => value === undefined ? [] : typeof value === "string" ? [value] : [...value]);
+    if (values.length === 0 && optional) return "";
+    if (values.length !== 1 || !values[0]) throw new TypeError(`operation requires one ${name} header`);
+    return values[0];
+  };
+  if (read("x-gregale-operation-result-version") !== "1") throw new TypeError("managed operation results are not supported");
+  return normalize({ [supportedOperation]: true, operationId: read("x-gregale-operation-id"), accountId: read("x-faas-tenant-id"),
+    appId: read("x-faas-app-id"), platformTenantId: read("x-faas-platform-tenant-id", true),
+    generation: read("x-gregale-operation-generation"), method, path, body });
+}
+
+export function operationRequestDigest(input: OperationRequest): Uint8Array {
+  const request = normalize(input);
+  return createHash("sha256").update("gregale-operation-request-v1\n")
+    .update(request.method).update("\n").update(request.path).update("\n").update(request.body).digest();
+}
+
+function encode(outcome: OperationOutcome): string {
+  if (outcome === null || typeof outcome !== "object" || Object.keys(outcome).some(key => !["result", "effects"].includes(key))
+      || !("result" in outcome)) throw new TypeError("operation outcome requires result and optional effects");
+  const body = JSON.stringify({ gregale_operation_result: 1, result: outcome.result, effects: outcome.effects === undefined ? [] : outcome.effects }, (_key, value: unknown) => {
+    if (value === undefined || typeof value === "function" || typeof value === "symbol" || typeof value === "bigint"
+        || (typeof value === "number" && !Number.isFinite(value))) throw new TypeError("operation outcome must contain JSON values");
+    return value;
+  });
+  validateBody(body);
+  return body;
+}
+
+// The input has already passed JSON.parse. Locate original value spans rather
+// than re-encode parsed numbers, which can lose precision or change wire size.
+function valueEnd(source: string, start: number): number {
+  if (source[start] === '"') {
+    for (let index = start + 1; index < source.length; index++) {
+      if (source[index] === "\\") index++;
+      else if (source[index] === '"') return index + 1;
     }
+  }
+  if (source[start] === "{" || source[start] === "[") {
+    let depth = 0;
+    for (let index = start; index < source.length; index++) {
+      const char = source[index];
+      if (char === '"') index = valueEnd(source, index) - 1;
+      else if (char === "{" || char === "[") depth++;
+      else if ((char === "}" || char === "]") && --depth === 0) return index + 1;
+    }
+  }
+  let end = start;
+  while (end < source.length && !/[\s,}\]]/.test(source[end]!)) end++;
+  return end;
+}
+
+function rawValues(source: string): Array<[string, string]> {
+  const object = source.trimStart()[0] === "{";
+  let index = source.search(/[\[{]/) + 1;
+  const values: Array<[string, string]> = [];
+  const space = () => { while (/\s/.test(source[index] ?? "")) index++; };
+  while (index < source.length) {
+    space();
+    if (source[index] === "}" || source[index] === "]") break;
+    let key = "";
+    if (object) {
+      const end = valueEnd(source, index);
+      key = JSON.parse(source.slice(index, end)) as string;
+      index = end;
+      space();
+      index++; // colon
+      space();
+    }
+    const end = valueEnd(source, index);
+    values.push([key, source.slice(index, end)]);
+    index = end;
+    space();
+    if (source[index] === ",") index++;
+  }
+  return values;
+}
+
+function validateBody(body: string): void {
+  if (Buffer.byteLength(body) > OPERATION_RESPONSE_BYTES) throw new TypeError("operation response exceeds platform limit");
+  const value = JSON.parse(body) as Record<string, unknown>;
+  if (!value || Array.isArray(value) || Object.keys(value).some(key => !["gregale_operation_result", "result", "effects"].includes(key))
+      || value.gregale_operation_result !== 1 || !("result" in value) || !Array.isArray(value.effects) || value.effects.length > OPERATION_EFFECTS) {
+    throw new TypeError("invalid saved operation response");
+  }
+  const names = new Set<string>();
+  const rawEffects = rawValues(new Map(rawValues(body)).get("effects")!);
+  for (const [index, effect] of (value.effects as ManagedOperationEffect[]).entries()) {
+    if (!effect || typeof effect !== "object" || Object.keys(effect).some(key => !["name", "webhook_id", "type", "payload"].includes(key))
+        || typeof effect.name !== "string" || !/^[a-z][a-z0-9-]{0,62}$/.test(effect.name) || names.has(effect.name)
+        || typeof effect.type !== "string" || !/^[a-z][a-z0-9_.-]*$/.test(effect.type) || effect.type.length > OPERATION_TYPE_BYTES
+        || !("payload" in effect)) {
+      throw new TypeError("invalid operation effect");
+    }
+    const payload = new Map(rawValues(rawEffects[index]![1])).get("payload");
+    if (payload === undefined || Buffer.byteLength(payload) > OPERATION_PAYLOAD_BYTES) throw new TypeError("operation payload exceeds platform limit");
+    uuid(effect.webhook_id);
+    names.add(effect.name);
+  }
+}
+
+/** Owns a fresh READ COMMITTED transaction. Callback must not commit or make external side effects. */
+export async function withOperationTransaction(
+  pool: OperationPool, input: OperationRequest,
+  handler: (transaction: OperationTransaction) => Promise<OperationOutcome>,
+): Promise<OperationTransactionResult> {
+  const request = normalize(input);
+  const digest = Buffer.from(operationRequestDigest(request));
+  const connection = await pool.connect();
+  let discard = false;
+  try {
+    await connection.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+    await connection.query("SELECT pg_advisory_xact_lock(hashtextextended('gregale.operation-inbox.v1:' || $1::uuid::text, 0))", [request.operationId]);
+    const stored = (await connection.query(
+      "SELECT account_id::text,app_id::text,coalesce(platform_tenant_id::text,'') AS platform_tenant_id,request_digest,response_body FROM public.gregale_operation_inbox WHERE operation_id=$1::uuid",
+      [request.operationId],
+    )).rows[0];
+    let body: string;
+    if (stored) {
+      if (stored.account_id !== request.accountId || stored.app_id !== request.appId
+          || stored.platform_tenant_id !== (request.platformTenantId ?? "") || !(stored.request_digest instanceof Uint8Array)
+          || !digest.equals(Buffer.from(stored.request_digest))) throw new OperationConflictError();
+      if (typeof stored.response_body !== "string") throw new TypeError("invalid saved operation response");
+      body = stored.response_body;
+      validateBody(body);
+    } else {
+      body = encode(await handler(connection));
+      await connection.query(
+        "INSERT INTO public.gregale_operation_inbox(operation_id,account_id,app_id,platform_tenant_id,request_digest,response_body) VALUES ($1::uuid,$2::uuid,$3::uuid,nullif($4,'')::uuid,$5,$6)",
+        [request.operationId, request.accountId, request.appId, request.platformTenantId ?? "", digest, body],
+      );
+    }
+    try { await connection.query("COMMIT"); }
+    catch (error) { throw new OperationCommitUnknownError(error); }
+    return { body, replayed: stored !== undefined };
+  } catch (error) {
+    try { await connection.query("ROLLBACK"); } catch { discard = true; }
+    throw error;
+  } finally {
+    connection.release(discard);
   }
 }

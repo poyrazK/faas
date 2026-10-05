@@ -125,6 +125,9 @@ def _fixture_generator(tmp_path, monkeypatch):
     originals = {
         "faas_sdk/_wrapper.py": b"# existing custom wrapper\n",
         "faas_sdk/operations_runtime.py": b"# uncommitted runtime authority\n",
+        "faas_sdk/operations.py": b"# managed operation transaction helper\n",
+        "faas_sdk/_operation_contract.py": b"# managed operation wire contract\n",
+        "faas_sdk/operation_schema.sql": b"-- managed operation receipt schema\n",
         "pyproject.toml": b"# curated project configuration\n",
         "README.md": b"curated SDK documentation\n",
     }

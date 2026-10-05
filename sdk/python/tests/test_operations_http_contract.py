@@ -177,10 +177,14 @@ def test_operation_doctor_scoped_observation_contract() -> None:
 
 def test_operation_completion_retry_receipt_contract() -> None:
     """ADR-521: explicit replay zero and retry IDs survive generation unchanged."""
-    from faas_sdk.api.operations import get_operation_delivery, get_operation_delivery_attempts, retry_operation_delivery_with_receipt
+    from faas_sdk.api.operations import (
+        get_operation_delivery,
+        get_operation_delivery_attempts,
+        retry_operation_delivery_with_receipt,
+    )
+    from faas_sdk.models.operation_delivery_inspection import OperationDeliveryInspection
     from faas_sdk.models.operation_delivery_retry_request import OperationDeliveryRetryRequest
     from faas_sdk.models.operation_delivery_retry_response import OperationDeliveryRetryResponse
-    from faas_sdk.models.operation_delivery_inspection import OperationDeliveryInspection
 
     identity = UUID("11111111-1111-1111-1111-111111111111")
     req = OperationDeliveryRetryRequest(retry_id="stable", delivery_id=identity, expected_replay_generation=0)
@@ -191,8 +195,28 @@ def test_operation_completion_retry_receipt_contract() -> None:
     page = get_operation_delivery_attempts._get_kwargs(slug="exports", id=identity, limit=1, cursor="opaque+/=")
     assert page["params"] == {"limit": 1, "cursor": "opaque+/="}
     time = "2026-10-05T12:00:00Z"
-    receipt = {"operation_id": str(identity), "retry_id": "stable", "delivery_id": str(identity), "expected_replay_generation": 0, "replay_generation": 1, "state": "queued", "queued_at": time, "expires_at": "2026-10-06T12:00:00Z"}
+    receipt = {
+        "operation_id": str(identity),
+        "retry_id": "stable",
+        "delivery_id": str(identity),
+        "expected_replay_generation": 0,
+        "replay_generation": 1,
+        "state": "queued",
+        "queued_at": time,
+        "expires_at": "2026-10-06T12:00:00Z",
+    }
     parsed = OperationDeliveryRetryResponse.from_dict(receipt)
     assert parsed.state == "queued" and parsed.replay_generation == 1
-    report = OperationDeliveryInspection.from_dict({"operation_id": str(identity), "business_state": "succeeded", "operation_expires_at": time, "observed_at": time, "state": "dead", "attempts": 8, "last_response_code": 422, "replay_generation": 0})
+    report = OperationDeliveryInspection.from_dict(
+        {
+            "operation_id": str(identity),
+            "business_state": "succeeded",
+            "operation_expires_at": time,
+            "observed_at": time,
+            "state": "dead",
+            "attempts": 8,
+            "last_response_code": 422,
+            "replay_generation": 0,
+        }
+    )
     assert report.business_state == "succeeded" and report.state == "dead" and report.replay_generation == 0

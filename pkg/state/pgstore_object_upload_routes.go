@@ -42,6 +42,9 @@ func (s *PgStore) GetObjectUploadRoute(ctx context.Context, accountID, appID, na
 }
 
 func (s *PgStore) UpsertObjectUploadRoute(ctx context.Context, route ObjectUploadRoute) (ObjectUploadRoute, error) {
+	if _, err := s.GetObjectBucket(ctx, route.AccountID, route.AppID, route.BucketID); err != nil {
+		return ObjectUploadRoute{}, err
+	}
 	if !route.Encryption.ValidFor(route.AccountID) {
 		return ObjectUploadRoute{}, ErrConflict
 	}

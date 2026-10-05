@@ -21,6 +21,9 @@ func (m *MemStore) EnvironmentGitSourceHealth(ctx context.Context, now time.Time
 	cutoff := now.Add(-staleAfter)
 	for _, memory := range m.environmentGitOps {
 		source := memory.source
+		if source.Detached {
+			continue
+		}
 		if source.Suspended {
 			health.Suspended++
 			continue

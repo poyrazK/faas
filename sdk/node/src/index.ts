@@ -33,6 +33,7 @@ export { GithubService } from './generated/services/GithubService.js';
 export { InstancesService } from './generated/services/InstancesService.js';
 export { InvocationsService } from './generated/services/InvocationsService.js';
 export { KeysService } from './generated/services/KeysService.js';
+export { ManagedPostgresService } from './generated/services/ManagedPostgresService.js';
 export { MetaService } from './generated/services/MetaService.js';
 export { MfaService } from './generated/services/MfaService.js';
 export { OperationsService } from './generated/services/OperationsService.js';
@@ -159,7 +160,23 @@ export {
 } from './dev-bridge.js';
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
-export { insertCommitEvent, type CommitEvent, type CommitTransaction } from "./commit.js";
 
-export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport } from './operations.js';
+export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport } from './customer-operations.js';
 export { GregaleOperations, type GregaleOperationsOptions, type OperationExecutionContext } from './operations-runtime.js';
+
+export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
+
+export { operationReceiptSchema } from "./operation-contract.js";
+export {
+  operationRequestFromHeaders,
+  operationRequestDigest,
+  withOperationTransaction,
+  OperationConflictError,
+  OperationCommitUnknownError,
+  type OperationRequest,
+  type OperationOutcome,
+  type OperationTransaction,
+  type OperationConnection,
+  type OperationPool,
+  type OperationTransactionResult,
+} from "./operations.js";

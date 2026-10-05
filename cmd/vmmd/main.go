@@ -518,16 +518,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Keep the :443 admission rule coupled to trust delivery. Both remain
 	// disabled unless the operator explicitly configures the private CA.
 	netns.SetDefaultServiceProxyHTTPS(len(serviceProxyCAPEM) > 0)
+	// ADR-576: seed before any netns is prepared, like the bridge IP above,
+	// so every namespace this process creates carries the same admission.
+	if cfg.ComputeNode.ServiceTCPEnabled {
+		netns.SetDefaultServiceAddressCIDR(api.ServiceAddressCIDR())
+	} else {
+		netns.SetDefaultServiceAddressCIDR(netip.Prefix{})
+	}
 	// Runtime policy rebuilds happen after every VM cache mutation. Seed the
 	// mutable policy from this host's deployment-owned network values before
 	// any wake can trigger a render; otherwise the package default (eth0)
 	// replaces a valid provider-specific boot policy (for example ens4 on
 	// GCP), cutting every guest off from DNS and the public internet.
-	hostPolicy := runtimeHostPolicy(cfg.ComputeNode, parsedBridge)
+	hostPolicy := runtimeHostPolicy(cfg.ComputeNode, parsedBridge, len(serviceProxyCAPEM) > 0)
 	netns.SwapActiveHostPolicy(hostPolicy)
 	log.Info("vmmd: runtime host policy configured",
 		"public_iface", hostPolicy.PublicIface,
-		"masquerade_cidr", hostPolicy.MasqueradeCIDR)
+		"masquerade_cidr", hostPolicy.MasqueradeCIDR,
+		"service_tcp", hostPolicy.ServiceTCP != nil)
 	listenTarget := cfg.ResolveListenTarget()
 	// targetURL is the DIAL target schedd/gatewayd use to reach
 	// this vmmd. Distinct from listenTarget (the bind address):
@@ -750,6 +758,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if err := registerComputeNodeKey(ctx, store, nodeID, nodeKey, nodeKeyID, log); err != nil {
 			return err
 		}
+		recordServiceAddressReadiness(ctx, store, nodeID, cfg.ComputeNode.ServiceTCPEnabled, log)
 	}
 
 	cbm := fcvm.NewColdBootMetrics()
@@ -1327,12 +1336,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// Workstream E: serve live, non-sensitive app configuration through the
 	// instance-bound guest metadata endpoint. The receiver only returns rows
-	// for the app/account attached to the accepted Firecracker stream.
-	runtimeConfigRecv, runtimeConfigErr := StartRuntimeConfigReceiver(ctx, log, mgr, store, jailer)
+	// for the deployment/app/account attached to the Firecracker stream.
+	runtimeEnvStore, _ := store.(runtimeConfigStore)
+	runtimeConfigRecv, runtimeConfigErr := StartRuntimeConfigReceiver(ctx, log, mgr, runtimeEnvStore, jailer)
 	if runtimeConfigErr != nil {
 		log.Warn("vmmd: runtime config receiver unavailable", "err", runtimeConfigErr, "goos", runtime.GOOS)
 	} else {
-		StartRuntimeConfigInvalidationWatcher(ctx, pool, runtimeConfigRecv, log)
 		defer runtimeConfigRecv.Close()
 	}
 	log.Info("vmmd ready", "fc_version", fcVersion, "max_slots", fcvm.MaxSlots,

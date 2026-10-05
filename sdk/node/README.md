@@ -237,6 +237,20 @@ generated services. The canonical mapping:
 Regenerate via `npm run gen` (committed per ADR-013; CI's
 `sdk-gen-node` job is the dirty-diff gate).
 
+## Transactional operation handlers
+
+For managed HTTP operations, `operationRequestFromHeaders` verifies negotiated
+support and captures the trusted identity with original request bytes.
+`withOperationTransaction(pool, operation, callback)` commits the callback's
+PostgreSQL writes and managed result/webhook intent together. A later attempt
+returns the saved response without repeating committed writes.
+
+Install `operationReceiptSchema` explicitly as the database owner. Use an idle,
+exclusively leased pg-compatible pool connection. Send `response.body` unchanged
+as `application/json`; `response.replayed` identifies receipt recovery. See the
+[transactional handler guide](../../docs/operation-transactions.md) for Express,
+receipt retention, and uncertain commit handling.
+
 ## Idempotency contract
 
 Every mutating call (POST/PUT/PATCH/DELETE) carries an `Idempotency-Key`
@@ -610,3 +624,15 @@ and an explicit `expected_replay_generation`, including zero. Reuse the same
 request after an uncertain reply; the returned `queued` receipt describes the
 original decision. Read delivery status separately. Business results and
 execution generations are unaffected. The legacy retry method remains available.
+
+
+## Object version protection
+
+The Storage API supports typed retention/legal-hold reads and mutations, plus
+protection operation inspection. Use an explicit owned public version UUIDv4
+(or `null` in an eligible Object Lock bucket). Mutations require a stable UUIDv4
+operation ID and return a durable receipt; retain the returned ID for retries
+and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
+holds are supported. Event-hold changes and governance bypass are unsupported.
+See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
+for enrollment, pending-operation fences and recovery behavior.

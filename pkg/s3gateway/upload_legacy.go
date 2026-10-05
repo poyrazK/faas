@@ -31,7 +31,7 @@ func (h *Handler) performLegacyGatewayPut(w http.ResponseWriter, r *http.Request
 		return
 	}
 	dispatched = true
-	response, err := h.client.Do(upstream) // #nosec G704 -- The immutable registry backend signs the URL; customers supply only the object key and metadata.
+	response, err := h.doMutationRequest(upstream, req)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return

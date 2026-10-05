@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GregaleOperationClient, OperationHTTPError, type Operation } from '../src/operations.js';
+import { GregaleOperationClient, OperationHTTPError, type Operation } from '../src/customer-operations.js';
 import { GregaleOperations } from '../src/operations-runtime.js';
 
 const id = '11111111-1111-4111-8111-111111111111';

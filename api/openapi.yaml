@@ -1030,6 +1030,30 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/postgres/capabilities:
+    get:
+      operationId: getManagedPostgresCapabilities
+      summary: Show plan and region PostgreSQL feature support
+      description: Returns configured provider-neutral support after plan limits without provider calls. provisioning_enabled includes qualification and canary gates. Current usage, budget, and quota admission are checked separately at reservation. Existing databases remain pinned to their original backend.
+      tags: [managed_postgres]
+      parameters:
+        - name: region
+          in: query
+          required: false
+          description: Portable region name; defaults to the configured region.
+          schema: { type: string, maxLength: 255 }
+      responses:
+        '200':
+          description: Effective regional capability contract
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresCapabilities' }
+        default:
+          description: Authentication or capability lookup error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/postgres/databases:
     get:
       operationId: listManagedPostgresDatabases
@@ -2069,6 +2093,126 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/objects/protection/retention:
+    parameters:
+      - { name: slug, in: path, required: true, description: Application owning this retention target., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Owned logical bucket for retention management., schema: { type: string, format: uuid } }
+      - { name: key, in: query, required: true, description: Logical object key whose retention is selected., schema: { type: string, minLength: 1, maxLength: 1024 } }
+      - { name: version_id, in: query, required: true, description: Exact owned version for retention; current selection is unsupported., schema: { type: string, minLength: 1 } }
+    get:
+      operationId: getObjectVersionRetention
+      summary: Read exact version retention
+      description: Read fresh native retention for an explicit owned version with storage manage scope and a bucket read grant. Available with enrollment disabled.
+      tags: [storage]
+      responses:
+        '200':
+          description: Verified native version retention policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionRetentionResult' }
+        default:
+          description: Retention read rejected by validation, capability, ownership or mutation fencing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      operationId: putObjectVersionRetention
+      summary: Request a durable exact version retention change
+      description: Accept durable retention intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Event hold changes and governance bypass are unsupported.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectVersionRetentionRequest' }
+      responses:
+        '200':
+          description: Existing retention operation receipt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionProtection' }
+        '202':
+          description: Durable retention intent accepted for operation inspection
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionProtection' }
+        default:
+          description: Retention mutation rejected by validation, capability, ownership or mutation fencing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/objects/protection/legal-hold:
+    parameters:
+      - { name: slug, in: path, required: true, description: Application owning this legal hold target., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Owned logical bucket for legal hold management., schema: { type: string, format: uuid } }
+      - { name: key, in: query, required: true, description: Logical object key whose legal hold is selected., schema: { type: string, minLength: 1, maxLength: 1024 } }
+      - { name: version_id, in: query, required: true, description: Exact owned version for legal hold; current selection is unsupported., schema: { type: string, minLength: 1 } }
+    get:
+      operationId: getObjectVersionLegalHold
+      summary: Read exact version legal hold
+      description: Read fresh native legal hold for an explicit owned version with storage manage scope and a bucket read grant. Available with enrollment disabled.
+      tags: [storage]
+      responses:
+        '200':
+          description: Verified native version legal hold policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionLegalHoldResult' }
+        default:
+          description: Legal hold read rejected by validation, capability, ownership or mutation fencing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      operationId: putObjectVersionLegalHold
+      summary: Request a durable exact version legal hold change
+      description: Accept durable legal hold intent with storage manage scope, a bucket write grant and backend enrollment. Recovery verifies readback without repeating a dispatched PUT. Fixed dates round upward to milliseconds. Event hold changes and governance bypass are unsupported.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectVersionLegalHoldRequest' }
+      responses:
+        '200':
+          description: Existing legal hold operation receipt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionProtection' }
+        '202':
+          description: Durable legal hold intent accepted for operation inspection
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionProtection' }
+        default:
+          description: Legal hold mutation rejected by validation, capability, ownership or mutation fencing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/protection-operations/{operation}:
+    parameters:
+      - { name: slug, in: path, required: true, description: Application owning this protection operation target., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Owned logical bucket for protection operation management., schema: { type: string, format: uuid } }
+      - { name: operation, in: path, required: true, description: Durable protection operation identity., schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectVersionProtection
+      summary: Inspect an owned version protection operation
+      description: Requires storage manage scope and a bucket read grant. Available with ingress or enrollment disabled. Provider identities and worker leases are private.
+      tags: [storage]
+      responses:
+        '200':
+          description: Durable operation status and accepted policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectVersionProtection' }
+        default:
+          description: Protection operation inspection rejected by validation, capability, ownership or mutation fencing
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/object-lock-capabilities:
     parameters:
       - { name: slug, in: path, required: true, description: App whose enrolled Object Lock capabilities are being discovered., schema: { type: string } }
@@ -2695,6 +2839,165 @@ paths:
               schema: { $ref: '#/components/schemas/ManagedPostgresUsageOperatorResponse' }
         default:
           description: Access denied, account not found, or accounting unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/accounting/{account_id}:
+    get:
+      operationId: listManagedPostgresAccountingDiagnostics
+      summary: Explain managed PostgreSQL accounting blockers
+      description: Operator allowlist and admin scope required, with the existing session MFA gate (bearer API keys follow IAM policy). Reads local catalog and ledger evidence only. Each page is one database snapshot; pages are live views, not a frozen account snapshot. No provider requests, opaque provider IDs, or credentials.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account whose local accounting evidence is requested.
+          schema: { type: string, format: uuid }
+        - name: after
+          in: query
+          description: Resume after the database ID returned as next_cursor.
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          description: Maximum databases returned in this page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Bounded per-database accounting evidence; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresAccountingDiagnosticsResponse' }
+        default:
+          description: Access denied, invalid pagination, account not found, or accounting unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/accounting/{account_id}/usage-imports/preview:
+    post:
+      operationId: previewManagedPostgresUsageImport
+      summary: Preview retained managed PostgreSQL usage evidence
+      description: Operator allowlist and admin scope required, with the existing session MFA gate. Validates normalized complete windows against local catalog and ledger evidence. Makes no provider calls or writes. Returns the revision required for apply; concurrent ledger or lifecycle changes invalidate it.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account whose retained usage evidence will be previewed.
+          schema: { type: string, format: uuid }
+      requestBody:
+        description: Normalized retained readings and source attestation for preview.
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresUsageImportRequest' }
+      responses:
+        '200':
+          description: Validated preview, without accounting changes; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresUsageImportResult' }
+        default:
+          description: Access denied, invalid evidence, conflicting ledger, or unavailable backend
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/accounting/{account_id}/usage-imports:
+    post:
+      operationId: applyManagedPostgresUsageImport
+      security: [{ cookieAuth: [] }]
+      summary: Apply retained managed PostgreSQL usage evidence
+      description: Allowlisted operator session with recent MFA step-up, same-origin checks, and Idempotency-Key required. Bearer API keys cannot apply imports. Requires expected_revision from preview. Commits normalized ledger windows, contiguous coverage, and immutable before/after evidence atomically. import_id durably deduplicates an identical request by the same actor; conflicting reuse is rejected. Evidence observation times are preserved. This neither establishes missing identities or shutdown nor reconciles a final provider invoice.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account owning the reviewed database and imported usage.
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Request replay key; import_id additionally provides permanent receipt deduplication.
+          schema: { type: string, minLength: 1, maxLength: 256 }
+      requestBody:
+        description: Reviewed retained readings with the revision returned by preview.
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresUsageImportRequest' }
+      responses:
+        '200':
+          description: Applied import or original committed response on identical durable replay; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresUsageImportResult' }
+        default:
+          description: Access denied, invalid evidence, expired preview, conflicting replay, or unavailable backend
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/accounting/{account_id}/reconciliations/preview:
+    post:
+      operationId: previewManagedPostgresAccountingReconciliation
+      summary: Preview legacy PostgreSQL identity and shutdown reconciliation
+      description: Operator allowlist and admin scope with existing MFA read policy required. Validates retained evidence against local catalog and ledger state without provider calls or writes. Only deleted accountable resources with unknown identities are eligible. Returns the revision required for apply.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account owning the legacy database being reconciled.
+          schema: { type: string, format: uuid }
+      requestBody:
+        description: Operator-verified identity and actual shutdown evidence; maximum 32 KiB.
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresAccountingReconciliationRequest' }
+      responses:
+        '200':
+          description: Reconciliation preview with no catalog or accounting changes; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresAccountingReconciliationResult' }
+        default:
+          description: Access denied, invalid evidence, incompatible ledger, conflicting identity, or unavailable backend
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/admin/managed-postgres/accounting/{account_id}/reconciliations:
+    post:
+      operationId: applyManagedPostgresAccountingReconciliation
+      security: [{ cookieAuth: [] }]
+      summary: Reconcile a legacy PostgreSQL identity and confirmed shutdown
+      description: Allowlisted operator session with recent MFA step-up, same-origin checks and Idempotency-Key required. Bearer keys cannot apply. Requires a current expected_revision. Atomically attaches the evidence-backed identity and actual shutdown boundary, resets derived coverage and retains immutable before/after evidence. Existing usage quantities and accounting obligations remain intact. Recovery and final corrections remain required; this does not settle an invoice. reconciliation_id permanently deduplicates identical requests by the same actor.
+      tags: [operator]
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          description: Account owning the reviewed legacy database.
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Request replay key; reconciliation_id also provides permanent deduplication.
+          schema: { type: string, minLength: 1, maxLength: 256 }
+      requestBody:
+        description: Reviewed identity and shutdown evidence with preview revision; maximum 32 KiB.
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresAccountingReconciliationRequest' }
+      responses:
+        '200':
+          description: Committed reconciliation or original durable response; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresAccountingReconciliationResult' }
+        default:
+          description: Access denied, invalid evidence, stale preview, conflicting identity/replay, or unavailable backend
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -5010,14 +5313,28 @@ paths:
       tags: [apps]
       operationId: getApp
       summary: Fetch one app.
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          description: Read or edit desired settings in this project environment. New deployments pin the revision; existing deployments keep their settings. Omit for legacy app settings.
+          schema: { type: string }
       responses:
         '200':
           description: The app.
+          headers:
+            X-Gregale-Workload-Revision:
+              description: Desired workload settings revision for an environment-scoped request.
+              schema: { type: integer, format: int64, minimum: 0 }
+            X-Gregale-Workload-Config-Hash:
+              description: SHA-256 of the immutable desired configuration, present when a revision exists.
+              schema: { type: string }
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AppResponse'
                 example: {"id":"0123456789abcdef0123456789abcdef","slug":"hello-world","type":"app","runtime":"","ram_mb":256,"max_concurrency":2,"concurrency_per_vm":5,"idle_timeout_s":60,"min_instances":0,"state":"running","last_deployment_id":"0123456789abcdef0123456789abcdef","created_at":"2026-07-01T08:00:00Z","updated_at":"2026-07-23T11:25:00Z","require_authn":false}
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -5025,6 +5342,17 @@ paths:
       tags: [apps]
       operationId: updateApp
       summary: Partial-update an app.
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          description: Edit desired workload settings in a registered project environment; deploy again to test the revision. Omit to update legacy app settings.
+          schema: { type: string }
+        - name: If-Workload-Revision
+          in: header
+          required: false
+          description: Optional expected desired revision when editing an environment; zero means no revision exists. Protected environments require an approved plan or promotion.
+          schema: { type: integer, format: int64, minimum: 0 }
       requestBody:
         required: true
         description: "Patch payload — every field is optional; omitted fields are unchanged. See UpdateAppRequest."
@@ -5036,6 +5364,13 @@ paths:
       responses:
         '200':
           description: The updated app.
+          headers:
+            X-Gregale-Workload-Revision:
+              description: New desired revision saved by an environment-scoped edit.
+              schema: { type: integer, format: int64, minimum: 0 }
+            X-Gregale-Workload-Config-Hash:
+              description: SHA-256 identifying the desired configuration saved by this edit.
+              schema: { type: string }
           content:
             application/json:
               schema:
@@ -5045,6 +5380,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/PlanLimit' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/InvalidMinInstances' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     delete:
@@ -16614,6 +16950,56 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
+  /v1/workflows/runs/{id}/steps/{step}/retry:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Workflow run whose failed step should be retried.
+      - name: step
+        in: path
+        required: true
+        schema: { type: string }
+        description: Failed HTTP step to resume in the existing run.
+    post:
+      tags: [workflows]
+      operationId: retryWorkflowStep
+      summary: Retry one failed or dead HTTP step in its existing workflow run.
+      description: |
+        Requeues the same run and preserves the failed step's persisted input
+        and attempt history. Only terminal failed or dead HTTP steps are eligible. The
+        request conflicts if another step is active, failed, or dead, a downstream
+        step already succeeded, or the run was cancelled. Skipped dependent
+        steps are reopened so ordinary DAG evaluation can continue. Each manual
+        retry grants one new dispatch and does not reset the manifest's
+        automatic retry budget.
+      responses:
+        '200':
+          description: The workflow run has been requeued at the requested step.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRunResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: The account plan does not include workflows.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403':
+          description: The account has reached its concurrent workflow run limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '409':
+          description: The run or step is not in a state that can be safely retried.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
   /v1/workflows/runs/{id}/callbacks:
     parameters:
       - name: id
@@ -18231,6 +18617,63 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environment-clones:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project whose production or stage environment will be cloned.
+        schema: { type: string }
+    post:
+      tags: [projects]
+      operationId: createFullProjectEnvironmentClone
+      summary: Request a complete isolated environment clone.
+      description: |
+        This dedicated route never falls back to partial cloning. Full admission
+        currently returns environment_full_clone_unavailable with named blockers
+        until complete coverage and coordinated data-copy proofs are available.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectEnvironmentRequest' }
+      responses:
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Full-copy capability unavailable; no partial target is created.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/projects/{slug}/environment-clones/{clone}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project owning the durable environment clone operation.
+        schema: { type: string }
+      - name: clone
+        in: path
+        required: true
+        description: Durable clone operation identifier returned when capture begins.
+        schema: { type: string }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentCloneOperation
+      summary: Read account- and project-scoped durable clone progress.
+      description: Status is available before the target environment is registered. Private captures, values and worker lease tokens are excluded.
+      responses:
+        '200':
+          description: Non-secret clone operation receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentCloneOperationResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments:
     parameters:
       - name: slug
@@ -18332,10 +18775,14 @@ paths:
       summary: Delete an unused project environment.
       description: |
         Deletes only an unprotected, non-production environment that has no
-        live releases. Configuration and approval history for the registry
-        entry is removed with it. Production, protected environments, and
-        environments still serving a live release return 409. If managed
-        resources cannot be revoked immediately, cleanup is durably queued and
+        live releases. Configuration, approval history, and owned pending or
+        finished asynchronous work are removed atomically. Production, protected
+        environments, and environments still serving a live release return 409.
+        Running work or an unreleased execution reservation returns 409 with
+        code environment_work_busy; wait for completion or claim recovery and
+        retry. Inconsistent work ownership returns environment_work_ownership_conflict
+        without deleting the environment. Cancellation receipts are retained.
+        If managed resources cannot be revoked immediately, cleanup is durably queued and
         retried; the deleted environment returns 202 while cleanup is pending.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -18420,7 +18867,7 @@ paths:
       tags:
       - projects
       operationId: updateEnvironmentGitSource
-      summary: Update report, enforce, pruning, and suspension controls.
+      summary: Update report, pruning, and suspension controls. Enforce is unavailable in preview.
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -18437,6 +18884,139 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EnvironmentGitSource'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      tags: [projects]
+      operationId: detachEnvironmentGitSource
+      summary: Release Git ownership while preserving values and retired binding history.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DetachEnvironmentGitSourceRequest'
+      responses:
+        '204':
+          description: The binding was retired; values and audit evidence are preserved.
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/source/rebind:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags: [projects]
+      operationId: rebindEnvironmentGitSource
+      summary: Retire the binding and create a verified report source requiring fresh approval.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RebindEnvironmentGitSourceRequest'
+      responses:
+        '201':
+          description: Replacement source requiring a new definition review and ownership adoption.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentGitSource'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/environment-field-ownership:
+    put:
+      tags: [projects]
+      operationId: claimEnvironmentFieldOwnership
+      summary: Reserve scoped Terraform variable, source or configuration fields against Git adoption.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvironmentFieldOwnershipRequest'
+      responses:
+        '200':
+          description: Scoped fields were reserved, or the request targets legacy unscoped intent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentFieldOwnershipResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      tags: [projects]
+      operationId: releaseEnvironmentFieldOwnership
+      summary: Release scoped Terraform field ownership without changing values.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvironmentFieldOwnershipRequest'
+      responses:
+        '200':
+          description: The specified ownership claims were released; values were preserved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentFieldOwnershipResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -19014,6 +19594,74 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project containing the workload and stage.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: Registered stage. Production is managed through the app queue-bindings API.
+        schema: { type: string }
+      - name: workload
+        in: path
+        required: true
+        description: Workload application slug belonging to this project.
+        schema: { type: string }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentQueueBindings
+      summary: Read a stage workload's complete desired queue configuration.
+      description: |
+        Returns logical definitions and the current workload revision. A missing
+        collection returns 409 environment_queue_collection_unavailable and never
+        inherits production queues. X-Gregale-Workload-Revision identifies the
+        head to use when initializing or replacing the collection.
+        Consumer activation is currently unavailable; saved definitions do not
+        activate delivery or qualify the stage for promotion.
+      responses:
+        '200':
+          description: Complete stage-owned desired queue collection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentQueueBindingsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [projects]
+      operationId: replaceProjectEnvironmentQueueBindings
+      summary: Replace a stage workload's complete desired queue configuration.
+      description: |
+        Requires expected_revision to match the complete workload settings head,
+        with zero for an uninitialized workload. An explicit empty bindings list
+        removes all stage definitions. Stale revisions and protected stages
+        return 409, including protected no-op writes. Definitions have logical
+        names and no production consumer IDs. Existing deployments retain their
+        pinned definitions. Consumer activation is currently unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReplaceProjectEnvironmentQueueBindingsRequest' }
+      responses:
+        '200':
+          description: Stored desired queue definitions and their workload revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentQueueBindingsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environments/{environment}/diff:
@@ -22186,20 +22834,40 @@ paths:
       tags: [invocations]
       operationId: listAppWorkPolicies
       summary: List named work policies for an app.
+      description: Stage reads return the complete desired policy collection from immutable workload settings. An uninitialized stage collection returns 409 and never inherits production policies. Stage policy execution remains unavailable until work lanes and producers are isolated.
       parameters:
         - $ref: '#/components/parameters/Slug'
+        - name: environment
+          in: query
+          required: false
+          description: Registered project environment. Omit for legacy production policies. An explicit production selection uses the legacy collection.
+          schema: { type: string }
       responses:
         '200':
           description: App work policies.
+          headers:
+            X-Gregale-Workload-Revision:
+              description: Desired workload configuration revision for a stage.
+              schema: { type: integer, format: int64, minimum: 1 }
+            X-Gregale-Workload-Config-Hash:
+              description: SHA-256 of the stage's immutable desired configuration.
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkPolicyListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/apps/{slug}/work-policies/{name}:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: false
+        description: Edit the complete desired collection in a registered stage. Omit for legacy production policies. Protected environments reject direct edits.
+        schema: { type: string }
       - in: path
         name: name
         required: true
@@ -22209,7 +22877,13 @@ paths:
       tags: [invocations]
       operationId: upsertAppWorkPolicy
       summary: Create or update a named app work policy.
-      description: Policy changes affect new work only. Existing invocations retain their admission settings and policy revision.
+      description: Legacy production changes affect new work only. Stage edits create immutable desired workload configuration and subsequent deployments pin it; existing deployments keep their policies. Stage policy execution and qualification remain unavailable until work lanes and producers are isolated.
+      parameters:
+        - name: If-Workload-Revision
+          in: header
+          required: false
+          description: Expected complete desired workload revision for a stage edit. Zero means no revision exists; concurrent edits return 409.
+          schema: { type: integer, format: int64, minimum: 0 }
       requestBody:
         required: true
         content:
@@ -22218,29 +22892,60 @@ paths:
       responses:
         '200':
           description: Saved policy.
+          headers:
+            X-Gregale-Workload-Revision:
+              description: Desired complete workload configuration revision for a stage.
+              schema: { type: integer, format: int64, minimum: 1 }
+            X-Gregale-Workload-Config-Hash:
+              description: Configuration hash containing the saved stage policy definition.
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkPolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
     delete:
       tags: [invocations]
       operationId: deleteAppWorkPolicy
       summary: Delete a policy after removing event subscription bindings.
+      description: A stage deletion preserves an explicit empty collection and its collection revision clock after the last policy is removed. Production producer bindings retain their existing deletion checks.
+      parameters:
+        - name: If-Workload-Revision
+          in: header
+          required: false
+          description: Expected complete desired workload revision for a stage edit.
+          schema: { type: integer, format: int64, minimum: 0 }
       responses:
-        '204': { description: Policy deleted. }
+        '204':
+          description: Policy deleted.
+          headers:
+            X-Gregale-Workload-Revision:
+              description: Desired workload revision after removing the stage policy.
+              schema: { type: integer, format: int64, minimum: 1 }
+            X-Gregale-Workload-Config-Hash:
+              description: Configuration hash containing the remaining stage policy collection.
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/apps/{slug}/work-policies/{name}/cancel-pending:
     post:
       tags: [invocations]
       operationId: cancelPendingAppWork
       summary: Cancel pending work for one policy and application key.
-      description: Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work.
+      description: Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work. A stage selection cancels only its isolated environment lane, including work admitted under a policy that has since been deleted from desired settings. Cancellation receipts are independent per environment. Omitting environment preserves the production API.
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: environment
+          in: query
+          required: false
+          description: Registered project environment whose pending work should be cancelled. Stage lanes and receipts are isolated by the environment's immutable identity.
+          schema: { type: string }
         - in: path
           name: name
           required: true
@@ -22257,8 +22962,10 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CancelPendingWorkResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/apps/{slug}/queues/send:
     post:
@@ -22301,12 +23008,7 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [name, operation_policy]
-              properties:
-                name: { type: string, minLength: 1, maxLength: 128 }
-                operation_policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: Active account-scoped queue policy containing this application. The source application and policy are immutable. }
+            schema: { $ref: '#/components/schemas/CreateCommitSourceRequest' }
       responses:
         '201':
           description: Commit source created with its immutable application and policy binding.
@@ -22543,6 +23245,7 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/queue-workload:
+    description: Production queue workload profile. Stage environment or scope queries are rejected before changing production resources; stage definitions use the project environment workload queue-bindings endpoint.
     put:
       tags: [queues]
       operationId: configureQueueWorkload
@@ -22578,6 +23281,7 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/queue-bindings:
+    description: Production queue bindings. Stage environment or scope queries are rejected before production access or idempotent replay. Stage definitions use the project environment workload queue-bindings endpoint.
     get:
       tags: [queues]
       operationId: listQueueBindings
@@ -22603,7 +23307,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/QueueBindingResponse' }
-        '400': { $ref: '#/components/responses/BadRequest' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -22632,6 +23336,7 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/queue-bindings/{id}:
+    description: Production queue binding identity. Stage environment or scope queries are rejected; stage definitions use logical names in the project environment workload queue-bindings endpoint.
     parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/Id32'
@@ -22645,6 +23350,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/QueueBindingResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -22674,11 +23380,13 @@ paths:
       summary: Delete one queue binding.
       responses:
         '204': { description: Queue binding deleted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/queue-bindings/{id}/status:
+    description: Production consumer status. Stage environment or scope queries are rejected before reading production counters.
     parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/Id32'
@@ -22699,6 +23407,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/QueueBindingStatusResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -29196,6 +29905,63 @@ components:
         expected_generation:
           type: integer
           minimum: 1
+
+    DetachEnvironmentGitSourceRequest:
+      type: object
+      description: Release this binding's Git ownership at the supplied generation while retaining its history.
+      additionalProperties: false
+      required: [expected_generation]
+      properties:
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 0
+    RebindEnvironmentGitSourceRequest:
+      type: object
+      description: Replace a Git binding with a fresh report-only source that requires a new approval.
+      additionalProperties: false
+      required: [expected_generation, manifest_path]
+      properties:
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 0
+        ref:
+          type: string
+        manifest_path:
+          type: string
+        approval_policy:
+          type: string
+          enum: [manual, protected_branch]
+    EnvironmentFieldOwnershipRequest:
+      type: object
+      additionalProperties: false
+      required: [environment, paths, manager]
+      description: Specify exactly one of app or project. App fields use variables/KEY or source; project fields use configuration/KEY. Terraform must claim before writes and release after deletion. Claims contain no values.
+      properties:
+        app:
+          type: string
+        project:
+          type: string
+        environment:
+          type: string
+        paths:
+          type: array
+          minItems: 1
+          maxItems: 1024
+          items:
+            type: string
+        manager:
+          type: string
+          enum: [terraform]
+    EnvironmentFieldOwnershipResponse:
+      type: object
+      description: Result of claiming or releasing Terraform ownership of environment fields.
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [claimed, released, unscoped]
     CreateEnvironmentGitSourceRequest:
       type: object
       description: Select a Git definition in the project repository; repository identities are verified by
@@ -29211,7 +29977,6 @@ components:
           type: string
           enum:
           - report
-          - enforce
           default: report
         approval_policy:
           type: string
@@ -29498,6 +30263,9 @@ components:
           type: string
         source:
           $ref: '#/components/schemas/EnvironmentGitSourceSpec'
+        detached:
+          type: boolean
+          description: Retired binding; excluded from current source lookup and controllers.
         suspended:
           type: boolean
         generation:
@@ -29640,7 +30408,6 @@ components:
           type: string
           enum:
           - report
-          - enforce
         prune:
           type: boolean
         suspended:
@@ -31911,16 +32678,27 @@ components:
         p50_latency_ms: { type: integer, minimum: 0, description: Request-weighted nearest-rank p50 from stored latency bucket upper bounds. }
         p95_latency_ms: { type: integer, minimum: 0, description: Request-weighted nearest-rank p95 from stored latency bucket upper bounds. }
         latency_quantized: { type: boolean, enum: [true], description: Latency values are conservative bucket upper bounds. }
+    CreateCommitSourceRequest:
+      description: Register an immutable database source bound to a managed app operation policy and routing contract.
+      type: object
+      required: [name, operation_policy]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        operation_policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: Active queue policy containing this application. Scope must be account or platform_tenant according to allow_tenant_selection. Environment-scoped policies are unsupported. }
+        contract_version: { type: integer, enum: [1, 2], default: 1, description: Immutable contract. Version 1 uses one source lane; version 2 requires explicit event routing and a business key. }
+        allow_tenant_selection: { type: boolean, default: false, description: Immutable owner grant authorizing this trusted database to select active customers linked to the fixed target application. Requires contract version 2 and a platform_tenant queue policy. }
     CommitSourceResponse:
       type: object
       description: Commit source destination, enabled state and latest bounded relay health observation.
-      required: [id, app_id, name, enabled]
+      required: [id, app_id, name, enabled, contract_version, allow_tenant_selection]
       properties:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         name: { type: string }
         enabled: { type: boolean }
         operation_policy: { type: string, description: Immutable managed Operations policy. Absent only for legacy internal sources. }
+        contract_version: { type: integer, enum: [1, 2] }
+        allow_tenant_selection: { type: boolean }
         relay_status: { type: string }
         last_checked_at: { type: string, format: date-time }
         pending_events: { type: integer, format: int64 }
@@ -31949,12 +32727,27 @@ components:
         observed_at: { type: string, format: date-time }
     CommitEventRequest:
       type: object
+      additionalProperties: false
       required: [id, type, data]
-      description: At-least-once handoff. Repeating the identity with identical JSON data returns the original receipt; changed type or data conflicts.
+      description: At-least-once handoff. Repeating the identity with identical JSON data and routing returns the original receipt; changed type, data or routing conflicts.
       properties:
         id: { type: string, format: uuid }
         type: { type: string, minLength: 1, maxLength: 256 }
         data: {}
+        routing: { $ref: '#/components/schemas/CommitRouting' }
+    CommitRouting:
+      type: object
+      additionalProperties: false
+      required: [version, key]
+      description: Version 2 routing authority is granted by the account owner on the source. Customer identity is separate from untrusted event data. Business keys share a queue only within the same policy and customer scope; scalar types remain distinct. Canonical keys are limited to 256 bytes including the type prefix.
+      properties:
+        version: { type: integer, enum: [2] }
+        platform_tenant_id: { type: string, format: uuid, description: "Required for sources with allow_tenant_selection; forbidden otherwise. Must be active, in the source account and linked to the target app through an active surface." }
+        key:
+          oneOf:
+            - { type: string, minLength: 1 }
+            - { type: number }
+            - { type: boolean }
     CommitReceiptResponse:
       type: object
       required: [receipt_id, source_id, event_id, accepted_at, operation_url]
@@ -31977,6 +32770,11 @@ components:
         source_id: { type: string, format: uuid }
         event_id: { type: string, format: uuid }
         state: { type: string, enum: [accepted, pending, running, completed, cancelled, failed, expired, unknown] }
+        result: { description: Business result of a completed managed Commit operation; any JSON value. }
+        effects:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/OperationEffectRecord' }
         accepted_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
     OutboundIntegrationOffer:
@@ -32506,6 +33304,25 @@ components:
         degraded: { type: boolean }
         as_of: { type: string, format: date-time }
         source: { type: string }
+    ManagedPostgresCapabilities:
+      description: Versioned PostgreSQL support for the default backend in a region, intersected with customer plan limits. Provider identities, costs, endpoints and credentials are excluded. Capabilities remain visible while the rollout gate is closed.
+      type: object
+      required: [contract_version, region, provisioning_enabled, database_limit, postgres_majors, service_classes, availability, credential_access, scale_to_zero, always_on, pooled_connections, point_in_time_restore, storage_limit_bytes, restore_window_seconds]
+      properties:
+        contract_version: { type: integer, minimum: 1 }
+        region: { type: string }
+        provisioning_enabled: { type: boolean }
+        database_limit: { type: integer, minimum: 0 }
+        postgres_majors: { type: array, items: { type: integer, minimum: 12, maximum: 99 } }
+        service_classes: { type: array, items: { type: string, enum: [development, burstable, production] } }
+        availability: { type: array, items: { type: string, enum: [single_zone, high_availability] } }
+        credential_access: { type: array, items: { type: string, enum: [read_write, read_only, migration] } }
+        scale_to_zero: { type: boolean }
+        always_on: { type: boolean }
+        pooled_connections: { type: boolean }
+        point_in_time_restore: { type: boolean }
+        storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
+        restore_window_seconds: { type: integer, format: int64, minimum: 0 }
     ManagedPostgresDatabase:
       description: Managed PostgreSQL metadata. Provider IDs and credentials are never returned.
       type: object
@@ -32604,6 +33421,128 @@ components:
         max_monthly_history_byte_seconds: { type: integer, format: int64, minimum: 0 }
         max_monthly_egress_bytes: { type: integer, format: int64, minimum: 0 }
         line_items: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresUsageLineItem' } }
+    ManagedPostgresAccountingDiagnostic:
+      description: Local evidence for one accountable database. Shared restores refer to their accounting root. Reasons explain stale admission only; an empty list does not establish invoice settlement or remaining budget. An unknown legacy tombstone has no confirmed terminal deadline.
+      type: object
+      required: [database_id, name, state, accounting_required, identity_known, accounting_database_id, blocking, reasons, collected_window_seconds]
+      properties:
+        database_id: { type: string, format: uuid }
+        name: { type: string }
+        state: { type: string, enum: [provisioning, ready, updating, deleting, failed, deleted] }
+        accounting_required: { type: boolean }
+        identity_known: { type: boolean }
+        accounting_database_id: { type: string, format: uuid }
+        blocking: { type: boolean, description: This resource blocks admission due to stale accounting under the enabled policy. False when the policy is disabled. }
+        reasons:
+          type: array
+          items: { type: string, enum: [identity_unknown, legacy_identity_unknown, coverage_missing, window_mismatch, shutdown_unconfirmed, coverage_incomplete, observation_stale, final_correction_pending] }
+        collected_window_seconds: { type: integer, format: int64, minimum: 0 }
+        required_from: { type: [string, "null"], format: date-time }
+        required_until: { type: [string, "null"], format: date-time }
+        collected_from: { type: [string, "null"], format: date-time }
+        collected_until: { type: [string, "null"], format: date-time }
+        observed_at: { type: [string, "null"], format: date-time }
+        correction_observed_at: { type: [string, "null"], format: date-time }
+        correction_required_at: { type: [string, "null"], format: date-time }
+        lease_until: { type: [string, "null"], format: date-time }
+    ManagedPostgresAccountingReconciliationRequest:
+      type: object
+      description: Operator-attested immutable backend identity and actual provider shutdown for one unresolved legacy tombstone. The operator verifies artifact ownership and lineage; the server does not fetch or authenticate the source. Missing lookup results are not shutdown evidence.
+      additionalProperties: false
+      required: [reconciliation_id, database_id, backend_id, backend_fingerprint, provider_resource_id, shutdown_at, observed_at, evidence_reference, evidence_sha256, reason]
+      properties:
+        reconciliation_id: { type: string, format: uuid, description: "Durable reconciliation identity." }
+        database_id: { type: string, format: uuid, description: "Deleted accountable database with no provider identity." }
+        backend_id: { type: string, minLength: 1, maxLength: 128, description: "Exact immutable catalog backend ID." }
+        backend_fingerprint: { type: string, pattern: '^[a-f0-9]{64}$', description: "Exact immutable catalog backend fingerprint." }
+        provider_resource_id: { type: string, minLength: 1, maxLength: 1024, description: "Verified opaque provider identity; include branch identity where required by the adapter." }
+        shutdown_at: { type: string, format: date-time, description: "Actual confirmed provider shutdown at or after catalog creation; microsecond precision." }
+        observed_at: { type: string, format: date-time, description: "Actual evidence observation at or after shutdown and retained ledger observations; no future timestamps." }
+        evidence_reference: { type: string, minLength: 1, maxLength: 256, description: "Retained nonsecret artifact reference; no credentials or signed URLs." }
+        evidence_sha256: { type: string, pattern: '^[a-f0-9]{64}$', description: "SHA-256 of the operator-verified source artifact." }
+        reason: { type: string, minLength: 1, maxLength: 512, description: "Audited reason for reconciliation." }
+        expected_revision: { type: string, pattern: '^[a-f0-9]{64}$', description: "Omit for preview; required for apply using the returned revision." }
+    ManagedPostgresAccountingReconciliationResult:
+      type: object
+      description: Preview or original committed repair response. Requires usage recovery describes the post-repair state; receipt replay is not a live admission or coverage read. Use accounting diagnostics for current status.
+      required: [reconciliation_id, database_id, revision, applied, shutdown_at, observed_at, shared_accounting, requires_usage_recovery]
+      properties:
+        reconciliation_id: { type: string, format: uuid, description: "Identity of the previewed or committed repair receipt." }
+        database_id: { type: string, format: uuid, description: "Reconciled catalog database." }
+        revision: { type: string, pattern: '^[a-f0-9]{64}$', description: "Revision fencing the reviewed request and relevant catalog/ledger/coverage state." }
+        applied: { type: boolean, description: "True for a committed repair or durable replay." }
+        previous_deleted_at: { type: string, format: date-time, description: "Previous logical deletion timestamp retained in the audit; it did not prove shutdown." }
+        shutdown_at: { type: string, format: date-time, description: "Attested actual shutdown boundary." }
+        observed_at: { type: string, format: date-time, description: "Preserved evidence observation time." }
+        shared_accounting: { type: boolean, description: "Restore descendant still shares its existing accounting root." }
+        requires_usage_recovery: { type: boolean, description: "Coverage resets on apply; recovery and final correction evidence must satisfy admission." }
+    ManagedPostgresUsageImportReading:
+      description: One normalized integer meter quantity from retained provider evidence.
+      type: object
+      additionalProperties: false
+      required: [meter, quantity]
+      properties:
+        meter: { type: string, enum: [active_seconds, compute_unit_seconds, storage_byte_seconds, history_byte_seconds, egress_bytes, operations] }
+        quantity: { type: integer, format: int64, minimum: 0 }
+    ManagedPostgresUsageImportWindow:
+      description: A complete policy-sized usage window with its actual source observation time.
+      type: object
+      additionalProperties: false
+      required: [from, to, observed_at, readings]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time, description: "Actual export observation time, at or after the closed window and no later than the server clock; microsecond precision maximum. Import time is never substituted." }
+        readings:
+          type: array
+          minItems: 1
+          maxItems: 6
+          items: { $ref: '#/components/schemas/ManagedPostgresUsageImportReading' }
+    ManagedPostgresUsageImportRequest:
+      description: Operator-attested retained usage for a known independently accounted database.
+      type: object
+      additionalProperties: false
+      required: [import_id, database_id, evidence_reference, evidence_sha256, reason, windows]
+      properties:
+        import_id: { type: string, format: uuid, description: "Durable request identity; preserve across retries." }
+        database_id: { type: string, format: uuid, description: "Independently accounted database; shared restores must import against their root." }
+        evidence_reference: { type: string, minLength: 1, maxLength: 256, description: "Non-secret retained evidence locator; never a credential or signed URL." }
+        evidence_sha256: { type: string, pattern: '^[a-f0-9]{64}$', description: "SHA-256 of the retained source artifact, attested by the operator; no artifact is fetched by this API." }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+        windows:
+          type: array
+          minItems: 1
+          maxItems: 256
+          description: Ascending contiguous complete policy-sized windows with exactly the backend's advertised meters. Costs are calculated from the current server policy. Maximum request size 1 MiB.
+          items: { $ref: '#/components/schemas/ManagedPostgresUsageImportWindow' }
+        expected_revision: { type: string, pattern: '^[a-f0-9]{64}$', description: "Omit for preview; required for apply." }
+    ManagedPostgresUsageImportResult:
+      description: Cost changes and resulting coverage from preview or an immutable applied import receipt.
+      type: object
+      required: [import_id, database_id, revision, applied, window_count, previous_cost_millicents, imported_cost_millicents, cost_delta_millicents, collected_from, collected_until, observed_at]
+      properties:
+        import_id: { type: string, format: uuid }
+        database_id: { type: string, format: uuid }
+        revision: { type: string, pattern: '^[a-f0-9]{64}$' }
+        applied: { type: boolean }
+        window_count: { type: integer, minimum: 1, maximum: 256 }
+        previous_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        imported_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        cost_delta_millicents: { type: integer, format: int64 }
+        collected_from: { type: string, format: date-time }
+        collected_until: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+    ManagedPostgresAccountingDiagnosticsResponse:
+      description: One live account-scoped page of local accounting evidence.
+      type: object
+      required: [account_id, evaluated_at, policy_enabled, window_seconds, items]
+      properties:
+        account_id: { type: string, format: uuid }
+        evaluated_at: { type: string, format: date-time }
+        policy_enabled: { type: boolean }
+        window_seconds: { type: integer, format: int64, minimum: 0 }
+        items: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/ManagedPostgresAccountingDiagnostic' } }
+        next_cursor: { type: [string, "null"], format: uuid }
     CreateManagedPostgresDatabaseRequest:
       description: Customer request to reserve a managed PostgreSQL database.
       type: object
@@ -33148,14 +34087,81 @@ components:
         encryption: { $ref: '#/components/schemas/ObjectEncryption', description: Verified active default for new implicit writes. }
         desired_encryption: { $ref: '#/components/schemas/ObjectEncryption', description: Requested default awaiting native verification. }
         updated_at: { type: string, format: date-time }
+    ObjectVersionRetention:
+      type: object
+      additionalProperties: false
+      description: Verified native retention, or a fixed-retention intent. An empty object requests a clear; active retention cannot be shortened without bypass, which is unsupported. Event hold fields are observation only for this contract.
+      properties:
+        mode: { type: string, enum: [GOVERNANCE, COMPLIANCE] }
+        retain_until_date: { type: string, format: date-time }
+        event_hold: { type: string, enum: [ON, OFF] }
+        event_hold_duration: { $ref: '#/components/schemas/ObjectRetentionPeriod' }
+    ObjectVersionLegalHold:
+      type: object
+      description: Independent exact-version legal hold status.
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [ON, OFF] }
+    ObjectVersionRetentionRequest:
+      type: object
+      description: Stable identity and fixed retention intent for an owned version.
+      additionalProperties: false
+      required: [id, retention]
+      properties:
+        id: { type: string, format: uuid, description: Stable caller-generated UUID v4; reuse only for the identical intent. }
+        retention: { $ref: '#/components/schemas/ObjectVersionRetention' }
+    ObjectVersionLegalHoldRequest:
+      type: object
+      description: Stable identity and desired independent legal hold for an owned version.
+      additionalProperties: false
+      required: [id, legal_hold]
+      properties:
+        id: { type: string, format: uuid, description: Caller-generated UUID v4 for this legal-hold intent; retain it when retrying. }
+        legal_hold: { $ref: '#/components/schemas/ObjectVersionLegalHold' }
+    ObjectVersionRetentionResult:
+      type: object
+      description: Selected public version and its observed native retention.
+      additionalProperties: false
+      required: [version_id, retention]
+      properties:
+        version_id: { type: string }
+        retention: { $ref: '#/components/schemas/ObjectVersionRetention' }
+    ObjectVersionLegalHoldResult:
+      type: object
+      description: Selected public version and its observed independent legal hold.
+      additionalProperties: false
+      required: [version_id, legal_hold]
+      properties:
+        version_id: { type: string }
+        legal_hold: { $ref: '#/components/schemas/ObjectVersionLegalHold' }
+    ObjectVersionProtection:
+      type: object
+      description: Durable public protection receipt containing immutable intent and bounded reconciliation progress.
+      additionalProperties: false
+      required: [id, bucket_id, key, version_id, kind, state, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        bucket_id: { type: string, format: uuid }
+        key: { type: string }
+        version_id: { type: string }
+        kind: { type: string, enum: [retention, legal_hold] }
+        state: { type: string, enum: [waiting, applying, ready, failed] }
+        retention: { $ref: '#/components/schemas/ObjectVersionRetention' }
+        legal_hold: { $ref: '#/components/schemas/ObjectVersionLegalHold' }
+        last_error_code: { type: string, enum: [provider_uncertain, provider_unsupported, provider_mismatch, preparation_failed, provider_rejected] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     ObjectLockCapabilities:
       type: object
-      description: Enrolled bucket configuration and default event hold capabilities, without a native health check.
+      description: Enrolled bucket configuration, default event holds, fixed version retention and legal-hold capabilities without a native health check.
       additionalProperties: false
-      required: [bucket_configuration, default_event_hold]
+      required: [bucket_configuration, default_event_hold, version_retention, version_legal_hold]
       properties:
         bucket_configuration: { type: boolean }
         default_event_hold: { type: boolean }
+        version_retention: { type: boolean }
+        version_legal_hold: { type: boolean }
     ObjectRetentionPeriod:
       type: object
       description: Exactly one positive days or years duration must be present. Null values are rejected.
@@ -36265,7 +37271,7 @@ components:
 
     CreatePlatformTenantWebhookRequest:
       type: object
-      description: Create a receiver for this tenant's supported customer, hostname, certificate, deployment, reconciliation, and finalized billing events.
+      description: Create a receiver for this tenant's supported customer, operation effect, hostname, certificate, deployment, reconciliation, and finalized billing events.
       required: [target_url, webhook_secret]
       properties:
         target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
@@ -36274,10 +37280,10 @@ components:
           type: array
           description: Events delivered to this receiver. Defaults to platform_tenant.statement.finalized when omitted.
           minItems: 1
-          maxItems: 7
+          maxItems: 8
           uniqueItems: true
           default: [platform_tenant.statement.finalized]
-          items: { type: string, enum: [platform_tenant.statement.finalized, platform_tenant.hostname.verified, platform_tenant.surface.certificate.changed, platform_tenant.surface.deployment.changed, platform_tenant.customer.linked, platform_tenant.customer.offboarded, platform_tenant.reconciliation.applied] }
+          items: { type: string, enum: [platform_tenant.statement.finalized, platform_tenant.hostname.verified, platform_tenant.surface.certificate.changed, platform_tenant.surface.deployment.changed, platform_tenant.customer.linked, platform_tenant.customer.offboarded, platform_tenant.reconciliation.applied, operation.effect] }
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format: { type: string, enum: [json, cloudevents], default: json }
         enabled: { type: boolean, default: true }
@@ -36309,9 +37315,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 7
+          maxItems: 8
           uniqueItems: true
-          items: { type: string, enum: [platform_tenant.statement.finalized, platform_tenant.hostname.verified, platform_tenant.surface.certificate.changed, platform_tenant.surface.deployment.changed, platform_tenant.customer.linked, platform_tenant.customer.offboarded, platform_tenant.reconciliation.applied] }
+          items: { type: string, enum: [platform_tenant.statement.finalized, platform_tenant.hostname.verified, platform_tenant.surface.certificate.changed, platform_tenant.surface.deployment.changed, platform_tenant.customer.linked, platform_tenant.customer.offboarded, platform_tenant.reconciliation.applied, operation.effect] }
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
         enabled: { type: boolean }
@@ -38087,6 +39093,9 @@ components:
         protocol:
           type: string
           enum: [tcp, udp]
+        internal:
+          type: boolean
+          description: "Internal-only listener: never public; same-account services reach it at the private service address (ADR-576)."
 
     TCPListenerResponse:
       description: "One app-owned raw TCP listener with a stable public endpoint."
@@ -39972,8 +40981,11 @@ components:
         One workflow step. The canonical ADR-081 target is `run`; `path`
         and `method` remain accepted for the existing HTTP wake executor
         during the runtime migration. Exactly one of `run`, `path`,
-        `wait_for_event`, `wait_for_callback`, `wait_for_duration`, or
+        `wait_for_event`, `wait_for_callback`, `wait_for_duration`,
         `wait_for_condition`, `outbound`, `join`, or `for_each` must be supplied.
+        Set `managed_operation` on an executable HTTP step to persist its business
+        result transactionally and replay it safely when the workflow retries
+        after an uncertain response.
       type: object
       required: [name]
       properties:
@@ -39982,6 +40994,9 @@ components:
         run:
           type: string
           description: "Named platform operation to invoke."
+        managed_operation:
+          type: boolean
+          description: "Opt into the managed PostgreSQL operation result protocol for this executable HTTP step. The handler must use the transactional operation SDK."
         for_each:
           $ref: '#/components/schemas/WorkflowForEachSpec'
         join:
@@ -40686,6 +41701,10 @@ components:
         finished_at: { type: [string, 'null'], format: date-time }
         next_attempt_at: { type: [string, 'null'], format: date-time }
         error: { type: [string, 'null'] }
+        effects:
+          type: array
+          description: "Accepted operation webhook effects and their delivery status."
+          items: { $ref: '#/components/schemas/OperationEffectRecord' }
 
     ListWorkflowStepAttemptsResponse:
       description: "The ordered executor-attempt history for one workflow step."
@@ -42944,6 +43963,7 @@ components:
         updated_at: { type: string, format: date-time }
         cloned_from: { type: string }
         clone: { $ref: '#/components/schemas/ProjectEnvironmentCloneResponse' }
+        clone_operation: { $ref: '#/components/schemas/ProjectEnvironmentCloneOperationResponse' }
 
     PutAppSecretReferenceRequest:
       description: Named sealed source selected within the exact registered project environment; contains no secret value.
@@ -43067,6 +44087,7 @@ components:
       type: object
       required: [workload_slug, workload_name, status]
       properties:
+        workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         workload_slug: { type: string }
         workload_name: { type: string }
         status: { type: string, enum: [live, not_deployed] }
@@ -43127,6 +44148,8 @@ components:
       type: object
       required: [workload_slug, workload_name, release, variables, secrets, bindings, domains, routes, policies]
       properties:
+        workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        workload_config_revision: { type: integer, format: int64, minimum: 1 }
         app_id: { type: string, format: uuid }
         workload_slug: { type: string }
         workload_name: { type: string }
@@ -43210,6 +44233,46 @@ components:
           maxItems: 50
           items: { $ref: '#/components/schemas/DeclaredRoute' }
 
+    ProjectEnvironmentQueueBinding:
+      description: Desired logical queue binding without runtime consumer identity or messages. HTTP consumers require push mode and a function workload.
+      type: object
+      required: [name, queue_name, mode, workload_class, enabled, max_concurrency]
+      additionalProperties: false
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        mode: { type: string, enum: [pull, push] }
+        workload_class: { type: string, enum: [worker, job, http] }
+        enabled: { type: boolean }
+        max_concurrency: { type: integer, minimum: 1, maximum: 10000 }
+        retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
+
+    ReplaceProjectEnvironmentQueueBindingsRequest:
+      description: Complete stage queue replacement fenced by the workload revision, not the queue collection clock.
+      type: object
+      required: [expected_revision, bindings]
+      additionalProperties: false
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        bindings:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentQueueBinding' }
+
+    ProjectEnvironmentQueueBindingsResponse:
+      description: Desired stage queue definitions. Consumer activation is currently unavailable and these definitions do not enable delivery or qualify promotion.
+      type: object
+      required: [environment, workload, revision, workload_revision, config_hash, activation_state, bindings]
+      properties:
+        environment: { type: string }
+        workload: { type: string }
+        revision: { type: integer, format: int64, minimum: 1, description: Queue collection clock. }
+        workload_revision: { type: integer, format: int64, minimum: 1, description: Complete workload revision to use as expected_revision on replacement. }
+        config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        activation_state: { type: string, enum: [unavailable] }
+        bindings:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentQueueBinding' }
+
     ProjectEnvironmentSharedResourceResponse:
       description: Application-scoped resource that is shared by all environments.
       type: object
@@ -43224,6 +44287,10 @@ components:
       type: object
       required: [project_slug, environment, protected, configuration, workloads, shared_resources, generated_at]
       properties:
+        feature_flags_hash:
+          description: Fingerprint of the environment identity, current flag version, and configuration observed before qualification probes. Omitted only for the legacy identity with no published flags. Combine with each released workload settings hash when submitting workload_config_hashes.
+          type: string
+          pattern: '^[a-f0-9]{64}$'
         active_release_set:
           description: Active graph, or null when no graph has been published. Its selected members may differ from the per-workload live deployments below.
           oneOf:
@@ -43419,6 +44486,9 @@ components:
       type: object
       required: [workload_slug, workload_name, kind]
       properties:
+        source_workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        target_workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        promoted_workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         workload_slug: { type: string }
         workload_name: { type: string }
         kind:
@@ -43490,6 +44560,11 @@ components:
       additionalProperties: false
       required: [release_set_id, configuration_version, configuration_hash, secret_revision_hashes, checks]
       properties:
+        workload_config_hashes:
+          description: Configuration fingerprints observed before probes; environment-owned settings require an exact match to deployed revisions.
+          type: object
+          propertyNames: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+          additionalProperties: { type: string, pattern: '^[a-f0-9]{64}$' }
         release_set_id: { type: string, format: uuid }
         configuration_version: { type: integer, minimum: 0 }
         configuration_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
@@ -43534,6 +44609,11 @@ components:
       type: object
       required: [id, environment, release_set_id, configuration_version, configuration_hash, secret_revision_hashes, status, checks, created_at, expires_at]
       properties:
+        workload_config_hashes:
+          description: Immutable per-workload fingerprints bound to this qualification receipt.
+          type: object
+          propertyNames: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+          additionalProperties: { type: string, pattern: '^[a-f0-9]{64}$' }
         id: { type: string, format: uuid }
         environment: { type: string }
         release_set_id: { type: string, format: uuid }
@@ -43557,6 +44637,39 @@ components:
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
 
+    ProjectEnvironmentCloneOperationResponse:
+      description: Durable clone progress within one account and project, excluding private source configuration and worker credentials.
+      type: object
+      required: [operation_id, project_slug, source_environment, target_environment, source_revision_hash, status, revision, resources, created_at, updated_at]
+      properties:
+        operation_id: { type: string }
+        project_slug: { type: string }
+        source_environment: { type: string }
+        target_environment: { type: string }
+        source_revision_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        source_release_set_id: { type: string }
+        target_release_set_id: { type: string }
+        status: { type: string, enum: [pending, capturing, copying, publishing, ready, failed, compensating, compensated] }
+        revision: { type: integer, format: int64, minimum: 1 }
+        resources:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentCloneResourceResponse' }
+        error_code: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ProjectEnvironmentCloneResourceResponse:
+      description: Progress and named blockers for an individual resource in a complete environment clone.
+      type: object
+      required: [kind, name, status]
+      properties:
+        kind: { type: string }
+        name: { type: string }
+        source_id: { type: string }
+        source_version: { type: string }
+        target_id: { type: string }
+        capture_point: { type: string }
+        status: { type: string, enum: [planned, capturing, captured, copying, verifying, ready, failed, unsupported, compensating, compensated] }
+
     CreateProjectEnvironmentRequest:
       description: Request to register or clone a named project environment.
       type: object
@@ -43573,6 +44686,10 @@ components:
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
           not: { const: default }
           description: Source environment whose scoped configuration and values are copied.
+        full:
+          type: boolean
+          default: false
+          description: Require a complete isolated copy; use the dedicated environment-clones route. Admission remains closed while complete coverage is unavailable.
         share_resources:
           type: boolean
           default: false
@@ -50625,7 +51742,7 @@ components:
         expires_after_ms: { type: integer, minimum: 0, maximum: 2592000000, default: 0 }
 
     WorkPolicyResponse:
-      description: Saved app policy and revision used for subsequent work admissions.
+      description: Saved policy definition and revision. For stage desired settings, created_at and updated_at identify the containing immutable workload configuration revision; stage execution remains gated.
       type: object
       additionalProperties: false
       required: [name, revision, max_running_per_key, max_running_per_fairness_key, pending_updates, debounce_ms, expires_after_ms, created_at, updated_at]
@@ -52817,7 +53934,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -53300,7 +54417,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -53381,7 +54498,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
+            enum: ["operation.effect", "app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "operation.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved", "routes.requirements.violated", "routes.requirements.recovered", "routes.requirements.changed", "routes.health.blocked", "routes.health.resumed", "routes.health.aborted", "routes.monitor.violated", "routes.monitor.recovered"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
@@ -54410,9 +55527,66 @@ components:
         lease_expires_at: { type: string, format: date-time }
         attempt_deadline: { type: string, format: date-time }
         result: { description: Platform-committed invocation result; arbitrary JSON value. }
+        effects:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/OperationEffectRecord' }
         last_error: { type: string, maxLength: 1024 }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
+
+
+    ManagedOperationResult:
+      type: object
+      additionalProperties: false
+      description: Opt-in managed HTTP operation handler response; encode as JSON and return from the handler after requiring X-Gregale-Operation-Result-Version header value 1. The entire response is bounded to 1 MiB. Ordinary invocation responses are unchanged. Only supported on managed request operations, including Commit operations.
+      required: [gregale_operation_result, result, effects]
+      properties:
+        gregale_operation_result: { type: integer, enum: [1] }
+        result: { description: Business result persisted atomically with effect enqueue; any JSON value, including null. }
+        effects:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ManagedOperationEffect' }
+
+    ManagedOperationEffect:
+      description: Named business webhook delivery proposed by a managed HTTP operation handler.
+      type: object
+      additionalProperties: false
+      required: [name, webhook_id, type, payload]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: Unique within this operation completion. }
+        webhook_id: { type: string, format: uuid, description: Explicit operation.effect subscriber owned by the authenticated operation scope. }
+        type: { type: string, maxLength: 256, pattern: '^[a-z][a-z0-9_.-]*$', description: Business event type carried inside the operation.effect payload. }
+        payload: { description: JSON business data bounded to 64 KiB. }
+
+    OperationEffectRecord:
+      description: Immutable effect identity and current delivery status from the signed webhook ledger.
+      type: object
+      required: [id, name, generation, status, attempt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        generation: { type: integer, format: int64 }
+        webhook_id: { type: string, format: uuid }
+        delivery_id: { type: string, format: uuid, description: Stable across webhook retries; equals the effect ID. }
+        type: { type: string }
+        status: { type: string, enum: [recorded, pending, in_flight, succeeded, failed, dead, unavailable], description: recorded is an opaque effect with no adapter; unavailable indicates deleted or pruned delivery history. Completion of the operation does not imply delivery succeeded. }
+        attempt: { type: integer, minimum: 0 }
+        last_error: { type: string }
+
+    OperationEffectPayload:
+      type: object
+      description: Data of the operation.effect webhook. Identity comes from the platform-owned operation.
+      required: [operation_id, app_id, generation, name, type, data]
+      properties:
+        operation_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        platform_tenant_id: { type: string, format: uuid }
+        generation: { type: integer, format: int64 }
+        name: { type: string }
+        type: { type: string }
+        data: { description: Handler-supplied business event data. }
 
 
     IssueFrame:
@@ -54757,6 +55931,11 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
 
+    FullEnvironmentCloneUnavailable:
+      description: 'code: environment_full_clone_unavailable — complete isolated resource coverage and coordinated data copies are unavailable.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     Conflict:
       description: 'code: conflict'
       content:

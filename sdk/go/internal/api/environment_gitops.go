@@ -77,6 +77,7 @@ type EnvironmentGitSource struct {
 	EnvironmentID          string                   `json:"environment_id"`
 	EnvironmentSlug        string                   `json:"environment"`
 	Spec                   EnvironmentGitSourceSpec `json:"source"`
+	Detached               bool                     `json:"detached"`
 	Suspended              bool                     `json:"suspended"`
 	Generation             int64                    `json:"generation"`
 	IntentVersion          int64                    `json:"intent_version"`
@@ -194,4 +195,26 @@ func validEnvironmentGitRef(ref string) bool {
 		}
 	}
 	return true
+}
+
+// Rebinding retires the old immutable binding and releases its field ownership.
+// Existing values and execution evidence are retained; fresh approval is required.
+type RebindEnvironmentGitSourceRequest struct {
+	ExpectedGeneration int64  `json:"expected_generation"`
+	Ref                string `json:"ref"`
+	ManifestPath       string `json:"manifest_path"`
+	ApprovalPolicy     string `json:"approval_policy"`
+}
+type DetachEnvironmentGitSourceRequest struct {
+	ExpectedGeneration int64 `json:"expected_generation"`
+}
+type EnvironmentFieldOwnershipRequest struct {
+	App         string   `json:"app,omitempty"`
+	Project     string   `json:"project,omitempty"`
+	Environment string   `json:"environment"`
+	Paths       []string `json:"paths"`
+	Manager     string   `json:"manager"`
+}
+type EnvironmentFieldOwnershipResponse struct {
+	Status string `json:"status"`
 }

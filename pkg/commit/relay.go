@@ -1,7 +1,9 @@
 package commit
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -83,18 +85,34 @@ func (r *Relay) Tick(ctx context.Context) (int, error) {
  ) UPDATE public.gregale_outbox o SET lease_token=$2::uuid,
  lease_until=clock_timestamp()+($3::bigint * interval '1 millisecond'), attempts=attempts+1
  FROM candidates c WHERE o.event_id=c.event_id
- RETURNING o.event_id::text,o.event_type,o.payload`, batch, token, lease.Milliseconds(), source)
+	RETURNING o.event_id::text,o.event_type,o.payload,to_jsonb(o)->'routing'`, batch, token, lease.Milliseconds(), source)
 	if err != nil {
 		return 0, fmt.Errorf("commit: claim events: %w", err)
 	}
-	var events []Event
+	type claimedEvent struct {
+		event          Event
+		invalidRouting bool
+	}
+	var events []claimedEvent
 	for rows.Next() {
 		var e Event
-		if err := rows.Scan(&e.ID, &e.Type, &e.Data); err != nil {
+		var routing json.RawMessage
+		if err := rows.Scan(&e.ID, &e.Type, &e.Data, &routing); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		events = append(events, e)
+		invalid := false
+		if len(routing) > 0 && string(routing) != "null" {
+			decoder := json.NewDecoder(bytes.NewReader(routing))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&e.Routing); err != nil {
+				invalid = true
+			}
+			if _, err := NormalizeRouting(e.Routing); err != nil {
+				invalid = true
+			}
+		}
+		events = append(events, claimedEvent{event: e, invalidRouting: invalid})
 	}
 	err = rows.Err()
 	rows.Close()
@@ -103,8 +121,15 @@ func (r *Relay) Tick(ctx context.Context) (int, error) {
 	}
 	accepted := 0
 	var failures []error
-	for _, e := range events {
-		receipt, acceptErr := r.Acceptor.Accept(ctx, e)
+	for _, claimed := range events {
+		e := claimed.event
+		var receipt Receipt
+		var acceptErr error
+		if claimed.invalidRouting {
+			acceptErr = &PermanentError{Code: "invalid_routing"}
+		} else {
+			receipt, acceptErr = r.Acceptor.Accept(ctx, e)
+		}
 		if acceptErr == nil {
 			if _, err := uuid.Parse(receipt.ID); err != nil {
 				acceptErr = errors.New("commit: invalid acceptance receipt")

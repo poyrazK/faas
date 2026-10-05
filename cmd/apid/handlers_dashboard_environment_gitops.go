@@ -186,6 +186,12 @@ func (s *server) environmentGitOpsDashboardRequest(r *http.Request) (any, dashbo
 	if action == "approve" {
 		return api.ApproveEnvironmentGitRevisionRequest{CommitSHA: r.FormValue("commit_sha"), DefinitionDigest: r.FormValue("definition_digest"), ExpectedGeneration: generation}, s.approveEnvironmentGitRevision, http.MethodPost, nil
 	}
+	if action == "rebind" {
+		return api.RebindEnvironmentGitSourceRequest{ExpectedGeneration: generation, Ref: r.FormValue("ref"), ManifestPath: r.FormValue("manifest_path"), ApprovalPolicy: r.FormValue("approval_policy")}, s.rebindEnvironmentGitSource, http.MethodPost, nil
+	}
+	if action == "unbind" {
+		return api.DetachEnvironmentGitSourceRequest{ExpectedGeneration: generation}, s.detachEnvironmentGitSource, http.MethodDelete, nil
+	}
 	if action == "controls" {
 		prune, suspended := r.FormValue("prune") == "true", r.FormValue("suspended") == "true"
 		return api.EnvironmentGitSourceUpdate{ExpectedGeneration: generation, Mode: r.FormValue("mode"), Prune: &prune, Suspended: &suspended}, s.updateEnvironmentGitSource, http.MethodPatch, nil

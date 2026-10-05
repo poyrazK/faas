@@ -155,8 +155,18 @@ func TestManagedPostgresConnectionURLUsesAccessSpecificEndpoint(t *testing.T) {
 		t.Fatalf("read-only URL = %q, %v", value, err)
 	}
 	material.Endpoints = material.Endpoints[:1]
-	if _, err := managedPostgresConnectionURL(managedpostgres.CredentialReadOnly, material); !errors.Is(err, managedpostgres.ErrUnsupported) {
-		t.Fatalf("missing read-only endpoint = %v", err)
+	for _, expectedHost := range []string{"primary.example.test", "pool.example.test"} {
+		if expectedHost == "pool.example.test" {
+			material.Endpoints = append(material.Endpoints, managedpostgres.Endpoint{Role: managedpostgres.EndpointPooled, Host: expectedHost, Port: 6432})
+		}
+		value, err := managedPostgresConnectionURL(managedpostgres.CredentialReadOnly, material)
+		if err != nil {
+			t.Fatal("read-only role requires no replica", err)
+		}
+		parsed, err := url.Parse(value)
+		if err != nil || parsed.Hostname() != expectedHost {
+			t.Fatal("wrong read-only fallback endpoint", err)
+		}
 	}
 }
 

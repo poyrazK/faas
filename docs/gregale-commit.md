@@ -9,6 +9,77 @@ and native KVM correctness acceptance passed on 2026-10-02 UTC for the managed
 Operations target on the GCP internal test node. The remaining
 production qualification work below still prevents customer promotion.
 
+
+## Version 2 business keys and customer routing (ADR-589)
+
+Version 1 sources continue to use an account-scoped source-wide queue. Opt in
+when creating a new source to use a business key:
+
+```sh
+gregale commit add orders --name order-events --operation-policy orders \
+  --contract-version 2
+```
+
+The policy must be an active account-scoped queue policy containing `orders`.
+For a trusted producer database that serves multiple customers, use a
+`platform_tenant` queue policy and explicitly grant customer selection:
+
+```sh
+gregale commit add orders --name customer-order-events \
+  --operation-policy customer-orders --contract-version 2 \
+  --allow-tenant-selection
+```
+
+The grant authorizes every writer of this outbox to choose customers within the
+owner account. Use a trusted application backend to write the outbox. Customer
+identity in ordinary event data does not confer routing authority. Selected
+customers must be active and linked to the fixed application by an active tenant
+surface. Source application, policy, contract and grant are immutable.
+
+Deploy the updated `apid` and `schedd` to every serving node before creating
+version 2 sources. Pause those sources before rolling either daemon back; older
+binaries do not enforce the version 2 routing contract.
+
+Install the fresh schema in `pkg/commit/schema.sql`. For an existing outbox,
+explicitly apply `pkg/commit/schema_routing_upgrade.sql` before binding a version
+2 source. Existing version 1 sources need no upgrade. Rebinding is an owner
+migration: drain the old source and preserve its receipts before moving a database
+to a new source; automatic source upgrades are unsupported.
+
+Write business changes and this event in the **same PostgreSQL transaction**:
+
+```ts
+await insertCommitEvent(transaction, {
+  id: stableEventId,
+  type: "order.created",
+  data: { order_id: "order-123" },
+  routing: {
+    version: 2,
+    platform_tenant_id: customerId,
+    key: "order-123",
+  },
+});
+```
+
+Omit `platform_tenant_id` for account-scoped version 2 sources. Version 2 requires
+routing and a nonempty string, number or boolean key. The canonical key has the
+existing 256-byte work-policy bound. Same policy/customer/key shares a queue across
+sources; different customers or business keys have separate lanes. Numeric values
+such as `1` and `1.0` share a lane, while the string `"1"` is distinct. Queueing
+coordinates operation ownership; external side effects still need idempotency.
+
+The Go SDK accepts `CommitEventRequest.Routing` and Python accepts
+`insert_commit_event(..., routing={"version": 2, "key": "order-123",
+"platform_tenant_id": customer_id})`. All helpers insert through the caller's
+existing transaction and leave commit/rollback to the application.
+
+A receipt fixes the event type, payload **and routing**. A changed customer or key
+for the same source/event conflicts. Accepted retries return the original receipt
+before current source, customer, policy or release checks; source pause and
+customer suspension do not erase acceptance history. New work remains subject to
+those checks. This is the admission slice of application-level durable operations;
+managed effect delivery and a dedicated operation timeline are subsequent work.
+
 ## Transaction contract
 
 Install `pkg/commit/schema.sql` explicitly in the customer database. Insert the
@@ -43,8 +114,9 @@ Historical internal receipts keep their original `invocation_id`.
   `{"id":"<uuid>","type":"order.created","data":{"order_id":"one"}}`.
 - `GET /v1/commit-sources/{source}/events/{event}` recovers its acceptance receipt.
 
-Tenant-required destinations are rejected until verified tenant targeting is
-implemented. Customer-supplied tenant payload fields must never confer identity.
+Version 1 rejects tenant-required destinations. Version 2 permits them with
+explicit owner-authorized customer routing. Customer-supplied tenant payload
+fields must never confer identity.
 
 ## Qualification work remaining
 
@@ -67,8 +139,8 @@ implemented. Customer-supplied tenant payload fields must never confer identity.
    pass in their database/API integration gates; the complete combined fault
    matrix is still a production qualification task.
 4. Audit quota races with other invocation producers, source lifecycle, receipt
-   storage growth, and tenant-required destinations. Tenant targeting remains
-   explicitly unsupported; account isolation and stable replay have database tests.
+   storage growth, and version 2 customer destinations. Customer routing has
+   database/API tests; native consumer qualification remains required.
 
 Integration tests cover the relay's database behavior and concurrent receipt
 creation. The process and native gates below additionally verify scheduler
@@ -287,16 +359,27 @@ receipt in the same database transaction as managed owner state changes, so it
 survives operation/result retention. This interface remains under qualification.
 
 Commit targets request-serving apps through the managed Operations dispatcher.
-Each source fixes an active account-scoped queue policy with no environment pin
+Version 1 sources fix an active account-scoped queue policy with no environment pin
 and containing its application. The source UUID defines one serialization lane;
 the event UUID defines owner idempotency. Policies control leases, retry delay and
 attempt limits. The existing account lock and pending-operation quota serialize
 admissions with other managed work. Enabled sources prevent policy retirement
 and incompatible changes. Pause the source and finish outstanding work before
 retiring its policy. A retired or incompatible policy cannot be resumed.
-Worker/job and tenant-required destinations remain unsupported.
+Worker/job destinations remain unsupported. Version 2 customer sources permit
+tenant-required request applications under ADR-589.
 
 ## Consumer transaction recipe
+
+For managed HTTP operations with PostgreSQL business writes, use the
+[SDK transaction wrapper](operation-transactions.md). It commits the business
+writes and complete result/effect response together, then replays that response
+for the same operation without rerunning committed work. It checks the trusted
+account/app/customer scope and exact request input, including across deployment
+or generation changes. Install the receipt schema explicitly and retain receipts
+while their operations can replay.
+
+For consumers that own their event identity and receipt implementation:
 
 Use a consumer-owned table with `PRIMARY KEY (consumer, source, event_id)`. In the same
 transaction as the business effect, insert the stable CloudEvents source/ID pair using
@@ -372,3 +455,12 @@ replay, or clean up events. The managed first release supports one fixed source
 per database outbox, including when the same database has multiple credentials
 or DNS aliases. Do not rebind a live outbox: pause delivery and use a separately
 provisioned outbox/database for a new source.
+
+## Deliver operation effects
+
+Managed HTTP handlers can return a versioned result envelope that atomically
+queues signed webhook effects with completion. Customer-scoped Commit operations
+can target only explicitly subscribed receivers for that same authenticated
+customer, with an active linked app surface. See
+[managed operation effects](managed-operation-effects.md) for handler examples,
+receiver configuration, delivery status, and upgrade requirements.

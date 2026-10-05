@@ -466,8 +466,8 @@ func TestWakeCoord_RunningInstancesAbsorbWaiters(t *testing.T) {
 }
 
 // TestEngineWakeFanoutForRefreshesExistingFromLedger pins the Engine wiring
-// on both cache paths. Static app limits may be cached for 15 seconds, but
-// live capacity changes on every admission and must be read fresh.
+// across repeated policy resolutions. Live capacity changes on every
+// admission and must be read fresh.
 func TestEngineWakeFanoutForRefreshesExistingFromLedger(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanScale, 1024, 20)
@@ -488,9 +488,9 @@ func TestEngineWakeFanoutForRefreshesExistingFromLedger(t *testing.T) {
 		t.Fatalf("admit existing instance: %v", err)
 	}
 
-	cached := e.wakeFanoutFor(context.Background(), app.ID)
-	if cached.Existing != 1 {
-		t.Fatalf("cached Existing = %d, want 1; live capacity must not be cached", cached.Existing)
+	refreshed := e.wakeFanoutFor(context.Background(), app.ID)
+	if refreshed.Existing != 1 {
+		t.Fatalf("refreshed Existing = %d, want 1; live capacity must not be cached", refreshed.Existing)
 	}
 }
 

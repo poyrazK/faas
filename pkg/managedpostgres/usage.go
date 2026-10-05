@@ -187,6 +187,7 @@ type usageCollectionWork struct {
 	observedAt  time.Time
 	to          time.Time
 	completed   bool
+	discover    bool
 	requests    int
 	included    bool
 	err         error
@@ -194,16 +195,24 @@ type usageCollectionWork struct {
 
 func (c *UsageCollector) prepareUsageCollection(ctx context.Context, database Database, to time.Time) *usageCollectionWork {
 	work := &usageCollectionWork{database: database, to: to}
-	if database.ProviderResourceID == "" {
-		work.err = ErrConflict
-		return work
-	}
 	backend, err := c.registry.Resolve(database.BackendID, database.BackendFingerprint)
 	if err != nil {
 		work.err = ErrUnavailable
 		return work
 	}
 	work.backend = backend
+	if database.ProviderResourceID == "" {
+		// An old unknown tombstone has no identity-based shutdown evidence.
+		// Discovery must not promote its logical deletion time to settlement.
+		if database.State == StateDeleted || database.LeaseUntil.After(c.now()) {
+			work.err = ErrUsageStale
+			return work
+		}
+		// Identity recovery gets one provider turn in the same fleet rounds
+		// and request budget as window recovery, after catalog preparation.
+		work.discover = true
+		return work
+	}
 	if database.RestoreSourceDatabaseID != "" && backend.Capabilities.RestoreUsageIncludedInSource {
 		// A restore descendant shares its root's aggregate and accounting
 		// endpoint, never an independent provider request or shutdown window.
@@ -273,6 +282,17 @@ func (c *UsageCollector) collectUsageRounds(ctx context.Context, work []*usageCo
 			if item.err != nil || item.included || item.completed || item.requests >= maximumUsageWindowsPerSweep {
 				continue
 			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if item.discover {
+				if !corrections {
+					attempted = true
+					item.requests++
+					item.err = c.recoverUsageIdentity(ctx, item)
+				}
+				continue
+			}
 			from := item.from
 			to := item.to
 			if corrections {
@@ -282,9 +302,6 @@ func (c *UsageCollector) collectUsageRounds(ctx context.Context, work []*usageCo
 				from = item.replayUntil.Add(-c.policy.Window)
 			} else if !from.Before(to) {
 				continue
-			}
-			if err := ctx.Err(); err != nil {
-				return err
 			}
 			attempted = true
 			item.requests++
@@ -302,6 +319,25 @@ func (c *UsageCollector) collectUsageRounds(ctx context.Context, work []*usageCo
 		}
 	}
 	return ctx.Err()
+}
+
+func (c *UsageCollector) recoverUsageIdentity(ctx context.Context, work *usageCollectionWork) error {
+	identity, err := discoverResource(ctx, work.backend.Provider, work.database)
+	if errors.Is(err, ErrNotFound) {
+		return ErrUsageStale
+	}
+	if err != nil {
+		return err
+	}
+	if err := c.store.RecordDiscoveredResource(ctx, work.database, identity, c.now()); err != nil {
+		return err
+	}
+	database := work.database
+	database.ProviderResourceID = identity
+	next := c.prepareUsageCollection(ctx, database, work.to)
+	next.requests = work.requests
+	*work = *next
+	return work.err
 }
 
 func (c *UsageCollector) finishUsageCollection(ctx context.Context, work []*usageCollectionWork, interrupted error, summary *UsageCollectionSummary) error {

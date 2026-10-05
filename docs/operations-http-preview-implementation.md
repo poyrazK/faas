@@ -538,3 +538,30 @@ configuration, deployment or native rollout is installed by this release.
 Portable local qualification receipts remain preserved with source hashes;
 integration with current main and current-head Linux CI must qualify the combined
 source. Native KVM, leakcheck and fleet rollout/rollback remain activation gates.
+
+The release integration preserves main `debf579635a7ea9f6c4e5c6650bb6b24f8222e2e`,
+including managed-operation transactions, environment clones and object-version
+protection. Customer HTTP SDK modules now use distinct filenames where main
+introduced managed-operation modules. The incoming managed implementations are
+byte-identical after resolution. SQLC reproduced all current configured inputs
+and outputs; the current main schema is retained exactly with the two additive
+Operations schema changes appended.
+
+Current integration passed complete Go SDK race tests, Node unit/generator/bridge
+tests, focused CLI and preview-policy race tests, OpenAPI/DTO/SDK coverage and
+static checks. Python unit tests passed after preserving the incoming managed
+exports. Current-source SDK reproduction is qualified separately. A broader
+scheduler test build exhausted owned temporary space; no scheduler runtime
+qualification is claimed from that attempt. Other builds remained running.
+Linux CI now explicitly enables the portable PostgreSQL/HTTP/SDK acceptance
+fixture in the existing API shard and builds its Node SDK first. This test uses
+a local HTTP bridge and does not qualify native VM lifecycle or activation.
+The exact-package state coverage floor remains 70%.
+
+The final Python SDK reproduced identically across two isolated current-spec
+generator passes while preserving all seventeen handwritten helpers. Its unit
+suite passed with 221 tests, four PostgreSQL-dependent skips and the separate
+regeneration tripwire excluded. Node passed 106 unit tests, eight generator
+tests and one bridge test. The production CLI generated the current reference,
+including the complete customer-operations command group. Local interrupted
+builds and their disk-guard receipts remain preserved as stopped attempts.

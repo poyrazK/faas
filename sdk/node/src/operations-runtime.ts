@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
-import { operationAPIBase, operationResponse, operationJSON, type Operation, type OperationReport, type OperationArtifactReport } from './operations.js';
+import { operationAPIBase, operationResponse, operationJSON, type Operation, type OperationReport, type OperationArtifactReport } from './customer-operations.js';
 
 export interface OperationExecutionContext { id: string; attempt: number; capability: string; invocationID: string }
 export interface GregaleOperationsOptions { apiURL: string; identityEndpoint?: string; fetch?: typeof globalThis.fetch; timeoutMs?: number }

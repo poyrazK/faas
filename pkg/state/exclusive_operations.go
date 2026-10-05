@@ -31,31 +31,32 @@ type ExclusiveWorkPolicy struct {
 }
 
 type ExclusiveOperation struct {
-	ID                string               `json:"id"`
-	AccountID         string               `json:"-"`
-	KeyID             string               `json:"-"`
-	AppID             string               `json:"app_id,omitempty"`
-	JobID             string               `json:"job_id,omitempty"`
-	PlatformTenantID  string               `json:"platform_tenant_id,omitempty"`
-	Sequence          int64                `json:"sequence"`
-	State             string               `json:"state"`
-	PolicyRevision    int64                `json:"policy_revision"`
-	Policy            exclusivework.Policy `json:"-"`
-	Request           json.RawMessage      `json:"-"`
-	RequestDigest     []byte               `json:"-"`
-	EquivalenceDigest []byte               `json:"-"`
-	IdempotencyDigest []byte               `json:"-"`
-	Generation        int64                `json:"generation"`
-	ClaimToken        string               `json:"-"`
-	IncarnationID     string               `json:"-"`
-	LeaseExpiresAt    *time.Time           `json:"lease_expires_at,omitempty"`
-	AttemptDeadline   *time.Time           `json:"attempt_deadline,omitempty"`
-	Result            json.RawMessage      `json:"result,omitempty"`
-	LastError         string               `json:"last_error,omitempty"`
-	CreatedAt         time.Time            `json:"created_at"`
-	DueAt             time.Time            `json:"due_at"`
-	Attempts          int                  `json:"attempts"`
-	QuotaReserved     bool                 `json:"-"`
+	ID                string                      `json:"id"`
+	AccountID         string                      `json:"-"`
+	KeyID             string                      `json:"-"`
+	AppID             string                      `json:"app_id,omitempty"`
+	JobID             string                      `json:"job_id,omitempty"`
+	PlatformTenantID  string                      `json:"platform_tenant_id,omitempty"`
+	Sequence          int64                       `json:"sequence"`
+	State             string                      `json:"state"`
+	PolicyRevision    int64                       `json:"policy_revision"`
+	Policy            exclusivework.Policy        `json:"-"`
+	Request           json.RawMessage             `json:"-"`
+	RequestDigest     []byte                      `json:"-"`
+	EquivalenceDigest []byte                      `json:"-"`
+	IdempotencyDigest []byte                      `json:"-"`
+	Generation        int64                       `json:"generation"`
+	ClaimToken        string                      `json:"-"`
+	IncarnationID     string                      `json:"-"`
+	LeaseExpiresAt    *time.Time                  `json:"lease_expires_at,omitempty"`
+	AttemptDeadline   *time.Time                  `json:"attempt_deadline,omitempty"`
+	Result            json.RawMessage             `json:"result,omitempty"`
+	Effects           []api.OperationEffectRecord `json:"effects,omitempty"`
+	LastError         string                      `json:"last_error,omitempty"`
+	CreatedAt         time.Time                   `json:"created_at"`
+	DueAt             time.Time                   `json:"due_at"`
+	Attempts          int                         `json:"attempts"`
+	QuotaReserved     bool                        `json:"-"`
 	// Replayed marks a receipt returned for an already accepted idempotency
 	// identity. It is not persisted and is distinct from joining active work.
 	Replayed    bool       `json:"-"`
@@ -159,6 +160,7 @@ type exclusiveTransaction interface {
 	insert(ExclusiveOperation) (ExclusiveOperation, error)
 	save(ExclusiveOperation) error
 	effects(ExclusiveOperation, []exclusivework.Effect) error
+	effectRecords(ExclusiveOperation) ([]api.OperationEffectRecord, error)
 }
 
 type exclusiveAtomic func(context.Context, func(exclusiveTransaction) error) error
@@ -645,9 +647,17 @@ func commitExclusive(ctx context.Context, atomic exclusiveAtomic, claim exclusiv
 		return ErrInvalidArgument
 	}
 	names := make(map[string]bool, len(effects))
-	for _, effect := range effects {
-		if !exclusivework.NamePattern.MatchString(effect.Name) || names[effect.Name] || len(effect.Payload) > 64<<10 || !json.Valid(effect.Payload) {
+	effects = slices.Clone(effects)
+	for i, effect := range effects {
+		if !exclusivework.NamePattern.MatchString(effect.Name) || names[effect.Name] || len(effect.Payload) > api.MaxExclusiveEffectPayloadBytes || !json.Valid(effect.Payload) {
 			return ErrInvalidArgument
+		}
+		if effect.WebhookID != "" || effect.Type != "" {
+			id, err := uuid.Parse(effect.WebhookID)
+			if err != nil || len(effect.Type) > api.MaxExclusiveEffectTypeBytes || !exclusivework.EffectTypePattern.MatchString(effect.Type) {
+				return ErrInvalidArgument
+			}
+			effects[i].WebhookID = id.String()
 		}
 		names[effect.Name] = true
 	}
@@ -657,6 +667,11 @@ func commitExclusive(ctx context.Context, atomic exclusiveAtomic, claim exclusiv
 			return err
 		}
 		if err := tx.effects(op, effects); err != nil {
+			return err
+		}
+		// Resolving destinations can wait on row locks. Sample the clock again
+		// after those locks: a lease that expired while waiting cannot publish.
+		if _, now, err = validateExclusiveOwner(tx, claim); err != nil {
 			return err
 		}
 		op.State, op.Result, op.CompletedAt = "completed", slices.Clone(result), &now

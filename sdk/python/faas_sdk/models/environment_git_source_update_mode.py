@@ -1,9 +1,8 @@
 from typing import Literal
 
-EnvironmentGitSourceUpdateMode = Literal["enforce", "report"]
+EnvironmentGitSourceUpdateMode = Literal["report"]
 
 ENVIRONMENT_GIT_SOURCE_UPDATE_MODE_VALUES: set[EnvironmentGitSourceUpdateMode] = {
-    "enforce",
     "report",
 }
 

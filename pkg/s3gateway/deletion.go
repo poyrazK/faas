@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -44,10 +45,13 @@ func (h *Handler) deleteObjectIntent(ctx context.Context, req requestContext, ke
 		return nil
 	}
 	svc := objectstorage.DeletionService{Store: st, Provider: req.provider, BeforeRequest: before}
-	j, e := svc.Start(ctx, req.bucket, key, selector, id, h.registry.Accounting)
-	if e == nil && j.State != "completed" {
-		e = objectstorage.ErrUnavailable
-	}
+	j, e := objectstorageactivity.Execute(ctx, h.store, req.bucket, func(mutationCtx context.Context) (state.ObjectDeletion, error) {
+		j, err := svc.Start(mutationCtx, req.bucket, key, selector, id, h.registry.Accounting)
+		if err == nil && j.State != "completed" {
+			err = objectstorage.ErrUnavailable
+		}
+		return j, err
+	})
 	return j, e
 }
 func (h *Handler) deleteCurrentObject(w http.ResponseWriter, r *http.Request, req requestContext, key string) {

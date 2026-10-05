@@ -1,9 +1,8 @@
 from typing import Literal
 
-CreateEnvironmentGitSourceRequestMode = Literal["enforce", "report"]
+CreateEnvironmentGitSourceRequestMode = Literal["report"]
 
 CREATE_ENVIRONMENT_GIT_SOURCE_REQUEST_MODE_VALUES: set[CreateEnvironmentGitSourceRequestMode] = {
-    "enforce",
     "report",
 }
 

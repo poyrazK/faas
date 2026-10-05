@@ -96,6 +96,19 @@ func (s *appSecretCredentialSink) SealCredential(ctx context.Context, binding ma
 	return managedpostgres.SealedCredential{ProviderIdentityID: material.ProviderIdentityID, Ref: credentialRef, Ciphertext: ciphertext, Kid: recipient.String(), ValueHash: valueHash}, nil
 }
 
+func (s *appSecretCredentialSink) seal(ctx context.Context, binding managedpostgres.Binding, material managedpostgres.CredentialMaterial) (state.AppSecret, string, error) {
+	sealed, err := s.SealCredential(ctx, binding, material)
+	if err != nil {
+		return state.AppSecret{}, "", err
+	}
+	return state.AppSecret{
+		AccountID: binding.AccountID, AppID: binding.AppID, Scope: binding.Scope, Key: binding.EnvironmentKey,
+		Ciphertext: sealed.Ciphertext, Kid: sealed.Kid, ValueHash: sealed.ValueHash,
+		ManagedPostgresBindingID: binding.ID, ManagedPostgresAccess: string(binding.Access),
+		ManagedCredentialRef: sealed.Ref, ManagedCredentialGeneration: binding.CredentialGeneration,
+	}, sealed.Ref, nil
+}
+
 func (s *appSecretCredentialSink) Delete(ctx context.Context, binding managedpostgres.Binding) error {
 	currentRef, err := managedPostgresCredentialRef(binding)
 	if err != nil {
@@ -167,7 +180,9 @@ func selectManagedPostgresEndpoint(access managedpostgres.CredentialAccess, endp
 				return endpoint, true
 			}
 		}
-		return managedpostgres.Endpoint{}, false
+		// Read-only is enforced by the qualified role's SQL privileges. A
+		// replica endpoint is optional; primary pooled/direct connections
+		// preserve the same permission contract and read-after-write behavior.
 	}
 	if access == managedpostgres.CredentialMigration {
 		for _, endpoint := range endpoints {
@@ -177,7 +192,7 @@ func selectManagedPostgresEndpoint(access managedpostgres.CredentialAccess, endp
 		}
 		return managedpostgres.Endpoint{}, false
 	}
-	if access != managedpostgres.CredentialReadWrite {
+	if access != managedpostgres.CredentialReadWrite && access != managedpostgres.CredentialReadOnly {
 		return managedpostgres.Endpoint{}, false
 	}
 	for _, preferred := range []managedpostgres.EndpointRole{managedpostgres.EndpointPooled, managedpostgres.EndpointDirect} {

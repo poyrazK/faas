@@ -157,20 +157,6 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 	if got := listResp.Secrets[0]; got.DeliveryVersion != 1 || got.DeliveryStatus != string(state.SecretDeliveryPending) {
 		t.Errorf("new secret delivery = version %d status %q, want 1/pending", got.DeliveryVersion, got.DeliveryStatus)
 	}
-	if _, err := e.store.RecordAppSecretDelivery(context.Background(), state.AppSecretDeliveryResult{
-		AccountID: e.acct.ID, AppID: app.ID, WakeID: "wake-delivered", InstanceID: "instance-delivered",
-		Status: state.SecretDeliveryDelivered, AttemptedAt: time.Now().UTC(),
-		Candidates: []state.AppSecretDeliveryCandidate{{Scope: api.DefaultEnvScope, Key: "STRIPE_KEY", Version: 1}},
-	}); err != nil {
-		t.Fatalf("record delivery: %v", err)
-	}
-	listRec = e.do(t, "GET", "/v1/apps/"+app.Slug+"/secrets", nil, nil)
-	if err := json.Unmarshal(listRec.Body.Bytes(), &listResp); err != nil {
-		t.Fatalf("decode delivered list: %v", err)
-	}
-	if got := listResp.Secrets[0]; got.DeliveryStatus != string(state.SecretDeliveryDelivered) || got.DeliveredVersion != 1 || got.LastDeliveredWakeID != "wake-delivered" {
-		t.Errorf("delivered metadata = %+v", got)
-	}
 	deployment, err := e.store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:reload-test",
 		Status: state.DeployLive,
@@ -181,6 +167,28 @@ func TestSecrets_PutGetDeleteRoundTrip(t *testing.T) {
 	firstRuntime, err := e.store.CreateInstance(context.Background(), app.ID, deployment.ID, string(state.StateRunning), 256, "test-node", "")
 	if err != nil {
 		t.Fatalf("create first runtime: %v", err)
+	}
+	snapshot, err := e.store.RuntimeAppValuesForDeployment(context.Background(), e.acct.ID, app.ID, deployment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence, err := state.NewRuntimeAppSecretFence(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.RecordAppSecretDelivery(context.Background(), state.AppSecretDeliveryResult{
+		Fence: fence, AccountID: e.acct.ID, AppID: app.ID, WakeID: firstRuntime.WakeID, InstanceID: firstRuntime.ID,
+		Status: state.SecretDeliveryDelivered, AttemptedAt: time.Now().UTC(),
+		Candidates: []state.AppSecretDeliveryCandidate{{Scope: api.DefaultEnvScope, Key: "STRIPE_KEY", Version: 1}},
+	}); err != nil {
+		t.Fatalf("record delivery: %v", err)
+	}
+	listRec = e.do(t, "GET", "/v1/apps/"+app.Slug+"/secrets", nil, nil)
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode delivered list: %v", err)
+	}
+	if got := listResp.Secrets[0]; got.DeliveryStatus != string(state.SecretDeliveryDelivered) || got.DeliveredVersion != 1 || got.LastDeliveredWakeID != firstRuntime.WakeID {
+		t.Errorf("delivered metadata = %+v", got)
 	}
 	secondRuntime, err := e.store.CreateInstance(context.Background(), app.ID, deployment.ID, string(state.StateRunning), 256, "test-node", "")
 	if err != nil {

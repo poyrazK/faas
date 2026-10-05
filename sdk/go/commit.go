@@ -1,12 +1,15 @@
 package faas
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math/big"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -43,6 +46,27 @@ func InsertCommitEvent(ctx context.Context, tx *sql.Tx, event CommitEventRequest
 	if !json.Valid(event.Data) {
 		return "", errors.New("commit: event data must be valid JSON")
 	}
+	if event.Routing != nil {
+		routing := *event.Routing
+		if routing.Version != 2 || !commitRoutingKey(routing.Key) {
+			return "", errors.New("commit: routing requires version 2 and a bounded nonempty scalar key")
+		}
+		if routing.PlatformTenantID != "" {
+			routing.PlatformTenantID = strings.ToLower(routing.PlatformTenantID)
+			if !commitUUID(routing.PlatformTenantID) {
+				return "", errors.New("commit: routing customer must be a UUID")
+			}
+		}
+		encoded, err := json.Marshal(routing)
+		if err != nil {
+			return "", err
+		}
+		_, err = tx.ExecContext(ctx, "INSERT INTO public.gregale_outbox(event_id,event_type,payload,routing) VALUES ($1::uuid,$2,$3::jsonb,$4::jsonb)", identity, event.Type, string(event.Data), string(encoded))
+		if err != nil {
+			return "", err
+		}
+		return identity, nil
+	}
 	_, err := tx.ExecContext(ctx, "INSERT INTO public.gregale_outbox(event_id,event_type,payload) VALUES ($1::uuid,$2,$3::jsonb)", identity, event.Type, string(event.Data))
 	if err != nil {
 		return "", err
@@ -66,4 +90,37 @@ func commitUUID(value string) bool {
 		}
 	}
 	return true
+}
+
+// Match the server's type-prefixed 256-byte business key contract.
+func commitRoutingKey(raw json.RawMessage) bool {
+	if !json.Valid(raw) {
+		return false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if decoder.Decode(&value) != nil {
+		return false
+	}
+	switch key := value.(type) {
+	case string:
+		return key != "" && len(key)+2 <= 256
+	case bool:
+		return true
+	case json.Number:
+		if len(key) > 256 {
+			return false
+		}
+		if pos := strings.IndexAny(string(key), "eE"); pos >= 0 {
+			exponent, err := strconv.Atoi(string(key)[pos+1:])
+			if err != nil || exponent < -256 || exponent > 256 {
+				return false
+			}
+		}
+		number, ok := new(big.Rat).SetString(string(key))
+		return ok && len(number.RatString())+2 <= 256
+	default:
+		return false
+	}
 }

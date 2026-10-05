@@ -380,7 +380,10 @@ from .commit_event_request import CommitEventRequest
 from .commit_operation_response import CommitOperationResponse
 from .commit_operation_response_state import CommitOperationResponseState
 from .commit_receipt_response import CommitReceiptResponse
+from .commit_routing import CommitRouting
+from .commit_routing_version import CommitRoutingVersion
 from .commit_source_response import CommitSourceResponse
+from .commit_source_response_contract_version import CommitSourceResponseContractVersion
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
@@ -423,6 +426,8 @@ from .create_app_webhook_request_delivery_format import CreateAppWebhookRequestD
 from .create_app_webhook_request_event_filter_item import CreateAppWebhookRequestEventFilterItem
 from .create_app_webhook_request_retry_policy import CreateAppWebhookRequestRetryPolicy
 from .create_commit_source_body import CreateCommitSourceBody
+from .create_commit_source_request import CreateCommitSourceRequest
+from .create_commit_source_request_contract_version import CreateCommitSourceRequestContractVersion
 from .create_consumer_key_request import CreateConsumerKeyRequest
 from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestScopesItem
 from .create_cors_preset_request import CreateCorsPresetRequest
@@ -514,6 +519,9 @@ from .create_project_environment_approval_request import CreateProjectEnvironmen
 from .create_project_environment_qualification_request import CreateProjectEnvironmentQualificationRequest
 from .create_project_environment_qualification_request_secret_revision_hashes import (
     CreateProjectEnvironmentQualificationRequestSecretRevisionHashes,
+)
+from .create_project_environment_qualification_request_workload_config_hashes import (
+    CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes,
 )
 from .create_project_environment_request import CreateProjectEnvironmentRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
@@ -695,6 +703,7 @@ from .deployment_response_stage_state import DeploymentResponseStageState
 from .deployment_response_tag import DeploymentResponseTag
 from .deployment_route_policy_snapshot_response import DeploymentRoutePolicySnapshotResponse
 from .deployment_summary_response import DeploymentSummaryResponse
+from .detach_environment_git_source_request import DetachEnvironmentGitSourceRequest
 from .dev_bridge_activity import DevBridgeActivity
 from .dev_bridge_activity_connection_state import DevBridgeActivityConnectionState
 from .dev_bridge_credentials import DevBridgeCredentials
@@ -814,6 +823,10 @@ from .environment_definition_configuration import EnvironmentDefinitionConfigura
 from .environment_definition_queue_pruning_policy import EnvironmentDefinitionQueuePruningPolicy
 from .environment_definition_workloads import EnvironmentDefinitionWorkloads
 from .environment_desired_revision import EnvironmentDesiredRevision
+from .environment_field_ownership_request import EnvironmentFieldOwnershipRequest
+from .environment_field_ownership_request_manager import EnvironmentFieldOwnershipRequestManager
+from .environment_field_ownership_response import EnvironmentFieldOwnershipResponse
+from .environment_field_ownership_response_status import EnvironmentFieldOwnershipResponseStatus
 from .environment_git_ops_change import EnvironmentGitOpsChange
 from .environment_git_ops_override_request import EnvironmentGitOpsOverrideRequest
 from .environment_git_ops_plan import EnvironmentGitOpsPlan
@@ -1222,10 +1235,23 @@ from .magic_link_signup_request import MagicLinkSignupRequest
 from .managed_execution_workflow_artifact_input import ManagedExecutionWorkflowArtifactInput
 from .managed_execution_workflow_response import ManagedExecutionWorkflowResponse
 from .managed_execution_workflow_response_status import ManagedExecutionWorkflowResponseStatus
+from .managed_operation_effect import ManagedOperationEffect
+from .managed_operation_result import ManagedOperationResult
+from .managed_operation_result_gregale_operation_result import ManagedOperationResultGregaleOperationResult
+from .managed_postgres_accounting_diagnostic import ManagedPostgresAccountingDiagnostic
+from .managed_postgres_accounting_diagnostic_reasons_item import ManagedPostgresAccountingDiagnosticReasonsItem
+from .managed_postgres_accounting_diagnostic_state import ManagedPostgresAccountingDiagnosticState
+from .managed_postgres_accounting_diagnostics_response import ManagedPostgresAccountingDiagnosticsResponse
+from .managed_postgres_accounting_reconciliation_request import ManagedPostgresAccountingReconciliationRequest
+from .managed_postgres_accounting_reconciliation_result import ManagedPostgresAccountingReconciliationResult
 from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
 from .managed_postgres_binding_state import ManagedPostgresBindingState
+from .managed_postgres_capabilities import ManagedPostgresCapabilities
+from .managed_postgres_capabilities_availability_item import ManagedPostgresCapabilitiesAvailabilityItem
+from .managed_postgres_capabilities_credential_access_item import ManagedPostgresCapabilitiesCredentialAccessItem
+from .managed_postgres_capabilities_service_classes_item import ManagedPostgresCapabilitiesServiceClassesItem
 from .managed_postgres_cutover import ManagedPostgresCutover
 from .managed_postgres_cutover_member import ManagedPostgresCutoverMember
 from .managed_postgres_cutover_member_access import ManagedPostgresCutoverMemberAccess
@@ -1241,6 +1267,11 @@ from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeS
 from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
 from .managed_postgres_health_provider_status import ManagedPostgresHealthProviderStatus
 from .managed_postgres_health_status import ManagedPostgresHealthStatus
+from .managed_postgres_usage_import_reading import ManagedPostgresUsageImportReading
+from .managed_postgres_usage_import_reading_meter import ManagedPostgresUsageImportReadingMeter
+from .managed_postgres_usage_import_request import ManagedPostgresUsageImportRequest
+from .managed_postgres_usage_import_result import ManagedPostgresUsageImportResult
+from .managed_postgres_usage_import_window import ManagedPostgresUsageImportWindow
 from .managed_postgres_usage_line_item import ManagedPostgresUsageLineItem
 from .managed_postgres_usage_line_item_code import ManagedPostgresUsageLineItemCode
 from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperatorResponse
@@ -1398,6 +1429,19 @@ from .object_tagging_result_tags import ObjectTaggingResultTags
 from .object_upload_route import ObjectUploadRoute
 from .object_upload_route_list import ObjectUploadRouteList
 from .object_version_delete_result import ObjectVersionDeleteResult
+from .object_version_legal_hold import ObjectVersionLegalHold
+from .object_version_legal_hold_request import ObjectVersionLegalHoldRequest
+from .object_version_legal_hold_result import ObjectVersionLegalHoldResult
+from .object_version_legal_hold_status import ObjectVersionLegalHoldStatus
+from .object_version_protection import ObjectVersionProtection
+from .object_version_protection_kind import ObjectVersionProtectionKind
+from .object_version_protection_last_error_code import ObjectVersionProtectionLastErrorCode
+from .object_version_protection_state import ObjectVersionProtectionState
+from .object_version_retention import ObjectVersionRetention
+from .object_version_retention_event_hold import ObjectVersionRetentionEventHold
+from .object_version_retention_mode import ObjectVersionRetentionMode
+from .object_version_retention_request import ObjectVersionRetentionRequest
+from .object_version_retention_result import ObjectVersionRetentionResult
 from .object_write_receipt import ObjectWriteReceipt
 from .object_write_receipt_error_code import ObjectWriteReceiptErrorCode
 from .object_write_receipt_list import ObjectWriteReceiptList
@@ -1451,6 +1495,9 @@ from .operation_doctor_response import OperationDoctorResponse
 from .operation_doctor_response_observation_scope import OperationDoctorResponseObservationScope
 from .operation_doctor_response_plan import OperationDoctorResponsePlan
 from .operation_doctor_response_submission_state import OperationDoctorResponseSubmissionState
+from .operation_effect_payload import OperationEffectPayload
+from .operation_effect_record import OperationEffectRecord
+from .operation_effect_record_status import OperationEffectRecordStatus
 from .operation_event import OperationEvent
 from .operation_event_type import OperationEventType
 from .operation_events_response import OperationEventsResponse
@@ -1734,6 +1781,10 @@ from .project_environment_binding_change_response_change import ProjectEnvironme
 from .project_environment_binding_change_response_kind import ProjectEnvironmentBindingChangeResponseKind
 from .project_environment_binding_response import ProjectEnvironmentBindingResponse
 from .project_environment_binding_response_kind import ProjectEnvironmentBindingResponseKind
+from .project_environment_clone_operation_response import ProjectEnvironmentCloneOperationResponse
+from .project_environment_clone_operation_response_status import ProjectEnvironmentCloneOperationResponseStatus
+from .project_environment_clone_resource_response import ProjectEnvironmentCloneResourceResponse
+from .project_environment_clone_resource_response_status import ProjectEnvironmentCloneResourceResponseStatus
 from .project_environment_clone_response import ProjectEnvironmentCloneResponse
 from .project_environment_clone_response_shared_resources_item import ProjectEnvironmentCloneResponseSharedResourcesItem
 from .project_environment_config_change import ProjectEnvironmentConfigChange
@@ -1801,9 +1852,19 @@ from .project_environment_qualification_response_secret_revision_hashes import (
     ProjectEnvironmentQualificationResponseSecretRevisionHashes,
 )
 from .project_environment_qualification_response_status import ProjectEnvironmentQualificationResponseStatus
+from .project_environment_qualification_response_workload_config_hashes import (
+    ProjectEnvironmentQualificationResponseWorkloadConfigHashes,
+)
 from .project_environment_qualification_result import ProjectEnvironmentQualificationResult
 from .project_environment_qualification_result_error_code import ProjectEnvironmentQualificationResultErrorCode
 from .project_environment_qualification_result_status import ProjectEnvironmentQualificationResultStatus
+from .project_environment_queue_binding import ProjectEnvironmentQueueBinding
+from .project_environment_queue_binding_mode import ProjectEnvironmentQueueBindingMode
+from .project_environment_queue_binding_workload_class import ProjectEnvironmentQueueBindingWorkloadClass
+from .project_environment_queue_bindings_response import ProjectEnvironmentQueueBindingsResponse
+from .project_environment_queue_bindings_response_activation_state import (
+    ProjectEnvironmentQueueBindingsResponseActivationState,
+)
 from .project_environment_release_diff_response import ProjectEnvironmentReleaseDiffResponse
 from .project_environment_release_diff_response_kind import ProjectEnvironmentReleaseDiffResponseKind
 from .project_environment_release_list_response import ProjectEnvironmentReleaseListResponse
@@ -1912,6 +1973,8 @@ from .queue_workload_profile_request_workload_class import QueueWorkloadProfileR
 from .queue_workload_profile_response import QueueWorkloadProfileResponse
 from .quota_block import QuotaBlock
 from .raise_overage_cap_request import RaiseOverageCapRequest
+from .rebind_environment_git_source_request import RebindEnvironmentGitSourceRequest
+from .rebind_environment_git_source_request_approval_policy import RebindEnvironmentGitSourceRequestApprovalPolicy
 from .receive_inbound_webhook_body import ReceiveInboundWebhookBody
 from .record_dev_sync_request import RecordDevSyncRequest
 from .record_dev_sync_request_status import RecordDevSyncRequestStatus
@@ -1928,6 +1991,7 @@ from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOps
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
+from .replace_project_environment_queue_bindings_request import ReplaceProjectEnvironmentQueueBindingsRequest
 from .replay_dev_bridge_webhook_request import ReplayDevBridgeWebhookRequest
 from .replay_event_fanout_failure_request import ReplayEventFanoutFailureRequest
 from .replay_event_fanout_failure_response import ReplayEventFanoutFailureResponse
@@ -2924,7 +2988,10 @@ __all__ = (
     "CommitOperationResponse",
     "CommitOperationResponseState",
     "CommitReceiptResponse",
+    "CommitRouting",
+    "CommitRoutingVersion",
     "CommitSourceResponse",
+    "CommitSourceResponseContractVersion",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
@@ -2967,6 +3034,8 @@ __all__ = (
     "CreateAppWebhookRequestEventFilterItem",
     "CreateAppWebhookRequestRetryPolicy",
     "CreateCommitSourceBody",
+    "CreateCommitSourceRequest",
+    "CreateCommitSourceRequestContractVersion",
     "CreateConsumerKeyRequest",
     "CreateConsumerKeyRequestScopesItem",
     "CreateCorsPresetRequest",
@@ -3051,6 +3120,7 @@ __all__ = (
     "CreateProjectEnvironmentApprovalRequest",
     "CreateProjectEnvironmentQualificationRequest",
     "CreateProjectEnvironmentQualificationRequestSecretRevisionHashes",
+    "CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes",
     "CreateProjectEnvironmentRequest",
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
@@ -3227,6 +3297,7 @@ __all__ = (
     "DeployTokenResponse",
     "DeployTokenResponseScopesItem",
     "DeployTokenResponseStatus",
+    "DetachEnvironmentGitSourceRequest",
     "DevBridgeActivity",
     "DevBridgeActivityConnectionState",
     "DevBridgeCredentials",
@@ -3344,6 +3415,10 @@ __all__ = (
     "EnvironmentDefinitionQueuePruningPolicy",
     "EnvironmentDefinitionWorkloads",
     "EnvironmentDesiredRevision",
+    "EnvironmentFieldOwnershipRequest",
+    "EnvironmentFieldOwnershipRequestManager",
+    "EnvironmentFieldOwnershipResponse",
+    "EnvironmentFieldOwnershipResponseStatus",
     "EnvironmentGitOpsChange",
     "EnvironmentGitOpsOverrideRequest",
     "EnvironmentGitOpsPlan",
@@ -3750,10 +3825,23 @@ __all__ = (
     "ManagedExecutionWorkflowArtifactInput",
     "ManagedExecutionWorkflowResponse",
     "ManagedExecutionWorkflowResponseStatus",
+    "ManagedOperationEffect",
+    "ManagedOperationResult",
+    "ManagedOperationResultGregaleOperationResult",
+    "ManagedPostgresAccountingDiagnostic",
+    "ManagedPostgresAccountingDiagnosticReasonsItem",
+    "ManagedPostgresAccountingDiagnosticsResponse",
+    "ManagedPostgresAccountingDiagnosticState",
+    "ManagedPostgresAccountingReconciliationRequest",
+    "ManagedPostgresAccountingReconciliationResult",
     "ManagedPostgresBinding",
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",
     "ManagedPostgresBindingState",
+    "ManagedPostgresCapabilities",
+    "ManagedPostgresCapabilitiesAvailabilityItem",
+    "ManagedPostgresCapabilitiesCredentialAccessItem",
+    "ManagedPostgresCapabilitiesServiceClassesItem",
     "ManagedPostgresCutover",
     "ManagedPostgresCutoverMember",
     "ManagedPostgresCutoverMemberAccess",
@@ -3769,6 +3857,11 @@ __all__ = (
     "ManagedPostgresHealthLastErrorCode",
     "ManagedPostgresHealthProviderStatus",
     "ManagedPostgresHealthStatus",
+    "ManagedPostgresUsageImportReading",
+    "ManagedPostgresUsageImportReadingMeter",
+    "ManagedPostgresUsageImportRequest",
+    "ManagedPostgresUsageImportResult",
+    "ManagedPostgresUsageImportWindow",
     "ManagedPostgresUsageLineItem",
     "ManagedPostgresUsageLineItemCode",
     "ManagedPostgresUsageOperatorResponse",
@@ -3924,6 +4017,19 @@ __all__ = (
     "ObjectUploadRoute",
     "ObjectUploadRouteList",
     "ObjectVersionDeleteResult",
+    "ObjectVersionLegalHold",
+    "ObjectVersionLegalHoldRequest",
+    "ObjectVersionLegalHoldResult",
+    "ObjectVersionLegalHoldStatus",
+    "ObjectVersionProtection",
+    "ObjectVersionProtectionKind",
+    "ObjectVersionProtectionLastErrorCode",
+    "ObjectVersionProtectionState",
+    "ObjectVersionRetention",
+    "ObjectVersionRetentionEventHold",
+    "ObjectVersionRetentionMode",
+    "ObjectVersionRetentionRequest",
+    "ObjectVersionRetentionResult",
     "ObjectWriteReceipt",
     "ObjectWriteReceiptErrorCode",
     "ObjectWriteReceiptList",
@@ -3975,6 +4081,9 @@ __all__ = (
     "OperationDoctorResponseObservationScope",
     "OperationDoctorResponsePlan",
     "OperationDoctorResponseSubmissionState",
+    "OperationEffectPayload",
+    "OperationEffectRecord",
+    "OperationEffectRecordStatus",
     "OperationEvent",
     "OperationEventsResponse",
     "OperationEventType",
@@ -4238,6 +4347,10 @@ __all__ = (
     "ProjectEnvironmentBindingChangeResponseKind",
     "ProjectEnvironmentBindingResponse",
     "ProjectEnvironmentBindingResponseKind",
+    "ProjectEnvironmentCloneOperationResponse",
+    "ProjectEnvironmentCloneOperationResponseStatus",
+    "ProjectEnvironmentCloneResourceResponse",
+    "ProjectEnvironmentCloneResourceResponseStatus",
     "ProjectEnvironmentCloneResponse",
     "ProjectEnvironmentCloneResponseSharedResourcesItem",
     "ProjectEnvironmentConfigChange",
@@ -4285,9 +4398,15 @@ __all__ = (
     "ProjectEnvironmentQualificationResponse",
     "ProjectEnvironmentQualificationResponseSecretRevisionHashes",
     "ProjectEnvironmentQualificationResponseStatus",
+    "ProjectEnvironmentQualificationResponseWorkloadConfigHashes",
     "ProjectEnvironmentQualificationResult",
     "ProjectEnvironmentQualificationResultErrorCode",
     "ProjectEnvironmentQualificationResultStatus",
+    "ProjectEnvironmentQueueBinding",
+    "ProjectEnvironmentQueueBindingMode",
+    "ProjectEnvironmentQueueBindingsResponse",
+    "ProjectEnvironmentQueueBindingsResponseActivationState",
+    "ProjectEnvironmentQueueBindingWorkloadClass",
     "ProjectEnvironmentReleaseDiffResponse",
     "ProjectEnvironmentReleaseDiffResponseKind",
     "ProjectEnvironmentReleaseListResponse",
@@ -4396,6 +4515,8 @@ __all__ = (
     "QueueWorkloadProfileResponse",
     "QuotaBlock",
     "RaiseOverageCapRequest",
+    "RebindEnvironmentGitSourceRequest",
+    "RebindEnvironmentGitSourceRequestApprovalPolicy",
     "ReceiveInboundWebhookBody",
     "RecordDevSyncRequest",
     "RecordDevSyncRequestStatus",
@@ -4412,6 +4533,7 @@ __all__ = (
     "RenameAppRequest",
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
+    "ReplaceProjectEnvironmentQueueBindingsRequest",
     "ReplayDevBridgeWebhookRequest",
     "ReplayEventFanoutFailureRequest",
     "ReplayEventFanoutFailureResponse",

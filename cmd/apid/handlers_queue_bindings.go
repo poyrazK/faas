@@ -118,6 +118,9 @@ func queueBindingTriggerID(ctx context.Context, store state.Store, appID, bindin
 }
 
 func (s *server) listQueueBindings(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -154,6 +157,9 @@ func (s *server) listQueueBindings(w http.ResponseWriter, r *http.Request, acct 
 // binding-scoped queue counters and the scheduler's last-known poll health.
 // Fleet-wide liveness and alerting remain observable through schedd metrics.
 func (s *server) getQueueBindingStatus(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -271,6 +277,9 @@ func queueBindingConsumerLiveness(now time.Time, health state.TriggerConsumerHea
 }
 
 func (s *server) createQueueBinding(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
 	var req api.CreateQueueBindingRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, queueBindingProblem(err.Error()))
@@ -362,6 +371,9 @@ func (s *server) createQueueBinding(w http.ResponseWriter, r *http.Request, acct
 }
 
 func (s *server) getQueueBinding(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
@@ -375,6 +387,9 @@ func (s *server) getQueueBinding(w http.ResponseWriter, r *http.Request, acct st
 }
 
 func (s *server) updateQueueBinding(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
 	var req api.UpdateQueueBindingRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, queueBindingProblem(err.Error()))
@@ -455,6 +470,9 @@ func (s *server) updateQueueBinding(w http.ResponseWriter, r *http.Request, acct
 }
 
 func (s *server) deleteQueueBinding(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
