@@ -325,7 +325,11 @@ SELECT current_database()::text AS database_name, current_user::text AS role_nam
  NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolcanlogin AND r.rolname<>current_user
    AND NOT r.rolsuper AND (pg_has_role(r.oid,d.datdba,'MEMBER') OR
      (current_setting('server_version_num')::integer<160000 AND r.rolcreaterole))) AS private_role,
- NOT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datid=d.oid AND a.usename IS DISTINCT FROM current_user) AS private_sessions
+ -- A row without a user is a server process (autovacuum worker, user-less
+ -- background worker, backend still authenticating), not a session. The
+ -- maintenance role cannot read backend_type, so usename is the test.
+ NOT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datid=d.oid AND a.usename IS NOT NULL
+   AND a.usename<>current_user) AS private_sessions
 FROM pg_database d WHERE d.datname=current_database()
 `
 

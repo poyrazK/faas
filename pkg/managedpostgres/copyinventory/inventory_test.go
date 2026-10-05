@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -106,6 +107,36 @@ func newInventoryFixture(t *testing.T) inventoryFixture {
 	return f
 }
 
+// assertStableFingerprint requires two reads that saw the same catalogues
+// to produce the same fingerprint. The inventory is cluster-wide, and in CI
+// the other packages of the shard create and drop databases and roles on the
+// same server, so two reads can legitimately differ. A pair whose contents
+// differ raced that churn and is retried; equal contents must fingerprint
+// equally.
+func assertStableFingerprint(t *testing.T, f inventoryFixture) {
+	t.Helper()
+	ctx := t.Context()
+	for attempt := 0; attempt < 50; attempt++ {
+		first, err := Read(ctx, f.conn, f.cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := Read(ctx, f.conn, f.cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(first.body, second.body) {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		if first.fingerprint != second.fingerprint {
+			t.Fatal("stable source inventory changed")
+		}
+		return
+	}
+	t.Fatal("every read pair saw different catalogues; cannot check fingerprint stability")
+}
+
 func TestCopyInventoryReadsClosedDatabasesGlobalsAndPrivateSettings(t *testing.T) {
 	f := newInventoryFixture(t)
 	ctx := t.Context()
@@ -186,9 +217,7 @@ func TestCopyInventoryReadsClosedDatabasesGlobalsAndPrivateSettings(t *testing.T
 			t.Fatal("ordinary output exposed sensitive inventory")
 		}
 	}
-	if replay, err := Read(ctx, f.conn, f.cfg); err != nil || replay.fingerprint != i.fingerprint {
-		t.Fatalf("stable source inventory changed: %v", err)
-	}
+	assertStableFingerprint(t, f)
 	otherKey := f.cfg
 	otherKey.FingerprintKey[1] = 23
 	if other, err := Read(ctx, f.conn, otherKey); err != nil || other.fingerprint == i.fingerprint {

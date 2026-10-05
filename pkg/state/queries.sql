@@ -8375,6 +8375,84 @@ VALUES(sqlc.arg(operation_id)::uuid,sqlc.arg(sequence)::bigint,sqlc.arg(event_ty
 SELECT record FROM customer_operations WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid
 AND (sqlc.arg(tenant_id)::text='' OR platform_tenant_id::text=sqlc.arg(tenant_id)::text);
 
+-- name: ListPlatformTenantCustomerOperations :many
+-- The tenant creation index supports descending keyset paging. Only public
+-- summary fields cross this boundary; source input/results/capabilities do not.
+SELECT jsonb_build_object(
+ 'id', o.record->'id',
+ 'name', o.record->'name',
+ 'generation', o.record->'generation',
+ 'state', o.record->'state',
+ 'progress', o.record->'progress',
+ 'cancellation_requested', o.record->'cancellation_requested',
+ 'latest_sequence', o.record->'latest_sequence',
+ 'updated_at', o.record->'updated_at',
+ 'expires_at', o.record->'expires_at',
+ 'created_at', o.created_at,
+ 'completion_delivery', jsonb_strip_nulls(jsonb_build_object(
+   'state', CASE WHEN coalesce(o.record->'completion_delivery'->>'delivery_id','') = ''
+     THEN o.record->'completion_delivery'->>'state'
+     WHEN delivery.id IS NULL THEN 'delivery_expired' ELSE delivery.status END,
+   'attempts', coalesce(delivery.attempt,(o.record->'completion_delivery'->>'attempts')::integer,0),
+   'next_attempt_at', CASE WHEN delivery.status IN ('pending','failed') THEN delivery.next_attempt_at END
+ ))) AS summary
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+LEFT JOIN app_webhook_deliveries delivery ON delivery.id=nullif(o.record->'completion_delivery'->>'delivery_id','')::uuid
+ AND delivery.account_id=o.account_id AND delivery.app_id=o.app_id
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.platform_tenant_id=sqlc.arg(tenant_id)::uuid
+ AND o.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+ AND (sqlc.arg(operation_name)::text='' OR d.name=sqlc.arg(operation_name)::text)
+ AND (sqlc.arg(operation_state)::text='' OR o.state=sqlc.arg(operation_state)::text)
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+ AND (sqlc.narg(before_created_at)::timestamptz IS NULL OR
+      (o.created_at,o.id)<(sqlc.narg(before_created_at)::timestamptz,sqlc.narg(before_id)::uuid))
+ORDER BY o.created_at DESC,o.id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ListAccountCustomerOperations :many
+-- The account/app creation index supports descending keyset paging across
+-- tenants. Only explicit public summary fields cross this operator boundary.
+SELECT jsonb_build_object(
+ 'platform_tenant_id', o.platform_tenant_id,
+ 'id', o.record->'id',
+ 'name', o.record->'name',
+ 'generation', o.record->'generation',
+ 'state', o.record->'state',
+ 'progress', o.record->'progress',
+ 'cancellation_requested', o.record->'cancellation_requested',
+ 'latest_sequence', o.record->'latest_sequence',
+ 'updated_at', o.record->'updated_at',
+ 'expires_at', o.record->'expires_at',
+ 'created_at', o.created_at,
+ 'completion_delivery', jsonb_strip_nulls(jsonb_build_object(
+   'state', CASE WHEN coalesce(o.record->'completion_delivery'->>'delivery_id','') = ''
+     THEN o.record->'completion_delivery'->>'state'
+     WHEN delivery.id IS NULL THEN 'delivery_expired' ELSE delivery.status END,
+   'attempts', coalesce(delivery.attempt,(o.record->'completion_delivery'->>'attempts')::integer,0),
+   'next_attempt_at', CASE WHEN delivery.status IN ('pending','failed') THEN delivery.next_attempt_at END
+ ))) AS summary
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+LEFT JOIN app_webhook_deliveries delivery ON delivery.id=nullif(o.record->'completion_delivery'->>'delivery_id','')::uuid
+ AND delivery.account_id=o.account_id AND delivery.app_id=o.app_id
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND (sqlc.arg(tenant_id)::text='' OR o.platform_tenant_id::text=sqlc.arg(tenant_id)::text)
+ AND o.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+ AND (sqlc.arg(operation_name)::text='' OR d.name=sqlc.arg(operation_name)::text)
+ AND (sqlc.arg(operation_state)::text='' OR o.state=sqlc.arg(operation_state)::text)
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+ AND (sqlc.narg(before_created_at)::timestamptz IS NULL OR
+      (o.created_at,o.id)<(sqlc.narg(before_created_at)::timestamptz,sqlc.narg(before_id)::uuid))
+ORDER BY o.created_at DESC,o.id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ListAccountCustomerOperationExecutions :many
+SELECT e.generation,i.id::text AS invocation_id,i.state,i.attempts,i.created_at,i.completed_at
+FROM customer_operation_executions e
+JOIN customer_operations o ON o.id=e.operation_id
+JOIN invocations i ON i.id=e.invocation_id AND i.account_id=o.account_id AND i.app_id=o.app_id
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.account_id=sqlc.arg(account_id)::uuid
+ AND e.generation>sqlc.arg(after_generation)::integer
+ORDER BY e.generation LIMIT sqlc.arg(page_limit)::integer;
+
 -- name: ReadCustomerOperationEvents :many
 SELECT operation_id::text,sequence,event_type,coalesce(execution_id::text,''::text)::text AS execution_id,attempt,data,created_at
 FROM customer_operation_events WHERE operation_id=sqlc.arg(operation_id)::uuid AND sequence>sqlc.arg(after_sequence)::bigint
@@ -10100,7 +10178,7 @@ sqlc.arg(generation)::bigint,sqlc.arg(name)::text,sqlc.arg(payload)::jsonb,
 nullif(sqlc.arg(webhook_id)::text,'')::uuid,nullif(sqlc.arg(event_type)::text,''));
 
 -- name: ReadManagedWorkflowRunForUpdate :one
-SELECT app_id::text, status FROM workflow_runs
+SELECT app_id::text, coalesce(platform_tenant_id::text, '')::text AS platform_tenant_id, status FROM workflow_runs
 WHERE id=sqlc.arg(run_id)::text::uuid FOR UPDATE;
 
 -- name: ReadManagedWorkflowStepForUpdate :one
@@ -10249,14 +10327,19 @@ WITH exclusive_effect AS (
  SELECT EXISTS(SELECT 1 FROM workflow_operation_effects e
   WHERE e.id=sqlc.arg(delivery_id)::text::uuid)::boolean AS managed,
  EXISTS (
-  SELECT 1 FROM workflow_operation_effects e
-  JOIN accounts ac ON ac.id=e.account_id AND ac.status='active'
-  JOIN apps a ON a.id=e.app_id AND a.account_id=e.account_id AND a.status<>'deleted'
-  JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id
+ SELECT 1 FROM workflow_operation_effects e
+ JOIN accounts ac ON ac.id=e.account_id AND ac.status='active'
+ JOIN apps a ON a.id=e.app_id AND a.account_id=e.account_id AND a.status<>'deleted'
+ JOIN workflow_runs r ON r.id=e.run_id AND r.app_id=e.app_id
+ JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id
    AND d.app_id=e.app_id AND d.account_id=e.account_id AND d.event='operation.effect'
   JOIN app_webhooks h ON h.id=e.webhook_id AND h.account_id=e.account_id
   WHERE e.id=sqlc.arg(delivery_id)::text::uuid AND h.enabled
-   AND 'operation.effect'=ANY(h.event_filter) AND h.scope='app' AND h.app_id=e.app_id
+   AND 'operation.effect'=ANY(h.event_filter)
+   AND ((r.platform_tenant_id IS NULL AND h.scope='app' AND h.app_id=e.app_id)
+    OR (r.platform_tenant_id=h.platform_tenant_id AND h.scope='platform_tenant'
+     AND EXISTS(SELECT 1 FROM platform_tenants t WHERE t.id=r.platform_tenant_id AND t.account_id=e.account_id AND t.status='active')
+     AND EXISTS(SELECT 1 FROM tenant_surfaces s WHERE s.app_id=e.app_id AND s.account_id=e.account_id AND s.platform_tenant_id=r.platform_tenant_id AND s.status='active')))
  )::boolean AS allowed
 )
 SELECT exclusive_effect.managed OR workflow_effect.managed AS managed,
@@ -13399,6 +13482,19 @@ WHERE a.id = sqlc.arg(app_id) AND a.status <> 'deleted' AND NOT a.maintenance_mo
   )
 FOR SHARE OF a, ac, d;
 
+-- name: LockWorkflowResumeTarget :one
+SELECT d.id AS deployment_id, app_workflow_definitions(a.id,d.workflows)::jsonb AS workflows, ac.plan
+FROM apps a JOIN accounts ac ON ac.id = a.account_id
+JOIN deployments d ON d.app_id = a.id
+WHERE a.id = sqlc.arg(app_id) AND a.status <> 'deleted' AND NOT a.maintenance_mode
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
+  AND d.id = (
+      SELECT dep.id FROM deployments dep
+      WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
+      ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
+  )
+FOR SHARE OF a, ac, d;
+
 -- name: LockWorkflowRunAdmission :exec
 SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(app_key)::text, 0));
 
@@ -13491,14 +13587,21 @@ SELECT nextval('automation_definition_versions')::bigint;
 SELECT key_id, public_key_pem FROM cluster_signing_keys WHERE id=1 AND retired_at IS NULL;
 
 -- name: WorkflowOutboundAttempt :one
-SELECT a.account_id, r.app_id, s.outbound_attempt_token
+SELECT a.account_id, r.app_id, r.platform_tenant_id, s.outbound_attempt_token
 FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
 JOIN apps a ON a.id=r.app_id JOIN accounts ac ON ac.id=a.account_id
 WHERE r.id=sqlc.arg(run_id) AND s.step_name=sqlc.arg(step_name) AND s.attempt=sqlc.arg(attempt)
 AND r.status='running' AND r.lease_until>clock_timestamp() AND s.status='running'
 AND s.outbound_attempt_token IS NOT NULL AND a.status<>'deleted'
-AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
-AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale');
+AND NOT a.maintenance_mode AND (NOT a.platform_tenant_required OR r.platform_tenant_id IS NOT NULL)
+AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
+AND (r.platform_tenant_id IS NULL OR EXISTS (
+ SELECT 1 FROM platform_tenants t WHERE t.id=r.platform_tenant_id AND t.account_id=a.account_id AND t.status='active'
+ AND (
+  EXISTS (SELECT 1 FROM api_consumers c WHERE c.account_id=a.account_id AND c.app_id=a.id AND c.platform_tenant_id=t.id AND c.status='active' AND c.revoked_at IS NULL)
+  OR EXISTS (SELECT 1 FROM tenant_surfaces ts WHERE ts.account_id=a.account_id AND ts.app_id=a.id AND ts.platform_tenant_id=t.id AND ts.status='active')
+ )
+));
 
 -- name: AuthorizeWorkflowOutbound :one
 SELECT EXISTS(
@@ -13511,8 +13614,16 @@ SELECT EXISTS(
  AND s.step_name=sqlc.arg(step_name) AND s.attempt=sqlc.arg(attempt)
  AND s.outbound_attempt_token=sqlc.arg(attempt_token) AND r.status='running'
  AND r.lease_until>clock_timestamp() AND s.status='running' AND a.status<>'deleted'
- AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+ AND NOT a.maintenance_mode AND (NOT a.platform_tenant_required OR r.platform_tenant_id IS NOT NULL)
  AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
+ AND COALESCE(r.platform_tenant_id::text, '')=sqlc.arg(tenant_id)::text
+ AND (r.platform_tenant_id IS NULL OR EXISTS (
+  SELECT 1 FROM platform_tenants t WHERE t.id=r.platform_tenant_id AND t.account_id=a.account_id AND t.status='active'
+  AND (
+   EXISTS (SELECT 1 FROM api_consumers tc WHERE tc.account_id=a.account_id AND tc.app_id=a.id AND tc.platform_tenant_id=t.id AND tc.status='active' AND tc.revoked_at IS NULL)
+   OR EXISTS (SELECT 1 FROM tenant_surfaces ts WHERE ts.account_id=a.account_id AND ts.app_id=a.id AND ts.platform_tenant_id=t.id AND ts.status='active')
+  )
+ ))
  AND i.id=sqlc.arg(integration_id) AND i.enabled AND i.owner_kind='customer'
  AND i.provider_auth_mode='managed' AND i.credential_source='customer_sealed'
  AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,s.foreach_index)#>>'{outbound,integration_id}'=i.id::text
@@ -13655,7 +13766,7 @@ WHERE s.run_id=sqlc.arg(run_id) AND s.step_name=sqlc.arg(step_name) AND (
 
 -- name: LockWorkflowResumeRun :one
 SELECT id,app_id,workflow_name,status,current_step,input,output,definition_snapshot,
- scheduled_for,started_at,finished_at,last_error,created_at,updated_at,resume_count,cancelled_at
+ scheduled_for,started_at,finished_at,last_error,created_at,updated_at,resume_count,cancelled_at,platform_tenant_id
 FROM workflow_runs WHERE id=sqlc.arg(run_id) AND app_id=sqlc.arg(app_id) FOR UPDATE;
 
 -- name: WorkflowResumeSteps :many
@@ -13716,6 +13827,40 @@ WHERE id=sqlc.arg(run_id) AND (sqlc.narg(generation)::integer IS NULL OR resume_
 UPDATE workflow_runs SET lease_until=now()+(sqlc.arg(timeout_ms)::bigint*interval '1 millisecond')+interval '5 minutes'
 WHERE id=sqlc.arg(run_id) AND status='running'
  AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer);
+
+-- name: LockCustomerOperationDeliveryOwner :one
+SELECT record FROM customer_operations WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid FOR UPDATE;
+
+-- name: GetCustomerOperationDeliveryRetry :one
+SELECT delivery_id::text, expected_replay_generation, replay_generation, queued_at, expires_at
+FROM customer_operation_delivery_retries WHERE operation_id=sqlc.arg(operation_id)::uuid AND retry_id=sqlc.arg(retry_id)::text;
+
+-- name: CountCustomerOperationDeliveryRetries :one
+SELECT count(*) FROM customer_operation_delivery_retries WHERE operation_id=sqlc.arg(operation_id)::uuid;
+
+-- name: InsertCustomerOperationDeliveryRetry :exec
+INSERT INTO customer_operation_delivery_retries(operation_id,retry_id,delivery_id,expected_replay_generation,replay_generation,queued_at,expires_at)
+VALUES(sqlc.arg(operation_id)::uuid,sqlc.arg(retry_id)::text,sqlc.arg(delivery_id)::uuid,sqlc.arg(expected_replay_generation)::integer,sqlc.arg(replay_generation)::integer,sqlc.arg(queued_at)::timestamptz,sqlc.arg(expires_at)::timestamptz);
+
+-- name: GetCustomerOperationDeliveryPlan :one
+SELECT plan FROM accounts WHERE id=sqlc.arg(account_id)::uuid;
+
+-- name: GetCustomerOperationDeliveryRow :one
+SELECT id::text, webhook_id::text, app_id::text, account_id::text, event, payload,
+ attempt,status,last_error,last_response_code,next_attempt_at,delivered_at,replay_generation
+FROM app_webhook_deliveries WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: LockCustomerOperationDeliveryRow :one
+SELECT id::text, webhook_id::text, app_id::text, account_id::text, event, payload,
+ attempt,status,last_error,last_response_code,next_attempt_at,delivered_at,replay_generation
+FROM app_webhook_deliveries WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid FOR UPDATE;
+
+-- name: ResetCustomerOperationDelivery :execrows
+UPDATE app_webhook_deliveries SET status='pending',attempt=0,replay_generation=replay_generation+1,
+ last_error='',last_response_code=0,next_attempt_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)::timestamptz
+WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND status='dead'
+ AND replay_generation=sqlc.arg(expected_replay_generation)::integer;
+
 -- name: GetManagedPostgresUsageImport :one
 SELECT request_sha256, result FROM managed_postgres_usage_imports
 WHERE account_id = $1 AND import_id = $2;

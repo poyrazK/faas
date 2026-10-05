@@ -181,6 +181,18 @@ func (f *nativeConnectionClosureFixture) selectedFlags(t *testing.T, open bool) 
 	}
 }
 
+// sameClosedDatabases compares the closure record a replacement worker
+// adopted. Sessions is a live pg_stat_activity count, not part of that
+// record: an autovacuum worker visiting the database between two
+// observations changes it, and the shared CI cluster has enough databases
+// for that to happen.
+func sameClosedDatabases(actual, original []managedpostgres.CheckpointConnectionDatabase) bool {
+	return slices.EqualFunc(actual, original, func(a, o managedpostgres.CheckpointConnectionDatabase) bool {
+		a.Sessions, o.Sessions = 0, 0
+		return a == o
+	})
+}
+
 func TestCheckpointConnectionClosureNativePipelineRecoversAndObservesDrain(t *testing.T) {
 	f := newNativeConnectionClosureFixture(t)
 	ctx := t.Context()
@@ -209,7 +221,7 @@ func TestCheckpointConnectionClosureNativePipelineRecoversAndObservesDrain(t *te
 	}
 	for _, closeAdmission := range []bool{false, true} {
 		actual, err := f.p.checkpointConnectionClosure(ctx, f.definition, f.maintenance, f.request, closeAdmission, f.connectPool(t))
-		if err != nil || actual.Drained || !actual.ClosedAt.Equal(closed.ClosedAt) || !reflect.DeepEqual(actual.Databases, closed.Databases) {
+		if err != nil || actual.Drained || !actual.ClosedAt.Equal(closed.ClosedAt) || !sameClosedDatabases(actual.Databases, closed.Databases) {
 			t.Fatalf("replacement worker changed original closure: %+v %v", actual, err)
 		}
 	}

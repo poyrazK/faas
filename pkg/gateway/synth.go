@@ -486,7 +486,7 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	}
 	workflowOperationAccount := ""
 	if req.Source == "workflow" {
-		if s.applyWorkflowAdmission(w, r, req.AppID, req.Headers) {
+		if s.applyWorkflowAdmission(w, r, req.AppID, req.PlatformTenantID, req.Headers) {
 			return
 		}
 		if req.OperationResultVersion == api.ManagedOperationResultVersion {

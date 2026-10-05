@@ -58,6 +58,35 @@ Tools with invalid parameter-header annotations are excluded from discovery;
 Other valid tools remain available. A malformed response or duplicate tool name
 still fails discovery.
 
+For modern servers that return a stateless `input_required` form request,
+`mcp call` can resume the same tool invocation after you explicitly enable input
+handling. `--interactive` displays the server's form schema and accepts a JSON
+object, `decline`, or `cancel`; it requires terminal stdin. Scripts can use
+`--input-responses-file` with a JSON object keyed by form request ID:
+
+```sh
+gregale mcp call --url https://mcp.example.com/mcp --tool report_preview \
+  --arguments '{"report":"sales"}' --interactive
+```
+
+```json
+{
+  "report_filters": {
+    "action": "accept",
+    "content": {"from": "2026-06-01", "to": "2026-06-30"}
+  }
+}
+```
+
+```sh
+gregale mcp call --url https://mcp.example.com/mcp --tool report_preview \
+  --arguments '{"report":"sales"}' --input-responses-file responses.json
+```
+
+The CLI sends form responses only after an explicit opt-in and bounds the
+number and size of requests it handles. Calls without either input option keep
+the existing single-request behavior.
+
 ## Tool contract snapshots
 
 Capture a caller-visible tool interface before changing a server:

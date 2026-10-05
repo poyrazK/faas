@@ -129,7 +129,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "mcp", "openapi", "preview", "projects", "registry", "rollback", "routes", "scan", "secrets", "tenant-surfaces", "platform-tenants", "trusted-publishers":
 		return "API"
-	case "add", "bindings", "bucket", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
+	case "add", "bindings", "bucket", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "operations", "customer-operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
 		return "Delivery"
@@ -1569,7 +1569,7 @@ var cliCommands = []cliCommand{
 				{Name: "customer-details", Short: "include observed consumer and tenant IDs in the report"},
 				{Name: "baseline-deployment", Short: "explicit parent deployment ID", Value: "ID"},
 				{Name: "test-report", Short: "JSON receipts from gregale test", Value: "PATH"},
-				{Name: "source-impact", Short: "version 2 JSON report from gregale routes impact", Value: "PATH"},
+				{Name: "source-impact", Short: "route impact report from gregale routes impact", Value: "PATH"},
 				{Name: "requirements", Short: "versioned route requirements YAML or JSON file", Value: "PATH"},
 				{Name: "fail-on-breaking", Short: "exit 1 for known response-contract breaks"},
 				{Name: "fail-on-request-breaking", Short: "exit 1 for known request-contract restrictions"},
@@ -1577,6 +1577,21 @@ var cliCommands = []cliCommand{
 				{Name: "fail-on-policy-drift", Short: "exit 1 for changed or incomplete route rule policy comparison"},
 				{Name: "fail-on-incomplete", Short: "exit 1 when evidence is missing or needs review"},
 				{Name: "fail-on-requirements", Short: "exit 1 for violated or unknown route requirements"},
+			}},
+			{Name: "review", Short: "Review route risk across multiple app previews in one release", Positionals: []string{"<preview-slug>..."}, Examples: []string{"gregale preview review pr-42-api pr-42-worker --format markdown", "gregale preview review pr-42-api pr-42-worker --source-impact pr-42-api=api-impact.json --source-impact pr-42-worker=worker-impact.json --json", "gregale preview review pr-42-api pr-42-worker --test-report pr-42-api=api-tests.json --fail-on-breaking --fail-on-incomplete"}, Flags: []cliFlag{
+				{Name: "format", Short: "report format: text or markdown (or use --json)", Value: "FORMAT"},
+				{Name: "since", Short: "traffic lookback duration (default 24h)", Value: "DURATION"},
+				{Name: "customer-details", Short: "include observed consumer and tenant IDs in each app report"},
+				{Name: "baseline-deployment", Short: "explicit parent deployment as PREVIEW=ID; repeat per preview", Value: "PREVIEW=ID"},
+				{Name: "test-report", Short: "test receipts as PREVIEW=PATH; repeat per preview", Value: "PREVIEW=PATH"},
+				{Name: "source-impact", Short: "route impact report as PREVIEW=PATH; repeat per preview", Value: "PREVIEW=PATH"},
+				{Name: "requirements", Short: "route requirements as PREVIEW=PATH; repeat per preview", Value: "PREVIEW=PATH"},
+				{Name: "fail-on-breaking", Short: "exit 1 if any app has known response-contract breaks"},
+				{Name: "fail-on-request-breaking", Short: "exit 1 if any app has known request restrictions"},
+				{Name: "fail-on-security-regression", Short: "exit 1 if any app reduces declared authentication requirements"},
+				{Name: "fail-on-policy-drift", Short: "exit 1 if any app has changed or incomplete route policy comparison"},
+				{Name: "fail-on-incomplete", Short: "exit 1 if any app report is unavailable or needs review"},
+				{Name: "fail-on-requirements", Short: "exit 1 unless every app has satisfied route requirements"},
 			}},
 			{Name: "wait", Short: "Wait for a preview deployment to become ready", Examples: []string{"gregale preview wait pr-42-my-api --progress --open"}, Positionals: []string{"<preview-slug>"}, Flags: []cliFlag{
 				{Name: "progress", Short: "print deployment transitions while waiting"},
@@ -1828,6 +1843,14 @@ var cliCommands = []cliCommand{
 				{Name: "incident", Value: "ID", Short: "saved incident UUID", Req: true},
 				{Name: "out", Value: "PATH", Short: "save incident evidence JSON to a new file"},
 			}},
+		}}, {Name: "lifecycle", Short: "Review deployed routes for carefully evidenced retirement candidates", Subcommands: []cliSub{
+			{Name: "review", Positionals: []string{"<slug>"}, Short: "Compare captured routes, observed usage, source and requirements", Examples: []string{"gregale routes lifecycle review api --deployment DEPLOYMENT_UUID --since 14d --source-impact impact.json --out lifecycle-review.json"}, Flags: []cliFlag{
+				{Name: "deployment", Value: "ID", Short: "immutable deployed contract UUID", Req: true},
+				{Name: "since", Value: "WINDOW", Short: "route-usage window (default 14d; plan retention may clamp it)"},
+				{Name: "source-impact", Value: "PATH", Short: "complete source impact report whose candidate revision matches the deployment commit"},
+				{Name: "out", Value: "PATH", Short: "save full JSON review to a new file"},
+				{Name: "fail-on-incomplete", Short: "exit nonzero when any route remains inconclusive"},
+			}},
 		}}, {Name: "health", Short: "Compare critical route errors and optional p95 latency to gate canary progression", Subcommands: []cliSub{
 			{Name: "get", Positionals: []string{"<slug>"}, Short: "Read selected routes, mode and revision"},
 			{Name: "set", Positionals: []string{"<slug>"}, Short: "Save exact normalized telemetry route selectors", Flags: []cliFlag{
@@ -1835,6 +1858,23 @@ var cliCommands = []cliCommand{
 				{Name: "mode", Value: "MODE", Short: "report (enforcement unavailable in preview)", Req: true, ClosedSet: []string{"report", "enforce"}},
 				{Name: "on-regression", Value: "ACTION", Short: "hold (default) or automatically abort on confirmed route 5xx regression", ClosedSet: []string{"hold", "abort"}},
 				{Name: "expected-revision", Value: "N", Short: "current revision; 0 initially", Req: true},
+			}},
+			{Name: "suggest", Positionals: []string{"<slug>"}, Short: "Rank observed routes by customer reach and traffic; emit reviewable canary selectors", Flags: []cliFlag{
+				{Name: "deployment", Value: "ID", Short: "immutable baseline deployment UUID; must match --preview-report when supplied", Req: true},
+				{Name: "since", Value: "WINDOW", Short: "observed usage window (default 168h; accepts 7d or RFC3339)"},
+				{Name: "customer-group-by", Value: "DIMENSION", Short: "rank by distinct tenant (default) or consumer count", ClosedSet: []string{"tenant", "consumer"}},
+				{Name: "limit", Value: "N", Short: "number of route selectors (default 10; maximum 20)"},
+				{Name: "preview-report", Value: "PATH", Short: "restrict suggestions to source-affected routes in a bound preview report for this app and deployment"},
+				{Name: "out", Value: "PATH", Short: "save a JSON selector array ready for routes health set"},
+			}},
+			{Name: "review", Positionals: []string{"<slug>"}, Short: "Join source-affected routes to configured canary coverage and candidate health evidence", Flags: []cliFlag{
+				{Name: "deployment", Value: "ID", Short: "candidate deployment UUID currently receiving canary traffic", Req: true},
+				{Name: "preview-report", Value: "PATH", Short: "bound preview report containing source-affected routes", Req: true},
+				{Name: "fail-on-incomplete", Short: "exit nonzero unless source impact is complete and all affected route health is ready"},
+			}},
+			{Name: "review-release", Short: "Gate every app in an aggregate preview review on source-affected canary route health", Examples: []string{"gregale routes health review-release --release-report release-review.json --fail-on-incomplete --json"}, Flags: []cliFlag{
+				{Name: "release-report", Value: "PATH", Short: "aggregate JSON report from gregale preview review", Req: true},
+				{Name: "fail-on-incomplete", Short: "exit nonzero unless every app has complete, healthy affected-route coverage"},
 			}},
 			{Name: "report", Positionals: []string{"<slug>"}, Short: "Read candidate/stable counts, selected p95 checks and route verdicts", Flags: []cliFlag{
 				{Name: "deployment", Value: "ID", Short: "candidate deployment UUID", Req: true},
@@ -1898,20 +1938,40 @@ var cliCommands = []cliCommand{
 			{Name: "plan", Short: "reviewed version 2 or 3 server plan JSON file", Value: "PATH", Req: true},
 			{Name: "confirm", Short: "confirm application of every reviewed change", Req: true},
 			{Name: "idempotency-key", Short: "stable retry key, defaults to plan SHA-256", Value: "KEY"},
-		}}, {Name: "impact", Positionals: []string{"[<slug>]"}, Short: "Explain FastAPI route impact between a Git baseline and candidate source", Examples: []string{
+		}}, {Name: "impact", Positionals: []string{"[<slug>]"}, Short: "Explain FastAPI, Go HTTP, Express, or Hono route impact between Git revisions", Examples: []string{
 			"gregale routes impact my-api --base origin/main --path . --entrypoint main:app",
 			"gregale routes impact --base HEAD~1 --head HEAD --format markdown",
+			"gregale routes impact --base origin/main --framework go-nethttp --path services/api --json",
+			"gregale routes impact --base origin/main --framework node-http --path services/node-api --json",
 			"gregale routes impact --base origin/main --fail-on-impact --fail-on-incomplete --json",
 		}, Flags: []cliFlag{
 			{Name: "base", Short: "baseline Git revision", Value: "REF", Req: true},
 			{Name: "head", Short: "candidate Git revision (defaults to working tree)", Value: "REF"},
 			{Name: "path", Short: "application source directory inside the repository", Value: "DIR"},
+			{Name: "framework", Short: "source framework: auto, fastapi, go-nethttp, or node-http", Value: "FRAMEWORK", ClosedSet: []string{"auto", "fastapi", "go-nethttp", "node-http"}},
 			{Name: "entrypoint", Short: "FastAPI module:variable (inferred when exactly one exists)", Value: "MODULE:VARIABLE"},
 			{Name: "format", Short: "report format", Value: "text|markdown", ClosedSet: []string{"text", "markdown"}},
 			{Name: "out", Short: "save JSON report to a new owner-readable file", Value: "PATH"},
 			{Name: "fail-on-impact", Short: "exit 1 when routes were added, removed, or may be affected"},
 			{Name: "fail-on-incomplete", Short: "exit 1 when static analysis is incomplete"},
-		}}},
+		}}, {Name: "contract", Short: "Check statically discovered source routes against a local OpenAPI contract", Subcommands: []cliSub{{
+			Name: "check", Positionals: []string{"[<slug>]"}, Short: "Find source-only and contract-only routes with conservative parameter matching",
+			Examples: []string{
+				"gregale routes contract check my-api --openapi openapi.yaml --base origin/main --fail-on-drift --json",
+				"gregale routes contract check --openapi openapi.yaml --base HEAD --path services/api --framework go-nethttp --format markdown",
+			}, Flags: []cliFlag{
+				{Name: "openapi", Short: "local OpenAPI 3.0 or 3.1 document", Value: "FILE", Req: true},
+				{Name: "base", Short: "baseline Git revision", Value: "REF", Req: true},
+				{Name: "head", Short: "candidate Git revision (defaults to working tree)", Value: "REF"},
+				{Name: "path", Short: "application source directory inside the repository", Value: "DIR"},
+				{Name: "framework", Short: "source framework: auto, fastapi, go-nethttp, or node-http", Value: "FRAMEWORK", ClosedSet: []string{"auto", "fastapi", "go-nethttp", "node-http"}},
+				{Name: "entrypoint", Short: "FastAPI module:variable (inferred when exactly one exists)", Value: "MODULE:VARIABLE"},
+				{Name: "format", Short: "report format", Value: "text|markdown", ClosedSet: []string{"text", "markdown"}},
+				{Name: "out", Short: "save JSON report to a new owner-readable file", Value: "PATH"},
+				{Name: "fail-on-drift", Short: "exit 1 for confirmed source-only or contract-only routes"},
+				{Name: "fail-on-incomplete", Short: "exit 1 when route or OpenAPI analysis is inconclusive"},
+			},
+		}}}},
 	},
 	{
 		Name:    "env",
@@ -2066,6 +2126,11 @@ var cliCommands = []cliCommand{
 		{Name: "list", Short: "List grouped issues", Flags: issueAppFlags}, {Name: "get", Short: "Read evidence and release history", Positionals: []string{"<issue-id>"}, Flags: issueAppFlags}, {Name: "assign", Short: "Assign an issue to an account", Positionals: []string{"<issue-id>"}, Flags: issueAppFlags}, {Name: "resolve", Short: "Resolve in a deployment", Positionals: []string{"<issue-id>"}, Flags: issueAppFlags}, {Name: "reopen", Short: "Reopen an issue", Positionals: []string{"<issue-id>"}, Flags: issueAppFlags}, {Name: "ignore", Short: "Ignore until a timestamp", Positionals: []string{"<issue-id>"}, Flags: issueAppFlags}, {Name: "impact-alert", Short: "Read or configure customer-impact alert threshold", Flags: issueAppFlags}, {Name: "ownership-rules", Short: "Read or replace automatic assignment rules", Flags: issueAppFlags}, {Name: "tokens", Short: "List ingest credentials", Flags: issueAppFlags}, {Name: "create-token", Short: "Create a deployment-bound ingest credential", Flags: issueAppFlags}, {Name: "revoke-token", Short: "Revoke an ingest credential", Positionals: []string{"<token-id>"}, Flags: issueAppFlags},
 	}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "application slug"}, {Name: "deployment", Value: "UUID", Short: "fixed or token-bound deployment"}, {Name: "state", Value: "STATE", Short: "filter issue state"}, {Name: "environment", Value: "ENV", Short: "environment filter"}, {Name: "cursor", Value: "CURSOR", Short: "issue-list or occurrence cursor"}, {Name: "release-cursor", Value: "CURSOR", Short: "release history cursor"}, {Name: "activity-cursor", Value: "CURSOR", Short: "activity history cursor"}, {Name: "assignee", Value: "OWNER", Short: "list filter me, unassigned, or account UUID; assignment owner UUID"}, {Name: "sort", Value: "ORDER", Short: "list order: recent or impact by verified customers in 24h"}, {Name: "min-customers", Value: "N", Short: "issue list threshold, or impact-alert policy threshold (0 disables)"}, {Name: "since", Value: "RFC3339", Short: "impact window start"}, {Name: "until", Value: "RFC3339", Short: "ignore until"}, {Name: "name", Value: "NAME", Short: "credential name"}, {Name: "expires-in", Value: "D", Short: "credential lifetime"}}},
 
+	{
+		Name: "customer-operations", DocSlug: "customer-operations", Short: "Inspect customer work, verify downloads and reconcile outcomes",
+		Examples:    []string{"gregale customer-operations list --app exports --scope production", "gregale customer-operations watch <id> --app exports --timeout 5m --json"},
+		Subcommands: customerOperationCLIManifest(),
+	},
 	{
 		Name:    "operations",
 		DocSlug: "operations",

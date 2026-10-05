@@ -121,6 +121,30 @@ query parameters are rejected. Responses use `Cache-Control: no-store`. The
 sample operator tools issue `write` scope, which allows all app methods; use
 Gregale's credential API to issue narrower `read` keys when appropriate.
 
+## Durable workflow boundary
+
+This starter requires a verified customer identity on every app request.
+Manual workflow runs can use the authenticated tenant's identity through
+`POST /v1/platform-tenant-self/apps/{slug}/workflows/{name}/runs`. Gregale
+persists that tenant ID and checks it again before dispatching each step. Tenants
+can inspect, cancel, and safely resume their own runs through the
+`/v1/platform-tenant-self/workflows/runs/{id}` endpoints.
+
+Tenant-bound workflows support managed-operation steps with effects delivered
+to a receiver owned by that same tenant. They can also call an existing
+customer-managed outbound integration explicitly bound to the app. The run's
+tenant identity is included in private authorization and rechecked against the
+active tenant-to-app link before dispatch and by outboundd. Integration
+credentials and route permissions remain app-owned and shared across tenants;
+per-tenant credentials are not part of this workflow interface. Event waits,
+callbacks, and scheduled workflow starts remain unavailable for tenant-required
+apps.
+
+Account-scoped apps can use managed workflow transactions and app-owned effects.
+The [transaction guide](https://github.com/poyrazK/faas/blob/main/docs/operation-transactions.md)
+and [effect delivery guide](https://github.com/poyrazK/faas/blob/main/docs/managed-operation-effects.md)
+show the handler, receipt schema, receiver setup, and recovery contract.
+
 ## Rotate, inspect usage, and suspend
 
 ```sh

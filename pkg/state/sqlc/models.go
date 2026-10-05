@@ -1446,6 +1446,16 @@ type CustomerOperationDefinition struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type CustomerOperationDeliveryRetry struct {
+	OperationID              pgtype.UUID
+	RetryID                  string
+	DeliveryID               pgtype.UUID
+	ExpectedReplayGeneration int32
+	ReplayGeneration         int32
+	QueuedAt                 pgtype.Timestamptz
+	ExpiresAt                pgtype.Timestamptz
+}
+
 type CustomerOperationEvent struct {
 	OperationID pgtype.UUID
 	Sequence    int64
@@ -6395,6 +6405,7 @@ type WorkflowRun struct {
 	LeaseUntil         pgtype.Timestamptz
 	ResumeCount        int32
 	CancelledAt        pgtype.Timestamptz
+	PlatformTenantID   pgtype.UUID
 }
 
 type WorkflowRunResume struct {
