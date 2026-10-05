@@ -12,6 +12,10 @@ export type ObjectLockCapabilities = {
    * Separately enrolled durable per-version event hold mutations.
    */
   version_event_hold: boolean;
+  /**
+   * Separately enrolled event holds on new writes and captured bucket defaults.
+   */
+  write_event_hold: boolean;
   version_retention: boolean;
   version_legal_hold: boolean;
 };

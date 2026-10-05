@@ -47,6 +47,7 @@ type ObjectLockCapabilities struct {
 	BucketConfiguration bool `json:"bucket_configuration"`
 	DefaultEventHold    bool `json:"default_event_hold"`
 	VersionEventHold    bool `json:"version_event_hold"`
+	WriteEventHold      bool `json:"write_event_hold"`
 	VersionRetention    bool `json:"version_retention"`
 	VersionLegalHold    bool `json:"version_legal_hold"`
 }

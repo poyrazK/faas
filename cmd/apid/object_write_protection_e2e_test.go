@@ -26,6 +26,7 @@ import (
 type writeProtectionControlNative struct {
 	mu                         sync.Mutex
 	objects                    map[string]http.Header
+	event                      bool
 	initiated                  http.Header
 	puts, creates, completions int
 }
@@ -103,6 +104,21 @@ func (f *writeProtectionControlNative) commit(key string, h http.Header) {
 	if h.Get("X-Amz-Object-Lock-Mode") == "" {
 		h.Set("X-Amz-Object-Lock-Mode", "COMPLIANCE")
 		h.Set("X-Amz-Object-Lock-Retain-Until-Date", time.Now().UTC().AddDate(0, 0, 3).Format(time.RFC3339Nano))
+		if f.event {
+			h.Set("X-Amz-Object-Lock-Event-Hold", "ON")
+			h.Set("X-Amz-Object-Lock-Event-Hold-Duration-Years", "1")
+		}
+	}
+	if h.Get("X-Amz-Object-Lock-Event-Hold") == "ON" {
+		days, _ := strconv.Atoi(h.Get("X-Amz-Object-Lock-Event-Hold-Duration-Days"))
+		if years, _ := strconv.Atoi(h.Get("X-Amz-Object-Lock-Event-Hold-Duration-Years")); years != 0 {
+			days = years * 365
+		}
+		minimum := time.Now().UTC().AddDate(0, 0, days)
+		existing, e := time.Parse(time.RFC3339Nano, h.Get("X-Amz-Object-Lock-Retain-Until-Date"))
+		if e != nil || minimum.After(existing) {
+			h.Set("X-Amz-Object-Lock-Retain-Until-Date", minimum.Format(time.RFC3339Nano))
+		}
 	}
 	f.objects[key] = h
 }
@@ -134,11 +150,42 @@ func TestWriteProtectionControlE2EPG(t *testing.T) {
 	})
 }
 
-func prepareWriteProtectionControl(t *testing.T, st state.Store, b state.ObjectBucket, advance func(bool)) {
+// adr: 595
+func TestEventWriteProtectionControlE2EMem(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	now := time.Now().UTC().Add(-17 * time.Minute)
+	e.store.SetClockForTest(func() time.Time { return now })
+	writeProtectionControlE2E(t, e.s, e.store, e.acct, e.key, nil, func(reset bool) {
+		if reset {
+			now = time.Now().UTC()
+		} else {
+			now = now.Add(16 * time.Minute)
+		}
+	}, true)
+}
+func TestEventWriteProtectionControlE2EPG(t *testing.T) {
+	e := setupPGHandler(t, api.PlanPro)
+	writeProtectionControlE2E(t, e.s, e.store, e.acct, e.key, e.pool, func(reset bool) {
+		if reset {
+			return
+		}
+		for _, q := range []string{`UPDATE object_bucket_versioning SET retry_at=clock_timestamp(),propagation_until=CASE WHEN state IN ('waiting','propagating') THEN clock_timestamp()-interval '1 second' ELSE propagation_until END`, `UPDATE object_upload_completions SET recovery_retry_at=clock_timestamp() WHERE status='pending'`, `UPDATE object_storage_multipart_uploads SET retry_at=clock_timestamp(),lease_until=CASE WHEN lease_token IS NULL THEN NULL ELSE clock_timestamp()-interval '1 second' END WHERE state='completing'`} {
+			if _, err := e.pool.Exec(t.Context(), q); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}, true)
+}
+
+func prepareWriteProtectionControl(t *testing.T, st state.Store, b state.ObjectBucket, advance func(bool), event ...bool) {
 	t.Helper()
 	days := int32(3)
 	lock := st.(state.ObjectBucketObjectLockStore)
 	cfg := api.ObjectBucketObjectLockConfiguration{Enabled: true, DefaultRetention: &api.ObjectLockDefaultRetention{Mode: "COMPLIANCE", Days: &days}}
+	if len(event) != 0 && event[0] {
+		years := int32(1)
+		cfg.DefaultRetention.DefaultEventHold = &api.ObjectRetentionPeriod{Years: &years}
+	}
 	if _, err := lock.RequestObjectBucketObjectLock(t.Context(), b.AccountID, b.AppID, b.ID, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -178,15 +225,16 @@ func prepareWriteProtectionControl(t *testing.T, st state.Store, b state.ObjectB
 	advance(true)
 }
 
-func writeProtectionControlE2E(t *testing.T, s *server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool, advance func(bool)) {
+func writeProtectionControlE2E(t *testing.T, s *server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool, advance func(bool), event ...bool) {
+	held := len(event) != 0 && event[0]
 	identity, teardown := withTestIdentities(t)
 	defer teardown()
-	native := &writeProtectionControlNative{objects: map[string]http.Header{}}
+	native := &writeProtectionControlNative{objects: map[string]http.Header{}, event: held}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { native.serve(t, w, r) }))
 	defer upstream.Close()
 	_, b, _, policy := seedEncryptionJournalStorage(t, s, st, acct, upstream.URL)
-	s.WithObjectStorage(objectLockTestRegistry(t, upstream.URL, policy, objectstorage.ObjectLockConfig{Enabled: true}))
-	prepareWriteProtectionControl(t, st, b, advance)
+	s.WithObjectStorage(objectLockTestRegistry(t, upstream.URL, policy, objectstorage.ObjectLockConfig{Enabled: true, EventHolds: held}))
+	prepareWriteProtectionControl(t, st, b, advance, held)
 	if err := s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
@@ -211,6 +259,12 @@ func writeProtectionControlE2E(t *testing.T, s *server, st state.Store, acct sta
 	client := api.NewClient(management.URL, bearer)
 	until := time.Now().UTC().AddDate(0, 0, 7)
 	p := &api.ObjectWriteProtection{Retention: &api.ObjectVersionRetention{Mode: "COMPLIANCE", RetainUntilDate: &until}, LegalHold: &api.ObjectVersionLegalHold{Status: "ON"}}
+	if held {
+		days := int32(30)
+		p.Retention.EventHold = "ON"
+		p.Retention.EventHoldDuration = &api.ObjectRetentionPeriod{Days: &days}
+		p.Retention.RetainUntilDate = nil
+	}
 	size := int64(3)
 	signed, err := client.SignBucketObject(t.Context(), "encrypted-journal", b.ID, api.ObjectSignRequest{Method: "PUT", Key: "explicit", SizeBytes: &size, ExpiresIn: 60, Protection: p})
 	if err != nil || signed.Headers["X-Amz-Object-Lock-Legal-Hold"] != "ON" {

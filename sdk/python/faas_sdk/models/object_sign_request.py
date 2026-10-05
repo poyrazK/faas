@@ -45,8 +45,10 @@ class ObjectSignRequest:
     tags: ObjectSignRequestTags | Unset = UNSET
     """PUT-only S3 object tags."""
     protection: ObjectWriteProtection | Unset = UNSET
-    """Fixed retention and independent legal hold for a new object version. Omitted retention inherits the admitted
-    bucket default. Event holds and governance bypass are unsupported."""
+    """Fixed or enrolled event retention and an independent legal hold for a new object version. Omitted retention
+    inherits the immutable admitted bucket default. Event hold ON requires one days or years duration and permits an
+    optional minimum date. Event hold OFF on creation requires an explicit fixed date and no duration. Governance
+    bypass is unsupported."""
     encryption: ObjectEncryption | Unset = UNSET
     """Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key
     reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique

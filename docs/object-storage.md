@@ -1926,8 +1926,8 @@ gregale bucket object-lock clear-default <app> <bucket-id>
 [ADR-584](adr/584-durable-object-version-protection.md) adds the per-version
 management described below. [ADR-592](adr/592-durable-object-write-protection.md) adds the write snapshots
 described below. [ADR-593](adr/593-protection-aware-object-lifecycle.md) adds protected
-lifecycle deletion. Event-hold changes and governance bypass remain separate work.
-The gateway rejects unsupported event-hold and governance-bypass headers. Object
+lifecycle deletion. ADRs 594 and 595 add per-version and creation event holds; governance bypass remains open.
+The gateway accepts separately enrolled event-hold creation headers and rejects governance-bypass headers. Object
 Lock enrollment remains explicit per backend; deployment defaults stay disabled.
 Local tests qualify the implementation; production activation remains deployment work.
 
@@ -2072,13 +2072,13 @@ free-space floor with PUTs. Gregale verifies the incoming part, computes MD5
 from its bounded spool and signs the native Content-MD5 header. Insufficient
 staging capacity returns `SlowDown` before a native part write.
 
-Owned Object Lock buckets capture the verified fixed retention default and any
+Owned Object Lock buckets capture the verified fixed or event retention default and any
 explicit write protection when admitting each upload or copy. Standard signed
 `x-amz-object-lock-mode`, `x-amz-object-lock-retain-until-date` and
 `x-amz-object-lock-legal-hold` headers are supported on PUT, CopyObject and
-CreateMultipartUpload. Mode and date must appear together; holds use `ON` or
-`OFF`. Dates must be in the future. Event holds and governance bypass are
-unsupported, and parts/completion cannot replace initiation protection.
+CreateMultipartUpload. Fixed retention requires mode and date together; legal holds use `ON` or
+`OFF`. Explicit dates must be in the future. Separately enrolled event holds are
+described below. Governance bypass is unsupported, and parts/completion cannot replace initiation protection.
 
 Signed object-upload and multipart-creation APIs accept an optional selection:
 
@@ -2127,3 +2127,26 @@ classification, malformed history or unknown effects retain custody and capacity
 Only verified all-version inventory changes the quota baseline after deletion.
 
 See [ADR-593](adr/593-protection-aware-object-lifecycle.md).
+
+### Event holds on new versions
+
+Separately enrolled backends advertise `write_event_hold`. Owned signed-upload
+and multipart initiation requests can select an event hold through `protection`:
+
+```json
+{"protection":{"retention":{"mode":"COMPLIANCE","event_hold":"ON","event_hold_duration":{"days":30}}}}
+```
+
+An optional `retain_until_date` is a minimum. ON requires one days or years
+duration. OFF on a new version requires a fixed date and no duration; use the
+existing-version retention API to release an active hold without a fixed date.
+The signed S3 PUT, copy and multipart initiation paths accept the standard
+`x-amz-object-lock-event-hold` and duration-days/duration-years headers.
+
+Omitted retention inherits the admitted bucket default, including default event
+holds and fixed minima. An explicit retention selection overrides that default.
+Upload routes inherit defaults. Parts and completion keep initiation policy.
+Accepted receipts preserve these snapshots through disabled enrollment, changing
+defaults, restarts and missing acknowledgments. Settlement requires exact-version
+readback with the correct status, duration, private receipt and retention bound;
+recovery does not resend the body. See [ADR-595](adr/595-event-protection-for-new-object-versions.md).

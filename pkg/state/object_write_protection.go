@@ -19,6 +19,8 @@ import (
 // write selection. Native bucket defaults cannot change through Gregale until
 // all accepted writes drain; recovery compares against this snapshot only.
 type ObjectWriteProtectionSnapshot struct {
+	// Admission-only capability; excluded from durable policy and readback proof.
+	AdmitEventHolds  bool                            `json:"-"`
 	Enabled          bool                            `json:"enabled,omitempty"`
 	Revision         int64                           `json:"revision,omitempty"`
 	CapturedAt       *time.Time                      `json:"captured_at,omitempty"`
@@ -36,7 +38,7 @@ func (p ObjectWriteProtectionSnapshot) Valid() bool {
 	if p.Empty() {
 		return true
 	}
-	return p.Enabled && p.Revision >= 0 && p.Revision <= api.MaxObjectBucketObjectLockRevision && p.CapturedAt != nil && !p.CapturedAt.IsZero() && p.CapturedAt.Year() >= 1 && p.CapturedAt.Year() <= 9999 && p.Requested.Valid() && (p.DefaultRetention == nil || p.DefaultRetention.Valid() && p.DefaultRetention.DefaultEventHold == nil)
+	return p.Enabled && p.Revision >= 0 && p.Revision <= api.MaxObjectBucketObjectLockRevision && p.CapturedAt != nil && !p.CapturedAt.IsZero() && p.CapturedAt.Year() >= 1 && p.CapturedAt.Year() <= 9999 && p.Requested.Valid() && (p.DefaultRetention == nil || p.DefaultRetention.Valid()) && p.MinimumRetention().Valid()
 }
 func (p ObjectWriteProtectionSnapshot) Clone() ObjectWriteProtectionSnapshot {
 	p.Requested = p.Requested.Clone()
@@ -66,7 +68,14 @@ func (p ObjectWriteProtectionSnapshot) Proof() string {
 // defaults at creation; its resulting deadline must be at least this minimum.
 func (p ObjectWriteProtectionSnapshot) MinimumRetention() api.ObjectVersionRetention {
 	if p.Requested.Retention != nil {
-		return p.Requested.Retention.Clone()
+		r := p.Requested.Retention.Clone()
+		if r.EventHold == "ON" && r.EventHoldDuration != nil && p.CapturedAt != nil {
+			until := eventHoldMinimum(*p.CapturedAt, *r.EventHoldDuration)
+			if r.RetainUntilDate == nil || until.After(*r.RetainUntilDate) {
+				r.RetainUntilDate = &until
+			}
+		}
+		return r.ForWrite()
 	}
 	if p.DefaultRetention == nil || p.CapturedAt == nil {
 		return api.ObjectVersionRetention{}
@@ -79,7 +88,26 @@ func (p ObjectWriteProtectionSnapshot) MinimumRetention() api.ObjectVersionReten
 	if d.Years != nil {
 		until = until.AddDate(int(*d.Years), 0, 0)
 	}
-	return (api.ObjectVersionRetention{Mode: d.Mode, RetainUntilDate: &until}).ForWrite()
+	r := api.ObjectVersionRetention{Mode: d.Mode, RetainUntilDate: &until}
+	if d.DefaultEventHold != nil {
+		period := d.DefaultEventHold.Clone()
+		r.EventHold, r.EventHoldDuration = "ON", &period
+		minimum := eventHoldMinimum(*p.CapturedAt, period)
+		if minimum.After(until) {
+			r.RetainUntilDate = &minimum
+		}
+	}
+	return r.ForWrite()
+}
+
+func eventHoldMinimum(captured time.Time, period api.ObjectRetentionPeriod) time.Time {
+	days := int32(0)
+	if period.Days != nil {
+		days = *period.Days
+	} else if period.Years != nil {
+		days = *period.Years * 365
+	}
+	return captured.AddDate(0, 0, int(days))
 }
 func captureObjectWriteProtection(j ObjectBucketObjectLock, p ObjectWriteProtectionSnapshot, now time.Time) (ObjectWriteProtectionSnapshot, error) {
 	if !p.ValidInput() || objectLockActive(j) {
@@ -91,14 +119,18 @@ func captureObjectWriteProtection(j ObjectBucketObjectLock, p ObjectWriteProtect
 		}
 		return ObjectWriteProtectionSnapshot{}, nil
 	}
-	if !j.ObservedKnown || j.ObservedConfiguration == nil || !j.ObservedConfiguration.Enabled || !j.ObservedConfiguration.Valid() || j.ObservedConfiguration.DefaultRetention != nil && j.ObservedConfiguration.DefaultRetention.DefaultEventHold != nil {
+	if !j.ObservedKnown || j.ObservedConfiguration == nil || !j.ObservedConfiguration.Enabled || !j.ObservedConfiguration.Valid() {
+		return p, ErrConflict
+	}
+	if !p.AdmitEventHolds && (p.Requested.Retention != nil && p.Requested.Retention.EventHold != "" || p.Requested.Retention == nil && j.ObservedConfiguration.DefaultRetention != nil && j.ObservedConfiguration.DefaultRetention.DefaultEventHold != nil) {
 		return p, ErrConflict
 	}
 	now = now.UTC().Truncate(time.Millisecond)
 	p.Enabled, p.Revision, p.CapturedAt = true, j.Revision, &now
 	p.DefaultRetention = j.ObservedConfiguration.Clone().DefaultRetention
 	p.Requested = p.Requested.ForWrite()
-	if !p.Valid() || !p.MinimumRetention().Valid() || p.Requested.Retention != nil && !p.Requested.Retention.RetainUntilDate.After(now) {
+	p.AdmitEventHolds = false
+	if !p.Valid() || !p.MinimumRetention().Valid() || p.Requested.Retention != nil && p.Requested.Retention.RetainUntilDate != nil && !p.Requested.Retention.RetainUntilDate.After(now) {
 		return p, ErrConflict
 	}
 	return p.Clone(), nil

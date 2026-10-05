@@ -8,6 +8,7 @@ import (
 // adr: 592
 func TestObjectWriteProtectionValidation(t *testing.T) {
 	until := time.Date(2027, 1, 2, 3, 4, 5, 123456789, time.UTC)
+	days := int32(30)
 	for _, tc := range []struct {
 		name  string
 		p     ObjectWriteProtection
@@ -18,6 +19,10 @@ func TestObjectWriteProtectionValidation(t *testing.T) {
 		{"hold", ObjectWriteProtection{LegalHold: &ObjectVersionLegalHold{Status: "ON"}}, true},
 		{"clear", ObjectWriteProtection{Retention: &ObjectVersionRetention{}}, false},
 		{"event", ObjectWriteProtection{Retention: &ObjectVersionRetention{EventHold: "ON"}}, false},
+		{"event on", ObjectWriteProtection{Retention: &ObjectVersionRetention{Mode: "COMPLIANCE", EventHold: "ON", EventHoldDuration: &ObjectRetentionPeriod{Days: &days}}}, true},
+		{"event off fixed", ObjectWriteProtection{Retention: &ObjectVersionRetention{Mode: "COMPLIANCE", EventHold: "OFF", RetainUntilDate: &until}}, true},
+		{"event off conditional", ObjectWriteProtection{Retention: &ObjectVersionRetention{Mode: "COMPLIANCE", EventHold: "OFF"}}, false},
+		{"event off duration", ObjectWriteProtection{Retention: &ObjectVersionRetention{Mode: "COMPLIANCE", EventHold: "OFF", RetainUntilDate: &until, EventHoldDuration: &ObjectRetentionPeriod{Days: &days}}}, false},
 		{"missing mode", ObjectWriteProtection{Retention: &ObjectVersionRetention{RetainUntilDate: &until}}, false},
 		{"invalid hold", ObjectWriteProtection{LegalHold: &ObjectVersionLegalHold{Status: "on"}}, false},
 	} {

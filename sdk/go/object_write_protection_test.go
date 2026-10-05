@@ -46,3 +46,38 @@ func TestWriteProtectionClientRequests(t *testing.T) {
 		t.Fatal(calls)
 	}
 }
+
+func TestEventWriteProtectionClientRequests(t *testing.T) {
+	years := int32(1)
+	p := &faas.ObjectWriteProtection{Retention: &faas.ObjectVersionRetention{Mode: "COMPLIANCE", EventHold: "ON", EventHoldDuration: &faas.ObjectRetentionPeriod{Years: &years}}, LegalHold: &faas.ObjectVersionLegalHold{Status: "ON"}}
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var body struct {
+			Protection *faas.ObjectWriteProtection `json:"protection"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Protection == nil || body.Protection.Retention == nil || body.Protection.Retention.EventHold != "ON" || body.Protection.Retention.EventHoldDuration == nil || body.Protection.Retention.EventHoldDuration.Years == nil || *body.Protection.Retention.EventHoldDuration.Years != 1 || body.Protection.LegalHold == nil || body.Protection.LegalHold.Status != "ON" {
+			t.Error(body)
+		}
+		if r.URL.Path == "/v1/apps/demo/buckets/bucket/signed-url" {
+			_, _ = fmt.Fprint(w, `{"method":"PUT","url":"https://s3.example.test/assets/key","headers":{"X-Amz-Object-Lock-Legal-Hold":"ON"}}`)
+		} else {
+			_, _ = fmt.Fprint(w, `{"id":"upload","state":"active"}`)
+		}
+	}))
+	defer srv.Close()
+	c, err := faas.NewClient(srv.URL, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := int64(3)
+	if _, err = c.SignBucketObject(context.Background(), "demo", "bucket", faas.ObjectSignRequest{Method: "PUT", Key: "key", SizeBytes: &size, Protection: p}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.CreateObjectMultipartUpload(context.Background(), "demo", "bucket", faas.CreateObjectMultipartUploadRequest{Key: "key", SizeBytes: 3, Protection: p}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatal(calls)
+	}
+}

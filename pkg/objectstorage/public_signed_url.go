@@ -92,7 +92,20 @@ func PublicSignedObjectHeaders(r SignRequest) (http.Header, error) {
 	if p := r.Protection; p != nil {
 		if r := p.Retention; r != nil {
 			h.Set("X-Amz-Object-Lock-Mode", r.Mode)
-			h.Set("X-Amz-Object-Lock-Retain-Until-Date", r.RetainUntilDate.UTC().Format(time.RFC3339Nano))
+			if r.RetainUntilDate != nil {
+				h.Set("X-Amz-Object-Lock-Retain-Until-Date", r.RetainUntilDate.UTC().Format(time.RFC3339Nano))
+			}
+			if r.EventHold != "" {
+				h.Set("X-Amz-Object-Lock-Event-Hold", r.EventHold)
+			}
+			if r.EventHoldDuration != nil {
+				if r.EventHoldDuration.Days != nil {
+					h.Set("X-Amz-Object-Lock-Event-Hold-Duration-Days", strconv.FormatInt(int64(*r.EventHoldDuration.Days), 10))
+				}
+				if r.EventHoldDuration.Years != nil {
+					h.Set("X-Amz-Object-Lock-Event-Hold-Duration-Years", strconv.FormatInt(int64(*r.EventHoldDuration.Years), 10))
+				}
+			}
 		}
 		if hold := p.LegalHold; hold != nil {
 			h.Set("X-Amz-Object-Lock-Legal-Hold", hold.Status)

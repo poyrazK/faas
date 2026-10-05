@@ -1,6 +1,6 @@
 package api
 
-// ObjectWriteProtection selects fixed retention and an independent legal hold
+// ObjectWriteProtection selects retention and an independent legal hold
 // for a new version. An omitted retention inherits the admitted bucket default.
 type ObjectWriteProtection struct {
 	Retention *ObjectVersionRetention `json:"retention,omitempty"`
@@ -9,7 +9,7 @@ type ObjectWriteProtection struct {
 
 func (p ObjectWriteProtection) Empty() bool { return p.Retention == nil && p.LegalHold == nil }
 func (p ObjectWriteProtection) Valid() bool {
-	return (p.Retention == nil || p.Retention.Valid() && !p.Retention.Empty() && p.Retention.EventHold == "" && p.Retention.EventHoldDuration == nil && p.Retention.RetainUntilDate != nil) && (p.LegalHold == nil || p.LegalHold.Valid())
+	return (p.Retention == nil || p.Retention.ValidForWrite() && !p.Retention.Empty() && (p.Retention.EventHold == "ON" || p.Retention.RetainUntilDate != nil)) && (p.LegalHold == nil || p.LegalHold.Valid())
 }
 func (p ObjectWriteProtection) Clone() ObjectWriteProtection {
 	if p.Retention != nil {

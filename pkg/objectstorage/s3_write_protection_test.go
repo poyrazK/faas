@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -33,6 +33,17 @@ func protectedHeadHeaders(w http.ResponseWriter, p state.ObjectWriteProtectionSn
 	if !r.Empty() {
 		w.Header().Set("X-Amz-Object-Lock-Mode", r.Mode)
 		w.Header().Set("X-Amz-Object-Lock-Retain-Until-Date", r.RetainUntilDate.Format(time.RFC3339Nano))
+		if r.EventHold != "" {
+			w.Header().Set("X-Amz-Object-Lock-Event-Hold", r.EventHold)
+		}
+		if r.EventHoldDuration != nil {
+			if r.EventHoldDuration.Days != nil {
+				w.Header().Set("X-Amz-Object-Lock-Event-Hold-Duration-Days", strconv.Itoa(int(*r.EventHoldDuration.Days)))
+			}
+			if r.EventHoldDuration.Years != nil {
+				w.Header().Set("X-Amz-Object-Lock-Event-Hold-Duration-Years", strconv.Itoa(int(*r.EventHoldDuration.Years)))
+			}
+		}
 	}
 	if p.Requested.LegalHold != nil {
 		w.Header().Set("X-Amz-Object-Lock-Legal-Hold", p.Requested.LegalHold.Status)
@@ -89,10 +100,18 @@ func TestS3ProtectedWriteExactReadback(t *testing.T) {
 		})
 	}
 }
-func TestS3ProtectionOnCopyAndMultipart(t *testing.T) {
+func TestS3ProtectionOnCopyAndMultipart(t *testing.T) { s3ProtectionOnCopyAndMultipart(t, false) }
+
+// adr: 595
+func TestS3EventProtectionOnCopyAndMultipart(t *testing.T) { s3ProtectionOnCopyAndMultipart(t, true) }
+func s3ProtectionOnCopyAndMultipart(t *testing.T, event bool) {
 	for _, kind := range []string{"copy", "multipart"} {
 		t.Run(kind, func(t *testing.T) {
 			snapshot := testWriteProtection()
+			if event {
+				days := int32(30)
+				snapshot.Requested.Retention = &api.ObjectVersionRetention{Mode: "COMPLIANCE", EventHold: "ON", EventHoldDuration: &api.ObjectRetentionPeriod{Days: &days}}
+			}
 			receipt := uuid.NewString()
 			mutations, heads := 0, 0
 			provider := protectionTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -110,6 +129,9 @@ func TestS3ProtectionOnCopyAndMultipart(t *testing.T) {
 					return
 				}
 				mutations++
+				if event && (kind == "copy" || r.URL.Query().Has("uploads")) && (r.Header.Get("X-Amz-Object-Lock-Event-Hold") != "ON" || r.Header.Get("X-Amz-Object-Lock-Event-Hold-Duration-Days") != "30" || r.Header.Get("X-Amz-Object-Lock-Retain-Until-Date") != "") {
+					t.Error("creation lost explicit event policy")
+				}
 				w.Header().Set("Content-Type", "application/xml")
 				w.Header().Set("X-Amz-Version-Id", "native-proof")
 				if kind == "copy" {
@@ -157,7 +179,21 @@ func TestS3ProtectionOnCopyAndMultipart(t *testing.T) {
 	}
 }
 func TestS3ProtectedWriteHistoryRecovery(t *testing.T) {
+	testS3ProtectedWriteHistoryRecovery(t, false)
+}
+
+// adr: 595
+func TestS3ProtectedEventWriteHistoryRecovery(t *testing.T) {
+	testS3ProtectedWriteHistoryRecovery(t, true)
+}
+
+func testS3ProtectedWriteHistoryRecovery(t *testing.T, event bool) {
+	t.Helper()
 	snapshot := testWriteProtection()
+	if event {
+		days := int32(30)
+		snapshot.Requested.Retention = &api.ObjectVersionRetention{Mode: "COMPLIANCE", EventHold: "ON", EventHoldDuration: &api.ObjectRetentionPeriod{Days: &days}}
+	}
 	receipt := uuid.NewString()
 	mutations := 0
 	provider := protectionTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -6115,67 +6115,59 @@ END $_$;
 
 
 --
--- Name: valid_object_protected_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
+-- Name: valid_object_event_protected_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.valid_object_protected_url_request(r jsonb) RETURNS boolean
+CREATE FUNCTION public.valid_object_event_protected_url_request(r jsonb) RETURNS boolean
     LANGUAGE plpgsql IMMUTABLE STRICT
     AS $$
-DECLARE method text;
 BEGIN
- IF jsonb_typeof(r)<>'object' OR octet_length(r::text)>32768 OR
-  r - ARRAY['method','key','expires_in','size_bytes','content_type','cache_control','content_disposition','content_encoding','content_language','metadata','tags','encryption','multipart','protection'] <> '{}'::jsonb OR
-  jsonb_typeof(r->'method') IS DISTINCT FROM 'string' OR jsonb_typeof(r->'key') IS DISTINCT FROM 'string' OR
-  octet_length(r->>'key') NOT BETWEEN 1 AND 1024 OR (r->>'key') ~ '[\x01-\x1f\x7f]' OR
-  jsonb_typeof(r->'expires_in') IS DISTINCT FROM 'number' OR (r->>'expires_in')::bigint NOT BETWEEN 1 AND 900 THEN RETURN false; END IF;
- method:=r->>'method';
- IF method IN ('GET','HEAD') THEN RETURN r - ARRAY['method','key','expires_in'] = '{}'::jsonb; END IF;
- IF method<>'PUT' OR jsonb_typeof(r->'size_bytes') IS DISTINCT FROM 'number' OR (r->>'size_bytes')::bigint NOT BETWEEN 0 AND 5368709120 THEN RETURN false; END IF;
- IF r ? 'multipart' THEN
-  IF jsonb_typeof(r->'multipart') IS DISTINCT FROM 'object' OR
-   (r->'multipart') - ARRAY['upload_id','part_number'] <> '{}'::jsonb OR
-   jsonb_typeof(r->'multipart'->'upload_id') IS DISTINCT FROM 'string' OR
-   (r->'multipart'->>'upload_id')::uuid='00000000-0000-0000-0000-000000000000'::uuid OR
-   jsonb_typeof(r->'multipart'->'part_number') IS DISTINCT FROM 'number' OR
-   (r->'multipart'->>'part_number')::int NOT BETWEEN 1 AND 10000 OR
-   (r->>'size_bytes')::bigint<1 OR r->>'content_type' IS DISTINCT FROM 'application/octet-stream' THEN RETURN false; END IF;
-  RETURN r - ARRAY['method','key','expires_in','size_bytes','content_type','multipart'] = '{}'::jsonb;
- END IF;
- IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('content_type','cache_control','content_disposition','content_encoding','content_language') AND (jsonb_typeof(value)<>'string' OR value::text ~ '\\r|\\n|\\u0000')) THEN RETURN false; END IF;
- IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('metadata','tags','encryption','protection') AND jsonb_typeof(value)<>'object') THEN RETURN false; END IF;
- IF r ? 'protection' AND (r->'protection'='{}' OR NOT valid_object_write_protection(jsonb_build_object('enabled',true,'captured_at','2026-01-01T00:00:00Z','requested',r->'protection'))) THEN RETURN false; END IF;
- RETURN true;
+ IF NOT coalesce(valid_object_protected_url_request(r-'protection'),false) THEN RETURN false; END IF;
+ IF NOT r ? 'protection' THEN RETURN true; END IF;
+ RETURN coalesce(r->>'method'='PUT' AND NOT r ? 'multipart' AND r->'protection'<>'{}' AND
+  valid_object_event_write_protection(jsonb_build_object('enabled',true,'captured_at','2026-01-01T00:00:00Z','requested',r->'protection')),false);
 EXCEPTION WHEN OTHERS THEN RETURN false;
 END $$;
 
 
 --
--- Name: valid_object_write_protection(jsonb); Type: FUNCTION; Schema: public; Owner: -
+-- Name: valid_object_event_write_protection(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.valid_object_write_protection(p jsonb) RETURNS boolean
+CREATE FUNCTION public.valid_object_event_write_protection(p jsonb) RETURNS boolean
     LANGUAGE plpgsql IMMUTABLE STRICT
-    AS $$
-DECLARE r jsonb; d jsonb; t timestamptz;
+    AS $_$
+DECLARE r jsonb; d jsonb; t timestamptz; minimum timestamptz; period jsonb; n integer;
 BEGIN
  IF p='{}' THEN RETURN true; END IF;
- IF jsonb_typeof(p)<>'object' OR octet_length(p::text)>16384 OR p-ARRAY['enabled','revision','captured_at','default_retention','requested']<>'{}' OR p->'enabled' IS DISTINCT FROM 'true'::jsonb OR
-  jsonb_typeof(p->'revision') IS DISTINCT FROM 'number' AND p ? 'revision' OR coalesce((p->>'revision')::bigint,0) NOT BETWEEN 0 AND 9007199254740991 OR jsonb_typeof(p->'captured_at') IS DISTINCT FROM 'string' THEN RETURN false; END IF;
- t := (p->>'captured_at')::timestamptz;
+ IF jsonb_typeof(p) IS DISTINCT FROM 'object' OR octet_length(p::text)>16384 OR p-ARRAY['enabled','revision','captured_at','default_retention','requested']<>'{}' OR p->'enabled' IS DISTINCT FROM 'true'::jsonb OR
+  p ? 'revision' AND (jsonb_typeof(p->'revision') IS DISTINCT FROM 'number' OR p->>'revision' !~ '^[0-9]+$' OR (p->>'revision')::numeric NOT BETWEEN 0 AND 9007199254740991) OR jsonb_typeof(p->'captured_at') IS DISTINCT FROM 'string' THEN RETURN false; END IF;
+ t:=(p->>'captured_at')::timestamptz;
  IF NOT isfinite(t) OR extract(year from t) NOT BETWEEN 1 AND 9999 THEN RETURN false; END IF;
- IF p ? 'default_retention' AND (NOT valid_object_lock_configuration(jsonb_build_object('enabled',true,'default_retention',p->'default_retention')) OR p->'default_retention' ? 'default_event_hold') THEN RETURN false; END IF;
- r := coalesce(p->'requested','{}'::jsonb);
- IF jsonb_typeof(r)<>'object' OR r-ARRAY['retention','legal_hold']<>'{}' THEN RETURN false; END IF;
+ IF p ? 'default_retention' AND NOT coalesce(valid_object_lock_configuration(jsonb_build_object('enabled',true,'default_retention',p->'default_retention')),false) THEN RETURN false; END IF;
+ r:=coalesce(p->'requested','{}'::jsonb);
+ IF jsonb_typeof(r) IS DISTINCT FROM 'object' OR r-ARRAY['retention','legal_hold']<>'{}' THEN RETURN false; END IF;
  IF r ? 'retention' THEN
-  d := r->'retention';
-  IF jsonb_typeof(d)<>'object' OR d-ARRAY['mode','retain_until_date']<>'{}' OR coalesce(d->>'mode','') NOT IN ('GOVERNANCE','COMPLIANCE') OR jsonb_typeof(d->'retain_until_date') IS DISTINCT FROM 'string' THEN RETURN false; END IF;
-  t := (d->>'retain_until_date')::timestamptz;
-  IF NOT isfinite(t) OR extract(year from t) NOT BETWEEN 1 AND 9999 OR date_trunc('milliseconds',t)<>t THEN RETURN false; END IF;
+  d:=r->'retention';
+  IF d='{}' OR NOT object_event_hold_retention_valid(d,true) OR NOT (d->>'event_hold'='ON' OR d ? 'retain_until_date') THEN RETURN false; END IF;
+  IF d ? 'retain_until_date' AND date_trunc('milliseconds',(d->>'retain_until_date')::timestamptz)<>(d->>'retain_until_date')::timestamptz THEN RETURN false; END IF;
+  IF d->>'event_hold'='ON' THEN period:=d->'event_hold_duration'; END IF;
+ ELSE
+  d:=p->'default_retention';
+  period:=d->'default_event_hold';
+  IF d ? 'days' THEN minimum:=t+(d->>'days')::integer*interval '1 day'; END IF;
+  IF d ? 'years' THEN minimum:=t+(d->>'years')::integer*interval '1 year'; END IF;
+  IF minimum IS NOT NULL AND extract(year FROM minimum) NOT BETWEEN 1 AND 9999 THEN RETURN false; END IF;
  END IF;
- IF r ? 'legal_hold' AND (jsonb_typeof(r->'legal_hold')<>'object' OR (r->'legal_hold')-ARRAY['status']<>'{}' OR coalesce(r->'legal_hold'->>'status','') NOT IN ('ON','OFF')) THEN RETURN false; END IF;
+ IF period IS NOT NULL THEN
+  n:=CASE WHEN period ? 'days' THEN (period->>'days')::integer ELSE (period->>'years')::integer*365 END;
+  minimum:=t+n*interval '1 day';
+  IF extract(year FROM minimum) NOT BETWEEN 1 AND 9999 THEN RETURN false; END IF;
+ END IF;
+ IF r ? 'legal_hold' AND (jsonb_typeof(r->'legal_hold') IS DISTINCT FROM 'object' OR (r->'legal_hold')-ARRAY['status']<>'{}' OR coalesce(r->'legal_hold'->>'status','') NOT IN ('ON','OFF')) THEN RETURN false; END IF;
  RETURN true;
 EXCEPTION WHEN OTHERS THEN RETURN false;
-END $$;
+END $_$;
 
 
 --
@@ -6227,6 +6219,7 @@ CREATE TABLE public.object_storage_multipart_uploads (
     CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[[:cntrl:]]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_completion_error CHECK (((completion_error_code = ANY (ARRAY[''::text, 'precondition_failed'::text, 'conditional_conflict'::text, 'conditional_not_found'::text])) AND ((completion_error_code = ''::text) OR ((state = ANY (ARRAY['aborting'::text, 'aborted'::text])) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_encryption_phase CHECK ((((encryption_lease_token = ''::text) OR ((encryption_snapshot <> '{}'::jsonb) AND (lease_token IS NOT NULL) AND (encryption_lease_token = lease_token))) AND ((NOT encryption_verified) OR ((encryption_snapshot <> '{}'::jsonb) AND (state = 'completed'::text) AND completion_dispatched)) AND ((encryption_snapshot = '{}'::jsonb) OR (state <> 'completed'::text) OR encryption_verified))),
+    CONSTRAINT object_multipart_event_protection_snapshot CHECK (public.valid_object_event_write_protection(protection_snapshot)),
     CONSTRAINT object_multipart_lifecycle_binding CHECK ((((lifecycle_scan_id IS NULL) AND (lifecycle_binding = '{}'::jsonb)) OR ((lifecycle_scan_id IS NOT NULL) AND (jsonb_typeof(lifecycle_binding) = 'object'::text) AND (lifecycle_binding ?& ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'expected_provider_upload_id'::text, 'expected_created_at'::text]) AND ((lifecycle_binding - ARRAY['scan_id'::text, 'scan_token'::text, 'rule_id'::text, 'expected_provider_upload_id'::text, 'expected_created_at'::text]) = '{}'::jsonb) AND (jsonb_typeof((lifecycle_binding -> 'scan_id'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'scan_id'::text) = (lifecycle_scan_id)::text) AND (jsonb_typeof((lifecycle_binding -> 'scan_token'::text)) = 'string'::text) AND ((octet_length((lifecycle_binding ->> 'scan_token'::text)) >= 1) AND (octet_length((lifecycle_binding ->> 'scan_token'::text)) <= 128)) AND (jsonb_typeof((lifecycle_binding -> 'rule_id'::text)) = 'string'::text) AND ((char_length((lifecycle_binding ->> 'rule_id'::text)) >= 1) AND (char_length((lifecycle_binding ->> 'rule_id'::text)) <= 255)) AND (jsonb_typeof((lifecycle_binding -> 'expected_provider_upload_id'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_provider_upload_id'::text) = provider_upload_id) AND (provider_upload_id <> ''::text) AND (jsonb_typeof((lifecycle_binding -> 'expected_created_at'::text)) = 'string'::text) AND ((lifecycle_binding ->> 'expected_created_at'::text) <> ''::text) AND (octet_length((lifecycle_binding)::text) <= 8192) AND (state = ANY (ARRAY['aborting'::text, 'aborted'::text]))))),
     CONSTRAINT object_multipart_part_url_deadline_shape CHECK (((part_url_unsafe_until IS NULL) OR ((part_count > 0) AND (part_url_unsafe_until >= created_at)))),
     CONSTRAINT object_multipart_protection_phase CHECK ((((protection_lease_token = ''::text) OR ((protection_snapshot <> '{}'::jsonb) AND (lease_token IS NOT NULL) AND (protection_lease_token = lease_token))) AND ((NOT protection_verified) OR ((protection_snapshot <> '{}'::jsonb) AND (state = 'completed'::text) AND completion_dispatched AND (completion_version_id <> ''::text) AND (completion_version_id <> 'null'::text))) AND ((protection_snapshot = '{}'::jsonb) OR (state <> 'completed'::text) OR protection_verified))),
@@ -6252,7 +6245,6 @@ CREATE TABLE public.object_storage_multipart_uploads (
     CONSTRAINT object_storage_multipart_uploads_part_revision_check CHECK ((part_revision >= 0)),
     CONSTRAINT object_storage_multipart_uploads_part_size_bytes_check CHECK (((part_size_bytes >= 0) AND (part_size_bytes <= '5368709120'::bigint))),
     CONSTRAINT object_storage_multipart_uploads_protection_lease_token_check CHECK ((octet_length(protection_lease_token) <= 128)),
-    CONSTRAINT object_storage_multipart_uploads_protection_snapshot_check CHECK (public.valid_object_write_protection(protection_snapshot)),
     CONSTRAINT object_storage_multipart_uploads_provider_upload_id_check CHECK ((length(provider_upload_id) <= 4096)),
     CONSTRAINT object_storage_multipart_uploads_size_bytes_check CHECK (((size_bytes >= 0) AND (size_bytes <= '5497558138880'::bigint))),
     CONSTRAINT object_storage_multipart_uploads_state_check CHECK ((state = ANY (ARRAY['initiating'::text, 'active'::text, 'completing'::text, 'completing_conditional'::text, 'aborting'::text, 'completed'::text, 'aborted'::text])))
@@ -6286,6 +6278,7 @@ CREATE TABLE public.object_storage_s3_credentials (
     url_api_key_id uuid,
     url_expires_at timestamp with time zone,
     url_receipt_id uuid,
+    CONSTRAINT object_s3_event_protected_url_request CHECK (((url_request IS NULL) OR public.valid_object_event_protected_url_request(url_request))),
     CONSTRAINT object_storage_s3_credentials_access_key_id_check CHECK ((access_key_id ~ '^GRGA[A-Z2-7]{16}$'::text)),
     CONSTRAINT object_storage_s3_credentials_check CHECK ((((status = 'active'::text) AND (revoked_at IS NULL)) OR ((status = 'revoked'::text) AND (revoked_at IS NOT NULL)))),
     CONSTRAINT object_storage_s3_credentials_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
@@ -6296,7 +6289,6 @@ CREATE TABLE public.object_storage_s3_credentials (
     CONSTRAINT object_storage_s3_credentials_secret_sealed_check CHECK ((length(secret_sealed) > 0)),
     CONSTRAINT object_storage_s3_credentials_status_check CHECK ((status = ANY (ARRAY['active'::text, 'revoked'::text]))),
     CONSTRAINT object_storage_s3_credentials_url_api_key_id_check CHECK (((url_api_key_id IS NULL) OR (url_api_key_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
-    CONSTRAINT object_storage_s3_credentials_url_request_check CHECK (((url_request IS NULL) OR public.valid_object_protected_url_request(url_request))),
     CONSTRAINT object_url_credential_shape CHECK ((((url_request IS NULL) AND (url_api_key_id IS NULL) AND (url_expires_at IS NULL) AND (url_receipt_id IS NULL)) OR ((url_request IS NOT NULL) AND (url_expires_at IS NOT NULL) AND (url_expires_at > created_at) AND (url_expires_at <= (created_at + '00:15:00'::interval)) AND (managed_app_id IS NULL) AND (rotation_parent_id IS NULL) AND ((((url_request ->> 'method'::text) = 'PUT'::text) AND (permission = 'write'::text) AND (((NOT (url_request ? 'multipart'::text)) AND (url_receipt_id IS NOT NULL)) OR ((url_request ? 'multipart'::text) AND (url_receipt_id IS NULL)))) OR (((url_request ->> 'method'::text) = ANY (ARRAY['GET'::text, 'HEAD'::text])) AND (permission = 'read'::text) AND (url_receipt_id IS NULL))))))
 );
 
@@ -8631,6 +8623,41 @@ END $_$;
 
 
 --
+-- Name: valid_object_protected_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_object_protected_url_request(r jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+DECLARE method text;
+BEGIN
+ IF jsonb_typeof(r)<>'object' OR octet_length(r::text)>32768 OR
+  r - ARRAY['method','key','expires_in','size_bytes','content_type','cache_control','content_disposition','content_encoding','content_language','metadata','tags','encryption','multipart','protection'] <> '{}'::jsonb OR
+  jsonb_typeof(r->'method') IS DISTINCT FROM 'string' OR jsonb_typeof(r->'key') IS DISTINCT FROM 'string' OR
+  octet_length(r->>'key') NOT BETWEEN 1 AND 1024 OR (r->>'key') ~ '[\x01-\x1f\x7f]' OR
+  jsonb_typeof(r->'expires_in') IS DISTINCT FROM 'number' OR (r->>'expires_in')::bigint NOT BETWEEN 1 AND 900 THEN RETURN false; END IF;
+ method:=r->>'method';
+ IF method IN ('GET','HEAD') THEN RETURN r - ARRAY['method','key','expires_in'] = '{}'::jsonb; END IF;
+ IF method<>'PUT' OR jsonb_typeof(r->'size_bytes') IS DISTINCT FROM 'number' OR (r->>'size_bytes')::bigint NOT BETWEEN 0 AND 5368709120 THEN RETURN false; END IF;
+ IF r ? 'multipart' THEN
+  IF jsonb_typeof(r->'multipart') IS DISTINCT FROM 'object' OR
+   (r->'multipart') - ARRAY['upload_id','part_number'] <> '{}'::jsonb OR
+   jsonb_typeof(r->'multipart'->'upload_id') IS DISTINCT FROM 'string' OR
+   (r->'multipart'->>'upload_id')::uuid='00000000-0000-0000-0000-000000000000'::uuid OR
+   jsonb_typeof(r->'multipart'->'part_number') IS DISTINCT FROM 'number' OR
+   (r->'multipart'->>'part_number')::int NOT BETWEEN 1 AND 10000 OR
+   (r->>'size_bytes')::bigint<1 OR r->>'content_type' IS DISTINCT FROM 'application/octet-stream' THEN RETURN false; END IF;
+  RETURN r - ARRAY['method','key','expires_in','size_bytes','content_type','multipart'] = '{}'::jsonb;
+ END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('content_type','cache_control','content_disposition','content_encoding','content_language') AND (jsonb_typeof(value)<>'string' OR value::text ~ '\\r|\\n|\\u0000')) THEN RETURN false; END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('metadata','tags','encryption','protection') AND jsonb_typeof(value)<>'object') THEN RETURN false; END IF;
+ IF r ? 'protection' AND (r->'protection'='{}' OR NOT valid_object_write_protection(jsonb_build_object('enabled',true,'captured_at','2026-01-01T00:00:00Z','requested',r->'protection'))) THEN RETURN false; END IF;
+ RETURN true;
+EXCEPTION WHEN OTHERS THEN RETURN false;
+END $$;
+
+
+--
 -- Name: valid_object_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8659,6 +8686,35 @@ BEGIN
  END IF;
  IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('content_type','cache_control','content_disposition','content_encoding','content_language') AND (jsonb_typeof(value)<>'string' OR value::text ~ '\\r|\\n|\\u0000')) THEN RETURN false; END IF;
  IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('metadata','tags','encryption') AND jsonb_typeof(value)<>'object') THEN RETURN false; END IF;
+ RETURN true;
+EXCEPTION WHEN OTHERS THEN RETURN false;
+END $$;
+
+
+--
+-- Name: valid_object_write_protection(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_object_write_protection(p jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+DECLARE r jsonb; d jsonb; t timestamptz;
+BEGIN
+ IF p='{}' THEN RETURN true; END IF;
+ IF jsonb_typeof(p)<>'object' OR octet_length(p::text)>16384 OR p-ARRAY['enabled','revision','captured_at','default_retention','requested']<>'{}' OR p->'enabled' IS DISTINCT FROM 'true'::jsonb OR
+  jsonb_typeof(p->'revision') IS DISTINCT FROM 'number' AND p ? 'revision' OR coalesce((p->>'revision')::bigint,0) NOT BETWEEN 0 AND 9007199254740991 OR jsonb_typeof(p->'captured_at') IS DISTINCT FROM 'string' THEN RETURN false; END IF;
+ t := (p->>'captured_at')::timestamptz;
+ IF NOT isfinite(t) OR extract(year from t) NOT BETWEEN 1 AND 9999 THEN RETURN false; END IF;
+ IF p ? 'default_retention' AND (NOT valid_object_lock_configuration(jsonb_build_object('enabled',true,'default_retention',p->'default_retention')) OR p->'default_retention' ? 'default_event_hold') THEN RETURN false; END IF;
+ r := coalesce(p->'requested','{}'::jsonb);
+ IF jsonb_typeof(r)<>'object' OR r-ARRAY['retention','legal_hold']<>'{}' THEN RETURN false; END IF;
+ IF r ? 'retention' THEN
+  d := r->'retention';
+  IF jsonb_typeof(d)<>'object' OR d-ARRAY['mode','retain_until_date']<>'{}' OR coalesce(d->>'mode','') NOT IN ('GOVERNANCE','COMPLIANCE') OR jsonb_typeof(d->'retain_until_date') IS DISTINCT FROM 'string' THEN RETURN false; END IF;
+  t := (d->>'retain_until_date')::timestamptz;
+  IF NOT isfinite(t) OR extract(year from t) NOT BETWEEN 1 AND 9999 OR date_trunc('milliseconds',t)<>t THEN RETURN false; END IF;
+ END IF;
+ IF r ? 'legal_hold' AND (jsonb_typeof(r->'legal_hold')<>'object' OR (r->'legal_hold')-ARRAY['status']<>'{}' OR coalesce(r->'legal_hold'->>'status','') NOT IN ('ON','OFF')) THEN RETURN false; END IF;
  RETURN true;
 EXCEPTION WHEN OTHERS THEN RETURN false;
 END $$;
@@ -16027,7 +16083,6 @@ CREATE TABLE public.object_upload_completions (
     CONSTRAINT object_upload_completions_idempotency_key_check CHECK ((length(idempotency_key) <= 128)),
     CONSTRAINT object_upload_completions_object_key_check CHECK (((length(object_key) >= 1) AND (length(object_key) <= 1024))),
     CONSTRAINT object_upload_completions_origin_check CHECK ((origin = ANY (ARRAY['route'::text, 'gateway'::text, 'gateway_copy'::text]))),
-    CONSTRAINT object_upload_completions_protection_snapshot_check CHECK (public.valid_object_write_protection(protection_snapshot)),
     CONSTRAINT object_upload_completions_recovery_cursor_check CHECK ((octet_length(recovery_cursor) <= 8192)),
     CONSTRAINT object_upload_completions_request_fingerprint_check CHECK ((length(request_fingerprint) <= 64)),
     CONSTRAINT object_upload_completions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'completed'::text, 'rejected'::text, 'failed'::text]))),
@@ -16035,6 +16090,7 @@ CREATE TABLE public.object_upload_completions (
     CONSTRAINT object_upload_completions_write_phase_check CHECK ((write_phase = ANY (ARRAY['untracked'::text, 'prepared'::text, 'dispatched'::text, 'settled'::text]))),
     CONSTRAINT object_upload_copy_source CHECK ((((origin = 'gateway_copy'::text) AND ((length(source_key) >= 1) AND (length(source_key) <= 1024)) AND ((length(source_etag) >= 1) AND (length(source_etag) <= 256)) AND (btrim(source_etag) <> ''::text) AND (POSITION((chr(10)) IN (source_etag)) = 0) AND (POSITION((chr(13)) IN (source_etag)) = 0)) OR ((origin <> 'gateway_copy'::text) AND (source_key = ''::text) AND (source_etag = ''::text)))),
     CONSTRAINT object_upload_encryption_phase CHECK ((((encryption_snapshot = '{}'::jsonb) OR (write_phase = ANY (ARRAY['prepared'::text, 'dispatched'::text, 'settled'::text]))) AND ((NOT encryption_dispatched) OR ((encryption_snapshot <> '{}'::jsonb) AND (write_phase = ANY (ARRAY['dispatched'::text, 'settled'::text])))) AND ((NOT encryption_verified) OR (encryption_dispatched AND (status = 'completed'::text) AND (write_phase = 'settled'::text))) AND ((encryption_snapshot = '{}'::jsonb) OR (status <> 'completed'::text) OR encryption_verified))),
+    CONSTRAINT object_upload_event_protection_snapshot CHECK (public.valid_object_event_write_protection(protection_snapshot)),
     CONSTRAINT object_upload_gateway_receipt CHECK (((origin <> ALL (ARRAY['gateway'::text, 'gateway_copy'::text])) OR ((route_id IS NULL) AND (idempotency_key = ''::text) AND (request_fingerprint = ''::text) AND (write_phase <> 'untracked'::text)))),
     CONSTRAINT object_upload_protection_phase CHECK ((((protection_snapshot = '{}'::jsonb) OR (write_phase = ANY (ARRAY['prepared'::text, 'dispatched'::text, 'settled'::text]))) AND ((NOT protection_dispatched) OR ((protection_snapshot <> '{}'::jsonb) AND (write_phase = ANY (ARRAY['dispatched'::text, 'settled'::text])))) AND ((NOT protection_verified) OR (protection_dispatched AND (status = 'completed'::text) AND (write_phase = 'settled'::text) AND (version_id <> ''::text) AND (version_id <> 'null'::text))) AND ((protection_snapshot = '{}'::jsonb) OR (status <> 'completed'::text) OR protection_verified))),
     CONSTRAINT object_upload_recovery_lease CHECK (((recovery_token = ''::text) = (recovery_lease_until IS NULL))),

@@ -40,11 +40,43 @@ func TestObjectWriteProtectionPG(t *testing.T) {
 		}
 	}, func() time.Time { return time.Now().UTC() })
 }
-func writeProtectionSuite(t *testing.T, st accountingStore, pool *pgxpool.Pool, advance func(string), clock func() time.Time) {
+
+// adr: 595
+func TestObjectEventWriteProtectionMem(t *testing.T) {
+	m := state.NewMemStore()
+	// Propagation advances twice; keep the staged inventory in the past.
+	now := time.Now().UTC().Add(-17 * time.Minute)
+	m.SetClockForTest(func() time.Time { return now })
+	writeProtectionSuite(t, m, nil, func(bucket string) {
+		if bucket == "" {
+			now = time.Now().UTC()
+		} else {
+			now = now.Add(16 * time.Minute)
+		}
+	}, func() time.Time { return now }, true)
+}
+func TestObjectEventWriteProtectionPG(t *testing.T) {
+	st, pool, ctx := pgStoreWithPool(t)
+	writeProtectionSuite(t, st, pool, func(bucket string) {
+		if bucket == "" {
+			return
+		}
+		_, err := pool.Exec(ctx, `UPDATE object_bucket_versioning SET retry_at=clock_timestamp(),propagation_until=CASE WHEN state IN ('waiting','propagating') THEN clock_timestamp()-interval '1 second' ELSE propagation_until END WHERE bucket_id=$1`, bucket)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}, func() time.Time { return time.Now().UTC() }, true)
+}
+func writeProtectionSuite(t *testing.T, st accountingStore, pool *pgxpool.Pool, advance func(string), clock func() time.Time, event ...bool) {
+	held := len(event) != 0 && event[0]
 	b, report := seedAccounting(t, st)
 	lock := st.(state.ObjectBucketObjectLockStore)
 	days := int32(3)
 	cfg := api.ObjectBucketObjectLockConfiguration{Enabled: true, DefaultRetention: &api.ObjectLockDefaultRetention{Mode: "COMPLIANCE", Days: &days}}
+	if held {
+		years := int32(1)
+		cfg.DefaultRetention.DefaultEventHold = &api.ObjectRetentionPeriod{Years: &years}
+	}
 	if _, err := lock.RequestObjectBucketObjectLock(t.Context(), b.AccountID, b.AppID, b.ID, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -66,11 +98,21 @@ func writeProtectionSuite(t *testing.T, st accountingStore, pool *pgxpool.Pool, 
 		t.Fatal(err)
 	}
 	writes := st.(state.ObjectTrackedGatewayUploadStore)
-	c, err := writes.BeginTrackedGatewayUpload(t.Context(), state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, SubjectID: "subject", Key: "protected", Bytes: 3, Status: "pending", Protection: state.ObjectWriteProtectionSnapshot{Requested: api.ObjectWriteProtection{LegalHold: &api.ObjectVersionLegalHold{Status: "ON"}}}}, accountingPolicy())
+	in := state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, SubjectID: "subject", Key: "protected", Bytes: 3, Status: "pending", Protection: state.ObjectWriteProtectionSnapshot{Requested: api.ObjectWriteProtection{LegalHold: &api.ObjectVersionLegalHold{Status: "ON"}}}}
+	if held {
+		if _, err := writes.BeginTrackedGatewayUpload(t.Context(), in, accountingPolicy()); !errors.Is(err, state.ErrConflict) {
+			t.Fatal("event default admitted without capability", err)
+		}
+		in.Protection.AdmitEventHolds = true
+	}
+	c, err := writes.BeginTrackedGatewayUpload(t.Context(), in, accountingPolicy())
 	if err != nil || !c.Protection.Enabled || c.Protection.Revision != j.Revision || c.Protection.MinimumRetention().Mode != "COMPLIANCE" {
 		t.Fatal(c, err)
 	}
 	original := c.Protection.Clone()
+	if held && (original.MinimumRetention().EventHold != "ON" || original.AdmitEventHolds || original.MinimumRetention().RetainUntilDate.Before(original.CapturedAt.AddDate(0, 0, 365))) {
+		t.Fatal("event default or admission bound lost", original)
+	}
 	*c.Protection.DefaultRetention.Days = 999
 	c, err = writes.GetObjectUploadReceipt(t.Context(), b.AccountID, b.AppID, "", "subject", c.ID)
 	if err != nil || !c.Protection.Equal(original) {
@@ -78,7 +120,7 @@ func writeProtectionSuite(t *testing.T, st accountingStore, pool *pgxpool.Pool, 
 	}
 	// A multipart initiation captures the same original default independently.
 	sessions := st.(state.ObjectMultipartUploadStore)
-	u, err := sessions.ReserveObjectMultipartUpload(t.Context(), state.ObjectMultipartUpload{ID: uuid.NewString(), AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, Key: "multipart", ExpiresAt: time.Now().Add(24 * time.Hour)}, 100)
+	u, err := sessions.ReserveObjectMultipartUpload(t.Context(), state.ObjectMultipartUpload{ID: uuid.NewString(), AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, Key: "multipart", Protection: state.ObjectWriteProtectionSnapshot{AdmitEventHolds: held}, ExpiresAt: time.Now().Add(24 * time.Hour)}, 100)
 	if err != nil || !u.Protection.Enabled {
 		t.Fatal(u, err)
 	}
@@ -169,6 +211,19 @@ func writeProtectionSuite(t *testing.T, st accountingStore, pool *pgxpool.Pool, 
 	}
 	if pool != nil {
 		assertWriteProtectionReplayPreservesHistory(t, pool)
+		if held {
+			data, err := migrations.FS.ReadFile("20261005175131410_object_event_write_protection.sql")
+			if err != nil {
+				t.Fatal(err)
+			}
+			parts := strings.SplitN(string(data), "-- +goose Down", 2)
+			if _, err = pool.Exec(t.Context(), parts[0]); err != nil {
+				t.Fatal("event migration replay", err)
+			}
+			if _, err = pool.Exec(t.Context(), parts[1]); err == nil {
+				t.Fatal("event rollback discarded history")
+			}
+		}
 		_, down := writeProtectionMigration(t)
 		if _, err = pool.Exec(t.Context(), down); err == nil || !strings.Contains(err.Error(), "Preserve write protection history") {
 			t.Fatal("rollback discarded protected history", err)
@@ -215,6 +270,13 @@ func writeProtectionMigration(t *testing.T) (string, string) {
 // adr: 592
 func TestObjectWriteProtectionMigrationRoundTrip(t *testing.T) {
 	_, pool, ctx := pgStoreWithPool(t)
+	latest, err := migrations.FS.ReadFile("20261005175131410_object_event_write_protection.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, strings.SplitN(string(latest), "-- +goose Down", 2)[1]); err != nil {
+		t.Fatal(err)
+	}
 	up, down := writeProtectionMigration(t)
 	if _, err := pool.Exec(ctx, down); err != nil {
 		t.Fatal(err)

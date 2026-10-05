@@ -3,6 +3,7 @@ package objectstorage
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -43,6 +45,10 @@ func applyPutProtection(ctx context.Context, in *s3.PutObjectInput) {
 	if r := p.Requested.Retention; r != nil {
 		in.ObjectLockMode = types.ObjectLockMode(r.Mode)
 		in.ObjectLockRetainUntilDate = r.RetainUntilDate
+		in.ObjectLockEventHold = types.ObjectLockEventHold(r.EventHold)
+		if r.EventHoldDuration != nil {
+			in.ObjectLockEventHoldDurationDays, in.ObjectLockEventHoldDurationYears = r.EventHoldDuration.Days, r.EventHoldDuration.Years
+		}
 	}
 	if h := p.Requested.LegalHold; h != nil {
 		in.ObjectLockLegalHoldStatus = types.ObjectLockLegalHoldStatus(h.Status)
@@ -62,6 +68,10 @@ func applyCopyProtection(ctx context.Context, in *s3.CopyObjectInput) {
 	if r := p.Requested.Retention; r != nil {
 		in.ObjectLockMode = types.ObjectLockMode(r.Mode)
 		in.ObjectLockRetainUntilDate = r.RetainUntilDate
+		in.ObjectLockEventHold = types.ObjectLockEventHold(r.EventHold)
+		if r.EventHoldDuration != nil {
+			in.ObjectLockEventHoldDurationDays, in.ObjectLockEventHoldDurationYears = r.EventHoldDuration.Days, r.EventHoldDuration.Years
+		}
 	}
 	if h := p.Requested.LegalHold; h != nil {
 		in.ObjectLockLegalHoldStatus = types.ObjectLockLegalHoldStatus(h.Status)
@@ -76,6 +86,10 @@ func applyMultipartProtection(ctx context.Context, in *s3.CreateMultipartUploadI
 	if r := p.Requested.Retention; r != nil {
 		in.ObjectLockMode = types.ObjectLockMode(r.Mode)
 		in.ObjectLockRetainUntilDate = r.RetainUntilDate
+		in.ObjectLockEventHold = types.ObjectLockEventHold(r.EventHold)
+		if r.EventHoldDuration != nil {
+			in.ObjectLockEventHoldDurationDays, in.ObjectLockEventHoldDurationYears = r.EventHoldDuration.Days, r.EventHoldDuration.Years
+		}
 	}
 	if h := p.Requested.LegalHold; h != nil {
 		in.ObjectLockLegalHoldStatus = types.ObjectLockLegalHoldStatus(h.Status)
@@ -95,7 +109,7 @@ func validProtectedHead(ctx context.Context, out *s3.HeadObjectOutput) bool {
 	}
 	headers := raw.Header
 	for name := range headers {
-		if strings.HasPrefix(strings.ToLower(name), "x-amz-object-lock-") && !strings.EqualFold(name, "X-Amz-Object-Lock-Mode") && !strings.EqualFold(name, "X-Amz-Object-Lock-Retain-Until-Date") && !strings.EqualFold(name, "X-Amz-Object-Lock-Legal-Hold") {
+		if strings.HasPrefix(strings.ToLower(name), "x-amz-object-lock-") && !strings.EqualFold(name, "X-Amz-Object-Lock-Mode") && !strings.EqualFold(name, "X-Amz-Object-Lock-Retain-Until-Date") && !strings.EqualFold(name, "X-Amz-Object-Lock-Legal-Hold") && !strings.EqualFold(name, "X-Amz-Object-Lock-Event-Hold") && !strings.EqualFold(name, "X-Amz-Object-Lock-Event-Hold-Duration-Days") && !strings.EqualFold(name, "X-Amz-Object-Lock-Event-Hold-Duration-Years") {
 			return false
 		}
 	}
@@ -115,6 +129,9 @@ func validProtectedHead(ctx context.Context, out *s3.HeadObjectOutput) bool {
 		}
 	}
 	wanted := p.MinimumRetention()
+	if !validProtectedEventHead(headers, out, wanted) {
+		return false
+	}
 	if !wanted.Empty() && (len(mode) != 1 || mode[0] != wanted.Mode || out.ObjectLockRetainUntilDate.Before(*wanted.RetainUntilDate)) {
 		return false
 	}
@@ -122,6 +139,40 @@ func validProtectedHead(ctx context.Context, out *s3.HeadObjectOutput) bool {
 		return false
 	}
 	return true
+}
+
+func validProtectedEventHead(headers http.Header, out *s3.HeadObjectOutput, wanted api.ObjectVersionRetention) bool {
+	hold := encryptionHeaderValues(headers, "X-Amz-Object-Lock-Event-Hold")
+	days := encryptionHeaderValues(headers, "X-Amz-Object-Lock-Event-Hold-Duration-Days")
+	years := encryptionHeaderValues(headers, "X-Amz-Object-Lock-Event-Hold-Duration-Years")
+	if wanted.EventHold == "" {
+		return len(hold)+len(days)+len(years) == 0 && out.ObjectLockEventHold == "" && out.ObjectLockEventHoldDurationDays == nil && out.ObjectLockEventHoldDurationYears == nil
+	}
+	if len(hold) != 1 || hold[0] != wanted.EventHold || string(out.ObjectLockEventHold) != hold[0] {
+		return false
+	}
+	if wanted.EventHold == "OFF" {
+		return len(days)+len(years) == 0 && out.ObjectLockEventHoldDurationDays == nil && out.ObjectLockEventHoldDurationYears == nil
+	}
+	if len(days)+len(years) != 1 {
+		return false
+	}
+	period := api.ObjectRetentionPeriod{}
+	values, observed := days, out.ObjectLockEventHoldDurationDays
+	if len(years) == 1 {
+		values, observed = years, out.ObjectLockEventHoldDurationYears
+	}
+	n, err := strconv.ParseInt(values[0], 10, 32)
+	if err != nil || observed == nil || int64(*observed) != n {
+		return false
+	}
+	v := int32(n)
+	if len(days) == 1 {
+		period.Days = &v
+	} else {
+		period.Years = &v
+	}
+	return sameEventHoldDuration(wanted.EventHoldDuration, &period)
 }
 
 // Native acknowledgments do not prove stored Object Lock policy. Read the exact
@@ -152,20 +203,39 @@ func validProtectedSignedPut(ctx context.Context, headers http.Header, signed st
 	if p.Empty() {
 		return true
 	}
-	for _, name := range []string{"X-Amz-Meta-" + ReservedObjectProtectionMetadataKey, "Content-Md5", "X-Amz-Object-Lock-Mode", "X-Amz-Object-Lock-Retain-Until-Date", "X-Amz-Object-Lock-Legal-Hold"} {
-		values := encryptionHeaderValues(headers, name)
-		if len(values) > 1 || len(values) == 1 && !strings.Contains(";"+signed+";", ";"+strings.ToLower(name)+";") {
-			return false
-		}
-	}
 	checksum, _ := ctx.Value(writeChecksumKey{}).(string)
+	expected := map[string]string{
+		"X-Amz-Meta-" + ReservedObjectProtectionMetadataKey: p.Proof(), "Content-Md5": checksum,
+		"X-Amz-Object-Lock-Mode": "", "X-Amz-Object-Lock-Retain-Until-Date": "", "X-Amz-Object-Lock-Legal-Hold": "",
+		"X-Amz-Object-Lock-Event-Hold": "", "X-Amz-Object-Lock-Event-Hold-Duration-Days": "", "X-Amz-Object-Lock-Event-Hold-Duration-Years": "",
+	}
 	if r := p.Requested.Retention; r != nil {
-		if !oneEncryptionHeader(headers, "X-Amz-Object-Lock-Mode", r.Mode) || !oneEncryptionHeader(headers, "X-Amz-Object-Lock-Retain-Until-Date", r.RetainUntilDate.UTC().Format(time.RFC3339Nano)) {
+		expected["X-Amz-Object-Lock-Mode"] = r.Mode
+		expected["X-Amz-Object-Lock-Event-Hold"] = r.EventHold
+		if r.RetainUntilDate != nil {
+			expected["X-Amz-Object-Lock-Retain-Until-Date"] = r.RetainUntilDate.UTC().Format(time.RFC3339Nano)
+		}
+		if d := r.EventHoldDuration; d != nil {
+			if d.Days != nil {
+				expected["X-Amz-Object-Lock-Event-Hold-Duration-Days"] = strconv.FormatInt(int64(*d.Days), 10)
+			}
+			if d.Years != nil {
+				expected["X-Amz-Object-Lock-Event-Hold-Duration-Years"] = strconv.FormatInt(int64(*d.Years), 10)
+			}
+		}
+	}
+	if h := p.Requested.LegalHold; h != nil {
+		expected["X-Amz-Object-Lock-Legal-Hold"] = h.Status
+	}
+	for name, want := range expected {
+		values := encryptionHeaderValues(headers, name)
+		if want == "" {
+			if len(values) != 0 {
+				return false
+			}
+		} else if len(values) != 1 || values[0] != want || !strings.Contains(";"+signed+";", ";"+strings.ToLower(name)+";") {
 			return false
 		}
 	}
-	if h := p.Requested.LegalHold; h != nil && !oneEncryptionHeader(headers, "X-Amz-Object-Lock-Legal-Hold", h.Status) {
-		return false
-	}
-	return checksum != "" && oneEncryptionHeader(headers, "Content-Md5", checksum) && oneEncryptionHeader(headers, "X-Amz-Meta-"+ReservedObjectProtectionMetadataKey, p.Proof())
+	return checksum != ""
 }

@@ -26,8 +26,8 @@ class ObjectVersionRetentionRequest:
     """Verified native retention or a retention intent. An empty object requests a clear. Active fixed retention
     cannot be shortened and active COMPLIANCE cannot be downgraded. Enrolled event hold ON requires one duration;
     OFF omits duration and lets the provider fix the final date from the existing hold. Observed dates and requested
-    minimum dates are preserved. Governance bypass is unsupported. Per-write protection remains fixed retention
-    only."""
+    minimum dates are preserved. Governance bypass is unsupported. For new writes, OFF requires a fixed date; an
+    undated OFF is reserved for releasing an existing hold."""
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)

@@ -69,7 +69,7 @@ func TestBucketObjectLockRequestXML(t *testing.T) {
 func TestBucketObjectLockCapabilityEnrollment(t *testing.T) {
 	p := historyTestProvider(t, nil).(Provider)
 	c := ObjectLockConfig{Enabled: true}
-	if !SupportsNativeObjectLock(p) || !c.PublicCapabilities(p).BucketConfiguration || c.PublicCapabilities(p).DefaultEventHold || c.PublicCapabilities(p).VersionEventHold {
+	if !SupportsNativeObjectLock(p) || !c.PublicCapabilities(p).BucketConfiguration || c.PublicCapabilities(p).DefaultEventHold || c.PublicCapabilities(p).VersionEventHold || c.PublicCapabilities(p).WriteEventHold {
 		t.Fatal("wrong bucket capability")
 	}
 	one := int32(1)
@@ -78,7 +78,7 @@ func TestBucketObjectLockCapabilityEnrollment(t *testing.T) {
 		t.Fatal("unenrolled event hold accepted")
 	}
 	c.EventHolds = true
-	if !c.PublicCapabilities(p).DefaultEventHold || !c.PublicCapabilities(p).VersionEventHold {
+	if !c.PublicCapabilities(p).DefaultEventHold || !c.PublicCapabilities(p).VersionEventHold || !c.PublicCapabilities(p).WriteEventHold {
 		t.Fatal("event enrollment was not advertised")
 	}
 	if err := c.ValidateConfiguration(p, v); err != nil {

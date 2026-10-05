@@ -32319,7 +32319,7 @@ components:
     ObjectWriteProtection:
       type: object
       additionalProperties: false
-      description: Fixed retention and independent legal hold for a new object version. Omitted retention inherits the admitted bucket default. Event holds and governance bypass are unsupported.
+      description: Fixed or enrolled event retention and an independent legal hold for a new object version. Omitted retention inherits the immutable admitted bucket default. Event hold ON requires one days or years duration and permits an optional minimum date. Event hold OFF on creation requires an explicit fixed date and no duration. Governance bypass is unsupported.
       properties:
         retention:
           $ref: '#/components/schemas/ObjectVersionRetention'
@@ -32328,7 +32328,7 @@ components:
     ObjectVersionRetention:
       type: object
       additionalProperties: false
-      description: Verified native retention or a retention intent. An empty object requests a clear. Active fixed retention cannot be shortened and active COMPLIANCE cannot be downgraded. Enrolled event hold ON requires one duration; OFF omits duration and lets the provider fix the final date from the existing hold. Observed dates and requested minimum dates are preserved. Governance bypass is unsupported. Per-write protection remains fixed retention only.
+      description: Verified native retention or a retention intent. An empty object requests a clear. Active fixed retention cannot be shortened and active COMPLIANCE cannot be downgraded. Enrolled event hold ON requires one duration; OFF omits duration and lets the provider fix the final date from the existing hold. Observed dates and requested minimum dates are preserved. Governance bypass is unsupported. For new writes, OFF requires a fixed date; an undated OFF is reserved for releasing an existing hold.
       properties:
         mode: { type: string, enum: [GOVERNANCE, COMPLIANCE] }
         retain_until_date: { type: string, format: date-time }
@@ -32394,11 +32394,12 @@ components:
       type: object
       description: Enrolled bucket configuration, default and per-version event holds, fixed version retention and legal-hold capabilities without a native health check.
       additionalProperties: false
-      required: [bucket_configuration, default_event_hold, version_retention, version_legal_hold, version_event_hold]
+      required: [bucket_configuration, default_event_hold, version_retention, version_legal_hold, version_event_hold, write_event_hold]
       properties:
         bucket_configuration: { type: boolean }
         default_event_hold: { type: boolean }
         version_event_hold: { type: boolean, description: Separately enrolled durable per-version event hold mutations. }
+        write_event_hold: { type: boolean, description: Separately enrolled event holds on new writes and captured bucket defaults. }
         version_retention: { type: boolean }
         version_legal_hold: { type: boolean }
     ObjectRetentionPeriod:

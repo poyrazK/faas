@@ -238,6 +238,10 @@ func (h *uploadHandler) uploadDestination(w http.ResponseWriter, r *http.Request
 			uploadProblem(w, http.StatusNotImplemented, "protected uploads are disabled on this backend")
 			return bucket, nil, false
 		}
+		if j.ObservedConfiguration != nil && j.ObservedConfiguration.DefaultRetention != nil && j.ObservedConfiguration.DefaultRetention.DefaultEventHold != nil && !backend.ObjectLock.EventHolds {
+			uploadProblem(w, http.StatusNotImplemented, "event hold uploads are disabled on this backend")
+			return bucket, nil, false
+		}
 	}
 	writer, ok := backend.Provider.(ObjectWriter)
 	if !ok {

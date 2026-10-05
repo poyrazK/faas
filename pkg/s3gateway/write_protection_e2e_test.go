@@ -26,6 +26,7 @@ type protectedWriteHTTPObject struct {
 	body, version string
 }
 type protectedWriteHTTP struct {
+	defaultRetention           *api.ObjectLockDefaultRetention
 	mu                         sync.Mutex
 	objects, versions, uploads map[string]protectedWriteHTTPObject
 	clock                      func() time.Time
@@ -131,6 +132,27 @@ func (f *protectedWriteHTTP) commit(key string, obj *protectedWriteHTTPObject) {
 	if obj.headers.Get("X-Amz-Object-Lock-Mode") == "" {
 		obj.headers.Set("X-Amz-Object-Lock-Mode", "COMPLIANCE")
 		obj.headers.Set("X-Amz-Object-Lock-Retain-Until-Date", f.clock().AddDate(0, 0, 3).Format(time.RFC3339Nano))
+		if f.defaultRetention != nil && f.defaultRetention.DefaultEventHold != nil {
+			obj.headers.Set("X-Amz-Object-Lock-Event-Hold", "ON")
+			p := f.defaultRetention.DefaultEventHold
+			if p.Days != nil {
+				obj.headers.Set("X-Amz-Object-Lock-Event-Hold-Duration-Days", strconv.Itoa(int(*p.Days)))
+			}
+			if p.Years != nil {
+				obj.headers.Set("X-Amz-Object-Lock-Event-Hold-Duration-Years", strconv.Itoa(int(*p.Years)))
+			}
+		}
+	}
+	if obj.headers.Get("X-Amz-Object-Lock-Event-Hold") == "ON" {
+		days, _ := strconv.Atoi(obj.headers.Get("X-Amz-Object-Lock-Event-Hold-Duration-Days"))
+		if years, _ := strconv.Atoi(obj.headers.Get("X-Amz-Object-Lock-Event-Hold-Duration-Years")); years != 0 {
+			days = years * 365
+		}
+		minimum := f.clock().AddDate(0, 0, days)
+		existing, err := time.Parse(time.RFC3339Nano, obj.headers.Get("X-Amz-Object-Lock-Retain-Until-Date"))
+		if err != nil || minimum.After(existing) {
+			obj.headers.Set("X-Amz-Object-Lock-Retain-Until-Date", minimum.Format(time.RFC3339Nano))
+		}
 	}
 	f.objects[key] = *obj
 	f.versions[obj.version] = *obj
@@ -162,12 +184,40 @@ func TestWriteProtectionSDKE2EPG(t *testing.T) {
 		}
 	}, func() time.Time { return time.Now().UTC() })
 }
-func writeProtectionSDKE2E(t *testing.T, st multipartCopyIntegrationStore, advance func(state.ObjectBucket), clock func() time.Time) {
+
+// adr: 595
+func TestEventWriteProtectionSDKE2EMem(t *testing.T) {
+	m := state.NewMemStore()
+	now := time.Now().UTC().Add(-17 * time.Minute)
+	m.SetClockForTest(func() time.Time { return now })
+	writeProtectionSDKE2E(t, m, func(b state.ObjectBucket) {
+		if b.ID == "" {
+			now = time.Now().UTC()
+		} else {
+			now = now.Add(16 * time.Minute)
+		}
+	}, func() time.Time { return now }, true)
+}
+func TestEventWriteProtectionSDKE2EPG(t *testing.T) {
+	st, pool := multipartCopyPGStore(t)
+	writeProtectionSDKE2E(t, st, func(b state.ObjectBucket) {
+		if b.ID == "" {
+			return
+		}
+		for _, q := range []string{`UPDATE object_bucket_versioning SET retry_at=clock_timestamp(),propagation_until=CASE WHEN state IN ('waiting','propagating') THEN clock_timestamp()-interval '1 second' ELSE propagation_until END WHERE bucket_id=$1`, `UPDATE object_upload_completions SET recovery_retry_at=clock_timestamp() WHERE bucket_id=$1 AND status='pending'`} {
+			if _, err := pool.Exec(t.Context(), q, b.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}, func() time.Time { return time.Now().UTC() }, true)
+}
+func writeProtectionSDKE2E(t *testing.T, st multipartCopyIntegrationStore, advance func(state.ObjectBucket), clock func() time.Time, event ...bool) {
+	held := len(event) != 0 && event[0]
 	native := &protectedWriteHTTP{objects: map[string]protectedWriteHTTPObject{}, versions: map[string]protectedWriteHTTPObject{}, uploads: map[string]protectedWriteHTTPObject{}, clock: clock}
 	f := newMultipartCopyIntegrationConfigured(t, st, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { native.serve(t, w, r) }), objectstorage.Config{}, 0, nil)
 	configure := func(enabled bool) {
 		policy := f.handler.registry.Accounting
-		reg, err := objectstorage.NewRegistry(objectstorage.Config{Accounting: &policy, DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "local"}, Backends: []objectstorage.BackendConfig{{ID: "local", Driver: "s3", Region: "us-east-1", Namespace: "integration", Endpoint: f.nativeEndpoint, AllowHTTP: true, PathStyle: true, S3Region: "us-east-1", AccessKeyEnv: "KEY", SecretKeyEnv: "SECRET", ObjectLock: objectstorage.ObjectLockConfig{Enabled: enabled}}}}, func(string) string { return "local-provider-test-credential" }, map[string]objectstorage.Factory{"s3": objectstorage.NewS3})
+		reg, err := objectstorage.NewRegistry(objectstorage.Config{Accounting: &policy, DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "local"}, Backends: []objectstorage.BackendConfig{{ID: "local", Driver: "s3", Region: "us-east-1", Namespace: "integration", Endpoint: f.nativeEndpoint, AllowHTTP: true, PathStyle: true, S3Region: "us-east-1", AccessKeyEnv: "KEY", SecretKeyEnv: "SECRET", ObjectLock: objectstorage.ObjectLockConfig{Enabled: enabled, EventHolds: enabled && held}}}}, func(string) string { return "local-provider-test-credential" }, map[string]objectstorage.Factory{"s3": objectstorage.NewS3})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -177,6 +227,10 @@ func writeProtectionSDKE2E(t *testing.T, st multipartCopyIntegrationStore, advan
 	lock := st.(state.ObjectBucketObjectLockStore)
 	days := int32(3)
 	cfg := api.ObjectBucketObjectLockConfiguration{Enabled: true, DefaultRetention: &api.ObjectLockDefaultRetention{Mode: "COMPLIANCE", Days: &days}}
+	if held {
+		cfg.DefaultRetention.DefaultEventHold = &api.ObjectRetentionPeriod{Years: aws.Int32(1)}
+	}
+	native.defaultRetention = cfg.DefaultRetention
 	if _, err := lock.RequestObjectBucketObjectLock(t.Context(), f.bucket.AccountID, f.bucket.AppID, f.bucket.ID, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +247,12 @@ func writeProtectionSDKE2E(t *testing.T, st multipartCopyIntegrationStore, advan
 		t.Fatal(err)
 	}
 	until := clock().AddDate(0, 0, 7)
-	out, err := f.client.PutObject(t.Context(), &awss3.PutObjectInput{Bucket: aws.String("assets"), Key: aws.String("source"), Body: strings.NewReader("hello"), ObjectLockMode: types.ObjectLockModeCompliance, ObjectLockRetainUntilDate: &until, ObjectLockLegalHoldStatus: types.ObjectLockLegalHoldStatusOn})
+	input := &awss3.PutObjectInput{Bucket: aws.String("assets"), Key: aws.String("source"), Body: strings.NewReader("hello"), ObjectLockMode: types.ObjectLockModeCompliance, ObjectLockRetainUntilDate: &until, ObjectLockLegalHoldStatus: types.ObjectLockLegalHoldStatusOn}
+	if held {
+		input.ObjectLockEventHold = types.ObjectLockEventHoldOn
+		input.ObjectLockEventHoldDurationDays = aws.Int32(30)
+	}
+	out, err := f.client.PutObject(t.Context(), input)
 	if err != nil || aws.ToString(out.VersionId) == "" {
 		t.Fatal(out, err)
 	}

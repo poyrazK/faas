@@ -50,6 +50,12 @@ func (h *uploadHandler) performTrackedUpload(w http.ResponseWriter, r *http.Requ
 	writeUploadJSON(w, http.StatusCreated, uploadResponse(done))
 }
 func (h *uploadHandler) beginTrackedUpload(w http.ResponseWriter, r *http.Request, st state.ObjectTrackedUploadStore, bucket state.ObjectBucket, c state.ObjectUploadCompletion) (state.ObjectUploadCompletion, bool) {
+	backend, err := h.registry.Resolve(bucket.BackendID, bucket.BackendFingerprint)
+	if err != nil {
+		uploadProblem(w, http.StatusServiceUnavailable, "upload protection is temporarily unavailable")
+		return c, false
+	}
+	c.Protection.AdmitEventHolds = backend.ObjectLock.EventHolds
 	intent, created, err := st.BeginTrackedObjectUpload(r.Context(), c, h.registry.Accounting)
 	if err != nil {
 		uploadAccountingProblem(w, err)
