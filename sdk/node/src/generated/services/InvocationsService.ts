@@ -465,7 +465,7 @@ export class InvocationsService {
    * The original failure remains visible in event receipts and retained
    * replay history. Delivery and application side effects remain at least once.
    *
-   * @returns AsyncInvokeResponse The recovery child was enqueued or already exists.
+   * @returns AsyncInvokeResponse The lane-preserving recovery child was admitted or is already retained.
    * @throws ApiError
    */
   public static replayKeyedInvocation({

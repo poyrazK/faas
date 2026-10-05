@@ -391,11 +391,11 @@ export class EventsService {
     limit = 100,
   }: {
     /**
-     * Published event source.
+     * Source of the published event whose dispatch attempts are requested.
      */
     source: string,
     /**
-     * Published event ID.
+     * Identity within the published source for this dispatch-attempt history.
      */
     id: string,
     /**

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Recorded invocation claim and its eventual dispatch outcome within one replay generation.
+ */
 export type InvocationAttemptResponse = {
   id: number;
   invocation_id: string;

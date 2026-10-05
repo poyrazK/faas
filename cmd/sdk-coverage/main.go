@@ -1030,6 +1030,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/event-deliveries":                                   "ListAppsSlugEventDeliveries",
 	"GET /v1/apps/{slug}/event-deliveries/attempts":                          "ListEventFanoutAttemptHistory",
 	"GET /v1/events/receipt":                                                 "GetEventReceipt",
+	"GET /v1/events/backlog":                                                 "GetEventBacklog",
+	"GET /v1/events/storage":                                                 "GetEventStorageUsage",
 	"GET /v1/events/receipt/replays":                                         "GetEventReceiptReplays",
 	"GET /v1/events/receipt/attempts":                                        "GetEventReceiptAttempts",
 	"POST /v1/invocations/{id}/replay-keyed":                                 "ReplayKeyedInvocation",

@@ -18,6 +18,8 @@ T = TypeVar("T", bound="InvocationAttemptResponse")
 
 @_attrs_define
 class InvocationAttemptResponse:
+    """Recorded invocation claim and its eventual dispatch outcome within one replay generation."""
+
     id: int
     invocation_id: UUID
     replay_generation: int

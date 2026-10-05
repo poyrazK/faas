@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { InvocationAttemptResponse } from './InvocationAttemptResponse.js';
+/**
+ * Retained dispatch attempts for the original application event delivery and its trusted replay descendants.
+ */
 export type EventReceiptAttemptHistoryResponse = {
   event_source: string;
   event_id: string;
@@ -14,7 +17,7 @@ export type EventReceiptAttemptHistoryResponse = {
   coverage: 'recorded_attempts_only';
   attempts: Array<InvocationAttemptResponse>;
   /**
-   * Opaque cursor for the next older page.
+   * Opaque cursor for the next page of older dispatch attempts for this captured recipient.
    */
   next_after?: string;
 };

@@ -21,6 +21,8 @@ T = TypeVar("T", bound="EventReceiptAttemptHistoryResponse")
 
 @_attrs_define
 class EventReceiptAttemptHistoryResponse:
+    """Retained dispatch attempts for the original application event delivery and its trusted replay descendants."""
+
     event_source: str
     event_id: str
     subscription_id: str
@@ -29,7 +31,7 @@ class EventReceiptAttemptHistoryResponse:
     """History is not backfilled and may be pruned; absence is not proof of no delivery."""
     attempts: list[InvocationAttemptResponse]
     next_after: str | Unset = UNSET
-    """Opaque cursor for the next older page."""
+    """Opaque cursor for the next page of older dispatch attempts for this captured recipient."""
 
     def to_dict(self) -> dict[str, Any]:
         event_source = self.event_source

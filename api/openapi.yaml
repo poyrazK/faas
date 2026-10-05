@@ -3488,8 +3488,8 @@ paths:
         pages; a running outcome may settle between reads.
       security: [{ bearerAuth: [] }]
       parameters:
-        - { name: source, in: query, required: true, description: Published event source., schema: { type: string, minLength: 1, maxLength: 256 } }
-        - { name: id, in: query, required: true, description: Published event ID., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: source, in: query, required: true, description: Source of the published event whose dispatch attempts are requested., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: id, in: query, required: true, description: Identity within the published source for this dispatch-attempt history., schema: { type: string, minLength: 1, maxLength: 256 } }
         - { name: subscription_id, in: query, required: true, description: Captured consumer identifier., schema: { type: string, minLength: 1, maxLength: 256 } }
         - { name: after, in: query, description: Opaque next_after cursor for this attempt history., schema: { type: string, maxLength: 8192 } }
         - { name: limit, in: query, description: Maximum retained attempts per page., schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
@@ -24641,7 +24641,7 @@ paths:
         - $ref: '#/components/parameters/Id32'
       responses:
         '202':
-          description: The recovery child was enqueued or already exists.
+          description: The lane-preserving recovery child was admitted or is already retained.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AsyncInvokeResponse' }
@@ -42218,6 +42218,7 @@ components:
         next_after: { type: string, description: Opaque cursor for the next older page; omit after when starting a fresh history read. }
 
     InvocationAttemptResponse:
+      description: Recorded invocation claim and its eventual dispatch outcome within one replay generation.
       type: object
       additionalProperties: false
       required: [id, invocation_id, replay_generation, attempt, started_at, outcome, retain_until]
@@ -42234,6 +42235,7 @@ components:
         retain_until: { type: string, format: date-time, description: Closed attempts can expire earlier if their invocation is deleted; running attempts are not pruned. }
 
     EventReceiptAttemptHistoryResponse:
+      description: Retained dispatch attempts for the original application event delivery and its trusted replay descendants.
       type: object
       additionalProperties: false
       required: [event_source, event_id, subscription_id, original_invocation_id, coverage, attempts]
@@ -42246,7 +42248,7 @@ components:
         attempts:
           type: array
           items: { $ref: '#/components/schemas/InvocationAttemptResponse' }
-        next_after: { type: string, description: Opaque cursor for the next older page. }
+        next_after: { type: string, description: Opaque cursor for the next page of older dispatch attempts for this captured recipient. }
 
     EventReceiptCancellationResponse:
       description: Durable work-policy cancel_pending operation receipt, which creates no handler invocation.
