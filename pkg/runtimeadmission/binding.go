@@ -26,12 +26,13 @@ var (
 )
 
 type Identity struct {
-	ProtocolVersion     uint32
-	NodeID, Incarnation string
+	ProtocolVersion        uint32
+	NodeID, Incarnation    string
+	SnapshotRestoreVersion uint32
 }
 
 func (i Identity) Validate() error {
-	if !supportedProtocol(i.ProtocolVersion) || !canonicalUUID(i.NodeID) || !canonicalUUID(i.Incarnation) {
+	if !supportedProtocol(i.ProtocolVersion) || !canonicalUUID(i.NodeID) || !canonicalUUID(i.Incarnation) || i.SnapshotRestoreVersion > SnapshotRestoreVersion || i.SnapshotRestoreVersion != 0 && i.ProtocolVersion != ArtifactProtocolVersion {
 		return ErrUnavailable
 	}
 	return nil
@@ -39,26 +40,28 @@ func (i Identity) Validate() error {
 
 // Binding is comparable so all grant fields must match an acknowledgment.
 type Binding struct {
-	ProtocolVersion     uint32 `json:"protocol_version"`
-	Token               string `json:"token"`
-	InstanceID          string `json:"instance_id"`
-	AppID               string `json:"app_id"`
-	DeploymentID        string `json:"deployment_id"`
-	AccountID           string `json:"account_id"`
-	NodeID              string `json:"node_id"`
-	Incarnation         string `json:"incarnation"`
-	DesiredRevision     int64  `json:"desired_revision"`
-	EffectiveHash       string `json:"effective_hash"`
-	CapturedInputHash   string `json:"captured_input_hash"`
-	PayloadHash         string `json:"payload_hash"`
-	EgressRevision      int64  `json:"egress_revision"`
-	IssuedAtUnixNano    int64  `json:"issued_at_unix_nano"`
-	ExpiresAtUnixNano   int64  `json:"expires_at_unix_nano"`
-	ArtifactSourcesHash string `json:"artifact_sources_hash,omitempty"`
+	ProtocolVersion      uint32 `json:"protocol_version"`
+	Token                string `json:"token"`
+	InstanceID           string `json:"instance_id"`
+	AppID                string `json:"app_id"`
+	DeploymentID         string `json:"deployment_id"`
+	AccountID            string `json:"account_id"`
+	NodeID               string `json:"node_id"`
+	Incarnation          string `json:"incarnation"`
+	DesiredRevision      int64  `json:"desired_revision"`
+	EffectiveHash        string `json:"effective_hash"`
+	CapturedInputHash    string `json:"captured_input_hash"`
+	PayloadHash          string `json:"payload_hash"`
+	EgressRevision       int64  `json:"egress_revision"`
+	IssuedAtUnixNano     int64  `json:"issued_at_unix_nano"`
+	ExpiresAtUnixNano    int64  `json:"expires_at_unix_nano"`
+	ArtifactSourcesHash  string `json:"artifact_sources_hash,omitempty"`
+	SnapshotCaptureToken string `json:"snapshot_capture_token,omitempty"`
+	SnapshotEvidenceHash string `json:"snapshot_evidence_hash,omitempty"`
 }
 
 func (b Binding) Validate(now time.Time) error {
-	if !supportedProtocol(b.ProtocolVersion) || b.DesiredRevision <= 0 || b.EgressRevision <= 0 || !b.validArtifactProtocol() {
+	if !supportedProtocol(b.ProtocolVersion) || b.DesiredRevision <= 0 || b.EgressRevision <= 0 || !b.validArtifactProtocol() || !b.validSnapshotBinding() {
 		return ErrInvalid
 	}
 	for _, id := range []string{b.Token, b.InstanceID, b.AppID, b.DeploymentID, b.AccountID, b.NodeID, b.Incarnation} {
@@ -103,14 +106,14 @@ func ValidHash(value string) bool {
 }
 
 func (b Binding) ToProto() *vmmdpb.RuntimeBootBinding {
-	return &vmmdpb.RuntimeBootBinding{ProtocolVersion: b.ProtocolVersion, Token: b.Token, InstanceId: b.InstanceID, AppId: b.AppID, DeploymentId: b.DeploymentID, AccountId: b.AccountID, NodeId: b.NodeID, Incarnation: b.Incarnation, DesiredRevision: b.DesiredRevision, EffectiveHash: b.EffectiveHash, CapturedInputHash: b.CapturedInputHash, PayloadHash: b.PayloadHash, EgressRevision: b.EgressRevision, IssuedAtUnixNano: b.IssuedAtUnixNano, ExpiresAtUnixNano: b.ExpiresAtUnixNano, ArtifactSourcesHash: b.ArtifactSourcesHash}
+	return &vmmdpb.RuntimeBootBinding{ProtocolVersion: b.ProtocolVersion, Token: b.Token, InstanceId: b.InstanceID, AppId: b.AppID, DeploymentId: b.DeploymentID, AccountId: b.AccountID, NodeId: b.NodeID, Incarnation: b.Incarnation, DesiredRevision: b.DesiredRevision, EffectiveHash: b.EffectiveHash, CapturedInputHash: b.CapturedInputHash, PayloadHash: b.PayloadHash, EgressRevision: b.EgressRevision, IssuedAtUnixNano: b.IssuedAtUnixNano, ExpiresAtUnixNano: b.ExpiresAtUnixNano, ArtifactSourcesHash: b.ArtifactSourcesHash, SnapshotCaptureToken: b.SnapshotCaptureToken, SnapshotEvidenceHash: b.SnapshotEvidenceHash}
 }
 
 func BindingFromProto(p *vmmdpb.RuntimeBootBinding) (Binding, error) {
 	if p == nil || RejectUnknown(p) != nil {
 		return Binding{}, ErrInvalid
 	}
-	return Binding{ProtocolVersion: p.ProtocolVersion, Token: p.Token, InstanceID: p.InstanceId, AppID: p.AppId, DeploymentID: p.DeploymentId, AccountID: p.AccountId, NodeID: p.NodeId, Incarnation: p.Incarnation, DesiredRevision: p.DesiredRevision, EffectiveHash: p.EffectiveHash, CapturedInputHash: p.CapturedInputHash, PayloadHash: p.PayloadHash, EgressRevision: p.EgressRevision, IssuedAtUnixNano: p.IssuedAtUnixNano, ExpiresAtUnixNano: p.ExpiresAtUnixNano, ArtifactSourcesHash: p.ArtifactSourcesHash}, nil
+	return Binding{ProtocolVersion: p.ProtocolVersion, Token: p.Token, InstanceID: p.InstanceId, AppID: p.AppId, DeploymentID: p.DeploymentId, AccountID: p.AccountId, NodeID: p.NodeId, Incarnation: p.Incarnation, DesiredRevision: p.DesiredRevision, EffectiveHash: p.EffectiveHash, CapturedInputHash: p.CapturedInputHash, PayloadHash: p.PayloadHash, EgressRevision: p.EgressRevision, IssuedAtUnixNano: p.IssuedAtUnixNano, ExpiresAtUnixNano: p.ExpiresAtUnixNano, ArtifactSourcesHash: p.ArtifactSourcesHash, SnapshotCaptureToken: p.SnapshotCaptureToken, SnapshotEvidenceHash: p.SnapshotEvidenceHash}, nil
 }
 
 type Receipt struct {

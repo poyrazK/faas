@@ -7229,6 +7229,18 @@ WHERE c.token=sqlc.arg(token)::uuid AND c.deployment_id=sqlc.arg(deployment_id):
 UPDATE application_standard_snapshot_captures SET acknowledgment=sqlc.arg(acknowledgment)::jsonb,received_at=clock_timestamp()
 WHERE token=sqlc.arg(token)::uuid AND acknowledgment IS NULL;
 
+-- Called after locking the target's current native inputs. Shared catalog and
+-- cache locks fence deletion/staleness until issuance or publication commits.
+-- name: LockApplicationStandardSnapshotRestore :one
+SELECT c.expected_state,c.grant_data,c.acknowledgment,c.created_at,c.received_at,c.input_snapshot,
+ s.deployment_id::text AS deployment_id,s.fc_version,s.storage_key,s.mem_bytes,s.disk_bytes,s.tier
+FROM application_standard_snapshot_captures c
+JOIN snapshots s ON s.application_standard_capture_token=c.token
+WHERE c.token=sqlc.arg(token)::uuid AND c.account_id=sqlc.arg(account_id)::uuid
+ AND c.app_id=sqlc.arg(app_id)::uuid AND c.deployment_id=sqlc.arg(deployment_id)::uuid
+ AND c.acknowledgment IS NOT NULL AND s.stale=false AND s.delete_pending=false
+ORDER BY s.created_at DESC,s.id DESC LIMIT 1 FOR SHARE OF c,s NOWAIT;
+
 -- name: LockSnapshotPublicationApp :one
 SELECT a.id::text FROM apps a JOIN deployments d ON d.app_id=a.id
 WHERE d.id=sqlc.arg(deployment_id)::uuid FOR UPDATE OF a;

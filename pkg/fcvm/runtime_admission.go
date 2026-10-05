@@ -129,6 +129,11 @@ func (m *Manager) WakeAdmitted(ctx context.Context, request AdmittedWakeRequest,
 
 func (m *Manager) prepareAdmittedInputs(request AdmittedWakeRequest, identity runtimeadmission.Identity) (WakeRequest, string, error) {
 	binding := request.Binding
+	// A restore-bound grant cannot silently enter the ordinary cold path.
+	// Remove this guard only with measured native snapshot consumption.
+	if binding.SnapshotCaptureToken != "" {
+		return WakeRequest{}, "", runtimeadmission.ErrUnavailable
+	}
 	if binding.NodeID != identity.NodeID || binding.Incarnation != identity.Incarnation {
 		return WakeRequest{}, "", runtimeadmission.ErrStale
 	}

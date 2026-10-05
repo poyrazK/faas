@@ -25,7 +25,36 @@ type admittedWireServer struct {
 }
 
 func (s *admittedWireServer) RuntimeAdmissionIdentity(context.Context, *vmmdpb.RuntimeAdmissionIdentityRequest) (*vmmdpb.RuntimeAdmissionIdentityResponse, error) {
-	return &vmmdpb.RuntimeAdmissionIdentityResponse{ProtocolVersion: s.identity.ProtocolVersion, NodeId: s.identity.NodeID, Incarnation: s.identity.Incarnation}, nil
+	return &vmmdpb.RuntimeAdmissionIdentityResponse{ProtocolVersion: s.identity.ProtocolVersion, NodeId: s.identity.NodeID, Incarnation: s.identity.Incarnation, SnapshotRestoreVersion: s.identity.SnapshotRestoreVersion}, nil
+}
+
+func TestVMMClientSnapshotRestoreIdentityPreservesCapability(t *testing.T) {
+	for _, version := range []uint32{0, runtimeadmission.SnapshotRestoreVersion, runtimeadmission.SnapshotRestoreVersion + 1} {
+		identity := runtimeadmission.Identity{ProtocolVersion: runtimeadmission.ArtifactProtocolVersion, NodeID: uuid.NewString(), Incarnation: uuid.NewString(), SnapshotRestoreVersion: version}
+		server := &admittedWireServer{identity: identity}
+		client := newPolicyWireClient(t, server)
+		got, err := client.RuntimeAdmissionIdentity(t.Context())
+		if version > runtimeadmission.SnapshotRestoreVersion {
+			if err == nil {
+				t.Fatal("unsupported capability accepted")
+			}
+			continue
+		}
+		if err != nil || got != identity {
+			t.Fatal("snapshot capability lost on wire", err)
+		}
+	}
+}
+
+func TestVMMClientSnapshotRestoreUnboundEvidenceRefusedBeforeRPC(t *testing.T) {
+	req, _, _ := preparedWireFixture(t, false)
+	req.SnapshotRestore = &vmmdpb.RuntimeSnapshotRestoreEvidence{Version: runtimeadmission.SnapshotRestoreVersion, CaptureToken: uuid.NewString()}
+	req.Binding.PayloadHash, _ = runtimeadmission.HashBootPayload(req)
+	server := &admittedWireServer{}
+	client := newPolicyWireClient(t, server)
+	if _, err := client.CreateAdmittedRuntime(t.Context(), req); err == nil || server.requests != 0 {
+		t.Fatal("unbound evidence entered native RPC", err)
+	}
 }
 func (s *admittedWireServer) Destroy(_ context.Context, req *vmmdpb.DestroyRequest) (*vmmdpb.DestroyResponse, error) {
 	s.destroyed = append(s.destroyed, req.GetInstance())

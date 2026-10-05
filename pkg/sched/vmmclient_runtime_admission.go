@@ -62,7 +62,7 @@ func (c *VMMClient) RuntimeAdmissionIdentity(ctx context.Context) (runtimeadmiss
 	if err := runtimeadmission.RejectUnknown(resp); err != nil {
 		return runtimeadmission.Identity{}, err
 	}
-	i := runtimeadmission.Identity{ProtocolVersion: resp.ProtocolVersion, NodeID: resp.NodeId, Incarnation: resp.Incarnation}
+	i := runtimeadmission.Identity{ProtocolVersion: resp.ProtocolVersion, NodeID: resp.NodeId, Incarnation: resp.Incarnation, SnapshotRestoreVersion: resp.SnapshotRestoreVersion}
 	return i, i.Validate()
 }
 
@@ -84,6 +84,9 @@ func (c *VMMClient) CreateAdmittedRuntime(ctx context.Context, req *vmmdpb.Creat
 	}
 	if hash != binding.PayloadHash {
 		return nil, runtimeadmission.ErrInvalid
+	}
+	if err := runtimeadmission.CheckSnapshotRestorePayload(req, binding, time.Now()); err != nil {
+		return nil, err
 	}
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)

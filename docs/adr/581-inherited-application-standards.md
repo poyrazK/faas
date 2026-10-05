@@ -2399,11 +2399,42 @@ copies and producer/capture/injected distinctions. Their historical boot parent
 is explicitly simulated. Files and stream verification are real portable I/O;
 they do not certify native process consumption or restored RAM.
 
-The hashed wire carrier, atomic current-catalog restore grant issuance, native
-snapshot loading from these protected inputs, snapshot-consumption receipts,
+Native snapshot loading from these protected inputs, snapshot-consumption receipts,
 paused restoration, and capture after serving promotion remain implementation
 work. Existing measured restore/promotion refusals and verified cold fallback
 remain active. Kernel/base backing verification, Firecracker compatibility,
 post-restore entropy/clock hooks, unique native leases, dedicated Linux amd64
 root/KVM test-metal/leakcheck, fleet recovery and release acceptance remain
 required. Public standard activation remains disabled.
+
+### Fresh catalog authority and hashed restore envelope
+
+A private versioned restore envelope now carries the immutable catalog capture,
+capture token and Firecracker version. Its deterministic evidence hash is a
+coupled pair with the capture token in the fresh boot binding. The complete
+envelope also participates in the existing boot payload hash. Unknown nested
+wire fields, missing or mismatched evidence, a cold request carrying restore
+evidence, changed artifact sources, RAM, keys or Firecracker version are refused.
+The native identity has a separate restore capability version; zero preserves
+the existing unavailable capability rather than implying support from protocol 2.
+
+Both stores check the published catalog when issuing fresh boot authority and
+again at final readiness publication. The catalog must have an acknowledged,
+non-stale cache row outside GC. Its stable captured application inputs must match
+the current locked target inputs, including reservation RAM and mode. The target
+has its own instance, token, node and process identity. Memory byte counts must
+match that target's RAM; caller-supplied evidence hashes cannot substitute for
+the stored capture. Historical source cleanup and a new target node do not
+rewrite or renew the parent grant. PostgreSQL locks the capture and cache rows
+with shared NOWAIT locks inside the existing native-input transaction; contention
+cannot hold parent locks indefinitely. No schema or frozen migration changes are
+part of this checkpoint.
+
+Portable authority tests use real MemStore and PostgreSQL state transitions and
+explicitly simulated captured bytes and cold fallback receipts. The RPC and
+direct native boundaries continue to refuse restore-bound grants before any
+allocation. Native loading, measured snapshot consumption, paused restore and
+promotion are still implementation work. Additive raw-database enforcement of
+the new restore binding, named environment scopes, remaining onboarding paths,
+native/fleet recovery and the operational release gates remain required before
+public activation. This checkpoint does not certify restored RAM or KVM execution.

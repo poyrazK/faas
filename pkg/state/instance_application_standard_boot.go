@@ -73,11 +73,15 @@ func validateStandardBootBinding(binding runtimeadmission.Binding, capture Insta
 }
 
 func standardCapturedArtifactSourceHash(capture InstanceApplicationStandardAdmission) (string, error) {
+	return runtimeadmission.HashArtifactSources(standardCapturedArtifactSources(capture))
+}
+
+func standardCapturedArtifactSources(capture InstanceApplicationStandardAdmission) []runtimeadmission.ArtifactSource {
 	sources := make([]runtimeadmission.ArtifactSource, 0, len(capture.RuntimeArtifacts))
 	for _, a := range capture.RuntimeArtifacts {
 		sources = append(sources, runtimeadmission.ArtifactSource{Kind: a.Kind, WorkloadName: a.WorkloadName, StorageKey: a.StorageKey, Digest: a.Digest, Bytes: a.Bytes})
 	}
-	return runtimeadmission.HashArtifactSources(sources)
+	return sources
 }
 
 func standardRuntimeReceiptTarget(next State, receipt runtimeadmission.Receipt) bool {

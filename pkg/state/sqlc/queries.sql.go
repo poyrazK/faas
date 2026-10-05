@@ -23787,6 +23787,66 @@ func (q *Queries) LockApplicationStandardSnapshotCapture(ctx context.Context, db
 	return inputs, err
 }
 
+const lockApplicationStandardSnapshotRestore = `-- name: LockApplicationStandardSnapshotRestore :one
+SELECT c.expected_state,c.grant_data,c.acknowledgment,c.created_at,c.received_at,c.input_snapshot,
+ s.deployment_id::text AS deployment_id,s.fc_version,s.storage_key,s.mem_bytes,s.disk_bytes,s.tier
+FROM application_standard_snapshot_captures c
+JOIN snapshots s ON s.application_standard_capture_token=c.token
+WHERE c.token=$1::uuid AND c.account_id=$2::uuid
+ AND c.app_id=$3::uuid AND c.deployment_id=$4::uuid
+ AND c.acknowledgment IS NOT NULL AND s.stale=false AND s.delete_pending=false
+ORDER BY s.created_at DESC,s.id DESC LIMIT 1 FOR SHARE OF c,s NOWAIT
+`
+
+type LockApplicationStandardSnapshotRestoreParams struct {
+	Token        pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type LockApplicationStandardSnapshotRestoreRow struct {
+	ExpectedState  string
+	GrantData      []byte
+	Acknowledgment []byte
+	CreatedAt      pgtype.Timestamptz
+	ReceivedAt     pgtype.Timestamptz
+	InputSnapshot  []byte
+	DeploymentID   string
+	FcVersion      string
+	StorageKey     string
+	MemBytes       int64
+	DiskBytes      int64
+	Tier           string
+}
+
+// Called after locking the target's current native inputs. Shared catalog and
+// cache locks fence deletion/staleness until issuance or publication commits.
+func (q *Queries) LockApplicationStandardSnapshotRestore(ctx context.Context, db DBTX, arg LockApplicationStandardSnapshotRestoreParams) (LockApplicationStandardSnapshotRestoreRow, error) {
+	row := db.QueryRow(ctx, lockApplicationStandardSnapshotRestore,
+		arg.Token,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+	)
+	var i LockApplicationStandardSnapshotRestoreRow
+	err := row.Scan(
+		&i.ExpectedState,
+		&i.GrantData,
+		&i.Acknowledgment,
+		&i.CreatedAt,
+		&i.ReceivedAt,
+		&i.InputSnapshot,
+		&i.DeploymentID,
+		&i.FcVersion,
+		&i.StorageKey,
+		&i.MemBytes,
+		&i.DiskBytes,
+		&i.Tier,
+	)
+	return i, err
+}
+
 const lockApplicationStandardWorkerOperation = `-- name: LockApplicationStandardWorkerOperation :one
 SELECT id FROM application_standard_operations
 WHERE id = $1::uuid AND org_id = $2::uuid

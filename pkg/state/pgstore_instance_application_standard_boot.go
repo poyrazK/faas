@@ -78,6 +78,9 @@ func (s *PgStore) IssueInstanceApplicationStandardBoot(ctx context.Context, expe
 	if err := validateStandardBootBinding(binding, input.capture, input.Incarnation, input.ProtocolVersion, now); err != nil {
 		return runtimeadmission.Binding{}, err
 	}
+	if err := checkStandardSnapshotRestoreTx(ctx, tx, binding, input.capture, now); err != nil {
+		return runtimeadmission.Binding{}, err
+	}
 	q := sqlc.New()
 	row, err := q.GetInstanceApplicationStandardBoot(ctx, tx, mustPgUUID(binding.Token))
 	if err == nil {
@@ -167,6 +170,9 @@ func prepareStandardRuntimePublication(ctx context.Context, tx pgx.Tx, expectedS
 	}
 	now := time.Unix(0, input.ClockUnixNano).UTC()
 	if err := validateStandardBootBinding(receipt.Binding, input.capture, input.Incarnation, input.ProtocolVersion, now); err != nil {
+		return instanceStandardBoot{}, err
+	}
+	if err := checkStandardSnapshotRestoreTx(ctx, tx, receipt.Binding, input.capture, now); err != nil {
 		return instanceStandardBoot{}, err
 	}
 	if !standardNativeGrantWithinArtifactLease(receipt.Binding.ExpiresAtUnixNano, input.artifactDeadline()) {

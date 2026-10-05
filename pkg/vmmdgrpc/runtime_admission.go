@@ -38,7 +38,7 @@ func (s *Server) RuntimeAdmissionIdentity(ctx context.Context, req *vmmdpb.Runti
 	if err != nil {
 		return nil, admissionStatus(err)
 	}
-	return &vmmdpb.RuntimeAdmissionIdentityResponse{ProtocolVersion: i.ProtocolVersion, NodeId: i.NodeID, Incarnation: i.Incarnation}, nil
+	return &vmmdpb.RuntimeAdmissionIdentityResponse{ProtocolVersion: i.ProtocolVersion, NodeId: i.NodeID, Incarnation: i.Incarnation, SnapshotRestoreVersion: i.SnapshotRestoreVersion}, nil
 }
 
 func (s *Server) admittedRuntimeIdentity(vmm admittedRuntimeVMM) (runtimeadmission.Identity, error) {
@@ -129,6 +129,14 @@ func (s *Server) parseAdmittedRuntime(ctx context.Context, req *vmmdpb.CreateAdm
 	}
 	if b.PayloadHash != hash {
 		return empty, 0, "", runtimeadmission.ErrInvalid
+	}
+	if err := runtimeadmission.CheckSnapshotRestorePayload(req, b, time.Now()); err != nil {
+		return empty, 0, "", err
+	}
+	// Verified input preparation is not a measured restore implementation.
+	// Keep the private envelope unavailable before any native allocation.
+	if req.SnapshotRestore != nil {
+		return empty, 0, "", runtimeadmission.ErrUnavailable
 	}
 	i, err := s.admittedRuntimeIdentity(vmm)
 	if err != nil {

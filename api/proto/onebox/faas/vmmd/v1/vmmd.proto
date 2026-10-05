@@ -2542,6 +2542,8 @@ message RuntimeAdmissionIdentityResponse {
   uint32 protocol_version = 1;
   string node_id = 2;
   string incarnation = 3;
+  // Zero means measured snapshot restore is unavailable. Boot protocol stays 2.
+  uint32 snapshot_restore_version = 4;
 }
 
 // Internal schedd grant. Hashes bind private captured inputs and the complete
@@ -2564,6 +2566,9 @@ message RuntimeBootBinding {
   int64 expires_at_unix_nano = 15;
   // Protocol 2 binds the complete canonical producer source set.
   string artifact_sources_hash = 16;
+  // Optional coupled pair. Historical capture needs fresh scoped authorization.
+  string snapshot_capture_token = 17;
+  string snapshot_evidence_hash = 18;
 }
 
 message CreateAdmittedRuntimeRequest {
@@ -2575,6 +2580,15 @@ message CreateAdmittedRuntimeRequest {
   // Complete approved producer blobs. The boot payload hash covers this set.
   // These are source identities, not snapshot or guest-overlay approval.
   repeated RuntimeArtifactSource artifact_sources = 4;
+  // Included in the boot payload hash; never authority without its saved grant.
+  RuntimeSnapshotRestoreEvidence snapshot_restore = 5;
+}
+
+message RuntimeSnapshotRestoreEvidence {
+  uint32 version = 1;
+  string capture_token = 2;
+  string fc_version = 3;
+  RuntimeSnapshotCapture capture = 4;
 }
 
 message RuntimeArtifactSource {
