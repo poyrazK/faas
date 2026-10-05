@@ -11,7 +11,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 595; adr: 432 — workflow admission retains its whole-receipt lease
+// adr: 595
+// adr: 432 — workflow admission retains its whole-receipt lease
 // even when application recipient adoption is enabled on the same scheduler.
 func TestEventWorkflowRoutingWithRecipientAdoptionEnabled(t *testing.T) {
 	store, ctx := state.NewMemStore(), t.Context()

@@ -121,7 +121,12 @@ func TestEventReceiptPaginationIsolationAndRecovery(t *testing.T) {
 		t.Fatalf("second receipt: %s", secondRec.Body)
 	}
 	dead, failed := second.Recipients[0], second.Recipients[1]
-	if len(dead.RecoveryActions) != 1 || dead.RecoveryActions[0].Kind != "dead_letter_replay" || !strings.Contains(dead.RecoveryActions[0].URL, "/queues/dead_letter/") {
+	deadLetters, err := e.store.ListDeadLetterEvents(ctx, work.RecipientSnapshot[1].AppID, 10, "")
+	if err != nil || len(deadLetters) != 1 || deadLetters[0].SourceID != dead.Execution.InvocationID {
+		t.Fatalf("dead-letter projection: %+v %v", deadLetters, err)
+	}
+	deadLetterURL := "/v1/apps/receipt-app/dlq/" + deadLetters[0].ID + "/replay"
+	if len(dead.RecoveryActions) != 1 || dead.RecoveryActions[0].Kind != "dead_letter_replay" || dead.RecoveryActions[0].URL != deadLetterURL {
 		t.Fatalf("dead letter action: %+v", dead)
 	}
 	if len(failed.RecoveryActions) != 1 || failed.RecoveryActions[0].Kind != "routing_replay" || failed.RecoveryActions[0].Body.SubscriptionID != failed.SubscriptionID || failed.RecoveryActions[0].Body.EventSource != "orders" || failed.FanoutHistoryURL == "" {

@@ -51,8 +51,12 @@ func enrichPgEventReceiptReplays(ctx context.Context, q *sqlc.Queries, tx pgx.Tx
 		entry.Recovery = &EventReceiptRecovery{RetainedReplayCount: row.RetainedReplayCount, LatestReplay: latest}
 		entry.HandlerReplayMode = ""
 		entry.HandlerReplayInvocationID = latest.InvocationID
+		entry.HandlerReplayDeadLetterID = uuidString(row.DeadLetterID)
 		if entry.TargetAvailable {
 			entry.HandlerReplayMode = receiptHandlerReplay(row.State, row.WorkPolicyName, row.QueueBindingID.Valid, entry.AppSlug, timestamptzToTimePtr(row.WorkExpiresAt), timestamptzToTimePtr(row.StartDeadlineAt))
+			if entry.HandlerReplayMode == "dead_letter_replay" && entry.HandlerReplayDeadLetterID == "" {
+				entry.HandlerReplayMode = ""
+			}
 			if row.KeyedReplayCreated || entry.HandlerReplayMode == "handler_replay" && row.PlainReplayCreated {
 				entry.HandlerReplayMode = ""
 			}

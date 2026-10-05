@@ -36,10 +36,12 @@ ORDER BY s.position LIMIT sqlc.arg(page_limit)::integer;
 -- name: EventReceiptInvocations :many
 SELECT i.id, i.app_id, i.state, i.attempts, i.replay_generation, coalesce(i.last_error, '')::text AS last_error,
        i.due_at, i.created_at, i.completed_at, coalesce(i.work_policy_name, '')::text AS work_policy_name,
-       i.queue_binding_id, i.work_expires_at, i.start_deadline_at,
+       i.queue_binding_id, i.work_expires_at, i.start_deadline_at, d.id AS dead_letter_id,
        EXISTS (SELECT 1 FROM invocation_keyed_replays r WHERE r.parent_invocation_id=i.id) AS keyed_replay_created,
        EXISTS (SELECT 1 FROM invocation_plain_replays r WHERE r.parent_invocation_id=i.id) AS plain_replay_created
 FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+LEFT JOIN production_dead_letter_events d ON d.source='invocation' AND d.source_id=i.id
+  AND d.account_id=i.account_id AND d.app_id=i.app_id AND d.replayed_at IS NULL
 WHERE i.account_id=sqlc.arg(account_id)::uuid AND i.id=ANY(sqlc.arg(invocation_ids)::uuid[])
   AND i.created_at >= sqlc.arg(accepted_at)::timestamptz;
 
@@ -58,11 +60,13 @@ SELECT roots.id::uuid AS root_id, latest.* FROM unnest(sqlc.arg(invocation_ids):
 CROSS JOIN LATERAL (
   SELECT i.id, i.app_id, i.state, i.attempts, i.replay_generation, i.replayed_from_invocation_id,
          coalesce(i.last_error, '')::text AS last_error, i.due_at, i.created_at, i.completed_at,
-         coalesce(i.work_policy_name, '')::text AS work_policy_name, i.queue_binding_id, i.work_expires_at, i.start_deadline_at,
+         coalesce(i.work_policy_name, '')::text AS work_policy_name, i.queue_binding_id, i.work_expires_at, i.start_deadline_at, d.id AS dead_letter_id,
          EXISTS (SELECT 1 FROM invocation_keyed_replays r WHERE r.parent_invocation_id=i.id) AS keyed_replay_created,
          EXISTS (SELECT 1 FROM invocation_plain_replays r WHERE r.parent_invocation_id=i.id) AS plain_replay_created,
          count(*) OVER ()::bigint AS retained_replay_count
   FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+  LEFT JOIN production_dead_letter_events d ON d.source='invocation' AND d.source_id=i.id
+    AND d.account_id=i.account_id AND d.app_id=i.app_id AND d.replayed_at IS NULL
   WHERE i.account_id=sqlc.arg(account_id)::uuid AND i.replay_root_invocation_id=roots.id
     AND i.replay_root_created_at >= sqlc.arg(accepted_at)::timestamptz
   ORDER BY i.created_at DESC, i.id DESC LIMIT 1

@@ -149,7 +149,7 @@ func eventReceiptActions(receipt state.EventReceipt, entry state.EventReceiptRec
 			path = "/v1/invocations/" + url.PathEscape(id) + "/replay-keyed"
 		}
 		if entry.HandlerReplayMode == "dead_letter_replay" {
-			path = "/v1/apps/" + url.PathEscape(entry.AppSlug) + "/queues/dead_letter/" + url.PathEscape(id) + "/replay"
+			path = "/v1/apps/" + url.PathEscape(entry.AppSlug) + "/dlq/" + url.PathEscape(entry.HandlerReplayDeadLetterID) + "/replay"
 		}
 		actions = append(actions, api.EventReceiptRecoveryAction{Kind: entry.HandlerReplayMode, Method: http.MethodPost, URL: path})
 	}

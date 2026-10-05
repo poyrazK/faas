@@ -44,7 +44,7 @@ exists; active and completed latest replays have no suggested action. Existing
 write authorization, idempotency and POST state checks remain authoritative.
 Routing replay and in-place dead-letter replay retain their existing semantics.
 This decision does not broaden generic replay eligibility for keyed/bound work.
-[ADR-598](584-safe-keyed-invocation-replay.md) subsequently adds a dedicated
+[ADR-598](598-safe-keyed-invocation-replay.md) subsequently adds a dedicated
 lane-preserving recovery path for failed unbound keyed work.
 
 `GET /v1/events/receipt/replays?source=SOURCE&id=ID&subscription_id=SUB` requires

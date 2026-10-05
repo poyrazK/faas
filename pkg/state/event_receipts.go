@@ -90,6 +90,7 @@ type EventReceiptRecipient struct {
 	RoutingReplayEligible          bool
 	HandlerReplayMode              string
 	HandlerReplayInvocationID      string
+	HandlerReplayDeadLetterID      string
 }
 
 func receiptLimit(limit int) int {
@@ -212,6 +213,10 @@ func enrichPgEventReceipt(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, recei
 			entry.Execution = receiptExecution(id, invocation.State, int(invocation.Attempts), invocation.ReplayGeneration, timeFromPgtype(invocation.DueAt), timeFromPgtype(invocation.CreatedAt), timestamptzToTimePtr(invocation.CompletedAt), invocation.LastError)
 			if entry.TargetAvailable {
 				entry.HandlerReplayMode = receiptHandlerReplay(invocation.State, invocation.WorkPolicyName, invocation.QueueBindingID.Valid, entry.AppSlug, timestamptzToTimePtr(invocation.WorkExpiresAt), timestamptzToTimePtr(invocation.StartDeadlineAt))
+				entry.HandlerReplayDeadLetterID = uuidString(invocation.DeadLetterID)
+				if entry.HandlerReplayMode == "dead_letter_replay" && entry.HandlerReplayDeadLetterID == "" {
+					entry.HandlerReplayMode = ""
+				}
 				if invocation.KeyedReplayCreated || entry.HandlerReplayMode == "handler_replay" && invocation.PlainReplayCreated {
 					entry.HandlerReplayMode = ""
 				}
@@ -372,9 +377,29 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 			receiptMissingExecution(&entry)
 		}
 		m.enrichMemEventReceiptReplays(&entry, accountID, id, owned, receipt.AcceptedAt)
+		m.enrichMemEventReceiptDeadLetter(&entry)
 		receipt.Recipients = append(receipt.Recipients, entry)
 	}
 	return receipt, nil
+}
+
+func (m *MemStore) enrichMemEventReceiptDeadLetter(entry *EventReceiptRecipient) {
+	if entry.HandlerReplayMode != "dead_letter_replay" {
+		return
+	}
+	id := entry.HandlerReplayInvocationID
+	if id == "" && entry.Execution != nil {
+		id = entry.Execution.InvocationID
+	}
+	inv, exists := m.invocations[id]
+	deadLetterID := unifiedDeadLetterEventID("invocation", id)
+	_, purged := m.deadLetterPurged[deadLetterID]
+	_, _, operationOwned := m.operationForInvocationLocked(id)
+	if !exists || purged || !m.productionInvocationWorkLocked(inv) || operationOwned || InvocationHasOperation(inv) {
+		entry.HandlerReplayMode = ""
+		return
+	}
+	entry.HandlerReplayDeadLetterID = deadLetterID
 }
 
 func cloneEventReceiptTime(value *time.Time) *time.Time {

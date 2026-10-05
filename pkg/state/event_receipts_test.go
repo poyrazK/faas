@@ -96,6 +96,56 @@ func TestEventReceiptRoutingPaginationAndRecovery(t *testing.T) {
 	})
 }
 
+// adr: 596
+// Recovery actions use the retained unified DLQ identity for original and
+// replayed executions; purged records must not advertise a broken action.
+func TestEventReceiptDeadLetterRecoveryIdentity(t *testing.T) {
+	for _, lineage := range []string{"original", "replay"} {
+		t.Run(lineage, func(t *testing.T) {
+			forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
+				ctx, account, app, work := seedRecipientClaims(t, store)
+				root := state.PublishedEventInvocationID(account, "orders", "evt-three-consumers", work.RecipientSnapshot[0].ID)
+				inv, err := store.EnqueueInvocation(ctx, state.Invocation{ID: root, AppID: app, AccountID: account, Source: state.InvocationAsyncInvoke, DueAt: time.Now()})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if lineage == "replay" {
+					failReceiptInvocation(t, store, root)
+					inv, err = store.(state.PlainInvocationReplayStore).ReplayPlainInvocation(ctx, account, root, state.PlainInvocationReplayOptions{})
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err := store.ClaimInvocation(ctx, inv.ID, "receipt-dead-letter", 30); err != nil {
+					t.Fatal(err)
+				}
+				if err := store.FailInvocation(ctx, inv.ID, "handler exhausted", 0, 1); err != nil {
+					t.Fatal(err)
+				}
+				deadLetters, err := store.ListDeadLetterEvents(ctx, app, 10, "")
+				if err != nil || len(deadLetters) != 1 || deadLetters[0].SourceID != inv.ID {
+					t.Fatalf("dead-letter projection: %+v %v", deadLetters, err)
+				}
+				receipt, err := store.EventReceipt(ctx, account, "orders", "evt-three-consumers", state.EventReceiptCursor{}, 200)
+				if err != nil {
+					t.Fatal(err)
+				}
+				entry := receipt.Recipients[0]
+				if entry.HandlerReplayMode != "dead_letter_replay" || entry.HandlerReplayDeadLetterID != deadLetters[0].ID || lineage == "replay" && entry.HandlerReplayInvocationID != inv.ID {
+					t.Fatalf("dead-letter recovery identity: %+v", entry)
+				}
+				if err := store.DeleteDeadLetterEvent(ctx, account, app, deadLetters[0].ID); err != nil {
+					t.Fatal(err)
+				}
+				receipt, err = store.EventReceipt(ctx, account, "orders", "evt-three-consumers", state.EventReceiptCursor{}, 200)
+				if err != nil || receipt.Recipients[0].HandlerReplayMode != "" {
+					t.Fatalf("purged dead letter advertised recovery: %+v %v", receipt, err)
+				}
+			})
+		})
+	}
+}
+
 // ADR-596: keyed work outcomes and cancellation receipts are actual delivery
 // evidence; an enqueued route alone cannot assert a successful execution.
 func TestEventReceiptWorkOutcomesAndRetention(t *testing.T) {
