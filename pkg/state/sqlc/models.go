@@ -4878,6 +4878,15 @@ type RegionalRuntimeQuotaReceipt struct {
 	CreatedAt          pgtype.Timestamptz
 }
 
+type RegionalRuntimeServingResume struct {
+	AppID        pgtype.UUID
+	ResumeID     pgtype.UUID
+	PermitID     pgtype.UUID
+	SeatID       pgtype.UUID
+	IntentClaims []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
 type RegionalRuntimeServingSeat struct {
 	AppID                pgtype.UUID
 	AllocationID         pgtype.UUID

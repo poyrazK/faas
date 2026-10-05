@@ -645,6 +645,7 @@ type Querier interface {
 	HasExclusiveSnapshotOwner(ctx context.Context, db DBTX, instanceID string) (bool, error)
 	HasPendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
 	HasPendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
+	HeldRegionalRuntimeServingResume(ctx context.Context, db DBTX, arg HeldRegionalRuntimeServingResumeParams) (RegionalRuntimeServingResume, error)
 	// ---------------------------------------------------------------------------
 	// ADR-096 customer-facing automatic error grouping.
 	// Tables live in migrations/00222_app_errors.sql. gatewayd-internal
@@ -762,6 +763,7 @@ type Querier interface {
 	// ADR-618: issuance is retained bookkeeping; no quota activation is implied.
 	InsertRegionalRuntimeCapacity(ctx context.Context, db DBTX, arg InsertRegionalRuntimeCapacityParams) (RegionalRuntimeCapacityReceipt, error)
 	InsertRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg InsertRegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error)
+	InsertRegionalRuntimeServingResume(ctx context.Context, db DBTX, arg InsertRegionalRuntimeServingResumeParams) (RegionalRuntimeServingResume, error)
 	InsertRegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg InsertRegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error)
 	// ---------------------------------------------------------------------------
 	// ADR-127 / issue #477 — production debugger per-request telemetry
@@ -1914,6 +1916,8 @@ type Querier interface {
 	RegionalRuntimeCapacityUsage(ctx context.Context, db DBTX, arg RegionalRuntimeCapacityUsageParams) (RegionalRuntimeCapacityUsageRow, error)
 	RegionalRuntimeQuotaHead(ctx context.Context, db DBTX, appID pgtype.UUID) (RegionalRuntimeQuotaHeadRow, error)
 	RegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg RegionalRuntimeQuotaReceiptParams) (RegionalRuntimeQuotaReceipt, error)
+	// ADR-626: immutable serving resume identities; mutations hold the quota journal lock.
+	RegionalRuntimeServingResume(ctx context.Context, db DBTX, arg RegionalRuntimeServingResumeParams) (RegionalRuntimeServingResume, error)
 	RegionalRuntimeServingSeat(ctx context.Context, db DBTX, arg RegionalRuntimeServingSeatParams) (RegionalRuntimeServingSeat, error)
 	RegionalRuntimeServingSeatUsage(ctx context.Context, db DBTX, arg RegionalRuntimeServingSeatUsageParams) (RegionalRuntimeServingSeatUsageRow, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)

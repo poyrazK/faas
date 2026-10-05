@@ -137,7 +137,8 @@ func TestPGRegionalRuntimeQuotaEmptyMigrationRoundTrip(t *testing.T) {
 	_, pool, _, _ := releasePGFixture(t)
 	up, down := regionalQuotaMigration(t)
 	capacityUp, capacityDown := regionalCapacityMigration(t)
-	for _, sql := range []string{capacityDown, down, up, capacityUp} {
+	resumeUp, resumeDown := regionalServingResumeMigration(t)
+	for _, sql := range []string{resumeDown, capacityDown, down, up, capacityUp, resumeUp} {
 		if _, err := pool.Exec(t.Context(), sql); err != nil {
 			t.Fatalf("empty quota migration round trip: %v", err)
 		}

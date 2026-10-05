@@ -12064,6 +12064,31 @@ func (q *Queries) HasPendingEnvironmentGitOpsRuntime(ctx context.Context, db DBT
 	return pending, err
 }
 
+const heldRegionalRuntimeServingResume = `-- name: HeldRegionalRuntimeServingResume :one
+SELECT r.app_id, r.resume_id, r.permit_id, r.seat_id, r.intent_claims, r.created_at FROM regional_runtime_serving_resumes r
+JOIN regional_runtime_serving_seats s ON s.app_id=r.app_id AND s.seat_id=r.seat_id
+WHERE r.app_id=$1 AND r.permit_id=$2 AND s.released_at IS NULL
+`
+
+type HeldRegionalRuntimeServingResumeParams struct {
+	AppID    pgtype.UUID
+	PermitID pgtype.UUID
+}
+
+func (q *Queries) HeldRegionalRuntimeServingResume(ctx context.Context, db DBTX, arg HeldRegionalRuntimeServingResumeParams) (RegionalRuntimeServingResume, error) {
+	row := db.QueryRow(ctx, heldRegionalRuntimeServingResume, arg.AppID, arg.PermitID)
+	var i RegionalRuntimeServingResume
+	err := row.Scan(
+		&i.AppID,
+		&i.ResumeID,
+		&i.PermitID,
+		&i.SeatID,
+		&i.IntentClaims,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const incrementAppError = `-- name: IncrementAppError :one
 
 INSERT INTO app_errors (
@@ -13656,6 +13681,40 @@ func (q *Queries) InsertRegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX
 		&i.GrantEnvelope,
 		&i.Retirement,
 		&i.RetirementEnvelope,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertRegionalRuntimeServingResume = `-- name: InsertRegionalRuntimeServingResume :one
+INSERT INTO regional_runtime_serving_resumes(app_id,resume_id,permit_id,seat_id,intent_claims)
+VALUES($1,$2,$3,$4,$5)
+RETURNING app_id, resume_id, permit_id, seat_id, intent_claims, created_at
+`
+
+type InsertRegionalRuntimeServingResumeParams struct {
+	AppID        pgtype.UUID
+	ResumeID     pgtype.UUID
+	PermitID     pgtype.UUID
+	SeatID       pgtype.UUID
+	IntentClaims []byte
+}
+
+func (q *Queries) InsertRegionalRuntimeServingResume(ctx context.Context, db DBTX, arg InsertRegionalRuntimeServingResumeParams) (RegionalRuntimeServingResume, error) {
+	row := db.QueryRow(ctx, insertRegionalRuntimeServingResume,
+		arg.AppID,
+		arg.ResumeID,
+		arg.PermitID,
+		arg.SeatID,
+		arg.IntentClaims,
+	)
+	var i RegionalRuntimeServingResume
+	err := row.Scan(
+		&i.AppID,
+		&i.ResumeID,
+		&i.PermitID,
+		&i.SeatID,
+		&i.IntentClaims,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -37067,6 +37126,30 @@ func (q *Queries) RegionalRuntimeQuotaReceipt(ctx context.Context, db DBTX, arg 
 		&i.GrantEnvelope,
 		&i.Retirement,
 		&i.RetirementEnvelope,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const regionalRuntimeServingResume = `-- name: RegionalRuntimeServingResume :one
+SELECT app_id, resume_id, permit_id, seat_id, intent_claims, created_at FROM regional_runtime_serving_resumes WHERE app_id=$1 AND resume_id=$2
+`
+
+type RegionalRuntimeServingResumeParams struct {
+	AppID    pgtype.UUID
+	ResumeID pgtype.UUID
+}
+
+// ADR-626: immutable serving resume identities; mutations hold the quota journal lock.
+func (q *Queries) RegionalRuntimeServingResume(ctx context.Context, db DBTX, arg RegionalRuntimeServingResumeParams) (RegionalRuntimeServingResume, error) {
+	row := db.QueryRow(ctx, regionalRuntimeServingResume, arg.AppID, arg.ResumeID)
+	var i RegionalRuntimeServingResume
+	err := row.Scan(
+		&i.AppID,
+		&i.ResumeID,
+		&i.PermitID,
+		&i.SeatID,
+		&i.IntentClaims,
 		&i.CreatedAt,
 	)
 	return i, err

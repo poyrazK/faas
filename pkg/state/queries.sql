@@ -11130,3 +11130,17 @@ WHERE id=sqlc.arg(run_id) AND (sqlc.narg(generation)::integer IS NULL OR resume_
 UPDATE workflow_runs SET lease_until=now()+(sqlc.arg(timeout_ms)::bigint*interval '1 millisecond')+interval '5 minutes'
 WHERE id=sqlc.arg(run_id) AND status='running'
  AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer);
+
+-- ADR-626: immutable serving resume identities; mutations hold the quota journal lock.
+-- name: RegionalRuntimeServingResume :one
+SELECT * FROM regional_runtime_serving_resumes WHERE app_id=sqlc.arg(app_id) AND resume_id=sqlc.arg(resume_id);
+
+-- name: HeldRegionalRuntimeServingResume :one
+SELECT r.* FROM regional_runtime_serving_resumes r
+JOIN regional_runtime_serving_seats s ON s.app_id=r.app_id AND s.seat_id=r.seat_id
+WHERE r.app_id=sqlc.arg(app_id) AND r.permit_id=sqlc.arg(permit_id) AND s.released_at IS NULL;
+
+-- name: InsertRegionalRuntimeServingResume :one
+INSERT INTO regional_runtime_serving_resumes(app_id,resume_id,permit_id,seat_id,intent_claims)
+VALUES(sqlc.arg(app_id),sqlc.arg(resume_id),sqlc.arg(permit_id),sqlc.arg(seat_id),sqlc.arg(intent_claims))
+RETURNING *;

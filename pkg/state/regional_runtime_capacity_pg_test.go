@@ -157,7 +157,8 @@ func TestPGRegionalRuntimeCapacitySQLGuards(t *testing.T) {
 func TestPGRegionalRuntimeCapacityEmptyMigrationRoundTrip(t *testing.T) {
 	s, _, _, _ := releasePGFixture(t)
 	up, down := regionalCapacityMigration(t)
-	for _, statement := range []string{down, up} {
+	resumeUp, resumeDown := regionalServingResumeMigration(t)
+	for _, statement := range []string{resumeDown, down, up, resumeUp} {
 		if _, err := s.pool.Exec(t.Context(), statement); err != nil {
 			t.Fatal(err)
 		}
