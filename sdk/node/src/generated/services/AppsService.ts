@@ -6,6 +6,7 @@ import type { AppBindingInventory } from '../models/AppBindingInventory.js';
 import type { AppErrorRequestsResponse } from '../models/AppErrorRequestsResponse.js';
 import type { AppErrorSampleResponse } from '../models/AppErrorSampleResponse.js';
 import type { AppErrorsSummaryResponse } from '../models/AppErrorsSummaryResponse.js';
+import type { AppHealthResponse } from '../models/AppHealthResponse.js';
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
 import type { AppResponse } from '../models/AppResponse.js';
 import type { AppRestartResponse } from '../models/AppRestartResponse.js';
@@ -1078,6 +1079,44 @@ export class AppsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Explain observed app serving health.
+   * Read-only assessment of default-scope HTTP serving deployments,
+   * replica readiness, node evidence and the last 5 minutes of request
+   * telemetry. Request metrics aggregate all app scopes. It never wakes
+   * or probes a workload. Structural evidence is available on every plan;
+   * request telemetry follows the existing Hobby+ metrics entitlement.
+   * Missing, failed, stale or truncated evidence cannot confirm health.
+   * A failed latest release does not erase older serving evidence.
+   * Scale-to-zero idle is expected when no warm replicas are required.
+   * Worker and job execution health is not assessed.
+   * Requires apps:read or admin scope. No MFA required.
+   *
+   * @returns AppHealthResponse Evidence assessment, including unknown checks.
+   * @throws ApiError
+   */
+  public static getAppHealth({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppHealthResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/health',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `Authentication required.`,
+        403: `Read scope required.`,
+        404: `App not found for this account.`,
+        429: `Rate limit exceeded.`,
       },
     });
   }

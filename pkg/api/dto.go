@@ -11734,3 +11734,39 @@ type EgressFlowLogResponse struct {
 	Flows     []EgressFlowLogEntry `json:"flows"`
 	Truncated bool                 `json:"truncated"`
 }
+
+// AppHealthResponse describes observed default-scope HTTP serving health.
+// Unknown evidence is explicit; this is not an uptime or reachability guarantee.
+type AppHealthResponse struct {
+	AppID                string            `json:"app_id"`
+	Status               string            `json:"status"`
+	Phase                string            `json:"phase"`
+	Summary              string            `json:"summary"`
+	Scope                string            `json:"scope"`
+	EvaluatedAt          string            `json:"evaluated_at"`
+	ValidForSeconds      int               `json:"valid_for_seconds"`
+	MetricsAsOf          string            `json:"metrics_as_of,omitempty"`
+	ServingDeploymentIDs []string          `json:"serving_deployment_ids"`
+	LatestDeploymentID   string            `json:"latest_deployment_id,omitempty"`
+	Capacity             AppHealthCapacity `json:"capacity"`
+	Checks               []AppHealthCheck  `json:"checks"`
+}
+
+type AppHealthCapacity struct {
+	Known    bool `json:"known"`
+	Required int  `json:"required"`
+	Ready    int  `json:"ready"`
+	Starting int  `json:"starting"`
+	Unready  int  `json:"unready"`
+	Unknown  int  `json:"unknown"`
+}
+
+// Code and Action are stable, safe identifiers for clients. Detail never
+// includes deployment errors, probe responses, node addresses or backend errors.
+type AppHealthCheck struct {
+	Code         string `json:"code"`
+	Status       string `json:"status"`
+	Detail       string `json:"detail"`
+	Action       string `json:"action,omitempty"`
+	DeploymentID string `json:"deployment_id,omitempty"`
+}

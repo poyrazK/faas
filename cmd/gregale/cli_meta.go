@@ -661,6 +661,7 @@ var cliCommands = []cliCommand{
 		},
 		SubcommandsAfterPositionals: true,
 		Subcommands: []cliSub{
+			{Name: subHealth, Short: "Explain default-scope serving health and missing evidence"},
 			{Name: "scale", Short: "Set max_concurrency / resource profile / RAM / CPU", Flags: []cliFlag{
 				{Name: "environment", Short: "edit desired workload settings in a project environment", Value: "SLUG"},
 			}},

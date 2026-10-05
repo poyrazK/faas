@@ -1294,6 +1294,12 @@ gregale app my-api --no-maintenance --streaming-enabled --websocket-enabled --ro
 gregale app my-api --consumer-auth-mode required --json
 ```
 
+### app health
+
+Explain default-scope serving health and missing evidence
+
+`gregale app <slug> health`
+
 ### app scale
 
 Set max_concurrency / resource profile / RAM / CPU

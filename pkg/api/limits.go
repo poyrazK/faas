@@ -8687,3 +8687,12 @@ const (
 
 // EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
 const EnvironmentFieldOwnershipMaxPaths = 1024
+
+// App health is a read-only, bounded evidence projection, not a probe loop.
+const (
+	AppHealthInstanceLimit          = 256
+	AppHealthDeploymentHistoryLimit = 50
+	AppHealthMetricsRange           = "5m"
+	AppHealthEvidenceMaxAge         = 2 * time.Minute
+	AppHealthCollectionTimeout      = 10 * time.Second
+)

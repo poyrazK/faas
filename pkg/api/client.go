@@ -7184,3 +7184,10 @@ func (c *Client) PutAppCustomMetric(ctx context.Context, slug, name string, valu
 func (c *Client) DeleteAppCustomMetric(ctx context.Context, slug, name string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/custom-metrics/"+name, nil, nil)
 }
+
+// GetAppHealth reads the default-scope HTTP health evidence without waking the app.
+func (c *Client) GetAppHealth(ctx context.Context, slug string) (AppHealthResponse, error) {
+	var out AppHealthResponse
+	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/health", nil, &out)
+	return out, err
+}

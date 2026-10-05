@@ -1133,6 +1133,7 @@ var methodRouteMap = map[string]string{
 	// would produce GetAppsSlugMetrics (Swagger-style); the SDK
 	// names it GetAppMetrics to match the existing per-app methods
 	// (GetApp, ListApps) — drop the slug placeholder from the verb.
+	"GET /v1/apps/{slug}/health":                "GetAppHealth",
 	"GET /v1/apps/{slug}/metrics":               "GetAppMetrics",
 	"GET /v1/apps/{slug}/pre-auth-observations": "GetAppPreAuthObservations",
 	"GET /v1/apps/{slug}/debug/dependencies":    "GetAppDebugDependencyLatency",

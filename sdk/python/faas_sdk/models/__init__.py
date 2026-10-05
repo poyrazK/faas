@@ -121,6 +121,15 @@ from .app_error_sample_response_headers_sample import AppErrorSampleResponseHead
 from .app_error_summary_item import AppErrorSummaryItem
 from .app_error_summary_item_error_class import AppErrorSummaryItemErrorClass
 from .app_errors_summary_response import AppErrorsSummaryResponse
+from .app_health_capacity import AppHealthCapacity
+from .app_health_check import AppHealthCheck
+from .app_health_check_action import AppHealthCheckAction
+from .app_health_check_code import AppHealthCheckCode
+from .app_health_check_status import AppHealthCheckStatus
+from .app_health_response import AppHealthResponse
+from .app_health_response_phase import AppHealthResponsePhase
+from .app_health_response_scope import AppHealthResponseScope
+from .app_health_response_status import AppHealthResponseStatus
 from .app_log_drain_analytics_bucket import AppLogDrainAnalyticsBucket
 from .app_log_drain_analytics_response import AppLogDrainAnalyticsResponse
 from .app_log_drain_analytics_response_bucket_interval import AppLogDrainAnalyticsResponseBucketInterval
@@ -2674,6 +2683,15 @@ __all__ = (
     "AppErrorsSummaryResponse",
     "AppErrorSummaryItem",
     "AppErrorSummaryItemErrorClass",
+    "AppHealthCapacity",
+    "AppHealthCheck",
+    "AppHealthCheckAction",
+    "AppHealthCheckCode",
+    "AppHealthCheckStatus",
+    "AppHealthResponse",
+    "AppHealthResponsePhase",
+    "AppHealthResponseScope",
+    "AppHealthResponseStatus",
     "AppliedBuild",
     "AppLogDrainAnalyticsBucket",
     "AppLogDrainAnalyticsResponse",

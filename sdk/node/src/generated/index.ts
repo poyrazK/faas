@@ -76,6 +76,9 @@ export type { AppErrorRequestsResponse } from './models/AppErrorRequestsResponse
 export type { AppErrorSampleResponse } from './models/AppErrorSampleResponse.js';
 export type { AppErrorsSummaryResponse } from './models/AppErrorsSummaryResponse.js';
 export type { AppErrorSummaryItem } from './models/AppErrorSummaryItem.js';
+export type { AppHealthCapacity } from './models/AppHealthCapacity.js';
+export type { AppHealthCheck } from './models/AppHealthCheck.js';
+export type { AppHealthResponse } from './models/AppHealthResponse.js';
 export type { AppliedBuild } from './models/AppliedBuild.js';
 export type { AppLogDrainAnalyticsBucket } from './models/AppLogDrainAnalyticsBucket.js';
 export type { AppLogDrainAnalyticsResponse } from './models/AppLogDrainAnalyticsResponse.js';
