@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
-// ADR-582: pending recipients exist before invocations, summary counts cover
+// ADR-596: pending recipients exist before invocations, summary counts cover
 // the whole snapshot, and mutable routing progress cannot reorder pages.
 func TestEventReceiptRoutingPaginationAndRecovery(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
@@ -96,7 +96,7 @@ func TestEventReceiptRoutingPaginationAndRecovery(t *testing.T) {
 	})
 }
 
-// ADR-582: keyed work outcomes and cancellation receipts are actual delivery
+// ADR-596: keyed work outcomes and cancellation receipts are actual delivery
 // evidence; an enqueued route alone cannot assert a successful execution.
 func TestEventReceiptWorkOutcomesAndRetention(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
@@ -160,7 +160,7 @@ func TestEventReceiptWorkOutcomesAndRetention(t *testing.T) {
 	})
 }
 
-// ADR-582: a historical receipt cannot join current metadata across tenants,
+// ADR-596: a historical receipt cannot join current metadata across tenants,
 // and old NULL snapshots must not be presented as a known empty recipient set.
 func TestEventReceiptLegacyAndForeignTargetPostgres(t *testing.T) {
 	store, pool, _ := pgStoreWithPool(t)
@@ -194,7 +194,7 @@ func TestEventReceiptLegacyAndForeignTargetPostgres(t *testing.T) {
 	}
 }
 
-// ADR-582: active leases and filtered candidates remain inspectable; missing
+// ADR-596: active leases and filtered candidates remain inspectable; missing
 // original invocation evidence after a handled route is explicitly unavailable.
 func TestEventReceiptActiveFilteredAndMissingExecution(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {

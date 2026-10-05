@@ -30,6 +30,11 @@ type WorkCancellationStore interface {
 	WorkCancellationByID(context.Context, string) (WorkCancellation, error)
 }
 
+func cloneWorkCancellation(receipt WorkCancellation) WorkCancellation {
+	receipt.KeyDigest = append([]byte(nil), receipt.KeyDigest...)
+	return receipt
+}
+
 func (s *PgStore) WorkCancellationByID(ctx context.Context, id string) (WorkCancellation, error) {
 	row, err := sqlc.New().WorkAdmissionCancellation(ctx, s.pool, mustPgUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -45,7 +50,7 @@ func (m *MemStore) WorkCancellationByID(_ context.Context, id string) (WorkCance
 	if !ok {
 		return WorkCancellation{}, ErrNotFound
 	}
-	return receipt, nil
+	return cloneWorkCancellation(receipt), nil
 }
 
 func validateWorkCancellation(appID, policyName, canonicalKey, cancellationID string) (uuid.UUID, [32]byte, error) {
@@ -74,11 +79,23 @@ func (s *PgStore) CancelPendingKeyedInvocations(ctx context.Context, appID, poli
 	if err != nil {
 		return WorkCancellation{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	return s.cancelPendingWorkDigest(ctx, appID, policyName, id, digest, invocationWorkEnvironment{})
+}
+
+func (s *PgStore) cancelPendingWorkDigest(ctx context.Context, appID, policyName string, id uuid.UUID, digest [32]byte, info invocationWorkEnvironment) (WorkCancellation, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return WorkCancellation{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if info.environment.ID != "" {
+		if err := lockInvocationEnvironmentDB(ctx, tx, info.app.ID, info.app.AccountID, info.environment.ID); err != nil {
+			return WorkCancellation{}, err
+		}
+		if err := registerWorkEnvironmentDomainDB(ctx, tx, info.app, info.environment.ID, policyName, "key", digest[:]); err != nil {
+			return WorkCancellation{}, err
+		}
+	}
 	out, err := cancelPendingKeyedInvocationsTx(ctx, tx, appID, policyName, digest[:], id.String())
 	if err != nil {
 		return WorkCancellation{}, err
@@ -89,10 +106,18 @@ func (s *PgStore) CancelPendingKeyedInvocations(ctx context.Context, appID, poli
 	return out, nil
 }
 
-func (m *MemStore) CancelPendingKeyedInvocations(_ context.Context, appID, policyName, canonicalKey, cancellationID string) (WorkCancellation, error) {
+func (m *MemStore) CancelPendingKeyedInvocations(ctx context.Context, appID, policyName, canonicalKey, cancellationID string) (WorkCancellation, error) {
+	id, digest, err := validateWorkCancellation(appID, policyName, canonicalKey, cancellationID)
+	if err != nil {
+		return WorkCancellation{}, err
+	}
+	return m.cancelPendingWorkDigest(ctx, appID, policyName, id, digest, invocationWorkEnvironment{})
+}
+
+func (m *MemStore) cancelPendingWorkDigest(_ context.Context, appID, policyName string, id uuid.UUID, digest [32]byte, info invocationWorkEnvironment) (WorkCancellation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.cancelPendingKeyedInvocationsLocked(appID, policyName, canonicalKey, cancellationID)
+	return m.cancelPendingWorkDigestLocked(appID, policyName, id, digest, info)
 }
 
 func (m *MemStore) cancelPendingKeyedInvocationsLocked(appID, policyName, canonicalKey, cancellationID string) (WorkCancellation, error) {
@@ -100,6 +125,10 @@ func (m *MemStore) cancelPendingKeyedInvocationsLocked(appID, policyName, canoni
 	if err != nil {
 		return WorkCancellation{}, err
 	}
+	return m.cancelPendingWorkDigestLocked(appID, policyName, id, digest, invocationWorkEnvironment{})
+}
+
+func (m *MemStore) cancelPendingWorkDigestLocked(appID, policyName string, id uuid.UUID, digest [32]byte, info invocationWorkEnvironment) (WorkCancellation, error) {
 	_, ok := m.apps[appID]
 	if !ok {
 		_, ok = m.apps[canonicalMemUUID(appID)]
@@ -107,11 +136,21 @@ func (m *MemStore) cancelPendingKeyedInvocationsLocked(appID, policyName, canoni
 	if !ok {
 		return WorkCancellation{}, ErrNotFound
 	}
+	if info.environment.ID != "" {
+		env, exists := m.projectEnvironments[info.environment.ID]
+		app := m.apps[info.app.ID]
+		if !exists || env.AccountID != info.app.AccountID || env.ProjectID != app.ProjectID || app.Status == AppDeleted {
+			return WorkCancellation{}, ErrInvocationEnvironmentWorkIsolation
+		}
+	}
 	if previous, ok := m.workCancellations[id.String()]; ok {
 		if !sameMemUUID(previous.AppID, appID) || previous.PolicyName != policyName || !bytes.Equal(previous.KeyDigest, digest[:]) {
 			return WorkCancellation{}, ErrConflict
 		}
-		return previous, nil
+		return cloneWorkCancellation(previous), nil
+	}
+	if err := m.registerWorkEnvironmentLocked(info, Invocation{AppID: appID, WorkPolicyName: policyName, WorkKeyDigest: digest[:]}); err != nil {
+		return WorkCancellation{}, err
 	}
 	now := time.Now().UTC()
 	receipt := WorkCancellation{ID: id.String(), AppID: canonicalMemUUID(appID),
@@ -127,5 +166,5 @@ func (m *MemStore) cancelPendingKeyedInvocationsLocked(appID, policyName, canoni
 		receipt.CancelledCount++
 	}
 	m.workCancellations[receipt.ID] = receipt
-	return receipt, nil
+	return cloneWorkCancellation(receipt), nil
 }

@@ -83,7 +83,7 @@ func routingRecipient(receipt *PublishedEventWork, claim PublishedEventRoutingCl
 	}
 	for _, r := range receipt.RecipientSnapshot {
 		if r.ID == claim.SubscriptionID {
-			if r.ObjectNotification != nil {
+			if r.ObjectNotification != nil || len(r.Workflow) != 0 {
 				return PublishedEventRecipient{}, ErrInvalidArgument
 			}
 			return r, nil

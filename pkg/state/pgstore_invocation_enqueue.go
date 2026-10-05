@@ -68,6 +68,7 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 		{"on_failure_destination_id", inv.OnFailureDestinationID, false, &params.OnFailureDestinationID},
 		{"platform_tenant_id", inv.PlatformTenantID, false, &params.PlatformTenantID},
 		{"queue_binding_id", inv.QueueBindingID, false, &params.QueueBindingID},
+		{"environment_id", inv.EnvironmentID, false, &params.EnvironmentID},
 		{"occurrence_id", inv.OccurrenceID, false, &params.OccurrenceID},
 		{"replayed_from_invocation_id", inv.ReplayedFromInvocationID, false, &params.ReplayedFromInvocationID},
 	} {
@@ -110,6 +111,7 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 func invocationFromSQL(row sqlc.Invocation) (Invocation, error) {
 	inv := Invocation{
 		ID: uuidString(row.ID), AppID: uuidString(row.AppID), AccountID: uuidString(row.AccountID),
+		EnvironmentID: uuidString(row.EnvironmentID), OperationID: uuidString(row.OperationID),
 		DeploymentScope: row.DeploymentScope, PlatformTenantID: uuidString(row.PlatformTenantID),
 		InstanceID: row.InstanceID.String, Source: InvocationSource(row.Source),
 		QueueBindingID: uuidString(row.QueueBindingID), QueueName: row.QueueName, State: InvocationState(row.State),

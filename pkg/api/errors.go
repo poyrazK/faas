@@ -632,11 +632,15 @@ const (
 	CodeUndeclaredRoute = "undeclared_route"
 	// CodeDeclaredRoutePolicyUnavailable is a fail-closed 503 used when the
 	// gateway cannot load or compile the contract required by an enabled app.
-	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
-	CodeValidation                     = "validation_failed"
-	CodeAppAdmissionUnavailable        = "app_admission_unavailable"
-	CodeDatabaseCutoverFenced          = "database_cutover_fenced"
-	CodeConflict                       = "conflict"
+	CodeDeclaredRoutePolicyUnavailable  = "declared_route_policy_unavailable"
+	CodeValidation                      = "validation_failed"
+	CodeAppAdmissionUnavailable         = "app_admission_unavailable"
+	CodeDatabaseCutoverFenced           = "database_cutover_fenced"
+	CodeAutomationVersionConflict       = "automation_version_conflict"
+	CodeAutomationOwnershipConflict     = "automation_ownership_conflict"
+	CodeAutomationInvalid               = "automation_invalid"
+	CodeConflict                        = "conflict"
+	CodeFullEnvironmentCloneUnavailable = "environment_full_clone_unavailable"
 	// ADR-568: the original private VM attempt cannot yet acknowledge its
 	// ownership or complete physical retirement. Keep its reservation charged.
 	CodeEnvironmentQualificationUnconfirmed = "environment_qualification_unconfirmed"
@@ -1808,19 +1812,26 @@ const (
 	CodeJobCommandInvalid = "job_command_invalid"
 
 	// Workflows (ADR-081).
-	CodePlanWorkflowsNotAllowed         = "plan_workflows_not_allowed"
-	CodePlanWorkflowsQuota              = "plan_workflows_quota"
-	CodeWorkflowDAGCycle                = "workflow_dag_cycle"
-	CodeWorkflowStepNotFound            = "workflow_step_not_found"
-	CodeWorkflowRunNotFound             = "workflow_run_not_found"
-	CodeWorkflowDefinitionNotFound      = "workflow_definition_not_found"
-	CodeWorkflowEventNotFound           = "workflow_event_not_found"
-	CodeWorkflowNotRunning              = "workflow_not_running"
-	CodeWorkflowDeploymentUnavailable   = "workflow_deployment_unavailable"
-	CodeWorkflowCallbackClosed          = "workflow_callback_closed"
-	CodeWorkflowCallbackExpired         = "workflow_callback_expired"
-	CodeWorkflowCallbackPayloadConflict = "workflow_callback_payload_conflict"
-	CodeWorkflowCallbackBindingConflict = "workflow_callback_binding_conflict"
+	CodePlanWorkflowsNotAllowed           = "plan_workflows_not_allowed"
+	CodePlanWorkflowsQuota                = "plan_workflows_quota"
+	CodeWorkflowDAGCycle                  = "workflow_dag_cycle"
+	CodeWorkflowStepNotFound              = "workflow_step_not_found"
+	CodeWorkflowRunNotFound               = "workflow_run_not_found"
+	CodeWorkflowStepRetryNotAllowed       = "workflow_step_retry_not_allowed"
+	CodeWorkflowDefinitionNotFound        = "workflow_definition_not_found"
+	CodeWorkflowEventNotFound             = "workflow_event_not_found"
+	CodeWebhookAutomationUnavailable      = "webhook_automation_unavailable"
+	CodeWebhookAutomationConflict         = "webhook_automation_conflict"
+	CodeWorkflowResumeConflict            = "workflow_resume_conflict"
+	CodeWorkflowResumeUnsafe              = "workflow_resume_unsafe"
+	CodeWorkflowResumeLimit               = "workflow_resume_limit"
+	CodeWorkflowNotRunning                = "workflow_not_running"
+	CodeWorkflowDeploymentUnavailable     = "workflow_deployment_unavailable"
+	CodeWorkflowTenantIdentityUnavailable = "workflow_tenant_identity_unavailable"
+	CodeWorkflowCallbackClosed            = "workflow_callback_closed"
+	CodeWorkflowCallbackExpired           = "workflow_callback_expired"
+	CodeWorkflowCallbackPayloadConflict   = "workflow_callback_payload_conflict"
+	CodeWorkflowCallbackBindingConflict   = "workflow_callback_binding_conflict"
 )
 
 // SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
@@ -1857,6 +1868,8 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
+	case CodeAutomationInvalid:
+		return http.StatusUnprocessableEntity
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
 		CodeAccountAbuseHold:
@@ -1913,7 +1926,7 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeNotFound, CodeUndeclaredRoute:
 		return http.StatusNotFound
-	case CodeDeclaredRoutePolicyUnavailable:
+	case CodeWebhookAutomationUnavailable, CodeDeclaredRoutePolicyUnavailable:
 		return http.StatusServiceUnavailable
 	case CodeNotImplemented:
 		return http.StatusNotImplemented
@@ -1921,8 +1934,13 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeDatabaseCutoverFenced, CodeConflict, CodeEnvironmentQualificationUnconfirmed, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
-		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
+	case CodeDatabaseCutoverFenced, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
+		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
+		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
+		CodeWebhookAutomationConflict, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
+		CodeWorkflowResumeLimit,
+		CodeWorkflowNotRunning, CodeWorkflowTenantIdentityUnavailable, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
+		CodeWorkflowStepRetryNotAllowed,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
@@ -3826,6 +3844,14 @@ func ErrWorkflowDeploymentUnavailable() *Problem {
 		"workflow definitions are validated by this release but require the workflow runtime deployment endpoint to be enabled")
 }
 
+// ErrWorkflowTenantIdentityUnavailable reports that the route does not carry
+// an authenticated platform tenant identity for a tenant-required app.
+func ErrWorkflowTenantIdentityUnavailable() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowTenantIdentityUnavailable,
+		"Tenant identity required",
+		"apps that require a platform tenant must start workflow runs through the account tenant route or an authenticated platform tenant token")
+}
+
 // ErrWorkflowRunNotFound returns a 404 when a workflow run is not found.
 func ErrWorkflowRunNotFound() *Problem {
 	return NewProblem(http.StatusNotFound, CodeWorkflowRunNotFound,
@@ -3849,6 +3875,13 @@ func ErrWorkflowStepNotFound() *Problem {
 func ErrWorkflowNotRunning() *Problem {
 	return NewProblem(http.StatusConflict, CodeWorkflowNotRunning,
 		"Workflow run not running", "the workflow run is not in running or awaiting_event status.")
+}
+
+// ErrWorkflowStepRetryNotAllowed marks a retry request that cannot safely
+// resume the run's current DAG state.
+func ErrWorkflowStepRetryNotAllowed() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowStepRetryNotAllowed,
+		"Workflow step cannot be retried", "retry requires a terminal failed or dead HTTP step with no other active, failed, or dead steps and no completed downstream work.")
 }
 
 func ErrWorkflowCallbackClosed() *Problem {
@@ -3896,7 +3929,7 @@ func ErrJobTaskNotRetriable(runID, taskIndex, status string) *Problem {
 func ErrJobTaskMaxRetriesReached(runID, taskIndex string, attempts, maxRetries int) *Problem {
 	return NewProblem(http.StatusConflict, CodeJobTaskMaxRetriesReached,
 		"Job task retry budget exhausted",
-		fmt.Sprintf("task %s in run %s has used %d attempts; retry_max is %d.", taskIndex, runID, attempts, maxRetries)).
+		fmt.Sprintf("task %s in run %s has used %d attempts; retry_max is %d. Re-run its input in a linked run with `gregale jobs replay-failed <job> %s`.", taskIndex, runID, attempts, maxRetries, runID)).
 		WithDocs(docsBase + "/jobs#retry")
 }
 
@@ -4566,6 +4599,23 @@ func ErrNoRollbackTarget() *Problem {
 	return NewProblem(http.StatusConflict, CodeNoRollbackTarget,
 		"No previous deployment",
 		"there's no superseded deployment to roll back to; deploy at least twice.").
+		WithDocs(docsBase + "/deploys#rollback")
+}
+
+// ErrNoRollbackTargetWithCandidates is ErrNoRollbackTarget for an app whose
+// earlier deployments are still live at 0% traffic. That is the state a
+// traffic split leaves after `traffic promote`. Those deployments can be
+// rolled back to explicitly, but a default rollback won't pick one: it cannot
+// tell a former production deployment from a staged preview that never served.
+// The detail names them, newest first, and gives the explicit command.
+func ErrNoRollbackTargetWithCandidates(appSlug string, revisions []string) *Problem {
+	if len(revisions) == 0 {
+		return ErrNoRollbackTarget()
+	}
+	return NewProblem(http.StatusConflict, CodeNoRollbackTarget,
+		"Choose a rollback target",
+		fmt.Sprintf("no deployment was superseded, but these deployments are live at 0%% traffic: %s. Roll back to one explicitly: gregale rollback %s --to %s",
+			strings.Join(revisions, ", "), appSlug, revisions[0])).
 		WithDocs(docsBase + "/deploys#rollback")
 }
 

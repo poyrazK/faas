@@ -44,7 +44,8 @@ CROSS JOIN LATERAL (SELECT coalesce(o.recipient_progress->(s.recipient->>'id'),'
 LEFT JOIN event_fanout_recipients r ON r.outbox_id=o.id AND r.subscription_id=s.recipient->>'id'
 CROSS JOIN LATERAL (SELECT CASE WHEN o.recipient_claims THEN coalesce(r.state,p.progress->>'state','pending')
                                ELSE coalesce(p.progress->>'state','pending') END::text AS routing_state) effective
-WHERE o.state IN ('pending','processing') AND nullif(s.recipient->>'app_id','') IS NOT NULL;
+WHERE o.state IN ('pending','processing') AND nullif(s.recipient->>'app_id','') IS NOT NULL
+    AND (s.recipient->'workflow' IS NULL OR s.recipient->'workflow'='null'::jsonb);
 
 CREATE FUNCTION refresh_event_routing_backlog(p_outbox_id bigint,p_subscription_id text DEFAULT NULL)
 RETURNS void LANGUAGE sql AS $$

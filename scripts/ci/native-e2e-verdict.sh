@@ -55,6 +55,7 @@ NATIVE_E2E_REQUIRED_TESTS=(
   TestWakeTimelineMetal
   TestDeployHealthcheckMetal
   TestCatalogRuntimeParityMetal
+  TestManagedOperationWorkflowMetal
   TestFeatureFlagsNativeParkRestoreMetal
   TestSec11_MemoryMaxFenceEnforced_CrossProcess
   TestSec11_SeccompFilterEnforced_CrossProcess

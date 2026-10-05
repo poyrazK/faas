@@ -193,6 +193,8 @@ func (r *PreviewEventRequest) UnmarshalJSON(data []byte) error {
 // EventPreviewSubscription describes an enabled subscription considered by a
 // read-only routing preview. Filter is the normalized manifest predicate.
 type EventPreviewSubscription struct {
+	WorkflowName   string          `json:"workflow_name,omitempty"`
+	DeploymentID   string          `json:"deployment_id,omitempty"`
 	AppSlug        string          `json:"app_slug"`
 	SubscriptionID string          `json:"subscription_id"`
 	Source         string          `json:"source"`

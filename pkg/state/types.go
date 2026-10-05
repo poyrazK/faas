@@ -3474,6 +3474,7 @@ const (
 	AppWebhookEventRolloutAborted                   AppWebhookEvent = "rollout.aborted"
 	AppWebhookEventErrorNew                         AppWebhookEvent = "error.new"
 	AppWebhookEventJobFinished                      AppWebhookEvent = "job.finished"
+	AppWebhookEventOperationFinished                AppWebhookEvent = "operation.finished"
 	AppWebhookEventPreviewCreated                   AppWebhookEvent = "preview.created"
 	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
 	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
@@ -3517,6 +3518,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRolloutAborted,
 	AppWebhookEventErrorNew,
 	AppWebhookEventJobFinished,
+	AppWebhookEventOperationFinished,
 	AppWebhookEventPreviewCreated,
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
@@ -3974,9 +3976,17 @@ type Invocation struct {
 	// ExclusiveClaim is short-lived schedd-to-gateway capability metadata. It
 	// is never stored in the invocation ledger or exposed by the customer API.
 	ExclusiveClaim *exclusivework.Claim `json:"-"`
-	ID             string               `json:"id"`
-	AppID          string               `json:"app_id"`
-	AccountID      string               `json:"account_id"`
+	// Host-to-host operation metadata is trusted protocol state, never persisted or guest-authored.
+	OperationResultVersion     int    `json:"-"`
+	ManagedOperationID         string `json:"-"`
+	ManagedOperationGeneration int64  `json:"-"`
+	ManagedOperationAccountID  string `json:"-"`
+	ID                         string `json:"id"`
+	AppID                      string `json:"app_id"`
+	AccountID                  string `json:"account_id"`
+	// OperationID is trusted claim metadata populated from the execution ledger.
+	// It is not accepted from a request header or JSON invocation envelope.
+	OperationID string `json:"-"`
 	// DeploymentScope is captured when work is accepted and never changes on
 	// retry or replay. Queue producers expose it through their environment
 	// contract; the ledger keeps the routing field internal.
@@ -3985,6 +3995,9 @@ type Invocation struct {
 	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
 	InstanceID       string           `json:"instance_id,omitempty"`
 	Source           InvocationSource `json:"source"`
+	// EnvironmentID is authenticated operational ownership, never request
+	// intent. Production remains NULL; stage admission persists the UUID.
+	EnvironmentID string `json:"-"`
 	// QueueBindingID is captured at admission and retained on retry/replay.
 	// It is internal until scoped producers and consumers expose one contract.
 	QueueBindingID string `json:"-"`
@@ -4289,8 +4302,11 @@ type FailOptions struct {
 	// ClaimAttempt fences a keyed dispatch against a newer lease of the
 	// same invocation. Zero is valid only for pre-claim or unkeyed work.
 	ClaimAttempt int
-	WorkDecision *workpolicy.Decision
-	OutcomeCode  string
+	// DispatchNotStarted is set only before invoking the guest. A lost lease
+	// or an error after dispatch leaves external effects uncertain.
+	DispatchNotStarted bool
+	WorkDecision       *workpolicy.Decision
+	OutcomeCode        string
 	// HasWorkClassification distinguishes an explicit empty outcome code from
 	// a call site that does not update scheduled-work classification.
 	HasWorkClassification bool
@@ -4306,6 +4322,8 @@ type FailOption func(*FailOptions)
 func WithOutcome(o InvocationOutcome) FailOption {
 	return func(f *FailOptions) { f.Outcome = o }
 }
+
+func WithDispatchNotStarted() FailOption { return func(f *FailOptions) { f.DispatchNotStarted = true } }
 
 func WithClaimAttempt(attempt int) FailOption {
 	return func(f *FailOptions) { f.ClaimAttempt = attempt }
@@ -6132,19 +6150,28 @@ const (
 
 // SnapshotForGC is the join-projection used by the imaged nightly GC
 // (spec §4.6: keep the bounded rollback window of deployment snapshots per
-// app; fleet budget pressure evicts from biggest-over-quota accounts first).
+// environment lifetime; budget pressure evicts from the largest accounts first).
 // It denormalises snapshot → deployment → app → account into one row so
 // the GC algorithm doesn't have to round-trip per row.
 //
 // AppStatus and DeploymentStatus let the GC discard snapshots that cannot
 // participate in a future wake. In particular, deleted apps and
-// failed/cancelled deployments must not consume the per-app rollback window;
+// failed/cancelled deployments must not consume the environment rollback window;
 // superseded deployments remain eligible because they are rollback targets.
 type SnapshotForGC struct {
 	ID           string
 	DeploymentID string
 	AppID        string
 	AccountID    string
+	// EnvironmentID retains the original lifetime, including after deletion.
+	// Legacy deployments without an environment use normalized Scope instead.
+	EnvironmentID string
+	Scope         string
+	// RuntimeOwnerInvalid marks snapshots whose original environment or pinned
+	// configuration no longer exists. These cannot occupy a rollback slot.
+	RuntimeOwnerInvalid bool
+	// DeploymentRootfsKey preserves the physical layer key across stage copies.
+	DeploymentRootfsKey string
 	// AppSlug is the apps.slug of the parent app. Populated from the
 	// snapshot → deployments → apps JOIN so the GC algorithm doesn't
 	// have to issue per-eviction DeploymentByID + AppByID lookups to
@@ -6170,11 +6197,8 @@ type SnapshotForGC struct {
 	// artifact GC sets it before attempting remote deletion.
 	DeletePending bool
 	CreatedAt     time.Time
-	// AppWarmSnapshotEnabled (issue #470 / PR C / ADR-072) projects
-	// apps.warm_snapshot_enabled from the JOIN so the GC policy can
-	// apply the two-tier rollback window only on apps that opted in to warm.
-	// Apps with warm_snapshot_enabled=false keep init rows only. Denormalised
-	// to avoid an AppByID round-trip per eviction row.
+	// AppWarmSnapshotEnabled is the deployment's pinned warm policy. Genuine
+	// unpinned legacy deployments use apps.warm_snapshot_enabled instead.
 	AppWarmSnapshotEnabled bool
 }
 
@@ -6448,8 +6472,10 @@ type AppSecretDeliveryCandidate struct {
 
 // AppSecretDeliveryResult records one runtime-start attempt for the staged
 // candidates. ErrorCode is a closed, non-sensitive reason; secret values and
-// ciphertext are intentionally absent.
+// ciphertext are intentionally absent. Fence captures the host's owned input
+// snapshot; InstanceID/WakeID identify the exact current boot attempt.
 type AppSecretDeliveryResult struct {
+	Fence       RuntimeAppSecretFence
 	AccountID   string
 	AppID       string
 	WakeID      string
@@ -6488,6 +6514,7 @@ const (
 // signal outcome for an exact set of secret versions. It is deliberately not
 // an application acknowledgement: the process may still fail to apply them.
 type AppSecretRuntimeReloadResult struct {
+	Fence        RuntimeAppSecretFence
 	AccountID    string
 	AppID        string
 	InstanceID   string
@@ -6503,6 +6530,7 @@ type AppSecretRuntimeReloadResult struct {
 // AppSecretRuntimeReloadAckResult records an application-owned outcome for
 // the current secret revision. It attests only what the application reports.
 type AppSecretRuntimeReloadAckResult struct {
+	Fence        RuntimeAppSecretFence
 	AccountID    string
 	AppID        string
 	InstanceID   string
@@ -6960,6 +6988,10 @@ type ProjectEnvironmentPromotion struct {
 	PreviousTargetConfigSnapshot json.RawMessage
 	TargetConfigVersion          int64
 	RollbackConfigVersion        int64
+	// Expected flag identities supplied by a preview. The store freezes the
+	// actual snapshots atomically with creation; callers cannot supply payloads.
+	SourceFeatureFlagsHash         string
+	PreviousTargetFeatureFlagsHash string
 }
 
 // ProjectEnvironmentPromotionWorkload is one checkpoint within a promotion.

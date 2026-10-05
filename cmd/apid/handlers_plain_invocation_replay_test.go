@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 587
+// adr: 601
 func TestPlainInvocationReplayDifferentKeysAndPruning(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	id, _ := seedInvocation(t, e, "failed", state.InvocationAsyncInvoke)

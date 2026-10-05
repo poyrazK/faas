@@ -215,7 +215,7 @@ func (m *MemStore) EventBacklog(ctx context.Context, accountID string, query Eve
 			return EventBacklog{}, err
 		}
 		for _, recipient := range work.RecipientSnapshot {
-			if recipient.AppID == "" {
+			if recipient.AppID == "" || len(recipient.Workflow) != 0 {
 				continue
 			}
 			entry := m.backlogRecipientLocked(accountID, work, recipient, identity)

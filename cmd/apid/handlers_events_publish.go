@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 )
@@ -63,7 +64,7 @@ func normalizePublishRequest(req api.PublishEventRequest, accountID string) (eve
 func (s *server) persistPublishedEvent(w http.ResponseWriter, r *http.Request, acct state.Account, envelope events.Envelope) {
 	payload, err := json.Marshal(envelope)
 	if err != nil {
-		s.log.Error("marshal published event failed", "event_id", envelope.ID, "err", err)
+		s.log.Error("marshal published event failed", "event_id", logsanitize.Field(envelope.ID), "err", logsanitize.FieldAny(err))
 		api.WriteProblem(w, api.ErrCapacity("failed to record event"))
 		return
 	}
@@ -78,7 +79,7 @@ func (s *server) persistPublishedEvent(w http.ResponseWriter, r *http.Request, a
 				"Event identity conflict", "source and id already identify an event with different type, schema version, or data"))
 			return
 		}
-		s.log.Error("record published event failed", "event_id", envelope.ID, "err", err)
+		s.log.Error("record published event failed", "event_id", logsanitize.Field(envelope.ID), "err", logsanitize.FieldAny(err))
 		api.WriteProblem(w, api.ErrCapacity("failed to record event"))
 		return
 	}
@@ -124,7 +125,7 @@ func (s *server) validateEventSchemaForIngress(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Event schema validation failed", err.Error()))
 		return false
 	}
-	s.log.Error("event schema lookup failed", "source", envelope.Source, "type", envelope.Type, "err", err)
+	s.log.Error("event schema lookup failed", "source", logsanitize.Field(envelope.Source), "type", logsanitize.Field(envelope.Type), "err", logsanitize.FieldAny(err))
 	api.WriteProblem(w, api.ErrCapacity("failed to validate event schema"))
 	return false
 }

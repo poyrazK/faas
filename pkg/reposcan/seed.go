@@ -123,7 +123,9 @@ type workloadSeed struct {
 	schedule  string
 	schedules []CronSchedule
 	ports     []int
-	envKeys   []string // KEYS only
+	// internalPorts are compose expose: listeners (ADR-576); nil = undeclared.
+	internalPorts []api.WorkloadPort
+	envKeys       []string // KEYS only
 }
 
 // workloadKey is the merge-by-(RootDir, Name) key. Two seeds with

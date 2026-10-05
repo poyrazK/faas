@@ -10,6 +10,9 @@ import (
 )
 
 func genericReplayPolicyProblem(orig state.Invocation) *api.Problem {
+	if orig.EnvironmentID != "" || state.InvocationHasOperation(orig) {
+		return api.NewProblem(http.StatusConflict, api.CodeInvocationNotReplayable, "Invocation not replayable", "use the owning environment or operation recovery surface")
+	}
 	if orig.QueueBindingID != "" || orig.QueueName != "" {
 		return api.NewProblem(http.StatusConflict, "queue_replay_requires_binding", "Queue replay requires its binding",
 			"use the app queue dead-letter replay endpoint to retain the original binding and work policy")

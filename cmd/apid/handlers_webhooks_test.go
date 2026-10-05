@@ -369,6 +369,7 @@ func TestCreateAppWebhook_EventOutOfVocabulary(t *testing.T) {
 }
 
 func TestCreateAppWebhook_EventWithoutProducerIsUnavailable(t *testing.T) {
+	// ADR-521: operation completion has its own producer-backed event.
 	e := setupWebhookTest(t, api.PlanPro)
 	mustSeedApp(t, e, "wh-no-producer")
 	req := webhookReq()
@@ -378,7 +379,7 @@ func TestCreateAppWebhook_EventWithoutProducerIsUnavailable(t *testing.T) {
 		t.Fatalf("status: got %d, want 400: %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "app_webhook_invalid") ||
-		!strings.Contains(rec.Body.String(), "app.parked, app.woken, deployment.live, deployment.failed, rollout.completed, rollout.aborted, job.finished, usage_statement.finalized") {
+		!strings.Contains(rec.Body.String(), "app.parked, app.woken, deployment.live, deployment.failed, rollout.completed, rollout.aborted, job.finished, operation.finished, usage_statement.finalized") {
 		t.Fatalf("body does not expose the producer-backed vocabulary: %s", rec.Body.String())
 	}
 }

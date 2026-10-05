@@ -27,6 +27,35 @@ func previewSourceFixture() routeimpact.Report {
 	}
 }
 
+func previewGoSourceFixture() routeimpact.Report {
+	source := previewSourceFixture()
+	source.Version, source.Framework = 3, "go-nethttp"
+	source.Scope = "Static Go net/http source impact."
+	source.Base.PythonFiles, source.Candidate.PythonFiles = 0, 0
+	source.Base.GoFiles, source.Candidate.GoFiles = 2, 2
+	for i := range source.Routes {
+		for _, route := range []*routeimpact.Route{source.Routes[i].Before, source.Routes[i].After} {
+			if route == nil {
+				continue
+			}
+			route.Source.File, route.Registration.File = "main.go", "main.go"
+			route.RegistrationHash = strings.Repeat("a", 64)
+			for j := range route.ContextFiles {
+				route.ContextFiles[j] = "main.go"
+			}
+		}
+		for j := range source.Routes[i].Evidence {
+			evidence := &source.Routes[i].Evidence[j]
+			evidence.File = "helper.go"
+			for k := range evidence.ViaSymbols {
+				evidence.ViaSymbols[k].File = "main.go"
+			}
+		}
+	}
+	source.ChangedFiles = []routeimpact.FileChange{{File: "main.go", Change: "modified"}}
+	return source
+}
+
 func previewSourceDeploymentFixture(commit, appID string) *api.DeploymentResponse {
 	return &api.DeploymentResponse{ID: "deployment-" + appID, AppID: appID, Status: "live", CommitSHA: commit, SourceURL: "https://user:secret-origin@github.com/Team/Service.git", SourceRoot: ".", SourceSHA256: strings.Repeat("9", 64)}
 }
@@ -71,6 +100,24 @@ func TestPreviewSourceBindsDeclaredMetadataAndKeepsContractClassification(t *tes
 		if strings.Contains(string(body), secret) {
 			t.Fatalf("leaked %s", secret)
 		}
+	}
+}
+
+func TestPreviewSourceAcceptsGoNetHTTPReportVersion3(t *testing.T) {
+	source := previewGoSourceFixture()
+	body, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := routeimpact.ParseReport(body)
+	if err != nil {
+		t.Fatalf("Go net/http source impact did not validate: %v", err)
+	}
+	report := previewSourceReportFixture()
+	attachPreviewSourceImpact(&report, parsed, "digest")
+	prioritizePreviewRouteReview(&report)
+	if report.SourceImpact.Status != "aligned" || report.SourceImpact.MappingStatus != "complete" || report.Routes[0].SourceImpact == nil || report.Routes[0].SourceImpact.Match != "parameter_names" {
+		t.Fatalf("Go source impact did not join to the captured route: %+v", report.SourceImpact)
 	}
 }
 

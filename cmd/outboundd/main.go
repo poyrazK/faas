@@ -185,6 +185,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	handler.IdentityVerifier = identityVerifier
 	handler.ExecutionIdentityVerifier = executionIdentityVerifier
 	handler.ExecutionAuthorizer = executionAuthorizer
+	if cfg.WorkflowOutboundEnabled || os.Getenv("FAAS_WORKFLOW_OUTBOUND_ENABLED") == "1" {
+		authorizer, err := outbound.NewPostgresWorkflowAuthorizer(pool)
+		if err != nil {
+			return err
+		}
+		handler.WorkflowAuthorizer = authorizer
+	}
 	outboundMetrics, err := outbound.NewMetrics(ops.Registry())
 	if err != nil {
 		return fmt.Errorf("outboundd: register metrics: %w", err)

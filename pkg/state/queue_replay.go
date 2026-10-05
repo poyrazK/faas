@@ -111,6 +111,9 @@ func (m *MemStore) retryQueueDeadLetterLocked(accountID, invocationID string, no
 	if _, err := m.eventReplayCapacityLocked(invocationID); err != nil {
 		return Invocation{}, err
 	}
+	if InvocationHasOperation(inv) {
+		return Invocation{}, ErrConflict
+	}
 	inv.State, inv.Attempts, inv.QuotaReserved = InvocationPending, 0, false
 	inv.ReplayGeneration++
 	inv.LastError, inv.InstanceID = "", ""

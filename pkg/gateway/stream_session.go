@@ -39,6 +39,23 @@ func newStreamSession(parent context.Context, ceiling, idle time.Duration) (ctx 
 	}
 }
 
+// grpcStreamContext opens a vmmd stream from a stream session without
+// sending the session's deadline to vmmd. gRPC turns a deadline present at
+// stream creation into grpc-timeout, which becomes vmmd's fixed server-side
+// deadline. Before the response starts, a stream session's deadline is the
+// request budget (at most RequestBudgetMax, 30 s). Detaching that budget after
+// the upgrade then cannot extend the stream vmmd already bounded.
+//
+// On production-us every WebSocket was closed (code 1006) at about 30 s, even
+// with a message every 10-20 s, and long streaming responses were capped the
+// same way. The wrapper keeps the session's cancellation, so the pre-response
+// budget, the 910 s / 24 h ceilings, the idle timer, and client disconnects
+// still end the stream through Done(). Only the deadline value is hidden.
+type grpcStreamContext struct{ context.Context }
+
+// Deadline reports no deadline; cancellation still flows through Done.
+func (grpcStreamContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+
 type idleSession struct {
 	ctx          context.Context
 	cancel       context.CancelFunc

@@ -173,6 +173,20 @@ Things to know:
 1. If your endpoint had any tags on it, the first tag will be used as a module name for the function (my_tag above)
 1. Any endpoint which did not have a tag will be in `faas_sdk.api.default`
 
+## Transactional operation handlers
+
+For managed HTTP operations, build the context with
+`operation_request_from_headers(headers, method, raw_target, raw_body)`, preserving
+repeated headers. Use `with_operation_transaction(connection, operation, callback)`
+or `await awith_operation_transaction(...)` with an idle, exclusively leased
+psycopg connection configured with `autocommit=True`. The callback's business
+writes and result/webhook intent commit together; retries recover the saved body.
+
+Install `operation_receipt_schema` explicitly as the database owner. Send
+`response.body` unchanged as `application/json`; `response.replayed` reports
+recovery. See the [transactional handler guide](../../docs/operation-transactions.md)
+for synchronous and async examples, retention, and uncertain commit handling.
+
 ## Login-target observation
 
 For a `POST` login route configured with `failed_responses`, central
@@ -331,3 +345,14 @@ If you want to install this client into another project without publishing it (e
 1. If that project is not using Poetry:
     1. Build a wheel with `poetry build -f wheel`
     1. Install that wheel from the other project `pip install <path-to-wheel>`
+
+## Object version protection
+
+The Storage API supports typed retention/legal-hold reads and mutations, plus
+protection operation inspection. Use an explicit owned public version UUIDv4
+(or `null` in an eligible Object Lock bucket). Mutations require a stable UUIDv4
+operation ID and return a durable receipt; retain the returned ID for retries
+and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
+holds are supported. Event-hold changes and governance bypass are unsupported.
+See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
+for enrollment, pending-operation fences and recovery behavior.

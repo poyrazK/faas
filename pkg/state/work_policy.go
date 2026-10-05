@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -44,12 +45,12 @@ type PendingQueueWorkCounter interface {
 }
 
 func (s *PgStore) PendingQueueWorkInLane(ctx context.Context, appID, policyName string, keyDigest []byte) (int, error) {
-	var n int
-	err := s.pool.QueryRow(ctx, `
-		select count(*) from invocations
-		where app_id = $1 and source = 'queue' and state = 'pending'
-		  and work_policy_name = $2 and work_key_digest = $3`, appID, policyName, keyDigest).Scan(&n)
-	return n, err
+	app, err := productionWorkUUID(appID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := sqlc.New().CountProductionPendingQueueWorkInLane(ctx, s.pool, sqlc.CountProductionPendingQueueWorkInLaneParams{AppID: app, WorkPolicyName: pgtype.Text{String: policyName, Valid: true}, WorkKeyDigest: keyDigest})
+	return int(n), err
 }
 
 func (m *MemStore) PendingQueueWorkInLane(_ context.Context, appID, policyName string, keyDigest []byte) (int, error) {
@@ -58,7 +59,7 @@ func (m *MemStore) PendingQueueWorkInLane(_ context.Context, appID, policyName s
 	n := 0
 	for _, inv := range m.invocations {
 		if inv.AppID == appID && inv.Source == InvocationQueue && inv.State == InvocationPending &&
-			inv.WorkPolicyName == policyName && bytes.Equal(inv.WorkKeyDigest, keyDigest) {
+			inv.WorkPolicyName == policyName && bytes.Equal(inv.WorkKeyDigest, keyDigest) && m.productionInvocationWorkLocked(inv) {
 			n++
 		}
 	}
@@ -141,17 +142,50 @@ func (m *MemStore) ExpirePendingKeyedInvocations(_ context.Context, now time.Tim
 // repeated producer ID returns its original row without replacing later work.
 // The selector is resolved by the producer; only its digest reaches storage.
 func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error) {
-	inv, err := prepareKeyedInvocation(inv, policy, canonicalKey, fairnessKeys)
+	inv, environment, err := resolveKeyedInvocationEnvironment(ctx, s, inv, policy)
 	if err != nil {
 		return Invocation{}, err
+	}
+	inv, err = prepareKeyedInvocation(inv, policy, canonicalKey, fairnessKeys)
+	if err != nil {
+		return Invocation{}, err
+	}
+	if environment.environment.ID != "" {
+		digest, e := invocationWorkDomainDigest(environment.environment.ID, "key", canonicalKey)
+		if e != nil {
+			return Invocation{}, e
+		}
+		inv.WorkKeyDigest = digest[:]
+		inv.WorkFairnessDigest, err = workEnvironmentFairnessDigest(policy, environment.environment.ID, canonicalKey, fairnessKeys)
+		if err != nil {
+			return Invocation{}, err
+		}
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Invocation{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	out, _, err := enqueueKeyedInvocationTx(ctx, tx, inv, policy)
+	if err := lockInvocationEnvironmentDB(ctx, tx, inv.AppID, inv.AccountID, environment.environment.ID); err != nil {
+		return Invocation{}, err
+	}
+	if err := registerInvocationWorkEnvironmentDB(ctx, tx, environment, inv); err != nil {
+		return Invocation{}, err
+	}
+	out, created, err := enqueueKeyedInvocationTx(ctx, tx, inv, policy)
+	if err == nil && !created {
+		if err := validateWorkEnvironmentReplayDB(ctx, tx, environment, out); err != nil {
+			return Invocation{}, err
+		}
+		return out, nil
+	}
 	if err != nil {
+		return Invocation{}, err
+	}
+	if environment.environment.ID != "" {
+		out.EnvironmentID = environment.environment.ID
+	}
+	if err := insertInvocationWorkEnvironmentDB(ctx, tx, environment, out); err != nil {
 		return Invocation{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -163,6 +197,9 @@ func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, po
 // lockKeyedClaimTx holds the lane until the caller commits its claim. The
 // running owner wins before pending FIFO, including after in-place replay.
 func lockKeyedClaimTx(ctx context.Context, tx pgx.Tx, id, appID, policyName string, digest []byte) error {
+	if err := validateWorkEnvironmentClaimDB(ctx, tx, id, appID, policyName, digest); err != nil {
+		return err
+	}
 	return lockWorkLaneClaimTx(ctx, tx, id, appID, policyName, digest, false)
 }
 
@@ -263,22 +300,30 @@ func lockFairnessClaimTx(ctx context.Context, tx pgx.Tx, appID, policyName strin
 	return nil
 }
 
-func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error) {
+func (m *MemStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error) {
+	inv, environment, err := resolveKeyedInvocationEnvironment(ctx, m, inv, policy)
+	if err != nil {
+		return Invocation{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.enqueueKeyedInvocationLocked(inv, policy, canonicalKey, fairnessKeys...)
+	return m.enqueueKeyedInvocationEnvironmentLocked(inv, policy, canonicalKey, environment, fairnessKeys...)
 }
 
 func (m *MemStore) enqueueKeyedInvocationLocked(inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error) {
+	return m.enqueueKeyedInvocationEnvironmentLocked(inv, policy, canonicalKey, invocationWorkEnvironment{}, fairnessKeys...)
+}
+
+func (m *MemStore) enqueueKeyedInvocationEnvironmentLocked(inv Invocation, policy workpolicy.Policy, canonicalKey string, environment invocationWorkEnvironment, fairnessKeys ...string) (Invocation, error) {
 	requestedScope := inv.DeploymentScope
 	if err := policy.Validate(); err != nil {
 		return Invocation{}, err
 	}
-	digest, err := workpolicy.DigestKey(canonicalKey)
+	digest, err := invocationWorkDomainDigest(environment.environment.ID, "key", canonicalKey)
 	if err != nil {
 		return Invocation{}, err
 	}
-	fairnessDigest, err := workFairnessDigest(policy, canonicalKey, fairnessKeys)
+	fairnessDigest, err := workEnvironmentFairnessDigest(policy, environment.environment.ID, canonicalKey, fairnessKeys)
 	if err != nil {
 		return Invocation{}, err
 	}
@@ -299,13 +344,19 @@ func (m *MemStore) enqueueKeyedInvocationLocked(inv Invocation, policy workpolic
 	if inv.ID == "" {
 		inv.ID = newID()
 	}
+	if err := m.validateWorkEnvironmentLocked(environment); err != nil {
+		return Invocation{}, err
+	}
 	if existing, ok := m.invocations[inv.ID]; ok {
 		if existing.AppID != inv.AppID || existing.PlatformTenantID != inv.PlatformTenantID || existing.WorkPolicyName != policy.Name ||
 			!bytes.Equal(existing.WorkKeyDigest, digest[:]) || requestedScope != "" && existing.DeploymentScope != requestedScope ||
 			inv.QueueBindingID != "" && canonicalMemUUID(existing.QueueBindingID) != canonicalMemUUID(inv.QueueBindingID) {
 			return Invocation{}, ErrConflict
 		}
-		return existing, nil
+		if err := m.validateWorkEnvironmentReplayLocked(environment, existing); err != nil {
+			return Invocation{}, err
+		}
+		return cloneInvocationWorkEnvelope(existing), nil
 	}
 	inv.WorkPolicyName = policy.Name
 	if err := m.captureInvocationQueueBindingLocked(&inv); err != nil {
@@ -320,6 +371,9 @@ func (m *MemStore) enqueueKeyedInvocationLocked(inv Invocation, policy workpolic
 	inv.CreatedAt = now
 	inv.DueAt = policy.AvailableAt(now, inv.DueAt)
 	inv.State = InvocationPending
+	if err := m.registerWorkEnvironmentLocked(environment, inv); err != nil {
+		return Invocation{}, err
+	}
 	for id, old := range m.invocations {
 		if old.AppID != inv.AppID || old.WorkPolicyName != policy.Name ||
 			!bytes.Equal(old.WorkKeyDigest, digest[:]) {
@@ -342,12 +396,18 @@ func (m *MemStore) enqueueKeyedInvocationLocked(inv Invocation, policy workpolic
 	}
 	inv.ReplayGeneration = 0
 	m.setInvocationLocked(inv.ID, inv)
+	if environment.environment.ID != "" {
+		m.invocationWorkEnvironmentAdmissions[inv.ID] = environment.admission(inv)
+	}
 	return inv, nil
 }
 
 func (m *MemStore) keyedClaimAllowedLocked(inv Invocation, now time.Time) error {
 	if inv.WorkPolicyName == "" {
 		return nil
+	}
+	if err := m.validateWorkEnvironmentClaimLocked(inv); err != nil {
+		return err
 	}
 	for id, old := range m.invocations {
 		if old.AppID == inv.AppID && old.WorkPolicyName == inv.WorkPolicyName &&

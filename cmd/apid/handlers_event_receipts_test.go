@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 582
+// adr: 596
 func TestEventReceiptPublishLinkAndStableAcceptance(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	request := api.PublishEventRequest{ID: "evt/?+&", Source: "https://orders.example/a?b=1&c=2", Type: "created", Data: json.RawMessage(`{}`)}
@@ -73,7 +73,7 @@ func seedAPIReceipt(t *testing.T, e testEnv) *state.PublishedEventWork {
 	return work
 }
 
-// adr: 582
+// adr: 596
 func TestEventReceiptPaginationIsolationAndRecovery(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	work := seedAPIReceipt(t, e)
@@ -168,7 +168,7 @@ func TestEventReceiptPaginationIsolationAndRecovery(t *testing.T) {
 	}
 }
 
-// adr: 582
+// adr: 596
 func TestEventReceiptReadScope(t *testing.T) {
 	for _, test := range []struct {
 		scope  string
@@ -184,7 +184,7 @@ func TestEventReceiptReadScope(t *testing.T) {
 	}
 }
 
-// adr: 582
+// adr: 596
 func TestEventReceiptCursorSupportsMaximumEncodedIdentity(t *testing.T) {
 	receipt := state.EventReceipt{OutboxID: 1, NextPosition: 1, EventSource: strings.Repeat("&", 256), EventID: strings.Repeat("<", 256)}
 	cursor := encodeEventReceiptCursor("00000000-0000-0000-0000-000000000001", receipt)

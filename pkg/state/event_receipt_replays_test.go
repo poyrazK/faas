@@ -208,7 +208,7 @@ func TestEventReceiptReplaySurvivesExecutionRetentionPostgres(t *testing.T) {
 	}
 }
 
-// adr: 587
+// adr: 601
 func TestEventReceiptPlainReplayDeduplicationAndRetention(t *testing.T) {
 	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
 		ctx, account, app, work := seedRecipientClaims(t, store)

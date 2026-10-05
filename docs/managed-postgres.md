@@ -37,7 +37,7 @@ Keep `provisioning_enabled` false outside an isolated provider qualification
 environment. The lifecycle service and background discovery also require all
 of the following runtime gates before they will provision: `FAAS_ENVIRONMENT`
 must be `staging`, `FAAS_MANAGED_POSTGRES_QUALIFIED=true`,
-`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=3`,
+`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=4`,
 `FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL` must be a future RFC3339 timestamp,
 and the exact qualified backend ID and fingerprint must be supplied through
 `FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` and
@@ -122,9 +122,13 @@ attempts cleanup after an intermediate failure and emits a JSON report with
 only stable check codes and restore evidence (without provider IDs). The
 command also emits a versioned `approval`
 envelope, an `approval_env` block when all rollout checks pass, and a
-machine-readable `readiness` result. Version 3 requires SQL permission probes,
-data recovery, and rejection of inherited source logins on the restore target.
-Versions 1 and 2 must be replaced by a new qualification run.
+machine-readable `readiness` result. Version 4 requires SQL permission probes,
+data recovery, rejection of inherited source logins on the restore target,
+and read-only credential evidence when the adapter advertises that access mode.
+Reader qualification exercises existing and future object access, write/DDL
+denials with client read-only settings disabled, RLS, password recovery on retry,
+data-preserving rotation, and rejection of retired sessions and fresh logins.
+Versions 1–3 must be replaced by a new qualification run.
 The approval is bound to the report digest, exact backend fingerprint, expiry,
 and the current canary allowlist. A provider-only run remains useful evidence
 but is not rollout-ready until the lifecycle smoke has passed.
@@ -260,7 +264,7 @@ codes without response bodies, connection strings, endpoint hosts, or API keys.
 | --- | --- | --- |
 | `read_write` (default) | Pooled, with direct fallback | Public-schema SELECT, INSERT, UPDATE, DELETE; sequence usage; RLS enforced |
 | `migration` | Direct required; release tasks only | Schema changes through a stable non-login schema owner; no role/database administration or replication |
-| `read_only` | Read-only endpoint required | Not advertised by the current Neon adapter |
+| `read_only` | Replica when available, otherwise pooled/direct primary | Public-schema SELECT and sequence inspection; no sequence advancement, DML, DDL, administration or RLS bypass |
 
 Runtime logins cannot create tables, temporary objects, schemas, or roles,
 truncate tables, or bypass row-level security. Runtime grants cover existing
@@ -269,6 +273,33 @@ Custom schemas and function execution require explicit migration-owner grants.
 Existing PUBLIC-executable SECURITY DEFINER functions block credential issuance;
 review their execution grants before adoption. New owner functions do not
 receive PUBLIC execution privileges by default.
+
+Reader issuance and cutover verification reject observed write grants through
+columns, PUBLIC, other customer schemas, sequences, SECURITY DEFINER functions,
+or default privileges. They preserve customer grants and return a conflict
+instead of weakening or silently rewriting them. Owners must keep their grants
+compatible: a later privileged migration can change permissions after issuance.
+Read-only primary connections have primary consistency; this access mode does
+not promise replica compute or offload. Attach a separate reader URL with:
+
+```sh
+gregale postgres attach DATABASE APP_SLUG --access read_only --env READ_DATABASE_URL
+```
+
+Discover configured support for your plan and the region's default placement:
+
+```sh
+gregale postgres capabilities --region eu-central-1 --json
+# API/SDK: GET /v1/postgres/capabilities?region=eu-central-1
+```
+
+The versioned response lists PostgreSQL versions, service classes, access modes,
+availability, pooling, scale-to-zero and restore/storage limits. It exposes no
+backend identity, credentials or provider costs. `provisioning_enabled` describes
+the qualification/canary gate separately from configured support; usage, budget
+and current quota admission are checked when reserving a resource. Discovery
+does not contact the provider. Existing databases and bindings stay pinned to
+their original backend, whose capabilities remain authoritative for operations.
 
 Use a separate environment key for migration tooling:
 
@@ -413,15 +444,23 @@ consumption. Deleting a branch of a live root keeps the root's active freshness
 requirement; the branch introduces no separate final-window wait.
 Ready counts remain lifecycle counts, so usage can be stale with zero ready
 databases. This protects the guardrail; it does not establish final invoice
-settlement or qualify Neon history after project deletion. Unavailable history
-requires an operator reconciliation workflow, which is still unfinished.
-Provider identities lost after uncertain provisioning responses also remain
-outside this known-resource accounting path.
-See [ADR-569](adr/569-managed-postgres-terminal-usage-coverage.md).
+settlement or qualify Neon history after project deletion. Operators can recover
+unavailable history using the audited retained-usage import described below.
+Before a provisioning or restore call, the catalog commits a permanent accounting
+obligation. If its response is lost, collection can recover the identity after
+an active lifecycle lease expires. Deletion discovers and persists identity
+before destroying the resource; an absent lookup keeps deletion pending. Legacy
+unknown tombstones remain stale because their old timestamps do not establish
+provider-confirmed shutdown. Newly reserved resources that never reached provider
+I/O can be deleted without an upstream call. Discovery uses a fleet recovery turn
+within the existing per-database request budget.
+See [ADR-569](adr/569-managed-postgres-terminal-usage-coverage.md) and
+[ADR-581](adr/581-managed-postgres-uncertain-accounting-intent.md).
 
 When enabled, a new database reservation is admitted only if the account has a
-complete usage coverage for every known provider resource, with fresh active
-observations and bounded final correction evidence for deleted resources and has not crossed its
+complete usage coverage for every provider resource and no unresolved accounting
+obligation, with fresh active observations and bounded final correction evidence
+for deleted resources and has not crossed its
 monthly cost, compute, storage, history (when configured), or egress ceiling. Missing or stale observations fail
 closed; an existing named database remains idempotent and can still be
 reconciled. The plan's per-database storage entitlement is multiplied by the
@@ -449,6 +488,122 @@ headroom, and a `guardrail_state` of `disabled`, `healthy`, `stale`, or
 continues to fail closed when observations are stale. Provider IDs, provider
 rates, internal cost line items, credentials, and connection URLs never appear
 in the customer response.
+
+Operators can diagnose stale accounting with
+`GET /v1/admin/managed-postgres/accounting/{account_id}` or
+`gregale postgres diagnostics ACCOUNT_ID --json`. The route uses the admin scope,
+MFA middleware, and operator email allowlist. Pages default to 50 resources, with
+`limit` capped at 100 and `after` set to the preceding page's `next_cursor`.
+Each page is a current local snapshot; a multi-page read does not freeze the
+account. The report reads the catalog and ledger without provider calls or writes.
+
+Each resource includes its accounting root, required/collected ranges, observation
+times, lease expiry, and stable stale-admission reasons: `identity_unknown`,
+`legacy_identity_unknown`, `coverage_missing`, `window_mismatch`,
+`shutdown_unconfirmed`, `coverage_incomplete`, `observation_stale`, or
+`final_correction_pending`. Shared restores use their root's evidence. Unknown
+legacy tombstones have no confirmed terminal deadline. A disabled policy reports
+no blockers, while retaining identity and coverage metadata. Empty reasons do not
+establish budget headroom or final provider settlement. Provider IDs and credential
+material are excluded. See [ADR-582](adr/582-managed-postgres-accounting-diagnostics.md).
+
+Operators can repair unavailable historical usage with retained evidence:
+
+```sh
+gregale postgres usage-import ACCOUNT_ID --file retained-usage.json --json
+# Review the costs/coverage; put the returned revision in expected_revision.
+gregale postgres usage-import ACCOUNT_ID --file retained-usage.json --apply --session-file operator-session --json
+```
+
+Preview makes no provider calls or writes. Apply requires an allowlisted operator
+session with a recent MFA step-up; the ordinary CLI bearer login cannot apply.
+The session file contains the opaque `faas_sid` cookie value and must be a private
+regular file (mode 0600). It is never saved in the normal CLI token store.
+Go SDK callers can use an empty bearer token and a cookie jar on `HTTPClient()`;
+other SDK callers must likewise use an operator session for apply.
+
+The JSON input has `import_id` (a UUID preserved across retries), `database_id`,
+`evidence_reference`, `evidence_sha256`, `reason`, and `windows`. Each window has
+RFC3339 `from`, `to`, and `observed_at`, plus `readings` containing `{ "meter":
+"compute_unit_seconds", "quantity": 60 }` entries for **every** meter advertised
+by the backend, including explicit observed zeros. Supply normalized integer
+quantities, without costs. Windows must be complete, contiguous, aligned to the
+configured policy window, and have source observations at or after their end.
+Times cannot be in the future or finer than microsecond precision. Submit at most
+256 windows and 1 MiB per request. Import shared restores against the accounting
+root shown by diagnostics.
+
+Retain and verify the source export's resource identity, completeness, units,
+observation time and SHA-256 before normalizing it. The API records the operator's
+attestation and does not fetch or authenticate source artifacts. References must
+contain no credentials or signed URLs. Preview reports previous/imported costs,
+their signed delta, resulting coverage and a revision. Concurrent accounting,
+policy or lifecycle changes require another preview. Apply atomically commits
+usage, coverage and immutable before/after evidence with the operator, reason,
+source reference/hash and price policy. Identical committed requests by the same
+actor return their original response; changed requests with the same import ID
+conflict. Schema rollback refuses to discard receipts. Final account erasure
+cascades them after confirmed resource deletion.
+
+Imports preserve source observation times. They cannot establish missing provider
+identities or shutdown, bypass freshness/budget checks, replace newer evidence
+with older readings, overlap daily and hourly accounting, or establish final
+invoice settlement. See [ADR-583](adr/583-managed-postgres-retained-usage-import.md).
+
+Legacy deleted rows whose accounting identity is unknown need identity and
+shutdown evidence before usage recovery. An allowlisted operator can preview
+and apply that repair:
+
+```sh
+gregale postgres reconcile ACCOUNT_ID --file retained-shutdown.json --json
+# Review the confirmed shutdown; put the returned revision in expected_revision.
+gregale postgres reconcile ACCOUNT_ID --file retained-shutdown.json --apply --session-file operator-session --json
+```
+
+The file contains the following fields; replace the illustrative IDs, times,
+fingerprint, and digest with verified retained evidence:
+
+```json
+{
+  "reconciliation_id": "00000000-0000-0000-0000-000000000001",
+  "database_id": "00000000-0000-0000-0000-000000000002",
+  "backend_id": "primary",
+  "backend_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "provider_resource_id": "verified-project-or-branch-id",
+  "shutdown_at": "2026-10-01T12:17:00Z",
+  "observed_at": "2026-10-02T09:00:00Z",
+  "evidence_reference": "retained/provider-shutdown-export",
+  "evidence_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "reason": "Repair lost legacy identity using confirmed provider shutdown"
+}
+```
+
+Confirm the resource's ownership, backend mapping, restore lineage, actual
+shutdown, and source observation before submitting. An absent provider lookup
+or the catalog's old logical deletion time does not prove shutdown. The API
+records the operator's attestation without fetching or authenticating artifacts.
+Keep references free of credentials and signed URLs. Requests are limited to
+32 KiB; times require microsecond precision or coarser, with observation at or
+after shutdown and no future time.
+
+Preview uses the operator read policy and changes nothing. Apply uses the same
+recent MFA session policy and private session file as usage import. It accepts
+only accountable deleted rows with no provider ID or active lifecycle lease,
+and rejects an identity already claimed under the same backend fingerprint.
+The preview revision fences concurrent catalog, policy, coverage, and ledger
+changes. Preserve `reconciliation_id`, revision, and the exact request for retries
+by the same operator; a committed replay returns the original result.
+
+Apply attaches the identity and replaces the logical deletion timestamp with
+the confirmed shutdown in one transaction. Its immutable receipt retains both
+catalog versions, the old coverage, actor, policy, and evidence reference/hash.
+Recorded quantities and costs stay intact. Derived coverage is reset, so the
+account remains stale until the collector or retained-usage import establishes
+complete history and final correction observations. Shared restore children
+continue to use their root's aggregate; import quantities against that root.
+Recheck `gregale postgres diagnostics ACCOUNT_ID --json` after recovery. A repair
+receipt reports the committed repair, not current admission or final invoice
+settlement. See [ADR-591](adr/591-managed-postgres-legacy-accounting-reconciliation.md).
 
 Operators with the admin scope and MFA can inspect the same account through
 `GET /v1/admin/managed-postgres/usage/{account_id}`. This bounded view adds the

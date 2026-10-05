@@ -23,7 +23,7 @@ func validateGitOpsOverride(request EnvironmentGitOpsOverrideRequest, now time.T
 }
 
 func changedEnvironmentGitSource(source EnvironmentGitSource, update EnvironmentGitSourceUpdate) (EnvironmentGitSource, error) {
-	if source.Generation != update.ExpectedGeneration {
+	if source.Detached || source.Generation != update.ExpectedGeneration {
 		return source, ErrConflict
 	}
 	if update.Mode != "" {

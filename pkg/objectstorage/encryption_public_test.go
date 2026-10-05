@@ -66,7 +66,11 @@ func TestEncryptedMultipartAdoptionWithDisabledKey(t *testing.T) {
 	p, b := encryptionS3Fixture(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Query().Has("uploads") {
 			lists++
-			_, _ = io.WriteString(w, `<ListMultipartUploadsResult><IsTruncated>false</IsTruncated><Upload><Key>existing</Key><UploadId>private-existing</UploadId></Upload></ListMultipartUploadsResult>`)
+			_, _ = io.WriteString(w, `<ListMultipartUploadsResult><IsTruncated>false</IsTruncated>`)
+			if r.URL.Query().Get("prefix") == "existing" {
+				_, _ = io.WriteString(w, `<Upload><Key>existing</Key><UploadId>private-existing</UploadId></Upload>`)
+			}
+			_, _ = io.WriteString(w, `</ListMultipartUploadsResult>`)
 			return
 		}
 		creates++

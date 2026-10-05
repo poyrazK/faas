@@ -69,6 +69,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -105,8 +110,9 @@ def sync_detailed(
 ) -> Response[Problem | WorkflowRunResponse]:
     """Start a durable workflow run.
 
-     Snapshots the named workflow definition from the app's current live
-    deployment and creates a pending run. The optional request body is
+     Snapshots the named effective workflow definition from the app's live
+    default deployment and dashboard publications and creates a pending run. The optional request body
+    is
     retained as the workflow input and may be any valid JSON value.
 
     Args:
@@ -144,8 +150,9 @@ def sync(
 ) -> Problem | WorkflowRunResponse | None:
     """Start a durable workflow run.
 
-     Snapshots the named workflow definition from the app's current live
-    deployment and creates a pending run. The optional request body is
+     Snapshots the named effective workflow definition from the app's live
+    default deployment and dashboard publications and creates a pending run. The optional request body
+    is
     retained as the workflow input and may be any valid JSON value.
 
     Args:
@@ -178,8 +185,9 @@ async def asyncio_detailed(
 ) -> Response[Problem | WorkflowRunResponse]:
     """Start a durable workflow run.
 
-     Snapshots the named workflow definition from the app's current live
-    deployment and creates a pending run. The optional request body is
+     Snapshots the named effective workflow definition from the app's live
+    default deployment and dashboard publications and creates a pending run. The optional request body
+    is
     retained as the workflow input and may be any valid JSON value.
 
     Args:
@@ -215,8 +223,9 @@ async def asyncio(
 ) -> Problem | WorkflowRunResponse | None:
     """Start a durable workflow run.
 
-     Snapshots the named workflow definition from the app's current live
-    deployment and creates a pending run. The optional request body is
+     Snapshots the named effective workflow definition from the app's live
+    default deployment and dashboard publications and creates a pending run. The optional request body
+    is
     retained as the workflow input and may be any valid JSON value.
 
     Args:

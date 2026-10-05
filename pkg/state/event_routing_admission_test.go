@@ -92,7 +92,7 @@ func seedRoutingAdmission(t *testing.T, store routingAdmissionTestStore, adopted
 	return claim, receipt, policy
 }
 
-// ADR-588: admission, checkpoint, history and aggregate settlement commit
+// ADR-602: admission, checkpoint, history and aggregate settlement commit
 // together. Duplicate recovery remains inert after invocation pruning.
 func TestEventRoutingAdmissionConcurrentRecoveryAndPruning(t *testing.T) {
 	forRoutingAdmissionStores(t, func(t *testing.T, store routingAdmissionTestStore, _ *pgxpool.Pool, adopted bool) {

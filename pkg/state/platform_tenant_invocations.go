@@ -72,5 +72,5 @@ func AdmitPlatformTenantInvocation(ctx context.Context, store interface {
 		return inv, ErrNotFound
 	}
 	// Use the persisted request, including its method, path, body and version pin.
-	return stored, nil
+	return admitOperationDispatch(ctx, store, stored, inv)
 }

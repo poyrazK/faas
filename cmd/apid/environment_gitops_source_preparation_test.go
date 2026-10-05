@@ -84,7 +84,7 @@ func TestEnvironmentGitOpsHTTPSourceBuildCandidateUsesApprovedArchive(t *testing
 	httpServer := httptest.NewServer(srv.handler())
 	defer httpServer.Close()
 	client := api.NewClient(httpServer.URL, key)
-	if _, err := client.CreateEnvironmentGitSource(t.Context(), "shop", "production", api.CreateEnvironmentGitSourceRequest{ManifestPath: "environments/production.yaml", Mode: "enforce"}); err != nil {
+	if _, err := client.CreateEnvironmentGitSource(t.Context(), "shop", "production", api.CreateEnvironmentGitSourceRequest{ManifestPath: "environments/production.yaml", Mode: "report"}); err != nil {
 		t.Fatal(err)
 	}
 	review, err := client.PreviewEnvironmentGitRevision(t.Context(), "shop", "production", api.PreviewEnvironmentGitRevisionRequest{CommitSHA: sha})
@@ -104,6 +104,7 @@ func TestEnvironmentGitOpsHTTPSourceBuildCandidateUsesApprovedArchive(t *testing
 	// A different archive returned for the same SHA is rejected before queue
 	// publication. Approval itself was read from the original exact bytes.
 	github.archive = environmentGitOpsBuildArchive(t, strings.ReplaceAll(definition, "port: 8080", "port: 9090"))
+	enableEnvironmentGitOpsTestExecutor(t, store, account.ID, project.ID)
 	worker := gitOpsBackendWorker(srv, store)
 	if _, err := worker.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)

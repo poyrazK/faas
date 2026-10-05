@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-// ADR-581: the additive migration starts disabled and can replay without
+// ADR-595: the additive migration starts disabled and can replay without
 // changing existing recipient ownership, generation, lease, or retry counters.
 func TestMigrations_EventRecipientClaimsReplayPreservesOwnership(t *testing.T) {
 	ctx := context.Background()

@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 586
+// adr: 600
 func TestDrainEventAttemptHistoryAndRetention(t *testing.T) {
 	d, harnessStore, _, _, gateway := newDrainHarness(t, api.PlanHobby, true)
 	store := harnessStore.(*state.MemStore)

@@ -242,6 +242,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.handleCORS(w, r, requestID) {
 		return
 	}
+	if r.URL.Query().Has(UploadGrantQueryParameter) {
+		h.serveUploadGrant(w, r, requestID)
+		return
+	}
 	var parsed sigV4Request
 	var presigned bool
 	var err error
@@ -290,7 +294,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPut && r.URL.Query().Has("encryption") {
 		bodyLimit = api.MaxObjectBucketEncryptionBodyBytes
 	}
-	if r.Method == http.MethodPut && r.URL.Query().Has("object-lock") {
+	if r.Method == http.MethodPut && (r.URL.Query().Has("object-lock") || r.URL.Query().Has("retention") || r.URL.Query().Has("legal-hold")) {
 		bodyLimit = api.MaxObjectLockBodyBytes
 	}
 	if r.Method == http.MethodPut && r.URL.Query().Get("uploadId") != "" {
@@ -494,6 +498,14 @@ func validDelimiter(delimiter string) bool {
 func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
 	query := operationQuery(r.URL.Query())
 	query.Del("x-id")
+	if query.Has("retention") || query.Has("legal-hold") {
+		kind := "retention"
+		if query.Has("legal-hold") {
+			kind = "legal_hold"
+		}
+		h.objectVersionProtection(w, r, req, key, kind)
+		return
+	}
 	if query.Has("tagging") {
 		if !queryKeysOnly(query, "tagging", "versionId") {
 			h.unsupported(w, r, req.requestID)
@@ -613,6 +625,8 @@ func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, re
 			status, code, message = http.StatusPaymentRequired, "AccountProblem", "The object storage safety budget has been reached."
 		} else if errors.Is(err, state.ErrObjectCapacity) {
 			status, code, message = http.StatusConflict, "OperationAborted", "The object storage capacity reservation would be exceeded."
+		} else if errors.Is(err, state.ErrConflict) {
+			status, code, message = http.StatusConflict, "OperationAborted", "The object key or bucket has pending work. Retry after it settles."
 		}
 		writeS3Error(w, status, code, message, r.URL.Path, req.requestID)
 		return false
@@ -952,6 +966,15 @@ func copyObjectHeaders(dst, src http.Header) {
 
 func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requestContext, err error, key string) {
 	resource := r.URL.Path
+	if errors.Is(err, state.ErrObjectBucketWriteFenced) {
+		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Bucket writes are temporarily paused for checkpoint capture.", resource, req.requestID)
+		return
+	}
+	if errors.Is(err, state.ErrObjectVersionProtectionPending) {
+		w.Header().Set("Retry-After", "30")
+		writeS3Error(w, http.StatusConflict, "OperationAborted", "Object version protection is pending.", resource, req.requestID)
+		return
+	}
 	if errors.Is(err, objectstorage.ErrNotFound) {
 		code, message := "NoSuchKey", "The specified key does not exist."
 		if key == "" {

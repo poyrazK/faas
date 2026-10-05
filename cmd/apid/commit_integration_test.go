@@ -260,3 +260,148 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	}
 
 }
+
+// Version 2 keeps customer routing outside the application payload, carries it
+// through the actual customer DB relay and recovers identities before admission.
+func TestCommitCustomerRoutingPostgresToAPI(t *testing.T) {
+	t.Setenv("FAAS_COMMIT_API_ENABLED", "true")
+	e := setupPGHandler(t, api.PlanPro)
+	ctx := t.Context()
+	store := state.NewPgStore(e.pool)
+	app, err := store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "routed-commit-worker", Type: state.AppTypeApp, Runtime: "node22", RAMMB: 256, PlatformTenantRequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.UpsertExclusiveWorkPolicy(ctx, e.acct.ID, exclusivework.Policy{Name: "customer-orders", Scope: "platform_tenant", Contention: "queue", MemberAppIDs: []string{app.ID}, LeaseSeconds: 15, MaxAttemptSeconds: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant, _, err := store.CreatePlatformTenant(ctx, e.acct.ID, "customer-a", "Customer A", 250)
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface, err := store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{AccountID: e.acct.ID, AppID: app.ID, Name: "customer-a", CertKind: state.CertKindPerHostSAN}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LinkPlatformTenantSurface(ctx, e.acct.ID, tenant.ID, surface.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.pool.Exec(ctx, `UPDATE tenant_surfaces SET status='active' WHERE id=$1::uuid`, surface.ID); err != nil {
+		t.Fatal(err)
+	}
+	created := e.do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/commit-sources", api.CreateCommitSourceRequest{Name: "customer-orders", OperationPolicy: "customer-orders", ContractVersion: 2, AllowTenantSelection: true}, nil)
+	var src api.CommitSourceResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &src); err != nil || created.Code != http.StatusCreated || src.ContractVersion != 2 || !src.AllowTenantSelection {
+		t.Fatalf("source: %d %s %v", created.Code, created.Body.String(), err)
+	}
+	customer := pgtest.OpenDatabase(t)
+	if _, err := customer.Exec(ctx, commitwork.Schema); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := customer.Exec(ctx, `INSERT INTO public.gregale_commit_binding(source_id) VALUES($1::uuid)`, src.ID); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(e.h)
+	defer server.Close()
+	acceptor := &commitwork.HTTPAcceptor{URL: server.URL + "/v1/commit-sources/" + src.ID + "/events", Token: e.key}
+	event := commitwork.Event{ID: uuid.NewString(), Type: "order.created", Data: json.RawMessage(`{"order_id":1,"platform_tenant_id":"untrusted-payload"}`), Routing: &api.CommitRouting{Version: 2, PlatformTenantID: tenant.ID, Key: json.RawMessage(`"order-1"`)}}
+	tx, err := customer.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitwork.Insert(ctx, tx, event); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	relay := commitwork.Relay{Pool: customer, SourceID: src.ID, Acceptor: acceptor}
+	if n, err := relay.Tick(ctx); err != nil || n != 1 {
+		t.Fatalf("routed handoff: %d %v", n, err)
+	}
+	first, err := acceptor.Accept(ctx, event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := store.ExclusiveOperationByID(ctx, e.acct.ID, first.OperationID)
+	if err != nil || op.PlatformTenantID != tenant.ID || op.AppID != app.ID {
+		t.Fatalf("trusted dispatch ownership: %+v %v", op, err)
+	}
+	path := "/v1/commit-sources/" + src.ID + "/events"
+	unknown := e.do(t, http.MethodPost, path, map[string]any{"id": uuid.NewString(), "type": "order.created", "data": map[string]any{}, "routing": map[string]any{"version": 2, "key": "order-1", "platform_tenant_id": tenant.ID, "app_id": app.ID}}, nil)
+	if unknown.Code != http.StatusBadRequest {
+		t.Fatalf("unknown routing field: %d %s", unknown.Code, unknown.Body.String())
+	}
+	changed := event
+	changed.Routing = &api.CommitRouting{Version: 2, PlatformTenantID: tenant.ID, Key: json.RawMessage(`"order-2"`)}
+	conflict := e.do(t, http.MethodPost, path, changed, nil)
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("routing conflict: %d %s", conflict.Code, conflict.Body.String())
+	}
+	noGrant := event
+	noGrant.ID = uuid.NewString()
+	noGrant.Routing = &api.CommitRouting{Version: 2, Key: json.RawMessage(`1`)}
+	denied := e.do(t, http.MethodPost, path, noGrant, nil)
+	if denied.Code != http.StatusBadRequest {
+		t.Fatalf("missing customer: %d %s", denied.Code, denied.Body.String())
+	}
+
+	// Exercise the scheduler's internal acceptor as well as HTTP handoff.
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := commitwork.SealConnection(identity.Recipient(), src.ID, "postgres://relay:fixture-secret@db.example/customer?sslmode=verify-full")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetCommitSourceConnection(ctx, e.acct.ID, src.ID, sealed); err != nil {
+		t.Fatal(err)
+	}
+	managed := event
+	managed.ID = uuid.NewString()
+	tx, err = customer.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commitwork.Insert(ctx, tx, managed); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	manager := commitmanaged.Manager{Store: store, Identities: []*age.X25519Identity{identity}, Open: func(ctx context.Context, _ string, _ commitwork.NetworkPolicy) (*pgxpool.Pool, error) {
+		return pgxpool.NewWithConfig(ctx, customer.Config().Copy())
+	}}
+	if err := manager.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	managedReceipt, err := store.CommitReceiptByEvent(ctx, e.acct.ID, src.ID, managed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedOp, err := store.ExclusiveOperationByID(ctx, e.acct.ID, managedReceipt.OperationID)
+	if err != nil || managedOp.PlatformTenantID != tenant.ID || managedOp.KeyID != op.KeyID {
+		t.Fatalf("managed relay lost customer/business lane: %+v %v", managedOp, err)
+	}
+	health := e.do(t, http.MethodGet, "/v1/commit-sources/"+src.ID, nil, nil)
+	var snapshot api.CommitSourceResponse
+	if err := json.Unmarshal(health.Body.Bytes(), &snapshot); err != nil || snapshot.ContractVersion != 2 || !snapshot.AllowTenantSelection || snapshot.RelayStatus != "healthy" {
+		t.Fatalf("routed source observation: %d %s %v", health.Code, health.Body.String(), err)
+	}
+
+	if _, err := store.SetPlatformTenantStatus(ctx, e.acct.ID, tenant.ID, state.PlatformTenantSuspended); err != nil {
+		t.Fatal(err)
+	}
+	suspended := event
+	suspended.ID = uuid.NewString()
+	denied = e.do(t, http.MethodPost, path, suspended, nil)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("suspended customer: %d %s", denied.Code, denied.Body.String())
+	}
+	replay, err := acceptor.Accept(ctx, event)
+	if err != nil || replay != first {
+		t.Fatalf("suspended replay: %+v %v", replay, err)
+	}
+}

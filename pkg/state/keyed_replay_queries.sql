@@ -1,6 +1,7 @@
 -- name: KeyedReplayParent :one
 SELECT i.* FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
 WHERE i.id=sqlc.arg(id)::uuid AND i.account_id=sqlc.arg(account_id)::uuid
+AND i.environment_id IS NULL AND NOT EXISTS (SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=i.id)
 FOR UPDATE OF i FOR SHARE OF a;
 
 -- name: KeyedReplayLaneIdentity :one
@@ -88,7 +89,7 @@ WHERE (l.app_id,l.policy_name,l.key_digest) IN (
 ) ORDER BY l.app_id,l.policy_name,l.key_digest FOR UPDATE OF l;
 
 -- name: DeadLetterReplayCandidateIDs :many
-SELECT id::text FROM dead_letter_events
+SELECT id::text FROM production_dead_letter_events
 WHERE account_id=sqlc.arg(account_id)::uuid AND replayed_at IS NULL
   AND (sqlc.narg(expected_app_id)::uuid IS NULL OR app_id=sqlc.narg(expected_app_id)::uuid)
   AND (sqlc.narg(expected_event_id)::uuid IS NULL OR id=sqlc.narg(expected_event_id)::uuid)

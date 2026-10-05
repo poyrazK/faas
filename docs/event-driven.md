@@ -2,6 +2,88 @@
 
 Use asynchronous invokes, jobs, webhooks, and scheduled triggers when work does not need to finish in the request path.
 
+## Start a workflow on a schedule
+
+On Hobby and higher plans, add a scheduled trigger to a workflow in
+`gregale.yaml` or its JSON equivalent:
+
+```yaml
+workflows:
+  - name: daily_report
+    trigger:
+      type: schedule
+      schedule: "0 7 * * *"
+      timezone: Europe/Istanbul
+      input:
+        report: daily
+      overlap: skip
+      enabled: true
+    steps:
+      - name: generate
+        run: generate_report
+        retry:
+          max_attempts: 3
+          backoff: exponential
+      - name: send
+        run: send_report
+        depends_on: [generate]
+        input:
+          report_id: "{{steps.generate.output.report_id}}"
+```
+
+Deploy the manifest with your application handlers. Gregale starts the workflow
+directly; an HTTP cron-to-workflow adapter is unnecessary. `run: generate_report`
+invokes the app's `/generate_report` handler via the existing workflow executor.
+The [example manifest](../examples/scheduled-workflows/gregale.yaml) provides
+this two-step recipe.
+
+Workflow execution remains a preview feature. Operators must configure the
+workflow executor and enable `FAAS_WORKFLOWS_ENABLED=1` on both `apid` and
+`schedd`. Inspect the configuration and latest scheduling outcome with:
+
+```bash
+gregale workflows schedules --app APP_SLUG
+gregale --json workflows schedules --app APP_SLUG
+gregale workflows list --app APP_SLUG
+gregale workflows steps RUN_ID
+gregale workflows attempts RUN_ID STEP_NAME
+```
+
+The corresponding inspection API is
+`GET /v1/apps/{slug}/workflows/schedules`. Its JSON envelope contains
+`runtime_enabled` and `schedules`; `unavailable_reason` explains a blocking
+runtime, account, plan, maintenance, or tenant requirement. `enabled` describes
+the trigger configuration. `next_fire_at` is a nominal calendar time and is
+omitted for disabled or unavailable schedules. Runtime availability reflects
+apid's configuration; it does not prove that schedd is running. `last_status`
+records `armed`, `started`, `skipped_overlap`, or `skipped_quota`;
+`last_scheduled_for` and `last_run_id` connect an admission to its execution.
+This endpoint keeps the latest outcome, not every skipped occurrence.
+
+Schedules use the same five-field cron grammar and daylight-saving behavior
+as application crons. UTC is the default timezone. Fixed `input` may be any
+JSON value within the ordinary 1 MiB run-input limit and defaults to `{}`.
+`overlap` defaults to `skip`: a pending, running, or waiting run of the same
+workflow, including a manual start, skips that minute. `allow` permits overlap
+within the app's existing concurrent-run quota. Quota refusal also skips the
+minute. A skipped occurrence is consumed; freeing capacity later does not
+retry it. You can still start the workflow manually with
+`gregale workflows run daily_report --app APP_SLUG --input '{"report":"daily"}'`.
+
+Only the live default deployment schedules work. Preview deployments do not
+create background copies. A new or redeployed schedule first arms when the
+scheduler observes it, then fires at its next eligible minute. Missed minutes
+during downtime are discarded; recovery does not enqueue a backlog. Set
+`enabled: false` and redeploy to stop new scheduled starts. Existing runs
+continue. Account suspension, abuse holds, Free-plan downgrade, and maintenance
+mode block admission. Tenant-required apps are excluded because this trigger
+does not supply platform-tenant identity. Schedule definitions use the existing
+workflow-definition quota rather than the separate HTTP/command-cron quota.
+
+Workflow steps retain their existing at-least-once execution contract. Use the
+stable workflow idempotency header for external effects even though duplicate
+scheduler observations cannot create multiple runs for one consumed minute.
+
 ## Durable workflow waits
 
 A declarative workflow can pause between handler invocations without keeping a
@@ -54,6 +136,50 @@ Executable steps receive an `Idempotency-Key` of
 `workflow/<run-id>/<step-name>`, unchanged across automatic retries; the
 separate `X-Faas-Workflow-Attempt` header increments. Deduplicate external
 side effects on that key. Delivery is still at least once, not exactly once.
+
+### Transactional HTTP workflow steps
+
+Set `managed_operation: true` on an executable step to make retries replay the
+same customer-database transaction result:
+
+```yaml
+- name: reserve
+  run: reserve_order
+  managed_operation: true
+  retry:
+    max_attempts: 3
+    backoff: exponential
+```
+
+The handler must use the managed-operation transaction wrapper described in
+[`operation-transactions.md`](operation-transactions.md). Gregale assigns one
+stable operation ID to the run and step, and advances the operation generation
+with each workflow attempt. The wrapper commits the business writes and saved
+result together. If Gregale retries after losing the HTTP response, the wrapper
+replays the saved result without repeating those writes. The workflow stores
+the result value as step output, so dependent steps receive the business result
+rather than the protocol envelope. The resolved step input is also persisted
+before dispatch, keeping the request fingerprint stable across retries.
+
+The wrapper may also return named webhook effects. Before the step is marked
+succeeded, Gregale verifies that each `webhook_id` is enabled and explicitly
+subscribed to `operation.effect`, then records the effect, queues its signed
+delivery, and completes the step in one platform transaction. Account-scoped
+runs target an app receiver under `POST /v1/apps/{slug}/webhooks`. Tenant-bound
+runs target a receiver owned by that same tenant under
+`POST /v1/platform-tenants/{tenant_id}/webhooks`; the active tenant-to-app link
+is checked when the result is committed and before each delivery attempt.
+Delivery uses the ordinary at-least-once webhook dispatcher. See
+[`managed-operation-effects.md`](managed-operation-effects.md) for the handler
+envelope and event payload.
+
+The customer database commit and Gregale's result/effect transaction are
+separate. If a receiver is disabled or invalid when Gregale accepts the result,
+the workflow step fails after the business transaction has committed. Configure
+the receiver before dispatch and make business writes safe to reconcile by the
+stable operation ID. Inspect delivery status with
+`gregale workflows attempts <run_id> <step_name>`; each attempt includes its
+effect and delivery IDs, status, retries, and last error.
 
 ### Recover from a failed step
 
@@ -111,6 +237,25 @@ The equivalent read-only API is
 `GET /v1/workflows/runs/{id}/steps/{step}/attempts`. Attempt history stores
 metadata, not request or response bodies; timer and callback waits do not
 create executor-attempt records.
+
+For a terminal run with one failed or dead HTTP step, retry that step in place:
+
+```bash
+gregale workflows retry RUN_ID STEP_NAME
+```
+
+This preserves the run ID, definition snapshot, resolved input, and existing
+attempt history. Gregale appends a new attempt and reopens skipped
+`depends_on` descendants so the scheduler can continue the DAG. The retry is
+rejected if another step is active, failed, or dead; a downstream step already
+succeeded; the target is a wait or failure-handler step; or the run was
+cancelled. A managed-operation handler keeps the same run/step operation ID,
+so its transaction SDK can replay a receipt already committed before a lost
+response. Each manual retry grants one new dispatch and does not reset the
+manifest's automatic retry budget; after another terminal failure, you can
+request another manual attempt. Ordinary HTTP handlers still need their own
+idempotency because delivery remains at least once. The API is
+`POST /v1/workflows/runs/{id}/steps/{step}/retry`.
 
 The timer
 starts only when its dependencies succeed. It is stored in the workflow
@@ -505,6 +650,77 @@ Paid plans support delayed tasks. The per-app pending limits are Hobby 5, Pro
 `delayed_tasks:write` to create/cancel and `delayed_tasks:read` to list/get;
 existing `deploy:write` and `apps:read` keys remain compatible.
 
+## Event workflow starts
+
+A workflow can start directly from an internal event without an adapter handler:
+
+```yaml
+workflows:
+  - name: paid_invoice
+    trigger:
+      type: event
+      source: billing.*
+      event_type: invoice.paid
+      filter:
+        data:
+          amount:
+            $gt: 100
+      enabled: true
+    steps:
+      - name: record
+        path: /record-payment
+        input:
+          invoice_id: "{{input.data.invoice_id}}"
+      - name: notify
+        path: /send-receipt
+        depends_on: [record]
+        input:
+          receipt_id: "{{steps.record.output.receipt_id}}"
+```
+
+The required source and event type accept the same exact and edge wildcard
+patterns as subscriptions. The optional filter is a YAML/JSON object evaluated
+against the CloudEvents envelope. A matching run receives that full envelope
+as input, so `{{input.data.invoice_id}}` selects the producer's invoice ID.
+Event triggers reject schedule, timezone, fixed input, and overlap fields.
+Several events can start concurrent runs, subject to the existing app run quota.
+
+Use `gregale events preview` before publishing; its samples include the workflow
+name, deployment ID, and stable recipient ID. Preview checks matching intent and
+does not reserve capacity or guarantee runtime availability. Publish with a
+stable source and `--id` when retrying the same logical event. Find admitted runs
+through `gregale workflows list --app APP`, then use workflow status, attempt,
+and cancellation commands as usual. Ordinary subscription invocations remain
+visible through `gregale events deliveries APP`.
+
+Event starts are part of the workflow preview on Hobby and above. Enable
+`FAAS_WORKFLOWS_ENABLED=1` on apid and schedd and configure the gateway executor.
+Only the preferred live default deployment contributes workflow candidates;
+preview deployments, maintenance apps, inactive or held accounts, and apps
+requiring platform tenant context do not capture new recipients. Apply the
+migration and upgrade schedulers before deploying these manifests. Older
+schedulers cannot interpret workflow recipients safely. Drain accepted workflow
+receipts and finish or cancel their runs before rolling back binaries.
+
+At publish time Gregale captures matching source/type candidates with their
+workflow definitions and filters. Redeploying, disabling, or removing a trigger
+changes future events; already accepted events keep the original definition.
+Step handlers run against the app's serving deployment. No historical events
+are backfilled. Identical event identities retain the original recipients.
+Admission commits a run with a durable event receipt, preventing duplicate runs
+on recovery even after run history is pruned. Event identities and receipts use
+the existing 30-day retention window.
+
+Capacity or temporary target failures retry through the existing fanout system.
+After the 12-attempt cap, inspect routing failures and replay them using
+`gregale events deliveries APP` and `gregale events replay`; `subscription_id`
+also identifies workflow recipients. Disabling the workflow runtime leaves
+workflow recipients pending without consuming their retry attempts. App handler
+side effects must remain idempotent because workflow steps may retry.
+
+See the [two-step event workflow recipe](../examples/event-workflows/README.md)
+and [ADR-432](adr/432-event-workflow-starts.md).
+
 ## Internal event subscriptions
 
 Applications can subscribe to events published through Gregale's internal
@@ -600,10 +816,10 @@ admit another delivery or cancel work created later while the receipt is retaine
 This applies to both whole-event and independent-recipient routing once every
 scheduler is upgraded. Older receipts without snapshots and specialized object
 notification destinations keep their existing routing paths. See
-[ADR-588](adr/588-atomic-event-routing-handoff.md) for the transaction and upgrade
+[ADR-602](adr/602-atomic-event-routing-handoff.md) for the transaction and upgrade
 boundary. Handler side effects still require application deduplication.
 
-When operators enable independent recipient routing (ADR-581), each captured
+When operators enable independent recipient routing (ADR-595), each captured
 candidate has its own five-minute lease and backoff from five seconds to five
 minutes. A terminal recipient can be replayed while its siblings are routing
 or waiting to retry. Each replay gets a fresh twelve-attempt routing budget;
@@ -611,7 +827,7 @@ the visible attempt count and history remain cumulative. Successful siblings
 are not rerun. The flag `FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED=1` enables adoption
 on schedd after all API and scheduler binaries are compatible. It defaults off;
 disabling it stops adoption but continues draining already adopted receipts.
-See [ADR-581](adr/581-independent-event-recipient-routing.md) for rollout and
+See [ADR-595](adr/595-independent-event-recipient-routing.md) for rollout and
 rollback requirements.
 
 Publish acceptance means the event is durably stored. A recipient marked
@@ -657,7 +873,7 @@ unresolved older receipts without snapshots as `unattributed_receipts`. That
 count is account-wide and uses only the acceptance/age window, even with other
 filters. The API requires a read key, returns metadata with no-store caching,
 and bounds reads to five seconds. Narrow filters and retry on
-`event_backlog_read_timeout`. Apply the [backlog migration](adr/592-event-consumer-backlog-inspection.md)
+`event_backlog_read_timeout`. Apply the [backlog migration](adr/606-event-consumer-backlog-inspection.md)
 before upgrading the API; routing behavior and recipient adoption are unchanged.
 
 Published and inbox envelopes use CloudEvents `datacontenttype` and the
@@ -774,7 +990,7 @@ been pruned, its retained parent returns `invocation_replay_unavailable` and
 receipts suppress its handler replay action. Existing accepted replay IDs
 remain readable when an old deployment pin expires. Delivery remains at least
 once; applications still deduplicate external side effects. See
-[ADR-587](adr/587-durable-plain-invocation-replay.md).
+[ADR-601](adr/601-durable-plain-invocation-replay.md).
 
 Failed keyed handlers use `keyed_handler_replay`, which calls
 `POST /v1/invocations/{id}/replay-keyed`. It preserves the captured policy
@@ -793,7 +1009,7 @@ Repeated keyed recovery requests return the same child, even after it completes.
 To recover again, target that child after it fails. If the child has been pruned
 while the parent remains, the parent cannot create another execution; receipts
 suppress that action. Queue-bound dead letters retain their existing in-place
-replay path. See [ADR-584](adr/584-safe-keyed-invocation-replay.md) for ordering,
+replay path. See [ADR-598](adr/598-safe-keyed-invocation-replay.md) for ordering,
 expiry and retention behavior.
 
 Keyed dead-letter replay keeps the original receipt and sequence. It waits
@@ -801,7 +1017,7 @@ for any same-key invocation or broker delivery already running, including a
 later sequence. An expired lease must be recovered before the replay can
 proceed. Once that ownership is resolved, pending work follows sequence order;
 other keys remain eligible. Replay preserves the original pending expiry.
-See [ADR-585](adr/585-keyed-dead-letter-replay-claim-exclusion.md).
+See [ADR-599](adr/599-keyed-dead-letter-replay-claim-exclusion.md).
 
 Inspect the original handler's delivery attempts and its trusted replay children:
 
@@ -821,7 +1037,7 @@ Only recorded, retained attempts are shown. History starts with claims made
 after the attempt-ledger upgrade and is not backfilled. Closed attempts expire
 after at most 30 days, earlier for shorter result retention or invocation
 deletion; running attempts are not pruned. An empty history does not establish
-that no delivery occurred. See [ADR-586](adr/586-invocation-backed-event-attempt-history.md).
+that no delivery occurred. See [ADR-600](adr/600-invocation-backed-event-attempt-history.md).
 
 List a consumer's retained replay executions, newest first:
 
@@ -893,7 +1109,7 @@ JSON output to page through older rows. Cursors remain valid when their detail
 row is removed, although an older page may become empty. Summaries reflect current
 observations independently of the page cursor. Recovery uses the durable recipient
 checkpoint and does not depend on retaining every history row. See
-[ADR-591](adr/591-bounded-event-routing-history.md).
+[ADR-605](adr/605-bounded-event-routing-history.md).
 
 To retry one terminal pre-invocation failure, pass its event ID, source, and
 subscription ID from the failure row:

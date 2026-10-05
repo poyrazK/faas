@@ -145,9 +145,17 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 			routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
 			continue
 		}
+		if len(recipient.Workflow) != 0 && !l.workflowsDispatched {
+			// Keep workflow recipients pending while the preview runtime is
+			// disabled. Ordinary subscriptions can finish independently.
+			routeErrs = append(routeErrs, errors.New("workflow event runtime is disabled"))
+			continue
+		}
 		var matched bool
 		var routeErr error
-		if admission, ok := l.engine.store.(state.PublishedEventRecipientAdmissionStore); ok && recipient.ObjectNotification == nil {
+		if len(recipient.Workflow) != 0 {
+			matched, routeErr = l.routeWorkflowEvent(ctx, work, envelope, recipient)
+		} else if admission, ok := l.engine.store.(state.PublishedEventRecipientAdmissionStore); ok && recipient.ObjectNotification == nil {
 			result, err := l.admitEventRecipient(ctx, admission, state.PublishedEventRoutingClaim{
 				OutboxID: work.ID, SubscriptionID: recipient.ID, ClaimToken: work.ClaimToken,
 			})
@@ -445,7 +453,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 			return
 		}
 		var routeErr error
-		if recipients, ok := l.engine.store.(state.PublishedEventRecipientWorkStore); ok && l.eventRecipientClaims && work.SnapshotCaptured {
+		if recipients, ok := l.engine.store.(state.PublishedEventRecipientWorkStore); ok && l.eventRecipientClaims && work.SnapshotCaptured && eventRecipientAdoptionSupported(work) {
 			routeErr = recipients.InitializePublishedEventRecipients(ctx, work, now)
 			if routeErr == nil {
 				continue
@@ -620,4 +628,13 @@ func (l *Loop) runEventHistoryPrune(ctx context.Context, now time.Time) {
 		return
 	}
 	l.eventFanoutHistoryLastPrune = now
+}
+
+func eventRecipientAdoptionSupported(work *state.PublishedEventWork) bool {
+	for _, recipient := range work.RecipientSnapshot {
+		if len(recipient.Workflow) != 0 {
+			return false
+		}
+	}
+	return true
 }

@@ -23,6 +23,10 @@ func TestRouteVerificationContract(t *testing.T) {
 		{"app auth", 401, "candidate", "candidate", SmokeVerified},
 		{"app forbidden", 403, "candidate", "candidate", SmokeVerified},
 		{"missing root", 404, "candidate", "candidate", SmokeVerified},
+		// A gRPC server answers a plain GET with 415 (gRPC over HTTP/2 spec).
+		// From the proven candidate that is connectivity, not a failure.
+		{"grpc server", 415, "candidate", "candidate", SmokeVerified},
+		{"unproven 415", 415, "candidate", "", SmokeSkipped},
 		{"old revision", 200, "old", "old", SmokeSkipped},
 		{"old revision missing root", 404, "old", "old", SmokeSkipped},
 		{"gateway not found", 404, "", "", SmokeSkipped},

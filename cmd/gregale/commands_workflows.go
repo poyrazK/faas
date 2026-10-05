@@ -16,12 +16,14 @@ var workflowUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{
 
 func cmdWorkflows(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale workflows <list|run|status|steps|attempts|cancel|events>", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflows <list|schedules|run|status|steps|attempts|retry|cancel|events>", "workflows")
 		return 1
 	}
 	switch args[0] {
 	case "list":
 		return cmdWorkflowsList(args[1:])
+	case "schedules":
+		return cmdWorkflowSchedules(args[1:])
 	case "run":
 		return cmdWorkflowsRun(args[1:])
 	case "status":
@@ -30,6 +32,8 @@ func cmdWorkflows(args []string) int {
 		return cmdWorkflowsSteps(args[1:])
 	case "attempts":
 		return cmdWorkflowsAttempts(args[1:])
+	case "retry":
+		return cmdWorkflowsRetry(args[1:])
 	case "cancel":
 		return cmdWorkflowsCancel(args[1:])
 	case "events":
@@ -271,6 +275,26 @@ func cmdWorkflowsCancel(args []string) int {
 	return 0
 }
 
+func cmdWorkflowsRetry(args []string) int {
+	if len(args) != 2 || !workflowUUIDPattern.MatchString(args[0]) || args[1] == "" {
+		PrintUsage(os.Stderr, "usage: gregale workflows retry <run_id> <step_name>", "workflows")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	run, err := client.RetryWorkflowStep(context.Background(), args[0], args[1])
+	if err != nil {
+		return printErr("Request failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(json.NewEncoder(osStdout).Encode(run))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Workflow run %s requeued at step %s (status: %s)\n", run.ID, args[1], run.Status)
+	return 0
+}
+
 func cmdWorkflowsEvents(args []string) int {
 	if len(args) == 0 || args[0] != "send" {
 		PrintUsage(os.Stderr, "usage: gregale workflows events send <run_id> <event_name> [--payload '{\"k\":\"v\"}']", "workflows")
@@ -361,6 +385,12 @@ func renderWorkflowStepAttemptsTable(w io.Writer, attempts []api.WorkflowStepAtt
 		_, _ = fmt.Fprintf(w, "%-8d  %-10s  %-6s  %-25s  %-25s  %-25s\n", a.Attempt, a.Status, httpStatus, a.StartedAt, finishedAt, nextAttemptAt)
 		if a.Error != nil && *a.Error != "" {
 			_, _ = fmt.Fprintf(w, "  error: %s\n", *a.Error)
+		}
+		for _, effect := range a.Effects {
+			_, _ = fmt.Fprintf(w, "  effect %-20s %-12s delivery=%s attempt=%d\n", effect.Name, effect.Status, effect.DeliveryID, effect.Attempt)
+			if effect.LastError != "" {
+				_, _ = fmt.Fprintf(w, "    error: %s\n", effect.LastError)
+			}
 		}
 	}
 }

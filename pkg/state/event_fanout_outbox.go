@@ -41,6 +41,10 @@ type PublishedEventWork struct {
 // PublishedEventRecipient is an immutable source/type candidate captured when
 // the event was accepted. The data filter is evaluated by the scheduler.
 type PublishedEventRecipient struct {
+	WebhookEndpointID string `json:"webhook_endpoint_id,omitempty"`
+	// Workflow is an acceptance-time definition; absent for ordinary subscriptions.
+	Workflow             json.RawMessage                    `json:"workflow,omitempty"`
+	DeploymentID         string                             `json:"deployment_id,omitempty"`
 	ID                   string                             `json:"id"`
 	AccountID            string                             `json:"account_id"`
 	AppID                string                             `json:"app_id"`
@@ -581,6 +585,7 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 		}
 		recipients = append(recipients, recipient)
 	}
+	recipients = append(recipients, m.workflowEventRecipientsLocked(subject.String(), event.Source, event.Type)...)
 	var storageBytes int64
 	if !strings.HasPrefix(event.Source, "gregale.") {
 		snapshot, err := json.Marshal(recipients)
@@ -661,6 +666,7 @@ func (m *MemStore) ClaimDuePublishedEvent(_ context.Context, now time.Time) (*Pu
 			n := cloneObjectNotificationSnapshot(*recipient.ObjectNotification)
 			copy.RecipientSnapshot[i].ObjectNotification = &n
 		}
+		copy.RecipientSnapshot[i].Workflow = bytes.Clone(recipient.Workflow)
 		if recipient.Work != nil {
 			binding := *recipient.Work
 			if recipient.Work.Policy != nil {
@@ -762,6 +768,14 @@ func (m *MemStore) PruneDeliveredPublishedEvents(_ context.Context, before time.
 		}
 		if work.Delivered && work.DeliveredAt.Before(before) {
 			delete(m.eventFanout, key)
+			for receiptKey, receipt := range m.webhookAutomationReceipts {
+				if receipt.outboxID == work.ID {
+					delete(m.webhookAutomationReceipts, receiptKey)
+				}
+			}
+			for _, recipient := range work.RecipientSnapshot {
+				delete(m.eventWorkflowReceipts, eventWorkflowReceiptKey(work.ID, recipient.ID))
+			}
 			pruned++
 		}
 	}

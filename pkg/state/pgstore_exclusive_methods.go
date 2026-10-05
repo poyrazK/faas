@@ -38,7 +38,15 @@ func (s *PgStore) ListExclusiveWorkPolicies(ctx context.Context, a string) (out 
 	return
 }
 func (s *PgStore) ExclusiveOperationByID(ctx context.Context, a, id string) (out ExclusiveOperation, err error) {
-	err = s.exclusiveAtomic(ctx, func(tx exclusiveTransaction) error { var e error; out, e = tx.operation(a, id); return e })
+	err = s.exclusiveAtomic(ctx, func(tx exclusiveTransaction) error {
+		var e error
+		out, e = tx.operation(a, id)
+		if e != nil {
+			return e
+		}
+		out.Effects, e = tx.effectRecords(out)
+		return e
+	})
 	return
 }
 

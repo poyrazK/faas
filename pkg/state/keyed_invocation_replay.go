@@ -81,6 +81,9 @@ func (m *MemStore) ExistingKeyedInvocationReplay(_ context.Context, accountID, p
 	if !ok || !sameMemUUID(parent.AccountID, accountID) || !sameMemUUID(m.apps[parent.AppID].AccountID, accountID) {
 		return Invocation{}, ErrNotFound
 	}
+	if _, _, linked := m.operationForInvocationLocked(parent.ID); linked {
+		parent.OperationID = "owned"
+	}
 	if !keyedReplayAllowed(parent) {
 		return Invocation{}, ErrKeyedReplayNotAllowed
 	}
@@ -101,7 +104,7 @@ func (m *MemStore) ExistingKeyedInvocationReplay(_ context.Context, accountID, p
 func keyedReplayAllowed(parent Invocation) bool {
 	return parent.State == InvocationFailed && parent.WorkPolicyName != "" &&
 		len(parent.WorkKeyDigest) == 32 && parent.WorkSequence > 0 &&
-		parent.QueueBindingID == "" && parent.QueueName == ""
+		parent.QueueBindingID == "" && parent.QueueName == "" && parent.EnvironmentID == "" && !InvocationHasOperation(parent)
 }
 
 func newKeyedReplay(parent Invocation, opts KeyedInvocationReplayOptions, sequence int64, now time.Time) Invocation {

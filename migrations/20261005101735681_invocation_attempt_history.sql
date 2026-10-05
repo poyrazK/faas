@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-586: dispatch evidence for async invocations and trusted replays.
+-- ADR-600: dispatch evidence for async invocations and trusted replays.
 CREATE TABLE IF NOT EXISTS invocation_attempt_history (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   invocation_id uuid NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,

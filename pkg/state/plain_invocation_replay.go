@@ -37,7 +37,7 @@ type plainReplayIdentity struct {
 
 func plainReplayAllowed(parent Invocation) bool {
 	return (parent.State == InvocationFailed || parent.State == InvocationDeadLetter) &&
-		parent.WorkPolicyName == "" && parent.QueueBindingID == "" && parent.QueueName == ""
+		parent.WorkPolicyName == "" && parent.QueueBindingID == "" && parent.QueueName == "" && parent.EnvironmentID == "" && !InvocationHasOperation(parent)
 }
 
 func (s *PgStore) beginPlainReplay(ctx context.Context, accountID, parentID string) (pgx.Tx, Invocation, error) {
@@ -163,6 +163,9 @@ func (m *MemStore) plainReplayParentLocked(accountID, parentID string) (Invocati
 	app, owned := m.eventSubscriptionAppLocked(parent.AppID)
 	if !ok || !sameMemUUID(parent.AccountID, accountID) || !owned || !sameMemUUID(app.AccountID, accountID) {
 		return Invocation{}, ErrNotFound
+	}
+	if _, _, linked := m.operationForInvocationLocked(parent.ID); linked {
+		parent.OperationID = "owned"
 	}
 	if !plainReplayAllowed(parent) {
 		return Invocation{}, ErrPlainReplayNotAllowed

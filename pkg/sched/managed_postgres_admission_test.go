@@ -83,11 +83,11 @@ func (s *cutoverAdmissionRaceStore) ManagedPostgresAdmissionFenced(context.Conte
 	return s.fenced.Load(), nil
 }
 
-func (s *cutoverAdmissionRaceStore) PublishInstanceRuntime(ctx context.Context, id, expected, netns, ip string, uid int) (state.Instance, error) {
+func (s *cutoverAdmissionRaceStore) PublishOwnedInstanceRuntime(ctx context.Context, publication state.RuntimeInstancePublication) (state.Instance, error) {
 	if s.fenced.Load() {
 		return state.Instance{}, state.ErrManagedPostgresAdmissionFenced
 	}
-	return s.MemStore.PublishInstanceRuntime(ctx, id, expected, netns, ip, uid)
+	return s.MemStore.PublishOwnedInstanceRuntime(ctx, publication)
 }
 
 func TestManagedPostgresAdmissionFenceDuringBootDestroysCandidate(t *testing.T) {

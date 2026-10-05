@@ -311,6 +311,12 @@ type ComputeNodeConfig struct {
 	// VXLAN seam. It is disabled by default until the operator has provisioned
 	// a shared encrypted overlay for every node in the region.
 	PrivateNetworkTransportEnabled bool `toml:"private_network_transport_enabled"`
+	// ServiceTCPEnabled turns on private TCP service addressing (ADR-576):
+	// every new netns admits guest TCP to api.ServiceAddressCIDR, the runtime
+	// host policy DNATs it onto the tenant-bridge service listeners, and the
+	// node records compute_nodes.service_address_ready_at so service DNS only
+	// hands addresses to instances whose netns carries the admission.
+	ServiceTCPEnabled bool `toml:"service_tcp_enabled"`
 	// PrivateNetworkTransportInterface is the underlay NIC used for VXLAN
 	// packets. Empty falls back to OverlayInterface, which keeps the common
 	// Tailscale/WireGuard deployment concise.
@@ -623,6 +629,13 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.ComputeNode.PrivateNetworkTransportEnabled = parsed
 	}
+	if v := os.Getenv("FAAS_SERVICE_TCP_ENABLED"); v != "" {
+		parsed, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_SERVICE_TCP_ENABLED %q invalid: %w", v, perr)
+		}
+		c.ComputeNode.ServiceTCPEnabled = parsed
+	}
 	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE"); v != "" {
 		c.ComputeNode.PrivateNetworkTransportInterface = v
 	}
@@ -847,7 +860,10 @@ func validatePublicIface(iface string) error {
 	return nil
 }
 
-func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix) netns.HostPolicy {
+// runtimeHostPolicy seeds the policy vmmd re-renders after every VM cache
+// mutation. serviceHTTPS mirrors whether the private service HTTPS listener
+// is staged on this node (ADR-576 keeps service-address :443 off otherwise).
+func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS bool) netns.HostPolicy {
 	policy := netns.DefaultHostPolicy
 	if iface := strings.TrimSpace(cfg.PublicIface); iface != "" {
 		policy.PublicIface = iface
@@ -863,6 +879,9 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix) netns.HostPol
 			Source: prefix.Masked(),
 			Ports:  append([]int(nil), cfg.PrivateIngressTCPPorts...),
 		})
+	}
+	if cfg.ServiceTCPEnabled {
+		policy.ServiceTCP = netns.NewServiceTCPHostPolicy(api.ServiceAddressCIDR(), bridge.Masked().Addr().Next(), api.ServiceTCPProxyPort, serviceHTTPS)
 	}
 	return policy
 }

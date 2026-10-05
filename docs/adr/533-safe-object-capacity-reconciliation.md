@@ -71,6 +71,12 @@ uploads, copy tracking, and operator resolution of uncertain writes remain gaps.
 
 ## Validation
 
+The 2026-10-04 hardening also applies the complete inventory scanner to ordinary
+usage refreshes. Duplicate keys across pages, unexpected grouped keys and empty
+truncated pages cannot publish usage. Native object listings require explicit
+completeness, sizes, bounded page counts and valid continuation tokens before
+either scanner can treat a response as complete.
+
 Shared memory/PostgreSQL suites cover account isolation, concurrent claims,
 pending writes, sticky conservative grants, multipart completion, cancellation,
 stale leases, failed scans, reusable reclaimed quota, and unchanged billing.

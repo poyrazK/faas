@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// adr: 586
+// adr: 600
 func TestCmdEventsAttemptsHistory(t *testing.T) {
 	resetJSONOut(t)
 	fake := authedFakeAPI(t, `{"event_id":"evt","event_source":"orders","subscription_id":"sub","original_invocation_id":"original","coverage":"recorded_attempts_only","attempts":[{"id":1,"invocation_id":"original","attempt":2,"replay_generation":1,"outcome":"unknown","error_detail":"lease expired","started_at":"2026-10-05T00:00:00Z"}],"next_after":"era1.next"}`, http.StatusOK)
