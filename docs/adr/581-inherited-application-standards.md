@@ -2291,9 +2291,46 @@ A scheduler acknowledgement proves this private replacement handoff completed,
 not whole-application observation. Logging, provider delivery, egress, native
 process identity, composed scans and retained artifact evidence still qualify
 independently before subsequent rollout waves. Portable scheduler tests use an
-explicit legacy native consumer simulation; they do not establish protocol-2
-artifact consumption or physical host enforcement. Positive composed multi-app
-wave acceptance, snapshot re-prime acceptance, fleet crash/recovery/rollback,
-named production environments, full migration recovery and dedicated native
+explicit legacy native consumer simulation; the composed portable scenario below
+also exercises protocol-2 contracts with simulated measured receipts. Neither
+establishes physical host enforcement. Native composed multi-app wave acceptance,
+snapshot re-prime acceptance, fleet crash/recovery/rollback, named production
+environments, full migration recovery and dedicated native
 Linux amd64 KVM/test-metal/leakcheck acceptance remain open release gates.
 Public standards activation remains disabled.
+
+### Composed portable wave acceptance
+
+The scheduler suite now exercises three services automatically enrolled under
+one organization standard with mandatory company logging, an approved publisher,
+signed images, enforced scan findings and egress restrictions. The fixture uses
+real ECDSA signature verification and consumption of decoded OCI layer streams,
+one shared base producer and one stable protocol-2 native process registration.
+Scanner tree facts, native drive consumption and provider delivery reports are
+explicit simulations; these tests do not mount ext4 artifacts, run a scanner,
+send logs to a provider or enforce a physical firewall.
+
+Both MemStore and PostgreSQL run the actual scheduler admission and replacement
+paths. PostgreSQL additionally consumes the installed revision's real durable
+outbox row through the scheduler handler and strict lease settlement. A replay
+does not admit a second replacement or spend another attempt. The fixture changes
+only queue replay eligibility to avoid waiting for the LISTEN grace interval;
+native authority leases, evidence timestamps and qualification clocks remain
+under their existing contracts.
+
+A reviewed destination and egress update installs one service per wave. Persisting
+settings or acknowledging replacement cannot advance application observation.
+Current inventory, delivered provider health, egress, native receipts and composed
+scan approval qualify each installed service before the next wave. Restarting the
+logging consumer after the first observed checkpoint blocks the second wave. A
+newer failed composed scan after the second checkpoint blocks the third wave.
+Fresh evidence must pass the owning observer before either wave resumes; a saved
+observed bit or a successful historical scan supplies no permission.
+
+A separately reviewed rollback selects version 1 at a new desired revision and
+repeats replacement, consumer qualification and wave advancement. Assertions inspect
+the actual controls, captured inputs, stored native receipts, adoption version and
+observed revision of every service after the update and rollback. This closes the
+positive composed portable wave scenario while preserving the independent snapshot
+re-prime, physical native/fleet recovery, named production scope, onboarding coverage,
+migration recovery and public release gates.
