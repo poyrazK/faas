@@ -1,8 +1,8 @@
-# ADR-585: Transactional managed HTTP workflow steps
+# ADR-586: Transactional managed HTTP workflow steps
 
 - Status: Accepted for implementation
 - Date: 2026-10-03
-- Related: ADR-081 (durable workflows), ADR-584 (transactional operation handler SDK)
+- Related: ADR-081 (durable workflows), ADR-585 (transactional operation handler SDK)
 
 ## Context
 

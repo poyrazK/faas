@@ -1,4 +1,4 @@
-// ADR-584: customer PostgreSQL business writes and replayable handler responses.
+// ADR-585: customer PostgreSQL business writes and replayable handler responses.
 import { createHash } from "node:crypto";
 import type { ManagedOperationEffect } from "./generated/models/ManagedOperationEffect.js";
 import {

@@ -1,8 +1,8 @@
-# ADR-584: Transactional operation handler SDK
+# ADR-585: Transactional operation handler SDK
 
-- Status: Accepted for implementation; runtime promotion follows ADR-583 qualification
+- Status: Accepted for implementation; runtime promotion follows ADR-584 qualification
 - Date: 2026-10-03
-- Related: ADR-430 (Commit), ADR-587 (customer routing), ADR-583 (webhook effects)
+- Related: ADR-430 (Commit), ADR-588 (customer routing), ADR-584 (webhook effects)
 
 ## Context
 
@@ -49,7 +49,7 @@ any stored response. Mismatches fail without executing the callback.
 On a first attempt, serialize and validate the complete version 1 response
 envelope, insert it with the business writes, and commit once. Store JSON as text
 to preserve exact response bytes, numeric precision, original effect intent, and
-Unicode across SDKs. Responses and effect payloads follow ADR-583 limits. A
+Unicode across SDKs. Responses and effect payloads follow ADR-584 limits. A
 rollback removes both the business write and receipt. A process death releases
 the transaction lock; no processing lease or incomplete receipt needs recovery.
 

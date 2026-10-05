@@ -151,6 +151,6 @@ and `sdk/commit-tests/requirements.txt` installed. It checks all three transacti
 wrappers, actual HTTP process death before/after commit, and all nine cross-language
 writer/reader pairs for both customer and account scope. It fails if the required
 PostgreSQL tests are skipped. Native
-managed-operation qualification remains a separate rollout gate under ADR-583.
+managed-operation qualification remains a separate rollout gate under ADR-584.
 CI runs this gate and the existing Commit SDK transaction acceptance with real
 PostgreSQL in the `operation-sdk-acceptance` job.
