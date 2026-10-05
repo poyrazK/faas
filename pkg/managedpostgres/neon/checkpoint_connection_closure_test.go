@@ -67,7 +67,9 @@ func newNativeConnectionClosureFixture(t *testing.T) *nativeConnectionClosureFix
 		ProviderResourceID: "project-source", DataResourceID: f.request.SourceResourceID}
 	createdDBs, createdRoles := []string{}, []string{}
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// Dropping three databases forces separate native checkpoints. Bound the
+		// whole cleanup without making ordinary disk contention leak fixtures.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 		for _, name := range createdDBs {
 			if _, err := root.Exec(ctx, "DROP DATABASE "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)"); err != nil {

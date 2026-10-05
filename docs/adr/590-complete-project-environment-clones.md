@@ -6830,3 +6830,8 @@ data-bearing capture and public full-clone gates described above. Integrating
 current main also retains its shared-cluster test serialization and maintenance
 session authentication fixes. PR #4251 remains a closed historical proposal;
 the combined increment is prepared in a new release PR.
+
+Native adapter fixtures allow one minute for aggregate cleanup of their three
+owned databases and roles. Each database drop forces a PostgreSQL checkpoint;
+the former ten-second aggregate budget left occupied fixture names under disk
+contention. This test cleanup budget does not change production IO deadlines.
