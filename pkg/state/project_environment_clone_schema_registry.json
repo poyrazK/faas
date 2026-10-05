@@ -6664,6 +6664,28 @@
     "kind": "operational"
   },
   {
+    "table": "runtime_release_qualifications",
+    "columns": [
+      "architecture",
+      "completed_at",
+      "firecracker_sha256",
+      "host_id",
+      "kernel_boot_id",
+      "kernel_sha256",
+      "leakcheck_sha256",
+      "profile",
+      "recorded_at",
+      "release_id",
+      "report_sha256",
+      "revocation_sha256",
+      "revoked_at",
+      "source_commit",
+      "started_at",
+      "test_metal_sha256"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "runtime_releases",
     "columns": [
       "architecture",

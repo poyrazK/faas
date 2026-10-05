@@ -14441,6 +14441,34 @@ func (q *Queries) GetRuntimeRelease(ctx context.Context, db DBTX, id string) (Ru
 	return i, err
 }
 
+const getRuntimeReleaseQualification = `-- name: GetRuntimeReleaseQualification :one
+SELECT release_id, profile, architecture, host_id, kernel_boot_id, source_commit, kernel_sha256, firecracker_sha256, report_sha256, test_metal_sha256, leakcheck_sha256, started_at, completed_at, recorded_at, revoked_at, revocation_sha256 FROM runtime_release_qualifications WHERE release_id=$1
+`
+
+func (q *Queries) GetRuntimeReleaseQualification(ctx context.Context, db DBTX, releaseID string) (RuntimeReleaseQualification, error) {
+	row := db.QueryRow(ctx, getRuntimeReleaseQualification, releaseID)
+	var i RuntimeReleaseQualification
+	err := row.Scan(
+		&i.ReleaseID,
+		&i.Profile,
+		&i.Architecture,
+		&i.HostID,
+		&i.KernelBootID,
+		&i.SourceCommit,
+		&i.KernelSha256,
+		&i.FirecrackerSha256,
+		&i.ReportSha256,
+		&i.TestMetalSha256,
+		&i.LeakcheckSha256,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.RecordedAt,
+		&i.RevokedAt,
+		&i.RevocationSha256,
+	)
+	return i, err
+}
+
 const getSession = `-- name: GetSession :one
 select id, account_id,
        coalesce(host(issued_ip), '') as issued_ip,
@@ -48559,6 +48587,80 @@ func (q *Queries) RecordRequestIDJournal(ctx context.Context, db DBTX, arg Recor
 	return id, err
 }
 
+const recordRuntimeReleaseQualification = `-- name: RecordRuntimeReleaseQualification :one
+INSERT INTO runtime_release_qualifications(release_id,profile,architecture,host_id,kernel_boot_id,source_commit,
+ kernel_sha256,firecracker_sha256,report_sha256,test_metal_sha256,leakcheck_sha256,started_at,completed_at)
+SELECT $1::text,$2::text,$3::text,$4::uuid,
+ $5::uuid,$6::text,$7::text,$8::text,
+ $9::text,$10::text,$11::text,
+ $12::timestamptz,$13::timestamptz
+FROM runtime_releases r WHERE r.id=$1::text AND r.architecture=$3::text
+ON CONFLICT(release_id) DO UPDATE SET release_id=runtime_release_qualifications.release_id
+WHERE runtime_release_qualifications.revoked_at IS NULL AND
+ ROW(runtime_release_qualifications.profile,runtime_release_qualifications.architecture,runtime_release_qualifications.host_id,
+ runtime_release_qualifications.kernel_boot_id,runtime_release_qualifications.source_commit,runtime_release_qualifications.kernel_sha256,
+ runtime_release_qualifications.firecracker_sha256,runtime_release_qualifications.report_sha256,runtime_release_qualifications.test_metal_sha256,
+ runtime_release_qualifications.leakcheck_sha256,runtime_release_qualifications.started_at,runtime_release_qualifications.completed_at)
+ = ROW(EXCLUDED.profile,EXCLUDED.architecture,EXCLUDED.host_id,EXCLUDED.kernel_boot_id,EXCLUDED.source_commit,EXCLUDED.kernel_sha256,
+ EXCLUDED.firecracker_sha256,EXCLUDED.report_sha256,EXCLUDED.test_metal_sha256,EXCLUDED.leakcheck_sha256,EXCLUDED.started_at,EXCLUDED.completed_at)
+RETURNING release_id, profile, architecture, host_id, kernel_boot_id, source_commit, kernel_sha256, firecracker_sha256, report_sha256, test_metal_sha256, leakcheck_sha256, started_at, completed_at, recorded_at, revoked_at, revocation_sha256
+`
+
+type RecordRuntimeReleaseQualificationParams struct {
+	ReleaseID         string
+	Profile           string
+	Architecture      string
+	HostID            pgtype.UUID
+	KernelBootID      pgtype.UUID
+	SourceCommit      string
+	KernelSha256      string
+	FirecrackerSha256 string
+	ReportSha256      string
+	TestMetalSha256   string
+	LeakcheckSha256   string
+	StartedAt         pgtype.Timestamptz
+	CompletedAt       pgtype.Timestamptz
+}
+
+// Operator-owned native runtime qualification (ADR-599), never customer intent.
+func (q *Queries) RecordRuntimeReleaseQualification(ctx context.Context, db DBTX, arg RecordRuntimeReleaseQualificationParams) (RuntimeReleaseQualification, error) {
+	row := db.QueryRow(ctx, recordRuntimeReleaseQualification,
+		arg.ReleaseID,
+		arg.Profile,
+		arg.Architecture,
+		arg.HostID,
+		arg.KernelBootID,
+		arg.SourceCommit,
+		arg.KernelSha256,
+		arg.FirecrackerSha256,
+		arg.ReportSha256,
+		arg.TestMetalSha256,
+		arg.LeakcheckSha256,
+		arg.StartedAt,
+		arg.CompletedAt,
+	)
+	var i RuntimeReleaseQualification
+	err := row.Scan(
+		&i.ReleaseID,
+		&i.Profile,
+		&i.Architecture,
+		&i.HostID,
+		&i.KernelBootID,
+		&i.SourceCommit,
+		&i.KernelSha256,
+		&i.FirecrackerSha256,
+		&i.ReportSha256,
+		&i.TestMetalSha256,
+		&i.LeakcheckSha256,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.RecordedAt,
+		&i.RevokedAt,
+		&i.RevocationSha256,
+	)
+	return i, err
+}
+
 const recordTriggerConsumerHealth = `-- name: RecordTriggerConsumerHealth :exec
 INSERT INTO trigger_consumer_health (
     trigger_id, last_poll_at, last_success_at, last_error_at, last_error,
@@ -52105,6 +52207,43 @@ func (q *Queries) RevokeManagedPostgresCutoverCredential(ctx context.Context, db
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const revokeRuntimeReleaseQualification = `-- name: RevokeRuntimeReleaseQualification :one
+UPDATE runtime_release_qualifications SET revoked_at=COALESCE(revoked_at,clock_timestamp()),revocation_sha256=$1::text
+WHERE release_id=$2::text AND report_sha256=$3::text
+ AND (revoked_at IS NULL OR revocation_sha256=$1::text)
+RETURNING release_id, profile, architecture, host_id, kernel_boot_id, source_commit, kernel_sha256, firecracker_sha256, report_sha256, test_metal_sha256, leakcheck_sha256, started_at, completed_at, recorded_at, revoked_at, revocation_sha256
+`
+
+type RevokeRuntimeReleaseQualificationParams struct {
+	Reason         string
+	ReleaseID      string
+	ExpectedReport string
+}
+
+func (q *Queries) RevokeRuntimeReleaseQualification(ctx context.Context, db DBTX, arg RevokeRuntimeReleaseQualificationParams) (RuntimeReleaseQualification, error) {
+	row := db.QueryRow(ctx, revokeRuntimeReleaseQualification, arg.Reason, arg.ReleaseID, arg.ExpectedReport)
+	var i RuntimeReleaseQualification
+	err := row.Scan(
+		&i.ReleaseID,
+		&i.Profile,
+		&i.Architecture,
+		&i.HostID,
+		&i.KernelBootID,
+		&i.SourceCommit,
+		&i.KernelSha256,
+		&i.FirecrackerSha256,
+		&i.ReportSha256,
+		&i.TestMetalSha256,
+		&i.LeakcheckSha256,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.RecordedAt,
+		&i.RevokedAt,
+		&i.RevocationSha256,
+	)
+	return i, err
 }
 
 const revokeSession = `-- name: RevokeSession :one

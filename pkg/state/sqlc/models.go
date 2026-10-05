@@ -5928,6 +5928,25 @@ type RuntimeRelease struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type RuntimeReleaseQualification struct {
+	ReleaseID         string
+	Profile           string
+	Architecture      string
+	HostID            pgtype.UUID
+	KernelBootID      pgtype.UUID
+	SourceCommit      string
+	KernelSha256      string
+	FirecrackerSha256 string
+	ReportSha256      string
+	TestMetalSha256   string
+	LeakcheckSha256   string
+	StartedAt         pgtype.Timestamptz
+	CompletedAt       pgtype.Timestamptz
+	RecordedAt        pgtype.Timestamptz
+	RevokedAt         pgtype.Timestamptz
+	RevocationSha256  pgtype.Text
+}
+
 type RuntimeSnapshot struct {
 	ID                  pgtype.UUID
 	CatalogKey          string

@@ -137,43 +137,44 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
-	runtimeReleases             map[string]RuntimeRelease
-	runtimeArtifactBindings     map[string]string
-	runtimeUpgradeTargets       map[string]runtimeUpgradeTarget
-	runtimeUpgradeBaselines     map[string]RuntimeUpgradeBaseline
-	operationData               *operationMemory
-	operationCodePins           map[string]time.Time
-	qualificationExecutions     map[string]EnvironmentQualificationExecutionStatus
-	environmentExternalOwners   map[string]environmentExternalFieldOwner
-	environmentGitOps           map[string]*environmentGitOpsMemory
-	financialEvidence           []FinancialUsageRecord
-	financialSamplingWindows    map[time.Time]financialSamplingWindow
-	financialNextSequence       int64
-	financialPrices             map[string]FinancialPriceSnapshot
-	financialBudgets            map[string]FinancialBudget
-	financialBudgetRevisions    map[string][]FinancialBudgetRevision
-	financialRetainedFrom       time.Time
-	exclusivePolicies           map[string]ExclusiveWorkPolicy
-	exclusiveTriggerBindings    map[string]ExclusiveTriggerBinding
-	exclusiveKeys               map[string]exclusiveKey
-	exclusiveOperations         map[string]ExclusiveOperation
-	exclusiveEffects            map[string][]exclusiveStoredEffect
-	exclusiveNow                func() time.Time
-	exclusiveSubmissions        map[string]string
-	capacityInstanceResources   map[string]capacityResources
-	serviceCapacityProtection   bool
-	serviceRecovery             map[string]ServiceRecovery
-	devBridgeSessions           map[string]devbridge.Session
-	devBridgeWebhookReplays     map[string]devbridge.WebhookReplay
-	featureFlagVersions         map[string][]FeatureFlagVersion
-	safeReleaseWorkerLeaseUntil time.Time
-	requestAuditEvents          map[string]RequestAuditRecord
-	discoveredAPIRoutes         map[string]DiscoveredAPIRoute
-	discoveryReceipts           map[string]struct{}
-	revisionPins                map[string]time.Time
-	imagePreparations           map[string]ImagePreparation
-	deploymentActivationMu      sync.Mutex
-	deploymentActivationLocks   map[string]*deploymentActivationLock
+	runtimeReleases              map[string]RuntimeRelease
+	runtimeReleaseQualifications map[string]RuntimeReleaseQualification
+	runtimeArtifactBindings      map[string]string
+	runtimeUpgradeTargets        map[string]runtimeUpgradeTarget
+	runtimeUpgradeBaselines      map[string]RuntimeUpgradeBaseline
+	operationData                *operationMemory
+	operationCodePins            map[string]time.Time
+	qualificationExecutions      map[string]EnvironmentQualificationExecutionStatus
+	environmentExternalOwners    map[string]environmentExternalFieldOwner
+	environmentGitOps            map[string]*environmentGitOpsMemory
+	financialEvidence            []FinancialUsageRecord
+	financialSamplingWindows     map[time.Time]financialSamplingWindow
+	financialNextSequence        int64
+	financialPrices              map[string]FinancialPriceSnapshot
+	financialBudgets             map[string]FinancialBudget
+	financialBudgetRevisions     map[string][]FinancialBudgetRevision
+	financialRetainedFrom        time.Time
+	exclusivePolicies            map[string]ExclusiveWorkPolicy
+	exclusiveTriggerBindings     map[string]ExclusiveTriggerBinding
+	exclusiveKeys                map[string]exclusiveKey
+	exclusiveOperations          map[string]ExclusiveOperation
+	exclusiveEffects             map[string][]exclusiveStoredEffect
+	exclusiveNow                 func() time.Time
+	exclusiveSubmissions         map[string]string
+	capacityInstanceResources    map[string]capacityResources
+	serviceCapacityProtection    bool
+	serviceRecovery              map[string]ServiceRecovery
+	devBridgeSessions            map[string]devbridge.Session
+	devBridgeWebhookReplays      map[string]devbridge.WebhookReplay
+	featureFlagVersions          map[string][]FeatureFlagVersion
+	safeReleaseWorkerLeaseUntil  time.Time
+	requestAuditEvents           map[string]RequestAuditRecord
+	discoveredAPIRoutes          map[string]DiscoveredAPIRoute
+	discoveryReceipts            map[string]struct{}
+	revisionPins                 map[string]time.Time
+	imagePreparations            map[string]ImagePreparation
+	deploymentActivationMu       sync.Mutex
+	deploymentActivationLocks    map[string]*deploymentActivationLock
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex

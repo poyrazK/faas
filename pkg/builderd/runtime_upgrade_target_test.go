@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -52,6 +53,9 @@ func TestRuntimeUpgradeBuildPersistsChosenRuntimeAndSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.RecordRuntimeReleaseQualification(t.Context(), builderQualificationFixture(target)); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.PinDeploymentRuntimeUpgradeTarget(t.Context(), dep.ID, target.ID, dep.SourceSHA256); err != nil {
 		t.Fatal(err)
 	}
@@ -80,6 +84,12 @@ func TestRuntimeUpgradeBuildPersistsChosenRuntimeAndSource(t *testing.T) {
 
 func (r runtimeUpgradeTargetReader) DeploymentRuntimeUpgradeTarget(context.Context, string) (state.RuntimeRelease, error) {
 	return r.target, r.err
+}
+
+func (r runtimeUpgradeTargetReader) RuntimeReleaseQualification(context.Context, string) (state.RuntimeReleaseQualification, error) {
+	q := builderQualificationFixture(r.target)
+	q.RecordedAt = time.Now().UTC()
+	return q, nil
 }
 
 func TestRuntimeUpgradeBuildUsesTargetAndRejectsLookupFailures(t *testing.T) {

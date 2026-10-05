@@ -116,6 +116,9 @@ func (h *Handler) explicitRuntimeUpgradeTarget(ctx context.Context, app state.Ap
 		target.Runtime != runtime || target.Runtime != app.Runtime || target.Architecture != goruntime.GOARCH || dep.SourceSHA256 == "" {
 		return nil, fmt.Errorf("%w: incompatible runtime update image target", state.ErrConflict)
 	}
+	if err := state.RequireRuntimeReleaseQualification(ctx, h.store, target); err != nil {
+		return nil, err
+	}
 	return &target, nil
 }
 

@@ -26,6 +26,9 @@ func resolveDeploymentRuntimeBaseRef(ctx context.Context, store any, app state.A
 				app.Runtime != target.Runtime || target.Architecture != runtime.GOARCH || fw == FrameworkDocker || dep.SourceSHA256 == "" {
 				return "", fmt.Errorf("%w: incompatible runtime update build target", state.ErrConflict)
 			}
+			if err := state.RequireRuntimeReleaseQualification(ctx, store, target); err != nil {
+				return "", err
+			}
 			return target.SourceRef, nil
 		}
 	}

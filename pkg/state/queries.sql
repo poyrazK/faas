@@ -13987,3 +13987,31 @@ INSERT INTO deployment_runtime_upgrade_baselines(deployment_id,serving_deploymen
 SELECT sqlc.arg(target_deployment_id)::uuid,serving_deployment_id,serving_rootfs_key,serving_runtime_release_id,
  target_release_id,configuration_fingerprint,secret_fingerprint,input_fingerprint,input_secret_fingerprint,captured_at
 FROM deployment_runtime_upgrade_baselines WHERE deployment_id=sqlc.arg(source_deployment_id)::uuid;
+
+-- Operator-owned native runtime qualification (ADR-599), never customer intent.
+-- name: RecordRuntimeReleaseQualification :one
+INSERT INTO runtime_release_qualifications(release_id,profile,architecture,host_id,kernel_boot_id,source_commit,
+ kernel_sha256,firecracker_sha256,report_sha256,test_metal_sha256,leakcheck_sha256,started_at,completed_at)
+SELECT sqlc.arg(release_id)::text,sqlc.arg(profile)::text,sqlc.arg(architecture)::text,sqlc.arg(host_id)::uuid,
+ sqlc.arg(kernel_boot_id)::uuid,sqlc.arg(source_commit)::text,sqlc.arg(kernel_sha256)::text,sqlc.arg(firecracker_sha256)::text,
+ sqlc.arg(report_sha256)::text,sqlc.arg(test_metal_sha256)::text,sqlc.arg(leakcheck_sha256)::text,
+ sqlc.arg(started_at)::timestamptz,sqlc.arg(completed_at)::timestamptz
+FROM runtime_releases r WHERE r.id=sqlc.arg(release_id)::text AND r.architecture=sqlc.arg(architecture)::text
+ON CONFLICT(release_id) DO UPDATE SET release_id=runtime_release_qualifications.release_id
+WHERE runtime_release_qualifications.revoked_at IS NULL AND
+ ROW(runtime_release_qualifications.profile,runtime_release_qualifications.architecture,runtime_release_qualifications.host_id,
+ runtime_release_qualifications.kernel_boot_id,runtime_release_qualifications.source_commit,runtime_release_qualifications.kernel_sha256,
+ runtime_release_qualifications.firecracker_sha256,runtime_release_qualifications.report_sha256,runtime_release_qualifications.test_metal_sha256,
+ runtime_release_qualifications.leakcheck_sha256,runtime_release_qualifications.started_at,runtime_release_qualifications.completed_at)
+ = ROW(EXCLUDED.profile,EXCLUDED.architecture,EXCLUDED.host_id,EXCLUDED.kernel_boot_id,EXCLUDED.source_commit,EXCLUDED.kernel_sha256,
+ EXCLUDED.firecracker_sha256,EXCLUDED.report_sha256,EXCLUDED.test_metal_sha256,EXCLUDED.leakcheck_sha256,EXCLUDED.started_at,EXCLUDED.completed_at)
+RETURNING *;
+
+-- name: GetRuntimeReleaseQualification :one
+SELECT * FROM runtime_release_qualifications WHERE release_id=$1;
+
+-- name: RevokeRuntimeReleaseQualification :one
+UPDATE runtime_release_qualifications SET revoked_at=COALESCE(revoked_at,clock_timestamp()),revocation_sha256=sqlc.arg(reason)::text
+WHERE release_id=sqlc.arg(release_id)::text AND report_sha256=sqlc.arg(expected_report)::text
+ AND (revoked_at IS NULL OR revocation_sha256=sqlc.arg(reason)::text)
+RETURNING *;

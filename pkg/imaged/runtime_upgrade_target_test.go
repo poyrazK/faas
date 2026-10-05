@@ -40,6 +40,9 @@ func TestRuntimeUpgradeImageUsesExactTargetAcrossGuestInitChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.RecordRuntimeReleaseQualification(t.Context(), imageQualificationFixture(target)); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(guest, []byte("new guest-init"), 0600); err != nil {
 		t.Fatal(err)
 	}
