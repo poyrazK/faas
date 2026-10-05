@@ -173,6 +173,7 @@ func (m *MemStore) deleteStandardMaterializationControlsLocked(appID string) {
 	m.eraseStandardEgressLocked(appID, "")
 	delete(m.applicationStandardEnrollmentClaims, canonicalStandardUUID(appID))
 	delete(m.standardObservationChecks, canonicalStandardUUID(appID))
+	delete(m.standardRuntimeRefreshRequests, canonicalStandardUUID(appID))
 	for key, b := range m.applicationStandardControlBindings {
 		if sameStandardUUID(b.AppID, appID) {
 			delete(m.applicationStandardControlBindings, key)
@@ -262,6 +263,7 @@ func (m *MemStore) installStandardProjectionLocked(app standardReviewAppSnapshot
 	}
 	m.applicationStandardEnrollments[enrollmentKey] = cloneApplicationStandardEnrollment(enrollment)
 	m.revokeStandardEnrollmentClaimLocked(app.AppID)
+	m.queueStandardRuntimeRefreshLocked(enrollment)
 }
 
 func (m *MemStore) revokeStandardEnrollmentClaimLocked(appID string) {

@@ -5953,6 +5953,49 @@ ON CONFLICT (app_id,signer_name) DO UPDATE SET cosign_public_key=excluded.cosign
 -- name: NotifyApplicationStandardControlsChanged :exec
 SELECT pg_notify('trusted_signer_changed',json_build_object('app_id',sqlc.arg(app_id)::text,'action','standard_projection')::text);
 
+-- Installation invalidates only cache eligibility, never source artifacts or
+-- environment intent. The existing stale trigger removes replica eligibility.
+-- name: InvalidateApplicationStandardSnapshots :exec
+UPDATE snapshots s SET stale=true FROM deployments d
+WHERE s.deployment_id=d.id AND d.app_id=sqlc.arg(app_id)::uuid AND NOT s.stale;
+
+-- This runs in the same transaction as the installed enrollment and target.
+-- A lost LISTEN hint still leaves replayable scheduler work after a crash.
+-- name: QueueApplicationStandardRuntimeRefresh :exec
+WITH queued AS (
+ INSERT INTO notification_outbox(channel,payload,available_at)
+ VALUES ('runtime_config_restart',sqlc.arg(payload)::text,clock_timestamp()+make_interval(secs=>sqlc.arg(wake_delay_seconds)::double precision))
+ RETURNING id,payload
+)
+SELECT pg_notify('runtime_config_restart',json_build_object('_notification_outbox_id',id,'_notification_payload',payload)::text) FROM queued;
+
+-- name: GetApplicationStandardRuntimeRefresh :one
+SELECT payload FROM notification_outbox
+WHERE channel='runtime_config_restart' AND payload::jsonb->>'app_id'=sqlc.arg(app_id)::text
+ AND payload::jsonb->'application_standard'->>'org_id'=sqlc.arg(org_id)::text
+ORDER BY id DESC LIMIT 1;
+
+-- name: CheckApplicationStandardRuntimeRefresh :one
+SELECT e.desired_revision,e.persisted_revision,e.effective_hash,
+ EXISTS (SELECT 1 FROM application_standard_operation_targets t JOIN application_standard_operations o ON o.id=t.operation_id
+  WHERE o.org_id=e.org_id AND o.state='paused' AND t.app_id=e.app_id AND t.state<>'skipped'
+   AND t.desired_revision=sqlc.arg(desired_revision)::bigint) AS paused
+FROM app_application_standards e JOIN apps a ON a.id=e.app_id
+WHERE e.app_id=sqlc.arg(app_id)::uuid AND e.org_id=sqlc.arg(org_id)::uuid AND a.status<>'deleted';
+
+-- An operator pause is not a failed delivery. Preserve the attempt budget and
+-- use the database clock to keep deferred work from busy-looping on replay.
+-- name: DeferNotificationClaim :execrows
+WITH owned AS MATERIALIZED (
+ SELECT id,lease_until FROM notification_outbox
+ WHERE id=sqlc.arg(id)::bigint AND state='processing' AND claimed_by=sqlc.arg(claim_token)::text AND attempts>0
+ FOR UPDATE
+)
+UPDATE notification_outbox o SET state='pending',attempts=o.attempts-1,
+ available_at=clock_timestamp()+sqlc.arg(retry_milliseconds)::bigint*interval '1 millisecond',
+ claimed_by=NULL,claimed_at=NULL,lease_until=NULL,last_error='application_standard_refresh_deferred'
+FROM owned WHERE o.id=owned.id AND owned.lease_until>clock_timestamp();
+
 -- name: ClaimApplicationStandardEnrollment :one
 WITH candidate AS (
  SELECT e.app_id FROM app_application_standards e JOIN apps a ON a.id=e.app_id

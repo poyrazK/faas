@@ -1692,6 +1692,40 @@ func (q *Queries) CheckApplicationStandardLogConsumer(ctx context.Context, db DB
 	return node_id, err
 }
 
+const checkApplicationStandardRuntimeRefresh = `-- name: CheckApplicationStandardRuntimeRefresh :one
+SELECT e.desired_revision,e.persisted_revision,e.effective_hash,
+ EXISTS (SELECT 1 FROM application_standard_operation_targets t JOIN application_standard_operations o ON o.id=t.operation_id
+  WHERE o.org_id=e.org_id AND o.state='paused' AND t.app_id=e.app_id AND t.state<>'skipped'
+   AND t.desired_revision=$1::bigint) AS paused
+FROM app_application_standards e JOIN apps a ON a.id=e.app_id
+WHERE e.app_id=$2::uuid AND e.org_id=$3::uuid AND a.status<>'deleted'
+`
+
+type CheckApplicationStandardRuntimeRefreshParams struct {
+	DesiredRevision int64
+	AppID           pgtype.UUID
+	OrgID           pgtype.UUID
+}
+
+type CheckApplicationStandardRuntimeRefreshRow struct {
+	DesiredRevision   int64
+	PersistedRevision int64
+	EffectiveHash     string
+	Paused            bool
+}
+
+func (q *Queries) CheckApplicationStandardRuntimeRefresh(ctx context.Context, db DBTX, arg CheckApplicationStandardRuntimeRefreshParams) (CheckApplicationStandardRuntimeRefreshRow, error) {
+	row := db.QueryRow(ctx, checkApplicationStandardRuntimeRefresh, arg.DesiredRevision, arg.AppID, arg.OrgID)
+	var i CheckApplicationStandardRuntimeRefreshRow
+	err := row.Scan(
+		&i.DesiredRevision,
+		&i.PersistedRevision,
+		&i.EffectiveHash,
+		&i.Paused,
+	)
+	return i, err
+}
+
 const checkExclusiveWorkRuntime = `-- name: CheckExclusiveWorkRuntime :one
 SELECT i.id::text FROM instances i JOIN apps a ON a.id=i.app_id
 WHERE i.id=$1::text::uuid AND i.wake_id=$2::text::uuid
@@ -5677,6 +5711,34 @@ type DecrementInstanceTailCountParams struct {
 func (q *Queries) DecrementInstanceTailCount(ctx context.Context, db DBTX, arg DecrementInstanceTailCountParams) error {
 	_, err := db.Exec(ctx, decrementInstanceTailCount, arg.ID, arg.TailCount)
 	return err
+}
+
+const deferNotificationClaim = `-- name: DeferNotificationClaim :execrows
+WITH owned AS MATERIALIZED (
+ SELECT id,lease_until FROM notification_outbox
+ WHERE id=$2::bigint AND state='processing' AND claimed_by=$3::text AND attempts>0
+ FOR UPDATE
+)
+UPDATE notification_outbox o SET state='pending',attempts=o.attempts-1,
+ available_at=clock_timestamp()+$1::bigint*interval '1 millisecond',
+ claimed_by=NULL,claimed_at=NULL,lease_until=NULL,last_error='application_standard_refresh_deferred'
+FROM owned WHERE o.id=owned.id AND owned.lease_until>clock_timestamp()
+`
+
+type DeferNotificationClaimParams struct {
+	RetryMilliseconds int64
+	ID                int64
+	ClaimToken        string
+}
+
+// An operator pause is not a failed delivery. Preserve the attempt budget and
+// use the database clock to keep deferred work from busy-looping on replay.
+func (q *Queries) DeferNotificationClaim(ctx context.Context, db DBTX, arg DeferNotificationClaimParams) (int64, error) {
+	result, err := db.Exec(ctx, deferNotificationClaim, arg.RetryMilliseconds, arg.ID, arg.ClaimToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deferRouteMonitor = `-- name: DeferRouteMonitor :exec
@@ -10590,6 +10652,25 @@ func (q *Queries) GetApplicationStandardRuntimeQualificationInput(ctx context.Co
 	return input, err
 }
 
+const getApplicationStandardRuntimeRefresh = `-- name: GetApplicationStandardRuntimeRefresh :one
+SELECT payload FROM notification_outbox
+WHERE channel='runtime_config_restart' AND payload::jsonb->>'app_id'=$1::text
+ AND payload::jsonb->'application_standard'->>'org_id'=$2::text
+ORDER BY id DESC LIMIT 1
+`
+
+type GetApplicationStandardRuntimeRefreshParams struct {
+	AppID string
+	OrgID string
+}
+
+func (q *Queries) GetApplicationStandardRuntimeRefresh(ctx context.Context, db DBTX, arg GetApplicationStandardRuntimeRefreshParams) (string, error) {
+	row := db.QueryRow(ctx, getApplicationStandardRuntimeRefresh, arg.AppID, arg.OrgID)
+	var payload string
+	err := row.Scan(&payload)
+	return payload, err
+}
+
 const getApplicationStandardSnapshotCapture = `-- name: GetApplicationStandardSnapshotCapture :one
 SELECT expected_state,grant_data,acknowledgment,created_at,received_at FROM application_standard_snapshot_captures
 WHERE token=$1::uuid AND account_id=$2::uuid
@@ -15495,6 +15576,18 @@ func (q *Queries) InstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, ins
 		&i.SidecarSecretVersions,
 	)
 	return i, err
+}
+
+const invalidateApplicationStandardSnapshots = `-- name: InvalidateApplicationStandardSnapshots :exec
+UPDATE snapshots s SET stale=true FROM deployments d
+WHERE s.deployment_id=d.id AND d.app_id=$1::uuid AND NOT s.stale
+`
+
+// Installation invalidates only cache eligibility, never source artifacts or
+// environment intent. The existing stale trigger removes replica eligibility.
+func (q *Queries) InvalidateApplicationStandardSnapshots(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, invalidateApplicationStandardSnapshots, appID)
+	return err
 }
 
 const invalidateEnvironmentGitOpsRuntimeAtBoundary = `-- name: InvalidateEnvironmentGitOpsRuntimeAtBoundary :exec
@@ -35222,6 +35315,27 @@ func (q *Queries) QueueApplicationStandardExceptionChange(ctx context.Context, d
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const queueApplicationStandardRuntimeRefresh = `-- name: QueueApplicationStandardRuntimeRefresh :exec
+WITH queued AS (
+ INSERT INTO notification_outbox(channel,payload,available_at)
+ VALUES ('runtime_config_restart',$1::text,clock_timestamp()+make_interval(secs=>$2::double precision))
+ RETURNING id,payload
+)
+SELECT pg_notify('runtime_config_restart',json_build_object('_notification_outbox_id',id,'_notification_payload',payload)::text) FROM queued
+`
+
+type QueueApplicationStandardRuntimeRefreshParams struct {
+	Payload          string
+	WakeDelaySeconds float64
+}
+
+// This runs in the same transaction as the installed enrollment and target.
+// A lost LISTEN hint still leaves replayable scheduler work after a crash.
+func (q *Queries) QueueApplicationStandardRuntimeRefresh(ctx context.Context, db DBTX, arg QueueApplicationStandardRuntimeRefreshParams) error {
+	_, err := db.Exec(ctx, queueApplicationStandardRuntimeRefresh, arg.Payload, arg.WakeDelaySeconds)
+	return err
 }
 
 const queueAutomaticRouteCheck = `-- name: QueueAutomaticRouteCheck :exec

@@ -292,6 +292,9 @@ func installStandardControlProjectionWithClaim(ctx context.Context, tx pgx.Tx, e
 	if count != 1 {
 		return ErrApplicationStandardReviewStale
 	}
+	if err := queueStandardRuntimeRefreshTx(ctx, tx, e); err != nil {
+		return err
+	}
 	return q.NotifyApplicationStandardControlsChanged(ctx, tx, e.AppID)
 }
 

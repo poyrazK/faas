@@ -2047,9 +2047,10 @@ func (l *Loop) HandleDurableNotification(ctx context.Context, n db.Notification)
 
 func (l *Loop) handleRuntimeConfigRestart(ctx context.Context, n db.Notification) error {
 	var payload struct {
-		AppID  string `json:"app_id"`
-		WakeID string `json:"wake_id"`
-		Scope  string `json:"scope"`
+		AppID    string                                   `json:"app_id"`
+		WakeID   string                                   `json:"wake_id"`
+		Scope    string                                   `json:"scope"`
+		Standard *state.ApplicationStandardRuntimeRefresh `json:"application_standard"`
 	}
 	if err := json.Unmarshal([]byte(n.Payload), &payload); err != nil {
 		return fmt.Errorf("sched: decode runtime config restart payload: %w", err)
@@ -2059,7 +2060,12 @@ func (l *Loop) handleRuntimeConfigRestart(ctx context.Context, n db.Notification
 	}
 	var out CoordOutcome
 	var err error
-	if payload.Scope != "" {
+	if payload.Standard != nil {
+		out, err = l.engine.RefreshApplicationStandard(ctx, state.ApplicationStandardRuntimeRefreshRequest{AppID: payload.AppID, WakeID: payload.WakeID, Standard: *payload.Standard})
+		if errors.Is(err, state.ErrApplicationStandardRefreshDeferred) {
+			err = errors.Join(db.ErrNotificationDeferred, err)
+		}
+	} else if payload.Scope != "" {
 		out, err = l.engine.RefreshRuntimeConfigForEnvironment(ctx, payload.AppID, payload.WakeID, payload.Scope)
 	} else {
 		out, err = l.engine.RefreshRuntimeConfig(ctx, payload.AppID, payload.WakeID)

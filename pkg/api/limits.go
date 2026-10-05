@@ -44,6 +44,7 @@ const (
 	ApplicationStandardWorkerLease                    = 30 * time.Second
 	ApplicationStandardWorkerInterval                 = 5 * time.Second
 	ApplicationStandardObservationInterval            = 5 * time.Second
+	ApplicationStandardRuntimeRefreshWakeDelay        = 5 * time.Second
 	ApplicationStandardWorkerPassTimeout              = 10 * time.Second
 	ApplicationStandardWorkerReleaseTimeout           = 2 * time.Second
 	ApplicationStandardWorkerPassLimit                = 16

@@ -2251,3 +2251,49 @@ restart discovers durable enrollments and scheduling metadata without re-enrollm
 The migration adds reversible private scheduling columns; older applied migration
 bytes remain frozen. Portable receipts do not replace native KVM acceptance,
 service replacement, snapshot re-prime, named production scope or release gates.
+
+
+### Durable runtime convergence after installation
+
+Each installed enrollment now invalidates the application's snapshot cache
+eligibility and enqueues a private revision/hash-bound `runtime_config_restart`
+handoff in the same PostgreSQL transaction. A failed outbox insert rolls back
+the controls, enrollment, cache invalidation and rollout checkpoint together.
+The existing snapshot-stale trigger removes replica eligibility; source artifacts
+and the old snapshot bytes remain available to their existing retention rules.
+A lost LISTEN notification is recovered through the durable notification outbox.
+This handoff adds no migration and changes no environment or secret fingerprint.
+The private LISTEN grace is centralized in `pkg/api/limits.go`.
+
+Schedd reuses the runtime configuration rolling replacement path. Its private
+standard context adds captured revision/hash freshness and checks the current
+installed enrollment before admission, withdrawal, destruction and acknowledgement.
+Resident live deployments receive fresh capacity before stale serving instances
+are drained and destroyed. Stale process memory is never snapshotted. A wholly
+idle application stays cold; its next ordinary wake uses current inputs. Existing
+environment receipt checks remain in force without inventing an environment
+change timestamp for a standards-only update. Snapshotting and migrating
+placements defer replacement until their lifecycle owner finishes.
+
+Superseded handoffs are harmless. A request coalesced behind an older restart
+rechecks captured inputs before acknowledgement. The scheduler resolves the
+store's physical application identity before instance selection, including legacy
+MemStore UUID spellings. An operator pause stops further replacement actions;
+already admitted work can finish. Resume reuses ready replacement capacity.
+Paused and busy lifecycle requests return a deferred outbox result, retaining
+the attempt budget and a storage-clock retry boundary. Actual delivery failures
+still use the existing bounded retry/dead-letter policy and require operator
+recovery after exhaustion. Abort retains already installed intent, consistent
+with the operation control contract; restoring an earlier projection requires
+a separately reviewed rollback.
+
+A scheduler acknowledgement proves this private replacement handoff completed,
+not whole-application observation. Logging, provider delivery, egress, native
+process identity, composed scans and retained artifact evidence still qualify
+independently before subsequent rollout waves. Portable scheduler tests use an
+explicit legacy native consumer simulation; they do not establish protocol-2
+artifact consumption or physical host enforcement. Positive composed multi-app
+wave acceptance, snapshot re-prime acceptance, fleet crash/recovery/rollback,
+named production environments, full migration recovery and dedicated native
+Linux amd64 KVM/test-metal/leakcheck acceptance remain open release gates.
+Public standards activation remains disabled.
