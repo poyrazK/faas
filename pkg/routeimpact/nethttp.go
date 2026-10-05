@@ -16,13 +16,15 @@ import (
 )
 
 type goRouteFile struct {
-	path        string
-	file        *ast.File
-	fset        *token.FileSet
-	packagePath string
-	imports     map[string]string
-	muxVars     map[string]bool
-	functions   map[string]string
+	path         string
+	file         *ast.File
+	fset         *token.FileSet
+	packagePath  string
+	imports      map[string]string
+	muxVars      map[string]bool
+	functions    map[string]string
+	ginDotImport bool
+	ginFactories map[string]map[string]string
 }
 
 type goFunction struct {
@@ -65,8 +67,16 @@ func indexGoNetHTTP(snapshot sourceSnapshot) (sourceIndex, error) {
 				continue
 			}
 			alias := path.Base(importPath)
+			if goIsChiImport(importPath) {
+				alias = "chi"
+			} else if goIsGinImport(importPath) {
+				alias = "gin"
+			}
 			if spec.Name != nil {
 				alias = spec.Name.Name
+				if alias == "." && goIsGinImport(importPath) {
+					file.ginDotImport = true
+				}
 			}
 			if alias != "_" && alias != "." {
 				file.imports[alias] = importPath
@@ -78,7 +88,7 @@ func indexGoNetHTTP(snapshot sourceSnapshot) (sourceIndex, error) {
 	if len(files) == 0 {
 		index.Issues = append(index.Issues, Issue{Code: "go_sources_unavailable", Message: "No parsable non-test Go source files were found in the selected root."})
 		if len(index.Issues) > api.RouteImpactMaxIssues {
-			return sourceIndex{}, errors.New("Go source exceeds the route impact issue limit")
+			return sourceIndex{}, errors.New("go source exceeds the route impact issue limit")
 		}
 		return index, nil
 	}
@@ -99,7 +109,7 @@ func indexGoNetHTTP(snapshot sourceSnapshot) (sourceIndex, error) {
 			method := goReceiverName(fn.Recv)
 			id := goFunctionID(file.packagePath, method, fn.Name.Name)
 			if len(functions) >= api.RouteImpactMaxSymbols {
-				return sourceIndex{}, errors.New("Go source exceeds the route impact function limit")
+				return sourceIndex{}, errors.New("go source exceeds the route impact function limit")
 			}
 			functions = append(functions, goFunction{file: file, decl: fn, name: fn.Name.Name, method: method, id: id})
 			if method == "" {
@@ -146,14 +156,14 @@ func indexGoNetHTTP(snapshot sourceSnapshot) (sourceIndex, error) {
 		issues := goUnknownFunctionCalls(fn.file, fn.decl.Body, fn.id, packageFuncs)
 		symbolIssues += len(issues)
 		if symbolIssues > api.RouteImpactMaxSymbolIssues {
-			return sourceIndex{}, errors.New("Go source exceeds the route impact function issue limit")
+			return sourceIndex{}, errors.New("go source exceeds the route impact function issue limit")
 		}
 		symbolEdges += len(refs)
 		if symbolEdges > api.RouteImpactMaxSymbolEdges {
-			return sourceIndex{}, errors.New("Go source exceeds the route impact function reference limit")
+			return sourceIndex{}, errors.New("go source exceeds the route impact function reference limit")
 		}
 		if len(index.Symbols) >= api.RouteImpactMaxSymbols {
-			return sourceIndex{}, errors.New("Go source exceeds the route impact function limit")
+			return sourceIndex{}, errors.New("go source exceeds the route impact function limit")
 		}
 		line := goLine(fn.file, fn.decl.Name.Pos())
 		index.Symbols[fn.id] = functionSymbol{Name: fn.id, File: fn.file.path, Line: line, Hash: contentHash(body), References: refs, Issues: issues}
@@ -208,15 +218,13 @@ func indexGoNetHTTP(snapshot sourceSnapshot) (sourceIndex, error) {
 				index.Issues = append(index.Issues, Issue{Code: "local_go_dependency_unavailable", File: file.path, Message: "A same-module import is outside the selected source root; its route references cannot be resolved."})
 				continue
 			}
-			for _, dependency := range packageFiles[packagePath] {
-				index.Dependencies[file.path] = append(index.Dependencies[file.path], dependency)
-			}
+			index.Dependencies[file.path] = append(index.Dependencies[file.path], packageFiles[packagePath]...)
 		}
 		sort.Strings(index.Dependencies[file.path])
 		index.Dependencies[file.path] = uniqueStrings(index.Dependencies[file.path])
 		importEdges += len(index.Dependencies[file.path])
 		if importEdges > api.RouteImpactMaxImportEdges {
-			return sourceIndex{}, errors.New("Go source exceeds the route impact import limit")
+			return sourceIndex{}, errors.New("go source exceeds the route impact import limit")
 		}
 	}
 
@@ -289,31 +297,43 @@ func indexGoNetHTTP(snapshot sourceSnapshot) (sourceIndex, error) {
 			})
 		}
 	}
+	packageChiVars := goPackageChiVariables(files)
+	if err := indexGoChiRoutes(&index, files, packageChiVars, packageFuncs, methodsByPackage, modulePath, duplicates); err != nil {
+		return sourceIndex{}, err
+	}
+	if err := indexGoGinRoutes(&index, files, packageFuncs, methodsByPackage, modulePath, duplicates); err != nil {
+		return sourceIndex{}, err
+	}
 	if len(index.Routes) > api.RouteImpactMaxRoutes {
-		return sourceIndex{}, errors.New("Go source exceeds the route impact route limit")
+		return sourceIndex{}, errors.New("go source exceeds the route impact route limit")
 	}
 	if len(index.Issues) > api.RouteImpactMaxIssues {
-		return sourceIndex{}, errors.New("Go source exceeds the route impact issue limit")
+		return sourceIndex{}, errors.New("go source exceeds the route impact issue limit")
 	}
 	hasDynamicRoute := false
 	for _, issue := range index.Issues {
-		if strings.HasPrefix(issue.Code, "dynamic_go_route") || issue.Code == "unsupported_go_route_pattern" {
+		if strings.HasPrefix(issue.Code, "dynamic_go_route") || strings.HasPrefix(issue.Code, "dynamic_chi_route") ||
+			strings.HasPrefix(issue.Code, "dynamic_chi_mount") || strings.Contains(issue.Code, "chi_mount") ||
+			strings.Contains(issue.Code, "chi_route_helper") || strings.Contains(issue.Code, "gin_route_helper") ||
+			strings.HasPrefix(issue.Code, "unresolved_chi_route") ||
+			issue.Code == "unsupported_go_route_pattern" || strings.HasPrefix(issue.Code, "unsupported_chi_route") || issue.Code == "unmodeled_chi_mount" ||
+			strings.HasPrefix(issue.Code, "dynamic_gin_") || strings.HasPrefix(issue.Code, "unsupported_gin_") || strings.HasPrefix(issue.Code, "unresolved_gin_") {
 			hasDynamicRoute = true
 			break
 		}
 	}
 	if len(index.Routes) == 0 && !hasDynamicRoute {
-		index.Issues = append(index.Issues, Issue{Code: "no_static_nethttp_routes", Message: "No supported Go net/http ServeMux registrations were found; dynamic or third-party routers may be outside the selected model."})
+		index.Issues = append(index.Issues, Issue{Code: "no_static_nethttp_routes", Message: "No supported Go HTTP route registrations were found; dynamic or third-party routers may be outside the selected model."})
 	}
 	symbolIssues = goSymbolIssueCount(index.Symbols)
 	if symbolIssues > api.RouteImpactMaxSymbolIssues {
-		return sourceIndex{}, errors.New("Go source exceeds the route impact function issue limit")
+		return sourceIndex{}, errors.New("go source exceeds the route impact function issue limit")
 	}
 	if len(index.Symbols) > api.RouteImpactMaxSymbols {
-		return sourceIndex{}, errors.New("Go source exceeds the route impact function limit")
+		return sourceIndex{}, errors.New("go source exceeds the route impact function limit")
 	}
 	if len(index.Issues) > api.RouteImpactMaxIssues {
-		return sourceIndex{}, errors.New("Go source exceeds the route impact issue limit")
+		return sourceIndex{}, errors.New("go source exceeds the route impact issue limit")
 	}
 	sort.Slice(index.Routes, func(i, j int) bool {
 		if index.Routes[i].Method != index.Routes[j].Method {
@@ -567,6 +587,51 @@ func goLocalMuxVariables(file *goRouteFile, scope ast.Node) (map[string]bool, ma
 	for name := range shadowed {
 		delete(known, name)
 	}
+	// Registration helpers commonly receive the mux from their caller instead
+	// of constructing it locally. A parameter is a reliable ServeMux origin
+	// only when its declared type names net/http.ServeMux.
+	if function, ok := scope.(*ast.FuncDecl); ok && function.Type.Params != nil {
+		muxParameters := map[string]bool{}
+		for _, field := range function.Type.Params.List {
+			if !goIsServeMuxType(file, field.Type) {
+				continue
+			}
+			for _, name := range field.Names {
+				muxParameters[name.Name] = true
+			}
+		}
+		bodyBindings := map[string]bool{}
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			switch value := node.(type) {
+			case *ast.ValueSpec:
+				for _, name := range value.Names {
+					bodyBindings[name.Name] = true
+				}
+			case *ast.AssignStmt:
+				if value.Tok == token.DEFINE {
+					for _, name := range value.Lhs {
+						goAddAssignedName(bodyBindings, name)
+					}
+				}
+			case *ast.RangeStmt:
+				if value.Tok == token.DEFINE {
+					goAddAssignedName(bodyBindings, value.Key)
+					goAddAssignedName(bodyBindings, value.Value)
+				}
+			case *ast.FuncLit:
+				goAddFieldNames(bodyBindings, value.Type.Params)
+				goAddFieldNames(bodyBindings, value.Type.Results)
+			}
+			return true
+		})
+		for name := range muxParameters {
+			if bodyBindings[name] {
+				continue
+			}
+			known[name] = true
+			delete(shadowed, name)
+		}
+	}
 	for changed := true; changed; {
 		changed = false
 		ast.Inspect(scope, func(node ast.Node) bool {
@@ -805,7 +870,7 @@ func goResolveHandler(file *goRouteFile, expr ast.Expr, packages map[string]map[
 		case *ast.CallExpr:
 			if selector, isSelector := value.Fun.(*ast.SelectorExpr); isSelector && selector.Sel.Name == "HandlerFunc" {
 				alias, isAlias := selector.X.(*ast.Ident)
-				if !isAlias || shadowed[alias.Name] || file.imports[alias.Name] != "net/http" {
+				if !isAlias || shadowed[alias.Name] || (file.imports[alias.Name] != "net/http" && !goIsGinImport(file.imports[alias.Name])) {
 					return "", "unresolved handler", Location{}, false
 				}
 				if len(value.Args) != 1 {

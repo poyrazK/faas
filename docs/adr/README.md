@@ -542,6 +542,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-498: Advisory production route budgets and saved incidents](498-production-route-monitoring.md) — continuously evaluate serving-route budgets and retain bounded incidents
 - [ADR-499: Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) — attribute incidents to request-time tenant or consumer cohorts with bounded recovery tracking
 - [ADR-581: Static Go net/http route impact](581-go-nethttp-route-impact.md) — map Go ServeMux source changes to route-level review evidence
+- [ADR-582: Static Go Chi route impact](582-go-chi-route-impact.md) — map literal Chi routes, groups, mounts, and middleware to route-level review evidence
 
 ## Customer operation decisions
 

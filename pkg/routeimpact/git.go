@@ -107,7 +107,7 @@ func (r repository) relative(path string) (string, bool) {
 }
 
 func routeSourcePath(path string) bool {
-	return strings.HasSuffix(path, ".py") || strings.HasSuffix(path, ".go")
+	return strings.HasSuffix(path, ".py") || strings.HasSuffix(path, ".go") || nodeSourcePath(path)
 }
 
 func routeAnalysisPath(path string) bool {
@@ -122,7 +122,7 @@ func (r repository) tree(ctx context.Context, commit string) (sourceSnapshot, er
 	snapshot := sourceSnapshot{meta: Snapshot{Revision: commit}, files: map[string]sourceFile{}}
 	var objects []string
 	var paths []string
-	pythonFiles, goFiles := 0, 0
+	pythonFiles, goFiles, javascriptFiles := 0, 0, 0
 	for _, row := range bytes.Split(body, []byte{0}) {
 		if len(row) == 0 {
 			continue
@@ -153,15 +153,18 @@ func (r repository) tree(ctx context.Context, commit string) (sourceSnapshot, er
 			if routeSourcePath(path) {
 				if strings.HasSuffix(path, ".py") {
 					pythonFiles++
-				} else {
+				} else if strings.HasSuffix(path, ".go") {
 					goFiles++
+				} else if nodeSourcePath(path) {
+					javascriptFiles++
 				}
 			}
 		}
 	}
-	if pythonFiles > api.RouteImpactMaxPythonFiles || goFiles > api.RouteImpactMaxGoFiles {
+	if pythonFiles > api.RouteImpactMaxPythonFiles || goFiles > api.RouteImpactMaxGoFiles || javascriptFiles > api.RouteImpactMaxJavaScriptFiles {
 		return sourceSnapshot{}, errors.New("source snapshot exceeds a route impact language file limit")
 	}
+	snapshot.meta.PythonFiles, snapshot.meta.GoFiles, snapshot.meta.JavaScriptFiles = pythonFiles, goFiles, javascriptFiles
 	if err := r.readBlobs(ctx, &snapshot, objects, paths); err != nil {
 		return sourceSnapshot{}, err
 	}
@@ -287,11 +290,13 @@ func (r repository) worktree(ctx context.Context) (sourceSnapshot, error) {
 		if routeSourcePath(path) {
 			if strings.HasSuffix(path, ".py") {
 				snapshot.meta.PythonFiles++
-			} else {
+			} else if strings.HasSuffix(path, ".go") {
 				snapshot.meta.GoFiles++
+			} else if nodeSourcePath(path) {
+				snapshot.meta.JavaScriptFiles++
 			}
 		}
-		if snapshot.meta.PythonFiles > api.RouteImpactMaxPythonFiles || snapshot.meta.GoFiles > api.RouteImpactMaxGoFiles || total > api.RouteImpactSourceMaxBytes {
+		if snapshot.meta.PythonFiles > api.RouteImpactMaxPythonFiles || snapshot.meta.GoFiles > api.RouteImpactMaxGoFiles || snapshot.meta.JavaScriptFiles > api.RouteImpactMaxJavaScriptFiles || total > api.RouteImpactSourceMaxBytes {
 			return sourceSnapshot{}, errors.New("working tree exceeds a route impact source limit")
 		}
 	}
@@ -371,15 +376,20 @@ func fingerprintForFramework(snapshot *sourceSnapshot, framework string) {
 		if file.body == nil {
 			continue
 		}
-		if framework == "go-nethttp" {
+		switch framework {
+		case "go-nethttp":
 			if strings.HasSuffix(path, ".go") || path == "go.mod" {
 				paths = append(paths, path)
 			}
-		} else if framework == "fastapi" {
+		case "fastapi":
 			if strings.HasSuffix(path, ".py") {
 				paths = append(paths, path)
 			}
-		} else {
+		case "node-http":
+			if nodeSourcePath(path) {
+				paths = append(paths, path)
+			}
+		default:
 			paths = append(paths, path)
 		}
 	}
@@ -389,17 +399,21 @@ func fingerprintForFramework(snapshot *sourceSnapshot, framework string) {
 		_, _ = fmt.Fprintf(hash, "%d:%s:%s\n", len(path), path, snapshot.files[path].hash)
 	}
 	snapshot.meta.SourceSHA256 = hex.EncodeToString(hash.Sum(nil))
-	snapshot.meta.PythonFiles, snapshot.meta.GoFiles = 0, 0
+	snapshot.meta.PythonFiles, snapshot.meta.GoFiles, snapshot.meta.JavaScriptFiles = 0, 0, 0
 	for _, path := range paths {
 		if framework == "fastapi" && strings.HasSuffix(path, ".py") {
 			snapshot.meta.PythonFiles++
 		} else if framework == "go-nethttp" && strings.HasSuffix(path, ".go") {
 			snapshot.meta.GoFiles++
+		} else if framework == "node-http" && nodeSourcePath(path) {
+			snapshot.meta.JavaScriptFiles++
 		} else if framework == "" {
 			if strings.HasSuffix(path, ".py") {
 				snapshot.meta.PythonFiles++
 			} else if strings.HasSuffix(path, ".go") {
 				snapshot.meta.GoFiles++
+			} else if nodeSourcePath(path) {
+				snapshot.meta.JavaScriptFiles++
 			}
 		}
 	}

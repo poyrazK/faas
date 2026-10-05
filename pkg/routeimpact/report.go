@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ParseReport reads a customer-owned version 2 artifact. It validates bounds
+// ParseReport reads a customer-owned FastAPI version 2, Go HTTP version 3, or Node HTTP version 4 artifact. It validates bounds
 // and internal structure, not authenticity or runtime behavior. Errors never
 // include arbitrary input values or decoder excerpts.
 func ParseReport(body []byte) (Report, error) {
@@ -112,7 +112,8 @@ func validSnapshot(snapshot Snapshot, candidate bool) bool {
 	_, err := hex.DecodeString(snapshot.SourceSHA256)
 	return (ValidCommit(snapshot.Revision) || (candidate && snapshot.Revision == "working-tree")) &&
 		len(snapshot.SourceSHA256) == 64 && err == nil && snapshot.PythonFiles >= 0 && snapshot.PythonFiles <= api.RouteImpactMaxPythonFiles &&
-		snapshot.GoFiles >= 0 && snapshot.GoFiles <= api.RouteImpactMaxGoFiles && (snapshot.Entrypoint == "" || validEntrypoint(snapshot.Entrypoint))
+		snapshot.GoFiles >= 0 && snapshot.GoFiles <= api.RouteImpactMaxGoFiles && snapshot.JavaScriptFiles >= 0 && snapshot.JavaScriptFiles <= api.RouteImpactMaxJavaScriptFiles &&
+		(snapshot.Entrypoint == "" || validEntrypoint(snapshot.Entrypoint))
 }
 
 func validOptionalSHA256(value string) bool {
@@ -124,12 +125,13 @@ func validOptionalSHA256(value string) bool {
 }
 
 func validateReport(report Report) error {
-	versionSupported := (report.Version == 2 && report.Framework == "fastapi") || (report.Version == 3 && report.Framework == "go-nethttp")
+	versionSupported := (report.Version == 2 && report.Framework == "fastapi") || (report.Version == 3 && report.Framework == "go-nethttp") ||
+		(report.Version == 4 && report.Framework == "node-http")
 	if !versionSupported || (report.Status != "complete" && report.Status != "incomplete") {
-		return errors.New("source impact requires a version 2 FastAPI or version 3 Go net/http report")
+		return errors.New("source impact requires a version 2 FastAPI, version 3 Go HTTP, or version 4 Node HTTP report")
 	}
-	if report.Framework == "go-nethttp" && (report.Base.Entrypoint != "" || report.Candidate.Entrypoint != "") {
-		return errors.New("Go net/http source impact must not include a FastAPI entrypoint")
+	if report.Framework != "fastapi" && (report.Base.Entrypoint != "" || report.Candidate.Entrypoint != "") {
+		return errors.New("non-FastAPI source impact must not include a FastAPI entrypoint")
 	}
 	identity, _ := RepositoryReference(report.Repository)
 	if report.Repository != "" && identity != report.Repository {
@@ -168,10 +170,10 @@ func validateReport(report Report) error {
 			return errors.New("source impact report has invalid or duplicate route results")
 		}
 		seen[key] = true
-		if report.Framework == "go-nethttp" {
+		if report.Framework == "go-nethttp" || report.Framework == "node-http" {
 			for _, route := range []*Route{result.Before, result.After} {
 				if route != nil && route.RegistrationHash == "" {
-					return errors.New("Go net/http source impact route has no registration fingerprint")
+					return errors.New("HTTP source impact route has no registration fingerprint")
 				}
 			}
 		}

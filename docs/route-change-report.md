@@ -1,21 +1,46 @@
 # Preview route change reports
 
 For local source changes, use [route source impact](route-source-impact.md)
-to connect FastAPI handlers and shared modules to affected endpoints before
-deployment.
+to connect supported application handlers and shared modules to affected
+endpoints before deployment.
 
 `gregale preview report` assembles a read-only review of a preview's
 HTTP surface. It compares captured deployment contracts and gateway policies,
 revision-attributed traffic observations, and supplied test
 evidence. It does not deploy, invoke routes, change policy, or post a PR comment.
-The report covers the selected preview app; a multi-workload PR requires
-one report per member preview.
+The report covers the selected preview app. Use `gregale preview review` to
+combine several member previews into one release-wide review.
 
 ```sh
 gregale preview report pr-42-checkout
 gregale preview report pr-42-checkout --json > route-report.json
 gregale preview report pr-42-checkout --format markdown > route-report.md
 ```
+
+For a release that spans multiple preview apps, review all services in one
+command. Route paths remain scoped to their app, and release priorities put
+blockers first, then use observed tenant/consumer reach and requests to order
+routes at the same priority:
+
+```sh
+gregale preview review pr-42-checkout pr-42-catalog \
+  --source-impact pr-42-checkout=checkout-impact.json \
+  --source-impact pr-42-catalog=catalog-impact.json \
+  --test-report pr-42-checkout=checkout-tests.json \
+  --test-report pr-42-catalog=catalog-tests.json \
+  --format markdown
+```
+
+The JSON result uses a version 1 release envelope containing each app's full
+version 7 preview report and a release-wide `review_priorities` list. Repeat
+`--baseline-deployment`, `--source-impact`, `--test-report`, and `--requirements`
+with `PREVIEW=VALUE` to bind optional evidence to the correct app. The command
+accepts up to 20 unique preview slugs. An unavailable preview is listed as
+incomplete and causes a nonzero exit; the `--fail-on-*` flags apply across all
+available app reports. `--fail-on-requirements` requires a requirements file for
+every preview. Customer identity details remain omitted unless
+`--customer-details` is supplied. Combined local evidence files are limited to
+64 MiB per release review.
 
 Markdown can be attached to a CI job summary. JSON uses a `version: 7` envelope,
 with or without `--source-impact`. Update consumers that accepted only earlier

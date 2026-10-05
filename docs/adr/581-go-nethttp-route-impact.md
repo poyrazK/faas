@@ -19,7 +19,8 @@ version 3 for Go reports because Go snapshots and routes include new provenance
 fields. Preview reports accept both versions.
 
 Support literal method/path and path-only registrations on the default mux and
-on mux values created by `http.NewServeMux`. Resolve local handler functions,
+on mux values created by `http.NewServeMux`, including registration helpers
+whose mux parameter is typed as `*http.ServeMux`. Resolve local handler functions,
 anonymous handlers, `http.HandlerFunc` wrappers, and direct calls through
 same-module imports. Expand Go's `GET` pattern to `GET` and `HEAD`; expand
 methodless path patterns to the supported standard methods. Fingerprint each

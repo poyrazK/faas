@@ -192,6 +192,35 @@ func health(http.ResponseWriter, *http.Request) {}
 	}
 }
 
+func TestGoNetHTTPDetectsMuxPassedToRegistrationHelper(t *testing.T) {
+	index, err := indexSource(t.Context(), testSnapshot(map[string]string{
+		"go.mod": "module example.com/store\n\ngo 1.25\n",
+		"main.go": `package main
+import web "net/http"
+func main() {
+	mux := web.NewServeMux()
+	registerRoutes(mux)
+}
+func registerRoutes(router *web.ServeMux) {
+	router.HandleFunc("GET /health", health)
+}
+func registerNestedCustom(mux *web.ServeMux) {
+	{
+		mux := new(customRouter)
+		mux.HandleFunc("GET /not-net-http", health)
+	}
+}
+func health(web.ResponseWriter, *web.Request) {}
+`,
+	}), "go-nethttp", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(index.Routes) != 2 || len(index.Issues) != 0 || index.Routes[0].Path != "/health" || index.Routes[1].Path != "/health" {
+		t.Fatalf("typed ServeMux registration helper was not followed: %+v", index)
+	}
+}
+
 func TestGoNetHTTPRecognizesZeroValueMuxAndRejectsShadowedRouter(t *testing.T) {
 	index, err := indexSource(t.Context(), testSnapshot(map[string]string{
 		"go.mod": "module example.com/store\n\ngo 1.25\n",

@@ -67,7 +67,8 @@ func semanticFileChanges(changes []FileChange, before, after sourceIndex, initia
 }
 
 func handlerChanged(before, after Route, changes []FileChange, oldIndex, newIndex sourceIndex) bool {
-	if before.Source.File != after.Source.File || before.Handler != after.Handler || before.HandlerSymbol != after.HandlerSymbol || before.RegistrationHash != after.RegistrationHash {
+	if before.Source.File != after.Source.File || before.Handler != after.Handler || before.HandlerSymbol != after.HandlerSymbol ||
+		before.RegistrationHash != after.RegistrationHash || !sameStringSequence(before.DependencySymbols, after.DependencySymbols) {
 		return true
 	}
 	old, oldExists := oldIndex.Symbols[before.HandlerSymbol]
@@ -76,6 +77,18 @@ func handlerChanged(before, after Route, changes []FileChange, oldIndex, newInde
 		return old.Hash != current.Hash
 	}
 	return handlerFileChanged(before, after, changes)
+}
+
+func sameStringSequence(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // Function references include direct calls and callback references. They are

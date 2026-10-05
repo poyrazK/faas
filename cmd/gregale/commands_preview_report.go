@@ -110,7 +110,7 @@ func cmdPreviewReport(args []string) int {
 	customerDetails := fs.Bool("customer-details", false, "include observed consumer and tenant IDs in the report")
 	baseline := fs.String("baseline-deployment", "", "explicit parent deployment ID")
 	tests := fs.String("test-report", "", "JSON receipts from gregale test")
-	sourceImpact := fs.String("source-impact", "", "version 2 FastAPI or version 3 Go net/http report from gregale routes impact")
+	sourceImpact := fs.String("source-impact", "", "route impact report from gregale routes impact")
 	requirements := fs.String("requirements", "", "versioned route requirements YAML or JSON file")
 	failRequestBreaking := fs.Bool("fail-on-request-breaking", false, "exit 1 for known request-contract restrictions")
 	failSecurity := fs.Bool("fail-on-security-regression", false, "exit 1 for known reductions in declared authentication requirements")

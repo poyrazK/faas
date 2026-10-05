@@ -25,7 +25,8 @@ const fastAPIScopeDescription = "Static FastAPI HTTP registrations, module-level
 
 const scopeDescription = fastAPIScopeDescription
 
-const goNetHTTPScopeDescription = "Static Go net/http ServeMux registrations and local function references within the selected source root. Function chains are potential call paths, not runtime traces. Dynamic patterns, handlers, and route construction remain explicit uncertainty. No linked changes does not prove a route is unaffected; configuration, data, and dynamic code are not verified."
+const goNetHTTPScopeDescription = "Static Go net/http ServeMux, Chi, and Gin route registrations, literal Chi mounts and Gin route groups, resolvable local middleware functions, and local function references within the selected source root. Function chains are potential call paths, not runtime traces. Dynamic patterns, handlers, unresolved mounts, and unresolved middleware remain explicit uncertainty. No linked changes does not prove a route is unaffected; configuration, data, and dynamic code are not verified."
+const nodeHTTPScopeDescription = "Static Express and Hono route registrations, literal local router mounts, resolvable local handlers and middleware, and local function references within the selected source root. JavaScript and TypeScript are parsed with a bundled TypeScript parser; application modules and dependencies are never loaded or executed. Dynamic paths, conditional registrations, unresolved handlers, and unsupported router factories remain explicit uncertainty. No linked changes does not prove a route is unaffected; configuration, data, and dynamic code are not verified."
 
 // Analyze compares a resolved baseline commit with a commit or working tree.
 // It does not contact Gregale, install dependencies, or execute customer code.
@@ -40,8 +41,8 @@ func Analyze(ctx context.Context, options Options) (Report, error) {
 	if framework == "" {
 		framework = "auto"
 	}
-	if framework != "auto" && framework != "fastapi" && framework != "go-nethttp" {
-		return Report{}, errors.New("--framework must be auto, fastapi, or go-nethttp")
+	if framework != "auto" && framework != "fastapi" && framework != "go-nethttp" && framework != "node-http" {
+		return Report{}, errors.New("--framework must be auto, fastapi, go-nethttp, or node-http")
 	}
 	if options.Entrypoint != "" && !validEntrypoint(options.Entrypoint) {
 		return Report{}, errors.New("--entrypoint must be a Python module:variable")
@@ -76,7 +77,7 @@ func Analyze(ctx context.Context, options Options) (Report, error) {
 	if framework == "auto" {
 		framework = detectFramework(base, candidate)
 	}
-	if framework == "go-nethttp" && options.Entrypoint != "" {
+	if framework != "fastapi" && options.Entrypoint != "" {
 		return Report{}, errors.New("--entrypoint is only supported with --framework fastapi")
 	}
 	fingerprintForFramework(&base, framework)
@@ -109,6 +110,16 @@ func detectFramework(base, candidate sourceSnapshot) string {
 	}
 	if snapshotHasSource(base, ".go") || snapshotHasSource(candidate, ".go") {
 		return "go-nethttp"
+	}
+	for path := range base.files {
+		if nodeSourcePath(path) {
+			return "node-http"
+		}
+	}
+	for path := range candidate.files {
+		if nodeSourcePath(path) {
+			return "node-http"
+		}
 	}
 	return "fastapi"
 }
@@ -149,6 +160,9 @@ func indexSource(ctx context.Context, snapshot sourceSnapshot, arguments ...stri
 	}
 	if framework == "go-nethttp" {
 		return indexGoNetHTTP(snapshot)
+	}
+	if framework == "node-http" {
+		return indexNodeHTTP(ctx, snapshot)
 	}
 	type source struct {
 		File string `json:"file"`
@@ -205,13 +219,21 @@ func compare(base, candidate sourceSnapshot, before, after sourceIndex, root, ap
 	base.meta.Entrypoint, candidate.meta.Entrypoint = before.Entrypoint, after.Entrypoint
 	scopeDescription := fastAPIScopeDescription
 	sourceExtension := ".py"
+	sourcePath := func(path string) bool { return strings.HasSuffix(path, sourceExtension) }
 	if framework == "go-nethttp" {
 		scopeDescription = goNetHTTPScopeDescription
 		sourceExtension = ".go"
+		sourcePath = func(path string) bool { return strings.HasSuffix(path, ".go") }
+	}
+	if framework == "node-http" {
+		scopeDescription = nodeHTTPScopeDescription
+		sourcePath = nodeSourcePath
 	}
 	version := 2
 	if framework == "go-nethttp" {
 		version = 3
+	} else if framework == "node-http" {
+		version = 4
 	}
 	report := Report{Version: version, Framework: framework, App: app, SourceRoot: root, Status: "complete",
 		Scope: scopeDescription, Base: base.meta, Candidate: candidate.meta, ChangedFiles: fileChanges(base, candidate),
@@ -229,10 +251,12 @@ func compare(base, candidate sourceSnapshot, before, after sourceIndex, root, ap
 		}
 	}
 	for _, change := range report.ChangedFiles {
-		if !strings.HasSuffix(change.File, sourceExtension) {
+		if !sourcePath(change.File) {
 			code, language := "non_python_change", "Python"
 			if framework == "go-nethttp" {
 				code, language = "non_go_change", "Go"
+			} else if framework == "node-http" {
+				code, language = "non_node_change", "JavaScript or TypeScript"
 			}
 			report.Issues = append(report.Issues, Issue{Code: code, File: change.File,
 				Message: "Changes outside " + language + " source files are not mapped to routes."})
