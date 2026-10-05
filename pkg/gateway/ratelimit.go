@@ -116,6 +116,9 @@ type Limiter struct {
 	// consult fails; until then requests use the local decision without
 	// waiting on Postgres.
 	centralOpenUntil atomic.Int64
+	// coalescer batches concurrent consults for one central counter when the
+	// backend implements CentralBatchBackend.
+	coalescer centralCoalescer
 }
 
 type bucket struct {
@@ -705,15 +708,25 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 // consumeCentral performs one authoritative consume, bounded by
 // centralConsultTimeout and skipped while the breaker is open. A failure opens
 // the breaker for centralBreakerWindow; a success closes it. A caller that
-// gave up (client disconnect) does not open it.
+// gave up (client disconnect) does not open it. Concurrent consults for one
+// counter are batched when the backend supports it (centralCoalescer).
 func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan string, rps, burst float64) (int, bool, error) {
 	now := l.now()
 	if until := l.centralOpenUntil.Load(); until != 0 && now.UnixNano() < until {
 		return 0, false, errCentralBreakerOpen
 	}
-	consultCtx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
-	defer cancel()
-	remaining, admitted, err := l.central.ConsumeToken(consultCtx, scope, subjectID, plan, rps, burst)
+	var (
+		remaining int
+		admitted  bool
+		err       error
+	)
+	if batch, ok := l.central.(CentralBatchBackend); ok {
+		remaining, admitted, err = l.coalescer.consume(ctx, l.central, batch, scope, subjectID, plan, rps, burst)
+	} else {
+		consultCtx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
+		remaining, admitted, err = l.central.ConsumeToken(consultCtx, scope, subjectID, plan, rps, burst)
+		cancel()
+	}
 	if err != nil {
 		if ctx.Err() == nil {
 			l.centralOpenUntil.Store(now.Add(centralBreakerWindow).UnixNano())

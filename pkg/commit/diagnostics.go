@@ -22,6 +22,11 @@ type DiagnosticCheck struct {
 // credential. It does not register credentials, claim events, or establish
 // connectivity from the scheduler's network. Driver errors never escape.
 func CheckDatabase(ctx context.Context, raw, source string) []DiagnosticCheck {
+	return CheckDatabaseVersion(ctx, raw, source, 1)
+}
+
+// CheckDatabaseVersion also checks the source routing schema contract.
+func CheckDatabaseVersion(ctx context.Context, raw, source string, version int) []DiagnosticCheck {
 	check := DiagnosticCheck{Name: "local_database", State: "fail", Code: "invalid_connection", Action: "Supply a PostgreSQL URL with sslmode=verify-full; use PGSSLROOTCERT for the trusted CA."}
 	if err := ValidateConnection(raw); err != nil {
 		return []DiagnosticCheck{check}
@@ -46,15 +51,19 @@ func CheckDatabase(ctx context.Context, raw, source string) []DiagnosticCheck {
 	if err := pool.Ping(ctx); err != nil {
 		return []DiagnosticCheck{check}
 	}
-	return CheckDatabasePool(ctx, pool, source)
+	return CheckDatabasePoolVersion(ctx, pool, source, version)
 }
 
 // CheckDatabasePool checks the supported schema, owner binding and relay role
 // grants without exercising any DML. It also supports real database fixtures.
 func CheckDatabasePool(ctx context.Context, pool *pgxpool.Pool, source string) []DiagnosticCheck {
+	return CheckDatabasePoolVersion(ctx, pool, source, 1)
+}
+
+func CheckDatabasePoolVersion(ctx context.Context, pool *pgxpool.Pool, source string, version int) []DiagnosticCheck {
 	checks := []DiagnosticCheck{{Name: "local_database", State: "pass", Code: "connected"}}
 	schema := DiagnosticCheck{Name: "schema", State: "pass", Code: "qualified"}
-	if err := QualifySchema(ctx, pool); err != nil {
+	if err := QualifySchemaVersion(ctx, pool, version); err != nil {
 		schema.State, schema.Code, schema.Action = "fail", "schema_unqualified", "Install the documented schema or explicit upgrade as the database owner."
 		return append(checks, schema)
 	}

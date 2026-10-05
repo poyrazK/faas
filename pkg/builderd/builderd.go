@@ -132,6 +132,12 @@ type Config struct {
 	// reuse. The guaranteed builder slot uses this bound for every capture
 	// and restore decision.
 	WarmIdle time.Duration `toml:"warm_idle"`
+	// DisableWarmBuilders turns off warm-builder capture and restore; every
+	// build cold-boots a fresh builder VM (the dependency cache still applies).
+	// cmd/builderd sets it unless the operator opts in, because a restore
+	// resumes a guest kernel whose mounted ext4 state predates builderd's
+	// offline edits of the same drive (see prepareWarmBuilder).
+	DisableWarmBuilders bool `toml:"-"`
 	// BuilderNodeID is the compute_node name stamped onto every
 	// provenance row this Builderd writes (ADR-038, Tier 3 / issue
 	// #197 B3.1). Defaulted to "default-local" on the one-box by
@@ -292,8 +298,18 @@ func (b *Builderd) WarmState() WarmState {
 	return b.warm.State()
 }
 
+// Production keeps warm builders off (Config.DisableWarmBuilders). A captured
+// builder is snapshotted with drive1 mounted, and refreshWarmBuilderDrive then
+// rewrites build.json, src.tar, and the entropy seed in the image with debugfs.
+// The restored guest kernel still holds its pre-edit dentry, inode, and ext4
+// block-group state. On production-us (2026-10-04) the restored build failed
+// with "read build entropy seed: no such file or directory": the seed's cached
+// negative dentry hid the new file. The same staleness can serve the previous
+// manifest or source, or let the guest allocate blocks debugfs just used. A
+// second warm attempt fell back to cold boot after 24 s. Re-enable only once
+// per-build inputs reach the guest without editing a mounted filesystem.
 func (b *Builderd) prepareWarmBuilder(ctx context.Context, slot SlotDecision, req VMRequest) (WarmVM, WarmRestoreResult, WarmSnapshot, bool) {
-	if slot.Label != "guaranteed" || req.WarmScopeKey == "" {
+	if b.cfg.DisableWarmBuilders || slot.Label != "guaranteed" || req.WarmScopeKey == "" {
 		return nil, "", WarmSnapshot{}, false
 	}
 	warmVM, ok := b.vm.(WarmVM)
@@ -617,7 +633,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.recoverClaimAfterLookupFailure(ctx, build, "load deployment", err)
 		return BuildResult{}, fmt.Errorf("builderd: load deployment: %w", err)
 	}
-	app, err := b.store.AppByID(ctx, dep.AppID)
+	app, err := state.AppForDeployment(ctx, b.store, dep)
 	if err != nil {
 		b.recoverClaimAfterLookupFailure(ctx, build, "load app", err)
 		return BuildResult{}, fmt.Errorf("builderd: load app: %w", err)

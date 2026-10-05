@@ -60,6 +60,15 @@ func (s *PgStore) IssueObjectURLCredential(ctx context.Context, c ObjectS3Creden
 	if _, err = q.ObjectURLCredentialLockBucket(ctx, tx, sqlc.ObjectURLCredentialLockBucketParams{ID: mustPgUUID(c.BucketID), AccountID: mustPgUUID(c.AccountID)}); err != nil {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
 	}
+	if c.URL.Request.Method == http.MethodPut {
+		_, fenceErr := q.ObjectBucketWriteFenceRead(ctx, tx, mustPgUUID(c.BucketID))
+		if fenceErr == nil {
+			return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrObjectBucketWriteFenced
+		}
+		if !errors.Is(fenceErr, pgx.ErrNoRows) {
+			return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(fenceErr)
+		}
+	}
 	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(c.AccountID)); err != nil {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, mapErr(err)
 	}

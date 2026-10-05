@@ -57,6 +57,28 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 	if !ok {
 		return
 	}
+	app, environment, problem := s.appEnvironmentSettings(w, r, acct, app, false)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if environment.Slug != "" {
+		resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
+		resp.URL = projectEnvironmentWorkloadURL(environment.ID, app.ID)
+		resp.CanonicalURL = resp.URL
+		_, err := s.store.LiveDeploymentForScope(r.Context(), app.ID, environment.Slug)
+		switch {
+		case err == nil:
+			resp.DeploymentAvailability = api.AppDeploymentAvailabilityLive
+		case errors.Is(err, state.ErrNotFound):
+			resp.DeploymentAvailability = api.AppDeploymentAvailabilityMissing
+		default:
+			api.WriteProblem(w, api.ErrCapacity("could not resolve environment deployment availability"))
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 	resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
 	if _, err := s.store.LiveDeployment(r.Context(), app.ID); err == nil {
 		resp.DeploymentAvailability = api.AppDeploymentAvailabilityLive
@@ -937,6 +959,11 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
+	app, environment, environmentProblem := s.appEnvironmentSettings(w, r, acct, app, true)
+	if environmentProblem != nil {
+		api.WriteProblem(w, environmentProblem)
+		return
+	}
 	var req api.UpdateAppRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
@@ -1445,6 +1472,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			Password: req.PublicAuth.BasicPass,
 			Sealed:   publicAuthSealed,
 		}
+	}
+	if environment.Slug != "" {
+		s.updateEnvironmentAppSettings(w, r, acct, app, environment, params)
+		return
 	}
 	configActivityAtomic := false
 	var configActivityOutboxID int64
@@ -2264,6 +2295,34 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(target, app))
 }
 
+// zeroTrafficRollbackCandidates lists, newest first, the app's live
+// deployments receiving 0% traffic: explicit rollback targets that the default
+// rollback cannot choose between. A traffic split followed by `traffic
+// promote` leaves the former production deployment in this state rather than
+// superseded. The list is advisory; a read error just omits it.
+func (s *server) zeroTrafficRollbackCandidates(ctx context.Context, appID string) []string {
+	const scan = 50
+	deployments, err := s.store.ListDeploymentsForApp(ctx, appID, scan, 0)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, d := range deployments {
+		if d.Status != state.DeployLive || d.TrafficPercent != 0 {
+			continue
+		}
+		ref := d.ID
+		if d.Revision > 0 {
+			ref = fmt.Sprintf("v%d", d.Revision)
+		}
+		out = append(out, ref)
+		if len(out) == 5 {
+			break
+		}
+	}
+	return out
+}
+
 // rollbackAppCore performs the shared rollback state transition for the REST
 // and dashboard surfaces. The caller owns authentication and app lookup;
 // this helper owns target selection, notifications, and audit records so the
@@ -2317,7 +2376,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	} else {
 		target, err = s.store.LatestSupersededDeployment(ctx, app.ID)
 		if err != nil {
-			return state.Deployment{}, api.ErrNoRollbackTarget()
+			return state.Deployment{}, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
 		}
 	}
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
@@ -3469,10 +3528,19 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 		Checks:     []api.DomainDoctorCheck{},
 		Healthy:    true,
 	}
-	// 1. DNS record found.
-	dnsStatus, dnsDetail, dnsRem := probeOK, "A or AAAA records present", ""
+	// 1. DNS record found. The failing case used to keep the success
+	// detail ("A or AAAA records present") and ask for an A/AAAA record,
+	// while `domains add` and points_to_gregale both ask for the Gregale
+	// CNAME. The address lookups follow CNAMEs, so that record satisfies
+	// this check too (production-us, 2026-10-04).
+	dnsStatus, dnsDetail, dnsRem := probeOK, "the domain resolves", ""
 	if !obs.DNSRecordFound {
-		dnsStatus, dnsRem = probeFail, "Publish an A or AAAA record at "+d.Domain
+		dnsStatus, dnsDetail = probeFail, "no DNS record resolves at "+d.Domain
+		if expected := customDomainTarget(); expected != "" && !strings.EqualFold(expected, d.Domain) {
+			dnsRem = routingRemediation(d.Domain, expected)
+		} else {
+			dnsRem = "Publish the record shown by `gregale domains add` at " + d.Domain
+		}
 		report.Healthy = false
 	}
 	report.Checks = append(report.Checks, api.DomainDoctorCheck{
@@ -4723,7 +4791,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 				"account", acct.ID,
 				"from", logsanitize.Field(string(acct.Plan)),
 				"to", logsanitize.Field(string(plan)),
-				"err", err)
+				"err", logsanitize.FieldAny(err))
 			if errors.Is(err, billing.ErrAlreadyCancelled) {
 				api.WriteProblem(w, api.NewProblem(http.StatusConflict,
 					api.CodeConflict, "billing subscription unavailable",

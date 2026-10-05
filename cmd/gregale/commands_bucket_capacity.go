@@ -18,6 +18,9 @@ func cmdBucket(args []string) int {
 	if len(args) > 0 && args[0] == "object-lock" {
 		return cmdBucketObjectLock(args[1:])
 	}
+	if len(args) > 0 && args[0] == "protection" {
+		return cmdVersionProtection(args[1:])
+	}
 	if len(args) > 0 && args[0] == "encryption-keys" {
 		return cmdBucketEncryptionKeys(args[1:])
 	}

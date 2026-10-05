@@ -87,3 +87,27 @@ func TestPg_ReleaseIdempotent(t *testing.T) {
 		t.Fatalf("completed response after release = %d %q %v, want it kept", status, body, err)
 	}
 }
+
+// TestPg_ReclaimIdempotent — apid reclaims a stored deploy response whose
+// deployment has since failed, so the same deploy runs again. The reclaim
+// must only take the exact response the caller read, and only once.
+func TestPg_ReclaimIdempotent(t *testing.T) {
+	s, ctx := pgStore(t)
+	acctID, _, _ := seedLiveDeploy(t, s, ctx)
+	const key = "POST /v1/apps/a/deployments\nk"
+	if err := s.PutIdempotent(ctx, acctID, key, 202, []byte(`{"id":"dep-1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.ReclaimIdempotent(ctx, acctID, key, 202, []byte(`{"id":"dep-0"}`)); err != nil || ok {
+		t.Fatalf("reclaim with another body = %v err=%v, want refused", ok, err)
+	}
+	if ok, err := s.ReclaimIdempotent(ctx, acctID, key, 202, []byte(`{"id":"dep-1"}`)); err != nil || !ok {
+		t.Fatalf("reclaim = %v err=%v, want reclaimed", ok, err)
+	}
+	if ok, err := s.ReclaimIdempotent(ctx, acctID, key, 202, []byte(`{"id":"dep-1"}`)); err != nil || ok {
+		t.Fatalf("second reclaim = %v err=%v, want refused (already in flight)", ok, err)
+	}
+	if res, err := s.ReserveIdempotent(ctx, acctID, key, time.Hour); err != nil || !res.InFlight {
+		t.Fatalf("reserve after reclaim = %+v err=%v, want in-flight", res, err)
+	}
+}

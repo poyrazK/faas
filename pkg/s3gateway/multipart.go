@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -173,7 +174,7 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 		upstream.Header.Set(name, value)
 	}
 	safeToSettle = false
-	response, err := h.client.Do(upstream)
+	response, err := h.doMutationRequest(upstream, req)
 	if err != nil {
 		if integrity.err != nil && h.writeAWSChunkedError(w, r, req.requestID, integrity.err) {
 			return
@@ -277,7 +278,9 @@ func (h *Handler) abortMultipart(w http.ResponseWriter, r *http.Request, req req
 	if !h.recordProviderRequest(w, r, req) {
 		return
 	}
-	if err = req.provider.AbortMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartAbortRequest{Key: claimed.Key, ProviderUploadID: claimed.ProviderUploadID}); err != nil {
+	if err = h.mutate(r.Context(), req, func(mutationCtx context.Context) error {
+		return req.provider.AbortMultipartUpload(mutationCtx, req.bucket.PhysicalName, objectstorage.MultipartAbortRequest{Key: claimed.Key, ProviderUploadID: claimed.ProviderUploadID})
+	}); err != nil {
 		h.providerError(w, r, req, err, key)
 		return
 	}
@@ -481,7 +484,9 @@ func (h *Handler) activatePublicMultipart(w http.ResponseWriter, r *http.Request
 		h.writeMultipartError(w, r, req, claimErr, "OperationAborted")
 		return state.ObjectMultipartUpload{}, false
 	}
-	providerID, providerErr := h.ensureCapturedMultipart(r.Context(), req, claimed)
+	providerID, providerErr := objectstorageactivity.Execute(r.Context(), h.store, req.bucket, func(mutationCtx context.Context) (string, error) {
+		return h.ensureCapturedMultipart(mutationCtx, req, claimed)
+	})
 	if providerErr != nil {
 		h.providerError(w, r, req, providerErr, upload.Key)
 		return state.ObjectMultipartUpload{}, false
@@ -496,4 +501,69 @@ func (h *Handler) activatePublicMultipart(w http.ResponseWriter, r *http.Request
 		return state.ObjectMultipartUpload{}, false
 	}
 	return upload, true
+}
+
+func (h *Handler) proxyMultipartPart(w http.ResponseWriter, r *http.Request, req requestContext, upload state.ObjectMultipartUpload, part int32) {
+	key := upload.Key
+	if r.ContentLength < 1 || r.ContentLength > min(h.registry.MaxUploadBytes, api.MaxObjectSinglePutBytes) {
+		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
+		return
+	}
+	if !h.admit(w, r, req, key, 0, false) {
+		return
+	}
+	integrity, err := newRequestIntegrityReader(r.Body, r.ContentLength, req.signature.PayloadHash, r.Header)
+	if err != nil {
+		h.writeAWSChunkedError(w, r, req.requestID, err)
+		return
+	}
+	if !h.recordProviderRequest(w, r, req) {
+		return
+	}
+	signed, err := req.provider.PresignMultipartPart(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartPartRequest{
+		Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumber: part, SizeBytes: r.ContentLength, ExpiresIn: 60,
+	})
+	if err != nil {
+		h.providerError(w, r, req, err, key)
+		return
+	}
+	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodPut, signed.URL, io.LimitReader(integrity, r.ContentLength))
+	if err != nil {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
+		return
+	}
+	upstream.ContentLength = r.ContentLength
+	for name, value := range signed.Headers {
+		upstream.Header.Set(name, value)
+	}
+	response, err := h.doMutationRequest(upstream, req)
+	if err != nil {
+		if integrity.err != nil && h.writeAWSChunkedError(w, r, req.requestID, integrity.err) {
+			return
+		}
+		if req.streaming != nil && req.streaming.err != nil && h.writeAWSChunkedError(w, r, req.requestID, req.streaming.err) {
+			return
+		}
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
+		return
+	}
+	defer h.closeResponseBody(response.Body, req.requestID)
+	if integrity.err != nil && h.writeAWSChunkedError(w, r, req.requestID, integrity.err) {
+		return
+	}
+	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && integrity.remaining != 0 {
+		writeS3Error(w, http.StatusBadRequest, "IncompleteBody", "You did not provide the number of bytes specified by Content-Length.", r.URL.Path, req.requestID)
+		return
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		h.providerHTTPError(w, r, req, response.StatusCode, key)
+		return
+	}
+	etag := response.Header.Get("ETag")
+	if etag == "" {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
+		return
+	}
+	w.Header().Set("ETag", etag)
+	w.WriteHeader(http.StatusOK)
 }

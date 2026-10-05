@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -243,37 +244,45 @@ func (s *server) signObjectMultipartPart(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
-	if upload.State != state.ObjectMultipartActive || !upload.ExpiresAt.After(time.Now()) {
-		bucketProblem(w, state.ErrConflict)
+	part, ok := prepareObjectMultipartPartSign(w, r, upload)
+	if !ok {
 		return
 	}
-	part64, err := strconv.ParseInt(r.PathValue("part"), 10, 32)
-	if err != nil {
-		bucketProblem(w, objectstorage.ErrInvalid)
-		return
-	}
-	part := int32(part64)
-	partBytes, err := multipartPartSize(upload, part)
-	if err != nil {
-		bucketProblem(w, err)
-		return
-	}
-	var req api.ObjectMultipartPartSignRequest
-	if !decodeBucketRequest(w, r, &req) {
-		return
-	}
-	if req.ExpiresIn < 0 || req.ExpiresIn > api.ObjectMultipartPartURLMaxTTLSeconds {
-		bucketProblem(w, objectstorage.ErrInvalid)
-		return
-	}
-	out, err := s.issueObjectMultipartPartURL(r, bucket, upload, objectstorage.MultipartPartRequest{
-		Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumber: part, SizeBytes: partBytes, ExpiresIn: req.ExpiresIn,
-	})
+	out, err := s.issueObjectMultipartPartURL(r, bucket, upload, part)
 	if err != nil {
 		bucketProblem(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func prepareObjectMultipartPartSign(w http.ResponseWriter, r *http.Request, upload state.ObjectMultipartUpload) (objectstorage.MultipartPartRequest, bool) {
+	if upload.State != state.ObjectMultipartActive || !upload.ExpiresAt.After(time.Now()) {
+		bucketProblem(w, state.ErrConflict)
+		return objectstorage.MultipartPartRequest{}, false
+	}
+	part64, err := strconv.ParseInt(r.PathValue("part"), 10, 32)
+	if err != nil {
+		bucketProblem(w, objectstorage.ErrInvalid)
+		return objectstorage.MultipartPartRequest{}, false
+	}
+	part := int32(part64)
+	partBytes, err := multipartPartSize(upload, part)
+	if err != nil {
+		bucketProblem(w, err)
+		return objectstorage.MultipartPartRequest{}, false
+	}
+	var req api.ObjectMultipartPartSignRequest
+	if !decodeBucketRequest(w, r, &req) {
+		return objectstorage.MultipartPartRequest{}, false
+	}
+	if req.ExpiresIn < 0 || req.ExpiresIn > api.MaxObjectSignedURLExpiresSeconds {
+		bucketProblem(w, objectstorage.ErrInvalid)
+		return objectstorage.MultipartPartRequest{}, false
+	}
+	return objectstorage.MultipartPartRequest{
+		Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, PartNumber: part, SizeBytes: partBytes, ExpiresIn: req.ExpiresIn,
+	}, true
 }
 
 func (s *server) completeObjectMultipartUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -399,9 +408,11 @@ func (s *server) executeObjectMultipartOperation(ctx context.Context, store stat
 			for _, part := range upload.Parts {
 				parts = append(parts, objectstorage.CompletedPart{PartNumber: part.PartNumber, ETag: part.ETag})
 			}
-			err = objectstorage.CompleteMultipart(callCtx, backend.Provider, bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
-				SessionID: upload.ID, Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, SizeBytes: upload.SizeBytes, Parts: parts,
-			}, upload.CompletionConditions)
+			err = objectstorageactivity.Run(callCtx, s.store, bucket, func(mutationCtx context.Context) error {
+				return objectstorage.CompleteMultipart(mutationCtx, backend.Provider, bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
+					SessionID: upload.ID, Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, SizeBytes: upload.SizeBytes, Parts: parts,
+				}, upload.CompletionConditions)
+			})
 			if err == nil {
 				err = finishObjectMultipartOperation(ctx, func(finishCtx context.Context) error {
 					return store.FinishObjectMultipartUpload(finishCtx, upload.ID, upload.LeaseToken, state.ObjectMultipartCompleted)
@@ -463,7 +474,9 @@ func (s *server) retryObjectMultipartOperation(ctx context.Context, store state.
 
 func (s *server) executeObjectMultipartAbort(ctx context.Context, store state.ObjectMultipartUploadStore, bucket state.ObjectBucket, u state.ObjectMultipartUpload, provider objectstorage.Provider) error {
 	request := objectstorage.MultipartAbortRequest{Key: u.Key, ProviderUploadID: u.ProviderUploadID}
-	if err := provider.AbortMultipartUpload(ctx, bucket.PhysicalName, request); err != nil {
+	if err := objectstorageactivity.Run(ctx, s.store, bucket, func(mutationCtx context.Context) error {
+		return provider.AbortMultipartUpload(mutationCtx, bucket.PhysicalName, request)
+	}); err != nil {
 		return err
 	}
 	transfers, ok := store.(state.ObjectMultipartTransferStore)

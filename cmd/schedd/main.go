@@ -1963,10 +1963,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// minter is nil-safe: a dev box without either
 			// source leaves the minter nil and SynthesizeRequest
 			// logs a loud warn + internal_only requests 403.
+			var workflowOutboundMinter sched.WorkflowOutboundMinter
 			if minter, mErr := newSchedInternalSvcMinter(ctx, store, log); mErr != nil {
 				log.Warn("schedd: internal-svc minter not wired; internal_only cron requests will 403 until corrected",
 					"err", mErr.Error())
 			} else {
+				workflowOutboundMinter = minter.MintWorkflow
 				modeLookup := sched.PublicAuthModeFromStore(store.AppByID)
 				internalSvcModeLookup = modeLookup
 				internalSvcTokenMinter = minter.AsFunc()
@@ -1997,8 +1999,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			loop.WithGatewaySynth(synth)
 			if workflowsDispatchEnabled(os.Getenv("FAAS_WORKFLOWS_ENABLED")) {
 				if executor, ok := synth.(sched.WorkflowStepExecutor); ok {
+					orchestrator := sched.NewWorkflowOrchestrator(store, executor, schedulerAuditor, workflowMetrics, log)
+					if os.Getenv("FAAS_WORKFLOW_OUTBOUND_ENABLED") == "1" {
+						key, keyErr := store.LoadClusterSigningKey(ctx)
+						if keyErr != nil || key.RetiredAt != nil {
+							return errors.New("workflow outbound requires an active cluster signing key")
+						}
+						if workflowOutboundMinter == nil {
+							return errors.New("workflow outbound requires the scheduler signing key")
+						}
+						orchestrator.WithOutboundExecutor(sched.NewWorkflowOutboundExecutor(store, workflowOutboundMinter))
+					}
 					loop.WithWorkflowsDispatched(true).
-						WithWorkflowOrchestrator(sched.NewWorkflowOrchestrator(store, executor, schedulerAuditor, workflowMetrics, log)).
+						WithWorkflowOrchestrator(orchestrator).
 						WithWorkflowRetention(sched.NewWorkflowRetention(store, log))
 					log.Info("schedd workflows dispatch enabled — FAAS_WORKFLOWS_ENABLED=1")
 				} else {

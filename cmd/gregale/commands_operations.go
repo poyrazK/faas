@@ -605,6 +605,13 @@ func cmdOperationGet(args []string) int {
 	if len(row.Result) > 0 {
 		_, _ = fmt.Fprintf(os.Stdout, "Result: %s\n", row.Result)
 	}
+	for _, effect := range row.Effects {
+		if effect.DeliveryID == "" {
+			_, _ = fmt.Fprintf(os.Stdout, "Effect %s: %s\n", effect.Name, effect.Status)
+			continue
+		}
+		_, _ = fmt.Fprintf(os.Stdout, "Effect %s: %s (delivery %s, attempt %d)\n", effect.Name, effect.Status, effect.DeliveryID, effect.Attempt)
+	}
 	return 0
 }
 

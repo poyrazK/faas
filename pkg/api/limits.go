@@ -65,6 +65,10 @@ const EnvironmentGitOpsReportCheckInterval = time.Minute
 const EnvironmentGitOpsReportRetryInterval = 30 * time.Second
 const EnvironmentGitOpsReportIdleInterval = 5 * time.Second
 
+// Bound completed report history while retaining recent diagnostic evidence.
+const EnvironmentGitOpsReportRetention = 7 * 24 * time.Hour
+const EnvironmentGitOpsReportRunsMaxPerSource = 1000
+
 // Qualification is separately leased from intent reconciliation. An expired
 // executor cannot publish evidence for a later attempt.
 const EnvironmentGitOpsQualificationLeaseDuration = 5 * time.Minute
@@ -266,6 +270,75 @@ const (
 	RealtimeResumeBearerTokenMaxBytes        = 3072
 )
 
+// Private PostgreSQL copy bounds, independent from data/storage entitlements.
+// An oversized inventory or archive fails capture; it is never truncated.
+const (
+	// Dedicated APID copy-worker service bounds include the process and its
+	// subprocesses. Provider PostgreSQL compute is admitted separately.
+	PostgresCopyWorkerMemoryMaxBytes   int64 = 1 << 30
+	PostgresCopyWorkerCPUMillicoresMax       = 1000
+	PostgresCopyWorkerTasksMax               = 64
+	// Selected source databases per private checkpoint admission barrier.
+	// Oversize sets fail before provider or SQL IO; they are never truncated.
+	PostgresCheckpointDatabasesMax = 1024
+	PostgresCopyInventoryMaxBytes  = 4 << 20
+	PostgresCopyEnvelopeMaxBytes   = PostgresCopyInventoryMaxBytes + (16 << 10)
+	PostgresCopyCiphertextMaxBytes = PostgresCopyEnvelopeMaxBytes + (64 << 10)
+	// PostgresCopyReaderMaxOperations bounds a private reader's retained
+	// provider operation chain. Oversize chains cannot retire ownership.
+	PostgresCopyReaderMaxOperations = 128
+	// Temporary reader ownership has its own structural account ceiling;
+	// reservations also retain the native capture's database quota charge.
+	PostgresCopyReadersPerAccountMax = 64
+	// Private archive transfer bounds are structural, not storage entitlements.
+	PostgresCopyArchiveMaxBytes           int64 = 1 << 40
+	PostgresCopyArchiveCiphertextMaxBytes int64 = 2 * PostgresCopyArchiveMaxBytes
+	PostgresCopyArchiveBytesPerAccountMax int64 = 64 * PostgresCopyArchiveCiphertextMaxBytes
+	PostgresCopyArchivesPerAccountMax           = 4096
+	PostgresCopyToolOutputMaxBytes              = 64 << 10
+	PostgresCopyConnectTimeoutSeconds           = 10
+	// Private import and verification windows share the admission ceiling: one
+	// identity-checking connection and one serial data worker connection.
+	PostgresCopyMaintenanceConnections    = 2
+	PostgresCopyMaintenanceCleanupTimeout = 10 * time.Second
+	// Independent contents verification bounds private worker work, not a storage
+	// entitlement. Row payloads stream; only keyed row digests enter private spools.
+	PostgresCopyContentsRelationsMax          = 65536
+	PostgresCopyContentsTypesMax              = 65536
+	PostgresCopyContentsColumnsMax            = 1 << 20
+	PostgresCopyContentsLargeObjectsMax       = 65536
+	PostgresCopyContentsTypeDepthMax          = 64
+	PostgresCopyContentsSortMemoryMax         = 8 << 20
+	PostgresCopyContentsSortDiskMax     int64 = 64 << 30
+	PostgresCopyContentsSortLevelsMax         = 32
+	PostgresCopyContentsReadBlockBytes        = 1 << 20
+	PostgresCopyContentsCleanupTimeout        = 10 * time.Second
+	// A single private worker owns a node-local contents spool. These bound
+	// simultaneous sort work; they are not VM CPU/RSS or billing allowances.
+	PostgresCopyContentsReadersPerWorkerMax          = 2
+	PostgresCopyContentsSortMemoryPerWorkerMax       = PostgresCopyContentsReadersPerWorkerMax * PostgresCopyContentsSortMemoryMax
+	PostgresCopyContentsSortDiskPerWorkerMax         = PostgresCopyContentsReadersPerWorkerMax * PostgresCopyContentsSortDiskMax
+	PostgresCopyContentsSpoolFreeReserveMin    int64 = 1 << 30
+	// Original manifests retain these account reservations until an explicit
+	// qualified retirement protocol exists; reader cleanup does not release them.
+	PostgresCopyContentsManifestsPerAccountMax       = 4096
+	PostgresCopyContentsBytesPerAccountMax     int64 = 1 << 30
+	// One retained verification result per charged contents owner; aggregate
+	// ciphertext is bounded by the contents owner count (64 MiB per account).
+	PostgresCopyVerificationEnvelopeMaxBytes   = 8 << 10
+	PostgresCopyVerificationCiphertextMaxBytes = 16 << 10
+	// Total native verification attempts per original database, including the
+	// first window. Retries keep closed history and need separate worker admission.
+	PostgresCopyVerificationAttemptsMax = 3
+	// Structural planned read-credit ceilings. Separate from measured resource
+	// usage, worker placement, storage entitlements and monetary billing.
+	PostgresCopyVerificationReadBytesPerDatabaseMax int64 = PostgresCopyVerificationAttemptsMax * PostgresCopyArchiveMaxBytes
+	PostgresCopyVerificationReadBytesPerAccountMax  int64 = PostgresCopyArchiveBytesPerAccountMax
+	// Includes the original proof and two subordinate retry holds. Parent FKs
+	// retain the charged contents owner until all attempt evidence is retired.
+	PostgresCopyVerificationBytesPerAccountMax = PostgresCopyContentsManifestsPerAccountMax * PostgresCopyVerificationAttemptsMax * PostgresCopyVerificationCiphertextMaxBytes
+)
+
 // Operator-configurable object-storage preview safeguards, not plan allowances
 // or billable storage entitlements. Metering/pricing need a separate decision.
 // Native inventory pages are durably staged between bounded worker sweeps.
@@ -332,6 +405,7 @@ const (
 	MaxObjectUploadSpoolBytes           int64 = 5 << 30
 	ObjectUploadSpoolMinFreeBytes       int64 = 1 << 30
 	ObjectTransferTimeout                     = 30 * time.Minute
+	ObjectMutationObservationTimeout          = 5 * time.Second
 	MaxObjectTransferTimeout                  = 24 * time.Hour
 	DefaultObjectConcurrentUploads            = 4
 	MaxObjectConcurrentUploads                = 64
@@ -370,6 +444,11 @@ const (
 	MaxActiveMultipartUploadsPerBucket        = 100
 	ObjectMultipartUploadTTL                  = 24 * time.Hour
 
+	// Admission bounds for brokered upload URLs. Expiry never drains active IO.
+	DefaultObjectSignedURLExpiresSeconds = 300
+	MaxObjectSignedURLExpiresSeconds     = 900
+	ObjectUploadGrantMaxHeaderBytes      = 16 << 10
+	ObjectUploadGrantPruneBatch          = 1000
 	// Fixed-size multipart provider URLs share the same bounds across adapters
 	// and durable signing admission.
 	ObjectMultipartPartURLDefaultTTLSeconds = 300
@@ -416,23 +495,26 @@ const (
 	MaxFOCUSExportBytes = 3 << 20
 	// Managed operations bound durable configuration, queue growth, and leases.
 	// MaxExclusivePoliciesPerAccount counts non-retired policies (ADR-427).
-	MaxExclusivePoliciesPerAccount = 64
-	MaxExclusivePendingPerAccount  = 10000
-	MinExclusiveLeaseSeconds       = 5
-	MaxExclusiveLeaseSeconds       = 300
-	DefaultExclusiveLeaseSeconds   = 30
-	MaxExclusiveAttemptSeconds     = 86400
-	MaxExclusiveMembers            = 100
-	MaxExclusiveIdentityBytes      = 128
-	MaxExclusiveEffectsPerCommit   = 32
-	DefaultExclusiveAttempts       = 5
-	MaxExclusiveAttempts           = 100
-	DefaultExclusiveRetrySeconds   = 5
-	MaxExclusiveRetrySeconds       = 3600
-	MaxExclusiveResultBytes        = 1 << 20
-	MaxExclusiveRequestBytes       = 2 << 20
-	MaxExclusiveErrorBytes         = 1024
-	MaxExclusiveInspectionRows     = 100
+	MaxExclusivePoliciesPerAccount   = 64
+	MaxExclusivePendingPerAccount    = 10000
+	MinExclusiveLeaseSeconds         = 5
+	MaxExclusiveLeaseSeconds         = 300
+	DefaultExclusiveLeaseSeconds     = 30
+	MaxExclusiveAttemptSeconds       = 86400
+	MaxExclusiveMembers              = 100
+	MaxExclusiveIdentityBytes        = 128
+	MaxExclusiveEffectsPerCommit     = 32
+	MaxExclusiveEffectPayloadBytes   = 64 << 10
+	MaxExclusiveEffectTypeBytes      = 256
+	DefaultExclusiveAttempts         = 5
+	MaxExclusiveAttempts             = 100
+	DefaultExclusiveRetrySeconds     = 5
+	MaxExclusiveRetrySeconds         = 3600
+	MaxExclusiveResultBytes          = 1 << 20
+	MaxExclusiveGatewayResponseBytes = MaxExclusiveResultBytes + 4096
+	MaxExclusiveRequestBytes         = 2 << 20
+	MaxExclusiveErrorBytes           = 1024
+	MaxExclusiveInspectionRows       = 100
 
 	OperationStreamLease           = 30 * time.Second
 	OperationStreamRenewInterval   = 10 * time.Second
@@ -888,6 +970,13 @@ type Limits struct {
 	// declare on top of TenantEgressBasePorts (ADR-361). 0 = the plan
 	// cannot declare any (Free/Hobby).
 	EgressExtraPortsMax int
+	// ServiceTCPSessionsPerAccount caps concurrent private TCP sessions an
+	// account's workloads may hold to its own services through the
+	// node-local service TCP proxy (ADR-576). It is enforced per compute
+	// node, like the public raw-TCP account cap, and is independent of
+	// EgressExtraPortsMax: reaching a same-account service is not tenant
+	// egress.
+	ServiceTCPSessionsPerAccount int
 
 	// Secrets (spec §11/G2). Ciphertext quota per app; per-value byte cap.
 	// SecretCountMax bounds the (app_id, scope, key) row count across every
@@ -2203,6 +2292,7 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerDestBurst:      20,
 		EgressFloodDropsPerMinute:      120,
 		EgressExtraPortsMax:            0,
+		ServiceTCPSessionsPerAccount:   16,
 		SecretCountMax:                 8,
 		SecretValueMaxBytes:            4 * 1024,
 		EnvVarsMax:                     16,
@@ -2587,6 +2677,7 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerDestBurst:      40,
 		EgressFloodDropsPerMinute:      240,
 		EgressExtraPortsMax:            0,
+		ServiceTCPSessionsPerAccount:   64,
 		SecretCountMax:                 25,
 		SecretValueMaxBytes:            8 * 1024,
 		EnvVarsMax:                     32,
@@ -2997,6 +3088,7 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerDestBurst:      100,
 		EgressFloodDropsPerMinute:      600,
 		EgressExtraPortsMax:            8,
+		ServiceTCPSessionsPerAccount:   256,
 		SecretCountMax:                 50,
 		SecretValueMaxBytes:            16 * 1024,
 		EnvVarsMax:                     64,
@@ -3369,6 +3461,7 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerDestBurst:      200,
 		EgressFloodDropsPerMinute:      1200,
 		EgressExtraPortsMax:            32,
+		ServiceTCPSessionsPerAccount:   1024,
 		SecretCountMax:                 100,
 		SecretValueMaxBytes:            32 * 1024,
 		EnvVarsMax:                     256,
@@ -5367,7 +5460,31 @@ var (
 )
 
 const (
-	WorkflowRunInputMaxBytes int64 = 1 << 20
+	AutomationSimulationRequestMaxBytes  int64 = 3 << 20
+	AutomationSimulationResponseMaxBytes int64 = 4 << 20
+	AutomationSimulationMaxSteps               = 128
+	AutomationSimulationMaxTraceEntries        = 1024
+	AutomationDefinitionMaxBytes         int64 = 1 << 20
+	AutomationNameMaxBytes                     = 128
+	WorkflowRunInputMaxBytes             int64 = 1 << 20
+	WorkflowWebhookBindingMaxBytes       int64 = 64 << 10
+	WorkflowWebhookFilterMaxBytes              = 32 << 10
+	WorkflowWebhookNameMaxBytes                = 128
+	WorkflowWebhookEventMaxBytes               = 256
+	WorkflowOutboundBodyMaxBytes         int64 = 1 << 20
+	WorkflowOutboundStepNameMaxBytes           = 128
+	WorkflowResumeRequestMaxBytes        int64 = 4096
+	WorkflowRunMaxResumes                      = 16
+	WorkflowForEachMaxItems                    = 128
+	WorkflowForEachNameMaxBytes                = 64
+	WorkflowForEachMaxInputBytes         int64 = 1 << 20
+	WorkflowForEachMaxOutputBytes        int64 = 1 << 20
+	WorkflowJoinMaxDependencies                = 128
+	WorkflowGuardMaxBytes                      = 16 << 10
+	WorkflowGuardMaxDepth                      = 8
+	WorkflowGuardMaxNodes                      = 32
+	WorkflowGuardNumberMaxBytes                = 4096
+	WorkflowGuardNumberMaxExponent             = 4096
 
 	// One-shot execution defaults and hard bounds. Per-plan maxima live in the
 	// arrays above or reuse the plan's existing RAM/disk source of truth.
@@ -8092,6 +8209,17 @@ func (p Plan) EgressExtraPortsMax() int {
 	return l.EgressExtraPortsMax
 }
 
+// ServiceTCPSessionsPerAccount returns the per-node concurrent private TCP
+// session cap for an account on this plan (ADR-576). Unknown plans get 0
+// (fail closed).
+func (p Plan) ServiceTCPSessionsPerAccount() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.ServiceTCPSessionsPerAccount
+}
+
 // tenantEgressForbiddenPorts are TCP ports an app may never add to its
 // egress (ADR-361), with the reason returned to the caller. SMTP stays
 // blocked for spam (spec §11); remote administration and SMB are the
@@ -8234,6 +8362,47 @@ const NamespaceBridgeReadinessMaxBytes = 4096
 // Listeners are a local workload contract, not an unbounded service registry.
 const WorkloadPortCapMax = 16
 
+// ADR-576: private TCP addressing between services.
+const (
+	// ServiceTCPProxyPort is the reserved tenant-bridge port of the node-local
+	// service TCP proxy. No netns rule admits it: guests reach it only through
+	// the host DNAT of a service address.
+	ServiceTCPProxyPort = 10082
+	// ServiceAddressIndexMin and ServiceAddressIndexMax bound an app's
+	// account-scoped index into ServiceAddressCIDR. The block's network and
+	// broadcast addresses are never allocated.
+	ServiceAddressIndexMin = 1
+	ServiceAddressIndexMax = 65534
+	// ServiceAddressReuseQuarantine keeps a deleted app's index out of
+	// allocation far longer than a cached service DNS answer (5 s TTL) or a
+	// lingering client, so a successor app never receives its traffic.
+	ServiceAddressReuseQuarantine = 24 * time.Hour
+	// ServiceTCPWakeTimeout bounds how long the service TCP proxy holds an
+	// accepted connection while a parked target is restored. It matches the
+	// gateway's 30 s wake hold so internal and public cold calls agree.
+	ServiceTCPWakeTimeout = 30 * time.Second
+	// ServiceTCPSessionsPerNodeMax caps concurrent private TCP sessions
+	// through one node's proxy across all accounts, independent of the
+	// per-account plan cap.
+	ServiceTCPSessionsPerNodeMax = 8192
+)
+
+// ServiceTCPReservedPorts belong to the HTTP service mesh on every service
+// address (ADR-576). The TCP proxy refuses them even when a target declares
+// one, so a raw session can never bypass HTTP-layer caller policy.
+func ServiceTCPReservedPorts() []int {
+	return []int{443, ServiceBindingLegacyPort, ServiceBindingPort}
+}
+
+// ServiceAddressCIDR is the block holding every app's service address
+// (ADR-576). It is a platform constant rather than an operator setting
+// because an address must not move when configuration changes. It sits in
+// the RFC 2544 benchmarking range, which is never a legitimate public
+// destination; the OCI puller's egress denylist already refuses it.
+func ServiceAddressCIDR() netip.Prefix {
+	return netip.MustParsePrefix("198.19.0.0/16")
+}
+
 // UDPListenerReservationsPerAppMax bounds all durable reservations, including
 // disabled ones and reservations retained across manifest changes.
 const UDPListenerReservationsPerAppMax = WorkloadPortCapMax
@@ -8367,6 +8536,10 @@ const (
 	ObjectBucketObjectLockRetry             = 30 * time.Second
 	ObjectBucketObjectLockTimeout           = time.Minute
 	ObjectBucketObjectLockBatch       int32 = 50
+	ObjectVersionProtectionLease            = 2 * time.Minute
+	ObjectVersionProtectionRetry            = 30 * time.Second
+	ObjectVersionProtectionTimeout          = 45 * time.Second
+	ObjectVersionProtectionBatch      int32 = 50
 	MaxObjectBucketObjectLockRevision int64 = 1<<53 - 1
 )
 
@@ -8513,3 +8686,6 @@ const (
 	RouteMonitorRecoveryCustomersPerRoute       = 100
 	RouteMonitorRecoveryStateMaxBytes           = 256 << 10
 )
+
+// EnvironmentFieldOwnershipMaxPaths bounds a field ownership request.
+const EnvironmentFieldOwnershipMaxPaths = 1024

@@ -287,8 +287,11 @@ const (
 	ServiceBindingEnvPrefix      = "GREGALE_SERVICE_"
 	ServiceBindingEnvSuffix      = "_URL"
 	ServiceBindingHTTPSEnvSuffix = "_HTTPS_URL"
-	ServiceBindingPort           = 10081
-	ServiceBindingLegacyPort     = 10080
+	// ServiceBindingHostEnvSuffix names the bare service host (ADR-576),
+	// for non-HTTP clients: redis://$GREGALE_SERVICE_CACHE_HOST:6379.
+	ServiceBindingHostEnvSuffix = "_HOST"
+	ServiceBindingPort          = 10081
+	ServiceBindingLegacyPort    = 10080
 
 	// ServiceBindingProbePath is reserved by the gateway for the HTTPS canary
 	// sent by `gregale bindings verify`. The gateway only intercepts it when a
@@ -411,6 +414,13 @@ func ServiceBindingHTTPSEnvKey(name string) string {
 	return strings.TrimSuffix(ServiceBindingEnvKey(name), ServiceBindingEnvSuffix) + ServiceBindingHTTPSEnvSuffix
 }
 
+// ServiceBindingHostEnvKey derives the bare-host companion for a target
+// (ADR-576). Its value is <service>.svc.gregale, which resolves to the
+// target's private service address on any TCP port it declares.
+func ServiceBindingHostEnvKey(name string) string {
+	return strings.TrimSuffix(ServiceBindingEnvKey(name), ServiceBindingEnvSuffix) + ServiceBindingHostEnvSuffix
+}
+
 // ServiceBindingEnv replaces platform-owned URLs while preserving other app
 // environment values. It selects the Fetch-compatible HTTP port (ADR-384).
 func ServiceBindingEnv(base map[string]string, bindings []AppServiceBinding) map[string]string {
@@ -421,9 +431,10 @@ func ServiceBindingEnv(base map[string]string, bindings []AppServiceBinding) map
 // other app environment values. The HTTPS alias is injected in either mode;
 // the selected transport controls the canonical _URL binding.
 func ServiceBindingEnvForTransport(base map[string]string, bindings []AppServiceBinding, transport ServiceBindingTransport) map[string]string {
-	env := make(map[string]string, len(base)+len(bindings))
+	env := make(map[string]string, len(base))
 	for key, value := range base {
-		if strings.HasPrefix(key, ServiceBindingEnvPrefix) && strings.HasSuffix(key, ServiceBindingEnvSuffix) {
+		if strings.HasPrefix(key, ServiceBindingEnvPrefix) &&
+			(strings.HasSuffix(key, ServiceBindingEnvSuffix) || strings.HasSuffix(key, ServiceBindingHostEnvSuffix)) {
 			continue
 		}
 		env[key] = value
@@ -437,6 +448,7 @@ func ServiceBindingEnvForTransport(base map[string]string, bindings []AppService
 		}
 		env[binding.Binding] = canonicalURL
 		env[ServiceBindingHTTPSEnvKey(binding.Service)] = httpsURL
+		env[ServiceBindingHostEnvKey(binding.Service)] = binding.Service + ".svc.gregale"
 	}
 	if len(env) == 0 {
 		return nil

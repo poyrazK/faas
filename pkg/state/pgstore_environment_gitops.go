@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -28,7 +29,7 @@ func environmentGitSourceFromSQL(row sqlc.EnvironmentGitSource, environment stri
 			Repository: row.Repository, Ref: row.SourceRef, ManifestPath: row.ManifestPath,
 			Mode: row.Mode, ApprovalPolicy: row.ApprovalPolicy, Prune: row.Prune,
 		},
-		Suspended: row.Suspended, Generation: row.Generation, IntentVersion: row.IntentVersion,
+		Detached: row.Detached, Suspended: row.Suspended, Generation: row.Generation, IntentVersion: row.IntentVersion,
 		ApprovedRevisionID: pgUUIDString(row.ApprovedRevisionID), AppliedRevisionID: pgUUIDString(row.AppliedRevisionID),
 		SourceErrorCode: row.SourceErrorCode, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
 		SourceCommitSHA: row.SourceCommitSha, SourceDefinitionDigest: row.SourceDefinitionDigest,
@@ -69,12 +70,28 @@ func (s *PgStore) CreateEnvironmentGitSource(ctx context.Context, accountID, pro
 	if err := spec.Validate(); err != nil {
 		return EnvironmentGitSource{}, fmt.Errorf("git source: %w: %w", ErrInvalidArgument, err)
 	}
-	row, err := sqlc.New().CreateEnvironmentGitSource(ctx, s.pool, sqlc.CreateEnvironmentGitSourceParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return EnvironmentGitSource{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	env, err := q.LockEnvironmentGitOpsEnvironment(ctx, tx, sqlc.LockEnvironmentGitOpsEnvironmentParams{AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), Environment: environment})
+	if err != nil {
+		return EnvironmentGitSource{}, mapErr(err)
+	}
+	if err = q.LockEnvironmentFieldOwnershipScope(ctx, tx, pgUUIDString(env)); err != nil {
+		return EnvironmentGitSource{}, err
+	}
+	row, err := q.CreateEnvironmentGitSource(ctx, tx, sqlc.CreateEnvironmentGitSourceParams{
 		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), EnvironmentSlug: environment,
 		RepositoryID: spec.RepositoryID, InstallationID: spec.InstallationID, Repository: spec.Repository,
 		SourceRef: spec.Ref, ManifestPath: spec.ManifestPath, Mode: spec.Mode, ApprovalPolicy: spec.ApprovalPolicy, Prune: spec.Prune,
 	})
 	if err != nil {
+		return EnvironmentGitSource{}, mapErr(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
 		return EnvironmentGitSource{}, mapErr(err)
 	}
 	return environmentGitSourceFromSQL(row, environment), nil
@@ -202,6 +219,9 @@ func (s *PgStore) claimEnvironmentGitOps(ctx context.Context, mode, token string
 		return EnvironmentGitOpsLease{}, mapErr(err)
 	}
 	if err := q.SupersedeEnvironmentGitOpsRuns(ctx, tx, sqlc.SupersedeEnvironmentGitOpsRunsParams{SourceID: source.ID, NowAt: gitOpsTime(now)}); err != nil {
+		return EnvironmentGitOpsLease{}, err
+	}
+	if err = q.PruneEnvironmentGitOpsReports(ctx, tx, sqlc.PruneEnvironmentGitOpsReportsParams{SourceID: source.ID, KeepCount: api.EnvironmentGitOpsReportRunsMaxPerSource, BeforeAt: gitOpsTime(now.Add(-api.EnvironmentGitOpsReportRetention))}); err != nil {
 		return EnvironmentGitOpsLease{}, err
 	}
 	run, err := q.InsertEnvironmentGitOpsRun(ctx, tx, sqlc.InsertEnvironmentGitOpsRunParams{
@@ -342,6 +362,9 @@ func (s *PgStore) FinishEnvironmentGitOps(ctx context.Context, lease Environment
 		}
 	}
 	if _, err := q.ReleaseEnvironmentGitOpsLease(ctx, tx, sqlc.ReleaseEnvironmentGitOpsLeaseParams{SourceID: mustPgUUID(lease.Source.ID), LeaseToken: lease.LeaseToken, NextAttemptAt: gitOpsTime(next)}); err != nil {
+		return mapErr(err)
+	}
+	if err := q.PruneEnvironmentGitOpsReports(ctx, tx, sqlc.PruneEnvironmentGitOpsReportsParams{SourceID: mustPgUUID(lease.Source.ID), KeepCount: api.EnvironmentGitOpsReportRunsMaxPerSource, BeforeAt: gitOpsTime(now.Add(-api.EnvironmentGitOpsReportRetention))}); err != nil {
 		return mapErr(err)
 	}
 	return tx.Commit(ctx)

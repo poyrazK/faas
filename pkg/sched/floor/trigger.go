@@ -475,7 +475,7 @@ func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 			t.observe(d.AppID, OutcomeDisabled)
 			continue
 		}
-		app, appErr := t.deploymentStore.AppByID(ctx, d.AppID)
+		app, appErr := state.AppForDeployment(ctx, t.deploymentStore, d)
 		if appErr != nil {
 			t.observe(d.AppID, OutcomeError)
 			continue

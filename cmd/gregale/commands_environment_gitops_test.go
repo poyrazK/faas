@@ -91,3 +91,39 @@ func TestEnvironmentGitOpsCLIProtectedBinding(t *testing.T) {
 		t.Fatalf("binding: %+v", req)
 	}
 }
+
+func TestEnvironmentGitOpsCLIBindingLifecycleRequiresReviewedGeneration(t *testing.T) {
+	for _, action := range []string{"rebind", "unbind"} {
+		t.Run(action, func(t *testing.T) {
+			resetJSONOut(t)
+			status := http.StatusCreated
+			method := http.MethodPost
+			if action == "unbind" {
+				status = http.StatusNoContent
+				method = http.MethodDelete
+			}
+			f := authedFakeAPI(t, `{}`, status)
+			args := []string{action, "shop", "production", "--expected-generation", "7"}
+			if action == "rebind" {
+				args = append(args, "--manifest-path", "env/new.yaml", "--ref", "refs/heads/reviewed")
+			}
+			if cmdProjectsEnvironmentGitOps(args) == 0 || f.sawMethod != "" {
+				t.Fatal("lifecycle changed ownership without confirmation")
+			}
+			if cmdProjectsEnvironmentGitOps(append(args, "--yes")) != 0 {
+				t.Fatal("reviewed lifecycle request failed")
+			}
+			want := "/v1/projects/shop/environments/production/gitops/source"
+			if action == "rebind" {
+				want += "/rebind"
+			}
+			if f.sawMethod != method || f.sawPath != want {
+				t.Fatalf("request: %s %s", f.sawMethod, f.sawPath)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(f.sawBody, &body); err != nil || body["expected_generation"] != float64(7) {
+				t.Fatalf("generation: %s %v", f.sawBody, err)
+			}
+		})
+	}
+}

@@ -6,6 +6,9 @@
  * One workload's live release identity in a source and target environment.
  */
 export type ProjectEnvironmentPromotionChange = {
+  source_workload_config_hash?: string;
+  target_workload_config_hash?: string;
+  promoted_workload_config_hash?: string;
   workload_slug: string;
   workload_name: string;
   kind: 'source_missing' | 'create' | 'update' | 'unchanged';

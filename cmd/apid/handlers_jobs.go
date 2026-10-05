@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -898,7 +899,7 @@ func (s *server) createJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 		return
 	}
-	s.log.Info("job created", "job", created.ID, "name", created.Name, "account", acct.ID)
+	s.log.Info("job created", "job", created.ID, "name", logsanitize.Field(created.Name), "account", acct.ID)
 	s.audit.Emit(r.Context(), "job.created", &acct.ID, map[string]any{
 		"job_id":  created.ID,
 		"name":    created.Name,
@@ -1408,7 +1409,7 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 				"Job image unavailable", "update image_ref to retry materialization before creating a run"))
 			return
 		}
-		s.log.Error("create job run failed", "job", j.ID, "account", acct.ID, "err", err)
+		s.log.Error("create job run failed", "job", j.ID, "account", acct.ID, "err", logsanitize.FieldAny(err))
 		api.WriteProblem(w, api.ErrCapacity("could not create run"))
 		return
 	}
