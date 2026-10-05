@@ -39,6 +39,8 @@ servers:
         description: Public hostname (one-box FaaS).
 
 tags:
+  - name: operations
+    description: Staged customer-owned HTTP work, scoped status and durable progress; production admission is disabled.
   - name: flags
     description: Customer-aware application behavior releases and decision evidence.
   - name: outbound
@@ -6899,6 +6901,350 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/operations/{id}/events:
+    get:
+      tags: [operations]
+      operationId: getAccountOperationEvents
+      summary: Read durable operation events as bounded JSON.
+      description: Requires account read scope and MFA. Resync_required instructs clients to refresh status when the watermark or event retention is stale. This operator endpoint returns JSON; customer SSE authorization remains separate.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      - in: query
+        name: after
+        description: Last observed durable event sequence.
+        required: false
+        schema: {type: integer, minimum: 0, default: 0}
+      responses:
+        '200':
+          description: Retained durable event page and the current sequence watermark.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationEventsResponse'}
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/executions:
+    get:
+      tags: [operations]
+      operationId: getOperationExecutions
+      summary: Inspect retained operation execution generations.
+      description: Requires account read scope and MFA. Rows are ordered by generation with attempt counts from the execution ledger. Payloads, headers and capabilities are omitted. Next_generation is the after watermark for the next page.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      - in: query
+        name: after
+        description: Last observed execution generation.
+        required: false
+        schema: {type: integer, minimum: 0, maximum: 2147483647, default: 0}
+      - in: query
+        name: limit
+        description: Maximum execution generations in this page.
+        required: false
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      responses:
+        '200':
+          description: Ordered retained execution generations with ledger attempt counts.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationExecutionsResponse'}
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/retry-delivery:
+    post:
+      tags: [operations]
+      operationId: retryOperationDelivery
+      summary: Retry a dead completion delivery without repeating work.
+      description: Requires deploy write scope and MFA. Atomically resets only a dead completion webhook delivery to pending. Pending, failed and in-flight deliveries retain their automatic retry policy and cannot be manually reset. Business state and execution generation stay unchanged; read status after an uncertain response.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      responses:
+        '200':
+          description: Business result with the independently reset notification projection.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationResponse'}
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/recover:
+    post:
+      tags:
+      - operations
+      operationId: recoverOperation
+      summary: Reconcile an uncertain outcome or authorize safe retry.
+      description: Requires deploy:write and evidence. Expected generation prevents stale recovery; recovery_id makes
+        the same recovery decision idempotent. succeeded validates result against the pinned output schema. safe_to_retry
+        creates a new execution while retaining the logical operation identity and pinned contract. Ordinary invocation/DLQ
+        replay cannot bypass this policy.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationRecoveryRequest'
+      responses:
+        '200':
+          description: Reconciled outcome or receipt of a newly authorized execution generation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/customer-operations/{id}/artifacts/{artifact}:
+    get:
+      tags:
+      - operations
+      operationId: downloadPlatformTenantSelfOperationArtifact
+      summary: Customer download of verified operation result bytes.
+      description: Requires platform_tenant:operations:read. Foreign artifacts and operations return the same 404.
+        Only succeeded operations allow downloads. The API checks the retained object size and SHA-256 before serving
+        verified bytes. Changed or missing retained private bytes make the artifact unavailable without rewriting
+        the business outcome. The reference expires with the operation projection. No signed URL is stored.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationArtifact'
+      responses:
+        '200':
+          description: Verified file content authorized for this customer.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          headers:
+            X-Gregale-Artifact-Sha256:
+              description: 'Customer result transfer: SHA-256 of the attached result bytes.'
+              schema:
+                type: string
+                pattern: ^sha256:[0-9a-f]{64}$
+            Content-Disposition:
+              description: 'Customer result transfer: Attachment filename from the verified declaration.'
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/artifacts/{artifact}:
+    get:
+      tags:
+      - operations
+      operationId: downloadOperationArtifact
+      summary: Account download of verified operation result bytes.
+      description: Requires account read scope and app ownership. Only succeeded operations allow downloads. The API
+        checks the retained object size and SHA-256 before serving verified bytes. Changed or missing retained private
+        bytes make the artifact unavailable without rewriting the business outcome. The reference expires with the
+        operation projection. No signed URL is stored.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationArtifact'
+      responses:
+        '200':
+          description: Verified file content authorized for this account and app.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          headers:
+            X-Gregale-Artifact-Sha256:
+              description: 'Account result transfer: SHA-256 of the attached result bytes.'
+              schema:
+                type: string
+                pattern: ^sha256:[0-9a-f]{64}$
+            Content-Disposition:
+              description: 'Account result transfer: Attachment filename from the verified declaration.'
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/runtime/operations/{id}/progress:
+    post:
+      tags:
+      - operations
+      operationId: reportOperationProgress
+      summary: Report progress from the current workload attempt.
+      description: Requires a fresh platform-issued workload JWT with audience gregale:operations and matching account,
+        app and instance, plus current dispatch proof. Stale attempts, expired leases and customer credentials are
+        denied. report_id retries are idempotent; changed report contents conflict. Stages must match the pinned definition.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXFaasInvocationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationCapability'
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationReportRequest'
+      responses:
+        '200':
+          description: Updated projection after accepting or replaying the fenced report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/runtime/operations/{id}/artifacts:
+    post:
+      tags:
+      - operations
+      operationId: attachOperationArtifact
+      summary: Attach verified managed-object result bytes.
+      description: Requires workload JWT and current dispatch proof as for progress. The object must be in a ready,
+        private, account/app/environment-owned managed bucket. Exact size and SHA-256 are verified before the attachment
+        and durable event commit. Repeated report_id with the same declaration is idempotent. A verified copy is retained under a private platform key; subsequent source mutation
+        or deletion does not change the retained result.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationXFaasInvocationId'
+      - $ref: '#/components/parameters/OperationXGregaleOperationAttempt'
+      - $ref: '#/components/parameters/OperationXGregaleOperationCapability'
+      security:
+      - operationsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationArtifactRequest'
+      responses:
+        '200':
+          description: Updated projection containing the verified managed-object reference.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
 
   /v1/platform-tenant-self/invocations/{id}:
     get:
@@ -28067,6 +28413,65 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/operations:
+    get:
+      tags: [operations]
+      operationId: listAccountOperations
+      summary: List retained customer operations for an account-owned app.
+      description: Requires account read scope and MFA. Explicit scope and optional tenant filter select data within account ownership. Descending keyset pages exclude private inputs and results. Customer tokens cannot access this operator route.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - in: query
+        name: scope
+        description: Deployment environment whose customer operations are listed.
+        required: true
+        schema: {type: string}
+      - in: query
+        name: tenant_id
+        description: Optional account-owned platform tenant filter.
+        required: false
+        schema: {type: string, format: uuid}
+      - in: query
+        name: name
+        description: Operation definition name.
+        required: false
+        schema: {type: string, maxLength: 64}
+      - in: query
+        name: state
+        description: Business state filter.
+        required: false
+        schema: {type: string, enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation]}
+      - in: query
+        name: limit
+        description: Number of account-owned operation summaries to include.
+        required: false
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      - in: query
+        name: cursor
+        description: Opaque cursor bound to the account and exact filters.
+        required: false
+        schema: {type: string, maxLength: 512}
+      responses:
+        '200':
+          description: Account app history page with optional tenant selection.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationListResponse'}
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
     post:
       tags: [exclusive-operations]
       operationId: submitExclusiveOperation
@@ -28280,9 +28685,548 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/apps/{slug}/operations/{id}/delivery:
+    get:
+      tags: [operations]
+      operationId: getOperationDelivery
+      summary: Inspect completion delivery independently of the business result.
+      description: Requires account read scope and MFA. Business work is never restarted.
+        Reads remain available with admission closed. Retention expiry returns 410. Receiver observations
+        are local ledger snapshots, not connectivity probes. Raw receiver errors, target URLs and payloads are excluded.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      responses:
+        '200':
+          description: Current completion delivery and independently retained business outcome.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationDeliveryInspection' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { description: The operation retention window for delivery inspection has expired. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/operations/{id}/delivery-attempts:
+    get:
+      tags: [operations]
+      operationId: getOperationDeliveryAttempts
+      summary: Read retained notification attempts for one owned operation.
+      description: Requires account read scope and MFA. Business work is never restarted.
+        Attempt history stays readable while admission is closed. Expired operations return 410. This endpoint
+        pages the existing notification ledger and excludes raw errors, destination URLs and payloads.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      - in: query
+        name: limit
+        description: Maximum retained notification attempts in this page, newest replay and attempt first.
+        schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      - in: query
+        name: cursor
+        description: Opaque continuation bound to this operation and its completion delivery.
+        schema: { type: string, maxLength: 512 }
+      responses:
+        '200':
+          description: Retained completion attempt evidence and an optional continuation cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationDeliveryAttemptsResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { description: The operation retention window for attempt history has expired. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/operations/{id}/delivery-retries:
+    post:
+      tags: [operations]
+      operationId: retryOperationDeliveryWithReceipt
+      summary: Commit an idempotent decision to retry a dead completion delivery.
+      description: Requires account deploy write scope and MFA. Business work is never restarted.
+        Retry IDs are scoped to the retained operation, with at most 32 decisions. An exact replay returns
+        the immutable original receipt even after later delivery failures or delivery cleanup. Changed payloads
+        and stale replay generations conflict. Receipt insertion and notification reset are atomic; receiver
+        cooldowns and destination policy remain in force. Queued denotes the recorded decision, not live delivery status.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OperationDeliveryRetryRequest' }
+      responses:
+        '200':
+          description: Immutable retry decision; use the delivery read for current transport state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationDeliveryRetryResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { description: The operation retention window for completion retry has expired. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { description: Retry request exceeds 4096 bytes. }
+  /v1/apps/{slug}/deployments/{deployment_id}/operation-doctor:
+    get:
+      tags: [operations]
+      operationId: getOperationDoctor
+      summary: Observe Operations submission prerequisites on the responding API node.
+      description: Account read scope and MFA are required. Select an owned deployment and tenant,
+        optionally one operation name. This read reserves no quota, grants no admission, probes no external
+        services and does not qualify native lifecycle or fleet availability. Completion warnings are
+        independent of submission blockers. Eligibility is an advisory observation, not an execution guarantee.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationDeploymentId'
+      - in: query
+        name: tenant_id
+        required: true
+        description: Owned platform tenant whose submission prerequisites will be observed.
+        schema: { type: string, format: uuid }
+      - in: query
+        name: name
+        description: Optional immutable operation name; omit to inspect the deployment's definitions.
+        schema: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        '200':
+          description: Bounded read-only report, including blocked or unverified prerequisites.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationDoctorResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/deployments/{deployment_id}/operation-definitions:
+    get:
+      tags: [operations]
+      operationId: listOperationDefinitions
+      summary: List immutable Operations contracts for one owned deployment.
+      description: Requires account read scope and MFA. Deployment identity selects the environment and pins;
+        reads remain available while admission is closed. No mutable active-deployment selector is inferred.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationDeploymentId'
+      responses:
+        '200':
+          description: Name-ordered contracts, bounded by the deployment definition allowance.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationDefinitionsResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/deployments/{deployment_id}/operation-definitions/{name}:
+    get:
+      tags: [operations]
+      operationId: getOperationDefinition
+      summary: Read one named contract pinned to an owned deployment.
+      description: Requires account read scope and MFA. Returns the immutable definition ID, revision,
+        schemas, deployment, environment and completion destination, without changing admission.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationDeploymentId'
+      - $ref: '#/components/parameters/OperationName'
+      responses:
+        '200':
+          description: Resolved immutable contract selected by deployment and name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationDefinitionResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags:
+      - operations
+      operationId: putOperationDefinition
+      summary: Install an immutable operation definition.
+      description: Requires deploy:write. Normal source deployment resolves schemas and installs definitions automatically.
+        Repeating the same resolved contract returns the same definition. Changing a definition on the same deployment
+        conflicts. This staged API has no production admission switch; definition registration and submission return 503 until the HTTP execution adapter is qualified.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationDeploymentId'
+      - $ref: '#/components/parameters/OperationName'
+      - $ref: '#/components/parameters/OperationXGregaleRelease'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationDefinitionSpec'
+      responses:
+        '200':
+          description: Installed contract with immutable revision and deployment pins.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationDefinitionResponse'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}:
+    get:
+      tags:
+      - operations
+      operationId: getOperation
+      summary: Read an account-owned operation.
+      description: Requires read scope. Business outcome and completion delivery are independent. The response omits
+        original input and execution capabilities.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      responses:
+        '200':
+          description: Account-authorized projection of customer business work.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/cancel:
+    post:
+      tags:
+      - operations
+      operationId: cancelOperation
+      summary: Request cancellation of account-owned work.
+      description: Requires deploy:write. Expected generation prevents cancelling a recovered execution. Pending work
+        can be cancelled; dispatching work may finish successfully or require reconciliation. A cancellation request
+        does not prove an external effect was undone.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationCancellationRequest'
+      responses:
+        '200':
+          description: Account cancellation intent and the resulting business projection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/customer-operations:
+    get:
+      tags: [operations]
+      operationId: listPlatformTenantSelfOperations
+      summary: Discover and reopen this customer's retained work.
+      description: >-
+        Requires platform_tenant:operations:read and an explicit app_id and environment scope.
+        Identity comes only from the authenticated tenant token. Pages contain status summaries,
+        never source input, result bytes, artifact locations or execution authority. Active work
+        remains visible; expired settled work is omitted. Creation time and ID determine descending
+        order. An opaque cursor is bound to the account, tenant, app, scope and filters. This is a
+        live view, not a transaction snapshot: state filters and retention can change membership.
+        Closed preview admission does not disable history reads.
+      parameters:
+      - name: app_id
+        description: Owning app identifier, scoped to the authenticated customer.
+        in: query
+        required: true
+        schema: {type: string, format: uuid}
+      - name: scope
+        description: Exact deployment environment; no all-environments selector.
+        in: query
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
+      - name: name
+        description: Stable operation name across definition revisions.
+        in: query
+        schema: {type: string, maxLength: 64, pattern: '^[a-z][a-z0-9-]{0,63}$'}
+      - name: state
+        description: Current business state filter, independent of delivery.
+        in: query
+        schema:
+          type: string
+          enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation]
+      - name: limit
+        description: Maximum summaries in this page.
+        in: query
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      - name: cursor
+        description: Opaque continuation from the same identity and filters.
+        in: query
+        schema: {type: string, minLength: 1, maxLength: 512}
+      responses:
+        '200':
+          description: Customer-scoped summaries and an optional continuation cursor.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationListResponse'}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      tags:
+      - operations
+      operationId: startPlatformTenantSelfOperation
+      summary: Start work owned by the authenticated customer.
+      description: 'Requires platform_tenant:operations:manage and an active customer identity. Idempotency-Key is
+        required and scoped to account, app, environment, authenticated platform tenant and operation name. Canonically
+        equivalent JSON inputs reuse the same operation across deployment changes; different input conflicts. Retention
+        follows the admitted plan: Hobby/Pro/Scale results 7/30/90 days and deduplication 30/90/180 days. An expired
+        retained result returns 410 during the deduplication window. Fresh work is unavailable on Free. Production admission remains disabled in this staged API.'
+      parameters:
+      - $ref: '#/components/parameters/OperationIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationStartRequest'
+      responses:
+        '202':
+          description: Durable acceptance for this logical customer submission.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationAcceptedResponse'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/customer-operations/identity:
+    get:
+      tags: [operations]
+      operationId: getPlatformTenantSelfOperationIdentity
+      summary: Verify the authenticated customer identity for submission receipts.
+      description: Requires platform_tenant:operations:manage and a tenant credential. Account credentials
+        cannot supply a tenant selector. Identity verification remains available while admission is closed.
+      responses:
+        '200':
+          description: Verified account and tenant IDs without the bearer credential.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationTenantIdentity'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/platform-tenant-self/customer-operations/{id}:
+    get:
+      tags:
+      - operations
+      operationId: getPlatformTenantSelfOperation
+      summary: Read this customer's operation.
+      description: Requires platform_tenant:operations:read. Missing and foreign operation identities return the same
+        404. Completion delivery failure does not change business success.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      responses:
+        '200':
+          description: Status, typed result and delivery visible to this owner.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/customer-operations/{id}/events:
+    get:
+      tags:
+      - operations
+      operationId: getPlatformTenantSelfOperationEvents
+      summary: Read or subscribe to durable operation progress.
+      description: 'Requires platform_tenant:operations:read. application/json returns a bounded ordered page. Accept:
+        text/event-stream streams durable events plus snapshot/resync frames; reconnect at least every five
+        minutes with a current credential. after overrides Last-Event-ID. Authorization is rechecked during streams;
+        revocation and suspension close them. When history expired or the cursor is ahead, a resync frame instructs
+        a fresh status read. Event retention is Hobby/Pro/Scale 1/7/30 days; PostgreSQL notifications are only wake
+        hints.'
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - $ref: '#/components/parameters/OperationAfter'
+      - $ref: '#/components/parameters/OperationLastEventId'
+      responses:
+        '200':
+          description: Retained ordered history with an explicit resynchronization indication.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationEventsResponse'
+            text/event-stream:
+              schema:
+                type: string
+              example: 'id: 3
+
+                event: operation
+
+                data: {"operation_id":"d1018236-95f4-4f60-ab75-459ae01d6b16","sequence":3,"type":"progress","data":{"stage":"export","completed":1,"total":4}}
+
+
+                '
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/customer-operations/{id}/cancel:
+    post:
+      tags:
+      - operations
+      operationId: cancelPlatformTenantSelfOperation
+      summary: Request cancellation of this customer's operation.
+      description: Requires platform_tenant:operations:manage. Only authenticated ownership authorizes cancellation.
+        Expected generation is required. Running side effects can still succeed or need reconciliation.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationCancellationRequest'
+      responses:
+        '200':
+          description: Customer cancellation intent accepted for the current generation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 components:
 
   securitySchemes:
+    operationsWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Platform-issued short-lived RS256 workload JWT with audience gregale:operations. Current invocation claim proof is also required.
     flagsWorkloadIdentity:
       type: http
       scheme: bearer
@@ -28336,6 +29280,95 @@ components:
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
 
   parameters:
+    OperationArtifact:
+      name: artifact
+      in: path
+      required: true
+      description: Attached result artifact identity.
+      schema:
+        type: string
+        format: uuid
+    OperationXFaasInvocationId:
+      name: X-Faas-Invocation-Id
+      in: header
+      required: true
+      description: Current invocation UUID supplied by trusted dispatch.
+      schema:
+        type: string
+        format: uuid
+    OperationXGregaleOperationAttempt:
+      name: X-Gregale-Operation-Attempt
+      in: header
+      required: true
+      description: Current fenced claim attempt.
+      schema:
+        type: integer
+        minimum: 1
+    OperationXGregaleOperationCapability:
+      name: X-Gregale-Operation-Capability
+      in: header
+      required: true
+      description: Ephemeral 256-bit claim capability supplied only to the active handler.
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+    OperationDeploymentId:
+      name: deployment_id
+      in: path
+      required: true
+      description: Deployment owning the contract.
+      schema:
+        type: string
+        format: uuid
+    OperationName:
+      name: name
+      in: path
+      required: true
+      description: Operation name matching the request contract.
+      schema:
+        type: string
+        maxLength: 64
+    OperationXGregaleRelease:
+      name: X-Gregale-Release
+      in: header
+      required: false
+      description: Optional release-set identity pinned by this definition.
+      schema:
+        type: string
+        format: uuid
+    OperationId:
+      name: id
+      in: path
+      required: true
+      description: Stable logical operation identity.
+      schema:
+        type: string
+        format: uuid
+    OperationIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Stable submission key; retries must preserve it and the input.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    OperationAfter:
+      name: after
+      in: query
+      required: false
+      description: Last durably consumed event sequence.
+      schema:
+        type: integer
+        minimum: 0
+    OperationLastEventId:
+      name: Last-Event-ID
+      in: header
+      required: false
+      description: Reconnect cursor when after is absent.
+      schema:
+        type: string
+        pattern: ^[0-9]+$
     SecretReferenceEnvironment:
       name: environment
       in: query
@@ -28535,6 +29568,703 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    OperationReportRequest:
+      description: Idempotent fenced progress report.
+      type: object
+      required:
+      - report_id
+      - stage
+      - completed
+      - total
+      properties:
+        report_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        stage:
+          type: string
+        completed:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+    OperationArtifactRequest:
+      description: Idempotent attachment of an existing managed object; bytes are checked before commit.
+      type: object
+      required:
+      - report_id
+      - name
+      - uri
+      - size_bytes
+      - sha256
+      properties:
+        name:
+          type: string
+          maxLength: 128
+        uri:
+          type: string
+          maxLength: 2048
+          description: Managed object to verify before attachment, formatted as obj://<app UUID>/<bucket UUID>/<opaque
+            key>.
+        size_bytes:
+          type: integer
+          minimum: 0
+        sha256:
+          type: string
+          pattern: ^sha256:[0-9a-f]{64}$
+        report_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+    OperationRecoveryRequest:
+      description: Explicit recovery decision with retained evidence and idempotent recovery identity.
+      type: object
+      required:
+      - recovery_id
+      - expected_generation
+      - resolution
+      - evidence
+      properties:
+        recovery_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        expected_generation:
+          type: integer
+          minimum: 1
+        resolution:
+          type: string
+          enum:
+          - succeeded
+          - failed
+          - cancelled
+          - safe_to_retry
+        evidence:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        result:
+          description: Required typed output for succeeded.
+
+    OperationDefinitionSpec:
+      description: >-
+        Resolved immutable contract for one HTTP handler. Ownership comes from verified authentication,
+        never input fields. Production admission stays disabled until the HTTP execution adapter is qualified.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - method
+      - path
+      - owner
+      - input_schema
+      - output_schema
+      - progress_stages
+      properties:
+        name:
+          type: string
+          maxLength: 64
+        method:
+          type: string
+          enum:
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+        path:
+          type: string
+          maxLength: 2048
+        owner:
+          type: string
+          enum:
+          - platform_tenant
+        input_schema:
+          description: Bundled JSON Schema 2020-12; only local document references are supported.
+        output_schema:
+          description: Bundled schema for the business result selected by the execution target.
+        progress_stages:
+          type: array
+          items:
+            type: string
+          maxItems: 64
+        completion_webhook_id:
+          type: string
+          format: uuid
+        recovery:
+          type: string
+          enum:
+          - reconcile_on_unknown
+          - safe_retry
+          default: reconcile_on_unknown
+    OperationDefinitionResponse:
+      description: Definition identity, content revision and deployment pins.
+      type: object
+      required:
+      - id
+      - app_id
+      - scope
+      - revision
+      - deployment_id
+      - spec
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        app_id:
+          type: string
+          format: uuid
+        scope:
+          type: string
+        revision:
+          type: string
+        deployment_id:
+          type: string
+          format: uuid
+        release_id:
+          type: string
+          format: uuid
+        spec:
+          $ref: '#/components/schemas/OperationDefinitionSpec'
+        created_at:
+          type: string
+          format: date-time
+    OperationDefinitionSummary:
+      description: Immutable definition metadata without bundled schema documents.
+      type: object
+      required:
+      - id
+      - app_id
+      - scope
+      - revision
+      - deployment_id
+      - name
+      - method
+      - path
+      - owner
+      - recovery
+      - progress_stages
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        app_id:
+          type: string
+          format: uuid
+        scope:
+          type: string
+        revision:
+          type: string
+        deployment_id:
+          type: string
+          format: uuid
+        release_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 64
+        method:
+          type: string
+          enum:
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+        path:
+          type: string
+          maxLength: 2048
+        owner:
+          type: string
+          enum:
+          - platform_tenant
+        completion_webhook_id:
+          type: string
+          format: uuid
+        recovery:
+          type: string
+          enum:
+          - reconcile_on_unknown
+          - safe_retry
+        progress_stages:
+          type: array
+          items:
+            type: string
+            maxLength: 64
+          maxItems: 64
+        created_at:
+          type: string
+          format: date-time
+    OperationDeliveryInspection:
+      description: Sanitized completion transport snapshot; business state remains independently authoritative.
+      type: object
+      additionalProperties: false
+      required: [operation_id, business_state, operation_expires_at, observed_at, state, attempts, last_response_code]
+      properties:
+        operation_id: { type: string, format: uuid }
+        business_state: { type: string, enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation] }
+        operation_expires_at: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+        state: { type: string }
+        delivery_id: { type: string, format: uuid }
+        webhook_id: { type: string, format: uuid }
+        replay_generation: { type: integer, minimum: 0, maximum: 2147483647 }
+        attempts: { type: integer, minimum: 0 }
+        last_response_code: { type: integer }
+        error_code: { type: string }
+        next_attempt_at: { type: string, format: date-time }
+        delivered_at: { type: string, format: date-time }
+        receiver_state: { type: string }
+        receiver_cooldown_until: { type: string, format: date-time }
+    OperationDeliveryAttempt:
+      description: One retained notification attempt without receiver payload, URL or raw transport errors.
+      type: object
+      additionalProperties: false
+      required: [replay_generation, attempt_number, outcome, response_code, started_at, finished_at]
+      properties:
+        replay_generation: { type: integer, minimum: 0 }
+        attempt_number: { type: integer, minimum: 1, maximum: 8 }
+        outcome: { type: string, enum: [succeeded, retrying, dead] }
+        response_code: { type: integer }
+        error_code: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        next_attempt_at: { type: string, format: date-time }
+    OperationDeliveryAttemptsResponse:
+      description: Newest-first attempt page with an operation-bound continuation cursor.
+      type: object
+      additionalProperties: false
+      required: [operation_id, delivery_id, attempts]
+      properties:
+        operation_id: { type: string, format: uuid }
+        delivery_id: { type: string, format: uuid }
+        attempts:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/OperationDeliveryAttempt' }
+        next_cursor: { type: string, maxLength: 512 }
+    OperationDeliveryRetryRequest:
+      description: Stable retry identity and the observed dead delivery generation; explicit generation zero is valid.
+      type: object
+      additionalProperties: false
+      required: [retry_id, delivery_id, expected_replay_generation]
+      properties:
+        retry_id: { type: string, minLength: 1, maxLength: 128 }
+        delivery_id: { type: string, format: uuid }
+        expected_replay_generation: { type: integer, minimum: 0, maximum: 2147483646 }
+    OperationDeliveryRetryResponse:
+      description: Immutable notification reset decision retained with its parent operation; queued is not delivery success.
+      type: object
+      additionalProperties: false
+      required: [operation_id, retry_id, delivery_id, expected_replay_generation, replay_generation, state, queued_at, expires_at]
+      properties:
+        operation_id: { type: string, format: uuid }
+        retry_id: { type: string }
+        delivery_id: { type: string, format: uuid }
+        expected_replay_generation: { type: integer, minimum: 0 }
+        replay_generation: { type: integer, minimum: 1 }
+        state: { type: string, enum: [queued] }
+        queued_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    OperationDoctorResponse:
+      description: Read-only prerequisite observations for an owned deployment and tenant on one API node.
+      type: object
+      additionalProperties: false
+      required: [app_id, scope, deployment_id, platform_tenant_id, plan, observed_at, observation_scope, submission_state, checks]
+      properties:
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        deployment_id: { type: string, format: uuid }
+        platform_tenant_id: { type: string, format: uuid }
+        plan: { type: string, enum: [free, hobby, pro, scale] }
+        observed_at: { type: string, format: date-time }
+        observation_scope: { type: string, enum: [responding_api_node] }
+        submission_state:
+          type: string
+          enum: [eligible, blocked, unknown]
+          description: Submission prerequisites only. Delivery warnings and unverified qualification do not determine this observation.
+        checks:
+          type: array
+          maxItems: 1024
+          minItems: 1
+          items: { $ref: '#/components/schemas/OperationDoctorCheck' }
+    OperationDoctorCheck:
+      description: One sanitized prerequisite, delivery configuration or unverified qualification observation.
+      type: object
+      additionalProperties: false
+      required: [check, status, impact, code, message]
+      properties:
+        check: { type: string }
+        status: { type: string, enum: [observed, configured, blocked, warning, unknown, not_requested] }
+        impact: { type: string, enum: [submission, delivery, qualification] }
+        code:
+          type: string
+          description: Stable non-secret reason code; filesystem paths and infrastructure errors are not exposed.
+        message: { type: string }
+        remediation: { type: string }
+        definition_id: { type: string, format: uuid }
+        name: { type: string }
+        revision: { type: string }
+        release_id: { type: string, format: uuid }
+        limit: { type: integer, format: int64, minimum: 0 }
+        observed: { type: integer, format: int64, minimum: 0 }
+    OperationDefinitionsResponse:
+      description: Contract metadata for one owned deployment; schemas are read individually.
+      type: object
+      required: [definitions]
+      properties:
+        definitions:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/OperationDefinitionSummary'
+    OperationTenantIdentity:
+      description: Tenant credential identity used to bind a private local submission receipt.
+      type: object
+      required: [account_id, platform_tenant_id]
+      properties:
+        account_id:
+          type: string
+          format: uuid
+        platform_tenant_id:
+          type: string
+          format: uuid
+    OperationProgress:
+      description: Current bounded progress from the active execution attempt.
+      type: object
+      required:
+      - stage
+      - completed
+      - total
+      - attempt
+      - updated_at
+      properties:
+        stage:
+          type: string
+        completed:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+        attempt:
+          type: integer
+          minimum: 1
+        updated_at:
+          type: string
+          format: date-time
+    OperationResultArtifact:
+      description: Verified result reference in a private customer-managed object bucket.
+      type: object
+      required:
+      - id
+      - name
+      - uri
+      - size_bytes
+      - sha256
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 128
+        uri:
+          type: string
+          maxLength: 2048
+          description: obj://<app UUID>/<bucket UUID>/<opaque object key>; never a signed URL.
+        size_bytes:
+          type: integer
+          minimum: 0
+        sha256:
+          type: string
+          pattern: ^sha256:[0-9a-f]{64}$
+        expires_at:
+          type: string
+          format: date-time
+    OperationDeliveryResponse:
+      description: Independent completion notification projection from the webhook outbox.
+      type: object
+      required:
+      - state
+      - attempts
+      properties:
+        state:
+          type: string
+          enum:
+          - not_requested
+          - awaiting_outcome
+          - configuration_failed
+          - pending
+          - in_flight
+          - succeeded
+          - failed
+          - dead
+          - delivery_expired
+        delivery_id:
+          type: string
+          format: uuid
+        attempts:
+          type: integer
+          minimum: 0
+        last_error:
+          type: string
+        next_attempt_at:
+          type: string
+          format: date-time
+    OperationResponse:
+      description: Customer business work; execution recovery and delivery retain independent semantics.
+      type: object
+      required:
+      - id
+      - name
+      - generation
+      - state
+      - completion_delivery
+      - cancellation_requested
+      - latest_sequence
+      - created_at
+      - updated_at
+      - expires_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        generation:
+          type: integer
+          minimum: 1
+        state:
+          type: string
+          enum:
+          - accepted
+          - running
+          - succeeded
+          - failed
+          - cancelled
+          - requires_reconciliation
+        progress:
+          $ref: '#/components/schemas/OperationProgress'
+        result:
+          description: Pinned-schema-validated business result, when confirmed successful.
+        artifacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/OperationResultArtifact'
+        completion_delivery:
+          $ref: '#/components/schemas/OperationDeliveryResponse'
+        cancellation_requested:
+          type: boolean
+        failure_code:
+          type: string
+        latest_sequence:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+    OperationSummary:
+      description: Bounded discovery metadata; omits result bytes, artifact locations and execution authority.
+      type: object
+      required:
+      - id
+      - name
+      - generation
+      - state
+      - completion_delivery
+      - cancellation_requested
+      - latest_sequence
+      - created_at
+      - updated_at
+      - expires_at
+      properties:
+        platform_tenant_id:
+          type: string
+          format: uuid
+          description: Present only on account operator listings; absent from tenant-self summaries.
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        generation:
+          type: integer
+          minimum: 1
+        state:
+          type: string
+          enum:
+          - accepted
+          - running
+          - succeeded
+          - failed
+          - cancelled
+          - requires_reconciliation
+        progress:
+          $ref: '#/components/schemas/OperationProgress'
+        completion_delivery:
+          $ref: '#/components/schemas/OperationDeliverySummary'
+        cancellation_requested:
+          type: boolean
+        latest_sequence:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+    OperationDeliverySummary:
+      description: Independent notification status without delivery identifiers or errors.
+      type: object
+      required: [state, attempts]
+      properties:
+        state:
+          type: string
+          enum: [not_requested, awaiting_outcome, configuration_failed, pending, in_flight, succeeded, failed, dead, delivery_expired]
+        attempts: {type: integer, minimum: 0}
+        next_attempt_at: {type: string, format: date-time}
+    OperationListResponse:
+      description: Bounded live discovery page of operation summaries, scoped to a verified customer or account operator.
+      type: object
+      required: [operations]
+      properties:
+        operations:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/OperationSummary'}
+        next_cursor: {type: string, maxLength: 512}
+    OperationExecution:
+      description: Retained execution generation and ledger attempt count without private invocation data.
+      type: object
+      required: [generation, invocation_id, state, attempts, created_at]
+      properties:
+        generation: {type: integer, minimum: 1}
+        invocation_id: {type: string, format: uuid}
+        state: {type: string}
+        attempts: {type: integer, minimum: 0}
+        created_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time}
+    OperationExecutionsResponse:
+      description: Ascending bounded page of retained execution generations.
+      type: object
+      required: [executions]
+      properties:
+        executions:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/OperationExecution'}
+        next_generation: {type: integer, minimum: 1}
+    OperationAcceptedResponse:
+      description: Durable stable operation identity and customer-scoped read routes.
+      type: object
+      required:
+      - id
+      - status_url
+      - events_url
+      properties:
+        id:
+          type: string
+          format: uuid
+        status_url:
+          type: string
+        events_url:
+          type: string
+    OperationEvent:
+      description: Ordered retained event; execution identity may change under the same logical operation.
+      type: object
+      required:
+      - operation_id
+      - sequence
+      - type
+      - data
+      - created_at
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          minimum: 1
+        type:
+          type: string
+          enum:
+          - accepted
+          - running
+          - progress
+          - artifact_attached
+          - succeeded
+          - failed
+          - cancelled
+          - reconciliation_required
+          - recovery_requested
+          - cancellation_requested
+          - delivery_changed
+        execution_id:
+          type: string
+          format: uuid
+        attempt:
+          type: integer
+          minimum: 0
+        data:
+          description: Event-specific customer projection.
+        created_at:
+          type: string
+          format: date-time
+    OperationEventsResponse:
+      description: One bounded event page, or instruction to read a fresh status snapshot.
+      type: object
+      required:
+      - events
+      - latest_sequence
+      - resync_required
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/OperationEvent'
+          maxItems: 100
+        latest_sequence:
+          type: integer
+          minimum: 0
+        resync_required:
+          type: boolean
+    OperationStartRequest:
+      description: Submission owned by the authenticated platform tenant.
+      type: object
+      additionalProperties: false
+      required:
+      - definition_id
+      - input
+      properties:
+        definition_id:
+          type: string
+          format: uuid
+        input:
+          description: JSON input matching the pinned definition.
+    OperationCancellationRequest:
+      description: Compare-and-set cancellation intent for this generation.
+      type: object
+      additionalProperties: false
+      required:
+      - expected_generation
+      properties:
+        expected_generation:
+          type: integer
+          minimum: 1
+
     DetachEnvironmentGitSourceRequest:
       type: object
       description: Release this binding's Git ownership at the supplied generation while retaining its history.
@@ -54639,6 +56369,16 @@ components:
         items: { type: array, items: { $ref: '#/components/schemas/IssueIngestToken' } }
 
   responses:
+    OperationConflict:
+      description: A pinned contract, idempotency payload or execution generation conflicts with the retained state.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    OperationGone:
+      description: The retained result expired; its identity remains reserved for the deduplication window.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
 
     TenantSurfacesNotAllowed:
       description: "code: tenant_surfaces_not_allowed — this account's plan does not include tenant surfaces."

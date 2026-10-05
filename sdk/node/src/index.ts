@@ -37,6 +37,7 @@ export { KeysService } from './generated/services/KeysService.js';
 export { ManagedPostgresService } from './generated/services/ManagedPostgresService.js';
 export { MetaService } from './generated/services/MetaService.js';
 export { MfaService } from './generated/services/MfaService.js';
+export { OperationsService } from './generated/services/OperationsService.js';
 export { OutboundService } from './generated/services/OutboundService.js';
 export { QueuesService } from './generated/services/QueuesService.js';
 export { TriggersService } from './generated/services/TriggersService.js';
@@ -160,6 +161,10 @@ export {
 } from './dev-bridge.js';
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
+
+export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport } from './customer-operations.js';
+export { GregaleOperations, type GregaleOperationsOptions, type OperationExecutionContext } from './operations-runtime.js';
+
 export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
 
 export { operationReceiptSchema } from "./operation-contract.js";

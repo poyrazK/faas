@@ -720,6 +720,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runServiceRolloutBindingWorker(ctx)
 		go srv.runCheckedRollbackWorker(ctx)
 		go srv.runAlertRollbackWorker(ctx)
+		go srv.runOperationArtifactCleanup(ctx)
 		go srv.runObjectStorageRecovery(ctx)
 		go srv.runObjectStorageAccounting(ctx)
 		go srv.runManagedPostgresReconciler(ctx)
@@ -1423,6 +1424,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: outbound_probe_gateway_url must be an HTTPS origin")
 	}
 	srv.outboundProbeGatewayURL = cfg.OutboundProbeGatewayURL
+	if err := srv.configureOperations(*cfg, deps.getenv); err != nil {
+		return err
+	}
+	srv.startOperationNotifications(ctx)
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err
 	}
@@ -1546,6 +1551,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: load SBOM storage backend: %w", err)
 	}
 	srv.WithSBOMRoot(deps.getenv("FAAS_SBOM_ROOT")).WithSBOMStorage(sbomStorage)
+	srv.WithOperationArtifactStorage(sbomStorage)
 	if signPubPath := strings.TrimSpace(deps.getenv("FAAS_SIGN_PUB")); signPubPath != "" {
 		rollbackVerifier, verifyErr := cosign.NewLocalVerifier(signPubPath, sbomStorage)
 		if verifyErr != nil {

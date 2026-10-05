@@ -553,6 +553,8 @@ jobs:
       # Handler fixtures clone a fully migrated private database. Migration
       # tests still use fresh schemas/databases and exercise the complete chain.
       FAAS_PGTEST_TEMPLATE_DATABASE: "1"
+      # Portable HTTP boundary only: the VM bridge is an HTTP fixture.
+      GREGALE_OPERATIONS_ACCEPTANCE: "1"
     steps:
       - name: pre-pull postgres image
         run: |
@@ -592,6 +594,14 @@ jobs:
           restore-keys: |
             go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-pg-1-${{ runner.os }}-
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+      - name: build SDK for portable Operations HTTP acceptance
+        working-directory: sdk/node
+        run: |
+          npm ci --ignore-scripts
+          npm run build
       - name: unit tests (pg shard 1)
         run: |
           mkdir -p coverage

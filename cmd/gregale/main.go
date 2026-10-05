@@ -489,6 +489,8 @@ func run(args []string) (status int) {
 		// Tier C: per-account invocation ledger (issue #394 follow-up).
 		// Mirrors `audit-events` for dispatcher shape.
 		return cmdInvocations(args[1:])
+	case "customer-operations":
+		return cmdCustomerOperations(args[1:])
 	case "operations":
 		// Durable exclusive operations: reconcile coordination policies and
 		// trigger bindings, submit work, inspect ownership, or cancel it.

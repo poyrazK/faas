@@ -1480,6 +1480,16 @@ type CustomerOperationDefinition struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type CustomerOperationDeliveryRetry struct {
+	OperationID              pgtype.UUID
+	RetryID                  string
+	DeliveryID               pgtype.UUID
+	ExpectedReplayGeneration int32
+	ReplayGeneration         int32
+	QueuedAt                 pgtype.Timestamptz
+	ExpiresAt                pgtype.Timestamptz
+}
+
 type CustomerOperationEvent struct {
 	OperationID pgtype.UUID
 	Sequence    int64

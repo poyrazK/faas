@@ -585,6 +585,46 @@ don't require the fixture.
 ## License
 
 Internal — see `LICENSE`.
+## Internal HTTP Operations preview
+
+Operations is staged and production submission remains disabled. For locally
+enabled acceptance, import `GregaleOperationClient` from the browser entry point
+and supply a callback that obtains a current tenant-bound token:
+
+```ts
+import { GregaleOperationClient } from '@gregale/sdk-node/browser';
+
+const operations = new GregaleOperationClient({
+  apiURL: 'https://api.example.com',
+  credential: () => session.currentTenantToken(),
+});
+const receipt = await operations.start(definitionID, { count: 100 }, submissionKey);
+for await (const update of operations.subscribe(receipt.id, { signal })) {
+  await saveAndRender(update);
+}
+```
+
+Keep `submissionKey` stable for duplicate submissions. Account API keys stay on
+the backend. The client refreshes credentials on reconnect; persist the applied
+event cursor and pass it as `after` when rebuilding the client.
+
+Server handlers import `GregaleOperations` from the main entry point and wrap
+trusted Gregale guest requests with `runRequest(req.headers, handler)`. Within
+that handler, use `progress({ report_id, stage, completed, total })` and
+`artifact({ report_id, name, uri, size_bytes, sha256 })`. Use stable report IDs
+when repeating a report. Workload metadata is fetched for every report, while
+the current invocation capability stays private to its request context.
+See [Operations](../../docs/operations.md) for ownership, retention and recovery.
+
+Completion delivery inspection, attempt history, and immutable retry decisions
+are exposed through the Operations APIs (`getOperationDelivery`,
+`getOperationDeliveryAttempts`, `retryOperationDeliveryWithReceipt`; PascalCase
+in Go and snake_case Python modules). New retries carry `retry_id`, `delivery_id`
+and an explicit `expected_replay_generation`, including zero. Reuse the same
+request after an uncertain reply; the returned `queued` receipt describes the
+original decision. Read delivery status separately. Business results and
+execution generations are unaffected. The legacy retry method remains available.
+
 
 ## Object version protection
 
