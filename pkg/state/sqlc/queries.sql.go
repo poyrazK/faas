@@ -1721,6 +1721,51 @@ func (q *Queries) CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg Ch
 	return i_id, err
 }
 
+const checkpointApplicationStandardObservation = `-- name: CheckpointApplicationStandardObservation :execrows
+UPDATE app_application_standards e SET observed_revision=CASE WHEN $1::boolean THEN e.desired_revision ELSE 0 END,
+ state=CASE WHEN $1::boolean THEN 'observed' ELSE 'persisted' END,
+ error_code=$2::text,updated_at=clock_timestamp()
+ WHERE e.app_id=$3::uuid AND e.org_id=$4::uuid
+ AND e.desired_revision=$5::bigint AND e.persisted_revision=e.desired_revision
+ AND e.state IN ('persisted','observed')
+ AND (NOT $1::boolean OR $6::timestamptz>clock_timestamp())
+ AND EXISTS(SELECT 1 FROM application_standard_operations o
+  WHERE o.id=$7::uuid AND o.org_id=e.org_id
+   AND o.lease_owner=$8::text AND o.lease_generation=$9::bigint
+   AND o.lease_until>clock_timestamp() AND o.state IN ('queued','running','waiting'))
+`
+
+type CheckpointApplicationStandardObservationParams struct {
+	Qualified     bool
+	ErrorCode     string
+	AppID         pgtype.UUID
+	OrgID         pgtype.UUID
+	Revision      int64
+	EvidenceUntil pgtype.Timestamptz
+	OperationID   pgtype.UUID
+	Owner         string
+	Generation    int64
+}
+
+// Requires the live worker generation and exact enrollment in the locked read.
+func (q *Queries) CheckpointApplicationStandardObservation(ctx context.Context, db DBTX, arg CheckpointApplicationStandardObservationParams) (int64, error) {
+	result, err := db.Exec(ctx, checkpointApplicationStandardObservation,
+		arg.Qualified,
+		arg.ErrorCode,
+		arg.AppID,
+		arg.OrgID,
+		arg.Revision,
+		arg.EvidenceUntil,
+		arg.OperationID,
+		arg.Owner,
+		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const checkpointApplicationStandardTarget = `-- name: CheckpointApplicationStandardTarget :exec
 UPDATE application_standard_operation_targets SET state = $1::text,
  desired_revision = $2::bigint, error_code = $3::text, updated_at = clock_timestamp()
@@ -18568,6 +18613,96 @@ func (q *Queries) ListApplicationStandardLogInventories(ctx context.Context, db 
 	return items, nil
 }
 
+const listApplicationStandardObservationArtifacts = `-- name: ListApplicationStandardObservationArtifacts :many
+SELECT d.id,application_standard_native_runtime_snapshot(d.app_id,d.id)::jsonb AS input
+ FROM deployments d WHERE d.app_id=$1::uuid
+ AND (d.status NOT IN ('failed','superseded','cancelled')
+  OR EXISTS(SELECT 1 FROM instances i WHERE i.deployment_id=d.id AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining'))
+  OR EXISTS(SELECT 1 FROM snapshots s WHERE s.deployment_id=d.id AND NOT s.stale AND NOT s.delete_pending))
+ ORDER BY d.id
+`
+
+type ListApplicationStandardObservationArtifactsRow struct {
+	ID    pgtype.UUID
+	Input []byte
+}
+
+func (q *Queries) ListApplicationStandardObservationArtifacts(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListApplicationStandardObservationArtifactsRow, error) {
+	rows, err := db.Query(ctx, listApplicationStandardObservationArtifacts, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListApplicationStandardObservationArtifactsRow{}
+	for rows.Next() {
+		var i ListApplicationStandardObservationArtifactsRow
+		if err := rows.Scan(&i.ID, &i.Input); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listApplicationStandardObservationSnapshots = `-- name: ListApplicationStandardObservationSnapshots :many
+SELECT s.id,c.input_snapshot,c.grant_data,c.acknowledgment,c.expected_state,c.created_at,c.received_at,
+ coalesce(application_standard_snapshot_catalog_matches(s,c),false)::boolean AS catalog_matches,
+ (n.last_heartbeat_at+make_interval(secs=>$1::double precision))::timestamptz AS heartbeat_until
+ FROM snapshots s LEFT JOIN application_standard_snapshot_captures c ON c.token=s.application_standard_capture_token
+ LEFT JOIN compute_nodes n ON n.id=c.node_id
+ WHERE s.deployment_id=$2::uuid AND NOT s.stale AND NOT s.delete_pending ORDER BY s.id
+`
+
+type ListApplicationStandardObservationSnapshotsParams struct {
+	HeartbeatSeconds float64
+	DeploymentID     pgtype.UUID
+}
+
+type ListApplicationStandardObservationSnapshotsRow struct {
+	ID             pgtype.UUID
+	InputSnapshot  []byte
+	GrantData      []byte
+	Acknowledgment []byte
+	ExpectedState  pgtype.Text
+	CreatedAt      pgtype.Timestamptz
+	ReceivedAt     pgtype.Timestamptz
+	CatalogMatches bool
+	HeartbeatUntil pgtype.Timestamptz
+}
+
+func (q *Queries) ListApplicationStandardObservationSnapshots(ctx context.Context, db DBTX, arg ListApplicationStandardObservationSnapshotsParams) ([]ListApplicationStandardObservationSnapshotsRow, error) {
+	rows, err := db.Query(ctx, listApplicationStandardObservationSnapshots, arg.HeartbeatSeconds, arg.DeploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListApplicationStandardObservationSnapshotsRow{}
+	for rows.Next() {
+		var i ListApplicationStandardObservationSnapshotsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.InputSnapshot,
+			&i.GrantData,
+			&i.Acknowledgment,
+			&i.ExpectedState,
+			&i.CreatedAt,
+			&i.ReceivedAt,
+			&i.CatalogMatches,
+			&i.HeartbeatUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listApplicationStandardPublishers = `-- name: ListApplicationStandardPublishers :many
 SELECT id, org_id, name, public_key_der, fingerprint, created_by, created_at FROM application_standard_publishers WHERE org_id = $1::uuid
 AND ($2::text = '' OR id > NULLIF($2::text, '')::uuid)
@@ -23294,6 +23429,34 @@ func (q *Queries) LockApplicationStandardLogInventoryParents(ctx context.Context
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockApplicationStandardObservation = `-- name: LockApplicationStandardObservation :one
+SELECT application_standard_lock_observation($1::uuid,$2::uuid)::uuid
+`
+
+type LockApplicationStandardObservationParams struct {
+	AppID pgtype.UUID
+	OrgID pgtype.UUID
+}
+
+// All subsequent reads and observation writes use this same transaction.
+func (q *Queries) LockApplicationStandardObservation(ctx context.Context, db DBTX, arg LockApplicationStandardObservationParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockApplicationStandardObservation, arg.AppID, arg.OrgID)
+	var column_1 pgtype.UUID
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const lockApplicationStandardObservationEvidence = `-- name: LockApplicationStandardObservationEvidence :one
+SELECT application_standard_lock_observation_evidence($1::uuid)::boolean
+`
+
+func (q *Queries) LockApplicationStandardObservationEvidence(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, lockApplicationStandardObservationEvidence, appID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const lockApplicationStandardOperationControl = `-- name: LockApplicationStandardOperationControl :one
@@ -36225,6 +36388,36 @@ func (q *Queries) ReadApplicationStandardLocalIntentAuthority(ctx context.Contex
 	return i, err
 }
 
+const readApplicationStandardObservationLogging = `-- name: ReadApplicationStandardObservationLogging :one
+SELECT application_standard_log_inventory($1::uuid)::jsonb AS inventory,
+ coalesce((SELECT jsonb_agg(application_standard_log_binding(d.app_id,d.id) ORDER BY d.id)
+  FROM app_log_drains d WHERE d.app_id=$1::uuid AND d.enabled
+   AND application_standard_log_binding(d.app_id,d.id) IS NOT NULL),'[]'::jsonb)::jsonb AS bindings,
+ (SELECT min(n.last_heartbeat_at+make_interval(secs=>$2::double precision))
+  FROM compute_nodes n LEFT JOIN application_standard_log_consumers c ON c.node_id=n.id
+  WHERE (n.role IS DISTINCT FROM 'control-plane' AND c.stopped_at IS NULL)
+   OR EXISTS(SELECT 1 FROM instances i WHERE i.app_id=$1::uuid AND i.node_id=n.id
+     AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining')))::timestamptz AS heartbeat_until
+`
+
+type ReadApplicationStandardObservationLoggingParams struct {
+	AppID            pgtype.UUID
+	HeartbeatSeconds float64
+}
+
+type ReadApplicationStandardObservationLoggingRow struct {
+	Inventory      []byte
+	Bindings       []byte
+	HeartbeatUntil pgtype.Timestamptz
+}
+
+func (q *Queries) ReadApplicationStandardObservationLogging(ctx context.Context, db DBTX, arg ReadApplicationStandardObservationLoggingParams) (ReadApplicationStandardObservationLoggingRow, error) {
+	row := db.QueryRow(ctx, readApplicationStandardObservationLogging, arg.AppID, arg.HeartbeatSeconds)
+	var i ReadApplicationStandardObservationLoggingRow
+	err := row.Scan(&i.Inventory, &i.Bindings, &i.HeartbeatUntil)
+	return i, err
+}
+
 const readApplicationStandardOperation = `-- name: ReadApplicationStandardOperation :one
 SELECT jsonb_build_object('id', o.id::text, 'org_id', o.org_id::text, 'plan_id', o.plan_id::text,
   'assignment_id', o.assignment_id::text, 'approval_hash', o.approval_hash, 'approved_by', o.approved_by::text,
@@ -40408,6 +40601,36 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 		return nil, err
 	}
 	return items, nil
+}
+
+const restrictApplicationStandardWorkerEvidence = `-- name: RestrictApplicationStandardWorkerEvidence :execrows
+UPDATE application_standard_operations SET lease_until=least(lease_until,$1::timestamptz)
+WHERE id=$2::uuid AND org_id=$3::uuid
+ AND lease_owner=$4::text AND lease_generation=$5::bigint
+ AND lease_until>clock_timestamp() AND $1::timestamptz>clock_timestamp()
+`
+
+type RestrictApplicationStandardWorkerEvidenceParams struct {
+	EvidenceUntil pgtype.Timestamptz
+	OperationID   pgtype.UUID
+	OrgID         pgtype.UUID
+	Owner         string
+	Generation    int64
+}
+
+// A wave transaction cannot outlive the evidence that authorized it.
+func (q *Queries) RestrictApplicationStandardWorkerEvidence(ctx context.Context, db DBTX, arg RestrictApplicationStandardWorkerEvidenceParams) (int64, error) {
+	result, err := db.Exec(ctx, restrictApplicationStandardWorkerEvidence,
+		arg.EvidenceUntil,
+		arg.OperationID,
+		arg.OrgID,
+		arg.Owner,
+		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const retainCustomerOperationBlob = `-- name: RetainCustomerOperationBlob :execrows

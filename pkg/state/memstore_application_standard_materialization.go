@@ -81,6 +81,13 @@ func (m *MemStore) MaterializeNextApplicationStandardTarget(ctx context.Context,
 	if index < 0 {
 		return m.standardMaterializationCheckpointLocked(c, o, now), nil
 	}
+	until, ready, err := m.revalidateStandardWaveLocked(ctx, &o, index)
+	if err != nil {
+		return ApplicationStandardOperation{}, err
+	}
+	if !ready {
+		return m.standardMaterializationCheckpointLocked(c, o, time.Now().UTC()), nil
+	}
 	t := &o.Targets[index]
 	plan, err := m.standardReviewPlanLocked(o.OrgID, o.PlanID)
 	if err != nil {
@@ -128,6 +135,9 @@ func (m *MemStore) MaterializeNextApplicationStandardTarget(ctx context.Context,
 	}
 	if err := ctx.Err(); err != nil {
 		return ApplicationStandardOperation{}, err
+	}
+	if !until.IsZero() && !until.After(time.Now()) {
+		return ApplicationStandardOperation{}, ErrApplicationStandardRuntimeStale
 	}
 	enrollment := standardInstalledEnrollment(app, *t, now)
 	m.installStandardProjectionLocked(app, projection, enrollment)

@@ -4,6 +4,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,10 +28,12 @@ type ApplicationStandardSnapshotCaptureRecord struct {
 	Grant                 runtimeadmission.SnapshotGrant
 	Acknowledgment        *runtimeadmission.SnapshotAcknowledgment
 	CreatedAt, ReceivedAt time.Time
+	inputs                json.RawMessage // Private immutable source inputs, also retained by PostgreSQL.
 }
 
 func (r ApplicationStandardSnapshotCaptureRecord) Clone() ApplicationStandardSnapshotCaptureRecord {
 	r.Grant = r.Grant.Clone()
+	r.inputs = append(json.RawMessage(nil), r.inputs...)
 	if r.Acknowledgment != nil {
 		owned := r.Acknowledgment.Clone()
 		r.Acknowledgment = &owned

@@ -61,7 +61,7 @@ func (m *MemStore) IssueApplicationStandardSnapshotCapture(ctx context.Context, 
 	if m.applicationStandardSnapshotCaptures == nil {
 		m.applicationStandardSnapshotCaptures = map[string]ApplicationStandardSnapshotCaptureRecord{}
 	}
-	m.applicationStandardSnapshotCaptures[g.Token] = ApplicationStandardSnapshotCaptureRecord{ExpectedState: expectedState, Grant: g.Clone(), CreatedAt: now}
+	m.applicationStandardSnapshotCaptures[g.Token] = ApplicationStandardSnapshotCaptureRecord{ExpectedState: expectedState, Grant: g.Clone(), CreatedAt: now, inputs: append([]byte(nil), m.instanceApplicationStandardAdmissions[ins.ID].inputs...)}
 	return g.Clone(), nil
 }
 

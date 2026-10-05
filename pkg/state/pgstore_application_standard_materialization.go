@@ -70,6 +70,13 @@ func (s *PgStore) materializeStandardTargetAttempt(ctx context.Context, c Applic
 	if index < 0 {
 		return checkpointStandardMaterialization(ctx, tx, c, o)
 	}
+	ready, err := revalidateStandardWaveTx(ctx, tx, c, &o, index)
+	if err != nil {
+		return o, err
+	}
+	if !ready {
+		return checkpointStandardMaterialization(ctx, tx, c, o)
+	}
 	row, err := q.GetApplicationStandardReviewPlan(ctx, tx, sqlc.GetApplicationStandardReviewPlanParams{OrgID: mustPgUUID(o.OrgID), PlanID: mustPgUUID(o.PlanID)})
 	if err != nil {
 		return o, err

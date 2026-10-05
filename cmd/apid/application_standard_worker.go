@@ -13,10 +13,11 @@ import (
 type applicationStandardWorkerStore interface {
 	state.ApplicationStandardMaterializationStore
 	state.ApplicationStandardAutomaticMaterializationStore
+	state.ApplicationStandardObservationStore
 }
 
-// Intent projection belongs to apid. This loop only writes durable settings;
-// schedd, imaged and gateways retain their runtime/verification ownership.
+// apid owns intent and aggregate adoption. Runtime owners supply evidence through
+// durable rows; this worker never calls vmmd or fabricates a consumer receipt.
 func (s *server) runApplicationStandardWorker(ctx context.Context) {
 	worker, ok := s.store.(applicationStandardWorkerStore)
 	if !ok {
@@ -45,7 +46,7 @@ func (s *server) runApplicationStandardPass(parent context.Context, worker appli
 	claim, err := worker.ClaimApplicationStandardOperation(ctx, owner)
 	if err == nil {
 		for range api.ApplicationStandardWorkerPassLimit {
-			operation, applyErr := worker.MaterializeNextApplicationStandardTarget(ctx, claim)
+			operation, applyErr := advanceApplicationStandardOperation(ctx, worker, claim)
 			if applyErr != nil {
 				s.applicationStandardWorkerError(ctx, "operation", claim.OperationID, applyErr)
 				break
@@ -79,6 +80,14 @@ func (s *server) runApplicationStandardPass(parent context.Context, worker appli
 			s.applicationStandardWorkerError(ctx, "enrollment", enrollment.AppID, err)
 		}
 	}
+}
+
+func advanceApplicationStandardOperation(ctx context.Context, worker applicationStandardWorkerStore, claim state.ApplicationStandardWorkerClaim) (state.ApplicationStandardOperation, error) {
+	operation, err := worker.ObserveApplicationStandardOperation(ctx, claim)
+	if err != nil || operation.State != "running" {
+		return operation, err
+	}
+	return worker.MaterializeNextApplicationStandardTarget(ctx, claim)
 }
 
 func (s *server) applicationStandardWorkerError(ctx context.Context, stage, id string, err error) {

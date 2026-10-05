@@ -2177,3 +2177,53 @@ refusal, fresh measured publication, current native qualification and scope
 repair. These simulated receipts establish storage behavior only. They do not
 advance application observation, release a wave, prove physical recovery or
 satisfy native KVM acceptance. Public mutation activation remains disabled.
+
+
+### Reviewed observation and wave revalidation
+
+The apid worker now qualifies each installed target before marking its enrollment
+and operation target observed. A worker claim never counts as consumer evidence.
+Qualification and checkpoint share one MemStore mutex or PostgreSQL transaction.
+PostgreSQL locks authoritative node membership, process identities, application
+parents, controls, report rows, placements, retained deployments and snapshot
+catalog rows. Additive child guards cover inserts and moves; a shared membership
+advisory fence covers new nodes and role changes. Nonwaiting acquisition returns
+busy rather than certifying an incomplete read. A stale SQL artifact guard rolls
+back a private savepoint while the outer application and membership fences remain.
+
+Every open required logging session must load the exact current drain inventory.
+Each current company destination needs current healthy delivery evidence from each
+required logging consumer. Both report refresh time and actual delivery-event time
+must be fresh; idle, degraded and periodically refreshed old success remain pending.
+Closed joined logging sessions discharge only their logging process obligation.
+Live placements still require current measured native protocol-2 consumption and
+current revision-bound outbound-policy receipts. Every retained deployment needs
+current producer/publisher approval and a composed scan under the current policy.
+Usable snapshot cache needs complete measured capture history, matching current
+inputs and an available original producer process. Legacy or stale cache cannot be
+silently upgraded into observation. An empty roster or artifact inventory is pending.
+
+The observer reports bounded reasons on the existing enrollment and operation
+fields. Positive observation is capped by the earliest heartbeat, consumer report,
+provider event, scan or exception deadline. PostgreSQL shortens the owning worker
+lease to that deadline so a late wave checkpoint rolls back. Materializing a later
+wave independently requalifies all previously observed targets in its own write
+transaction; a persisted observed bit cannot release a new wave. Pause, abort,
+expired or replaced worker generations prevent late observation writes.
+
+This checkpoint implements reviewed-operation observation. Automatic onboarding
+still materializes its enrollment; independent automatic observation reconciliation,
+positive multi-application wave acceptance, scheduler-driven replacement and
+snapshot re-prime acceptance, fleet recovery, named production
+scope and native Linux amd64 KVM acceptance remain release work. Provider evidence
+is deliberately conservative for idle services until a real delivery is available.
+The public mutation gate remains disabled. Portable tests use explicitly simulated
+native and delivery receipts and do not establish physical host enforcement.
+
+
+The regression suite caught a reverse-parent locking change in legacy deployment
+metadata and instance cleanup. A third additive migration replaces the observation
+child guard's application-row lock with a dedicated shared advisory fence. Only an
+observer acquires its exclusive counterpart; ordinary parent-row transactions
+retain their prior cleanup behavior. The earlier applied migration files are
+preserved. The existing artifact writer regression gate covers compatibility.

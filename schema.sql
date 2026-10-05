@@ -1136,6 +1136,63 @@ $$;
 
 
 --
+-- Name: application_standard_lock_observation(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_lock_observation(application_id uuid, organization_id uuid) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+DECLARE locked uuid;
+BEGIN
+ IF NOT pg_try_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.consumer-membership',0)) THEN
+  RAISE EXCEPTION 'application standard membership is busy' USING ERRCODE='55P03';
+ END IF;
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.observation.'||application_id::text,0)) THEN
+  RAISE EXCEPTION 'application standard children are busy' USING ERRCODE='55P03';
+ END IF;
+ SELECT a.id INTO locked FROM apps a JOIN app_application_standards e ON e.app_id=a.id
+ WHERE a.id=application_id AND a.org_id=organization_id AND a.status<>'deleted'
+ FOR UPDATE OF a,e NOWAIT;
+ IF NOT FOUND THEN RETURN NULL; END IF;
+ PERFORM n.id FROM compute_nodes n ORDER BY n.id FOR SHARE NOWAIT;
+ PERFORM c.node_id FROM application_standard_log_consumers c ORDER BY c.node_id FOR SHARE NOWAIT;
+ PERFORM i.id FROM instances i WHERE i.app_id=application_id ORDER BY i.id FOR SHARE NOWAIT;
+ PERFORM d.id FROM deployments d WHERE d.app_id=application_id ORDER BY d.id FOR SHARE NOWAIT;
+ PERFORM s.id FROM snapshots s JOIN deployments d ON d.id=s.deployment_id
+ WHERE d.app_id=application_id ORDER BY s.id FOR SHARE OF s NOWAIT;
+ RETURN locked;
+END;
+$$;
+
+
+--
+-- Name: application_standard_lock_observation_evidence(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_lock_observation_evidence(application_id uuid) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||application_id::text,0)) THEN
+  RAISE EXCEPTION 'application standard controls are busy' USING ERRCODE='55P03';
+ END IF;
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ WHERE a.id=application_id FOR SHARE OF o,acct NOWAIT;
+ PERFORM p.id FROM projects p JOIN apps a ON a.project_id=p.id WHERE a.id=application_id FOR SHARE OF p NOWAIT;
+ PERFORM d.id FROM app_log_drains d WHERE d.app_id=application_id ORDER BY d.id FOR SHARE NOWAIT;
+ PERFORM b.app_id FROM application_standard_control_bindings b WHERE b.app_id=application_id
+ ORDER BY b.field,b.resource_id FOR SHARE NOWAIT;
+ PERFORM r.id FROM application_standard_log_destinations r JOIN application_standard_control_bindings b
+ ON b.resource_id=r.id AND b.field='log_destinations' WHERE b.app_id=application_id ORDER BY r.id FOR SHARE OF r NOWAIT;
+ PERFORM x.app_id FROM application_standard_log_inventories x WHERE x.app_id=application_id ORDER BY x.node_id FOR SHARE NOWAIT;
+ PERFORM h.app_id FROM application_standard_log_health h WHERE h.app_id=application_id ORDER BY h.node_id,h.drain_id FOR SHARE NOWAIT;
+ PERFORM e.app_id FROM application_standard_egress_observations e WHERE e.app_id=application_id ORDER BY e.node_id FOR SHARE NOWAIT;
+ RETURN true;
+END;
+$$;
+
+
+--
 -- Name: application_standard_lock_snapshot_capture(uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2352,6 +2409,53 @@ BEGIN
 EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN RETURN NULL;
 END;
 $_$;
+
+
+--
+-- Name: application_standard_observation_child_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_observation_child_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bodies jsonb[]; body jsonb; app_id uuid; ids uuid[] := '{}';
+BEGIN
+ IF TG_OP='INSERT' THEN bodies:=ARRAY[to_jsonb(NEW)];
+ ELSIF TG_OP='DELETE' THEN bodies:=ARRAY[to_jsonb(OLD)];
+ ELSE bodies:=ARRAY[to_jsonb(OLD),to_jsonb(NEW)]; END IF;
+ FOREACH body IN ARRAY bodies LOOP
+  IF TG_TABLE_NAME='snapshots' THEN
+   SELECT d.app_id INTO app_id FROM deployments d WHERE d.id=(body->>'deployment_id')::uuid;
+  ELSE app_id:=(body->>'app_id')::uuid; END IF;
+  IF app_id IS NOT NULL THEN ids:=array_append(ids,app_id); END IF;
+ END LOOP;
+ FOR app_id IN SELECT DISTINCT x.id FROM unnest(ids) AS x(id) ORDER BY x.id LOOP
+  IF NOT pg_try_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.observation.'||app_id::text,0)) THEN
+   RAISE EXCEPTION 'application standard observation is busy' USING ERRCODE='55P03';
+  END IF;
+ END LOOP;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_observation_membership_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_observation_membership_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND NEW.role IS NOT DISTINCT FROM OLD.role THEN RETURN NEW; END IF;
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.consumer-membership',0)) THEN
+  RAISE EXCEPTION 'application standard membership is busy' USING ERRCODE='55P03';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END;
+$$;
 
 
 --
@@ -32575,6 +32679,34 @@ CREATE TRIGGER application_standard_native_incarnation_once BEFORE INSERT OR UPD
 --
 
 CREATE TRIGGER application_standard_native_promotion_guard BEFORE INSERT OR DELETE OR UPDATE ON public.instance_application_standard_promotions FOR EACH ROW EXECUTE FUNCTION public.application_standard_native_promotion_guard();
+
+
+--
+-- Name: deployments application_standard_observation_deployment_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_observation_deployment_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.application_standard_observation_child_guard();
+
+
+--
+-- Name: instances application_standard_observation_instance_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_observation_instance_guard BEFORE INSERT OR DELETE OR UPDATE ON public.instances FOR EACH ROW EXECUTE FUNCTION public.application_standard_observation_child_guard();
+
+
+--
+-- Name: compute_nodes application_standard_observation_membership_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_observation_membership_guard BEFORE INSERT OR DELETE OR UPDATE OF role ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.application_standard_observation_membership_guard();
+
+
+--
+-- Name: snapshots application_standard_observation_snapshot_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_observation_snapshot_guard BEFORE INSERT OR DELETE OR UPDATE ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.application_standard_observation_child_guard();
 
 
 --

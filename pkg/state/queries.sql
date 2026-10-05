@@ -7233,6 +7233,61 @@ WHERE i.id=sqlc.arg(instance_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
  AND a.org_id=sqlc.arg(org_id)::uuid AND a.status<>'deleted'
 FOR SHARE OF i NOWAIT;
 
+-- All subsequent reads and observation writes use this same transaction.
+-- name: LockApplicationStandardObservation :one
+SELECT application_standard_lock_observation(sqlc.arg(app_id)::uuid,sqlc.arg(org_id)::uuid)::uuid;
+
+-- name: LockApplicationStandardObservationEvidence :one
+SELECT application_standard_lock_observation_evidence(sqlc.arg(app_id)::uuid)::boolean;
+
+-- name: ReadApplicationStandardObservationLogging :one
+SELECT application_standard_log_inventory(sqlc.arg(app_id)::uuid)::jsonb AS inventory,
+ coalesce((SELECT jsonb_agg(application_standard_log_binding(d.app_id,d.id) ORDER BY d.id)
+  FROM app_log_drains d WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.enabled
+   AND application_standard_log_binding(d.app_id,d.id) IS NOT NULL),'[]'::jsonb)::jsonb AS bindings,
+ (SELECT min(n.last_heartbeat_at+make_interval(secs=>sqlc.arg(heartbeat_seconds)::double precision))
+  FROM compute_nodes n LEFT JOIN application_standard_log_consumers c ON c.node_id=n.id
+  WHERE (n.role IS DISTINCT FROM 'control-plane' AND c.stopped_at IS NULL)
+   OR EXISTS(SELECT 1 FROM instances i WHERE i.app_id=sqlc.arg(app_id)::uuid AND i.node_id=n.id
+     AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining')))::timestamptz AS heartbeat_until;
+
+-- name: ListApplicationStandardObservationArtifacts :many
+SELECT d.id,application_standard_native_runtime_snapshot(d.app_id,d.id)::jsonb AS input
+ FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid
+ AND (d.status NOT IN ('failed','superseded','cancelled')
+  OR EXISTS(SELECT 1 FROM instances i WHERE i.deployment_id=d.id AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining'))
+  OR EXISTS(SELECT 1 FROM snapshots s WHERE s.deployment_id=d.id AND NOT s.stale AND NOT s.delete_pending))
+ ORDER BY d.id;
+
+-- name: ListApplicationStandardObservationSnapshots :many
+SELECT s.id,c.input_snapshot,c.grant_data,c.acknowledgment,c.expected_state,c.created_at,c.received_at,
+ coalesce(application_standard_snapshot_catalog_matches(s,c),false)::boolean AS catalog_matches,
+ (n.last_heartbeat_at+make_interval(secs=>sqlc.arg(heartbeat_seconds)::double precision))::timestamptz AS heartbeat_until
+ FROM snapshots s LEFT JOIN application_standard_snapshot_captures c ON c.token=s.application_standard_capture_token
+ LEFT JOIN compute_nodes n ON n.id=c.node_id
+ WHERE s.deployment_id=sqlc.arg(deployment_id)::uuid AND NOT s.stale AND NOT s.delete_pending ORDER BY s.id;
+
+-- Requires the live worker generation and exact enrollment in the locked read.
+-- name: CheckpointApplicationStandardObservation :execrows
+UPDATE app_application_standards e SET observed_revision=CASE WHEN sqlc.arg(qualified)::boolean THEN e.desired_revision ELSE 0 END,
+ state=CASE WHEN sqlc.arg(qualified)::boolean THEN 'observed' ELSE 'persisted' END,
+ error_code=sqlc.arg(error_code)::text,updated_at=clock_timestamp()
+ WHERE e.app_id=sqlc.arg(app_id)::uuid AND e.org_id=sqlc.arg(org_id)::uuid
+ AND e.desired_revision=sqlc.arg(revision)::bigint AND e.persisted_revision=e.desired_revision
+ AND e.state IN ('persisted','observed')
+ AND (NOT sqlc.arg(qualified)::boolean OR sqlc.narg(evidence_until)::timestamptz>clock_timestamp())
+ AND EXISTS(SELECT 1 FROM application_standard_operations o
+  WHERE o.id=sqlc.arg(operation_id)::uuid AND o.org_id=e.org_id
+   AND o.lease_owner=sqlc.arg(owner)::text AND o.lease_generation=sqlc.arg(generation)::bigint
+   AND o.lease_until>clock_timestamp() AND o.state IN ('queued','running','waiting'));
+
+-- A wave transaction cannot outlive the evidence that authorized it.
+-- name: RestrictApplicationStandardWorkerEvidence :execrows
+UPDATE application_standard_operations SET lease_until=least(lease_until,sqlc.narg(evidence_until)::timestamptz)
+WHERE id=sqlc.arg(operation_id)::uuid AND org_id=sqlc.arg(org_id)::uuid
+ AND lease_owner=sqlc.arg(owner)::text AND lease_generation=sqlc.arg(generation)::bigint
+ AND lease_until>clock_timestamp() AND sqlc.narg(evidence_until)::timestamptz>clock_timestamp();
+
 -- name: InsertInstanceApplicationStandardBoot :exec
 INSERT INTO instance_application_standard_boots(token,instance_id,expected_state,binding)
 VALUES(sqlc.arg(token)::uuid,sqlc.arg(instance_id)::uuid,sqlc.arg(expected_state)::text,sqlc.arg(binding)::jsonb);
