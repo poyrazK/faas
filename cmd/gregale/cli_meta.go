@@ -541,7 +541,7 @@ var cliCommands = []cliCommand{
 	{
 		Name: "commit", DocSlug: "commit", Short: "Manage transactional PostgreSQL outbox sources (internal)",
 		Subcommands: []cliSub{
-			{Name: "add", Short: "Register a fixed app destination", Flags: []cliFlag{{Name: "name", Short: "account source name", Req: true, Value: "NAME"}, {Name: "operation-policy", Short: "account-scoped queue policy", Req: true, Value: "NAME"}}},
+			{Name: "add", Short: "Register a fixed app destination", Flags: []cliFlag{{Name: "name", Short: "account source name", Req: true, Value: "NAME"}, {Name: "operation-policy", Short: "managed Operations queue policy", Req: true, Value: "NAME"}, {Name: "contract-version", Short: "immutable source contract version (default 1)", Value: "VERSION", ClosedSet: []string{"1", "2"}}, {Name: "allow-tenant-selection", Short: "grant version 2 account-owner customer selection"}}},
 			{Name: "connection", Short: "Seal database credentials from a file", Flags: []cliFlag{{Name: "file", Short: "connection URL file", Req: true, Value: "PATH"}}},
 			{Name: "pause", Short: "Pause new acceptance"},
 			{Name: "resume", Short: "Resume new acceptance"},
@@ -1091,7 +1091,8 @@ var cliCommands = []cliCommand{
 			{Name: "run", Short: "Trigger a new workflow run", Positionals: []string{"<workflow-name>"}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "input", Short: "JSON input payload (default {})", Value: "JSON"}}},
 			{Name: "status", Short: "Show details of a workflow run", Positionals: []string{"<run_id>"}},
 			{Name: "steps", Short: "List steps for a workflow run", Positionals: []string{"<run_id>"}},
-			{Name: "attempts", Short: "List retry attempts for one step of a workflow run", Positionals: []string{"<run_id>", "<step_name>"}},
+			{Name: "attempts", Short: "List retry attempts and managed effect delivery status for a workflow step", Positionals: []string{"<run_id>", "<step_name>"}},
+			{Name: "retry", Short: "Retry one safely resumable failed HTTP step", Positionals: []string{"<run_id>", "<step_name>"}},
 			{Name: "cancel", Short: "Cancel an active workflow run", Positionals: []string{"<run_id>"}},
 			{Name: "events", Short: "Send external event to a workflow run", Positionals: []string{"<run_id>", "<event_name>"}},
 		},
@@ -2090,7 +2091,7 @@ var cliCommands = []cliCommand{
 				{Name: "tasks", Value: "N", Short: "number of Job tasks (default 1; omit with --run-file)"},
 				{Name: "run-file", Value: "FILE", Short: "JSON CreateJobRunRequest"},
 			}, Examples: []string{"gregale operations start-job --policy imports --key '\"customer:acme:import\"' nightly-import"}},
-			{Name: "get", Short: "Inspect operation state and committed result", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "self", Short: "use the authenticated platform-customer scope"}}},
+			{Name: "get", Short: "Inspect operation state, committed result, and effect delivery status", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "self", Short: "use the authenticated platform-customer scope"}}},
 			{Name: "wait", Short: "Wait for a terminal operation state", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "self", Short: "use the authenticated platform-customer scope"}, {Name: "timeout", Value: "DURATION", Short: "stop waiting after this duration"}, {Name: "interval", Value: "DURATION", Short: "time between status checks"}}},
 			{Name: "cancel", Short: "Request cancellation of pending or active work", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "self", Short: "use the authenticated platform-customer scope"}}},
 		},

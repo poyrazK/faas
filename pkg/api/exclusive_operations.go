@@ -86,20 +86,67 @@ type ExclusiveWorkPolicyList struct {
 }
 
 type ExclusiveOperationRecord struct {
-	ID               string          `json:"id"`
-	AppID            string          `json:"app_id,omitempty"`
-	JobID            string          `json:"job_id,omitempty"`
+	ID               string                  `json:"id"`
+	AppID            string                  `json:"app_id,omitempty"`
+	JobID            string                  `json:"job_id,omitempty"`
+	PlatformTenantID string                  `json:"platform_tenant_id,omitempty"`
+	Sequence         int64                   `json:"sequence"`
+	State            string                  `json:"state"`
+	PolicyRevision   int64                   `json:"policy_revision"`
+	Generation       int64                   `json:"generation"`
+	LeaseExpiresAt   *time.Time              `json:"lease_expires_at,omitempty"`
+	AttemptDeadline  *time.Time              `json:"attempt_deadline,omitempty"`
+	Result           json.RawMessage         `json:"result,omitempty"`
+	Effects          []OperationEffectRecord `json:"effects,omitempty"`
+	LastError        string                  `json:"last_error,omitempty"`
+	CreatedAt        time.Time               `json:"created_at"`
+	CompletedAt      *time.Time              `json:"completed_at,omitempty"`
+}
+
+// ManagedOperationResultVersion identifies the supported handler response protocol.
+const ManagedOperationResultVersion = 1
+
+// ManagedOperationResult is an opt-in HTTP handler response. Only managed
+// request operations interpret this envelope; authority stays with schedd.
+// The entire encoded envelope must fit MaxExclusiveResultBytes.
+type ManagedOperationResult struct {
+	Version int                      `json:"gregale_operation_result"`
+	Result  json.RawMessage          `json:"result"`
+	Effects []ManagedOperationEffect `json:"effects"`
+}
+
+// ManagedOperationEffect names a business webhook delivery proposed by a handler.
+type ManagedOperationEffect struct {
+	Name      string          `json:"name"`
+	Payload   json.RawMessage `json:"payload"`
+	WebhookID string          `json:"webhook_id"`
+	Type      string          `json:"type"`
+}
+
+// OperationEffectRecord correlates immutable effect identity with the existing
+// webhook ledger. Unavailable means the delivery history was deleted or pruned.
+type OperationEffectRecord struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Generation int64  `json:"generation"`
+	WebhookID  string `json:"webhook_id,omitempty"`
+	DeliveryID string `json:"delivery_id,omitempty"`
+	Type       string `json:"type,omitempty"`
+	Status     string `json:"status"`
+	Attempt    int    `json:"attempt"`
+	LastError  string `json:"last_error,omitempty"`
+}
+
+// OperationEffectPayload is the data in an operation.effect webhook. Scope and
+// identifiers are supplied by the control plane, not the handler response.
+type OperationEffectPayload struct {
+	OperationID      string          `json:"operation_id"`
+	AppID            string          `json:"app_id"`
 	PlatformTenantID string          `json:"platform_tenant_id,omitempty"`
-	Sequence         int64           `json:"sequence"`
-	State            string          `json:"state"`
-	PolicyRevision   int64           `json:"policy_revision"`
 	Generation       int64           `json:"generation"`
-	LeaseExpiresAt   *time.Time      `json:"lease_expires_at,omitempty"`
-	AttemptDeadline  *time.Time      `json:"attempt_deadline,omitempty"`
-	Result           json.RawMessage `json:"result,omitempty"`
-	LastError        string          `json:"last_error,omitempty"`
-	CreatedAt        time.Time       `json:"created_at"`
-	CompletedAt      *time.Time      `json:"completed_at,omitempty"`
+	Name             string          `json:"name"`
+	Type             string          `json:"type"`
+	Data             json.RawMessage `json:"data"`
 }
 
 type ExclusivePolicyRequest = ExclusiveOperationPolicy

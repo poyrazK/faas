@@ -27,14 +27,20 @@ class WorkflowStepSpec:
     """One workflow step. The canonical ADR-081 target is `run`; `path`
     and `method` remain accepted for the existing HTTP wake executor
     during the runtime migration. Exactly one of `run`, `path`,
-    `wait_for_event`, `wait_for_callback`, `wait_for_duration`, or
+    `wait_for_event`, `wait_for_callback`, `wait_for_duration`,
     `wait_for_condition`, `outbound`, `join`, or `for_each` must be supplied.
+    Set `managed_operation` on an executable HTTP step to persist its business
+    result transactionally and replay it safely when the workflow retries
+    after an uncertain response.
 
     """
 
     name: str
     run: str | Unset = UNSET
     """Named platform operation to invoke."""
+    managed_operation: bool | Unset = UNSET
+    """Opt into the managed PostgreSQL operation result protocol for this executable HTTP step. The handler must
+    use the transactional operation SDK."""
     for_each: WorkflowForEachSpec | Unset = UNSET
     """Sequential action over a JSON array from input or a direct dependency output.
     Snapshots all items and resolved action inputs before dispatch. At most 128
@@ -104,6 +110,8 @@ class WorkflowStepSpec:
         name = self.name
 
         run = self.run
+
+        managed_operation = self.managed_operation
 
         for_each: dict[str, Any] | Unset = UNSET
         if not isinstance(self.for_each, Unset):
@@ -175,6 +183,8 @@ class WorkflowStepSpec:
         )
         if run is not UNSET:
             field_dict["run"] = run
+        if managed_operation is not UNSET:
+            field_dict["managed_operation"] = managed_operation
         if for_each is not UNSET:
             field_dict["for_each"] = for_each
         if join is not UNSET:
@@ -224,6 +234,8 @@ class WorkflowStepSpec:
         name = d.pop("name")
 
         run = d.pop("run", UNSET)
+
+        managed_operation = d.pop("managed_operation", UNSET)
 
         _for_each = d.pop("for_each", UNSET)
         for_each: WorkflowForEachSpec | Unset
@@ -328,6 +340,7 @@ class WorkflowStepSpec:
         workflow_step_spec = cls(
             name=name,
             run=run,
+            managed_operation=managed_operation,
             for_each=for_each,
             join=join,
             outbound=outbound,

@@ -75,6 +75,7 @@ var AllowedAppWebhookDeliveryFormats = []string{"json", "cloudevents"}
 // The delivery ledger intentionally retains its wider historical enum so old
 // rows remain readable during upgrades.
 var AllowedAppWebhookEvents = []string{
+	"operation.effect",
 	"app.parked", "app.woken",
 	"deployment.live", "deployment.failed",
 	"rollout.completed", "rollout.aborted",
@@ -336,7 +337,8 @@ const AppWebhookEventFilterLenMax = 32
 // alert rule routes.
 //
 // EventFilter is the optional allowlist: empty/nil subscribes to
-// every event in AllowedAppWebhookEvents. When non-empty, every
+// lifecycle event in AllowedAppWebhookEvents. Operation effects require an
+// explicit operation.effect entry. When non-empty, every
 // entry must be a member of the closed set — the handler rejects
 // drift with 400 ErrAppWebhookInvalid.
 type CreateAppWebhookRequest struct {

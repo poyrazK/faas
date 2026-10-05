@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -20,6 +21,13 @@ import (
 // WorkflowStepExecutor dispatches a single step execution to an app instance.
 type WorkflowStepExecutor interface {
 	ExecuteStep(ctx context.Context, appID string, path, method string, headers map[string]string, body []byte, timeout time.Duration) (int, []byte, error)
+}
+
+// WorkflowManagedOperationExecutor is implemented by the authenticated
+// scheduler-to-gateway transport. The operation identity is host metadata;
+// it must never be supplied as a customer HTTP header.
+type WorkflowManagedOperationExecutor interface {
+	ExecuteManagedOperationStep(ctx context.Context, appID string, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, error)
 }
 
 // WorkflowOrchestrator coordinates workflow state transitions and step dispatch (ADR-081).
@@ -938,6 +946,8 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 	var statusCode int
 	var body []byte
 	var outboundRetryAt time.Time
+	managedOperationID := ""
+	var managedEffects []exclusivework.Effect
 	if spec.Outbound != nil {
 		statusCode, body, outboundRetryAt, err = o.outbound.ExecuteOutboundStep(ctx, run.ID, step.StepName, step.Attempt+1, *spec.Outbound, inputBytes, timeout)
 		if errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) {
@@ -950,7 +960,22 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 			execCtx, release = o.workflowItemContext(ctx, run.ID, step.StepName, step.Attempt+1)
 			defer release()
 		}
-		statusCode, body, err = o.executor.ExecuteStep(execCtx, run.AppID, workflowStepPath(spec), method, headers, inputBytes, timeout)
+		if spec.ManagedOperation {
+			managedExecutor, ok := o.executor.(WorkflowManagedOperationExecutor)
+			if !ok {
+				err = errors.New("managed workflow operation transport is unavailable")
+			} else {
+				var identityErr error
+				managedOperationID, identityErr = api.ManagedWorkflowStepOperationID(run.ID, step.StepName)
+				if identityErr != nil {
+					err = identityErr
+				} else {
+					statusCode, body, err = managedExecutor.ExecuteManagedOperationStep(execCtx, run.AppID, workflowStepPath(spec), method, headers, inputBytes, timeout, managedOperationID, int64(step.Attempt+1))
+				}
+			}
+		} else {
+			statusCode, body, err = o.executor.ExecuteStep(execCtx, run.AppID, workflowStepPath(spec), method, headers, inputBytes, timeout)
+		}
 	}
 	auditOutput := string(body)
 	if workflowHasOutbound(workflowSpecs) {
@@ -959,7 +984,29 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 	duration := time.Since(start)
 
 	if err == nil && statusCode >= 200 && statusCode < 300 {
-		// Success (2xx). Item results are bounded before durable collection.
+		if spec.ManagedOperation {
+			var envelope map[string]json.RawMessage
+			if json.Unmarshal(body, &envelope) != nil || envelope["gregale_operation_result"] == nil {
+				err = errors.New("managed workflow step must return a negotiated operation result")
+			} else {
+				result, effects, decodeErr := decodeOperationResult(body)
+				switch {
+				case decodeErr != nil:
+					err = errors.New("managed workflow step returned an invalid operation result")
+				default:
+					body = result
+					managedEffects = effects
+				}
+			}
+			if err != nil {
+				statusCode = 500
+				body = nil
+			}
+		}
+	}
+
+	if err == nil && statusCode >= 200 && statusCode < 300 {
+		// Bound item outputs before persisting them as a collected for_each result.
 		if step.ForEachParent != nil {
 			if int64(len(body)) > api.WorkflowForEachMaxOutputBytes {
 				message := state.ErrWorkflowForEachOutputLimit.Error()
@@ -969,13 +1016,48 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 				body, _ = json.Marshal(string(body))
 			}
 		}
-		if markErr := o.store.MarkWorkflowStepAttemptStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt+1, workflowHTTPStatus(statusCode, err), body, nil); markErr != nil {
+		if !workflowHasOutbound(workflowSpecs) {
+			auditOutput = string(body)
+		}
+		if spec.ManagedOperation {
+			committer, ok := o.store.(state.ManagedWorkflowStepCommitter)
+			if !ok {
+				err = errors.New("managed workflow result store is unavailable")
+				statusCode = 500
+			} else {
+				commitErr := committer.CommitManagedWorkflowStep(ctx, state.ManagedWorkflowStepCommit{
+					RunID: run.ID, StepName: step.StepName, OperationID: managedOperationID,
+					Attempt: step.Attempt + 1, HTTPStatus: statusCode, Output: body, Effects: managedEffects,
+				})
+				switch {
+				case commitErr == nil:
+					// The result, delivery rows, step, and attempt now share one commit.
+				case errors.Is(commitErr, state.ErrInvalidArgument), errors.Is(commitErr, state.ErrOperationEffectDestination):
+					statusCode = 409
+					body = []byte("managed workflow operation result or effect destination is invalid")
+				case errors.Is(commitErr, state.ErrConflict), errors.Is(commitErr, state.ErrWorkflowNotRunning),
+					errors.Is(commitErr, state.ErrWorkflowRunNotFound), errors.Is(commitErr, state.ErrWorkflowStepNotFound),
+					errors.Is(commitErr, state.ErrWorkflowAttemptNotFound):
+					return false, commitErr
+				default:
+					if o.log != nil {
+						o.log.WarnContext(ctx, "managed workflow result persistence failed", "run_id", run.ID, "step", step.StepName, "err", commitErr)
+					}
+					err = errors.New("managed workflow result persistence failed")
+					statusCode = 500
+					body = nil
+				}
+			}
+		} else if markErr := o.store.MarkWorkflowStepAttemptStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusSucceeded, step.Attempt+1, workflowHTTPStatus(statusCode, err), body, nil); markErr != nil {
 			if errors.Is(markErr, state.ErrWorkflowForEachOutputLimit) {
 				message := markErr.Error()
 				return true, o.store.MarkWorkflowStepAttemptStatus(ctx, run.ID, step.StepName, state.WorkflowStepStatusFailed, step.Attempt+1, workflowHTTPStatus(statusCode, nil), nil, &message)
 			}
 			return false, markErr
 		}
+	}
+
+	if err == nil && statusCode >= 200 && statusCode < 300 {
 		if o.metrics != nil {
 			o.metrics.ObserveStepComplete(run.AppID, "unknown", step.StepName, "succeeded", duration)
 		}

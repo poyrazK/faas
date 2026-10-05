@@ -153,6 +153,7 @@ type WorkflowSpec struct {
 type WorkflowStepSpec struct {
 	Name             string                 `json:"name" yaml:"name" toml:"name"`
 	Run              string                 `json:"run,omitempty" yaml:"run,omitempty" toml:"run,omitempty"`
+	ManagedOperation bool                   `json:"managed_operation,omitempty" yaml:"managed_operation,omitempty" toml:"managed_operation,omitempty"`
 	Input            json.RawMessage        `json:"input,omitempty" yaml:"input,omitempty" toml:"input,omitempty"`
 	Path             string                 `json:"path,omitempty" yaml:"path,omitempty" toml:"path,omitempty"`
 	ForEach          *WorkflowForEachSpec   `json:"for_each,omitempty" yaml:"for_each,omitempty" toml:"for_each,omitempty"`
@@ -169,6 +170,21 @@ type WorkflowStepSpec struct {
 	OnTimeout        string                 `json:"on_timeout,omitempty" yaml:"on_timeout,omitempty" toml:"on_timeout,omitempty"`
 	OnFailure        string                 `json:"on_failure,omitempty" yaml:"on_failure,omitempty" toml:"on_failure,omitempty"`
 	Retry            *WorkflowRetrySpec     `json:"retry,omitempty" yaml:"retry,omitempty" toml:"retry,omitempty"`
+}
+
+// ManagedWorkflowStepOperationID is stable across handler retries and scoped
+// to one run/step pair. The run UUID and framed tuple are hashed so arbitrary
+// workflow step names cannot collide through delimiter ambiguity.
+func ManagedWorkflowStepOperationID(runID, stepName string) (string, error) {
+	run, err := uuid.Parse(runID)
+	if err != nil || stepName == "" {
+		return "", fmt.Errorf("workflow operation identity requires a run UUID and step name")
+	}
+	framed, err := json.Marshal([2]string{run.String(), stepName})
+	if err != nil {
+		return "", err
+	}
+	return uuid.NewSHA1(uuid.NameSpaceURL, append([]byte("gregale-workflow-step-operation-v1\n"), framed...)).String(), nil
 }
 
 // WorkflowConditionSpec calls a named checker on a durable schedule. A checker
@@ -254,7 +270,8 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 	}
 	allowed := map[string]struct{}{
 		"name": {}, "run": {}, "input": {}, "path": {}, "method": {},
-		"depends_on": {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "wait_for_condition": {}, "timeout": {},
+		"managed_operation": {},
+		"depends_on":        {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "wait_for_condition": {}, "timeout": {},
 		"on_timeout": {}, "on_failure": {}, "retry": {}, "outbound": {}, "when": {}, "join": {}, "for_each": {},
 	}
 	for key := range fields {
@@ -266,6 +283,7 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 	type wire struct {
 		Name             string                 `json:"name"`
 		Run              string                 `json:"run"`
+		ManagedOperation bool                   `json:"managed_operation"`
 		Input            json.RawMessage        `json:"input"`
 		Path             string                 `json:"path"`
 		ForEach          *WorkflowForEachSpec   `json:"for_each"`
@@ -296,7 +314,7 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*s = WorkflowStepSpec{
-		Name: w.Name, Run: w.Run, Input: cloneRawJSON(w.Input), Path: w.Path,
+		Name: w.Name, Run: w.Run, ManagedOperation: w.ManagedOperation, Input: cloneRawJSON(w.Input), Path: w.Path,
 		ForEach: w.ForEach, Join: w.Join, When: w.When, Outbound: w.Outbound, Method: w.Method, DependsOn: append([]string(nil), w.DependsOn...),
 		WaitForEvent: w.WaitForEvent, WaitForCallback: w.WaitForCallback,
 		WaitForDuration:  waitForDuration,
@@ -321,6 +339,7 @@ func (s WorkflowStepSpec) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Name             string                 `json:"name"`
 		Run              string                 `json:"run,omitempty"`
+		ManagedOperation bool                   `json:"managed_operation,omitempty"`
 		Input            json.RawMessage        `json:"input,omitempty"`
 		Path             string                 `json:"path,omitempty"`
 		ForEach          *WorkflowForEachSpec   `json:"for_each,omitempty"`
@@ -338,7 +357,7 @@ func (s WorkflowStepSpec) MarshalJSON() ([]byte, error) {
 		OnFailure        string                 `json:"on_failure,omitempty"`
 		Retry            *WorkflowRetrySpec     `json:"retry,omitempty"`
 	}{
-		Name: s.Name, Run: s.Run, Input: s.Input, Path: s.Path, Method: s.Method, Outbound: s.Outbound,
+		Name: s.Name, Run: s.Run, ManagedOperation: s.ManagedOperation, Input: s.Input, Path: s.Path, Method: s.Method, Outbound: s.Outbound,
 		ForEach: s.ForEach, Join: s.Join, When: s.When, DependsOn: s.DependsOn, WaitForEvent: s.WaitForEvent,
 		WaitForCallback: s.WaitForCallback,
 		WaitForDuration: waitForDuration, WaitForCondition: s.WaitForCondition, Timeout: timeout,
@@ -358,7 +377,8 @@ func (s *WorkflowStepSpec) UnmarshalYAML(node *yaml.Node) error {
 	}
 	allowed := map[string]struct{}{
 		"name": {}, "run": {}, "input": {}, "path": {}, "method": {},
-		"depends_on": {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "wait_for_condition": {}, "timeout": {},
+		"managed_operation": {},
+		"depends_on":        {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "wait_for_condition": {}, "timeout": {},
 		"on_timeout": {}, "on_failure": {}, "retry": {}, "outbound": {}, "when": {}, "join": {}, "for_each": {},
 	}
 	for key := range fields {
@@ -485,6 +505,9 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 		}
 		if hasPath && !validWorkflowPath(step.Path) {
 			return nil, fmt.Errorf("%w in step %q: %q", ErrWorkflowInvalidPath, step.Name, step.Path)
+		}
+		if step.ManagedOperation && !hasRun && !hasPath {
+			return nil, fmt.Errorf("workflow: managed_operation requires an executable HTTP step in %q", step.Name)
 		}
 		if step.Method != "" && !validWorkflowMethod(step.Method) {
 			return nil, fmt.Errorf("%w in step %q: %q", ErrWorkflowInvalidMethod, step.Name, step.Method)
@@ -815,13 +838,14 @@ type ListWorkflowStepsResponse struct {
 
 // WorkflowStepAttemptResponse is one durable executor invocation for a step.
 type WorkflowStepAttemptResponse struct {
-	Attempt       int     `json:"attempt"`
-	Status        string  `json:"status"`
-	HTTPStatus    *int    `json:"http_status,omitempty"`
-	StartedAt     string  `json:"started_at"`
-	FinishedAt    *string `json:"finished_at,omitempty"`
-	NextAttemptAt *string `json:"next_attempt_at,omitempty"`
-	Error         *string `json:"error,omitempty"`
+	Attempt       int                     `json:"attempt"`
+	Status        string                  `json:"status"`
+	HTTPStatus    *int                    `json:"http_status,omitempty"`
+	StartedAt     string                  `json:"started_at"`
+	FinishedAt    *string                 `json:"finished_at,omitempty"`
+	NextAttemptAt *string                 `json:"next_attempt_at,omitempty"`
+	Error         *string                 `json:"error,omitempty"`
+	Effects       []OperationEffectRecord `json:"effects,omitempty"`
 }
 
 // ListWorkflowStepAttemptsResponse is returned by

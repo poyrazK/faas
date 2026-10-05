@@ -2536,10 +2536,10 @@ func (q *Queries) CloseWorkflowOutboundUnknownAttempts(ctx context.Context, db D
 }
 
 const commitManagedReceipt = `-- name: CommitManagedReceipt :one
-INSERT INTO commit_receipts(id,account_id,source_id,event_id,event_type,payload,operation_id,operation_state,completed_at)
+INSERT INTO commit_receipts(id,account_id,source_id,event_id,event_type,payload,operation_id,operation_state,completed_at,routing)
 VALUES($1::text::uuid,$2::text::uuid,$3::text::uuid,
  $4::text::uuid,$5::text,$6::jsonb,
- $7::text::uuid,$8::text,$9::timestamptz)
+ $7::text::uuid,$8::text,$9::timestamptz,$10::jsonb)
 RETURNING id::text,source_id::text,event_id::text,operation_id::text,accepted_at
 `
 
@@ -2553,6 +2553,7 @@ type CommitManagedReceiptParams struct {
 	OperationID    string
 	OperationState string
 	CompletedAt    pgtype.Timestamptz
+	Routing        []byte
 }
 
 type CommitManagedReceiptRow struct {
@@ -2574,6 +2575,7 @@ func (q *Queries) CommitManagedReceipt(ctx context.Context, db DBTX, arg CommitM
 		arg.OperationID,
 		arg.OperationState,
 		arg.CompletedAt,
+		arg.Routing,
 	)
 	var i CommitManagedReceiptRow
 	err := row.Scan(
@@ -2590,14 +2592,16 @@ const commitManagedReceiptReplay = `-- name: CommitManagedReceiptReplay :one
 SELECT id::text, source_id::text, event_id::text,
  COALESCE(invocation_id::text,'')::text AS invocation_id,
  COALESCE(operation_id::text,'')::text AS operation_id, accepted_at,
- event_type=$1::text AND payload=$2::jsonb AS matches
-FROM commit_receipts WHERE account_id=$3::text::uuid
- AND source_id=$4::text::uuid AND event_id=$5::text::uuid
+ event_type=$1::text AND payload=$2::jsonb
+ AND routing IS NOT DISTINCT FROM $3::jsonb AS matches
+FROM commit_receipts WHERE account_id=$4::text::uuid
+ AND source_id=$5::text::uuid AND event_id=$6::text::uuid
 `
 
 type CommitManagedReceiptReplayParams struct {
 	EventType string
 	Payload   []byte
+	Routing   []byte
 	AccountID string
 	SourceID  string
 	EventID   string
@@ -2617,6 +2621,7 @@ func (q *Queries) CommitManagedReceiptReplay(ctx context.Context, db DBTX, arg C
 	row := db.QueryRow(ctx, commitManagedReceiptReplay,
 		arg.EventType,
 		arg.Payload,
+		arg.Routing,
 		arg.AccountID,
 		arg.SourceID,
 		arg.EventID,
@@ -2635,20 +2640,23 @@ func (q *Queries) CommitManagedReceiptReplay(ctx context.Context, db DBTX, arg C
 }
 
 const commitManagedSource = `-- name: CommitManagedSource :one
-INSERT INTO commit_sources(account_id,app_id,name,operation_policy)
-SELECT $1::text::uuid,id,$2::text,$3::text
-FROM apps WHERE id=$4::text::uuid AND account_id=$1::text::uuid
- AND NOT platform_tenant_required AND status<>'deleted'
+INSERT INTO commit_sources(account_id,app_id,name,operation_policy,contract_version,allow_tenant_selection)
+SELECT $1::text::uuid,id,$2::text,$3::text,$4::integer,$5::boolean
+FROM apps WHERE id=$6::text::uuid AND account_id=$1::text::uuid
+ AND (NOT platform_tenant_required OR $5::boolean) AND status<>'deleted'
 ON CONFLICT(account_id,name) DO UPDATE SET name=commit_sources.name
 WHERE commit_sources.app_id=excluded.app_id AND commit_sources.operation_policy=excluded.operation_policy
+ AND commit_sources.contract_version=excluded.contract_version AND commit_sources.allow_tenant_selection=excluded.allow_tenant_selection
 RETURNING id::text, enabled
 `
 
 type CommitManagedSourceParams struct {
-	AccountID       string
-	Name            string
-	OperationPolicy string
-	AppID           string
+	AccountID            string
+	Name                 string
+	OperationPolicy      string
+	ContractVersion      int32
+	AllowTenantSelection bool
+	AppID                string
 }
 
 type CommitManagedSourceRow struct {
@@ -2661,6 +2669,8 @@ func (q *Queries) CommitManagedSource(ctx context.Context, db DBTX, arg CommitMa
 		arg.AccountID,
 		arg.Name,
 		arg.OperationPolicy,
+		arg.ContractVersion,
+		arg.AllowTenantSelection,
 		arg.AppID,
 	)
 	var i CommitManagedSourceRow
@@ -2708,7 +2718,8 @@ func (q *Queries) CommitOperationHistory(ctx context.Context, db DBTX, arg Commi
 const commitPolicyWouldInvalidateSource = `-- name: CommitPolicyWouldInvalidateSource :one
 SELECT EXISTS(SELECT 1 FROM commit_sources c
  WHERE c.account_id=$1::text::uuid AND c.operation_policy=$2::text AND c.enabled
- AND ($3::boolean OR $4::jsonb->>'scope'<>'account'
+ AND ($3::boolean OR $4::jsonb->>'scope'<>CASE WHEN c.allow_tenant_selection THEN 'platform_tenant' ELSE 'account' END
+ OR COALESCE($4::jsonb->>'environment_id','')<>''
  OR $4::jsonb->>'contention'<>'queue'
  OR NOT COALESCE($4::jsonb->'member_app_ids' ? c.app_id::text,false))) AS incompatible
 `
@@ -2812,7 +2823,7 @@ func (q *Queries) CommitRelayObservationSummary(ctx context.Context, db DBTX, fr
 
 const commitSourceForManagedAdmission = `-- name: CommitSourceForManagedAdmission :one
 SELECT c.app_id::text, c.enabled, COALESCE(c.operation_policy,'')::text AS operation_policy,
- a.platform_tenant_required
+ c.contract_version, c.allow_tenant_selection, a.platform_tenant_required
 FROM commit_sources c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id
 WHERE c.account_id=$1::text::uuid AND c.id=$2::text::uuid
 FOR UPDATE OF c FOR SHARE OF a
@@ -2827,6 +2838,8 @@ type CommitSourceForManagedAdmissionRow struct {
 	CAppID                 string
 	Enabled                bool
 	OperationPolicy        string
+	ContractVersion        int32
+	AllowTenantSelection   bool
 	PlatformTenantRequired bool
 }
 
@@ -2837,6 +2850,8 @@ func (q *Queries) CommitSourceForManagedAdmission(ctx context.Context, db DBTX, 
 		&i.CAppID,
 		&i.Enabled,
 		&i.OperationPolicy,
+		&i.ContractVersion,
+		&i.AllowTenantSelection,
 		&i.PlatformTenantRequired,
 	)
 	return i, err
@@ -2844,7 +2859,7 @@ func (q *Queries) CommitSourceForManagedAdmission(ctx context.Context, db DBTX, 
 
 const commitSourceIdentity = `-- name: CommitSourceIdentity :one
 SELECT id::text,app_id::text,name,enabled,COALESCE(operation_policy,'')::text AS operation_policy,
- relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
+ contract_version,allow_tenant_selection,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
 FROM commit_sources WHERE account_id=$1::text::uuid AND id=$2::text::uuid
 `
 
@@ -2854,16 +2869,18 @@ type CommitSourceIdentityParams struct {
 }
 
 type CommitSourceIdentityRow struct {
-	ID              string
-	AppID           string
-	Name            string
-	Enabled         bool
-	OperationPolicy string
-	RelayStatus     string
-	LastCheckedAt   pgtype.Timestamptz
-	PendingEvents   pgtype.Int8
-	BlockedEvents   pgtype.Int8
-	OldestPendingAt pgtype.Timestamptz
+	ID                   string
+	AppID                string
+	Name                 string
+	Enabled              bool
+	OperationPolicy      string
+	ContractVersion      int32
+	AllowTenantSelection bool
+	RelayStatus          string
+	LastCheckedAt        pgtype.Timestamptz
+	PendingEvents        pgtype.Int8
+	BlockedEvents        pgtype.Int8
+	OldestPendingAt      pgtype.Timestamptz
 }
 
 func (q *Queries) CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitSourceIdentityParams) (CommitSourceIdentityRow, error) {
@@ -2875,6 +2892,8 @@ func (q *Queries) CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitS
 		&i.Name,
 		&i.Enabled,
 		&i.OperationPolicy,
+		&i.ContractVersion,
+		&i.AllowTenantSelection,
 		&i.RelayStatus,
 		&i.LastCheckedAt,
 		&i.PendingEvents,
@@ -2882,6 +2901,27 @@ func (q *Queries) CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitS
 		&i.OldestPendingAt,
 	)
 	return i, err
+}
+
+const commitTenantAppScope = `-- name: CommitTenantAppScope :one
+SELECT s.id::text FROM tenant_surfaces s
+WHERE s.account_id=$1::text::uuid
+ AND s.app_id=$2::text::uuid
+ AND s.platform_tenant_id=$3::text::uuid AND s.status='active'
+LIMIT 1 FOR SHARE
+`
+
+type CommitTenantAppScopeParams struct {
+	AccountID string
+	AppID     string
+	TenantID  string
+}
+
+func (q *Queries) CommitTenantAppScope(ctx context.Context, db DBTX, arg CommitTenantAppScopeParams) (string, error) {
+	row := db.QueryRow(ctx, commitTenantAppScope, arg.AccountID, arg.AppID, arg.TenantID)
+	var s_id string
+	err := row.Scan(&s_id)
+	return s_id, err
 }
 
 const completeAutomaticRouteCheck = `-- name: CompleteAutomaticRouteCheck :execrows
@@ -2988,6 +3028,81 @@ type CompleteEnvironmentGitOpsRuntimeParams struct {
 
 func (q *Queries) CompleteEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, arg CompleteEnvironmentGitOpsRuntimeParams) (int64, error) {
 	result, err := db.Exec(ctx, completeEnvironmentGitOpsRuntime, arg.SourceID, arg.EffectID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const completeManagedWorkflowAttempt = `-- name: CompleteManagedWorkflowAttempt :execrows
+UPDATE workflow_step_attempts
+SET status='succeeded',http_status=$1::integer,
+ finished_at=clock_timestamp(),next_attempt_at=NULL,error=NULL
+WHERE run_id=$2::text::uuid AND step_name=$3::text
+ AND attempt=$4::integer AND status='running'
+`
+
+type CompleteManagedWorkflowAttemptParams struct {
+	HttpStatus int32
+	RunID      string
+	StepName   string
+	Attempt    int32
+}
+
+func (q *Queries) CompleteManagedWorkflowAttempt(ctx context.Context, db DBTX, arg CompleteManagedWorkflowAttemptParams) (int64, error) {
+	result, err := db.Exec(ctx, completeManagedWorkflowAttempt,
+		arg.HttpStatus,
+		arg.RunID,
+		arg.StepName,
+		arg.Attempt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const completeManagedWorkflowRun = `-- name: CompleteManagedWorkflowRun :execrows
+UPDATE workflow_runs
+SET current_step=$1::text,updated_at=clock_timestamp()
+WHERE id=$2::text::uuid AND status='running'
+`
+
+type CompleteManagedWorkflowRunParams struct {
+	StepName string
+	RunID    string
+}
+
+func (q *Queries) CompleteManagedWorkflowRun(ctx context.Context, db DBTX, arg CompleteManagedWorkflowRunParams) (int64, error) {
+	result, err := db.Exec(ctx, completeManagedWorkflowRun, arg.StepName, arg.RunID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const completeManagedWorkflowStep = `-- name: CompleteManagedWorkflowStep :execrows
+UPDATE workflow_steps
+SET status='succeeded',output=$1::jsonb,error=NULL,
+ next_retry_at=NULL,finished_at=clock_timestamp()
+WHERE run_id=$2::text::uuid AND step_name=$3::text
+ AND status='running' AND attempt=$4::integer
+`
+
+type CompleteManagedWorkflowStepParams struct {
+	Output   []byte
+	RunID    string
+	StepName string
+	Attempt  int32
+}
+
+func (q *Queries) CompleteManagedWorkflowStep(ctx context.Context, db DBTX, arg CompleteManagedWorkflowStepParams) (int64, error) {
+	result, err := db.Exec(ctx, completeManagedWorkflowStep,
+		arg.Output,
+		arg.RunID,
+		arg.StepName,
+		arg.Attempt,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -3192,6 +3307,20 @@ func (q *Queries) CountActiveWorkflowRunsForAdmission(ctx context.Context, db DB
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countActiveWorkflowRunsForRetry = `-- name: CountActiveWorkflowRunsForRetry :one
+SELECT count(*)::bigint
+FROM workflow_runs
+WHERE app_id=$1::text::uuid
+  AND status IN ('pending','running','awaiting_event')
+`
+
+func (q *Queries) CountActiveWorkflowRunsForRetry(ctx context.Context, db DBTX, appID string) (int64, error) {
+	row := db.QueryRow(ctx, countActiveWorkflowRunsForRetry, appID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countAppEnvironmentIntent = `-- name: CountAppEnvironmentIntent :one
@@ -5917,6 +6046,31 @@ type EnqueueEnvironmentGitOpsParams struct {
 
 func (q *Queries) EnqueueEnvironmentGitOps(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitOpsParams) error {
 	_, err := db.Exec(ctx, enqueueEnvironmentGitOps, arg.SourceID, arg.Generation, arg.NextAttemptAt)
+	return err
+}
+
+const enqueueExclusiveWebhookEffect = `-- name: EnqueueExclusiveWebhookEffect :exec
+INSERT INTO app_webhook_deliveries(id,webhook_id,app_id,account_id,event,payload,next_attempt_at)
+VALUES($1::text::uuid,$2::text::uuid,
+$3::text::uuid,$4::text::uuid,'operation.effect',$5::jsonb,clock_timestamp())
+`
+
+type EnqueueExclusiveWebhookEffectParams struct {
+	ID        string
+	WebhookID string
+	AppID     string
+	AccountID string
+	Payload   []byte
+}
+
+func (q *Queries) EnqueueExclusiveWebhookEffect(ctx context.Context, db DBTX, arg EnqueueExclusiveWebhookEffectParams) error {
+	_, err := db.Exec(ctx, enqueueExclusiveWebhookEffect,
+		arg.ID,
+		arg.WebhookID,
+		arg.AppID,
+		arg.AccountID,
+		arg.Payload,
+	)
 	return err
 }
 
@@ -11988,9 +12142,10 @@ func (q *Queries) InsertEventWorkflowRun(ctx context.Context, db DBTX, arg Inser
 }
 
 const insertExclusiveWorkEffect = `-- name: InsertExclusiveWorkEffect :exec
-INSERT INTO exclusive_work_effects(id,operation_id,generation,name,payload)
+INSERT INTO exclusive_work_effects(id,operation_id,generation,name,payload,webhook_id,event_type)
 VALUES($1::text::uuid,$2::text::uuid,
-$3::bigint,$4::text,$5::jsonb)
+$3::bigint,$4::text,$5::jsonb,
+nullif($6::text,'')::uuid,nullif($7::text,''))
 `
 
 type InsertExclusiveWorkEffectParams struct {
@@ -11999,6 +12154,8 @@ type InsertExclusiveWorkEffectParams struct {
 	Generation  int64
 	Name        string
 	Payload     []byte
+	WebhookID   string
+	EventType   string
 }
 
 func (q *Queries) InsertExclusiveWorkEffect(ctx context.Context, db DBTX, arg InsertExclusiveWorkEffectParams) error {
@@ -12008,6 +12165,8 @@ func (q *Queries) InsertExclusiveWorkEffect(ctx context.Context, db DBTX, arg In
 		arg.Generation,
 		arg.Name,
 		arg.Payload,
+		arg.WebhookID,
+		arg.EventType,
 	)
 	return err
 }
@@ -12902,6 +13061,48 @@ func (q *Queries) InsertWebhookAutomationReceipt(ctx context.Context, db DBTX, a
 		arg.OutboxID,
 		arg.Status,
 		arg.IgnoredReason,
+	)
+	return err
+}
+
+const insertWorkflowOperationEffect = `-- name: InsertWorkflowOperationEffect :exec
+INSERT INTO workflow_operation_effects(
+ id,account_id,app_id,run_id,step_name,operation_id,generation,name,payload,webhook_id,event_type
+) VALUES(
+ $1::text::uuid,$2::text::uuid,$3::text::uuid,
+ $4::text::uuid,$5::text,$6::text::uuid,
+ $7::bigint,$8::text,$9::jsonb,
+ $10::text::uuid,$11::text
+)
+`
+
+type InsertWorkflowOperationEffectParams struct {
+	ID          string
+	AccountID   string
+	AppID       string
+	RunID       string
+	StepName    string
+	OperationID string
+	Generation  int64
+	Name        string
+	Payload     []byte
+	WebhookID   string
+	EventType   string
+}
+
+func (q *Queries) InsertWorkflowOperationEffect(ctx context.Context, db DBTX, arg InsertWorkflowOperationEffectParams) error {
+	_, err := db.Exec(ctx, insertWorkflowOperationEffect,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.RunID,
+		arg.StepName,
+		arg.OperationID,
+		arg.Generation,
+		arg.Name,
+		arg.Payload,
+		arg.WebhookID,
+		arg.EventType,
 	)
 	return err
 }
@@ -17601,6 +17802,62 @@ func (q *Queries) ListExclusiveWorkActive(ctx context.Context, db DBTX, keyID st
 	return items, nil
 }
 
+const listExclusiveWorkEffects = `-- name: ListExclusiveWorkEffects :many
+SELECT e.id::text,e.name,e.generation,coalesce(e.webhook_id::text,'')::text AS webhook_id,
+ coalesce(e.event_type,'')::text AS event_type,
+ CASE WHEN e.webhook_id IS NULL THEN 'recorded' ELSE coalesce(d.status,'unavailable') END::text AS status,
+ coalesce(d.attempt,0)::integer AS attempt,coalesce(d.last_error,'')::text AS last_error
+FROM exclusive_work_effects e JOIN exclusive_work_operations o ON o.id=e.operation_id
+LEFT JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id AND d.account_id=o.account_id
+WHERE o.id=$1::text::uuid AND o.account_id=$2::text::uuid
+ORDER BY e.name
+`
+
+type ListExclusiveWorkEffectsParams struct {
+	OperationID string
+	AccountID   string
+}
+
+type ListExclusiveWorkEffectsRow struct {
+	EID        string
+	Name       string
+	Generation int64
+	WebhookID  string
+	EventType  string
+	Status     string
+	Attempt    int32
+	LastError  string
+}
+
+func (q *Queries) ListExclusiveWorkEffects(ctx context.Context, db DBTX, arg ListExclusiveWorkEffectsParams) ([]ListExclusiveWorkEffectsRow, error) {
+	rows, err := db.Query(ctx, listExclusiveWorkEffects, arg.OperationID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListExclusiveWorkEffectsRow{}
+	for rows.Next() {
+		var i ListExclusiveWorkEffectsRow
+		if err := rows.Scan(
+			&i.EID,
+			&i.Name,
+			&i.Generation,
+			&i.WebhookID,
+			&i.EventType,
+			&i.Status,
+			&i.Attempt,
+			&i.LastError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listExclusiveWorkPolicies = `-- name: ListExclusiveWorkPolicies :many
 SELECT id, account_id, name, revision, configuration, retired, created_at, updated_at FROM exclusive_work_policies
 WHERE account_id=$1::text::uuid ORDER BY name
@@ -19981,6 +20238,65 @@ func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID str
 	return items, nil
 }
 
+const listWorkflowOperationEffects = `-- name: ListWorkflowOperationEffects :many
+SELECT e.id::text AS id,e.name,e.generation,e.webhook_id::text AS webhook_id,
+ e.id::text AS delivery_id,e.event_type AS type,
+ coalesce(d.status,'unavailable')::text AS status,coalesce(d.attempt,0)::integer AS attempt,
+ coalesce(d.last_error,'')::text AS last_error
+FROM workflow_operation_effects e
+LEFT JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id
+ AND d.app_id=e.app_id AND d.account_id=e.account_id
+WHERE e.run_id=$1::text::uuid AND e.step_name=$2::text
+ORDER BY e.generation,e.name
+`
+
+type ListWorkflowOperationEffectsParams struct {
+	RunID    string
+	StepName string
+}
+
+type ListWorkflowOperationEffectsRow struct {
+	ID         string
+	Name       string
+	Generation int64
+	WebhookID  string
+	DeliveryID string
+	Type       string
+	Status     string
+	Attempt    int32
+	LastError  string
+}
+
+func (q *Queries) ListWorkflowOperationEffects(ctx context.Context, db DBTX, arg ListWorkflowOperationEffectsParams) ([]ListWorkflowOperationEffectsRow, error) {
+	rows, err := db.Query(ctx, listWorkflowOperationEffects, arg.RunID, arg.StepName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWorkflowOperationEffectsRow{}
+	for rows.Next() {
+		var i ListWorkflowOperationEffectsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Generation,
+			&i.WebhookID,
+			&i.DeliveryID,
+			&i.Type,
+			&i.Status,
+			&i.Attempt,
+			&i.LastError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkflowResumes = `-- name: ListWorkflowResumes :many
 SELECT run_id, resume_number, account_id, previous_status, previous_error, resumed_steps, created_at FROM workflow_run_resumes WHERE run_id=$1 ORDER BY resume_number
 `
@@ -22137,6 +22453,15 @@ func (q *Queries) LockWorkflowResumeRun(ctx context.Context, db DBTX, arg LockWo
 	return i, err
 }
 
+const lockWorkflowRetryAdmission = `-- name: LockWorkflowRetryAdmission :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
+`
+
+func (q *Queries) LockWorkflowRetryAdmission(ctx context.Context, db DBTX, appID string) error {
+	_, err := db.Exec(ctx, lockWorkflowRetryAdmission, appID)
+	return err
+}
+
 const lockWorkflowRunAdmission = `-- name: LockWorkflowRunAdmission :exec
 SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
 `
@@ -22144,6 +22469,37 @@ SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
 func (q *Queries) LockWorkflowRunAdmission(ctx context.Context, db DBTX, appKey string) error {
 	_, err := db.Exec(ctx, lockWorkflowRunAdmission, appKey)
 	return err
+}
+
+const lockWorkflowRunForManualRetry = `-- name: LockWorkflowRunForManualRetry :one
+SELECT id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, resume_count, cancelled_at FROM workflow_runs
+WHERE id=$1::text::uuid
+FOR UPDATE
+`
+
+func (q *Queries) LockWorkflowRunForManualRetry(ctx context.Context, db DBTX, runID string) (WorkflowRun, error) {
+	row := db.QueryRow(ctx, lockWorkflowRunForManualRetry, runID)
+	var i WorkflowRun
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.WorkflowName,
+		&i.Status,
+		&i.CurrentStep,
+		&i.Input,
+		&i.Output,
+		&i.DefinitionSnapshot,
+		&i.ScheduledFor,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LeaseUntil,
+		&i.ResumeCount,
+		&i.CancelledAt,
+	)
+	return i, err
 }
 
 const lockWorkflowScheduleTarget = `-- name: LockWorkflowScheduleTarget :one
@@ -22173,6 +22529,54 @@ func (q *Queries) LockWorkflowScheduleTarget(ctx context.Context, db DBTX, appID
 	return i, err
 }
 
+const lockWorkflowStepsForManualRetry = `-- name: LockWorkflowStepsForManualRetry :many
+SELECT run_id, step_name, status, attempt, input, output, started_at, finished_at, error, created_at, next_check_at, next_retry_at, outbound_attempt_token, foreach_parent, foreach_index, foreach_count, retry_base, when_matched, when_evaluated_at, skip_reason FROM workflow_steps
+WHERE run_id=$1::text::uuid
+ORDER BY created_at,step_name
+FOR UPDATE
+`
+
+func (q *Queries) LockWorkflowStepsForManualRetry(ctx context.Context, db DBTX, runID string) ([]WorkflowStep, error) {
+	rows, err := db.Query(ctx, lockWorkflowStepsForManualRetry, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowStep{}
+	for rows.Next() {
+		var i WorkflowStep
+		if err := rows.Scan(
+			&i.RunID,
+			&i.StepName,
+			&i.Status,
+			&i.Attempt,
+			&i.Input,
+			&i.Output,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Error,
+			&i.CreatedAt,
+			&i.NextCheckAt,
+			&i.NextRetryAt,
+			&i.OutboundAttemptToken,
+			&i.ForeachParent,
+			&i.ForeachIndex,
+			&i.ForeachCount,
+			&i.RetryBase,
+			&i.WhenMatched,
+			&i.WhenEvaluatedAt,
+			&i.SkipReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const managedPostgresAdmissionFenced = `-- name: ManagedPostgresAdmissionFenced :one
 SELECT (managed_postgres_admission_cutover_id IS NOT NULL)::boolean AS fenced FROM apps WHERE id=$1::text::uuid
 `
@@ -22182,6 +22586,25 @@ func (q *Queries) ManagedPostgresAdmissionFenced(ctx context.Context, db DBTX, a
 	var fenced bool
 	err := row.Scan(&fenced)
 	return fenced, err
+}
+
+const managedWorkflowEffectAppScope = `-- name: ManagedWorkflowEffectAppScope :one
+SELECT a.account_id::text AS account_id, ac.status AS account_status
+FROM apps a JOIN accounts ac ON ac.id=a.account_id
+WHERE a.id=$1::text::uuid AND a.status<>'deleted'
+FOR SHARE OF a, ac
+`
+
+type ManagedWorkflowEffectAppScopeRow struct {
+	AccountID     string
+	AccountStatus string
+}
+
+func (q *Queries) ManagedWorkflowEffectAppScope(ctx context.Context, db DBTX, appID string) (ManagedWorkflowEffectAppScopeRow, error) {
+	row := db.QueryRow(ctx, managedWorkflowEffectAppScope, appID)
+	var i ManagedWorkflowEffectAppScopeRow
+	err := row.Scan(&i.AccountID, &i.AccountStatus)
+	return i, err
 }
 
 const markClaimedTriggerRecordDeadLetter = `-- name: MarkClaimedTriggerRecordDeadLetter :execrows
@@ -30246,6 +30669,56 @@ func (q *Queries) ObserveEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const operationEffectDeliveryAllowed = `-- name: OperationEffectDeliveryAllowed :one
+WITH exclusive_effect AS (
+ SELECT EXISTS(SELECT 1 FROM exclusive_work_effects e
+  WHERE e.id=$1::text::uuid AND e.webhook_id IS NOT NULL)::boolean AS managed,
+ EXISTS (
+ SELECT 1 FROM exclusive_work_effects e
+ JOIN exclusive_work_operations o ON o.id=e.operation_id
+ JOIN accounts ac ON ac.id=o.account_id AND ac.status='active'
+ JOIN apps a ON a.id=o.app_id AND a.account_id=o.account_id AND a.status<>'deleted'
+ JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id
+  AND d.app_id=o.app_id AND d.account_id=o.account_id AND d.event='operation.effect'
+ JOIN app_webhooks h ON h.id=e.webhook_id AND h.account_id=o.account_id
+ WHERE e.id=$1::text::uuid AND o.state='completed' AND o.generation=e.generation
+  AND h.enabled AND 'operation.effect'=ANY(h.event_filter)
+  AND ((o.platform_tenant_id IS NULL AND h.scope='app' AND h.app_id=o.app_id)
+   OR (o.platform_tenant_id=h.platform_tenant_id AND h.scope='platform_tenant'
+    AND EXISTS(SELECT 1 FROM platform_tenants t WHERE t.id=o.platform_tenant_id AND t.account_id=o.account_id AND t.status='active')
+    AND EXISTS(SELECT 1 FROM tenant_surfaces s WHERE s.app_id=o.app_id AND s.account_id=o.account_id AND s.platform_tenant_id=o.platform_tenant_id AND s.status='active')))
+)::boolean AS allowed
+), workflow_effect AS (
+ SELECT EXISTS(SELECT 1 FROM workflow_operation_effects e
+  WHERE e.id=$1::text::uuid)::boolean AS managed,
+ EXISTS (
+  SELECT 1 FROM workflow_operation_effects e
+  JOIN accounts ac ON ac.id=e.account_id AND ac.status='active'
+  JOIN apps a ON a.id=e.app_id AND a.account_id=e.account_id AND a.status<>'deleted'
+  JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id
+   AND d.app_id=e.app_id AND d.account_id=e.account_id AND d.event='operation.effect'
+  JOIN app_webhooks h ON h.id=e.webhook_id AND h.account_id=e.account_id
+  WHERE e.id=$1::text::uuid AND h.enabled
+   AND 'operation.effect'=ANY(h.event_filter) AND h.scope='app' AND h.app_id=e.app_id
+ )::boolean AS allowed
+)
+SELECT exclusive_effect.managed OR workflow_effect.managed AS managed,
+ exclusive_effect.allowed OR workflow_effect.allowed AS allowed
+FROM exclusive_effect, workflow_effect
+`
+
+type OperationEffectDeliveryAllowedRow struct {
+	Managed pgtype.Bool
+	Allowed pgtype.Bool
+}
+
+func (q *Queries) OperationEffectDeliveryAllowed(ctx context.Context, db DBTX, deliveryID string) (OperationEffectDeliveryAllowedRow, error) {
+	row := db.QueryRow(ctx, operationEffectDeliveryAllowed, deliveryID)
+	var i OperationEffectDeliveryAllowedRow
+	err := row.Scan(&i.Managed, &i.Allowed)
+	return i, err
+}
+
 const orgByID = `-- name: OrgByID :one
 select
     id, slug, name, personal_org,
@@ -33339,6 +33812,46 @@ func (q *Queries) ReadManagedPostgresHealthSnapshots(ctx context.Context, db DBT
 	return items, nil
 }
 
+const readManagedWorkflowRunForUpdate = `-- name: ReadManagedWorkflowRunForUpdate :one
+SELECT app_id::text, status FROM workflow_runs
+WHERE id=$1::text::uuid FOR UPDATE
+`
+
+type ReadManagedWorkflowRunForUpdateRow struct {
+	AppID  string
+	Status string
+}
+
+func (q *Queries) ReadManagedWorkflowRunForUpdate(ctx context.Context, db DBTX, runID string) (ReadManagedWorkflowRunForUpdateRow, error) {
+	row := db.QueryRow(ctx, readManagedWorkflowRunForUpdate, runID)
+	var i ReadManagedWorkflowRunForUpdateRow
+	err := row.Scan(&i.AppID, &i.Status)
+	return i, err
+}
+
+const readManagedWorkflowStepForUpdate = `-- name: ReadManagedWorkflowStepForUpdate :one
+SELECT status, attempt FROM workflow_steps
+WHERE run_id=$1::text::uuid AND step_name=$2::text
+FOR UPDATE
+`
+
+type ReadManagedWorkflowStepForUpdateParams struct {
+	RunID    string
+	StepName string
+}
+
+type ReadManagedWorkflowStepForUpdateRow struct {
+	Status  string
+	Attempt int32
+}
+
+func (q *Queries) ReadManagedWorkflowStepForUpdate(ctx context.Context, db DBTX, arg ReadManagedWorkflowStepForUpdateParams) (ReadManagedWorkflowStepForUpdateRow, error) {
+	row := db.QueryRow(ctx, readManagedWorkflowStepForUpdate, arg.RunID, arg.StepName)
+	var i ReadManagedWorkflowStepForUpdateRow
+	err := row.Scan(&i.Status, &i.Attempt)
+	return i, err
+}
+
 const readProjectReleaseSet = `-- name: ReadProjectReleaseSet :one
 SELECT (to_jsonb(rs) || jsonb_build_object('environment', rs.environment_slug,
         'members', COALESCE((SELECT jsonb_agg(jsonb_build_object(
@@ -34782,6 +35295,28 @@ type RenewNotificationClaimParams struct {
 // evaluated before waiting for a row lock must not resurrect an expired lease.
 func (q *Queries) RenewNotificationClaim(ctx context.Context, db DBTX, arg RenewNotificationClaimParams) (int64, error) {
 	result, err := db.Exec(ctx, renewNotificationClaim, arg.LeaseMilliseconds, arg.ID, arg.ClaimToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const reopenSkippedWorkflowStepsForRetry = `-- name: ReopenSkippedWorkflowStepsForRetry :execrows
+UPDATE workflow_steps
+SET status='pending',input=NULL,output=NULL,next_check_at=NULL,next_retry_at=NULL,
+    finished_at=NULL,error=NULL
+WHERE run_id=$1::text::uuid
+  AND step_name=ANY($2::text[])
+  AND status='skipped'
+`
+
+type ReopenSkippedWorkflowStepsForRetryParams struct {
+	RunID     string
+	StepNames []string
+}
+
+func (q *Queries) ReopenSkippedWorkflowStepsForRetry(ctx context.Context, db DBTX, arg ReopenSkippedWorkflowStepsForRetryParams) (int64, error) {
+	result, err := db.Exec(ctx, reopenSkippedWorkflowStepsForRetry, arg.RunID, arg.StepNames)
 	if err != nil {
 		return 0, err
 	}
@@ -36373,6 +36908,28 @@ func (q *Queries) RequestTelemetryRouteCustomers(ctx context.Context, db DBTX, a
 	return items, nil
 }
 
+const requeueFailedWorkflowStepForRetry = `-- name: RequeueFailedWorkflowStepForRetry :execrows
+UPDATE workflow_steps
+SET status='pending',output=NULL,next_check_at=NULL,next_retry_at=NULL,
+    finished_at=NULL,error=NULL
+WHERE run_id=$1::text::uuid
+  AND step_name=$2::text
+  AND status IN ('failed','dead')
+`
+
+type RequeueFailedWorkflowStepForRetryParams struct {
+	RunID    string
+	StepName string
+}
+
+func (q *Queries) RequeueFailedWorkflowStepForRetry(ctx context.Context, db DBTX, arg RequeueFailedWorkflowStepForRetryParams) (int64, error) {
+	result, err := db.Exec(ctx, requeueFailedWorkflowStepForRetry, arg.RunID, arg.StepName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const requeueFireNowRequest = `-- name: RequeueFireNowRequest :execrows
 UPDATE cron_fire_now_requests
 SET status = 'pending'
@@ -36385,6 +36942,46 @@ func (q *Queries) RequeueFireNowRequest(ctx context.Context, db DBTX, id pgtype.
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const requeueWorkflowRunForRetry = `-- name: RequeueWorkflowRunForRetry :one
+UPDATE workflow_runs
+SET status='pending',current_step=$1::text,
+    scheduled_for=clock_timestamp(),output=NULL,finished_at=NULL,last_error=NULL,
+    lease_until=NULL,updated_at=clock_timestamp()
+WHERE id=$2::text::uuid
+  AND status IN ('failed','dead')
+RETURNING id, app_id, workflow_name, status, current_step, input, output, definition_snapshot, scheduled_for, started_at, finished_at, last_error, created_at, updated_at, lease_until, resume_count, cancelled_at
+`
+
+type RequeueWorkflowRunForRetryParams struct {
+	StepName string
+	RunID    string
+}
+
+func (q *Queries) RequeueWorkflowRunForRetry(ctx context.Context, db DBTX, arg RequeueWorkflowRunForRetryParams) (WorkflowRun, error) {
+	row := db.QueryRow(ctx, requeueWorkflowRunForRetry, arg.StepName, arg.RunID)
+	var i WorkflowRun
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.WorkflowName,
+		&i.Status,
+		&i.CurrentStep,
+		&i.Input,
+		&i.Output,
+		&i.DefinitionSnapshot,
+		&i.ScheduledFor,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LeaseUntil,
+		&i.ResumeCount,
+		&i.CancelledAt,
+	)
+	return i, err
 }
 
 const reserveAccountCreditConsumption = `-- name: ReserveAccountCreditConsumption :one
@@ -36510,6 +37107,35 @@ func (q *Queries) ResolveEnvironmentFieldOwnershipScope(ctx context.Context, db 
 		&i.Resource,
 	)
 	return i, err
+}
+
+const resolveExclusiveWebhookEffectTarget = `-- name: ResolveExclusiveWebhookEffectTarget :one
+SELECT id::text FROM app_webhooks
+WHERE id=$1::text::uuid AND account_id=$2::text::uuid
+ AND enabled AND 'operation.effect'=ANY(event_filter)
+ AND (($3::text='' AND scope='app' AND app_id=$4::text::uuid)
+ OR ($3::text<>'' AND scope='platform_tenant'
+ AND platform_tenant_id=nullif($3::text,'')::uuid))
+FOR SHARE
+`
+
+type ResolveExclusiveWebhookEffectTargetParams struct {
+	WebhookID string
+	AccountID string
+	TenantID  string
+	AppID     string
+}
+
+func (q *Queries) ResolveExclusiveWebhookEffectTarget(ctx context.Context, db DBTX, arg ResolveExclusiveWebhookEffectTargetParams) (string, error) {
+	row := db.QueryRow(ctx, resolveExclusiveWebhookEffectTarget,
+		arg.WebhookID,
+		arg.AccountID,
+		arg.TenantID,
+		arg.AppID,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const resolvePublicProjectRelease = `-- name: ResolvePublicProjectRelease :one

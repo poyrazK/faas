@@ -107,6 +107,32 @@ func TestCmdWorkflowsCancel_InvalidUUID(t *testing.T) {
 	}
 }
 
+func TestCmdWorkflowsRetry_ValidationAndAPIJourney(t *testing.T) {
+	resetJSONOut(t)
+	if code, captured := runWithStderr(t, func() int { return cmdWorkflowsRetry([]string{"bad-id", "charge-order"}) }); code != 1 || !strings.Contains(captured, "gregale workflows retry <run_id> <step_name>") {
+		t.Fatalf("invalid run: exit=%d stderr=%q", code, captured)
+	}
+
+	runID := "00000000-0000-4000-8000-000000000005"
+	f := authedFakeAPI(t, `{"id":"`+runID+`","status":"running"}`, http.StatusOK)
+	oldOut := osStdout
+	var out strings.Builder
+	osStdout = &out
+	t.Cleanup(func() { osStdout = oldOut })
+	if code := cmdWorkflows([]string{"retry", runID, "charge-order"}); code != 0 {
+		t.Fatalf("retry command exit = %d", code)
+	}
+	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/workflows/runs/"+runID+"/steps/charge-order/retry" {
+		t.Fatalf("request = %s %s, want retry POST for the named step", f.sawMethod, f.sawPath)
+	}
+	if f.sawHeader.Get("Idempotency-Key") == "" {
+		t.Fatal("retry request did not carry an idempotency key")
+	}
+	if !strings.Contains(out.String(), "requeued at step charge-order") {
+		t.Fatalf("user-facing result = %q", out.String())
+	}
+}
+
 func TestCmdWorkflowsEvents_MissingArgs(t *testing.T) {
 	code, captured := runWithStderr(t, func() int {
 		return cmdWorkflowsEvents([]string{"send", "not-enough-args"})
