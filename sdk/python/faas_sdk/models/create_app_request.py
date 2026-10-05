@@ -166,8 +166,8 @@ class CreateAppRequest:
     streaming_enabled: bool | Unset = UNSET
     """Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471)."""
     websocket_enabled: bool | Unset = UNSET
-    """Per-app raw-bytes Upgrade bridge flag (issue #676 / ADR-080). Omitted → apid applies the plan default; PATCH-
-    true on Free is rejected by apid with 403 plan_websocket_not_allowed."""
+    """Per-app raw-bytes Upgrade bridge flag (issue #676 / ADR-080). Omitted → apid applies the plan default;
+    PATCH-true on Free is rejected by apid with 403 plan_websocket_not_allowed."""
     route_metrics_enabled: bool | Unset = UNSET
     """Per-app per-route observability flag (ADR-093). Omitted → apid applies the plan default (Free = false;
     Hobby/Pro/Scale = true). PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed."""

@@ -15,8 +15,8 @@ T = TypeVar("T", bound="CreateKeyRequest")
 @_attrs_define
 class CreateKeyRequest:
     """API key creation payload — label and optional scopes. Plaintext is returned exactly once in the 201 response. Scopes
-    defaults to `["admin"]` when omitted so existing callers preserve the legacy full-access behavior. See IAM-1, ADR-034
-    rev2.
+    defaults to `["admin"]` when omitted so existing callers preserve the legacy full-access behavior. See IAM-1,
+    ADR-034 rev2.
 
     """
 

@@ -29,8 +29,8 @@ class UsageResponse:
     canonical net_tx_bytes and never added to it. ADR-046."""
     net_tx_bytes: int | Unset = UNSET
     """Per-app monthly byte delta on root-side vethHost.rx_bytes. Canonical optional egress-billing source;
-    informational while the provider policy is off. ADR-046. Includes Ethernet framing — the same kernel counter used
-    by shaping."""
+    informational while the provider policy is off. ADR-046. Includes Ethernet framing — the same kernel counter
+    used by shaping."""
     net_rx_bytes: int | Unset = UNSET
     """Per-app monthly byte delta on root-side vethHost.tx_bytes (root→guest = ingress; informational; not billed).
     ADR-048. Mirror of `net_tx_bytes` for the inbound direction. Same sysfs source —

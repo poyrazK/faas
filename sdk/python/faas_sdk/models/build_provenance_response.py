@@ -53,8 +53,8 @@ class BuildProvenanceResponse:
     """Phase 3 populator fills this from `syft` output. Empty string when not yet populated."""
     framework_version: None | str | Unset = UNSET
     """Source-declared language version (nodes 22.11.0 / python 3.13 / go 1.24, etc.). Empty string when no version
-    file is present or any parser fails — best-effort, never an error. Added in DEPLOY-PROV-5 / issue #740 / ADR-087.
-   """
+    file is present or any parser fails — best-effort, never an error. Added in DEPLOY-PROV-5 / issue #740 /
+    ADR-087."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

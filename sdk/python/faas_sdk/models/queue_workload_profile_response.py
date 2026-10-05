@@ -21,8 +21,8 @@ class QueueWorkloadProfileResponse:
 
     app: AppResponse
     """An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy
-    pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 /
-    #172)."""
+    pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169
+    / #172)."""
     binding: QueueBindingResponse
     """Durable queue-to-workload binding."""
     scaling_policy: ScalingPolicy
