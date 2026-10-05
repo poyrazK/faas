@@ -1,8 +1,8 @@
-# ADR-582: Static Go Chi route impact
+# ADR-594: Static Go Chi route impact
 
 - **Status:** Accepted
 - **Date:** 2026-10-05
-- **Relates to:** ADR-581 (static Go `net/http` route impact), ADR-440 (function-level source impact)
+- **Relates to:** ADR-593 (static Go `net/http` route impact), ADR-440 (function-level source impact)
 
 ## Context
 

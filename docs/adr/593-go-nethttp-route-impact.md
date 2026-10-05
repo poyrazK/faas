@@ -1,4 +1,4 @@
-# ADR-581: Static Go net/http route impact
+# ADR-593: Static Go net/http route impact
 
 - **Status:** Accepted
 - **Date:** 2026-10-04
