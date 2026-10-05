@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Durable compute resize progress. Provider identity and credentials are never returned; existing connections may be interrupted.
+ */
 export type ManagedPostgresResize = {
   id: string;
   database_id: string;

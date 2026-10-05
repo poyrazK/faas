@@ -59,6 +59,9 @@ def sync_detailed(
 ) -> Response[ManagedPostgresResize | Problem]:
     """Get managed PostgreSQL resize progress
 
+     Reads a durable resize request for the authenticated account and database. Responses are not cached
+    and omit private provider identity.
+
     Args:
         id (str):
         resize_id (UUID):
@@ -91,6 +94,9 @@ def sync(
 ) -> ManagedPostgresResize | Problem | None:
     """Get managed PostgreSQL resize progress
 
+     Reads a durable resize request for the authenticated account and database. Responses are not cached
+    and omit private provider identity.
+
     Args:
         id (str):
         resize_id (UUID):
@@ -117,6 +123,9 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresResize | Problem]:
     """Get managed PostgreSQL resize progress
+
+     Reads a durable resize request for the authenticated account and database. Responses are not cached
+    and omit private provider identity.
 
     Args:
         id (str):
@@ -147,6 +156,9 @@ async def asyncio(
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresResize | Problem | None:
     """Get managed PostgreSQL resize progress
+
+     Reads a durable resize request for the authenticated account and database. Responses are not cached
+    and omit private provider identity.
 
     Args:
         id (str):

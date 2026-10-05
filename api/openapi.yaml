@@ -1330,10 +1330,12 @@ paths:
       - name: resize_id
         in: path
         required: true
+        description: Canonical UUID supplied as request_id when reserving this resize.
         schema: { type: string, format: uuid }
     get:
       operationId: getManagedPostgresResize
       summary: Get managed PostgreSQL resize progress
+      description: Reads a durable resize request for the authenticated account and database. Responses are not cached and omit private provider identity.
       tags: [managed_postgres]
       responses:
         '200':
@@ -31647,6 +31649,7 @@ components:
         storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         restore_window_seconds: { type: integer, format: int64, minimum: 0 }
     ResizeManagedPostgresDatabaseRequest:
+      description: Canonical UUID request for a compute-class change on an existing managed PostgreSQL database.
       type: object
       additionalProperties: false
       required: [request_id, service_class]
@@ -31654,6 +31657,7 @@ components:
         request_id: { type: string, format: uuid, description: "Canonical nonzero UUID; reuse with the same database and target after uncertain responses." }
         service_class: { type: string, enum: [development, burstable, production] }
     ManagedPostgresResize:
+      description: Durable compute resize progress. Provider identity and credentials are never returned; existing connections may be interrupted.
       type: object
       required: [id, database_id, from_class, target_class, generation, state, connection_interruption_expected, created_at]
       properties:

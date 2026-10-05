@@ -24,6 +24,11 @@ T = TypeVar("T", bound="ManagedPostgresResize")
 
 @_attrs_define
 class ManagedPostgresResize:
+    """Durable compute resize progress. Provider identity and credentials are never returned; existing connections may be
+    interrupted.
+
+    """
+
     id: UUID
     database_id: str
     from_class: ManagedPostgresResizeFromClass

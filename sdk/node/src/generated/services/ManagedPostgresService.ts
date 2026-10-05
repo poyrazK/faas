@@ -304,6 +304,7 @@ export class ManagedPostgresService {
   }
   /**
    * Get managed PostgreSQL resize progress
+   * Reads a durable resize request for the authenticated account and database. Responses are not cached and omit private provider identity.
    * @returns ManagedPostgresResize Account and database scoped resize progress
    * @returns Problem Authentication or resize lookup error
    * @throws ApiError
@@ -316,6 +317,9 @@ export class ManagedPostgresService {
      * Opaque Gregale managed PostgreSQL resource identifier.
      */
     id: string,
+    /**
+     * Canonical UUID supplied as request_id when reserving this resize.
+     */
     resizeId: string,
   }): CancelablePromise<ManagedPostgresResize | Problem> {
     return __request(OpenAPI, {
