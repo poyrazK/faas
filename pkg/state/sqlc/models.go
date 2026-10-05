@@ -2125,17 +2125,42 @@ type EventDeliverySlot struct {
 }
 
 type EventFanoutAttemptHistory struct {
-	ID             int64
-	OutboxID       int64
-	AppID          pgtype.UUID
-	SubscriptionID string
-	Action         string
-	State          string
-	Attempts       int32
-	FailureCode    string
-	Retryable      bool
-	LastError      string
-	OccurredAt     pgtype.Timestamptz
+	ID                int64
+	OutboxID          int64
+	AppID             pgtype.UUID
+	SubscriptionID    string
+	Action            string
+	State             string
+	Attempts          int32
+	FailureCode       string
+	Retryable         bool
+	LastError         string
+	OccurredAt        pgtype.Timestamptz
+	CapacityScope     string
+	CapacityDeferrals int64
+	DetailsTruncated  bool
+	HistoryBytes      int64
+}
+
+type EventFanoutHistorySummary struct {
+	OutboxID                 int64
+	SubscriptionID           string
+	AppID                    pgtype.UUID
+	ObservedOutcomes         int64
+	CapacityDeferrals        int64
+	CoalescedOutcomes        int64
+	CompactedOutcomes        int64
+	CompactedThroughID       int64
+	CompactedThroughAt       pgtype.Timestamptz
+	FirstCapacityWaitAt      pgtype.Timestamptz
+	LastCapacityWaitAt       pgtype.Timestamptz
+	LastCapacityScope        string
+	LastOutcomeCapacityScope string
+	LastWasCoalesced         bool
+	LatestID                 int64
+	LatestFailureID          int64
+	LatestReplayID           int64
+	NextPruneAt              pgtype.Timestamptz
 }
 
 type EventFanoutOutbox struct {

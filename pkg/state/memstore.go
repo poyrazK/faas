@@ -661,16 +661,17 @@ type MemStore struct {
 	snapshotReplicas map[snapshotReplicaKey]snapshotReplicaRow
 	// snapshotOrigins records the producer node/locality for region-scoped
 	// fan-out. Legacy snapshots without an entry remain globally eligible.
-	snapshotOrigins          map[string]snapshotOriginRow
-	events                   []Event
-	eventDeliverySlots       map[string]eventDeliverySlot
-	eventRoutingFairness     map[string]time.Time
-	eventFanout              map[string]*PublishedEventWork
-	eventFanoutNextID        int64
-	eventFanoutAttempts      []EventFanoutAttempt
-	eventFanoutAttemptNextID int64
-	eventSchemas             map[string]EventSchema
-	workflowRunLeases        map[string]time.Time
+	snapshotOrigins             map[string]snapshotOriginRow
+	events                      []Event
+	eventDeliverySlots          map[string]eventDeliverySlot
+	eventRoutingFairness        map[string]time.Time
+	eventFanout                 map[string]*PublishedEventWork
+	eventFanoutNextID           int64
+	eventFanoutAttempts         []EventFanoutAttempt
+	eventFanoutHistorySummaries map[eventHistoryKey]*eventHistorySummary
+	eventFanoutAttemptNextID    int64
+	eventSchemas                map[string]EventSchema
+	workflowRunLeases           map[string]time.Time
 	// auditOutbox mirrors audit_event_outbox. It is separate from the
 	// events slice because delivery claims need leases and retry state,
 	// while the resulting audit event remains append-only.

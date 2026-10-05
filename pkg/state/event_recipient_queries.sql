@@ -116,13 +116,16 @@ SET recipient_progress = jsonb_set(o.recipient_progress, ARRAY[sqlc.arg(subscrip
         WHERE p.value->>'state' = 'failed' ORDER BY p.key LIMIT 1)
 WHERE o.id = sqlc.arg(id)::bigint;
 
--- name: EventRecipientAppendHistory :exec
+-- name: EventRecipientAppendHistory :one
 INSERT INTO event_fanout_attempt_history
-    (outbox_id, app_id, subscription_id, action, state, attempts, failure_code, retryable, last_error, occurred_at)
+    (outbox_id, app_id, subscription_id, action, state, attempts, failure_code, retryable, last_error, occurred_at,
+     capacity_scope,capacity_deferrals,details_truncated)
 VALUES (sqlc.arg(outbox_id)::bigint, sqlc.arg(app_id)::uuid, sqlc.arg(subscription_id)::text,
         sqlc.arg(action)::text, sqlc.arg(state)::text, sqlc.arg(attempts)::integer,
         sqlc.arg(failure_code)::text, sqlc.arg(retryable)::boolean, sqlc.arg(last_error)::text,
-        sqlc.arg(occurred_at)::timestamptz);
+        sqlc.arg(occurred_at)::timestamptz,sqlc.arg(capacity_scope)::text,
+        sqlc.arg(capacity_deferrals)::bigint,sqlc.arg(details_truncated)::boolean)
+RETURNING id;
 
 -- name: EventRecipientSettleReceipt :exec
 UPDATE event_fanout_outbox o
@@ -253,3 +256,88 @@ UPDATE event_fanout_outbox o SET state='pending',claim_token=NULL,lease_until=NU
  clock_timestamp()+interval '5 seconds')) FROM jsonb_each(o.recipient_progress) p WHERE p.value->>'state'='pending'),clock_timestamp()+interval '5 seconds')
 WHERE o.id=sqlc.arg(id)::bigint AND o.claim_token=sqlc.arg(claim_token)::uuid
  AND o.state='processing' AND NOT o.recipient_claims AND o.lease_until>clock_timestamp();
+
+-- name: EventHistoryObserve :one
+INSERT INTO event_fanout_history_summaries AS s
+ (outbox_id,subscription_id,app_id,observed_outcomes,capacity_deferrals,
+  first_capacity_wait_at,last_capacity_wait_at,last_capacity_scope,last_outcome_capacity_scope)
+VALUES (sqlc.arg(outbox_id)::bigint,sqlc.arg(subscription_id)::text,sqlc.arg(app_id)::uuid,1,
+ sqlc.arg(capacity_deferrals)::bigint,
+ CASE WHEN sqlc.arg(wait_scope)::text<>'' THEN sqlc.arg(occurred_at)::timestamptz END,
+ CASE WHEN sqlc.arg(wait_scope)::text<>'' THEN sqlc.arg(occurred_at)::timestamptz END,
+ sqlc.arg(wait_scope)::text,sqlc.arg(wait_scope)::text)
+ON CONFLICT (outbox_id,subscription_id) DO UPDATE SET
+ observed_outcomes=s.observed_outcomes+1,
+ capacity_deferrals=greatest(s.capacity_deferrals,excluded.capacity_deferrals),
+ first_capacity_wait_at=coalesce(s.first_capacity_wait_at,excluded.first_capacity_wait_at),
+ last_capacity_wait_at=coalesce(excluded.last_capacity_wait_at,s.last_capacity_wait_at),
+ last_capacity_scope=CASE WHEN excluded.last_capacity_scope<>'' THEN excluded.last_capacity_scope ELSE s.last_capacity_scope END,
+ last_was_coalesced=excluded.last_outcome_capacity_scope<>'' AND s.last_outcome_capacity_scope=excluded.last_outcome_capacity_scope,
+ coalesced_outcomes=s.coalesced_outcomes+CASE WHEN excluded.last_outcome_capacity_scope<>'' AND s.last_outcome_capacity_scope=excluded.last_outcome_capacity_scope THEN 1 ELSE 0 END,
+ last_outcome_capacity_scope=excluded.last_outcome_capacity_scope
+RETURNING last_was_coalesced;
+
+-- name: EventHistoryMarkDetail :exec
+UPDATE event_fanout_history_summaries SET latest_id=sqlc.arg(history_id)::bigint,
+ latest_failure_id=CASE WHEN sqlc.arg(is_failure)::boolean THEN sqlc.arg(history_id)::bigint ELSE latest_failure_id END,
+ latest_replay_id=CASE WHEN sqlc.arg(is_replay)::boolean THEN sqlc.arg(history_id)::bigint ELSE latest_replay_id END
+WHERE outbox_id=sqlc.arg(outbox_id)::bigint AND subscription_id=sqlc.arg(subscription_id)::text;
+
+-- name: EventHistoryCompact :execrows
+WITH ranked AS (
+ SELECT h.id,h.occurred_at,
+   h.id IN (s.latest_id,s.latest_failure_id,s.latest_replay_id) AS protected,
+   row_number() OVER (ORDER BY (h.id IN (s.latest_id,s.latest_failure_id,s.latest_replay_id)) DESC,h.id DESC) AS position,
+   sum(h.history_bytes) OVER (ORDER BY (h.id IN (s.latest_id,s.latest_failure_id,s.latest_replay_id)) DESC,h.id DESC) AS bytes
+ FROM event_fanout_attempt_history h JOIN event_fanout_history_summaries s
+  ON s.outbox_id=h.outbox_id AND s.subscription_id=h.subscription_id
+ WHERE h.outbox_id=sqlc.arg(outbox_id)::bigint AND h.subscription_id=sqlc.arg(subscription_id)::text
+), removed AS (
+ DELETE FROM event_fanout_attempt_history h USING ranked r WHERE h.id=r.id AND
+ (r.position>sqlc.arg(max_rows)::bigint OR r.bytes>sqlc.arg(max_bytes)::bigint OR
+  (NOT r.protected AND r.occurred_at<=sqlc.arg(before_at)::timestamptz))
+ RETURNING h.id,h.occurred_at
+)
+UPDATE event_fanout_history_summaries SET
+ compacted_outcomes=compacted_outcomes+(SELECT count(*) FROM removed),
+ compacted_through_id=greatest(compacted_through_id,coalesce((SELECT max(id) FROM removed),0)),
+ compacted_through_at=greatest(compacted_through_at,(SELECT max(occurred_at) FROM removed))
+WHERE outbox_id=sqlc.arg(outbox_id)::bigint AND subscription_id=sqlc.arg(subscription_id)::text;
+
+-- name: EventHistorySchedulePrune :exec
+UPDATE event_fanout_history_summaries s SET next_prune_at=(
+ SELECT min(h.occurred_at)+sqlc.arg(retention_seconds)::bigint * interval '1 second'
+ FROM event_fanout_attempt_history h WHERE h.outbox_id=s.outbox_id AND h.subscription_id=s.subscription_id
+ AND h.id NOT IN (s.latest_id,s.latest_failure_id,s.latest_replay_id))
+WHERE s.outbox_id=sqlc.arg(outbox_id)::bigint AND s.subscription_id=sqlc.arg(subscription_id)::text;
+
+-- name: EventHistoryPruneCandidates :many
+-- Take parent locks before summary/detail locks, matching routing and replay.
+SELECT o.id FROM event_fanout_history_summaries s
+JOIN event_fanout_outbox o ON o.id=s.outbox_id
+WHERE s.next_prune_at<=sqlc.arg(now_at)::timestamptz
+ORDER BY s.next_prune_at,s.outbox_id,s.subscription_id
+LIMIT sqlc.arg(batch_limit)::integer FOR UPDATE OF o SKIP LOCKED;
+
+-- name: EventHistoryDueRecipients :many
+SELECT subscription_id FROM event_fanout_history_summaries
+WHERE outbox_id=sqlc.arg(outbox_id)::bigint AND next_prune_at<=sqlc.arg(now_at)::timestamptz
+ORDER BY subscription_id LIMIT sqlc.arg(batch_limit)::integer;
+
+-- name: EventHistoryList :many
+SELECT h.*,o.event_id,o.source AS event_source,o.event_type
+FROM event_fanout_attempt_history h JOIN event_fanout_outbox o ON o.id=h.outbox_id
+JOIN apps a ON a.id=h.app_id AND a.account_id=o.account_id
+WHERE h.app_id=sqlc.arg(app_id)::uuid AND (sqlc.arg(event_source)::text='' OR o.source=sqlc.arg(event_source)::text) AND (sqlc.arg(event_id)::text='' OR o.event_id=sqlc.arg(event_id)::text)
+ AND (sqlc.arg(subscription_id)::text='' OR h.subscription_id=sqlc.arg(subscription_id)::text)
+ AND (sqlc.arg(before_id)::bigint=0 OR h.id<sqlc.arg(before_id)::bigint)
+ORDER BY h.id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EventHistorySummaries :many
+SELECT s.*, (SELECT count(*) FROM event_fanout_attempt_history h WHERE h.outbox_id=s.outbox_id AND h.subscription_id=s.subscription_id)::bigint AS retained_records,
+ (SELECT coalesce(sum(h.history_bytes),0)::bigint FROM event_fanout_attempt_history h WHERE h.outbox_id=s.outbox_id AND h.subscription_id=s.subscription_id)::bigint AS retained_bytes
+FROM event_fanout_history_summaries s JOIN event_fanout_outbox o ON o.id=s.outbox_id
+JOIN apps a ON a.id=s.app_id AND a.account_id=o.account_id
+WHERE s.app_id=sqlc.arg(app_id)::uuid AND (sqlc.arg(event_source)::text='' OR o.source=sqlc.arg(event_source)::text) AND (sqlc.arg(event_id)::text='' OR o.event_id=sqlc.arg(event_id)::text)
+ AND (sqlc.arg(subscription_id)::text='' OR s.subscription_id=sqlc.arg(subscription_id)::text)
+ORDER BY s.subscription_id;

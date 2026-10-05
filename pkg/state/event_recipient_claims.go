@@ -151,12 +151,8 @@ func recordEventRecipientOutcome(ctx context.Context, q *sqlc.Queries, tx pgx.Tx
 }
 
 func appendEventRecipientHistory(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, outboxID int64, appID, subscriptionID, action string, progress PublishedEventRecipientProgress) error {
-	return q.EventRecipientAppendHistory(ctx, tx, sqlc.EventRecipientAppendHistoryParams{
-		OutboxID: outboxID, AppID: mustPgUUID(appID), SubscriptionID: subscriptionID,
-		Action: action, State: progress.State, Attempts: int32(progress.Attempts),
-		FailureCode: progress.FailureCode, Retryable: progress.Retryable,
-		LastError: progress.LastError, OccurredAt: pgtypeFromTime(progress.UpdatedAt),
-	})
+	return recordBoundedEventHistory(ctx, q, tx, outboxID, appID, subscriptionID, action, progress)
+
 }
 
 func cloneEventRecipientWork(work *PublishedEventRecipientWork) *PublishedEventRecipientWork {

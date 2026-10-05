@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -416,6 +417,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	if l.now != nil {
 		now = l.now().UTC()
 	}
+	l.runEventHistoryPrune(ctx, now)
 	if now.Sub(l.eventFanoutLastPrune) >= 10*time.Second {
 		if retention, ok := l.engine.store.(state.PublishedEventRetentionStore); ok {
 			if _, err := retention.PruneDeliveredPublishedEvents(ctx, now.Add(-state.PublishedEventIdentityRetention), 5000); err != nil {
@@ -599,4 +601,23 @@ func eventFanoutCapacityWait(err error) bool {
 		return eventFanoutCapacityWait(child)
 	}
 	return errors.Is(err, state.ErrEventDeliveryCapacity)
+}
+
+// Detail retention is independent of receipt settlement. Parent SKIP LOCKED
+// locks make this maintenance yield to active routing and operator replay.
+func (l *Loop) runEventHistoryPrune(ctx context.Context, now time.Time) {
+	if now.Sub(l.eventFanoutHistoryLastPrune) < 10*time.Second {
+		return
+	}
+	retention, ok := l.engine.store.(state.EventFanoutHistoryRetentionStore)
+	if !ok {
+		return
+	}
+	if _, err := retention.PruneEventFanoutHistory(ctx, now, api.EventRoutingHistoryPruneBatch); err != nil {
+		if l.log != nil {
+			l.log.Warn("sched: compact routing history failed", "err", err)
+		}
+		return
+	}
+	l.eventFanoutHistoryLastPrune = now
 }

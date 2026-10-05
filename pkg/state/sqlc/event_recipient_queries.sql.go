@@ -113,30 +113,407 @@ func (q *Queries) EventDeliveryReplayAccount(ctx context.Context, db DBTX, invoc
 	return i, err
 }
 
-const eventRecipientAppendHistory = `-- name: EventRecipientAppendHistory :exec
+const eventHistoryCompact = `-- name: EventHistoryCompact :execrows
+WITH ranked AS (
+ SELECT h.id,h.occurred_at,
+   h.id IN (s.latest_id,s.latest_failure_id,s.latest_replay_id) AS protected,
+   row_number() OVER (ORDER BY (h.id IN (s.latest_id,s.latest_failure_id,s.latest_replay_id)) DESC,h.id DESC) AS position,
+   sum(h.history_bytes) OVER (ORDER BY (h.id IN (s.latest_id,s.latest_failure_id,s.latest_replay_id)) DESC,h.id DESC) AS bytes
+ FROM event_fanout_attempt_history h JOIN event_fanout_history_summaries s
+  ON s.outbox_id=h.outbox_id AND s.subscription_id=h.subscription_id
+ WHERE h.outbox_id=$1::bigint AND h.subscription_id=$2::text
+), removed AS (
+ DELETE FROM event_fanout_attempt_history h USING ranked r WHERE h.id=r.id AND
+ (r.position>$3::bigint OR r.bytes>$4::bigint OR
+  (NOT r.protected AND r.occurred_at<=$5::timestamptz))
+ RETURNING h.id,h.occurred_at
+)
+UPDATE event_fanout_history_summaries SET
+ compacted_outcomes=compacted_outcomes+(SELECT count(*) FROM removed),
+ compacted_through_id=greatest(compacted_through_id,coalesce((SELECT max(id) FROM removed),0)),
+ compacted_through_at=greatest(compacted_through_at,(SELECT max(occurred_at) FROM removed))
+WHERE outbox_id=$1::bigint AND subscription_id=$2::text
+`
+
+type EventHistoryCompactParams struct {
+	OutboxID       int64
+	SubscriptionID string
+	MaxRows        int64
+	MaxBytes       int64
+	BeforeAt       pgtype.Timestamptz
+}
+
+func (q *Queries) EventHistoryCompact(ctx context.Context, db DBTX, arg EventHistoryCompactParams) (int64, error) {
+	result, err := db.Exec(ctx, eventHistoryCompact,
+		arg.OutboxID,
+		arg.SubscriptionID,
+		arg.MaxRows,
+		arg.MaxBytes,
+		arg.BeforeAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const eventHistoryDueRecipients = `-- name: EventHistoryDueRecipients :many
+SELECT subscription_id FROM event_fanout_history_summaries
+WHERE outbox_id=$1::bigint AND next_prune_at<=$2::timestamptz
+ORDER BY subscription_id LIMIT $3::integer
+`
+
+type EventHistoryDueRecipientsParams struct {
+	OutboxID   int64
+	NowAt      pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) EventHistoryDueRecipients(ctx context.Context, db DBTX, arg EventHistoryDueRecipientsParams) ([]string, error) {
+	rows, err := db.Query(ctx, eventHistoryDueRecipients, arg.OutboxID, arg.NowAt, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var subscription_id string
+		if err := rows.Scan(&subscription_id); err != nil {
+			return nil, err
+		}
+		items = append(items, subscription_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventHistoryList = `-- name: EventHistoryList :many
+SELECT h.id, h.outbox_id, h.app_id, h.subscription_id, h.action, h.state, h.attempts, h.failure_code, h.retryable, h.last_error, h.occurred_at, h.capacity_scope, h.capacity_deferrals, h.details_truncated, h.history_bytes,o.event_id,o.source AS event_source,o.event_type
+FROM event_fanout_attempt_history h JOIN event_fanout_outbox o ON o.id=h.outbox_id
+JOIN apps a ON a.id=h.app_id AND a.account_id=o.account_id
+WHERE h.app_id=$1::uuid AND ($2::text='' OR o.source=$2::text) AND ($3::text='' OR o.event_id=$3::text)
+ AND ($4::text='' OR h.subscription_id=$4::text)
+ AND ($5::bigint=0 OR h.id<$5::bigint)
+ORDER BY h.id DESC LIMIT $6::integer
+`
+
+type EventHistoryListParams struct {
+	AppID          pgtype.UUID
+	EventSource    string
+	EventID        string
+	SubscriptionID string
+	BeforeID       int64
+	PageLimit      int32
+}
+
+type EventHistoryListRow struct {
+	ID                int64
+	OutboxID          int64
+	AppID             pgtype.UUID
+	SubscriptionID    string
+	Action            string
+	State             string
+	Attempts          int32
+	FailureCode       string
+	Retryable         bool
+	LastError         string
+	OccurredAt        pgtype.Timestamptz
+	CapacityScope     string
+	CapacityDeferrals int64
+	DetailsTruncated  bool
+	HistoryBytes      int64
+	EventID           string
+	EventSource       string
+	EventType         string
+}
+
+func (q *Queries) EventHistoryList(ctx context.Context, db DBTX, arg EventHistoryListParams) ([]EventHistoryListRow, error) {
+	rows, err := db.Query(ctx, eventHistoryList,
+		arg.AppID,
+		arg.EventSource,
+		arg.EventID,
+		arg.SubscriptionID,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventHistoryListRow{}
+	for rows.Next() {
+		var i EventHistoryListRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OutboxID,
+			&i.AppID,
+			&i.SubscriptionID,
+			&i.Action,
+			&i.State,
+			&i.Attempts,
+			&i.FailureCode,
+			&i.Retryable,
+			&i.LastError,
+			&i.OccurredAt,
+			&i.CapacityScope,
+			&i.CapacityDeferrals,
+			&i.DetailsTruncated,
+			&i.HistoryBytes,
+			&i.EventID,
+			&i.EventSource,
+			&i.EventType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventHistoryMarkDetail = `-- name: EventHistoryMarkDetail :exec
+UPDATE event_fanout_history_summaries SET latest_id=$1::bigint,
+ latest_failure_id=CASE WHEN $2::boolean THEN $1::bigint ELSE latest_failure_id END,
+ latest_replay_id=CASE WHEN $3::boolean THEN $1::bigint ELSE latest_replay_id END
+WHERE outbox_id=$4::bigint AND subscription_id=$5::text
+`
+
+type EventHistoryMarkDetailParams struct {
+	HistoryID      int64
+	IsFailure      bool
+	IsReplay       bool
+	OutboxID       int64
+	SubscriptionID string
+}
+
+func (q *Queries) EventHistoryMarkDetail(ctx context.Context, db DBTX, arg EventHistoryMarkDetailParams) error {
+	_, err := db.Exec(ctx, eventHistoryMarkDetail,
+		arg.HistoryID,
+		arg.IsFailure,
+		arg.IsReplay,
+		arg.OutboxID,
+		arg.SubscriptionID,
+	)
+	return err
+}
+
+const eventHistoryObserve = `-- name: EventHistoryObserve :one
+INSERT INTO event_fanout_history_summaries AS s
+ (outbox_id,subscription_id,app_id,observed_outcomes,capacity_deferrals,
+  first_capacity_wait_at,last_capacity_wait_at,last_capacity_scope,last_outcome_capacity_scope)
+VALUES ($1::bigint,$2::text,$3::uuid,1,
+ $4::bigint,
+ CASE WHEN $5::text<>'' THEN $6::timestamptz END,
+ CASE WHEN $5::text<>'' THEN $6::timestamptz END,
+ $5::text,$5::text)
+ON CONFLICT (outbox_id,subscription_id) DO UPDATE SET
+ observed_outcomes=s.observed_outcomes+1,
+ capacity_deferrals=greatest(s.capacity_deferrals,excluded.capacity_deferrals),
+ first_capacity_wait_at=coalesce(s.first_capacity_wait_at,excluded.first_capacity_wait_at),
+ last_capacity_wait_at=coalesce(excluded.last_capacity_wait_at,s.last_capacity_wait_at),
+ last_capacity_scope=CASE WHEN excluded.last_capacity_scope<>'' THEN excluded.last_capacity_scope ELSE s.last_capacity_scope END,
+ last_was_coalesced=excluded.last_outcome_capacity_scope<>'' AND s.last_outcome_capacity_scope=excluded.last_outcome_capacity_scope,
+ coalesced_outcomes=s.coalesced_outcomes+CASE WHEN excluded.last_outcome_capacity_scope<>'' AND s.last_outcome_capacity_scope=excluded.last_outcome_capacity_scope THEN 1 ELSE 0 END,
+ last_outcome_capacity_scope=excluded.last_outcome_capacity_scope
+RETURNING last_was_coalesced
+`
+
+type EventHistoryObserveParams struct {
+	OutboxID          int64
+	SubscriptionID    string
+	AppID             pgtype.UUID
+	CapacityDeferrals int64
+	WaitScope         string
+	OccurredAt        pgtype.Timestamptz
+}
+
+func (q *Queries) EventHistoryObserve(ctx context.Context, db DBTX, arg EventHistoryObserveParams) (bool, error) {
+	row := db.QueryRow(ctx, eventHistoryObserve,
+		arg.OutboxID,
+		arg.SubscriptionID,
+		arg.AppID,
+		arg.CapacityDeferrals,
+		arg.WaitScope,
+		arg.OccurredAt,
+	)
+	var last_was_coalesced bool
+	err := row.Scan(&last_was_coalesced)
+	return last_was_coalesced, err
+}
+
+const eventHistoryPruneCandidates = `-- name: EventHistoryPruneCandidates :many
+SELECT o.id FROM event_fanout_history_summaries s
+JOIN event_fanout_outbox o ON o.id=s.outbox_id
+WHERE s.next_prune_at<=$1::timestamptz
+ORDER BY s.next_prune_at,s.outbox_id,s.subscription_id
+LIMIT $2::integer FOR UPDATE OF o SKIP LOCKED
+`
+
+type EventHistoryPruneCandidatesParams struct {
+	NowAt      pgtype.Timestamptz
+	BatchLimit int32
+}
+
+// Take parent locks before summary/detail locks, matching routing and replay.
+func (q *Queries) EventHistoryPruneCandidates(ctx context.Context, db DBTX, arg EventHistoryPruneCandidatesParams) ([]int64, error) {
+	rows, err := db.Query(ctx, eventHistoryPruneCandidates, arg.NowAt, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventHistorySchedulePrune = `-- name: EventHistorySchedulePrune :exec
+UPDATE event_fanout_history_summaries s SET next_prune_at=(
+ SELECT min(h.occurred_at)+$1::bigint * interval '1 second'
+ FROM event_fanout_attempt_history h WHERE h.outbox_id=s.outbox_id AND h.subscription_id=s.subscription_id
+ AND h.id NOT IN (s.latest_id,s.latest_failure_id,s.latest_replay_id))
+WHERE s.outbox_id=$2::bigint AND s.subscription_id=$3::text
+`
+
+type EventHistorySchedulePruneParams struct {
+	RetentionSeconds int64
+	OutboxID         int64
+	SubscriptionID   string
+}
+
+func (q *Queries) EventHistorySchedulePrune(ctx context.Context, db DBTX, arg EventHistorySchedulePruneParams) error {
+	_, err := db.Exec(ctx, eventHistorySchedulePrune, arg.RetentionSeconds, arg.OutboxID, arg.SubscriptionID)
+	return err
+}
+
+const eventHistorySummaries = `-- name: EventHistorySummaries :many
+SELECT s.outbox_id, s.subscription_id, s.app_id, s.observed_outcomes, s.capacity_deferrals, s.coalesced_outcomes, s.compacted_outcomes, s.compacted_through_id, s.compacted_through_at, s.first_capacity_wait_at, s.last_capacity_wait_at, s.last_capacity_scope, s.last_outcome_capacity_scope, s.last_was_coalesced, s.latest_id, s.latest_failure_id, s.latest_replay_id, s.next_prune_at, (SELECT count(*) FROM event_fanout_attempt_history h WHERE h.outbox_id=s.outbox_id AND h.subscription_id=s.subscription_id)::bigint AS retained_records,
+ (SELECT coalesce(sum(h.history_bytes),0)::bigint FROM event_fanout_attempt_history h WHERE h.outbox_id=s.outbox_id AND h.subscription_id=s.subscription_id)::bigint AS retained_bytes
+FROM event_fanout_history_summaries s JOIN event_fanout_outbox o ON o.id=s.outbox_id
+JOIN apps a ON a.id=s.app_id AND a.account_id=o.account_id
+WHERE s.app_id=$1::uuid AND ($2::text='' OR o.source=$2::text) AND ($3::text='' OR o.event_id=$3::text)
+ AND ($4::text='' OR s.subscription_id=$4::text)
+ORDER BY s.subscription_id
+`
+
+type EventHistorySummariesParams struct {
+	AppID          pgtype.UUID
+	EventSource    string
+	EventID        string
+	SubscriptionID string
+}
+
+type EventHistorySummariesRow struct {
+	OutboxID                 int64
+	SubscriptionID           string
+	AppID                    pgtype.UUID
+	ObservedOutcomes         int64
+	CapacityDeferrals        int64
+	CoalescedOutcomes        int64
+	CompactedOutcomes        int64
+	CompactedThroughID       int64
+	CompactedThroughAt       pgtype.Timestamptz
+	FirstCapacityWaitAt      pgtype.Timestamptz
+	LastCapacityWaitAt       pgtype.Timestamptz
+	LastCapacityScope        string
+	LastOutcomeCapacityScope string
+	LastWasCoalesced         bool
+	LatestID                 int64
+	LatestFailureID          int64
+	LatestReplayID           int64
+	NextPruneAt              pgtype.Timestamptz
+	RetainedRecords          int64
+	RetainedBytes            int64
+}
+
+func (q *Queries) EventHistorySummaries(ctx context.Context, db DBTX, arg EventHistorySummariesParams) ([]EventHistorySummariesRow, error) {
+	rows, err := db.Query(ctx, eventHistorySummaries,
+		arg.AppID,
+		arg.EventSource,
+		arg.EventID,
+		arg.SubscriptionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventHistorySummariesRow{}
+	for rows.Next() {
+		var i EventHistorySummariesRow
+		if err := rows.Scan(
+			&i.OutboxID,
+			&i.SubscriptionID,
+			&i.AppID,
+			&i.ObservedOutcomes,
+			&i.CapacityDeferrals,
+			&i.CoalescedOutcomes,
+			&i.CompactedOutcomes,
+			&i.CompactedThroughID,
+			&i.CompactedThroughAt,
+			&i.FirstCapacityWaitAt,
+			&i.LastCapacityWaitAt,
+			&i.LastCapacityScope,
+			&i.LastOutcomeCapacityScope,
+			&i.LastWasCoalesced,
+			&i.LatestID,
+			&i.LatestFailureID,
+			&i.LatestReplayID,
+			&i.NextPruneAt,
+			&i.RetainedRecords,
+			&i.RetainedBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventRecipientAppendHistory = `-- name: EventRecipientAppendHistory :one
 INSERT INTO event_fanout_attempt_history
-    (outbox_id, app_id, subscription_id, action, state, attempts, failure_code, retryable, last_error, occurred_at)
+    (outbox_id, app_id, subscription_id, action, state, attempts, failure_code, retryable, last_error, occurred_at,
+     capacity_scope,capacity_deferrals,details_truncated)
 VALUES ($1::bigint, $2::uuid, $3::text,
         $4::text, $5::text, $6::integer,
         $7::text, $8::boolean, $9::text,
-        $10::timestamptz)
+        $10::timestamptz,$11::text,
+        $12::bigint,$13::boolean)
+RETURNING id
 `
 
 type EventRecipientAppendHistoryParams struct {
-	OutboxID       int64
-	AppID          pgtype.UUID
-	SubscriptionID string
-	Action         string
-	State          string
-	Attempts       int32
-	FailureCode    string
-	Retryable      bool
-	LastError      string
-	OccurredAt     pgtype.Timestamptz
+	OutboxID          int64
+	AppID             pgtype.UUID
+	SubscriptionID    string
+	Action            string
+	State             string
+	Attempts          int32
+	FailureCode       string
+	Retryable         bool
+	LastError         string
+	OccurredAt        pgtype.Timestamptz
+	CapacityScope     string
+	CapacityDeferrals int64
+	DetailsTruncated  bool
 }
 
-func (q *Queries) EventRecipientAppendHistory(ctx context.Context, db DBTX, arg EventRecipientAppendHistoryParams) error {
-	_, err := db.Exec(ctx, eventRecipientAppendHistory,
+func (q *Queries) EventRecipientAppendHistory(ctx context.Context, db DBTX, arg EventRecipientAppendHistoryParams) (int64, error) {
+	row := db.QueryRow(ctx, eventRecipientAppendHistory,
 		arg.OutboxID,
 		arg.AppID,
 		arg.SubscriptionID,
@@ -147,8 +524,13 @@ func (q *Queries) EventRecipientAppendHistory(ctx context.Context, db DBTX, arg 
 		arg.Retryable,
 		arg.LastError,
 		arg.OccurredAt,
+		arg.CapacityScope,
+		arg.CapacityDeferrals,
+		arg.DetailsTruncated,
 	)
-	return err
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const eventRecipientClaim = `-- name: EventRecipientClaim :one

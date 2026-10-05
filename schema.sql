@@ -11572,8 +11572,15 @@ CREATE TABLE public.event_fanout_attempt_history (
     retryable boolean DEFAULT false NOT NULL,
     last_error text DEFAULT ''::text NOT NULL,
     occurred_at timestamp with time zone DEFAULT now() NOT NULL,
+    capacity_scope text DEFAULT ''::text NOT NULL,
+    capacity_deferrals bigint DEFAULT 0 NOT NULL,
+    details_truncated boolean DEFAULT false NOT NULL,
+    history_bytes bigint GENERATED ALWAYS AS ((((((((128)::bigint + octet_length(subscription_id)) + octet_length(action)) + octet_length(state)) + octet_length(failure_code)) + octet_length(last_error)) + octet_length(capacity_scope))) STORED NOT NULL,
     CONSTRAINT event_fanout_attempt_history_action_check CHECK ((action = ANY (ARRAY['fanout_attempt'::text, 'operator_replay'::text]))),
     CONSTRAINT event_fanout_attempt_history_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT event_fanout_attempt_history_capacity_deferrals_check CHECK ((capacity_deferrals >= 0)),
+    CONSTRAINT event_fanout_attempt_history_capacity_scope_check CHECK ((capacity_scope = ANY (ARRAY[''::text, 'consumer'::text, 'app'::text, 'account'::text]))),
+    CONSTRAINT event_fanout_attempt_history_history_bytes_check CHECK ((history_bytes >= 0)),
     CONSTRAINT event_fanout_attempt_history_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'filtered'::text, 'enqueued'::text, 'failed'::text])))
 );
 
@@ -11589,6 +11596,42 @@ ALTER TABLE public.event_fanout_attempt_history ALTER COLUMN id ADD GENERATED AL
     NO MINVALUE
     NO MAXVALUE
     CACHE 1
+);
+
+
+--
+-- Name: event_fanout_history_summaries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_fanout_history_summaries (
+    outbox_id bigint NOT NULL,
+    subscription_id text NOT NULL,
+    app_id uuid NOT NULL,
+    observed_outcomes bigint DEFAULT 0 NOT NULL,
+    capacity_deferrals bigint DEFAULT 0 NOT NULL,
+    coalesced_outcomes bigint DEFAULT 0 NOT NULL,
+    compacted_outcomes bigint DEFAULT 0 NOT NULL,
+    compacted_through_id bigint DEFAULT 0 NOT NULL,
+    compacted_through_at timestamp with time zone,
+    first_capacity_wait_at timestamp with time zone,
+    last_capacity_wait_at timestamp with time zone,
+    last_capacity_scope text DEFAULT ''::text NOT NULL,
+    last_outcome_capacity_scope text DEFAULT ''::text NOT NULL,
+    last_was_coalesced boolean DEFAULT false NOT NULL,
+    latest_id bigint DEFAULT 0 NOT NULL,
+    latest_failure_id bigint DEFAULT 0 NOT NULL,
+    latest_replay_id bigint DEFAULT 0 NOT NULL,
+    next_prune_at timestamp with time zone,
+    CONSTRAINT event_fanout_history_summarie_last_outcome_capacity_scope_check CHECK ((last_outcome_capacity_scope = ANY (ARRAY[''::text, 'consumer'::text, 'app'::text, 'account'::text]))),
+    CONSTRAINT event_fanout_history_summaries_capacity_deferrals_check CHECK ((capacity_deferrals >= 0)),
+    CONSTRAINT event_fanout_history_summaries_coalesced_outcomes_check CHECK ((coalesced_outcomes >= 0)),
+    CONSTRAINT event_fanout_history_summaries_compacted_outcomes_check CHECK ((compacted_outcomes >= 0)),
+    CONSTRAINT event_fanout_history_summaries_compacted_through_id_check CHECK ((compacted_through_id >= 0)),
+    CONSTRAINT event_fanout_history_summaries_last_capacity_scope_check CHECK ((last_capacity_scope = ANY (ARRAY[''::text, 'consumer'::text, 'app'::text, 'account'::text]))),
+    CONSTRAINT event_fanout_history_summaries_latest_failure_id_check CHECK ((latest_failure_id >= 0)),
+    CONSTRAINT event_fanout_history_summaries_latest_id_check CHECK ((latest_id >= 0)),
+    CONSTRAINT event_fanout_history_summaries_latest_replay_id_check CHECK ((latest_replay_id >= 0)),
+    CONSTRAINT event_fanout_history_summaries_observed_outcomes_check CHECK ((observed_outcomes >= 0))
 );
 
 
@@ -19197,6 +19240,14 @@ ALTER TABLE ONLY public.event_fanout_attempt_history
 
 
 --
+-- Name: event_fanout_history_summaries event_fanout_history_summaries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_fanout_history_summaries
+    ADD CONSTRAINT event_fanout_history_summaries_pkey PRIMARY KEY (outbox_id, subscription_id);
+
+
+--
 -- Name: event_fanout_outbox event_fanout_outbox_account_id_source_event_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -23682,6 +23733,13 @@ CREATE INDEX event_fanout_customer_storage_idx ON public.event_fanout_outbox USI
 --
 
 CREATE INDEX event_fanout_failure_history_idx ON public.event_fanout_outbox USING btree (account_id, created_at DESC, id DESC) WHERE (last_error IS NOT NULL);
+
+
+--
+-- Name: event_fanout_history_summaries_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_history_summaries_prune_idx ON public.event_fanout_history_summaries USING btree (next_prune_at, outbox_id, subscription_id) WHERE (next_prune_at IS NOT NULL);
 
 
 --
@@ -31460,6 +31518,14 @@ ALTER TABLE ONLY public.event_delivery_slots
 
 ALTER TABLE ONLY public.event_fanout_attempt_history
     ADD CONSTRAINT event_fanout_attempt_history_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_fanout_history_summaries event_fanout_history_summaries_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_fanout_history_summaries
+    ADD CONSTRAINT event_fanout_history_summaries_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
 
 
 --

@@ -838,11 +838,26 @@ gregale events fanout-history APP \
   --event-id evt-123
 ```
 
-History is ordered newest first and retained for the same period as the event
-fanout receipt. Use `--subscription-id` to narrow it to one captured recipient;
-use `--before` with `next_before` from JSON output to page through older rows.
-Replay rows include the failure details that led to the replay, even after the
-recipient later succeeds.
+History is ordered newest first. Each recipient retains at most 128 detail rows
+and 64 KiB of logical detail bytes; unprotected detail expires after thirty days,
+including while the event remains pending. Compaction prioritizes the latest
+outcome, real failure and replay request. Error details are bounded to 1,024 UTF-8
+bytes and clipped rows set `details_truncated`.
+
+Repeated consecutive capacity waits with the same scope update durable counters
+instead of appending detail. JSON output includes `coverage=bounded_recorded_outcomes`
+and recipient `summaries`: cumulative deferrals, wait first/last times, coalesced
+and compacted counts, retained records/bytes, and the boundary of removed detail.
+Summaries describe recorded observations and survive with the receipt; older
+unrecorded transitions cannot be reconstructed. The last capacity scope is the
+most recent recorded wait, including after recovery.
+
+Use `--subscription-id` to narrow the view and `--before` with `next_before` from
+JSON output to page through older rows. Cursors remain valid when their detail
+row is removed, although an older page may become empty. Summaries reflect current
+observations independently of the page cursor. Recovery uses the durable recipient
+checkpoint and does not depend on retaining every history row. See
+[ADR-591](adr/591-bounded-event-routing-history.md).
 
 To retry one terminal pre-invocation failure, pass its event ID, source, and
 subscription ID from the failure row:

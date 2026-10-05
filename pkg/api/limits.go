@@ -20,6 +20,17 @@ import (
 	"time"
 )
 
+// Routing detail is bounded independently of pending receipt retention (ADR-591).
+const (
+	EventRoutingHistoryRowOverheadBytes = 128
+	EventRoutingHistoryMaxRows          = 128
+	EventRoutingHistoryMaxBytes         = 64 << 10
+	EventRoutingHistoryErrorMaxBytes    = 1024
+	EventRoutingHistoryCodeMaxBytes     = 128
+	EventRoutingHistoryRetention        = 30 * 24 * time.Hour
+	EventRoutingHistoryPruneBatch       = 50
+)
+
 // Queue binding intent ceilings are shared by the API and GitOps compiler.
 const QueueBindingMaxConcurrency = 10000
 const QueueBindingRetryMaxBaseSeconds = 3600

@@ -37952,9 +37952,17 @@ components:
         retryable: { type: boolean }
         last_error: { type: string }
         occurred_at: { type: string, format: date-time }
+        capacity_scope: { type: string, enum: [consumer, app, account], description: Capacity wait scope for this immutable observation. }
+        capacity_deferrals: { type: integer, format: int64, minimum: 0, description: Cumulative deferrals at this observation; summaries provide the current total. }
+        details_truncated: { type: boolean, description: Error or failure code detail was truncated to its UTF-8 byte ceiling. }
 
     EventFanoutAttemptHistoryResponse:
-      description: Bounded immutable routing history for one app-scoped event identity.
+      description: >-
+        Bounded recorded routing outcomes with durable recipient summaries. Repeated capacity waits
+        coalesce; details have row and logical byte caps and thirty-day retention independent of receipt
+        settlement. Latest outcome, failure and replay evidence is prioritized. Summaries describe gaps,
+        not an exhaustive historical audit. IDs remain immutable and cursors remain valid after pruning.
+        Summaries are current observations across the identity, independent of the detail page cursor.
       type: object
       additionalProperties: false
       required: [app_slug, event_source, event_id, history]
@@ -37967,6 +37975,29 @@ components:
           type: array
           items: { $ref: '#/components/schemas/EventFanoutAttemptResponse' }
         next_before: { type: string, description: Opaque cursor bound to the app, event identity, and optional recipient filter. }
+        coverage: { type: string, enum: [bounded_recorded_outcomes], description: Recorded observations only; pre-migration transitions and compacted details are unavailable. }
+        summaries:
+          type: array
+          items: { $ref: '#/components/schemas/EventFanoutHistorySummaryResponse' }
+
+    EventFanoutHistorySummaryResponse:
+      description: Durable recipient counters and detail coverage for the retained receipt.
+      type: object
+      additionalProperties: false
+      required: [subscription_id, observed_outcomes, capacity_deferrals, coalesced_outcomes, compacted_outcomes, retained_records, retained_bytes]
+      properties:
+        subscription_id: { type: string, format: uuid }
+        observed_outcomes: { type: integer, format: int64, minimum: 0, description: Recorded routing and replay observations including coalesced waits. }
+        capacity_deferrals: { type: integer, format: int64, minimum: 0, description: Highest durable cumulative recipient deferral checkpoint. }
+        coalesced_outcomes: { type: integer, format: int64, minimum: 0, description: Repeated waits represented by counters instead of detail rows. }
+        compacted_outcomes: { type: integer, format: int64, minimum: 0, description: Detail rows removed by retention or budgets. }
+        compacted_through_id: { type: integer, format: int64, minimum: 1, description: Highest removed detail ID; protected older rows can remain, so this is not a contiguous missing prefix. }
+        compacted_through_at: { type: string, format: date-time, description: Latest occurrence time among removed detail rows. }
+        first_capacity_wait_at: { type: string, format: date-time, description: First recorded capacity wait after summary rollout. }
+        last_capacity_wait_at: { type: string, format: date-time }
+        last_capacity_scope: { type: string, enum: [consumer, app, account], description: Most recent recorded capacity scope, also retained after recovery. }
+        retained_records: { type: integer, format: int64, minimum: 0 }
+        retained_bytes: { type: integer, format: int64, minimum: 0, description: Logical detail bytes including a fixed per-row allowance; excludes physical storage and indexes. }
 
     EventReceiptResponse:
       description: Acceptance and routing evidence with a bounded recipient page; execution is a separate lifecycle.

@@ -388,6 +388,15 @@ type Querier interface {
 	EventDeliveryInsertSlot(ctx context.Context, db DBTX, arg EventDeliveryInsertSlotParams) error
 	EventDeliveryLockCapacity(ctx context.Context, db DBTX, arg EventDeliveryLockCapacityParams) error
 	EventDeliveryReplayAccount(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EventDeliveryReplayAccountRow, error)
+	EventHistoryCompact(ctx context.Context, db DBTX, arg EventHistoryCompactParams) (int64, error)
+	EventHistoryDueRecipients(ctx context.Context, db DBTX, arg EventHistoryDueRecipientsParams) ([]string, error)
+	EventHistoryList(ctx context.Context, db DBTX, arg EventHistoryListParams) ([]EventHistoryListRow, error)
+	EventHistoryMarkDetail(ctx context.Context, db DBTX, arg EventHistoryMarkDetailParams) error
+	EventHistoryObserve(ctx context.Context, db DBTX, arg EventHistoryObserveParams) (bool, error)
+	// Take parent locks before summary/detail locks, matching routing and replay.
+	EventHistoryPruneCandidates(ctx context.Context, db DBTX, arg EventHistoryPruneCandidatesParams) ([]int64, error)
+	EventHistorySchedulePrune(ctx context.Context, db DBTX, arg EventHistorySchedulePruneParams) error
+	EventHistorySummaries(ctx context.Context, db DBTX, arg EventHistorySummariesParams) ([]EventHistorySummariesRow, error)
 	EventReceiptAcceptedAt(ctx context.Context, db DBTX, arg EventReceiptAcceptedAtParams) (pgtype.Timestamptz, error)
 	EventReceiptAttemptHistory(ctx context.Context, db DBTX, arg EventReceiptAttemptHistoryParams) ([]InvocationAttemptHistory, error)
 	EventReceiptCancellations(ctx context.Context, db DBTX, arg EventReceiptCancellationsParams) ([]EventReceiptCancellationsRow, error)
@@ -397,7 +406,7 @@ type Querier interface {
 	EventReceiptReplayHistory(ctx context.Context, db DBTX, arg EventReceiptReplayHistoryParams) ([]EventReceiptReplayHistoryRow, error)
 	EventReceiptReplaySummaries(ctx context.Context, db DBTX, arg EventReceiptReplaySummariesParams) ([]EventReceiptReplaySummariesRow, error)
 	EventReceiptReplayTarget(ctx context.Context, db DBTX, arg EventReceiptReplayTargetParams) (pgtype.UUID, error)
-	EventRecipientAppendHistory(ctx context.Context, db DBTX, arg EventRecipientAppendHistoryParams) error
+	EventRecipientAppendHistory(ctx context.Context, db DBTX, arg EventRecipientAppendHistoryParams) (int64, error)
 	EventRecipientClaim(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (EventRecipientClaimRow, error)
 	EventRecipientFinish(ctx context.Context, db DBTX, arg EventRecipientFinishParams) (int64, error)
 	EventRecipientInitializeReceipt(ctx context.Context, db DBTX, arg EventRecipientInitializeReceiptParams) (int64, error)

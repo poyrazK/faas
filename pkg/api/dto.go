@@ -284,28 +284,50 @@ type EventFanoutFailureResponse struct {
 	FailedAt       time.Time `json:"failed_at"`
 }
 
-// EventFanoutAttemptResponse is one immutable routing outcome or explicit
+// EventFanoutAttemptResponse is one immutable, bounded routing outcome or explicit
 // operator replay request for an event recipient.
 type EventFanoutAttemptResponse struct {
-	SubscriptionID string    `json:"subscription_id"`
-	Action         string    `json:"action"`
-	State          string    `json:"state"`
-	AttemptNumber  int       `json:"attempt_number"`
-	FailureCode    string    `json:"failure_code,omitempty"`
-	Retryable      bool      `json:"retryable"`
-	LastError      string    `json:"last_error,omitempty"`
-	OccurredAt     time.Time `json:"occurred_at"`
+	CapacityScope     string    `json:"capacity_scope,omitempty"`
+	CapacityDeferrals int64     `json:"capacity_deferrals,omitempty"`
+	DetailsTruncated  bool      `json:"details_truncated,omitempty"`
+	SubscriptionID    string    `json:"subscription_id"`
+	Action            string    `json:"action"`
+	State             string    `json:"state"`
+	AttemptNumber     int       `json:"attempt_number"`
+	FailureCode       string    `json:"failure_code,omitempty"`
+	Retryable         bool      `json:"retryable"`
+	LastError         string    `json:"last_error,omitempty"`
+	OccurredAt        time.Time `json:"occurred_at"`
 }
 
 // EventFanoutAttemptHistoryResponse contains the bounded attempt timeline for
 // one event identity and app.
 type EventFanoutAttemptHistoryResponse struct {
-	AppSlug        string                       `json:"app_slug"`
-	EventSource    string                       `json:"event_source"`
-	EventID        string                       `json:"event_id"`
-	SubscriptionID string                       `json:"subscription_id,omitempty"`
-	History        []EventFanoutAttemptResponse `json:"history"`
-	NextBefore     string                       `json:"next_before,omitempty"`
+	Coverage       string                              `json:"coverage"`
+	Summaries      []EventFanoutHistorySummaryResponse `json:"summaries"`
+	AppSlug        string                              `json:"app_slug"`
+	EventSource    string                              `json:"event_source"`
+	EventID        string                              `json:"event_id"`
+	SubscriptionID string                              `json:"subscription_id,omitempty"`
+	History        []EventFanoutAttemptResponse        `json:"history"`
+	NextBefore     string                              `json:"next_before,omitempty"`
+}
+
+// EventFanoutHistorySummaryResponse survives detail compaction with its receipt.
+// Counters cover recorded observations, including migration checkpoints only.
+type EventFanoutHistorySummaryResponse struct {
+	SubscriptionID      string     `json:"subscription_id"`
+	ObservedOutcomes    int64      `json:"observed_outcomes"`
+	CapacityDeferrals   int64      `json:"capacity_deferrals"`
+	CoalescedOutcomes   int64      `json:"coalesced_outcomes"`
+	CompactedOutcomes   int64      `json:"compacted_outcomes"`
+	CompactedThroughID  int64      `json:"compacted_through_id,omitempty"`
+	CompactedThroughAt  *time.Time `json:"compacted_through_at,omitempty"`
+	FirstCapacityWaitAt *time.Time `json:"first_capacity_wait_at,omitempty"`
+	LastCapacityWaitAt  *time.Time `json:"last_capacity_wait_at,omitempty"`
+	LastCapacityScope   string     `json:"last_capacity_scope,omitempty"`
+	RetainedRecords     int64      `json:"retained_records"`
+	RetainedBytes       int64      `json:"retained_bytes"`
 }
 
 // EventDeliveryListResponse contains invocation lifecycle rows and terminal
