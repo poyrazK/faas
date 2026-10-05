@@ -2962,7 +2962,13 @@ paths:
         `events:publish`, `deploy:write`, or `admin`.
         Matching and delivery are asynchronous follow-up work. The Location header
         and receipt_url point to GET /v1/events/receipt for delivery evidence.
-        Identical identity retries return the original accepted_at timestamp.
+        Identical identity retries return the original accepted_at timestamp,
+        including when retained customer event storage is full. New identities
+        exceeding the account count or byte budget return 429 with code
+        event_storage_capacity_exhausted, limit/observed and Retry-After. No ledger
+        or receipt is committed on rejection. Storage is released by receipt
+        retention pruning, not by delivery completion. GET /v1/events/storage
+        reports current usage and plan limits.
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -2983,6 +2989,30 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/events/storage:
+    get:
+      tags: [events]
+      operationId: getEventStorageUsage
+      summary: Inspect retained customer event storage and account limits.
+      description: |
+        Requires apps:read or admin. Returns usage only for the authenticated
+        account. Logical UTF-8 JSON bytes include envelope, duplicated event data,
+        and immutable recipient snapshots. Pending and settled receipts remain
+        charged until retention pruning. Reserved gregale.* platform events are
+        exempt. Indexes, TOAST compression, ledger and attempt history are outside
+        this budget. A null oldest_pending_at means no customer routing is pending.
+        Responses use Cache-Control no-store.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current retained storage and plan limits.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventStorageUsageResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '503': { $ref: '#/components/responses/ServerError' }
 
   /v1/events/receipt:
@@ -37731,6 +37761,26 @@ components:
         accepted_at: { type: string, format: date-time }
         account_id: { type: string, format: uuid }
         receipt_url: { type: string, format: uri-reference, description: Account-authenticated relative URL for this event receipt. }
+
+    EventStorageUsageResponse:
+      description: Retained customer event counts, logical JSON bytes, pending age and current account budgets.
+      example: { retained_events: 0, retained_bytes: 0, pending_events: 0, oldest_pending_at: null, limits: { retained_events: 16384, retained_bytes: 67108864 } }
+      type: object
+      additionalProperties: false
+      required: [retained_events, retained_bytes, pending_events, oldest_pending_at, limits]
+      properties:
+        retained_events: { type: integer, format: int64, minimum: 0 }
+        retained_bytes: { type: integer, format: int64, minimum: 0 }
+        pending_events: { type: integer, format: int64, minimum: 0 }
+        oldest_pending_at: { type: [string, 'null'], format: date-time }
+        limits:
+          example: { retained_events: 16384, retained_bytes: 67108864 }
+          type: object
+          additionalProperties: false
+          required: [retained_events, retained_bytes]
+          properties:
+            retained_events: { type: integer, format: int64, minimum: 0 }
+            retained_bytes: { type: integer, format: int64, minimum: 0 }
 
     RegisterEventSchemaRequest:
       description: Immutable event schema registration request.

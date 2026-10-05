@@ -465,3 +465,149 @@ func (q *Queries) EventReceiptReplayTarget(ctx context.Context, db DBTX, arg Eve
 	err := row.Scan(&app_id)
 	return app_id, err
 }
+
+const eventStorageAcceptedCharge = `-- name: EventStorageAcceptedCharge :one
+SELECT customer_storage_bytes FROM event_fanout_outbox
+WHERE account_id=$1::uuid AND source=$2::text AND event_id=$3::text
+`
+
+type EventStorageAcceptedChargeParams struct {
+	AccountID pgtype.UUID
+	Source    string
+	EventID   string
+}
+
+func (q *Queries) EventStorageAcceptedCharge(ctx context.Context, db DBTX, arg EventStorageAcceptedChargeParams) (int64, error) {
+	row := db.QueryRow(ctx, eventStorageAcceptedCharge, arg.AccountID, arg.Source, arg.EventID)
+	var customer_storage_bytes int64
+	err := row.Scan(&customer_storage_bytes)
+	return customer_storage_bytes, err
+}
+
+const eventStorageAccountPlan = `-- name: EventStorageAccountPlan :one
+SELECT plan FROM accounts WHERE id=$1::uuid FOR SHARE
+`
+
+func (q *Queries) EventStorageAccountPlan(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, eventStorageAccountPlan, accountID)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
+}
+
+const eventStorageAppend = `-- name: EventStorageAppend :exec
+INSERT INTO events(actor,kind,subject,data,trace_id,at)
+VALUES($1::text,'event.published',$2::uuid,$3::jsonb,
+       $4::text,coalesce($5::timestamptz,now()))
+`
+
+type EventStorageAppendParams struct {
+	Actor      string
+	AccountID  pgtype.UUID
+	Payload    []byte
+	TraceID    pgtype.Text
+	OccurredAt pgtype.Timestamptz
+}
+
+func (q *Queries) EventStorageAppend(ctx context.Context, db DBTX, arg EventStorageAppendParams) error {
+	_, err := db.Exec(ctx, eventStorageAppend,
+		arg.Actor,
+		arg.AccountID,
+		arg.Payload,
+		arg.TraceID,
+		arg.OccurredAt,
+	)
+	return err
+}
+
+const eventStorageIdentity = `-- name: EventStorageIdentity :one
+SELECT (event_type=$1::text AND coalesce(schema_version,'')=$2::text
+        AND event_data=$3::jsonb)::boolean AS content_matches
+FROM event_fanout_outbox
+WHERE account_id=$4::uuid AND source=$5::text AND event_id=$6::text
+FOR SHARE
+`
+
+type EventStorageIdentityParams struct {
+	EventType     string
+	SchemaVersion string
+	EventData     []byte
+	AccountID     pgtype.UUID
+	Source        string
+	EventID       string
+}
+
+func (q *Queries) EventStorageIdentity(ctx context.Context, db DBTX, arg EventStorageIdentityParams) (bool, error) {
+	row := db.QueryRow(ctx, eventStorageIdentity,
+		arg.EventType,
+		arg.SchemaVersion,
+		arg.EventData,
+		arg.AccountID,
+		arg.Source,
+		arg.EventID,
+	)
+	var content_matches bool
+	err := row.Scan(&content_matches)
+	return content_matches, err
+}
+
+const eventStorageLockAccount = `-- name: EventStorageLockAccount :exec
+INSERT INTO event_storage_admission(account_id) VALUES($1::uuid)
+ON CONFLICT(account_id) DO UPDATE SET account_id=excluded.account_id
+`
+
+func (q *Queries) EventStorageLockAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, eventStorageLockAccount, accountID)
+	return err
+}
+
+const eventStoragePublicUsage = `-- name: EventStoragePublicUsage :one
+SELECT a.plan, coalesce(u.retained_events,0)::bigint AS retained_events,
+       coalesce(u.retained_bytes,0)::bigint AS retained_bytes, coalesce(u.pending_events,0)::bigint AS pending_events,
+       u.oldest_pending_at::timestamptz AS oldest_pending_at
+FROM accounts a
+LEFT JOIN LATERAL (
+    SELECT count(*)::bigint AS retained_events, coalesce(sum(o.customer_storage_bytes),0)::bigint AS retained_bytes,
+           count(*) FILTER (WHERE o.state <> 'delivered')::bigint AS pending_events,
+           min(o.created_at) FILTER (WHERE o.state <> 'delivered') AS oldest_pending_at
+    FROM event_fanout_outbox o WHERE o.account_id=a.id AND o.customer_storage_bytes>0
+) u ON true WHERE a.id=$1::uuid
+`
+
+type EventStoragePublicUsageRow struct {
+	Plan            string
+	RetainedEvents  int64
+	RetainedBytes   int64
+	PendingEvents   int64
+	OldestPendingAt pgtype.Timestamptz
+}
+
+func (q *Queries) EventStoragePublicUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (EventStoragePublicUsageRow, error) {
+	row := db.QueryRow(ctx, eventStoragePublicUsage, accountID)
+	var i EventStoragePublicUsageRow
+	err := row.Scan(
+		&i.Plan,
+		&i.RetainedEvents,
+		&i.RetainedBytes,
+		&i.PendingEvents,
+		&i.OldestPendingAt,
+	)
+	return i, err
+}
+
+const eventStorageUsage = `-- name: EventStorageUsage :one
+SELECT count(*)::bigint AS retained_events, coalesce(sum(customer_storage_bytes),0)::bigint AS retained_bytes
+FROM event_fanout_outbox WHERE account_id=$1::uuid AND customer_storage_bytes>0
+`
+
+type EventStorageUsageRow struct {
+	RetainedEvents int64
+	RetainedBytes  int64
+}
+
+func (q *Queries) EventStorageUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (EventStorageUsageRow, error) {
+	row := db.QueryRow(ctx, eventStorageUsage, accountID)
+	var i EventStorageUsageRow
+	err := row.Scan(&i.RetainedEvents, &i.RetainedBytes)
+	return i, err
+}

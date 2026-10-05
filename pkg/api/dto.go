@@ -71,6 +71,16 @@ type PublishEventResponse struct {
 	AccountID  string    `json:"account_id"`
 }
 
+// EventStorageUsageResponse describes retained customer publication storage.
+// Pending events remain charged until routing settles and retention expires.
+type EventStorageUsageResponse struct {
+	RetainedEvents  int64              `json:"retained_events"`
+	RetainedBytes   int64              `json:"retained_bytes"`
+	PendingEvents   int64              `json:"pending_events"`
+	OldestPendingAt *time.Time         `json:"oldest_pending_at"`
+	Limits          EventStorageLimits `json:"limits"`
+}
+
 // RegisterEventSchemaRequest installs an immutable JSON Schema version for
 // one account-scoped event source/type pair.
 type RegisterEventSchemaRequest struct {

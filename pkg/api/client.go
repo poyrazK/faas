@@ -7152,3 +7152,10 @@ func (c *Client) GetEventReceiptAttempts(ctx context.Context, source, id, subscr
 	}
 	return out, c.do(ctx, "GET", "/v1/events/receipt/attempts?"+query.Encode(), nil, &out)
 }
+
+// GetEventStorageUsage reads retained customer event usage and plan budgets.
+func (c *Client) GetEventStorageUsage(ctx context.Context) (EventStorageUsageResponse, error) {
+	var out EventStorageUsageResponse
+	err := c.do(ctx, http.MethodGet, "/v1/events/storage", nil, &out)
+	return out, err
+}

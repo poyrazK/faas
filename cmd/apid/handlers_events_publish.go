@@ -30,20 +30,7 @@ func (s *server) publishEvent(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 
-	var occurredAt time.Time
-	if req.Time != nil {
-		occurredAt = *req.Time
-	}
-	envelope, err := (events.Envelope{
-		ID:              req.ID,
-		Source:          req.Source,
-		Type:            req.Type,
-		Time:            occurredAt,
-		DataContentType: req.DataContentType,
-		Data:            req.Data,
-		AccountID:       req.AccountID,
-		SchemaVersion:   req.SchemaVersion,
-	}).Normalize(acct.ID, time.Now().UTC())
+	envelope, err := normalizePublishRequest(req, acct.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
@@ -60,6 +47,20 @@ func (s *server) publishEvent(w http.ResponseWriter, r *http.Request, acct state
 	envelope.Tracestate = traceHeaders["tracestate"]
 	envelope.Baggage = traceHeaders["baggage"]
 
+	s.persistPublishedEvent(w, r, acct, envelope)
+}
+
+func normalizePublishRequest(req api.PublishEventRequest, accountID string) (events.Envelope, error) {
+	var occurredAt time.Time
+	if req.Time != nil {
+		occurredAt = *req.Time
+	}
+	return (events.Envelope{ID: req.ID, Source: req.Source, Type: req.Type, Time: occurredAt,
+		DataContentType: req.DataContentType, Data: req.Data, AccountID: req.AccountID,
+		SchemaVersion: req.SchemaVersion}).Normalize(accountID, time.Now().UTC())
+}
+
+func (s *server) persistPublishedEvent(w http.ResponseWriter, r *http.Request, acct state.Account, envelope events.Envelope) {
 	payload, err := json.Marshal(envelope)
 	if err != nil {
 		s.log.Error("marshal published event failed", "event_id", envelope.ID, "err", err)
@@ -67,6 +68,9 @@ func (s *server) publishEvent(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	if err := s.store.AppendEvent(r.Context(), "apid", "event.published", &acct.ID, payload); err != nil {
+		if writeEventStorageCapacity(w, err) {
+			return
+		}
 		var pgErr *pgconn.PgError
 		if errors.Is(err, state.ErrConflict) ||
 			(errors.As(err, &pgErr) && pgErr.ConstraintName == "event_fanout_identity_uniq") {

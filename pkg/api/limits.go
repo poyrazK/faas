@@ -665,7 +665,17 @@ const (
 // dispatching), including retained replay descendants. ADR-589.
 type EventDeliveryLimits struct{ PerConsumer, PerApp, PerAccount int }
 
+// EventStorageLimits bounds retained customer event envelopes and immutable
+// recipient snapshots per account, including settled receipts. ADR-590.
+const EventStorageRetryAfterSeconds = 60
+
+type EventStorageLimits struct {
+	RetainedEvents int64 `json:"retained_events"`
+	RetainedBytes  int64 `json:"retained_bytes"`
+}
+
 type Limits struct {
+	EventStorage    EventStorageLimits
 	EventDeliveries EventDeliveryLimits
 	Operations      OperationPlanLimits
 	Plan            Plan
@@ -2219,6 +2229,7 @@ var planLimits = map[Plan]Limits{
 		// Hobby so a customer mid-upgrade sees the cap before the
 		// plan flips. Deadline defaults to 5m, retention to 1d.
 		EventDeliveries:                   EventDeliveryLimits{64, 256, 1024},
+		EventStorage:                      EventStorageLimits{4096, 8 << 20},
 		MaxAsyncInvocationsPerAccount:     100,
 		MaxAsyncInvocationDeadlineSeconds: 300,
 		MaxAsyncResultRetentionSeconds:    86400,
@@ -2603,6 +2614,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-134 PR-B: Hobby 1k / 1h / 7d. Matches the doubling
 		// from Free's 100/5m/1d.
 		EventDeliveries:                   EventDeliveryLimits{256, 1024, 4096},
+		EventStorage:                      EventStorageLimits{16384, 64 << 20},
 		MaxAsyncInvocationsPerAccount:     1000,
 		MaxAsyncInvocationDeadlineSeconds: 3600,
 		MaxAsyncResultRetentionSeconds:    604800,
@@ -3020,6 +3032,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-134 PR-B: Pro 10k / 6h / 30d. Decadal bumps from
 		// Hobby track the Doubling pattern (1k->10k, 1h->6h, 7d->30d).
 		EventDeliveries:                   EventDeliveryLimits{1024, 4096, 16384},
+		EventStorage:                      EventStorageLimits{131072, 512 << 20},
 		MaxAsyncInvocationsPerAccount:     10000,
 		MaxAsyncInvocationDeadlineSeconds: 21600,
 		MaxAsyncResultRetentionSeconds:    2592000,
@@ -3402,6 +3415,7 @@ var planLimits = map[Plan]Limits{
 		// pattern); 90d retention matches the audit-grade trace
 		// retention target.
 		EventDeliveries:                   EventDeliveryLimits{4096, 16384, 65536},
+		EventStorage:                      EventStorageLimits{1048576, 4 << 30},
 		MaxAsyncInvocationsPerAccount:     100000,
 		MaxAsyncInvocationDeadlineSeconds: 86400,
 		MaxAsyncResultRetentionSeconds:    7776000,

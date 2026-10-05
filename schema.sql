@@ -11616,6 +11616,12 @@ CREATE TABLE public.event_fanout_outbox (
     recipient_snapshot jsonb,
     recipient_progress jsonb DEFAULT '{}'::jsonb NOT NULL,
     recipient_claims boolean DEFAULT false NOT NULL,
+    customer_storage_bytes bigint GENERATED ALWAYS AS (
+CASE
+    WHEN ("left"(source, 8) = 'gregale.'::text) THEN (0)::bigint
+    ELSE (((octet_length((payload)::text))::bigint + (octet_length((event_data)::text))::bigint) + (octet_length((COALESCE(recipient_snapshot, '[]'::jsonb))::text))::bigint)
+END) STORED NOT NULL,
+    CONSTRAINT event_fanout_outbox_customer_storage_bytes_check CHECK ((customer_storage_bytes >= 0)),
     CONSTRAINT event_fanout_outbox_recipient_progress_check CHECK ((jsonb_typeof(recipient_progress) = 'object'::text)),
     CONSTRAINT event_fanout_outbox_recipient_snapshot_check CHECK (((recipient_snapshot IS NULL) OR (jsonb_typeof(recipient_snapshot) = 'array'::text))),
     CONSTRAINT event_fanout_outbox_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'delivered'::text])))
@@ -11690,6 +11696,15 @@ CREATE TABLE public.event_schemas (
     CONSTRAINT event_schemas_event_type_check CHECK (((char_length(event_type) >= 1) AND (char_length(event_type) <= 256))),
     CONSTRAINT event_schemas_source_check CHECK (((char_length(source) >= 1) AND (char_length(source) <= 256))),
     CONSTRAINT event_schemas_version_check CHECK ((version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'::text))
+);
+
+
+--
+-- Name: event_storage_admission; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_storage_admission (
+    account_id uuid NOT NULL
 );
 
 
@@ -19222,6 +19237,14 @@ ALTER TABLE ONLY public.event_schemas
 
 
 --
+-- Name: event_storage_admission event_storage_admission_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_storage_admission
+    ADD CONSTRAINT event_storage_admission_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: event_subscription_work_bindings event_subscription_work_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -23645,6 +23668,13 @@ CREATE INDEX event_fanout_attempt_history_app_idx ON public.event_fanout_attempt
 --
 
 CREATE INDEX event_fanout_attempt_history_recipient_idx ON public.event_fanout_attempt_history USING btree (outbox_id, subscription_id, id DESC);
+
+
+--
+-- Name: event_fanout_customer_storage_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_fanout_customer_storage_idx ON public.event_fanout_outbox USING btree (account_id) INCLUDE (customer_storage_bytes, state, created_at) WHERE (customer_storage_bytes > 0);
 
 
 --
@@ -31462,6 +31492,14 @@ ALTER TABLE ONLY public.event_routing_fairness
 
 ALTER TABLE ONLY public.event_schemas
     ADD CONSTRAINT event_schemas_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_storage_admission event_storage_admission_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_storage_admission
+    ADD CONSTRAINT event_storage_admission_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

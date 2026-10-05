@@ -16589,8 +16589,12 @@ func (m *MemStore) appendEventLocked(actor, kind string, subject *string, data [
 		Data:    append([]byte(nil), data...),
 	}
 	if kind == "event.published" {
-		if err := m.enqueuePublishedEventLocked(subj, data, at); err != nil {
+		created, err := m.enqueuePublishedEventLocked(subj, data, at)
+		if err != nil {
 			return err
+		}
+		if !created && customerPublishedEvent(kind, data) {
+			return nil
 		}
 	}
 	m.events = append(m.events, e)

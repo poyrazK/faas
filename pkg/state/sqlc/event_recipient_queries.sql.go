@@ -551,7 +551,7 @@ WITH candidate AS (
 ), claimed AS (
  UPDATE event_fanout_outbox o SET state='processing',claim_token=gen_random_uuid(),
  lease_until=$1::timestamptz+interval '5 minutes',attempts=o.attempts+1
- FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.source, o.event_id, o.event_type, o.schema_version, o.event_data, o.payload, o.state, o.attempts, o.available_at, o.lease_until, o.claim_token, o.last_error, o.created_at, o.delivered_at, o.recipient_snapshot, o.recipient_progress, o.recipient_claims
+ FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.source, o.event_id, o.event_type, o.schema_version, o.event_data, o.payload, o.state, o.attempts, o.available_at, o.lease_until, o.claim_token, o.last_error, o.created_at, o.delivered_at, o.recipient_snapshot, o.recipient_progress, o.recipient_claims, o.customer_storage_bytes
 ), fairness AS (
  INSERT INTO event_routing_fairness
  SELECT c.account_id,v.subscription_id,clock_timestamp() FROM claimed c
@@ -564,29 +564,30 @@ WITH candidate AS (
  ORDER BY c.account_id,v.subscription_id
  ON CONFLICT (account_id,subscription_id) DO UPDATE SET last_claimed_at=excluded.last_claimed_at RETURNING account_id
 )
-SELECT c.id, c.account_id, c.source, c.event_id, c.event_type, c.schema_version, c.event_data, c.payload, c.state, c.attempts, c.available_at, c.lease_until, c.claim_token, c.last_error, c.created_at, c.delivered_at, c.recipient_snapshot, c.recipient_progress, c.recipient_claims FROM claimed c WHERE EXISTS (SELECT 1 FROM fairness f WHERE f.account_id=c.account_id)
+SELECT c.id, c.account_id, c.source, c.event_id, c.event_type, c.schema_version, c.event_data, c.payload, c.state, c.attempts, c.available_at, c.lease_until, c.claim_token, c.last_error, c.created_at, c.delivered_at, c.recipient_snapshot, c.recipient_progress, c.recipient_claims, c.customer_storage_bytes FROM claimed c WHERE EXISTS (SELECT 1 FROM fairness f WHERE f.account_id=c.account_id)
 `
 
 type EventRoutingClaimReceiptRow struct {
-	ID                int64
-	AccountID         pgtype.UUID
-	Source            string
-	EventID           string
-	EventType         string
-	SchemaVersion     pgtype.Text
-	EventData         []byte
-	Payload           []byte
-	State             string
-	Attempts          int32
-	AvailableAt       pgtype.Timestamptz
-	LeaseUntil        pgtype.Timestamptz
-	ClaimToken        pgtype.UUID
-	LastError         pgtype.Text
-	CreatedAt         pgtype.Timestamptz
-	DeliveredAt       pgtype.Timestamptz
-	RecipientSnapshot []byte
-	RecipientProgress []byte
-	RecipientClaims   bool
+	ID                   int64
+	AccountID            pgtype.UUID
+	Source               string
+	EventID              string
+	EventType            string
+	SchemaVersion        pgtype.Text
+	EventData            []byte
+	Payload              []byte
+	State                string
+	Attempts             int32
+	AvailableAt          pgtype.Timestamptz
+	LeaseUntil           pgtype.Timestamptz
+	ClaimToken           pgtype.UUID
+	LastError            pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	DeliveredAt          pgtype.Timestamptz
+	RecipientSnapshot    []byte
+	RecipientProgress    []byte
+	RecipientClaims      bool
+	CustomerStorageBytes int64
 }
 
 func (q *Queries) EventRoutingClaimReceipt(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (EventRoutingClaimReceiptRow, error) {
@@ -612,6 +613,7 @@ func (q *Queries) EventRoutingClaimReceipt(ctx context.Context, db DBTX, nowAt p
 		&i.RecipientSnapshot,
 		&i.RecipientProgress,
 		&i.RecipientClaims,
+		&i.CustomerStorageBytes,
 	)
 	return i, err
 }
@@ -707,7 +709,7 @@ func (q *Queries) EventRoutingLockApp(ctx context.Context, db DBTX, arg EventRou
 }
 
 const eventRoutingLockReceipt = `-- name: EventRoutingLockReceipt :one
-SELECT id, account_id, source, event_id, event_type, schema_version, event_data, payload, state, attempts, available_at, lease_until, claim_token, last_error, created_at, delivered_at, recipient_snapshot, recipient_progress, recipient_claims FROM event_fanout_outbox WHERE id=$1::bigint FOR UPDATE
+SELECT id, account_id, source, event_id, event_type, schema_version, event_data, payload, state, attempts, available_at, lease_until, claim_token, last_error, created_at, delivered_at, recipient_snapshot, recipient_progress, recipient_claims, customer_storage_bytes FROM event_fanout_outbox WHERE id=$1::bigint FOR UPDATE
 `
 
 func (q *Queries) EventRoutingLockReceipt(ctx context.Context, db DBTX, id int64) (EventFanoutOutbox, error) {
@@ -733,6 +735,7 @@ func (q *Queries) EventRoutingLockReceipt(ctx context.Context, db DBTX, id int64
 		&i.RecipientSnapshot,
 		&i.RecipientProgress,
 		&i.RecipientClaims,
+		&i.CustomerStorageBytes,
 	)
 	return i, err
 }
@@ -769,7 +772,7 @@ func (q *Queries) EventRoutingLockRecipient(ctx context.Context, db DBTX, arg Ev
 }
 
 const eventRoutingReceipt = `-- name: EventRoutingReceipt :one
-SELECT id, account_id, source, event_id, event_type, schema_version, event_data, payload, state, attempts, available_at, lease_until, claim_token, last_error, created_at, delivered_at, recipient_snapshot, recipient_progress, recipient_claims FROM event_fanout_outbox WHERE id=$1::bigint
+SELECT id, account_id, source, event_id, event_type, schema_version, event_data, payload, state, attempts, available_at, lease_until, claim_token, last_error, created_at, delivered_at, recipient_snapshot, recipient_progress, recipient_claims, customer_storage_bytes FROM event_fanout_outbox WHERE id=$1::bigint
 `
 
 func (q *Queries) EventRoutingReceipt(ctx context.Context, db DBTX, id int64) (EventFanoutOutbox, error) {
@@ -795,6 +798,7 @@ func (q *Queries) EventRoutingReceipt(ctx context.Context, db DBTX, id int64) (E
 		&i.RecipientSnapshot,
 		&i.RecipientProgress,
 		&i.RecipientClaims,
+		&i.CustomerStorageBytes,
 	)
 	return i, err
 }

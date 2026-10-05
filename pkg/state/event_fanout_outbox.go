@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,8 +19,9 @@ import (
 // PublishedEventWork is one durable fanout receipt. A claim token prevents a
 // worker whose lease expired from acknowledging another worker's claim.
 type PublishedEventWork struct {
-	ID      int64
-	Payload []byte
+	ID           int64
+	Payload      []byte
+	StorageBytes int64
 	// A nil database snapshot marks a receipt accepted before the snapshot
 	// migration. SnapshotCaptured distinguishes it from an empty recipient set.
 	RecipientSnapshot []PublishedEventRecipient
@@ -602,25 +604,25 @@ func (m *MemStore) appendEventFanoutAttemptLocked(work *PublishedEventWork, reci
 	})
 }
 
-func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byte, now time.Time) error {
+func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byte, now time.Time) (bool, error) {
 	if subject == nil {
-		return fmt.Errorf("event.published requires an account subject")
+		return false, fmt.Errorf("event.published requires an account subject")
 	}
 	var event publishedEventIdentity
 	if err := json.Unmarshal(payload, &event); err != nil {
-		return err
+		return false, err
 	}
 	if event.Source == "" || event.ID == "" || event.Type == "" || len(event.Data) == 0 {
-		return fmt.Errorf("event.published requires source, id, type and data")
+		return false, fmt.Errorf("event.published requires source, id, type and data")
 	}
 	key := subject.String() + "\x00" + event.Source + "\x00" + event.ID
 	if previous := m.eventFanout[key]; previous != nil {
 		var prior publishedEventIdentity
 		_ = json.Unmarshal(previous.Payload, &prior)
 		if prior.Type != event.Type || prior.SchemaVersion != event.SchemaVersion || !jsonEqual(prior.Data, event.Data) {
-			return ErrConflict
+			return false, ErrConflict
 		}
-		return nil
+		return false, nil
 	}
 	if m.eventFanout == nil {
 		m.eventFanout = make(map[string]*PublishedEventWork)
@@ -657,11 +659,26 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 		}
 		recipients = append(recipients, recipient)
 	}
+	var storageBytes int64
+	if !strings.HasPrefix(event.Source, "gregale.") {
+		snapshot, err := json.Marshal(recipients)
+		if err != nil {
+			return false, err
+		}
+		storageBytes = eventJSONStorageBytes(payload) + eventJSONStorageBytes(event.Data) + eventJSONStorageBytes(snapshot)
+		usage, err := m.eventStorageUsageLocked(subject.String())
+		if err != nil {
+			return false, err
+		}
+		if err = eventStorageExceeded(usage.Limits, usage.RetainedEvents+1, usage.RetainedBytes+storageBytes); err != nil {
+			return false, err
+		}
+	}
 	m.eventFanoutNextID++
-	m.eventFanout[key] = &PublishedEventWork{ID: m.eventFanoutNextID, Payload: bytes.Clone(payload), RecipientSnapshot: recipients,
+	m.eventFanout[key] = &PublishedEventWork{ID: m.eventFanoutNextID, Payload: bytes.Clone(payload), StorageBytes: storageBytes, RecipientSnapshot: recipients,
 		SnapshotCaptured: true, RecipientProgress: make(map[string]PublishedEventRecipientProgress),
 		AvailableAt: now, CreatedAt: time.Now().UTC()}
-	return nil
+	return true, nil
 }
 
 func jsonEqual(a, b []byte) bool {

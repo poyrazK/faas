@@ -2139,25 +2139,26 @@ type EventFanoutAttemptHistory struct {
 }
 
 type EventFanoutOutbox struct {
-	ID                int64
-	AccountID         pgtype.UUID
-	Source            string
-	EventID           string
-	EventType         string
-	SchemaVersion     pgtype.Text
-	EventData         []byte
-	Payload           []byte
-	State             string
-	Attempts          int32
-	AvailableAt       pgtype.Timestamptz
-	LeaseUntil        pgtype.Timestamptz
-	ClaimToken        pgtype.UUID
-	LastError         pgtype.Text
-	CreatedAt         pgtype.Timestamptz
-	DeliveredAt       pgtype.Timestamptz
-	RecipientSnapshot []byte
-	RecipientProgress []byte
-	RecipientClaims   bool
+	ID                   int64
+	AccountID            pgtype.UUID
+	Source               string
+	EventID              string
+	EventType            string
+	SchemaVersion        pgtype.Text
+	EventData            []byte
+	Payload              []byte
+	State                string
+	Attempts             int32
+	AvailableAt          pgtype.Timestamptz
+	LeaseUntil           pgtype.Timestamptz
+	ClaimToken           pgtype.UUID
+	LastError            pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	DeliveredAt          pgtype.Timestamptz
+	RecipientSnapshot    []byte
+	RecipientProgress    []byte
+	RecipientClaims      bool
+	CustomerStorageBytes int64
 }
 
 type EventFanoutRecipient struct {
@@ -2189,6 +2190,10 @@ type EventSchema struct {
 	Version   string
 	Schema    []byte
 	CreatedAt pgtype.Timestamptz
+}
+
+type EventStorageAdmission struct {
+	AccountID pgtype.UUID
 }
 
 type EventSubscription struct {

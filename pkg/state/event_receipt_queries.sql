@@ -85,3 +85,42 @@ WHERE i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uui
   AND (sqlc.narg(after_created_at)::timestamptz IS NULL OR
        (i.created_at, i.id)<(sqlc.narg(after_created_at)::timestamptz, sqlc.narg(after_id)::uuid))
 ORDER BY i.created_at DESC, i.id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EventStorageAccountPlan :one
+SELECT plan FROM accounts WHERE id=sqlc.arg(account_id)::uuid FOR SHARE;
+
+-- name: EventStorageLockAccount :exec
+INSERT INTO event_storage_admission(account_id) VALUES(sqlc.arg(account_id)::uuid)
+ON CONFLICT(account_id) DO UPDATE SET account_id=excluded.account_id;
+
+-- name: EventStorageIdentity :one
+SELECT (event_type=sqlc.arg(event_type)::text AND coalesce(schema_version,'')=sqlc.arg(schema_version)::text
+        AND event_data=sqlc.arg(event_data)::jsonb)::boolean AS content_matches
+FROM event_fanout_outbox
+WHERE account_id=sqlc.arg(account_id)::uuid AND source=sqlc.arg(source)::text AND event_id=sqlc.arg(event_id)::text
+FOR SHARE;
+
+-- name: EventStorageUsage :one
+SELECT count(*)::bigint AS retained_events, coalesce(sum(customer_storage_bytes),0)::bigint AS retained_bytes
+FROM event_fanout_outbox WHERE account_id=sqlc.arg(account_id)::uuid AND customer_storage_bytes>0;
+
+-- name: EventStoragePublicUsage :one
+SELECT a.plan, coalesce(u.retained_events,0)::bigint AS retained_events,
+       coalesce(u.retained_bytes,0)::bigint AS retained_bytes, coalesce(u.pending_events,0)::bigint AS pending_events,
+       u.oldest_pending_at::timestamptz AS oldest_pending_at
+FROM accounts a
+LEFT JOIN LATERAL (
+    SELECT count(*)::bigint AS retained_events, coalesce(sum(o.customer_storage_bytes),0)::bigint AS retained_bytes,
+           count(*) FILTER (WHERE o.state <> 'delivered')::bigint AS pending_events,
+           min(o.created_at) FILTER (WHERE o.state <> 'delivered') AS oldest_pending_at
+    FROM event_fanout_outbox o WHERE o.account_id=a.id AND o.customer_storage_bytes>0
+) u ON true WHERE a.id=sqlc.arg(account_id)::uuid;
+
+-- name: EventStorageAppend :exec
+INSERT INTO events(actor,kind,subject,data,trace_id,at)
+VALUES(sqlc.arg(actor)::text,'event.published',sqlc.arg(account_id)::uuid,sqlc.arg(payload)::jsonb,
+       sqlc.narg(trace_id)::text,coalesce(sqlc.narg(occurred_at)::timestamptz,now()));
+
+-- name: EventStorageAcceptedCharge :one
+SELECT customer_storage_bytes FROM event_fanout_outbox
+WHERE account_id=sqlc.arg(account_id)::uuid AND source=sqlc.arg(source)::text AND event_id=sqlc.arg(event_id)::text;
