@@ -150,6 +150,20 @@ Recorded usage remains in account monthly totals after database deletion.
 If provider history is outside its retention period, investigate and reconcile
 that gap before enabling further reservations.
 
+For `legacy_identity_unknown` diagnostics on deleted rows, retain and verify
+resource ownership, the exact backend fingerprint, branch lineage, and actual
+provider shutdown evidence. Preview with `gregale postgres reconcile ACCOUNT_ID
+--file retained-shutdown.json --json`, review the boundary, then apply with its
+`expected_revision` and a recently stepped-up operator session file. See the
+[input format and evidence requirements](managed-postgres.md). Missing lookup
+results and old logical deletion timestamps are insufficient.
+
+The repair preserves the old catalog and coverage in an immutable receipt,
+retains all monetary ledger rows, and resets derived coverage atomically. Run
+normal collection or the retained-usage import against the accounting root,
+then inspect account diagnostics again. Attaching an identity alone does not
+settle missing windows, final corrections, budget headroom, or provider invoices.
+
 ## Credential privilege adoption
 
 Apply `20261001105914375_managed_postgres_migration_credentials.sql` before

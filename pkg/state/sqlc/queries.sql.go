@@ -10573,6 +10573,29 @@ func (q *Queries) GetInvoiceSnapshot(ctx context.Context, db DBTX, id pgtype.UUI
 	return i, err
 }
 
+const getManagedPostgresAccountingReconciliation = `-- name: GetManagedPostgresAccountingReconciliation :one
+SELECT request_sha256, result FROM managed_postgres_accounting_reconciliations
+WHERE account_id = $1 AND reconciliation_id = $2
+`
+
+type GetManagedPostgresAccountingReconciliationParams struct {
+	AccountID        pgtype.UUID
+	ReconciliationID pgtype.UUID
+}
+
+type GetManagedPostgresAccountingReconciliationRow struct {
+	RequestSha256 string
+	Result        []byte
+}
+
+// ADR-591: operator reconciliation only repairs an unresolved deleted catalog row.
+func (q *Queries) GetManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg GetManagedPostgresAccountingReconciliationParams) (GetManagedPostgresAccountingReconciliationRow, error) {
+	row := db.QueryRow(ctx, getManagedPostgresAccountingReconciliation, arg.AccountID, arg.ReconciliationID)
+	var i GetManagedPostgresAccountingReconciliationRow
+	err := row.Scan(&i.RequestSha256, &i.Result)
+	return i, err
+}
+
 const getManagedPostgresCutover = `-- name: GetManagedPostgresCutover :one
 SELECT id, account_id, app_id, scope, source_database_id, target_database_id, source_backend_id, source_backend_fingerprint, source_resource_id, source_generation, target_backend_id, target_backend_fingerprint, target_resource_id, target_generation, state, last_error_code, lease_token, lease_until, attempt_count, retry_at, created_at, updated_at, verified_at FROM managed_postgres_cutovers WHERE account_id=$1::text::uuid AND id=$2::text::uuid
 `
@@ -10633,6 +10656,53 @@ func (q *Queries) GetManagedPostgresRawUsageCoverage(ctx context.Context, db DBT
 		&i.ObservedAt,
 		&i.SourceDatabaseID,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getManagedPostgresReconciliationLedger = `-- name: GetManagedPostgresReconciliationLedger :one
+SELECT count(*)::bigint AS records, min(window_from)::timestamptz AS first_window,
+ max(window_to)::timestamptz AS last_window, max(observed_at)::timestamptz AS last_observation,
+ COALESCE(bool_or(account_id <> $1::uuid OR backend_id <> $2::text
+ OR backend_fingerprint <> $3::text OR meter <> ALL($4::text[])
+ OR window_to - window_from <> $5::bigint * interval '1 second'
+ OR mod(extract(epoch FROM window_from),NULLIF($5::bigint,0)) <> 0),false)::boolean AS invalid
+FROM managed_postgres_usage WHERE database_id = $6::uuid
+`
+
+type GetManagedPostgresReconciliationLedgerParams struct {
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	Meters             []string
+	WindowSeconds      int64
+	DatabaseID         pgtype.UUID
+}
+
+type GetManagedPostgresReconciliationLedgerRow struct {
+	Records         int64
+	FirstWindow     pgtype.Timestamptz
+	LastWindow      pgtype.Timestamptz
+	LastObservation pgtype.Timestamptz
+	Invalid         bool
+}
+
+func (q *Queries) GetManagedPostgresReconciliationLedger(ctx context.Context, db DBTX, arg GetManagedPostgresReconciliationLedgerParams) (GetManagedPostgresReconciliationLedgerRow, error) {
+	row := db.QueryRow(ctx, getManagedPostgresReconciliationLedger,
+		arg.AccountID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.Meters,
+		arg.WindowSeconds,
+		arg.DatabaseID,
+	)
+	var i GetManagedPostgresReconciliationLedgerRow
+	err := row.Scan(
+		&i.Records,
+		&i.FirstWindow,
+		&i.LastWindow,
+		&i.LastObservation,
+		&i.Invalid,
 	)
 	return i, err
 }
@@ -11238,6 +11308,34 @@ func (q *Queries) HasManagedPostgresIncompatibleUsageWindow(ctx context.Context,
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const hasManagedPostgresReconciliationIdentity = `-- name: HasManagedPostgresReconciliationIdentity :one
+SELECT EXISTS (SELECT 1 FROM managed_postgres_databases
+ WHERE backend_id = $1::text AND backend_fingerprint = $2::text
+ AND provider_resource_id = $3::text AND id <> $4::uuid)
+ OR EXISTS (SELECT 1 FROM managed_postgres_accounting_reconciliations
+ WHERE backend_id = $1::text AND backend_fingerprint = $2::text
+ AND provider_resource_id = $3::text AND database_id <> $4::uuid) AS claimed
+`
+
+type HasManagedPostgresReconciliationIdentityParams struct {
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	DatabaseID         pgtype.UUID
+}
+
+func (q *Queries) HasManagedPostgresReconciliationIdentity(ctx context.Context, db DBTX, arg HasManagedPostgresReconciliationIdentityParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, hasManagedPostgresReconciliationIdentity,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.ProviderResourceID,
+		arg.DatabaseID,
+	)
+	var claimed pgtype.Bool
+	err := row.Scan(&claimed)
+	return claimed, err
 }
 
 const hasPendingEnvironmentGitOpsEffects = `-- name: HasPendingEnvironmentGitOpsEffects :one
@@ -12342,6 +12440,61 @@ func (q *Queries) InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg
 	var i InsertInvoiceHistorySnapshotRow
 	err := row.Scan(&i.ID, &i.UpdatedAt)
 	return i, err
+}
+
+const insertManagedPostgresAccountingReconciliation = `-- name: InsertManagedPostgresAccountingReconciliation :exec
+INSERT INTO managed_postgres_accounting_reconciliations (
+ account_id, reconciliation_id, database_id, backend_id, backend_fingerprint, provider_resource_id,
+ actor_id, reason, evidence_reference, evidence_sha256, request_sha256, preview_revision,
+ request, policy, before_catalog, after_catalog, coverage_before, result, created_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+`
+
+type InsertManagedPostgresAccountingReconciliationParams struct {
+	AccountID          pgtype.UUID
+	ReconciliationID   pgtype.UUID
+	DatabaseID         pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	ActorID            string
+	Reason             string
+	EvidenceReference  string
+	EvidenceSha256     string
+	RequestSha256      string
+	PreviewRevision    string
+	Request            []byte
+	Policy             []byte
+	BeforeCatalog      []byte
+	AfterCatalog       []byte
+	CoverageBefore     []byte
+	Result             []byte
+	CreatedAt          pgtype.Timestamptz
+}
+
+func (q *Queries) InsertManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg InsertManagedPostgresAccountingReconciliationParams) error {
+	_, err := db.Exec(ctx, insertManagedPostgresAccountingReconciliation,
+		arg.AccountID,
+		arg.ReconciliationID,
+		arg.DatabaseID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.ProviderResourceID,
+		arg.ActorID,
+		arg.Reason,
+		arg.EvidenceReference,
+		arg.EvidenceSha256,
+		arg.RequestSha256,
+		arg.PreviewRevision,
+		arg.Request,
+		arg.Policy,
+		arg.BeforeCatalog,
+		arg.AfterCatalog,
+		arg.CoverageBefore,
+		arg.Result,
+		arg.CreatedAt,
+	)
+	return err
 }
 
 const insertManagedPostgresCutover = `-- name: InsertManagedPostgresCutover :exec
@@ -18602,6 +18755,38 @@ func (q *Queries) ListManagedPostgresImportRecords(ctx context.Context, db DBTX,
 	return items, nil
 }
 
+const listManagedPostgresReconciliationCoverage = `-- name: ListManagedPostgresReconciliationCoverage :many
+SELECT database_id, window_seconds, collected_from, collected_until, observed_at, source_database_id, updated_at FROM managed_postgres_usage_coverage WHERE database_id = $1 ORDER BY window_seconds LIMIT 2
+`
+
+func (q *Queries) ListManagedPostgresReconciliationCoverage(ctx context.Context, db DBTX, databaseID pgtype.UUID) ([]ManagedPostgresUsageCoverage, error) {
+	rows, err := db.Query(ctx, listManagedPostgresReconciliationCoverage, databaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ManagedPostgresUsageCoverage{}
+	for rows.Next() {
+		var i ManagedPostgresUsageCoverage
+		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.WindowSeconds,
+			&i.CollectedFrom,
+			&i.CollectedUntil,
+			&i.ObservedAt,
+			&i.SourceDatabaseID,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listManagedPostgresUsageResources = `-- name: ListManagedPostgresUsageResources :many
 SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.accounting_required FROM managed_postgres_databases d
 WHERE (NULLIF(d.provider_resource_id, '') IS NOT NULL OR d.accounting_required)
@@ -21736,6 +21921,15 @@ func (q *Queries) LockManagedPostgresCutoverLease(ctx context.Context, db DBTX, 
 		&i.VerifiedAt,
 	)
 	return i, err
+}
+
+const lockManagedPostgresReconciliationIdentity = `-- name: LockManagedPostgresReconciliationIdentity :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text,587))
+`
+
+func (q *Queries) LockManagedPostgresReconciliationIdentity(ctx context.Context, db DBTX, identityScope string) error {
+	_, err := db.Exec(ctx, lockManagedPostgresReconciliationIdentity, identityScope)
+	return err
 }
 
 const lockManagedPostgresUsageResource = `-- name: LockManagedPostgresUsageResource :one
@@ -34355,6 +34549,41 @@ func (q *Queries) ReassignOrphanedAppOwner(ctx context.Context, db DBTX, arg Rea
 	return result.RowsAffected(), nil
 }
 
+const reconcileManagedPostgresLegacyResource = `-- name: ReconcileManagedPostgresLegacyResource :execrows
+UPDATE managed_postgres_databases SET provider_resource_id = $1::text,
+ deleted_at = $2::timestamptz, updated_at = $3::timestamptz
+WHERE id = $4::uuid AND account_id = $5::uuid
+ AND backend_id = $6::text AND backend_fingerprint = $7::text
+ AND state = 'deleted' AND accounting_required AND NULLIF(provider_resource_id,'') IS NULL
+ AND (lease_until IS NULL OR lease_until <= $3::timestamptz)
+`
+
+type ReconcileManagedPostgresLegacyResourceParams struct {
+	ProviderResourceID string
+	ShutdownAt         pgtype.Timestamptz
+	Now                pgtype.Timestamptz
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+}
+
+func (q *Queries) ReconcileManagedPostgresLegacyResource(ctx context.Context, db DBTX, arg ReconcileManagedPostgresLegacyResourceParams) (int64, error) {
+	result, err := db.Exec(ctx, reconcileManagedPostgresLegacyResource,
+		arg.ProviderResourceID,
+		arg.ShutdownAt,
+		arg.Now,
+		arg.ID,
+		arg.AccountID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recordAppSecretRevocationAck = `-- name: RecordAppSecretRevocationAck :execrows
 UPDATE app_secret_revocation_targets t
    SET status = $1::text,
@@ -37036,6 +37265,15 @@ UPDATE managed_postgres_cutover_credentials SET verified_at=NULL WHERE cutover_i
 
 func (q *Queries) ResetManagedPostgresCutoverVerification(ctx context.Context, db DBTX, id string) error {
 	_, err := db.Exec(ctx, resetManagedPostgresCutoverVerification, id)
+	return err
+}
+
+const resetManagedPostgresReconciliationCoverage = `-- name: ResetManagedPostgresReconciliationCoverage :exec
+DELETE FROM managed_postgres_usage_coverage WHERE database_id = $1
+`
+
+func (q *Queries) ResetManagedPostgresReconciliationCoverage(ctx context.Context, db DBTX, databaseID pgtype.UUID) error {
+	_, err := db.Exec(ctx, resetManagedPostgresReconciliationCoverage, databaseID)
 	return err
 }
 

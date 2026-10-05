@@ -1237,6 +1237,8 @@ from .managed_postgres_accounting_diagnostic import ManagedPostgresAccountingDia
 from .managed_postgres_accounting_diagnostic_reasons_item import ManagedPostgresAccountingDiagnosticReasonsItem
 from .managed_postgres_accounting_diagnostic_state import ManagedPostgresAccountingDiagnosticState
 from .managed_postgres_accounting_diagnostics_response import ManagedPostgresAccountingDiagnosticsResponse
+from .managed_postgres_accounting_reconciliation_request import ManagedPostgresAccountingReconciliationRequest
+from .managed_postgres_accounting_reconciliation_result import ManagedPostgresAccountingReconciliationResult
 from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
@@ -3755,6 +3757,8 @@ __all__ = (
     "ManagedPostgresAccountingDiagnosticReasonsItem",
     "ManagedPostgresAccountingDiagnosticsResponse",
     "ManagedPostgresAccountingDiagnosticState",
+    "ManagedPostgresAccountingReconciliationRequest",
+    "ManagedPostgresAccountingReconciliationResult",
     "ManagedPostgresBinding",
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",

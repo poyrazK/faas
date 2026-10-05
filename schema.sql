@@ -6277,6 +6277,19 @@ END $$;
 
 
 --
+-- Name: protect_managed_postgres_accounting_reconciliation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_managed_postgres_accounting_reconciliation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' AND NOT EXISTS (SELECT 1 FROM accounts WHERE id = OLD.account_id) THEN RETURN OLD; END IF;
+    RAISE EXCEPTION 'managed postgres accounting reconciliation evidence is append-only';
+END $$;
+
+
+--
 -- Name: protect_managed_postgres_usage_import(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -13909,6 +13922,39 @@ CREATE TABLE public.mail_suppressions (
 
 
 --
+-- Name: managed_postgres_accounting_reconciliations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_accounting_reconciliations (
+    account_id uuid NOT NULL,
+    reconciliation_id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    provider_resource_id text NOT NULL,
+    actor_id text NOT NULL,
+    reason text NOT NULL,
+    evidence_reference text NOT NULL,
+    evidence_sha256 text NOT NULL,
+    request_sha256 text NOT NULL,
+    preview_revision text NOT NULL,
+    request jsonb NOT NULL,
+    policy jsonb NOT NULL,
+    before_catalog jsonb NOT NULL,
+    after_catalog jsonb NOT NULL,
+    coverage_before jsonb NOT NULL,
+    result jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT managed_postgres_accounting_reconcilia_evidence_reference_check CHECK (((octet_length(evidence_reference) >= 1) AND (octet_length(evidence_reference) <= 256))),
+    CONSTRAINT managed_postgres_accounting_reconciliati_preview_revision_check CHECK ((preview_revision ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_accounting_reconciliatio_evidence_sha256_check CHECK ((evidence_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_accounting_reconciliation_request_sha256_check CHECK ((request_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_accounting_reconciliations_actor_id_check CHECK (((octet_length(actor_id) >= 1) AND (octet_length(actor_id) <= 256))),
+    CONSTRAINT managed_postgres_accounting_reconciliations_reason_check CHECK (((octet_length(reason) >= 1) AND (octet_length(reason) <= 512)))
+);
+
+
+--
 -- Name: managed_postgres_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -20647,6 +20693,30 @@ ALTER TABLE ONLY public.login_tokens
 
 ALTER TABLE ONLY public.mail_suppressions
     ADD CONSTRAINT mail_suppressions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_postgres_accounting_reconciliations managed_postgres_accounting_r_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
+    ADD CONSTRAINT managed_postgres_accounting_r_backend_id_backend_fingerprin_key UNIQUE (backend_id, backend_fingerprint, provider_resource_id);
+
+
+--
+-- Name: managed_postgres_accounting_reconciliations managed_postgres_accounting_reconciliations_database_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
+    ADD CONSTRAINT managed_postgres_accounting_reconciliations_database_id_key UNIQUE (database_id);
+
+
+--
+-- Name: managed_postgres_accounting_reconciliations managed_postgres_accounting_reconciliations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
+    ADD CONSTRAINT managed_postgres_accounting_reconciliations_pkey PRIMARY KEY (account_id, reconciliation_id);
 
 
 --
@@ -29234,6 +29304,13 @@ CREATE TRIGGER jobs_schedule_revision BEFORE UPDATE ON public.jobs FOR EACH ROW 
 
 
 --
+-- Name: managed_postgres_accounting_reconciliations managed_postgres_accounting_reconciliation_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_accounting_reconciliation_immutable BEFORE DELETE OR UPDATE ON public.managed_postgres_accounting_reconciliations FOR EACH ROW EXECUTE FUNCTION public.protect_managed_postgres_accounting_reconciliation();
+
+
+--
 -- Name: apps managed_postgres_admission_fence_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -33292,6 +33369,22 @@ ALTER TABLE ONLY public.login_tokens
 
 ALTER TABLE ONLY public.mail_suppressions
     ADD CONSTRAINT mail_suppressions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_accounting_reconciliations managed_postgres_accounting_reconciliations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
+    ADD CONSTRAINT managed_postgres_accounting_reconciliations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_accounting_reconciliations managed_postgres_accounting_reconciliations_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
+    ADD CONSTRAINT managed_postgres_accounting_reconciliations_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) DEFERRABLE INITIALLY DEFERRED;
 
 
 --

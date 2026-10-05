@@ -556,8 +556,11 @@ type Querier interface {
 	// instance row is missing.
 	GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.UUID) (int32, error)
 	GetInvoiceSnapshot(ctx context.Context, db DBTX, id pgtype.UUID) (GetInvoiceSnapshotRow, error)
+	// ADR-591: operator reconciliation only repairs an unresolved deleted catalog row.
+	GetManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg GetManagedPostgresAccountingReconciliationParams) (GetManagedPostgresAccountingReconciliationRow, error)
 	GetManagedPostgresCutover(ctx context.Context, db DBTX, arg GetManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
 	GetManagedPostgresRawUsageCoverage(ctx context.Context, db DBTX, arg GetManagedPostgresRawUsageCoverageParams) (ManagedPostgresUsageCoverage, error)
+	GetManagedPostgresReconciliationLedger(ctx context.Context, db DBTX, arg GetManagedPostgresReconciliationLedgerParams) (GetManagedPostgresReconciliationLedgerRow, error)
 	GetManagedPostgresUsageImport(ctx context.Context, db DBTX, arg GetManagedPostgresUsageImportParams) (GetManagedPostgresUsageImportRow, error)
 	GetManagedPostgresUsageProgress(ctx context.Context, db DBTX, arg GetManagedPostgresUsageProgressParams) (GetManagedPostgresUsageProgressRow, error)
 	// Bearer hot-path lookup. Filters past-TTL rows out at the SQL
@@ -616,6 +619,7 @@ type Querier interface {
 	HasEnvironmentGitOpsRuntimeDrift(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
 	HasExclusiveSnapshotOwner(ctx context.Context, db DBTX, instanceID string) (bool, error)
 	HasManagedPostgresIncompatibleUsageWindow(ctx context.Context, db DBTX, arg HasManagedPostgresIncompatibleUsageWindowParams) (bool, error)
+	HasManagedPostgresReconciliationIdentity(ctx context.Context, db DBTX, arg HasManagedPostgresReconciliationIdentityParams) (pgtype.Bool, error)
 	HasPendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
 	HasPendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
 	// ---------------------------------------------------------------------------
@@ -719,6 +723,7 @@ type Querier interface {
 	InsertExclusiveWorkOperation(ctx context.Context, db DBTX, arg InsertExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)
 	InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg InsertFeatureFlagVersionParams) (FeatureFlagVersion, error)
 	InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error)
+	InsertManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg InsertManagedPostgresAccountingReconciliationParams) error
 	InsertManagedPostgresCutover(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverParams) error
 	InsertManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverCredentialParams) (int64, error)
 	// ADR-581: only a validated new reservation can prove provider I/O has not begun.
@@ -1129,6 +1134,7 @@ type Querier interface {
 	ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, arg ListManagedPostgresAccountingCoverageParams) ([]ListManagedPostgresAccountingCoverageRow, error)
 	ListManagedPostgresCutoverCredentials(ctx context.Context, db DBTX, id string) ([]ManagedPostgresCutoverCredential, error)
 	ListManagedPostgresImportRecords(ctx context.Context, db DBTX, arg ListManagedPostgresImportRecordsParams) ([]ManagedPostgresUsage, error)
+	ListManagedPostgresReconciliationCoverage(ctx context.Context, db DBTX, databaseID pgtype.UUID) ([]ManagedPostgresUsageCoverage, error)
 	// ADR-569: known resources remain accountable through lifecycle shutdown.
 	ListManagedPostgresUsageResources(ctx context.Context, db DBTX, arg ListManagedPostgresUsageResourcesParams) ([]ManagedPostgresDatabase, error)
 	// Candidate lookup for schedd fan-out. The final JSON filter matcher remains
@@ -1259,6 +1265,7 @@ type Querier interface {
 	LockManagedPostgresCutoverDatabases(ctx context.Context, db DBTX, databaseIds []string) ([]ManagedPostgresDatabase, error)
 	LockManagedPostgresCutoverForVerification(ctx context.Context, db DBTX, arg LockManagedPostgresCutoverForVerificationParams) (ManagedPostgresCutover, error)
 	LockManagedPostgresCutoverLease(ctx context.Context, db DBTX, arg LockManagedPostgresCutoverLeaseParams) (ManagedPostgresCutover, error)
+	LockManagedPostgresReconciliationIdentity(ctx context.Context, db DBTX, identityScope string) error
 	LockManagedPostgresUsageResource(ctx context.Context, db DBTX, id pgtype.UUID) (ManagedPostgresDatabase, error)
 	// Serializes reservation attempts for one rule across every gateway replica.
 	LockMirrorRuleForSlotLease(ctx context.Context, db DBTX, ruleID pgtype.UUID) (string, error)
@@ -1790,6 +1797,7 @@ type Querier interface {
 	// migration slot 533.
 	ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error)
 	ReassignOrphanedAppOwner(ctx context.Context, db DBTX, arg ReassignOrphanedAppOwnerParams) (int64, error)
+	ReconcileManagedPostgresLegacyResource(ctx context.Context, db DBTX, arg ReconcileManagedPostgresLegacyResourceParams) (int64, error)
 	RecordAppSecretRevocationAck(ctx context.Context, db DBTX, arg RecordAppSecretRevocationAckParams) (int64, error)
 	RecordAppSecretRuntimeProcessAck(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeProcessAckParams) (int64, error)
 	// ADR-508: preserve only current execution receipts on projection writes.
@@ -1940,6 +1948,7 @@ type Querier interface {
 	ReserveAccountCreditConsumption(ctx context.Context, db DBTX, arg ReserveAccountCreditConsumptionParams) (pgtype.UUID, error)
 	ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accountID string) (int32, error)
 	ResetManagedPostgresCutoverVerification(ctx context.Context, db DBTX, id string) error
+	ResetManagedPostgresReconciliationCoverage(ctx context.Context, db DBTX, databaseID pgtype.UUID) error
 	ResetWorkflowResumeStep(ctx context.Context, db DBTX, arg ResetWorkflowResumeStepParams) error
 	ResetWorkflowRunningSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	ResolveEnvironmentFieldOwnershipScope(ctx context.Context, db DBTX, arg ResolveEnvironmentFieldOwnershipScopeParams) (ResolveEnvironmentFieldOwnershipScopeRow, error)

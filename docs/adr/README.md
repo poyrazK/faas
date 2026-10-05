@@ -76,6 +76,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 - [ADR-581: Managed PostgreSQL uncertain accounting intent](581-managed-postgres-uncertain-accounting-intent.md) — durable provider-attempt ownership and identity recovery before deletion
 - [ADR-582: Managed PostgreSQL accounting diagnostics](582-managed-postgres-accounting-diagnostics.md) — operator-only per-database evidence and admission blockers
 - [ADR-583: Managed PostgreSQL retained usage import](583-managed-postgres-retained-usage-import.md) — previewed, atomic accounting repairs with immutable evidence
+- [ADR-591: Managed PostgreSQL legacy accounting reconciliation](591-managed-postgres-legacy-accounting-reconciliation.md) — attested identity/shutdown repair with audited coverage reset
 | 529 | [Bindings gate at traffic promotion](529-binding-gated-promotion.md) | accepted | Require evidence and atomically fence traffic promotion on observed revisions |
 | 528 | [Deployment selection for bindings verification](528-deployment-binding-verification.md) | accepted | Probe the exact deployment artifact with its scoped runtime configuration |
 | 527 | [Bindings preflight policy](527-binding-preflight-policy.md) | accepted | Apply configurable readiness, age, rotation and runtime gates |

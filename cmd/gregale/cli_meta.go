@@ -2367,6 +2367,11 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed PostgreSQL databases"},
 			{Name: "usage", Short: "Show monthly managed PostgreSQL usage and guardrail state"},
+			{Name: "reconcile", Short: "Preview or apply legacy identity and shutdown evidence (operator only)", Positionals: []string{"<account_id>"}, Flags: []cliFlag{
+				{Name: "file", Short: "verified identity and shutdown evidence JSON file", Value: "FILE", Req: true},
+				{Name: "apply", Short: "apply with expected_revision from preview"},
+				{Name: "session-file", Short: "private operator session cookie file (required for apply)", Value: "FILE"},
+			}, Examples: []string{"gregale postgres reconcile ACCOUNT_ID --file reconciliation.json --json"}},
 			{Name: "usage-import", Short: "Preview or apply retained usage evidence (operator only)", Positionals: []string{"<account_id>"}, Flags: []cliFlag{
 				{Name: "file", Short: "normalized retained evidence JSON file", Value: "FILE", Req: true},
 				{Name: "apply", Short: "apply with expected_revision from preview"},
