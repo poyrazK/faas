@@ -10613,6 +10613,52 @@ func (q *Queries) GetManagedPostgresCutover(ctx context.Context, db DBTX, arg Ge
 	return i, err
 }
 
+const getManagedPostgresRawUsageCoverage = `-- name: GetManagedPostgresRawUsageCoverage :one
+SELECT database_id, window_seconds, collected_from, collected_until, observed_at, source_database_id, updated_at FROM managed_postgres_usage_coverage WHERE database_id = $1 AND window_seconds = $2
+`
+
+type GetManagedPostgresRawUsageCoverageParams struct {
+	DatabaseID    pgtype.UUID
+	WindowSeconds int64
+}
+
+func (q *Queries) GetManagedPostgresRawUsageCoverage(ctx context.Context, db DBTX, arg GetManagedPostgresRawUsageCoverageParams) (ManagedPostgresUsageCoverage, error) {
+	row := db.QueryRow(ctx, getManagedPostgresRawUsageCoverage, arg.DatabaseID, arg.WindowSeconds)
+	var i ManagedPostgresUsageCoverage
+	err := row.Scan(
+		&i.DatabaseID,
+		&i.WindowSeconds,
+		&i.CollectedFrom,
+		&i.CollectedUntil,
+		&i.ObservedAt,
+		&i.SourceDatabaseID,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getManagedPostgresUsageImport = `-- name: GetManagedPostgresUsageImport :one
+SELECT request_sha256, result FROM managed_postgres_usage_imports
+WHERE account_id = $1 AND import_id = $2
+`
+
+type GetManagedPostgresUsageImportParams struct {
+	AccountID pgtype.UUID
+	ImportID  pgtype.UUID
+}
+
+type GetManagedPostgresUsageImportRow struct {
+	RequestSha256 string
+	Result        []byte
+}
+
+func (q *Queries) GetManagedPostgresUsageImport(ctx context.Context, db DBTX, arg GetManagedPostgresUsageImportParams) (GetManagedPostgresUsageImportRow, error) {
+	row := db.QueryRow(ctx, getManagedPostgresUsageImport, arg.AccountID, arg.ImportID)
+	var i GetManagedPostgresUsageImportRow
+	err := row.Scan(&i.RequestSha256, &i.Result)
+	return i, err
+}
+
 const getManagedPostgresUsageProgress = `-- name: GetManagedPostgresUsageProgress :one
 SELECT c.collected_from, c.collected_until, c.observed_at, COALESCE(c.source_database_id::text, '')::text AS source_database_id,
  (SELECT min(u.observed_at) FROM managed_postgres_usage u
@@ -11172,6 +11218,23 @@ AND o.lease_expires_at>clock_timestamp() AND o.attempt_deadline>clock_timestamp(
 
 func (q *Queries) HasExclusiveSnapshotOwner(ctx context.Context, db DBTX, instanceID string) (bool, error) {
 	row := db.QueryRow(ctx, hasExclusiveSnapshotOwner, instanceID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const hasManagedPostgresIncompatibleUsageWindow = `-- name: HasManagedPostgresIncompatibleUsageWindow :one
+SELECT EXISTS (SELECT 1 FROM managed_postgres_usage
+ WHERE database_id = $1 AND window_to - window_from <> $2::bigint * interval '1 second')
+`
+
+type HasManagedPostgresIncompatibleUsageWindowParams struct {
+	DatabaseID    pgtype.UUID
+	WindowSeconds int64
+}
+
+func (q *Queries) HasManagedPostgresIncompatibleUsageWindow(ctx context.Context, db DBTX, arg HasManagedPostgresIncompatibleUsageWindowParams) (bool, error) {
+	row := db.QueryRow(ctx, hasManagedPostgresIncompatibleUsageWindow, arg.DatabaseID, arg.WindowSeconds)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -12450,6 +12513,52 @@ func (q *Queries) InsertManagedPostgresReservation(ctx context.Context, db DBTX,
 		&i.AccountingRequired,
 	)
 	return i, err
+}
+
+const insertManagedPostgresUsageImport = `-- name: InsertManagedPostgresUsageImport :exec
+INSERT INTO managed_postgres_usage_imports (
+ account_id, import_id, database_id, actor_id, reason, evidence_reference, evidence_sha256,
+ request_sha256, preview_revision, request, policy, before_records, after_records, result, created_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+`
+
+type InsertManagedPostgresUsageImportParams struct {
+	AccountID         pgtype.UUID
+	ImportID          pgtype.UUID
+	DatabaseID        pgtype.UUID
+	ActorID           string
+	Reason            string
+	EvidenceReference string
+	EvidenceSha256    string
+	RequestSha256     string
+	PreviewRevision   string
+	Request           []byte
+	Policy            []byte
+	BeforeRecords     []byte
+	AfterRecords      []byte
+	Result            []byte
+	CreatedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) InsertManagedPostgresUsageImport(ctx context.Context, db DBTX, arg InsertManagedPostgresUsageImportParams) error {
+	_, err := db.Exec(ctx, insertManagedPostgresUsageImport,
+		arg.AccountID,
+		arg.ImportID,
+		arg.DatabaseID,
+		arg.ActorID,
+		arg.Reason,
+		arg.EvidenceReference,
+		arg.EvidenceSha256,
+		arg.RequestSha256,
+		arg.PreviewRevision,
+		arg.Request,
+		arg.Policy,
+		arg.BeforeRecords,
+		arg.AfterRecords,
+		arg.Result,
+		arg.CreatedAt,
+	)
+	return err
 }
 
 const insertOIDCExchangedToken = `-- name: InsertOIDCExchangedToken :one
@@ -14972,9 +15081,10 @@ SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid
 AND ($2::text IS NULL OR d.scope=$2::text)
 AND ($3::uuid IS NULL OR d.id<>$3::uuid)
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
-    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    d.serving_ended_at IS NOT NULL
+    OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))))
-ORDER BY d.created_at DESC,d.id DESC LIMIT 1
+ORDER BY coalesce(d.serving_ended_at,d.created_at) DESC,d.created_at DESC,d.id DESC LIMIT 1
 `
 
 type LatestRetainedRollbackDeploymentParams struct {
@@ -14983,6 +15093,11 @@ type LatestRetainedRollbackDeploymentParams struct {
 	CurrentDeploymentID pgtype.UUID
 }
 
+// Most recently serving first (serving_ended_at, migration
+// 20261004234807528); rows superseded before it fall back to created_at.
+// A live 0% deployment that served before (a release demoted by `traffic
+// promote` or `traffic set`) is a rollback target; one that never served
+// (a dark deploy) needs a retention pin.
 func (q *Queries) LatestRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LatestRetainedRollbackDeploymentParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, latestRetainedRollbackDeployment, arg.AppID, arg.Scope, arg.CurrentDeploymentID)
 	var id pgtype.UUID
@@ -18193,7 +18308,7 @@ func (q *Queries) ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInv
 }
 
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
-select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.serving_ended_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime
 from deployments d
 join apps a on a.id = d.app_id
 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
@@ -18286,6 +18401,7 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.CanaryStages,
 			&i.SnapshotMissCount,
 			&i.SnapshotMissLastAt,
+			&i.ServingEndedAt,
 			&i.SnapshotMissBackoffUntil,
 			&i.Workflows,
 			&i.SourceRoot,
@@ -18432,6 +18548,49 @@ func (q *Queries) ListManagedPostgresCutoverCredentials(ctx context.Context, db 
 			&i.Kid,
 			&i.ValueHash,
 			&i.VerifiedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listManagedPostgresImportRecords = `-- name: ListManagedPostgresImportRecords :many
+SELECT account_id, database_id, backend_id, backend_fingerprint, window_from, window_to, observed_at, meter, quantity, cost_millicents FROM managed_postgres_usage
+WHERE database_id = $1 AND window_from < $2 AND window_to > $3
+ORDER BY window_from, meter
+`
+
+type ListManagedPostgresImportRecordsParams struct {
+	DatabaseID pgtype.UUID
+	WindowTo   pgtype.Timestamptz
+	WindowFrom pgtype.Timestamptz
+}
+
+func (q *Queries) ListManagedPostgresImportRecords(ctx context.Context, db DBTX, arg ListManagedPostgresImportRecordsParams) ([]ManagedPostgresUsage, error) {
+	rows, err := db.Query(ctx, listManagedPostgresImportRecords, arg.DatabaseID, arg.WindowTo, arg.WindowFrom)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ManagedPostgresUsage{}
+	for rows.Next() {
+		var i ManagedPostgresUsage
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.DatabaseID,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.WindowFrom,
+			&i.WindowTo,
+			&i.ObservedAt,
+			&i.Meter,
+			&i.Quantity,
+			&i.CostMillicents,
 		); err != nil {
 			return nil, err
 		}
@@ -21816,9 +21975,10 @@ SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.scope=$2::text
 AND d.id<>$3::uuid
 AND d.environment_workload_runtime IS NULL
 AND (d.status='superseded' OR (d.status='live' AND d.traffic_percent=0 AND (
-    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    d.serving_ended_at IS NOT NULL
+    OR EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id))))
-ORDER BY d.created_at DESC,d.id DESC LIMIT 1 FOR UPDATE OF d
+ORDER BY coalesce(d.serving_ended_at,d.created_at) DESC,d.created_at DESC,d.id DESC LIMIT 1 FOR UPDATE OF d
 `
 
 type LockRetainedRollbackDeploymentParams struct {
@@ -40875,6 +41035,71 @@ func (q *Queries) UpsertInvoiceSnapshot(ctx context.Context, db DBTX, arg Upsert
 		&i.DetailLifecycle,
 	)
 	return i, err
+}
+
+const upsertManagedPostgresUsageCoverage = `-- name: UpsertManagedPostgresUsageCoverage :exec
+INSERT INTO managed_postgres_usage_coverage (database_id, window_seconds, collected_from, collected_until, observed_at)
+VALUES ($1,$2,$3,$4,$5)
+ON CONFLICT (database_id, window_seconds) DO UPDATE SET
+ collected_from = EXCLUDED.collected_from, collected_until = EXCLUDED.collected_until,
+ observed_at = EXCLUDED.observed_at, updated_at = now()
+`
+
+type UpsertManagedPostgresUsageCoverageParams struct {
+	DatabaseID     pgtype.UUID
+	WindowSeconds  int64
+	CollectedFrom  pgtype.Timestamptz
+	CollectedUntil pgtype.Timestamptz
+	ObservedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) UpsertManagedPostgresUsageCoverage(ctx context.Context, db DBTX, arg UpsertManagedPostgresUsageCoverageParams) error {
+	_, err := db.Exec(ctx, upsertManagedPostgresUsageCoverage,
+		arg.DatabaseID,
+		arg.WindowSeconds,
+		arg.CollectedFrom,
+		arg.CollectedUntil,
+		arg.ObservedAt,
+	)
+	return err
+}
+
+const upsertManagedPostgresUsageRecord = `-- name: UpsertManagedPostgresUsageRecord :exec
+INSERT INTO managed_postgres_usage (
+ account_id, database_id, backend_id, backend_fingerprint, window_from, window_to, observed_at, meter, quantity, cost_millicents
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ON CONFLICT (database_id, window_from, window_to, meter) DO UPDATE SET
+ observed_at = EXCLUDED.observed_at, quantity = EXCLUDED.quantity, cost_millicents = EXCLUDED.cost_millicents
+WHERE managed_postgres_usage.observed_at <= EXCLUDED.observed_at
+`
+
+type UpsertManagedPostgresUsageRecordParams struct {
+	AccountID          pgtype.UUID
+	DatabaseID         pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	WindowFrom         pgtype.Timestamptz
+	WindowTo           pgtype.Timestamptz
+	ObservedAt         pgtype.Timestamptz
+	Meter              string
+	Quantity           int64
+	CostMillicents     int64
+}
+
+func (q *Queries) UpsertManagedPostgresUsageRecord(ctx context.Context, db DBTX, arg UpsertManagedPostgresUsageRecordParams) error {
+	_, err := db.Exec(ctx, upsertManagedPostgresUsageRecord,
+		arg.AccountID,
+		arg.DatabaseID,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.WindowFrom,
+		arg.WindowTo,
+		arg.ObservedAt,
+		arg.Meter,
+		arg.Quantity,
+		arg.CostMillicents,
+	)
+	return err
 }
 
 const upsertOIDCTrustPolicy = `-- name: UpsertOIDCTrustPolicy :one

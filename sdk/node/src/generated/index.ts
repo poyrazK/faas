@@ -653,6 +653,10 @@ export type { ManagedPostgresDatabase } from './models/ManagedPostgresDatabase.j
 export type { ManagedPostgresDatabaseList } from './models/ManagedPostgresDatabaseList.js';
 export type { ManagedPostgresHealth } from './models/ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './models/ManagedPostgresID.js';
+export type { ManagedPostgresUsageImportReading } from './models/ManagedPostgresUsageImportReading.js';
+export type { ManagedPostgresUsageImportRequest } from './models/ManagedPostgresUsageImportRequest.js';
+export type { ManagedPostgresUsageImportResult } from './models/ManagedPostgresUsageImportResult.js';
+export type { ManagedPostgresUsageImportWindow } from './models/ManagedPostgresUsageImportWindow.js';
 export type { ManagedPostgresUsageLineItem } from './models/ManagedPostgresUsageLineItem.js';
 export type { ManagedPostgresUsageOperatorResponse } from './models/ManagedPostgresUsageOperatorResponse.js';
 export type { ManagedPostgresUsageResponse } from './models/ManagedPostgresUsageResponse.js';

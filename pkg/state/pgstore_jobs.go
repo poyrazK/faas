@@ -1092,11 +1092,16 @@ func (s *PgStore) JobRunReplayFailed(ctx context.Context, sourceRunID, accountID
 	}
 	fanned := make([]JobTask, 0, len(failed))
 	for i, task := range failed {
+		// A replay of a replay keeps the root run's partition index.
+		origin := task.TaskIndex
+		if task.SourceTaskIndex != nil {
+			origin = *task.SourceTaskIndex
+		}
 		created, err := scanJobTask(tx.QueryRow(ctx, `insert into job_tasks
 			(run_id,task_index,status,input_id,input_ref,source_task_index)
 			values ($1::uuid,$2,'queued',nullif($3,''),nullif($4,''),$5)
 			returning `+jobTaskSelectCols,
-			run.ID, i, task.InputID, task.InputRef, task.TaskIndex))
+			run.ID, i, task.InputID, task.InputRef, origin))
 		if err != nil {
 			return JobRun{}, nil, err
 		}

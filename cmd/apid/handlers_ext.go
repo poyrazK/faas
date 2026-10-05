@@ -3497,10 +3497,19 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 		Checks:     []api.DomainDoctorCheck{},
 		Healthy:    true,
 	}
-	// 1. DNS record found.
-	dnsStatus, dnsDetail, dnsRem := probeOK, "A or AAAA records present", ""
+	// 1. DNS record found. The failing case used to keep the success
+	// detail ("A or AAAA records present") and ask for an A/AAAA record,
+	// while `domains add` and points_to_gregale both ask for the Gregale
+	// CNAME. The address lookups follow CNAMEs, so that record satisfies
+	// this check too (production-us, 2026-10-04).
+	dnsStatus, dnsDetail, dnsRem := probeOK, "the domain resolves", ""
 	if !obs.DNSRecordFound {
-		dnsStatus, dnsRem = probeFail, "Publish an A or AAAA record at "+d.Domain
+		dnsStatus, dnsDetail = probeFail, "no DNS record resolves at "+d.Domain
+		if expected := customDomainTarget(); expected != "" && !strings.EqualFold(expected, d.Domain) {
+			dnsRem = routingRemediation(d.Domain, expected)
+		} else {
+			dnsRem = "Publish the record shown by `gregale domains add` at " + d.Domain
+		}
 		report.Healthy = false
 	}
 	report.Checks = append(report.Checks, api.DomainDoctorCheck{

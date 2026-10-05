@@ -1256,6 +1256,11 @@ from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeS
 from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
 from .managed_postgres_health_provider_status import ManagedPostgresHealthProviderStatus
 from .managed_postgres_health_status import ManagedPostgresHealthStatus
+from .managed_postgres_usage_import_reading import ManagedPostgresUsageImportReading
+from .managed_postgres_usage_import_reading_meter import ManagedPostgresUsageImportReadingMeter
+from .managed_postgres_usage_import_request import ManagedPostgresUsageImportRequest
+from .managed_postgres_usage_import_result import ManagedPostgresUsageImportResult
+from .managed_postgres_usage_import_window import ManagedPostgresUsageImportWindow
 from .managed_postgres_usage_line_item import ManagedPostgresUsageLineItem
 from .managed_postgres_usage_line_item_code import ManagedPostgresUsageLineItemCode
 from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperatorResponse
@@ -3755,6 +3760,11 @@ __all__ = (
     "ManagedPostgresHealthLastErrorCode",
     "ManagedPostgresHealthProviderStatus",
     "ManagedPostgresHealthStatus",
+    "ManagedPostgresUsageImportReading",
+    "ManagedPostgresUsageImportReadingMeter",
+    "ManagedPostgresUsageImportRequest",
+    "ManagedPostgresUsageImportResult",
+    "ManagedPostgresUsageImportWindow",
     "ManagedPostgresUsageLineItem",
     "ManagedPostgresUsageLineItemCode",
     "ManagedPostgresUsageOperatorResponse",

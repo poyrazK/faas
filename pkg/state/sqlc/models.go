@@ -1694,6 +1694,7 @@ type Deployment struct {
 	CanaryStages               []byte
 	SnapshotMissCount          int32
 	SnapshotMissLastAt         pgtype.Timestamptz
+	ServingEndedAt             pgtype.Timestamptz
 	SnapshotMissBackoffUntil   pgtype.Timestamptz
 	Workflows                  []byte
 	SourceRoot                 pgtype.Text
@@ -3264,6 +3265,24 @@ type ManagedPostgresUsageCoverage struct {
 	ObservedAt       pgtype.Timestamptz
 	SourceDatabaseID pgtype.UUID
 	UpdatedAt        pgtype.Timestamptz
+}
+
+type ManagedPostgresUsageImport struct {
+	AccountID         pgtype.UUID
+	ImportID          pgtype.UUID
+	DatabaseID        pgtype.UUID
+	ActorID           string
+	Reason            string
+	EvidenceReference string
+	EvidenceSha256    string
+	RequestSha256     string
+	PreviewRevision   string
+	Request           []byte
+	Policy            []byte
+	BeforeRecords     []byte
+	AfterRecords      []byte
+	Result            []byte
+	CreatedAt         pgtype.Timestamptz
 }
 
 type ManagedRealtimeChannelHead struct {

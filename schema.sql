@@ -2659,6 +2659,7 @@ CREATE TABLE public.deployments (
     canary_stages jsonb,
     snapshot_miss_count integer DEFAULT 0 NOT NULL,
     snapshot_miss_last_at timestamp with time zone,
+    serving_ended_at timestamp with time zone,
     snapshot_miss_backoff_until timestamp with time zone,
     workflows jsonb DEFAULT '[]'::jsonb NOT NULL,
     source_root text,
@@ -6173,6 +6174,19 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_fixed_multipart_admission_fenced',MESSAGE='Fixed multipart admission identity and layout are immutable';
  END IF;
  RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_managed_postgres_usage_import(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_managed_postgres_usage_import() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' AND NOT EXISTS (SELECT 1 FROM accounts WHERE id = OLD.account_id) THEN RETURN OLD; END IF;
+    RAISE EXCEPTION 'managed postgres usage import evidence is append-only';
 END $$;
 
 
@@ -13884,6 +13898,35 @@ CREATE TABLE public.managed_postgres_usage_coverage (
 
 
 --
+-- Name: managed_postgres_usage_imports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_usage_imports (
+    account_id uuid NOT NULL,
+    import_id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    actor_id text NOT NULL,
+    reason text NOT NULL,
+    evidence_reference text NOT NULL,
+    evidence_sha256 text NOT NULL,
+    request_sha256 text NOT NULL,
+    preview_revision text NOT NULL,
+    request jsonb NOT NULL,
+    policy jsonb NOT NULL,
+    before_records jsonb NOT NULL,
+    after_records jsonb NOT NULL,
+    result jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT managed_postgres_usage_imports_actor_id_check CHECK (((octet_length(actor_id) >= 1) AND (octet_length(actor_id) <= 256))),
+    CONSTRAINT managed_postgres_usage_imports_evidence_reference_check CHECK (((octet_length(evidence_reference) >= 1) AND (octet_length(evidence_reference) <= 256))),
+    CONSTRAINT managed_postgres_usage_imports_evidence_sha256_check CHECK ((evidence_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_usage_imports_preview_revision_check CHECK ((preview_revision ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_usage_imports_reason_check CHECK (((octet_length(reason) >= 1) AND (octet_length(reason) <= 512))),
+    CONSTRAINT managed_postgres_usage_imports_request_sha256_check CHECK ((request_sha256 ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
 -- Name: managed_realtime_channel_heads; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -20377,6 +20420,14 @@ ALTER TABLE ONLY public.managed_postgres_health
 
 ALTER TABLE ONLY public.managed_postgres_usage_coverage
     ADD CONSTRAINT managed_postgres_usage_coverage_pkey PRIMARY KEY (database_id, window_seconds);
+
+
+--
+-- Name: managed_postgres_usage_imports managed_postgres_usage_imports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_imports
+    ADD CONSTRAINT managed_postgres_usage_imports_pkey PRIMARY KEY (account_id, import_id);
 
 
 --
@@ -28889,6 +28940,13 @@ CREATE TRIGGER managed_postgres_restore_sources_guard BEFORE UPDATE OF state ON 
 
 
 --
+-- Name: managed_postgres_usage_imports managed_postgres_usage_import_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_usage_import_immutable BEFORE DELETE OR UPDATE ON public.managed_postgres_usage_imports FOR EACH ROW EXECUTE FUNCTION public.protect_managed_postgres_usage_import();
+
+
+--
 -- Name: compute_nodes managed_realtime_channel_route_targets_compute_nodes_update_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -32931,6 +32989,22 @@ ALTER TABLE ONLY public.managed_postgres_usage_coverage
 
 ALTER TABLE ONLY public.managed_postgres_usage
     ADD CONSTRAINT managed_postgres_usage_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_usage_imports managed_postgres_usage_imports_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_imports
+    ADD CONSTRAINT managed_postgres_usage_imports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_usage_imports managed_postgres_usage_imports_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_imports
+    ADD CONSTRAINT managed_postgres_usage_imports_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) DEFERRABLE INITIALLY DEFERRED;
 
 
 --

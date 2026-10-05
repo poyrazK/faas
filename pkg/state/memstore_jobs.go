@@ -987,7 +987,11 @@ func (m *MemStore) JobRunReplayFailed(_ context.Context, sourceRunID, accountID 
 	fanned := make([]JobTask, 0, len(failed))
 	tasks := make(map[int]JobTask, len(failed))
 	for i, task := range failed {
+		// A replay of a replay keeps the root run's partition index.
 		origin := task.TaskIndex
+		if task.SourceTaskIndex != nil {
+			origin = *task.SourceTaskIndex
+		}
 		created := JobTask{RunID: run.ID, TaskIndex: i, SourceTaskIndex: &origin,
 			InputID: task.InputID, InputRef: task.InputRef, Status: "queued", Attempt: 1, CreatedAt: now}
 		fanned = append(fanned, created)

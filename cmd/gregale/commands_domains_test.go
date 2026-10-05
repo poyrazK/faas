@@ -297,3 +297,30 @@ func TestDomainsDispatch_StatusRegistered(t *testing.T) {
 		t.Errorf("status route = %s %s, want GET /v1/domains", f.sawMethod, f.sawPath)
 	}
 }
+
+// TestDomainsAdd_PositionalDomainWithTrailingFlags — production-us rejected
+// `domains add <domain> --app <slug>` (flags after a positional) with a usage
+// error naming "domains-add". Every other domains subcommand takes <domain>
+// positionally, so add now does too, with flags on either side.
+func TestDomainsAdd_PositionalDomainWithTrailingFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"add", "shop.example.com", "--app", "shop-api"},
+		{"add", "--app", "shop-api", "shop.example.com"},
+		{"add", "shop.example.com", "--domain", "shop.example.com", "--app", "shop-api"},
+	} {
+		resetJSONOut(t)
+		f := authedFakeAPI(t, `{"domain":"shop.example.com","app_id":"app-1","challenge_token":"challenge"}`, http.StatusAccepted)
+		if code := cmdDomains(args); code != 0 {
+			t.Fatalf("%v: exit = %d, want 0", args, code)
+		}
+		var request api.CreateCustomDomainRequest
+		if err := json.Unmarshal(f.sawBody, &request); err != nil || request.Domain != "shop.example.com" || request.AppID != "shop-api" {
+			t.Fatalf("%v: request = %+v err=%v", args, request, err)
+		}
+	}
+	resetJSONOut(t)
+	authedFakeAPI(t, "", http.StatusOK)
+	if code := cmdDomains([]string{"add", "a.example.com", "--domain", "b.example.com", "--app", "shop-api"}); code == 0 {
+		t.Fatal("conflicting positional and --domain accepted")
+	}
+}
