@@ -19999,6 +19999,7 @@ CREATE TABLE public.workflow_runs (
     lease_until timestamp with time zone,
     resume_count integer DEFAULT 0 NOT NULL,
     cancelled_at timestamp with time zone,
+    platform_tenant_id uuid,
     CONSTRAINT workflow_runs_cancelled_at_check CHECK (((cancelled_at IS NULL) OR (status = 'failed'::text))),
     CONSTRAINT workflow_runs_resume_count_check CHECK (((resume_count >= 0) AND (resume_count <= 16))),
     CONSTRAINT workflow_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text])))
@@ -30528,6 +30529,13 @@ CREATE INDEX workflow_runs_dispatch_idx ON public.workflow_runs USING btree (sch
 
 
 --
+-- Name: workflow_runs_platform_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_platform_tenant_idx ON public.workflow_runs USING btree (platform_tenant_id, created_at DESC) WHERE (platform_tenant_id IS NOT NULL);
+
+
+--
 -- Name: workflow_runs_running_lease_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -39577,6 +39585,14 @@ ALTER TABLE ONLY public.workflow_run_resumes
 
 ALTER TABLE ONLY public.workflow_runs
     ADD CONSTRAINT workflow_runs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_runs workflow_runs_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_runs
+    ADD CONSTRAINT workflow_runs_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE RESTRICT;
 
 
 --

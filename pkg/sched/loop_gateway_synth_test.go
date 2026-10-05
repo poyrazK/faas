@@ -73,7 +73,7 @@ func TestHTTPGatewaySynthInvokeCarriesEnvelopeAndResult(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	h := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL}
+	h := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL, mintInternalSvcToken: func(string) (string, error) { return "test-token", nil }}
 	got, err := h.Invoke(context.Background(), "app-1", state.Invocation{
 		PlatformTenantID: "tenant-1",
 		ID:               "inv-1",
@@ -93,6 +93,43 @@ func TestHTTPGatewaySynthInvokeCarriesEnvelopeAndResult(t *testing.T) {
 	}
 	if string(got.Result) != `{"ok":true}` {
 		t.Fatalf("result = %s, want {\"ok\":true}", got.Result)
+	}
+}
+
+func TestHTTPGatewaySynthWorkflowStepCarriesPersistedTenantIdentity(t *testing.T) {
+	runID := "11111111-1111-4111-8111-111111111111"
+	operationID, err := api.ManagedWorkflowStepOperationID(runID, "process")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got struct {
+			PlatformTenantID                   string            `json:"platform_tenant_id"`
+			Source                             string            `json:"source"`
+			Headers                            map[string]string `json:"headers"`
+			OperationResultVersion             int               `json:"operation_result_version"`
+			ManagedWorkflowOperationID         string            `json:"managed_workflow_operation_id"`
+			ManagedWorkflowOperationGeneration int64             `json:"managed_workflow_operation_generation"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got.PlatformTenantID != "tenant-1" || got.Source != "workflow" || got.Headers["X-Faas-Workflow-Run-Id"] != runID ||
+			got.OperationResultVersion != api.ManagedOperationResultVersion || got.ManagedWorkflowOperationID != operationID || got.ManagedWorkflowOperationGeneration != 1 {
+			t.Fatalf("workflow identity envelope=%+v", got)
+		}
+		_, _ = w.Write([]byte(`{"state":"dispatching","status_code":200,"result":{"ok":true}}`))
+	}))
+	defer srv.Close()
+	h := &httpGatewaySynth{client: srv.Client(), basePrefix: srv.URL, mintInternalSvcToken: func(string) (string, error) { return "test-token", nil }}
+	status, body, err := h.ExecuteWorkflowStep(context.Background(), "app-1", WorkflowStepIdentity{
+		RunID: runID, PlatformTenantID: "tenant-1",
+	}, "/process", http.MethodPost, map[string]string{
+		"X-Faas-Internal-Wake": "workflow", "X-Faas-Workflow-Run-Id": runID,
+		"X-Faas-Workflow-Step": "process", "X-Faas-Workflow-Attempt": "1",
+	}, []byte(`{"order_id":"42"}`), time.Second, operationID, 1)
+	if err != nil || status != http.StatusOK || string(body) != `{"ok":true}` {
+		t.Fatalf("ExecuteWorkflowStep = %d %s, %v", status, body, err)
 	}
 }
 

@@ -1786,13 +1786,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// later. runWithDeps attaches the actual startup store's verified mode
 	// projection before serving, preserving lookup errors rather than an allow.
 	deps.synth.WithMetrics(deps.metrics).WithAudit(deps.requireAuthnAudit.Emit)
-	deps.synth.WithWorkflowAdmission(func(ctx context.Context, appID, runID, stepName string, attempt int) error {
+	deps.synth.WithWorkflowAdmission(func(ctx context.Context, appID, runID, platformTenantID, stepName string, attempt int) error {
 		run, err := pgStore.GetWorkflowRun(ctx, runID)
 		if err != nil {
 			return fmt.Errorf("load workflow run: %w", err)
 		}
-		if run.AppID != appID {
-			return fmt.Errorf("workflow run belongs to another app")
+		if run.AppID != appID || run.PlatformTenantID != platformTenantID {
+			return fmt.Errorf("workflow run app or tenant identity does not match")
 		}
 		if run.Status != state.WorkflowRunStatusRunning {
 			return fmt.Errorf("workflow run is %s", run.Status)

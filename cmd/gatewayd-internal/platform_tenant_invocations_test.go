@@ -161,3 +161,55 @@ func TestSynthAdapterPlatformTenantDurableAdmission(t *testing.T) {
 		t.Fatal("cancelled work reached worker")
 	}
 }
+
+func TestSynthAdapterWorkflowTenantAdmissionUsesPersistedRun(t *testing.T) {
+	ctx := t.Context()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "workflow-tenant-admission@example.test", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "workflow-tenant-admission", Type: state.AppTypeFunction})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant, _, err := store.CreatePlatformTenant(ctx, account.ID, "workflow-customer", "Workflow customer", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := store.CreateAPIConsumer(ctx, account.ID, app.ID, "workflow-customer", "Workflow customer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LinkPlatformTenantConsumer(ctx, account.ID, tenant.ID, consumer.ID); err != nil {
+		t.Fatal(err)
+	}
+	run := &state.WorkflowRun{AppID: app.ID, PlatformTenantID: tenant.ID, WorkflowName: "process", Status: state.WorkflowRunStatusRunning,
+		DefinitionSnapshot: json.RawMessage(`{"name":"process","steps":[{"name":"main","path":"/process"}]}`)}
+	if err := store.CreateWorkflowRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	headers, err := json.Marshal(map[string]string{"X-Faas-Workflow-Run-Id": run.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv := state.Invocation{ID: "workflow-request", AppID: app.ID, Source: state.InvocationSource("workflow"),
+		PlatformTenantID: tenant.ID, Headers: headers}
+	if _, err := admitPlatformTenantInvocation(ctx, store, app.ID, inv); err != nil {
+		t.Fatalf("persisted tenant workflow rejected: %v", err)
+	}
+	for _, changed := range []state.Invocation{
+		{ID: inv.ID, AppID: inv.AppID, Source: inv.Source, Headers: inv.Headers},
+		{ID: inv.ID, AppID: inv.AppID, Source: inv.Source, PlatformTenantID: "forged-tenant", Headers: inv.Headers},
+	} {
+		if _, err := admitPlatformTenantInvocation(ctx, store, app.ID, changed); err == nil {
+			t.Fatal("workflow dispatch accepted an omitted or substituted tenant")
+		}
+	}
+	if _, err := store.SetPlatformTenantStatus(ctx, account.ID, tenant.ID, state.PlatformTenantSuspended); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admitPlatformTenantInvocation(ctx, store, app.ID, inv); err == nil {
+		t.Fatal("suspended tenant workflow reached dispatch")
+	}
+}

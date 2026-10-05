@@ -70,9 +70,9 @@ func TestManagedWorkflowOperationPreservesTrafficSecurityHandoff(t *testing.T) {
 			dispatcher := &operationResultSynthDispatcher{result: json.RawMessage(`{"ok":true}`)}
 			srv := NewSynthServer("", dispatcher, nil)
 			srv.internalSvcVerifier = &testInternalSvcVerifier{allowed: map[string]ed25519.PublicKey{"schedd": pub}}
-			srv.workflowAdmission = func(_ context.Context, gotApp, gotRun, step string, attempt int) error {
-				if gotApp != appID || gotRun != runID || step != "charge" || attempt != 1 {
-					t.Fatalf("workflow admission identity=%s/%s/%s/%d", gotApp, gotRun, step, attempt)
+			srv.workflowAdmission = func(_ context.Context, gotApp, gotRun, tenantID, step string, attempt int) error {
+				if gotApp != appID || gotRun != runID || tenantID != "" || step != "charge" || attempt != 1 {
+					t.Fatalf("workflow admission identity=%s/%s/%s/%s/%d", gotApp, gotRun, tenantID, step, attempt)
 				}
 				return nil
 			}

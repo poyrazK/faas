@@ -1822,25 +1822,26 @@ const (
 	CodeJobCommandInvalid = "job_command_invalid"
 
 	// Workflows (ADR-081).
-	CodePlanWorkflowsNotAllowed         = "plan_workflows_not_allowed"
-	CodePlanWorkflowsQuota              = "plan_workflows_quota"
-	CodeWorkflowDAGCycle                = "workflow_dag_cycle"
-	CodeWorkflowStepNotFound            = "workflow_step_not_found"
-	CodeWorkflowRunNotFound             = "workflow_run_not_found"
-	CodeWorkflowStepRetryNotAllowed     = "workflow_step_retry_not_allowed"
-	CodeWorkflowDefinitionNotFound      = "workflow_definition_not_found"
-	CodeWorkflowEventNotFound           = "workflow_event_not_found"
-	CodeWebhookAutomationUnavailable    = "webhook_automation_unavailable"
-	CodeWebhookAutomationConflict       = "webhook_automation_conflict"
-	CodeWorkflowResumeConflict          = "workflow_resume_conflict"
-	CodeWorkflowResumeUnsafe            = "workflow_resume_unsafe"
-	CodeWorkflowResumeLimit             = "workflow_resume_limit"
-	CodeWorkflowNotRunning              = "workflow_not_running"
-	CodeWorkflowDeploymentUnavailable   = "workflow_deployment_unavailable"
-	CodeWorkflowCallbackClosed          = "workflow_callback_closed"
-	CodeWorkflowCallbackExpired         = "workflow_callback_expired"
-	CodeWorkflowCallbackPayloadConflict = "workflow_callback_payload_conflict"
-	CodeWorkflowCallbackBindingConflict = "workflow_callback_binding_conflict"
+	CodePlanWorkflowsNotAllowed           = "plan_workflows_not_allowed"
+	CodePlanWorkflowsQuota                = "plan_workflows_quota"
+	CodeWorkflowDAGCycle                  = "workflow_dag_cycle"
+	CodeWorkflowStepNotFound              = "workflow_step_not_found"
+	CodeWorkflowRunNotFound               = "workflow_run_not_found"
+	CodeWorkflowStepRetryNotAllowed       = "workflow_step_retry_not_allowed"
+	CodeWorkflowDefinitionNotFound        = "workflow_definition_not_found"
+	CodeWorkflowEventNotFound             = "workflow_event_not_found"
+	CodeWebhookAutomationUnavailable      = "webhook_automation_unavailable"
+	CodeWebhookAutomationConflict         = "webhook_automation_conflict"
+	CodeWorkflowResumeConflict            = "workflow_resume_conflict"
+	CodeWorkflowResumeUnsafe              = "workflow_resume_unsafe"
+	CodeWorkflowResumeLimit               = "workflow_resume_limit"
+	CodeWorkflowNotRunning                = "workflow_not_running"
+	CodeWorkflowDeploymentUnavailable     = "workflow_deployment_unavailable"
+	CodeWorkflowTenantIdentityUnavailable = "workflow_tenant_identity_unavailable"
+	CodeWorkflowCallbackClosed            = "workflow_callback_closed"
+	CodeWorkflowCallbackExpired           = "workflow_callback_expired"
+	CodeWorkflowCallbackPayloadConflict   = "workflow_callback_payload_conflict"
+	CodeWorkflowCallbackBindingConflict   = "workflow_callback_binding_conflict"
 )
 
 // SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
@@ -1950,7 +1951,7 @@ func StatusForCode(code string) int {
 		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
 		CodeWebhookAutomationConflict, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
 		CodeWorkflowResumeLimit,
-		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
+		CodeWorkflowNotRunning, CodeWorkflowTenantIdentityUnavailable, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeWorkflowStepRetryNotAllowed,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
@@ -3897,6 +3898,14 @@ func ErrWorkflowDeploymentUnavailable() *Problem {
 	return NewProblem(http.StatusNotImplemented, CodeWorkflowDeploymentUnavailable,
 		"Workflow deployment unavailable",
 		"workflow definitions are validated by this release but require the workflow runtime deployment endpoint to be enabled")
+}
+
+// ErrWorkflowTenantIdentityUnavailable reports that the route does not carry
+// an authenticated platform tenant identity for a tenant-required app.
+func ErrWorkflowTenantIdentityUnavailable() *Problem {
+	return NewProblem(http.StatusConflict, CodeWorkflowTenantIdentityUnavailable,
+		"Tenant identity required",
+		"apps that require a platform tenant must start workflow runs through the account tenant route or an authenticated platform tenant token")
 }
 
 // ErrWorkflowRunNotFound returns a 404 when a workflow run is not found.

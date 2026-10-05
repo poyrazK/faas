@@ -16499,6 +16499,209 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "code: workflow_tenant_identity_unavailable — tenant-required apps must use a tenant-scoped workflow run route."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/account/platform-tenants/{tenant_id}/apps/{slug}/workflows/{name}/runs:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        description: Customer record to bind to the new workflow execution.
+        schema: { type: string, format: uuid }
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: Name of the published workflow definition to run.
+        schema: { type: string, minLength: 1 }
+    post:
+      tags: [workflows]
+      operationId: createTenantWorkflowRun
+      summary: Start a durable workflow run for an account-owned tenant.
+      description: |
+        Account owners can start a run for a tenant linked to the app through an
+        active API consumer or active tenant surface. The tenant ID is persisted
+        and propagated through trusted internal step dispatch metadata. Managed
+        operation steps may deliver effects only to an explicitly subscribed
+        receiver owned by that same tenant. Outbound steps can use an existing
+        app-bound customer-managed integration; the signed run identity and
+        active tenant-to-app link are checked at dispatch and outbound
+        authorization. Integration credentials and route policies remain
+        app-scoped and shared across tenants. Event waits and callbacks remain
+        unsupported for tenant-bound workflows.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {}
+      responses:
+        '201':
+          description: The new pending tenant-scoped workflow run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRunResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: The account plan does not include tenant-scoped durable workflow runs.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The app is not configured to accept tenant-scoped workflow runs.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/platform-tenant-self/apps/{slug}/workflows/{name}/runs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: Identifier of the workflow definition to start for this tenant.
+        schema: { type: string, minLength: 1 }
+    post:
+      tags: [workflows]
+      operationId: createPlatformTenantSelfWorkflowRun
+      summary: Start a durable workflow run as the authenticated platform tenant.
+      description: |
+        Uses the tenant ID from the authenticated platform tenant access token.
+        The tenant must be actively linked to the app. Requires the
+        platform_tenant:invocations:manage scope. Managed operation effects are
+        delivered only to an explicitly subscribed receiver owned by this
+        tenant. Outbound steps can use an existing app-bound customer-managed
+        integration; the signed run identity and active tenant-to-app link are
+        checked at dispatch and outbound authorization. Integration credentials
+        and route policies remain app-scoped and shared across tenants. Event
+        waits and callbacks remain unsupported.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {}
+      responses:
+        '201':
+          description: A pending workflow run created with the authenticated tenant identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRunResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The app does not accept workflow runs for this authenticated tenant identity.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/platform-tenant-self/workflows/runs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant-owned workflow run returned when starting the workflow.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [workflows]
+      operationId: getPlatformTenantSelfWorkflowRun
+      summary: Read this tenant's workflow run status and result.
+      description: Requires a tenant-bound token with platform_tenant:invocations:read. Foreign, unbound, and missing runs return the same 404.
+      responses:
+        '200':
+          description: Workflow status and result for the authenticated tenant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRunResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/platform-tenant-self/workflows/runs/{id}/cancel:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant-owned workflow run to cancel.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [workflows]
+      operationId: cancelPlatformTenantSelfWorkflowRun
+      summary: Cancel this tenant's active workflow run.
+      description: Requires a tenant-bound token with platform_tenant:invocations:manage. Repeating the request on a terminal run returns its current state.
+      responses:
+        '200':
+          description: Workflow status after the cancellation request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRunResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/platform-tenant-self/workflows/runs/{id}/resume:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Failed or dead workflow run owned by the authenticated tenant.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [workflows]
+      operationId: resumePlatformTenantSelfWorkflowRun
+      summary: Resume eligible failed actions in this tenant's workflow run.
+      description: |
+        Requires a tenant-bound token with platform_tenant:invocations:manage.
+        Send the current resume_count. The platform preserves completed work and
+        only reopens actions accepted by the workflow's safe-resume rules.
+        Foreign, unbound, and missing runs return the same 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResumeWorkflowRunRequest' }
+      responses:
+        '200':
+          description: The queued run with its incremented resume_count.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRunResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: The account plan does not include durable workflows.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
+        '409':
+          description: The run is stale, unsafe to resume, or has reached its resume limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Resume requests are limited to 4096 bytes.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
@@ -39915,6 +40118,7 @@ components:
         cancelled_at: { type: string, format: date-time }
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
+        platform_tenant_id: { type: [string, 'null'], format: uuid, description: Platform tenant authorized for this workflow run, when present. }
         workflow_name: { type: string }
         status:
           type: string

@@ -67,7 +67,7 @@ func (e *workflowOutboundExecutor) ExecuteOutboundStep(ctx context.Context, runI
 	if err != nil {
 		return 0, nil, zero, state.ErrWorkflowOutboundAttemptExpired
 	}
-	identity := outbound.WorkflowIdentity{AccountID: lease.AccountID, AppID: lease.AppID, RunID: runID, StepName: stepName, Attempt: attempt, AttemptToken: lease.Token}
+	identity := outbound.WorkflowIdentity{AccountID: lease.AccountID, AppID: lease.AppID, PlatformTenantID: lease.PlatformTenantID, RunID: runID, StepName: stepName, Attempt: attempt, AttemptToken: lease.Token}
 	assertion, err := e.mint(identity, spec.IntegrationID, spec.Method, spec.Path, input)
 	if err != nil {
 		return 0, nil, zero, errors.New("workflow outbound assertion unavailable")

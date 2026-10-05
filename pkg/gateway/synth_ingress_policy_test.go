@@ -179,7 +179,7 @@ func TestSynthIngressPolicyPreservesWorkflowAdmissionOrder(t *testing.T) {
 		return state.AppPublicAuthModeOpen, nil
 	})
 	server.WithInternalSvcVerifier(&testInternalSvcVerifier{})
-	server.WithWorkflowAdmission(func(context.Context, string, string, string, int) error { return nil })
+	server.WithWorkflowAdmission(func(context.Context, string, string, string, string, int) error { return nil })
 	response := httptest.NewRecorder()
 	server.Mux().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/invocations:dispatch",
 		strings.NewReader(`{"app_id":"app-1","invocation_id":"inv-1","source":"workflow"}`)))

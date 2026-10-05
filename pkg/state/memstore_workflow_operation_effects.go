@@ -61,6 +61,22 @@ func (m *MemStore) CommitManagedWorkflowStep(ctx context.Context, input ManagedW
 		if !exists || app.Status == AppDeleted || !accountExists || account.Status != AccountActive {
 			return ErrOperationEffectDestination
 		}
+		if run.PlatformTenantID != "" {
+			tenant, tenantExists := m.platformTenants[run.PlatformTenantID]
+			linked := false
+			for surfaceID, linkedTenantID := range m.platformTenantBySurface {
+				surface := m.tenantSurfaces[surfaceID]
+				if canonicalMemUUID(linkedTenantID) == canonicalMemUUID(run.PlatformTenantID) &&
+					canonicalMemUUID(surface.AccountID) == canonicalMemUUID(app.AccountID) &&
+					canonicalMemUUID(surface.AppID) == canonicalMemUUID(run.AppID) && surface.Status == SurfaceStatusActive {
+					linked = true
+					break
+				}
+			}
+			if !tenantExists || canonicalMemUUID(tenant.AccountID) != canonicalMemUUID(app.AccountID) || !linked {
+				return ErrOperationEffectDestination
+			}
+		}
 		staged = make([]workflowOperationStoredEffect, 0, len(commit.Effects))
 		deliveries = make([]AppWebhookDelivery, 0, len(commit.Effects))
 		for _, effect := range commit.Effects {
@@ -71,7 +87,7 @@ func (m *MemStore) CommitManagedWorkflowStep(ctx context.Context, input ManagedW
 					break
 				}
 			}
-			if !managedWorkflowEffectDestinationMatches(app.AccountID, run.AppID, hook) {
+			if !managedWorkflowEffectDestinationMatches(app.AccountID, run.AppID, run.PlatformTenantID, hook) {
 				return ErrOperationEffectDestination
 			}
 			id := workflowOperationEffectID(commit.OperationID, effect.Name)
@@ -88,7 +104,7 @@ func (m *MemStore) CommitManagedWorkflowStep(ctx context.Context, input ManagedW
 					}
 				}
 			}
-			body, err := workflowOperationEffectBody(commit.OperationID, run.AppID, int64(commit.Attempt), effect)
+			body, err := workflowOperationEffectBody(commit.OperationID, run.AppID, run.PlatformTenantID, int64(commit.Attempt), effect)
 			if err != nil {
 				return ErrInvalidArgument
 			}

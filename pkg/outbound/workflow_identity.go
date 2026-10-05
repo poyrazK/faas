@@ -20,12 +20,13 @@ var ErrWorkflowNotAuthorized = errors.New("workflow outbound not authorized")
 
 // WorkflowIdentity is private host authorization, never a customer API payload.
 type WorkflowIdentity struct {
-	AccountID    string `json:"account_id"`
-	AppID        string `json:"app_id"`
-	RunID        string `json:"run_id"`
-	StepName     string `json:"step_name"`
-	Attempt      int    `json:"attempt"`
-	AttemptToken string `json:"attempt_token"`
+	AccountID        string `json:"account_id"`
+	AppID            string `json:"app_id"`
+	PlatformTenantID string `json:"platform_tenant_id,omitempty"`
+	RunID            string `json:"run_id"`
+	StepName         string `json:"step_name"`
+	Attempt          int    `json:"attempt"`
+	AttemptToken     string `json:"attempt_token"`
 }
 
 type workflowClaims struct {
@@ -49,6 +50,12 @@ func validWorkflowIdentity(identity WorkflowIdentity) bool {
 	for _, raw := range []string{identity.AccountID, identity.AppID, identity.RunID, identity.AttemptToken} {
 		id, err := uuid.Parse(raw)
 		if err != nil || id == uuid.Nil || id.String() != raw {
+			return false
+		}
+	}
+	if identity.PlatformTenantID != "" {
+		id, err := uuid.Parse(identity.PlatformTenantID)
+		if err != nil || id == uuid.Nil || id.String() != identity.PlatformTenantID {
 			return false
 		}
 	}

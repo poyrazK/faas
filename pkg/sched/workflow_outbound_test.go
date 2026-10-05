@@ -39,14 +39,17 @@ func TestWorkflowOutboundRetryAfterIsBounded(t *testing.T) {
 	}
 }
 
-type outboundLeaseStub struct{ token atomic.Pointer[string] }
+type outboundLeaseStub struct {
+	token    atomic.Pointer[string]
+	tenantID string
+}
 
 func (s *outboundLeaseStub) GetWorkflowOutboundAttempt(context.Context, string, string, int) (state.WorkflowOutboundAttempt, error) {
 	token := s.token.Load()
 	if token == nil {
 		return state.WorkflowOutboundAttempt{}, state.ErrWorkflowNotRunning
 	}
-	return state.WorkflowOutboundAttempt{AccountID: "00000000-0000-0000-0000-000000000001", AppID: "00000000-0000-0000-0000-000000000002", Token: *token}, nil
+	return state.WorkflowOutboundAttempt{AccountID: "00000000-0000-0000-0000-000000000001", AppID: "00000000-0000-0000-0000-000000000002", PlatformTenantID: s.tenantID, Token: *token}, nil
 }
 func (s *outboundLeaseStub) ValidateWorkflowOutboundBindings(context.Context, string, api.WorkflowSpec) error {
 	return nil
@@ -56,6 +59,7 @@ func TestWorkflowOutboundExecutorOutputAndCancellation(t *testing.T) {
 	store := &outboundLeaseStub{}
 	nonce := uuid.NewString()
 	store.token.Store(&nonce)
+	store.tenantID = uuid.NewString()
 	identityCalls := 0
 	capturedBody := ""
 	key := ""
@@ -63,6 +67,9 @@ func TestWorkflowOutboundExecutorOutputAndCancellation(t *testing.T) {
 		identityCalls++
 		if identity.AttemptToken != nonce {
 			t.Error("wrong lease")
+		}
+		if identity.PlatformTenantID != store.tenantID {
+			t.Error("tenant identity did not come from the persisted outbound lease")
 		}
 		capturedBody = string(body)
 		return "private-token", nil

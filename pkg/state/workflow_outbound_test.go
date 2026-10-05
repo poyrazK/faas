@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"testing"
 	"time"
@@ -111,6 +112,70 @@ func TestWorkflowOutboundPublicationAndAttemptFencing(t *testing.T) {
 		attempts, err = store.GetWorkflowStepAttempts(ctx, run.ID, "send")
 		if err != nil || len(attempts) != 2 || attempts[1].Status != WorkflowAttemptStatusFailed || attempts[1].FinishedAt == nil {
 			t.Fatalf("cancelled attempt ledger remains running: %+v %v", attempts, err)
+		}
+	})
+}
+
+func TestTenantWorkflowOutboundAttemptRequiresActiveTenantLink(t *testing.T) {
+	workflowScheduleStores(t, func(t *testing.T, store Store) {
+		ctx := context.Background()
+		account, err := store.CreateAccount(ctx, "tenant-outbound-"+uuid.NewString()+"@example.com", api.PlanHobby)
+		if err != nil {
+			t.Fatal(err)
+		}
+		app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "tenant-outbound-" + uuid.NewString(), Type: AppTypeApp, RAMMB: 256, PlatformTenantRequired: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		tenants := store.(PlatformTenantStore)
+		tenant, _, err := tenants.CreatePlatformTenant(ctx, account.ID, "customer-"+uuid.NewString(), "Customer", 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		consumer, err := store.CreateAPIConsumer(ctx, account.ID, app.ID, "customer-"+uuid.NewString(), "Customer")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tenants.LinkPlatformTenantConsumer(ctx, account.ID, tenant.ID, consumer.ID); err != nil {
+			t.Fatal(err)
+		}
+		spec := api.WorkflowSpec{Name: "tenant-outbound", Steps: []api.WorkflowStepSpec{{Name: "send", Outbound: &api.WorkflowOutboundSpec{IntegrationID: uuid.NewString(), Method: "POST", Path: "/v1/items", IdempotencySupported: true}}}}
+		snapshot, err := json.Marshal(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run := &WorkflowRun{AppID: app.ID, PlatformTenantID: tenant.ID, WorkflowName: spec.Name, DefinitionSnapshot: snapshot}
+		if err := store.CreateWorkflowRun(ctx, run); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CreateWorkflowSteps(ctx, run.ID, []*WorkflowStep{{StepName: "send"}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.StartWorkflowStep(ctx, run.ID, "send", 1, json.RawMessage(`{"id":1}`)); err != nil {
+			t.Fatal(err)
+		}
+		outboundStore := store.(WorkflowOutboundStore)
+		lease, err := outboundStore.GetWorkflowOutboundAttempt(ctx, run.ID, "send", 1)
+		if err != nil || lease.PlatformTenantID != tenant.ID {
+			t.Fatalf("tenant outbound lease=%+v err=%v", lease, err)
+		}
+		if _, err := tenants.SetPlatformTenantStatus(ctx, account.ID, tenant.ID, PlatformTenantSuspended); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := outboundStore.GetWorkflowOutboundAttempt(ctx, run.ID, "send", 1); err == nil {
+			t.Fatal("suspended tenant retained an outbound attempt")
+		}
+		if _, err := tenants.SetPlatformTenantStatus(ctx, account.ID, tenant.ID, PlatformTenantActive); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.RevokeAPIConsumer(ctx, account.ID, consumer.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := outboundStore.GetWorkflowOutboundAttempt(ctx, run.ID, "send", 1); err == nil {
+			t.Fatal("revoked tenant app link retained an outbound attempt")
 		}
 	})
 }
