@@ -235,7 +235,7 @@ concurrent release locking, runtime data access, and retained schema after
 migration-login retirement. Keep the existing live version-5 Neon qualification
 and rollout gates; local PostgreSQL evidence does not replace them.
 
-## Compute resize recovery (ADR-593)
+## Compute resize recovery (ADR-595)
 
 Use a fresh version 5 qualification approval before allowing new Neon intents.
 The qualification changes the disposable primary's class and restores it,

@@ -1,4 +1,4 @@
-# ADR-593 · Durable managed PostgreSQL compute resizing
+# ADR-595 · Durable managed PostgreSQL compute resizing
 
 - **Status:** accepted for operator preview; live provider qualification required
 - **Date:** 2026-10-05
