@@ -1,6 +1,6 @@
 package runtimeadmission
 
-// adr: 586. Historical capture lineage never replaces fresh restore authority.
+// adr: 590. Historical capture lineage never replaces fresh restore authority.
 
 import (
 	"time"

@@ -1,6 +1,6 @@
 package state
 
-// adr: 586. Restore catalog selection is history; issuance fences current input.
+// adr: 590. Restore catalog selection is history; issuance fences current input.
 
 import (
 	"encoding/json"

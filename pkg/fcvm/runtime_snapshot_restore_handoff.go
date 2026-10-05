@@ -1,6 +1,6 @@
 package fcvm
 
-// adr: 586. Pin the load inputs; an API acknowledgment is not consumed RAM.
+// adr: 590. Pin the load inputs; an API acknowledgment is not consumed RAM.
 
 import (
 	"context"

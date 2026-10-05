@@ -1,4 +1,4 @@
-# ADR-586 · Versioned inherited application standards
+# ADR-590 · Versioned inherited application standards
 
 - **Status:** implementation in progress; acceptance required before release
 - **Date:** 2026-09-30
@@ -32,8 +32,12 @@ moved to ADR-431; frozen SQL files and their historical citations remain unchang
 Upstream assigned ADR-431 to bounded gateway trace retention. This decision moved to ADR-581; frozen SQL files and their historical citations remain unchanged.
 
 Upstream assigned ADR-581 to managed PostgreSQL uncertain accounting intent.
-This decision now uses ADR-586; ADR-585 is reserved by the environment isolation
+This decision moved to ADR-586; ADR-585 is reserved by the environment isolation
 PR. Frozen SQL files and their historical citations remain unchanged.
+
+Upstream assigned ADR-586 to the transactional operation handler SDK and added
+ADR-587 through ADR-589. This decision now uses ADR-590; frozen SQL files and
+their historical citations remain unchanged.
 
 ## Contract
 

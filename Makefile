@@ -1457,3 +1457,10 @@ issues-smoke: ## Send controlled Gregale Issues failures to an explicitly confir
 .PHONY: test-commit-sdk
 test-commit-sdk:
 	sh scripts/test-commit-sdk.sh
+
+.PHONY: test-operation-sdk check-operation-sdk-schema
+test-operation-sdk:
+	sh scripts/test-operation-sdk.sh
+
+check-operation-sdk-schema:
+	python3 scripts/gen-operation-inbox-schema.py --check
