@@ -10,7 +10,10 @@ type publicDeploymentBurstAdmitter interface {
 type publicBurstAdmitter struct {
 	backend    publicDeploymentBurstAdmitter
 	deployment string
+	healthy    func(string) int
 }
+
+func (b publicBurstAdmitter) HealthyCount(app string) int { return b.healthy(app) }
 
 func (b publicBurstAdmitter) AdmitBurst(ctx context.Context, app, scope, trigger string, maximum, count int) (int, error) {
 	return b.backend.AdmitDeploymentBurst(ctx, app, b.deployment, scope, trigger, maximum, count)
@@ -30,5 +33,20 @@ func (h *Handler) maybePublicRoutingBurst(ctx context.Context, app App, maximum,
 		maximum = app.MaxConcurrency
 	}
 	app.Scope = routing.Scope
-	return h.maybeBurstCapacityWithAdmitter(ctx, app, maximum, perVM, publicBurstAdmitter{backend: backend, deployment: routing.SelectedDeploymentID})
+	healthy := h.backend.HealthyCount
+	if counter, ok := h.backend.(interface {
+		HealthyCountForDeployments(string, []string) int
+	}); ok {
+		// Fresh host policy reads deliberately bypass the old weighted cache.
+		// Count only the positive cohorts captured for this request; refreshing
+		// that cache here would mix a later traffic policy into admission.
+		deployments := make([]string, 0, len(routing.Weights))
+		for _, weight := range routing.Weights {
+			if weight.TrafficPercent > 0 {
+				deployments = append(deployments, weight.ID)
+			}
+		}
+		healthy = func(app string) int { return counter.HealthyCountForDeployments(app, deployments) }
+	}
+	return h.maybeBurstCapacityWithAdmitter(ctx, app, maximum, perVM, publicBurstAdmitter{backend: backend, deployment: routing.SelectedDeploymentID, healthy: healthy})
 }

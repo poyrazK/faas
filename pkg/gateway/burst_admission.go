@@ -20,6 +20,19 @@ type burstCapacityAdmitter interface {
 	AdmitBurst(ctx context.Context, appID, scope, trigger string, maxConcurrency, count int) (admitted int, err error)
 }
 
+// A captured routing policy can count its eligible target sets independently
+// of the mutable weighted picker used by legacy admission paths.
+type burstCapacityCounter interface {
+	HealthyCount(string) int
+}
+
+func (h *Handler) burstHealthyCount(appID string, admitter burstCapacityAdmitter) int {
+	if counter, ok := admitter.(burstCapacityCounter); ok {
+		return counter.HealthyCount(appID)
+	}
+	return h.backend.HealthyCount(appID)
+}
+
 // burstPressure tracks requests which have passed the edge rate limits and
 // may still need a function target. It is deliberately local to gatewayd:
 // unlike Prometheus, it is available immediately during a burst and does not
@@ -221,7 +234,7 @@ func (h *Handler) maybeBurstCapacityWithAdmitter(ctx context.Context, app App, m
 		return waited, nil
 	}
 	for {
-		healthy := h.backend.HealthyCount(app.ID)
+		healthy := h.burstHealthyCount(app.ID, admitter)
 		if healthy > 0 && time.Now().UnixNano() < state.settlingUntil.Load() {
 			return waited, nil
 		}
@@ -256,7 +269,7 @@ func (h *Handler) maybeBurstCapacityWithAdmitter(ctx context.Context, app App, m
 			// A scheduler refusal to expand does not invalidate targets that
 			// already exist. Let the normal forwarding limits and request
 			// budget bound their work instead of failing the whole burst.
-			if generation.err != nil && h.backend.HealthyCount(app.ID) > 0 {
+			if generation.err != nil && h.burstHealthyCount(app.ID, admitter) > 0 {
 				return waited, nil
 			}
 			if generation.err != nil {
@@ -276,7 +289,7 @@ func (h *Handler) runBurstCapacity(ctx context.Context, app App, maxInstances, p
 
 	var workerErr error
 	for lifecycleCtx.Err() == nil {
-		healthy := h.backend.HealthyCount(app.ID)
+		healthy := h.burstHealthyCount(app.ID, admitter)
 		desired := desiredBurstInstancesForApp(state, app, perVM, maxInstances, time.Now())
 		if desired <= healthy {
 			break
@@ -310,7 +323,7 @@ func (h *Handler) runBurstCapacity(ctx context.Context, app App, maxInstances, p
 			}
 			break
 		}
-		if admitted == 0 || h.backend.HealthyCount(app.ID) <= healthy {
+		if admitted == 0 || h.burstHealthyCount(app.ID, admitter) <= healthy {
 			workerErr = errBurstCapacityStalled
 			if h.log != nil {
 				h.log.Warn("gateway: burst admission made no progress", "app_id", app.ID, "requested", count, "admitted", admitted)
