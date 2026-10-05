@@ -136,6 +136,12 @@ func run(args []string) (status int) {
 			PrintUsage(os.Stderr, "usage: gregale version", "version")
 			return 0
 		}
+		if jsonOutput {
+			// production-us hunt #4: --json version printed "gregale dev".
+			return jsonOut(writeJSON(map[string]string{
+				"version": wire.Version, "git_sha": wire.GitSHA, "build_time": wire.BuildTime,
+			}))
+		}
 		fmt.Printf("gregale %s\n", wire.Version)
 		return 0
 	case "help", "--help", "-h":

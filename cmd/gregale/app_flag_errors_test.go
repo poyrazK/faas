@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -139,5 +140,22 @@ func TestCustomerPlatformDoctorSkipsOwnerTools(t *testing.T) {
 	}
 	if !slices.Contains(refs, "DATABASE_URL") {
 		t.Errorf("doctor env scan lost the app's own DATABASE_URL: %v", refs)
+	}
+}
+
+// TestVersionJSON reproduces production-us hunt #4: `gregale --json
+// version` printed the human "gregale dev" line, breaking the documented
+// "every command accepts --json" contract scripts rely on.
+func TestVersionJSON(t *testing.T) {
+	stdout, restore := captureStdout(t)
+	code := run([]string{"--json", "version"})
+	restore()
+	out := stdout.String()
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(out), &got); err != nil || got["version"] == "" {
+		t.Fatalf("--json version = %q (%v), want a JSON object with version", out, err)
 	}
 }
