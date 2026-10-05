@@ -7,6 +7,18 @@ import (
 	"strconv"
 )
 
+func (c *Client) GetManagedPostgresCapabilities(ctx context.Context, region string) (ManagedPostgresCapabilities, error) {
+	var out ManagedPostgresCapabilities
+	path := "/v1/postgres/capabilities"
+	if region != "" {
+		path += "?region=" + url.QueryEscape(region)
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return ManagedPostgresCapabilities{}, err
+	}
+	return out, nil
+}
+
 func (c *Client) ListManagedPostgresAccountingDiagnostics(ctx context.Context, accountID, afterID string, limit int) (ManagedPostgresAccountingDiagnosticsResponse, error) {
 	var out ManagedPostgresAccountingDiagnosticsResponse
 	query := url.Values{}

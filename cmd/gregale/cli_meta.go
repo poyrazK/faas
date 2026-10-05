@@ -2378,6 +2378,9 @@ var cliCommands = []cliCommand{
 		Audience: cliAudienceOperator,
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed PostgreSQL databases"},
+			{Name: "capabilities", Short: "Show plan and region PostgreSQL feature support", Flags: []cliFlag{
+				{Name: "region", Short: "region (defaults to configured region)", Value: "REGION"},
+			}, Examples: []string{"gregale postgres capabilities --json"}},
 			{Name: "usage", Short: "Show monthly managed PostgreSQL usage and guardrail state"},
 			{Name: "reconcile", Short: "Preview or apply legacy identity and shutdown evidence (operator only)", Positionals: []string{"<account_id>"}, Flags: []cliFlag{
 				{Name: "file", Short: "verified identity and shutdown evidence JSON file", Value: "FILE", Req: true},

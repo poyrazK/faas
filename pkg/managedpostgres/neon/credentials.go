@@ -40,7 +40,7 @@ func (p *Provider) IssueCredentials(ctx context.Context, request managedpostgres
 	if err := validateCredentialRequest(request); err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}
-	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialMigration {
+	if request.Access != managedpostgres.CredentialReadWrite && request.Access != managedpostgres.CredentialReadOnly && request.Access != managedpostgres.CredentialMigration {
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnsupported
 	}
 	ref, err := parseResourceRef(request.ProviderResourceID)

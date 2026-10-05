@@ -180,7 +180,9 @@ func selectManagedPostgresEndpoint(access managedpostgres.CredentialAccess, endp
 				return endpoint, true
 			}
 		}
-		return managedpostgres.Endpoint{}, false
+		// Read-only is enforced by the qualified role's SQL privileges. A
+		// replica endpoint is optional; primary pooled/direct connections
+		// preserve the same permission contract and read-after-write behavior.
 	}
 	if access == managedpostgres.CredentialMigration {
 		for _, endpoint := range endpoints {
@@ -190,7 +192,7 @@ func selectManagedPostgresEndpoint(access managedpostgres.CredentialAccess, endp
 		}
 		return managedpostgres.Endpoint{}, false
 	}
-	if access != managedpostgres.CredentialReadWrite {
+	if access != managedpostgres.CredentialReadWrite && access != managedpostgres.CredentialReadOnly {
 		return managedpostgres.Endpoint{}, false
 	}
 	for _, preferred := range []managedpostgres.EndpointRole{managedpostgres.EndpointPooled, managedpostgres.EndpointDirect} {

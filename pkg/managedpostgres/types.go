@@ -682,6 +682,12 @@ type CredentialPrivilegeProber interface {
 	ProbeCredentialPrivileges(context.Context, string, CredentialMaterial) (CredentialPrivilegeEvidence, error)
 }
 
+// ReadOnlyCredentialProber proves the portable read-only access contract on
+// disposable resources. Advertising read_only requires this live evidence.
+type ReadOnlyCredentialProber interface {
+	ProbeReadOnlyCredentials(context.Context, string) (ReadOnlyCredentialEvidence, error)
+}
+
 // RestoreCredentialIsolationProber verifies that the source login cannot
 // authenticate against the restored target.
 type RestoreCredentialIsolationProber interface {

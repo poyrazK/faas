@@ -648,6 +648,7 @@ export type { ManagedPostgresAccountingReconciliationRequest } from './models/Ma
 export type { ManagedPostgresAccountingReconciliationResult } from './models/ManagedPostgresAccountingReconciliationResult.js';
 export type { ManagedPostgresBinding } from './models/ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './models/ManagedPostgresBindingList.js';
+export type { ManagedPostgresCapabilities } from './models/ManagedPostgresCapabilities.js';
 export type { ManagedPostgresCutover } from './models/ManagedPostgresCutover.js';
 export type { ManagedPostgresCutoverID } from './models/ManagedPostgresCutoverID.js';
 export type { ManagedPostgresCutoverMember } from './models/ManagedPostgresCutoverMember.js';
