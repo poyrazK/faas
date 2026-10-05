@@ -98,6 +98,11 @@ func (m *Manager) RegionalMigrationSource(_ context.Context, instance, token str
 // Current authority and fences still apply; unfinished native recovery stays
 // quarantined and cannot be resumed through this path.
 func (m *Manager) ResumeRegionalMigration(ctx context.Context, instance, token string, p runtimequota.Placement) error {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	r, err := m.RegionalMigrationSource(ctx, instance, token)
 	if err != nil {
 		return err

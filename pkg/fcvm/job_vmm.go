@@ -250,6 +250,11 @@ func EffectiveDestroyWait(taskTimeoutSec int) time.Duration {
 // Implemented on JailerVMM only. Tests that drive Boot directly
 // with a fully-resolved VMConfig don't go through this entry.
 func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobColdBootSpec) (err error) {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err
 	}
@@ -313,6 +318,11 @@ func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobCol
 func (v *JailerVMM) stageJobManifest(instance string, m JobManifest) (retErr error) {
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
+	ctx, release, err := v.beginNativeEffects(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	owner, err := v.nativeDriveStagingOwner(ctx, instance)
 	if err != nil {
 		return err
@@ -732,6 +742,11 @@ func validateJobExitPayload(payload JobExitPayload) error {
 // signal the customer by signalling the Firecracker host process; it must use a
 // host-initiated vsock connection to the supervisor inside the VM.
 func (v *JailerVMM) SignalJob(ctx context.Context, l Lease, signal syscall.Signal, grace time.Duration) (bool, int32, error) {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return false, 0, effectErr
+	}
+	defer finishNativeEffects()
 	// Preserve StopInstance's immediate-stop contract. A zero grace or explicit
 	// SIGKILL must not silently become a 30-second graceful stop for job VMs.
 	if grace <= 0 || signal == syscall.SIGKILL {

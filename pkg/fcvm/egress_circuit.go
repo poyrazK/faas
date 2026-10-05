@@ -28,6 +28,11 @@ import (
 // Idempotent, and a no-op when the app has no live instances: a parked app
 // has no netns to hold a rule, and the wake path renders the set fresh.
 func (m *Manager) UpdateEgressCircuit(ctx context.Context, appID string, targets []netns.EgressCircuitTarget) error {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if appID == "" {
 		return fmt.Errorf("fcvm: UpdateEgressCircuit: empty app_id")
 	}

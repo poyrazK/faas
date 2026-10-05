@@ -48,6 +48,11 @@ func validateNativeQualificationWake(ctx context.Context, frame state.Environmen
 // physical generation. Schedd supplies the frozen workload payload; vmmd
 // verifies its placement, artifact and guest reservation at this boundary.
 func (m *Manager) WakeEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, req WakeRequest) (*Instance, error) {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return nil, effectErr
+	}
+	defer finishNativeEffects()
 	j, err := m.qualificationJournal(frame)
 	if err != nil {
 		return nil, err
@@ -70,6 +75,11 @@ func (m *Manager) WakeEnvironmentQualification(ctx context.Context, frame state.
 // tombstone, absent parent, or generic destroy result cannot supply a receipt.
 // Unbound attempts remain charged until native exclusion proof is implemented.
 func (m *Manager) RetireEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution) (state.EnvironmentQualificationRetirement, error) {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return state.EnvironmentQualificationRetirement{}, effectErr
+	}
+	defer finishNativeEffects()
 	j, err := m.qualificationJournal(frame)
 	if err != nil {
 		return state.EnvironmentQualificationRetirement{}, err

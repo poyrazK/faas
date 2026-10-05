@@ -1,6 +1,7 @@
 //go:build linux || darwin
 
 // adr: 568 — native ownership and uncertain retirement must remain fenced.
+// adr: 639
 package fcvm
 
 import (
@@ -164,6 +165,9 @@ func TestNativeCleanupRestoresPinnedSourceAfterCacheReplacement(t *testing.T) {
 
 func TestNativeCleanupUnknownMountOrOldVersionChrootCannotBeAcknowledged(t *testing.T) {
 	_, v, _ := nativeManagerFixture(t)
+	if err := v.nativeRecovery.acquireDaemonOwnership(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	l := prepareRecoveredNative(t, v, 0, "old-instance")
 	local, err := v.nativeRecovery.journal.read(l.Instance)
 	if err != nil {

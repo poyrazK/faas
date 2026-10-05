@@ -1,6 +1,7 @@
 //go:build linux || darwin
 
 // adr: 568 — image access remains owned across daemon death and shared inode aliases.
+// adr: 639
 package fcvm
 
 import (
@@ -388,6 +389,9 @@ func TestNativeImageRecordsRejectMissingAndDuplicateAuthority(t *testing.T) {
 
 func TestNativeImageManagerStagingUsesOriginalOwnerAndRefusesUnjournaledCopies(t *testing.T) {
 	_, v, _ := nativeManagerFixture(t)
+	if err := v.nativeRecovery.acquireDaemonOwnership(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	v.readyTimeout = 30 * time.Second
 	lease := leaseForSlot("qualification-image-manager", 3)
 	if err := v.nativeRecovery.journal.prepare(t.Context(), lease); err != nil {

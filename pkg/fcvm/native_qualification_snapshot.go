@@ -29,6 +29,18 @@ func (v *JailerVMM) checkEnvironmentQualificationSnapshotSupport() error {
 // shared deployment keys, or another attempt. This is capture evidence only,
 // never a successful restore, smoke check, or graph qualification receipt.
 func (m *Manager) CaptureEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution) (proof state.EnvironmentQualificationSnapshot, result error) {
+	if m != nil {
+		if backend, ok := m.vmm.(environmentQualificationSnapshotBackend); ok {
+			if err := backend.checkEnvironmentQualificationSnapshotSupport(); err != nil {
+				return proof, err
+			}
+		}
+	}
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return proof, effectErr
+	}
+	defer finishNativeEffects()
 	j, err := m.qualificationJournal(frame)
 	if err != nil {
 		return proof, err

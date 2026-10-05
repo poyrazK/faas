@@ -1,6 +1,7 @@
 //go:build linux || darwin
 
 // adr: 568 — native ownership and uncertain retirement must remain fenced.
+// adr: 639
 package fcvm
 
 import (
@@ -25,6 +26,14 @@ type recoveryVMMFixture struct {
 	*fakeVMM
 	jailer  *JailerVMM
 	command func(context.Context, []string, []byte) ([]byte, error)
+}
+
+func (v *recoveryVMMFixture) beginNativeEffects(ctx context.Context) (context.Context, func(), error) {
+	return v.jailer.beginNativeEffects(ctx)
+}
+
+func (v *recoveryVMMFixture) withNativeInventory(ctx context.Context, observe func(context.Context) error) error {
+	return v.jailer.withNativeInventory(ctx, observe)
 }
 
 type nativeOwnershipRunner struct {

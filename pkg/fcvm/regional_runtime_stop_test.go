@@ -3,6 +3,7 @@
 package fcvm
 
 // adr: 630
+// adr: 639
 import (
 	"context"
 	"errors"
@@ -190,7 +191,7 @@ func TestRegionalNativeStopUncertainExitRetainsResourcesAndCanRetry(t *testing.T
 	}
 }
 
-func TestRegionalNativeStopRequiresExclusiveNativeDaemonOwnership(t *testing.T) {
+func TestRegionalNativeStopRefusesLostNativeDaemonOwnership(t *testing.T) {
 	m, v, host, req, _ := regionalNativeStopFixture(t, false)
 	r := v.nativeRecovery
 	if err := r.daemonLock.Close(); err != nil {
@@ -202,11 +203,11 @@ func TestRegionalNativeStopRequiresExclusiveNativeDaemonOwnership(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer otherOwner.Close()
+	defer func() { _ = otherOwner.Close() }()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 	defer cancel()
 	stop, err := m.RetireRegionalRuntime(ctx, req.Instance, req.RegionalRuntime.Permit, uuid.NewString())
-	if !errors.Is(err, context.DeadlineExceeded) || stop != (runtimequota.CapacityStop{}) || m.LeasedCount() != 1 || len(m.run.(*fakeRunner).commands) != 0 {
+	if !errors.Is(err, errNativeDaemonOwnershipLost) || stop != (runtimequota.CapacityStop{}) || m.LeasedCount() != 1 || len(m.run.(*fakeRunner).commands) != 0 {
 		t.Fatal("another daemon's original native ownership was bypassed", err)
 	}
 	rows, err := host.PermitInventory()

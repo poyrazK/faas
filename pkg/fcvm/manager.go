@@ -1793,6 +1793,21 @@ func (m *Manager) processExited(instance string, exitCode int, generation *uint6
 		// receipts remain owned by WaitJobExit and the stuck-task reaper.
 		return
 	}
+	if lifecycle == nil {
+		lifecycle = context.Background()
+	}
+	lifecycle, release, err := m.beginNativeEffects(detachedNativeEffectContext(lifecycle))
+	if err != nil {
+		m.log.Warn("process exit native ownership unavailable", "instance", instance, "err", err)
+		return
+	}
+	defer release()
+	m.mu.Lock()
+	current := m.live[instance] == inst && (generation == nil || m.processGenerations[instance] == *generation)
+	m.mu.Unlock()
+	if !current {
+		return
+	}
 
 	// Stop the health loop before notifying schedd. Otherwise the
 	// dead process can produce a second, slower liveness failure while
@@ -2303,7 +2318,7 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 		// Managers constructed outside cmd/vmmd still get the safe
 		// behavior: a request cancellation must not kill a monitor
 		// for a successfully running VM.
-		parent = context.WithoutCancel(ctx)
+		parent = detachedNativeEffectContext(ctx)
 	}
 	// Keep the generation token on the private lifecycle context rather than
 	// exposing it through LivenessProbeConfig. The cmd-level starter derives
@@ -2825,6 +2840,11 @@ func (m *Manager) ForwardStatelessAdvisory(ctx context.Context, instance, appID 
 // EnsureBaseExt4 calls once per child restage so two concurrent
 // restages of different runtimes see distinct mountpoints.
 func (m *Manager) MountParentExt4(ctx context.Context, storageKey string) (string, error) {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return "", effectErr
+	}
+	defer finishNativeEffects()
 	if m.storage == nil {
 		return "", vmmdmount.ErrNotFound
 	}
@@ -2887,6 +2907,11 @@ func (m *Manager) MountParentExt4(ctx context.Context, storageKey string) (strin
 // run in separate service mount namespaces; returning a mountpoint alone does
 // not make the mounted view visible to imaged.
 func (m *Manager) MaterializeParentExt4(ctx context.Context, storageKey, targetDir string) error {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	mountpoint, err := m.MountParentExt4(ctx, storageKey)
 	if err != nil {
 		return err
@@ -2905,6 +2930,11 @@ func (m *Manager) MaterializeParentExt4(ctx context.Context, storageKey, targetD
 // nil-equivalent (no error) on success AND on a never-issued
 // mountpoint; surfaces a real umount error (e.g. EBUSY) verbatim.
 func (m *Manager) UmountParentExt4(ctx context.Context, mountpoint string) error {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if m.parentMounts == nil {
 		// No registry wired — every call is a no-op. Matches the
 		// default-local unit-test path; production cmd/vmmd wires
@@ -2952,6 +2982,11 @@ func (m *Manager) UmountParentExt4(ctx context.Context, mountpoint string) error
 // them via MkdirBaseStaging + MkdirTemp) and a vmmd-side
 // cleanup would race with imaged's own defer-after-error.
 func (m *Manager) MountOverlayParent(ctx context.Context, lowerdir, upperdir, workdir, merged string) error {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if m.parentMounts == nil {
 		return fmt.Errorf("vmmd: parent overlay mount: registry not wired")
 	}
@@ -2995,6 +3030,11 @@ func (m *Manager) MountOverlayParent(ctx context.Context, lowerdir, upperdir, wo
 // — the staging tree (upper+work) stays in place because imaged
 // may want to reuse them on the next Mount attempt.
 func (m *Manager) UmountOverlayParent(ctx context.Context, merged string) error {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if m.parentMounts == nil {
 		return nil
 	}
@@ -3481,6 +3521,11 @@ func (m *Manager) WakeExecution(ctx context.Context, req ExecutionWakeRequest) (
 	if m == nil || m.vmm == nil {
 		return nil, errors.New("fcvm: execution wake is not configured")
 	}
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return nil, effectErr
+	}
+	defer finishNativeEffects()
 	if req.Instance == "" || req.AccountID == "" || !req.Plan.Valid() || !api.ExecutionRuntime(req.Runtime).Valid() {
 		return nil, errors.New("fcvm: invalid execution wake envelope")
 	}
@@ -3517,6 +3562,11 @@ func (m *Manager) WakeAppTask(ctx context.Context, req AppTaskWakeRequest) (*Ins
 	if m == nil || m.vmm == nil {
 		return nil, errors.New("fcvm: app task wake is not configured")
 	}
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return nil, effectErr
+	}
+	defer finishNativeEffects()
 	if wake.Instance == "" || wake.AccountID == "" || wake.AppID == "" || wake.DeploymentID == "" ||
 		!wake.Plan.Valid() || wake.BaseKey == "" || wake.LayerKey == "" ||
 		wake.VcpuCount <= 0 || wake.MemSizeMiB <= 0 || wake.CPUMillicores <= 0 {
@@ -3687,6 +3737,11 @@ type ColdBootRequest struct {
 // ColdBoot boots an instance from rootfs with no snapshot. It is Wake with a nil
 // snapshot.
 func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance, error) {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return nil, effectErr
+	}
+	defer finishNativeEffects()
 	return m.Wake(ctx, WakeRequest{
 		Instance: req.Instance, AccountID: req.AccountID,
 		BaseKey: req.BaseKey, LayerKey: req.LayerKey,
@@ -3751,6 +3806,11 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 // grace; pass EffectiveDestroyWait(req.TaskTimeoutSec) at the call
 // site.
 func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance, err error) {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return nil, effectErr
+	}
+	defer finishNativeEffects()
 	if m.vmm == nil {
 		return nil, fmt.Errorf("manager: BootJob: nil vmm")
 	}
@@ -3961,6 +4021,11 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if err := m.preflightNativeRegionalRuntime(ctx, req.RegionalRuntime); err != nil {
 		return nil, fmt.Errorf("manager: preflight native regional wake: %w", err)
 	}
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return nil, effectErr
+	}
+	defer finishNativeEffects()
 	finish, admissionErr := m.beginRuntimeLaunch(ctx, admissionForWake(req))
 	if admissionErr != nil {
 		return nil, admissionErr
@@ -5237,6 +5302,14 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 // (invariant §6.2-4: a parked app's cgroup is gone). The snapshot files are
 // written to spec's paths. Returns the snapshot info for schedd/imaged to record.
 func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
+	if err := m.preflightSnapshotProducer(ctx, instance, spec); err != nil {
+		return SnapshotInfo{}, err
+	}
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return SnapshotInfo{}, effectErr
+	}
+	defer finishNativeEffects()
 	operationCtx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("park %s: %w", instance, err)
@@ -5300,6 +5373,14 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 // engine owns the destroy so the audit/state-machine transitions
 // stay in one place.
 func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
+	if err := m.preflightSnapshotProducer(ctx, instance, spec); err != nil {
+		return SnapshotInfo{}, err
+	}
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return SnapshotInfo{}, effectErr
+	}
+	defer finishNativeEffects()
 	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, err)
@@ -5405,6 +5486,14 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if m == nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil manager", instance)
 	}
+	if err := m.preflightSnapshotProducer(ctx, instance, spec); err != nil {
+		return SnapshotInfo{}, err
+	}
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return SnapshotInfo{}, effectErr
+	}
+	defer finishNativeEffects()
 	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance, err)
@@ -5465,6 +5554,11 @@ func (m *Manager) TriggerExtensionHook(ctx context.Context, instance, phase stri
 	if m == nil || m.vmm == nil {
 		return fmt.Errorf("extension_hook %s: nil vmm", instance)
 	}
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	m.mu.Lock()
 	inst, ok := m.live[instance]
 	m.mu.Unlock()
@@ -5487,6 +5581,11 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 	if m == nil {
 		return fmt.Errorf("resume_vm %s: nil manager", instance)
 	}
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
 	if err != nil {
 		return fmt.Errorf("resume_vm %s: %w", instance, err)
@@ -5538,6 +5637,11 @@ func (m *Manager) Destroy(ctx context.Context, instance string) error {
 // SignalAndKill joins the original teardown result. Failed cleanup retains the
 // complete resource identity, preventing a replacement or resumed guest.
 func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal syscall.Signal, grace time.Duration) (killSignalSent bool, exitCode int32, err error) {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return false, 0, effectErr
+	}
+	defer finishNativeEffects()
 	if builder, killed, code, interruptErr := m.interruptExportingBuilder(ctx, instance); builder {
 		return killed, code, interruptErr
 	}
@@ -5584,6 +5688,11 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 // DestroyWithExport preserves the first teardown owner's export target and
 // result for concurrent callers, while confirmed cleanup owns lease release.
 func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir string) (exitCode int, err error) {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return -1, effectErr
+	}
+	defer finishNativeEffects()
 	var flight *instanceTeardownFlight
 	for {
 		var owner bool
@@ -6142,6 +6251,11 @@ func hasWorkloadName(names []string, want string) bool {
 // Wake before publication. A partial failure is retried by the durable policy
 // reconciler.
 func (m *Manager) UpdateAppCPULimit(ctx context.Context, appID string, revision int64, cpuMillicores int) error {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if appID == "" {
 		return fmt.Errorf("fcvm: UpdateAppCPULimit: empty app_id")
 	}
@@ -6211,6 +6325,11 @@ func (m *Manager) UpdateAppCPULimit(ctx context.Context, appID string, revision 
 }
 
 func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix) error {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if appID == "" {
 		return fmt.Errorf("fcvm: UpdateEgressAllowlist: empty app_id")
 	}
@@ -6375,6 +6494,11 @@ func (m *Manager) updatePrivateNetwork(ctx context.Context, appID string, cidrs,
 // An attachment operation carries its original live target set through the
 // final route/policy fan-out. A fresh snapshot could acquire a replacement VM.
 func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID string, cidrs, allowedCIDRs []netip.Prefix, firewallRules []api.PrivateNetworkFirewallRule, originalTargets map[string]*Instance) error {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if appID == "" {
 		return fmt.Errorf("fcvm: UpdatePrivateNetwork: empty app_id")
 	}
@@ -6638,6 +6762,11 @@ func (m *Manager) UpdatePrivateNetworkAttachmentWithFirewall(ctx context.Context
 }
 
 func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, networkID string, address netip.Addr, cidrs, allowedCIDRs []netip.Prefix, firewallRules []api.PrivateNetworkFirewallRule) error {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if appID == "" || networkID == "" || !address.IsValid() || !address.Is4() {
 		return fmt.Errorf("fcvm: UpdatePrivateNetworkAttachment: invalid identity")
 	}
@@ -6843,6 +6972,11 @@ func containsPrefix(prefixes []netip.Prefix, want netip.Prefix) bool {
 // cmd/vmmd/egress_watcher.go (a failed Render does NOT break
 // the live ruleset).
 func (m *Manager) UpdateStaticEgressIP(ctx context.Context, accountID, appID string, ip string) error {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if appID == "" {
 		return fmt.Errorf("fcvm: UpdateStaticEgressIP: empty app_id")
 	}
@@ -7696,6 +7830,11 @@ func layerKeyForColdBoot(req WakeRequest) string {
 // transaction per instance. New wakes read the ports from their request.
 // Instances whose set already matches are skipped.
 func (m *Manager) UpdateEgressPorts(ctx context.Context, appID string, extra []uint16) error {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if appID == "" {
 		return fmt.Errorf("fcvm: UpdateEgressPorts: empty app_id")
 	}

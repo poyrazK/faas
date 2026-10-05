@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/runtimequotahost"
 )
 
 type nativeRecoveryVMM interface {
@@ -42,6 +43,14 @@ func (m *Manager) RecoverNativeProcesses(ctx context.Context) error {
 	if v == nil {
 		return nil
 	}
+	r := v.nativeRecoveryRuntime()
+	if r.journal == nil || r.support == nil || r.resources == nil || r.inventory == nil {
+		return errors.Join(runtimequotahost.ErrStorage, errors.New("native recovery: complete inventory capability is unavailable"))
+	}
+	barrier, ok := m.vmm.(nativeEffectVMM)
+	if !ok {
+		return errors.New("native recovery: complete producer barrier is unavailable")
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -62,13 +71,20 @@ func (m *Manager) RecoverNativeProcesses(ctx context.Context) error {
 	flight := &nativeRecoveryInitFlight{done: make(chan struct{})}
 	m.nativeRecoveryFlight = flight
 	m.mu.Unlock()
-	leases, err := v.nativeRecoveryLeases(ctx)
-	if err == nil {
-		err = m.checkNativeRegionalRecovery(ctx, v)
-	}
-	if err == nil {
-		err = m.alloc.reserveRecovered(leases)
-	}
+	// Keep the observed ownership stable until its allocator quarantine exists.
+	// A producer cannot use the scan-to-reservation gap to reuse a native slot.
+	var leases []Lease
+	err := barrier.withNativeInventory(ctx, func(ctx context.Context) error {
+		var err error
+		leases, err = v.nativeRecoveryLeases(ctx)
+		if err != nil {
+			return err
+		}
+		if err := m.checkNativeRegionalRecovery(ctx, v); err != nil {
+			return err
+		}
+		return m.alloc.reserveRecovered(leases)
+	})
 	m.mu.Lock()
 	if err == nil {
 		m.nativeRecovered = make(map[string][]Lease)

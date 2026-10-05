@@ -641,6 +641,11 @@ func (j *nativeHostHelperJournal) run(ctx context.Context, owner nativeLaunchRec
 // owner directly. Other mounts, materialisation and bind provenance still need
 // this protocol before restart cleanup is safe.
 func (v *JailerVMM) runHostHelper(ctx context.Context, instance string, argv []string) ([]byte, error) {
+	ctx, release, err := v.beginNativeEffects(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if len(argv) == 0 {
 		return nil, errors.New("native helper: empty command")
 	}
@@ -691,6 +696,11 @@ func validateNativeHostHelperAuthority(owner nativeLaunchRecord, purpose nativeH
 // require this daemon's registered producer; cleanup requires the durable VM
 // exit fence instead and can survive the original daemon or request.
 func (v *JailerVMM) runNativeHostCommand(ctx context.Context, owner nativeLaunchRecord, purpose nativeHostHelperPurpose, argv []string, input []byte) ([]byte, error) {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return nil, effectErr
+	}
+	defer finishNativeEffects()
 	r := v.nativeRecovery
 	if r == nil || len(argv) == 0 {
 		return nil, errors.New("native helper: native command ownership is unavailable")

@@ -20,6 +20,11 @@ func (m *Manager) resumeRegionalRuntime(ctx context.Context, instance string, p 
 	if m == nil || m.vmm == nil || m.runtimeHostJournal == nil {
 		return runtimequotahost.ErrStorage
 	}
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	p = p.Clone()
 	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
 	if err != nil {

@@ -52,9 +52,10 @@ import (
 // reference them by their in-chroot basenames.
 type JailerVMM struct {
 	nativeRecovery *nativeProcessRecoveryRuntime // opt-in, configured before admission
-	chrootBase     string                        // /srv/fc/jail
-	fcName         string                        // chroot dir name jailer derives from the exec-file basename
-	readyTimeout   time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
+	nativeEffects  nativeEffectBarrier
+	chrootBase     string        // /srv/fc/jail
+	fcName         string        // chroot dir name jailer derives from the exec-file basename
+	readyTimeout   time.Duration // WAKING/cold-boot readiness budget (spec §6)
 	// tcpReadinessDial substitutes a deterministic probe in pure-Go tests.
 	// nil uses net.DialTimeout; configure only before the VMM is used.
 	tcpReadinessDial func(string, string, time.Duration) (net.Conn, error)
@@ -638,7 +639,14 @@ func (v *JailerVMM) WithServiceProxyCA(pem []byte) *JailerVMM {
 // helper copy. It also surfaces a missing or unusable helper before vmmd
 // advertises capacity.
 func (v *JailerVMM) PrepareJailHelper() error {
-	_, err := v.ensureMountHelper()
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	_, release, err := v.beginNativeEffects(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	_, err = v.ensureMountHelper()
 	return err
 }
 
@@ -820,6 +828,11 @@ func (v *JailerVMM) socketPath(instance string) string {
 // deferred Kill sweeps the tmp files alongside the chroot (which is
 // already on tmpfs, per spec §11).
 func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec) (err error) {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err
 	}
@@ -910,6 +923,11 @@ func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workl
 // Move 4 (issue #254): registerRing is called BEFORE startJailer so
 // cmd.Stdout can be wired to the ring's writer in startJailer.
 func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheckPath string) (err error) {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err
 	}
@@ -917,6 +935,11 @@ func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheck
 }
 
 func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, healthcheckGRPC bool, healthcheckGRPCService string, startupDeadlineS int, executionMode string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if err := v.ensureNativeLaunch(ctx, l); err != nil {
 		return err
 	}
@@ -1133,6 +1156,11 @@ func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloa
 	}
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return false, effectErr
+	}
+	defer finishNativeEffects()
 	owner, err := v.nativeDriveStagingOwner(ctx, instance)
 	if err != nil {
 		return false, err
@@ -1507,6 +1535,11 @@ func (v *JailerVMM) restoreConfiguredCPUFence(l Lease, workloads []WorkloadSpec,
 // tail; canceling that tail prevents its captured boot-time quota from
 // overwriting a newer runtime policy after this method returns.
 func (v *JailerVMM) UpdateCPULimit(ctx context.Context, l Lease, cpuMillicores int) error {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1559,7 +1592,7 @@ func (v *JailerVMM) scheduleStartupCPUBoostTail(
 		lease:     l,
 		workloads: append([]WorkloadSpec(nil), workloads...),
 		profile:   profile,
-		ctx:       context.WithoutCancel(ctx),
+		ctx:       detachedNativeEffectContext(ctx),
 		wakeID:    fields.WakeID,
 		appID:     fields.AppID,
 		readyAt:   readyAt,
@@ -1582,6 +1615,12 @@ func (v *JailerVMM) scheduleStartupCPUBoostTail(
 // finishStartupCPUBoostTail serializes quota restoration with Kill and a
 // replacement VM using the same instance id. A stale callback is ignored.
 func (v *JailerVMM) finishStartupCPUBoostTail(ctx context.Context, tail *startupCPUBoostTail) {
+	ctx, release, err := v.beginNativeEffects(ctx)
+	if err != nil {
+		slog.Error("vmm: startup CPU tail ownership unavailable", "instance", tail.lease.Instance, "err", err)
+		return
+	}
+	defer release()
 	v.mu.Lock()
 	if v.cpuBoostTails[tail.lease.Instance] != tail {
 		v.mu.Unlock()
@@ -1589,7 +1628,7 @@ func (v *JailerVMM) finishStartupCPUBoostTail(ctx context.Context, tail *startup
 	}
 	delete(v.cpuBoostTails, tail.lease.Instance)
 	restoreStartedAt := time.Now()
-	err := v.restoreConfiguredCPUFence(tail.lease, tail.workloads, tail.profile.ConfiguredMillicores)
+	err = v.restoreConfiguredCPUFence(tail.lease, tail.workloads, tail.profile.ConfiguredMillicores)
 	quotaRestoredAt := time.Now()
 	v.mu.Unlock()
 
@@ -1651,6 +1690,11 @@ func (v *JailerVMM) cancelStartupCPUBoostTail(instance string) {
 // HTTP GET <path> against <HostIP>:8080 and accepts 2xx as ready. The
 // Manager threads WakeRequest.HealthcheckPath into this field at bringUp.
 func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err error) {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err
 	}
@@ -2409,6 +2453,20 @@ func readConnectAck(conn net.Conn) (string, error) {
 // shared entropy is exactly the failure mode V6 rejects, so we refuse
 // to declare it ready.
 func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnixNano int64) error {
+	if v == nil {
+		return fmt.Errorf("vmm: TriggerResumeHook: nil receiver")
+	}
+	if l.Instance == "" {
+		return fmt.Errorf("vmm: TriggerResumeHook: empty instance")
+	}
+	if v.chrootBase == "" {
+		return fmt.Errorf("vmm: TriggerResumeHook: chrootBase not configured")
+	}
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	return retryResumeTransport(ctx, func(callCtx context.Context) error {
 		return v.triggerResumeHookOnce(callCtx, l, hostTimeUnixNano)
 	})
@@ -2562,6 +2620,11 @@ func (v *JailerVMM) TriggerBeforeCheckpoint(ctx context.Context, l Lease) error 
 	if v == nil || v.chrootBase == "" || l.Instance == "" {
 		return fmt.Errorf("vmm: before_checkpoint: invalid VMM or instance")
 	}
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	conn, err := (&net.Dialer{}).DialContext(callCtx, "unix", v.vsockUDSSock(l.Instance))
@@ -2635,6 +2698,11 @@ func (v *JailerVMM) TriggerExtensionHook(ctx context.Context, l Lease, phase str
 	if len(body) == 0 || len(body) > extensionHookMaxBodyBytes {
 		return fmt.Errorf("vmm: extension hook body %d bytes exceeds %d cap", len(body), extensionHookMaxBodyBytes)
 	}
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	callCtx, cancel := context.WithTimeout(ctx, extensionHookDialDeadline)
 	defer cancel()
 	sock := v.vsockUDSSock(l.Instance)
@@ -2689,6 +2757,11 @@ func (v *JailerVMM) TriggerExtensionHook(ctx context.Context, l Lease, phase str
 // this guest leaf update removes the old boot-time duplicate as a limiting
 // factor when the app ceiling is raised.
 func (v *JailerVMM) UpdateAppWorkloadCPULimit(ctx context.Context, l Lease, cpuMillicores int) error {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if v == nil || l.Instance == "" || v.chrootBase == "" {
 		return fmt.Errorf("vmm: update guest app CPU limit: invalid VMM or instance")
 	}
@@ -2839,6 +2912,14 @@ func (v *JailerVMM) SendStatelessAdvisory(ctx context.Context, l Lease, appID st
 // runner is alive), then Snapshot fires the init-tier capture with
 // the trailing Kill (the legacy park step).
 func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (SnapshotInfo, error) {
+	if err := v.preflightSnapshotKeepAlive(ctx, l, spec); err != nil {
+		return SnapshotInfo{}, err
+	}
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return SnapshotInfo{}, effectErr
+	}
+	defer finishNativeEffects()
 	info, err := v.SnapshotKeepAlive(ctx, l, spec)
 	if err != nil {
 		return SnapshotInfo{}, err
@@ -2869,11 +2950,13 @@ func (v *JailerVMM) Snapshot(ctx context.Context, l Lease, spec SnapshotSpec) (S
 // failure handler in pkg/sched.engine.captureWarmSnapshotLocked).
 func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec SnapshotSpec) (info SnapshotInfo, retErr error) {
 	if err := v.preflightSnapshotKeepAlive(ctx, l, spec); err != nil {
-		// This legacy path creates memory/state files before drive export.
-		// Native capture requires its original output/publication session;
-		// refuse before hooks, pause, file creation or failed-capture deletion.
 		return SnapshotInfo{}, err
 	}
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return SnapshotInfo{}, effectErr
+	}
+	defer finishNativeEffects()
 	defer func() {
 		if retErr != nil {
 			v.cleanupFailedSnapshotCapture(ctx, spec)
@@ -3276,6 +3359,11 @@ func prepareLocalSnapshotPath(storageKey, localPath string) error {
 // Firecracker "Conflict: chassis is locked" 409 with similar
 // wording doesn't get silently swallowed as success.
 func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if v == nil {
 		return fmt.Errorf("vmm: ResumeVM: nil receiver")
 	}
@@ -3310,6 +3398,11 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 // SIGKILL'd instances don't get an artifact export — that's Builderd's path
 // (use DestroyWithExport).
 func (v *JailerVMM) Kill(ctx context.Context, l Lease) error {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if v.nativeRecovery != nil {
 		return v.killNative(ctx, l)
 	}
@@ -3424,6 +3517,11 @@ func killAndConfirmExit(cmd *exec.Cmd, done <-chan struct{}, wait time.Duration)
 // grace timer races against the watchdog to fire SIGKILL on the
 // customer-configured deadline.
 func (v *JailerVMM) SignalAndKill(ctx context.Context, l Lease, signal syscall.Signal, grace time.Duration) (killSignalSent bool, exitCode int32, err error) {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return false, 0, effectErr
+	}
+	defer finishNativeEffects()
 	if v.nativeRecovery != nil {
 		v.mu.Lock()
 		rec := v.recs[l.Instance]
@@ -3537,6 +3635,11 @@ func signalAndKillRace(cmd *exec.Cmd, doneCh <-chan struct{}, signal syscall.Sig
 // Manager.Destroy's contract. Builder records wait for completion even when
 // a caller suppresses export; cancellation interrupts them via InterruptBuild.
 func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir string) (int, error) {
+	ctx, finishNativeEffects, effectErr := v.beginNativeCleanup(ctx)
+	if effectErr != nil {
+		return -1, effectErr
+	}
+	defer finishNativeEffects()
 	v.mu.Lock()
 	rec, ok := v.recs[l.Instance]
 	v.mu.Unlock()
@@ -3581,7 +3684,9 @@ func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir st
 		case <-rec.done:
 			goto exited
 		case <-ctx.Done():
-			v.killProcess(l.Instance)
+			if err := v.killProcess(context.WithoutCancel(ctx), l.Instance, rec); err != nil {
+				return -1, err
+			}
 			select {
 			case <-rec.done:
 			case <-time.After(5 * time.Second):
@@ -3592,7 +3697,9 @@ func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir st
 			// Force-kill and re-wait with a shorter budget. A builder that ignores
 			// the spec's BuildTimeoutSeconds is misbehaving; refuse to hold vmmd
 			// forever, but don't tear down the chroot before the export either.
-			v.killProcess(l.Instance)
+			if err := v.killProcess(context.WithoutCancel(ctx), l.Instance, rec); err != nil {
+				return -1, err
+			}
 			select {
 			case <-rec.done:
 			case <-time.After(5 * time.Second):
@@ -3603,7 +3710,9 @@ func (v *JailerVMM) DestroyWithExport(ctx context.Context, l Lease, exportDir st
 			if !consoleShowsGuestHalted(rec.consolePath) {
 				continue
 			}
-			v.killProcess(l.Instance)
+			if err := v.killProcess(context.WithoutCancel(ctx), l.Instance, rec); err != nil {
+				return -1, err
+			}
 			select {
 			case <-rec.done:
 			case <-time.After(5 * time.Second):
@@ -3642,6 +3751,11 @@ exited:
 // InterruptBuild stops the child without releasing its drives, chroot or
 // process record. DestroyWithExport owns those resources until export finishes.
 func (v *JailerVMM) InterruptBuild(ctx context.Context, instance string) (int32, error) {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return -1, effectErr
+	}
+	defer finishNativeEffects()
 	v.mu.Lock()
 	rec := v.recs[instance]
 	v.mu.Unlock()
@@ -3651,7 +3765,9 @@ func (v *JailerVMM) InterruptBuild(ctx context.Context, instance string) (int32,
 		}
 		return 0, nil
 	}
-	v.killProcess(instance)
+	if err := v.killProcess(ctx, instance, rec); err != nil {
+		return -1, err
+	}
 	select {
 	case <-rec.done:
 		v.mu.Lock()
@@ -3663,13 +3779,26 @@ func (v *JailerVMM) InterruptBuild(ctx context.Context, instance string) (int32,
 	}
 }
 
-func (v *JailerVMM) killProcess(instance string) {
-	v.mu.Lock()
-	proc := v.proc[instance]
-	v.mu.Unlock()
-	if proc != nil && proc.Process != nil {
-		_ = proc.Process.Kill()
+func (v *JailerVMM) killProcess(ctx context.Context, instance string, expected *instanceRecord) error {
+	_, release, err := v.beginNativeEffects(ctx)
+	if err != nil {
+		return err
 	}
+	defer release()
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	// A callback can wait behind inventory while a replacement takes this ID.
+	// Only the exact original record and child may receive its signal.
+	if expected == nil || v.recs[instance] != expected {
+		return nil
+	}
+	proc := v.proc[instance]
+	if proc != nil && proc == expected.cmd && proc.Process != nil {
+		if err := proc.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return err
+		}
+	}
+	return nil
 }
 
 // consoleShowsGuestHalted reads only the tail of the serial console. The
@@ -4129,6 +4258,11 @@ func stagedDrivePath(mountRoot, optimizedPath string) (string, error) {
 func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	owner, err := v.nativeDriveStagingOwner(ctx, instance)
 	if err != nil {
 		return err
@@ -4160,6 +4294,11 @@ func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
 func (v *JailerVMM) StageAPIEnv(instance string, jsonBlob []byte) error {
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	owner, err := v.nativeDriveStagingOwner(ctx, instance)
 	if err != nil {
 		return err
@@ -4188,6 +4327,11 @@ const workloadEnvPath = "upper/etc/faas/workloads"
 func (v *JailerVMM) StageWorkloadEnv(instance, workloadName string, jsonBlob []byte) error {
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	owner, err := v.nativeDriveStagingOwner(ctx, instance)
 	if err != nil {
 		return err
@@ -4246,6 +4390,11 @@ func validWorkloadName(name string) bool {
 func (v *JailerVMM) StageWorkloadManifest(instance string, driveIdx int, w WorkloadSpec) error {
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	owner, err := v.nativeDriveStagingOwner(ctx, instance)
 	if err != nil {
 		return err
@@ -4515,6 +4664,11 @@ type workloadRoster struct {
 func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, sidecars []WorkloadSpec) error {
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	owner, err := v.nativeDriveStagingOwner(ctx, instance)
 	if err != nil {
 		return err
@@ -4684,16 +4838,18 @@ func copyTree(src, dst string, maxBytes int64) error {
 // --- helpers ---------------------------------------------------------------
 
 func (v *JailerVMM) mkChroot(instance string) (string, error) {
-	if v.nativeRecovery != nil {
-		ctx, cancel := v.driveStagingContext()
-		defer cancel()
-		owner, err := v.nativeDriveStagingOwner(ctx, instance)
-		if err != nil {
-			return "", err
-		}
-		return v.mkChrootForOwner(ctx, owner, instance)
+	ctx, cancel := v.driveStagingContext()
+	defer cancel()
+	ctx, release, err := v.beginNativeEffects(ctx)
+	if err != nil {
+		return "", err
 	}
-	return v.mkChrootLegacy(instance)
+	defer release()
+	owner, err := v.nativeDriveStagingOwner(ctx, instance)
+	if err != nil {
+		return "", err
+	}
+	return v.mkChrootForOwner(ctx, owner, instance)
 }
 
 func (v *JailerVMM) mkChrootLegacy(instance string) (string, error) {
@@ -4739,6 +4895,11 @@ func (v *JailerVMM) mkChrootLegacy(instance string) (string, error) {
 // own stderr only on configuration errors; that stream remains discarded
 // to avoid mixing error noise into the customer's log tail.
 func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...string) error {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err
 	}
@@ -4851,8 +5012,11 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	v.recs[l.Instance] = rec
 	v.mu.Unlock()
 	if rec.isBuilder {
+		watchCtx := detachedNativeEffectContext(ctx)
 		go watchBuilderGuestHalt(rec.consolePath, rec.done, 250*time.Millisecond, func() {
-			v.killProcess(l.Instance)
+			if err := v.killProcess(watchCtx, l.Instance, rec); err != nil {
+				slog.Error("vmm: halted builder termination uncertain", "instance", l.Instance, "err", err)
+			}
 		})
 	}
 	// Watchdog: cmd.Wait must be called exactly once per process (stdlib
@@ -4943,6 +5107,11 @@ func (v *JailerVMM) provision(root string, cfg VMConfig, uid, gid int, instance 
 	}
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return cfg, effectErr
+	}
+	defer finishNativeEffects()
 	owner, err := v.nativeDriveStagingOwner(ctx, instanceID)
 	if err != nil {
 		return cfg, err
@@ -5026,6 +5195,11 @@ func (v *JailerVMM) stageEphemeralWritableAsForOwner(ctx context.Context, owner 
 func (v *JailerVMM) stageReadOnlyAs(root, src, name, instance string) (string, error) {
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return "", effectErr
+	}
+	defer finishNativeEffects()
 	owner, err := v.nativeDriveStagingOwner(ctx, instance)
 	if err != nil {
 		return "", err
@@ -6746,6 +6920,11 @@ func stageWritableAs(root, src, name string, uid, gid int) (string, error) {
 func (v *JailerVMM) stageWritableAs(root, src, name string, uid, gid int, instance string) (string, error) {
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return "", effectErr
+	}
+	defer finishNativeEffects()
 	owner, err := v.nativeDriveStagingOwner(ctx, instance)
 	if err != nil {
 		return "", err

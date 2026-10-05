@@ -60,6 +60,11 @@ func (m *Manager) completePausedRestore(ctx context.Context, inst *Instance) err
 }
 
 func (v *JailerVMM) ResumeServingVM(ctx context.Context, l Lease, spec ServingResumeSpec) error {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	if err := v.ResumeVM(ctx, l); err != nil {
 		return err
 	}

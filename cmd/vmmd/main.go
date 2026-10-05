@@ -1130,51 +1130,56 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The legacy reapers do not supply pinned exit or resource receipts and
 	// therefore cannot remove jails or clones behind that ownership.
 	if store != nil && !cfg.NativeProcessRecovery {
-		isLiveInstance := func(ctx context.Context, instanceID string) (bool, error) {
-			ins, err := store.InstanceByID(ctx, instanceID)
-			if err != nil {
-				// A row that is genuinely gone is not live; anything else is
-				// unknown and must not authorise resource removal.
-				if errors.Is(err, state.ErrNotFound) {
-					return false, nil
+		if err := mgr.RunNativeHostMaintenance(ctx, func(ctx context.Context) error {
+			isLiveInstance := func(ctx context.Context, instanceID string) (bool, error) {
+				ins, err := store.InstanceByID(ctx, instanceID)
+				if err != nil {
+					// A row that is genuinely gone is not live; anything else is
+					// unknown and must not authorise resource removal.
+					if errors.Is(err, state.ErrNotFound) {
+						return false, nil
+					}
+					return false, err
 				}
-				return false, err
+				return state.IsLive(ins.State), nil
 			}
-			return state.IsLive(ins.State), nil
-		}
-		rep, err := fcvm.ReapOrphanedJails(ctx, fcvm.ReapOptions{
-			JailRoot: jailer.JailRoot(),
-			Runner:   wire.ExecRunner{},
-			Log:      log,
-			IsLive:   isLiveInstance,
-		})
-		if err != nil {
-			log.Warn("vmmd: orphan reap failed", "err", err)
-		} else if rep.Scanned > 0 {
-			log.Info("vmmd: orphan reap complete",
-				"scanned", rep.Scanned, "reaped", rep.Reaped,
-				"process_only", rep.ProcessOnly,
-				"skipped_live", rep.SkippedLive,
-				"skipped_young", rep.SkippedYoung,
-				"skipped_unknown", rep.SkippedUnknown)
-		}
-		if cacheBackend := storage.AsCacheBackend(storageBackend); cacheBackend != nil {
-			cloneRep, cloneErr := fcvm.ReapOrphanedLayerClones(ctx, fcvm.LayerCloneReapOptions{
-				Root:   cacheBackend.Root(),
-				IsLive: isLiveInstance,
-				Log:    log,
+			rep, err := fcvm.ReapOrphanedJails(ctx, fcvm.ReapOptions{
+				JailRoot: jailer.JailRoot(),
+				Runner:   wire.ExecRunner{},
+				Log:      log,
+				IsLive:   isLiveInstance,
 			})
-			if cloneErr != nil {
-				log.Warn("vmmd: orphan layer clone reap failed", "err", cloneErr)
-			} else if cloneRep.Scanned > 0 {
-				log.Info("vmmd: orphan layer clone reap complete",
-					"scanned", cloneRep.Scanned, "reaped", cloneRep.Reaped,
-					"reclaimed_logical_bytes", cloneRep.ReclaimedLogicalBytes,
-					"skipped_live", cloneRep.SkippedLive,
-					"skipped_young", cloneRep.SkippedYoung,
-					"skipped_unknown", cloneRep.SkippedUnknown,
-					"failed", cloneRep.Failed)
+			if err != nil {
+				log.Warn("vmmd: orphan reap failed", "err", err)
+			} else if rep.Scanned > 0 {
+				log.Info("vmmd: orphan reap complete",
+					"scanned", rep.Scanned, "reaped", rep.Reaped,
+					"process_only", rep.ProcessOnly,
+					"skipped_live", rep.SkippedLive,
+					"skipped_young", rep.SkippedYoung,
+					"skipped_unknown", rep.SkippedUnknown)
 			}
+			if cacheBackend := storage.AsCacheBackend(storageBackend); cacheBackend != nil {
+				cloneRep, cloneErr := fcvm.ReapOrphanedLayerClones(ctx, fcvm.LayerCloneReapOptions{
+					Root:   cacheBackend.Root(),
+					IsLive: isLiveInstance,
+					Log:    log,
+				})
+				if cloneErr != nil {
+					log.Warn("vmmd: orphan layer clone reap failed", "err", cloneErr)
+				} else if cloneRep.Scanned > 0 {
+					log.Info("vmmd: orphan layer clone reap complete",
+						"scanned", cloneRep.Scanned, "reaped", cloneRep.Reaped,
+						"reclaimed_logical_bytes", cloneRep.ReclaimedLogicalBytes,
+						"skipped_live", cloneRep.SkippedLive,
+						"skipped_young", cloneRep.SkippedYoung,
+						"skipped_unknown", cloneRep.SkippedUnknown,
+						"failed", cloneRep.Failed)
+				}
+			}
+			return nil
+		}); err != nil {
+			log.Warn("vmmd: legacy orphan reap ownership unavailable", "err", err)
 		}
 	}
 
@@ -1194,7 +1199,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		sweepInterval = 30 * time.Second
 	}
 	liveness.Register(sweepLoopName, 3*sweepInterval)
-	go runParentMountSweep(sweepCtx, parentReg, cfg.ParentSweepInterval, log, func() { liveness.Beat(sweepLoopName) })
+	go runParentMountSweep(sweepCtx, parentReg, cfg.ParentSweepInterval, log, func() { liveness.Beat(sweepLoopName) }, mgr.RunNativeHostMaintenance)
 	// Shutdown sweep — registered as a defer BEFORE the gRPC
 	// GracefulStop so a late RPC still gets serviced and the
 	// registry is empty when vmmd exits. Defers run LIFO, so
@@ -1202,8 +1207,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// correct order (no late caller waiting on a mountpoint
 	// while we sweep it).
 	defer func() {
-		if n := parentReg.SweepAll(ctx, log); n > 0 {
-			log.Info("vmmd: shutdown parent-mount sweep", "n", n)
+		if err := mgr.RunNativeHostMaintenance(context.WithoutCancel(ctx), func(ctx context.Context) error {
+			if n := parentReg.SweepAll(ctx, log); n > 0 {
+				log.Info("vmmd: shutdown parent-mount sweep", "n", n)
+			}
+			return nil
+		}); err != nil {
+			log.Warn("vmmd: shutdown parent-mount ownership unavailable", "err", err)
 		}
 	}()
 

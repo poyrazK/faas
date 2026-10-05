@@ -19,6 +19,11 @@ func (m *Manager) RetireRegionalRuntime(ctx context.Context, instance string, p 
 	if m == nil || m.runtimeHostJournal == nil || m.nativeVMM() == nil {
 		return runtimequota.CapacityStop{}, runtimequotahost.ErrStorage
 	}
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return runtimequota.CapacityStop{}, effectErr
+	}
+	defer finishNativeEffects()
 	r := m.nativeVMM().nativeRecoveryRuntime()
 	if r.journal == nil || r.resources == nil {
 		return runtimequota.CapacityStop{}, runtimequotahost.ErrStorage

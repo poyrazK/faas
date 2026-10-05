@@ -69,6 +69,11 @@ func (m *Manager) retainCleanup(lease Lease, nc netns.Config, workloadNames []st
 }
 
 func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, workloadNames []string) error {
+	ctx, finishNativeEffects, effectErr := m.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	retained := m.retainCleanup(lease, nc, workloadNames)
 	retained.mu.Lock()
 	defer retained.mu.Unlock()

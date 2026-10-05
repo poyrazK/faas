@@ -8,6 +8,11 @@ import (
 )
 
 func (v *JailerVMM) stageNativeImageForOwner(ctx context.Context, owner nativeLaunchRecord, root, source, name string, readOnly, preferLink bool) (string, error) {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return "", effectErr
+	}
+	defer finishNativeEffects()
 	r := v.nativeRecovery
 	if r == nil || owner.Generation != r.generation(owner.Lease.Instance) || root != v.chrootRoot(owner.Lease.Instance) {
 		return "", errors.New("native image source: staging lacks original local jail authority")
@@ -21,6 +26,11 @@ func (v *JailerVMM) stageNativeImageForOwner(ctx context.Context, owner nativeLa
 }
 
 func (v *JailerVMM) stageNativeWritableImageForOwner(ctx context.Context, owner nativeLaunchRecord, root, source, name string, uid, gid int, instance string) (string, error) {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return "", effectErr
+	}
+	defer finishNativeEffects()
 	r := v.nativeRecovery
 	if r == nil || r.journal == nil || instance != owner.Lease.Instance || uid != owner.Lease.UID || gid != owner.Lease.GID || root != v.chrootRoot(instance) || name != layerImageName || owner.Lease.IsBuilder {
 		return "", errors.New("native image source: private clone lacks original local jail authority")
@@ -39,6 +49,11 @@ func (v *JailerVMM) stageNativeWritableImageForOwner(ctx context.Context, owner 
 }
 
 func (v *JailerVMM) mkChrootForOwner(ctx context.Context, expected nativeLaunchRecord, instance string) (root string, err error) {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return "", effectErr
+	}
+	defer finishNativeEffects()
 	if v.nativeRecovery == nil {
 		return v.mkChrootLegacy(instance)
 	}

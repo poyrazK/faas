@@ -1,4 +1,5 @@
 // adr: 022
+// adr: 639
 
 package fcvm
 
@@ -1361,9 +1362,9 @@ func TestRestore_MkChrootFailure(t *testing.T) {
 // TestKill_ChrootRemoveErrorFailsWhenBaseIsFile covers the only path that
 // returns an error from Kill: RemoveAll fails because the base path isn't
 // a directory.
-func TestKill_ChrootRemoveErrorFailsWhenBaseIsFile(t *testing.T) {
-	// Need chrootBase to be a regular file so RemoveAll(<base>/firecracker/x)
-	// returns ENOTDIR. Put the file inside a temp dir.
+func TestKill_InvalidChrootBaseRefusesBeforeCleanup(t *testing.T) {
+	// A regular file cannot supply the protected root-wide barrier.
+	// Refuse before entering physical cleanup and retain that file.
 	dir := t.TempDir()
 	base := filepath.Join(dir, "iamafile")
 	if err := os.WriteFile(base, []byte("not-a-dir"), 0o640); err != nil {
@@ -1372,10 +1373,13 @@ func TestKill_ChrootRemoveErrorFailsWhenBaseIsFile(t *testing.T) {
 	v := NewJailerVMM(base, time.Second)
 	err := v.Kill(context.Background(), Lease{Instance: "x"})
 	if err == nil {
-		t.Fatal("expected RemoveAll to fail")
+		t.Fatal("expected an invalid coordination root to refuse cleanup")
 	}
-	if !strings.Contains(err.Error(), "remove chroot") {
-		t.Errorf("error %q missing 'remove chroot'", err.Error())
+	if !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("invalid root error: %v", err)
+	}
+	if body, err := os.ReadFile(base); err != nil || string(body) != "not-a-dir" {
+		t.Fatalf("invalid root was modified: %q %v", body, err)
 	}
 }
 

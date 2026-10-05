@@ -33,6 +33,7 @@ type nativeProcessRecoveryRuntime struct {
 	mu         sync.Mutex
 	owned      map[string]string // launch generation registered by this daemon
 	daemonLock *os.File          // held for this daemon's lifetime, never by a boot RPC
+	everOwned  bool              // losing this descriptor cannot mint fresh local ownership
 	lockWait   time.Duration
 }
 
@@ -97,6 +98,16 @@ func (r *nativeProcessRecoveryRuntime) remember(record nativeLaunchRecord) {
 // Capture both prepared/unfinished journal frames and every actual native UID.
 // Completed records are still checked, but do not reserve reusable slots.
 func (v *JailerVMM) nativeRecoveryLeases(ctx context.Context) ([]Lease, error) {
+	var leases []Lease
+	err := v.withNativeInventory(ctx, func(ctx context.Context) error {
+		var err error
+		leases, err = v.scanNativeRecoveryLeases(ctx)
+		return err
+	})
+	return leases, err
+}
+
+func (v *JailerVMM) scanNativeRecoveryLeases(ctx context.Context) ([]Lease, error) {
 	r := v.nativeRecovery
 	if err := r.support(); err != nil {
 		return nil, fmt.Errorf("native recovery support: %w", err)
@@ -209,6 +220,11 @@ func (v *JailerVMM) prepareNativeLeaseWithPlacement(ctx context.Context, lease L
 }
 
 func (v *JailerVMM) prepareNativeLeaseWithRegionalResources(ctx context.Context, lease Lease, placement *runtimequota.Placement, resources *state.RegionalRuntimeResources) error {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	placement = cloneRuntimePlacement(placement)
 	resources = cloneNativeRegionalResources(resources)
 	if err := validateNativeRegionalPlacement(lease, placement); err != nil {
@@ -263,7 +279,17 @@ func (r *nativeProcessRecoveryRuntime) acquireDaemonOwnership(ctx context.Contex
 		return err
 	}
 	if r.daemonLock != nil {
+		_, err := r.daemonLock.Stat()
+		if err != nil {
+			return fmt.Errorf("native recovery: daemon ownership descriptor is unavailable: %w", err)
+		}
 		return nil
+	}
+	if r.everOwned {
+		return errNativeDaemonOwnershipLost
+	}
+	if r.journal == nil {
+		return errors.New("native recovery: ownership journal is unavailable")
 	}
 	budget := r.lockWait
 	if budget <= 0 {
@@ -282,12 +308,18 @@ func (r *nativeProcessRecoveryRuntime) acquireDaemonOwnership(ctx context.Contex
 		return fmt.Errorf("native recovery: daemon ownership: %w", err)
 	}
 	r.daemonLock = lock
+	r.everOwned = true
 	return nil
 }
 
 // A restore fallback retains its original lease and network. Only its local
 // registered producer can replace the prior confirmed native incarnation.
 func (v *JailerVMM) ensureNativeLaunch(ctx context.Context, lease Lease) error {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	r := v.nativeRecovery
 	if r == nil {
 		return nil
@@ -330,6 +362,11 @@ func (v *JailerVMM) nativeRetirementRecord(ctx context.Context, lease Lease) (na
 }
 
 func (v *JailerVMM) confirmNativeCleanup(ctx context.Context, lease Lease, nc netns.Config) error {
+	ctx, finishNativeEffects, effectErr := v.beginNativeEffects(ctx)
+	if effectErr != nil {
+		return effectErr
+	}
+	defer finishNativeEffects()
 	r := v.nativeRecovery
 	if r == nil {
 		return nil

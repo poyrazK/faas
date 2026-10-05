@@ -90,7 +90,7 @@ func (m *Manager) startReadinessLoop(ctx context.Context, instance string, slot 
 	}
 	parent := m.lifecycleCtx //nolint:contextcheck // Readiness is daemon-owned and intentionally outlives the wake RPC.
 	if parent == nil {
-		parent = context.WithoutCancel(ctx)
+		parent = detachedNativeEffectContext(ctx)
 	}
 	loopCtx, cancel := context.WithCancel(parent)
 	m.mu.Lock()

@@ -1,3 +1,4 @@
+// adr: 639
 package fcvm
 
 import (
@@ -126,7 +127,7 @@ func TestJailerVMMUpdateCPULimitCancelsStaleStartupBoostTail(t *testing.T) {
 		profile: startupCPUProfile{ConfiguredMillicores: 1000, StartupMillicores: 1000},
 		timer:   time.NewTimer(time.Hour),
 	}
-	vmm := &JailerVMM{cpuBoostTails: map[string]*startupCPUBoostTail{lease.Instance: tail}}
+	vmm := &JailerVMM{chrootBase: t.TempDir(), cpuBoostTails: map[string]*startupCPUBoostTail{lease.Instance: tail}}
 
 	if err := vmm.UpdateCPULimit(context.Background(), lease, 250); err != nil {
 		t.Fatalf("UpdateCPULimit: %v", err)
@@ -162,7 +163,7 @@ func TestJailerVMMUpdateCPULimitKeepsStartupTailWhenWriteFails(t *testing.T) {
 		timer:   time.NewTimer(time.Hour),
 	}
 	t.Cleanup(func() { tail.timer.Stop() })
-	vmm := &JailerVMM{cpuBoostTails: map[string]*startupCPUBoostTail{lease.Instance: tail}}
+	vmm := &JailerVMM{chrootBase: t.TempDir(), cpuBoostTails: map[string]*startupCPUBoostTail{lease.Instance: tail}}
 
 	if err := vmm.UpdateCPULimit(context.Background(), lease, 250); err == nil {
 		t.Fatal("UpdateCPULimit succeeded without an existing cgroup scope")

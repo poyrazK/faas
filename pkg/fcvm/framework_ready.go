@@ -29,7 +29,7 @@ func (m *Manager) startFrameworkReadyLoop(ctx context.Context, id string) {
 	}
 	parent := m.lifecycleCtx //nolint:contextcheck // Observer belongs to the daemon, not the short-lived wake RPC.
 	if parent == nil {
-		parent = context.WithoutCancel(ctx)
+		parent = detachedNativeEffectContext(ctx)
 	}
 	ctx, cancel := context.WithCancel(parent)
 	run := &frameworkReadyRun{cancel: cancel, done: make(chan struct{}), instance: inst}

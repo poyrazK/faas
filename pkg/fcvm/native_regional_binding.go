@@ -259,3 +259,24 @@ func (m *Manager) preflightRegionalMigrationCapture(ctx context.Context, inst *I
 	}
 	return m.checkNativeRegionalInstance(inst, *spec.RegionalMigrationSource)
 }
+
+// This early capability check can refuse only. Capture repeats it under its
+// instance flight and producer permit before any physical or durable effects.
+func (m *Manager) preflightSnapshotProducer(ctx context.Context, instance string, spec SnapshotSpec) error {
+	if m == nil {
+		return nil
+	}
+	v, ok := m.vmm.(snapshotCapturePreflighter)
+	if !ok {
+		return nil
+	}
+	m.mu.Lock()
+	inst := m.live[instance]
+	if inst == nil {
+		m.mu.Unlock()
+		return nil
+	}
+	lease := inst.Lease
+	m.mu.Unlock()
+	return v.preflightSnapshotKeepAlive(ctx, lease, spec)
+}
