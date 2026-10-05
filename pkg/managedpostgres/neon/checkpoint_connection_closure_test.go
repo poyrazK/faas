@@ -1,4 +1,4 @@
-// adr: 585
+// adr: 590
 package neon
 
 import (
@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/connectionfence"
 )
@@ -48,6 +49,7 @@ func newNativeConnectionClosureFixture(t *testing.T) *nativeConnectionClosureFix
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = root.Close(context.Background()) })
+	pgtest.LockCluster(t, root, "managed-postgres-checkpoint-fixtures")
 	var occupied bool
 	if err := root.QueryRow(t.Context(), "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=$1) OR EXISTS (SELECT 1 FROM pg_database WHERE datname=$2)", maintenanceSourceRole, connectionfence.MaintenanceDatabase).Scan(&occupied); err != nil || occupied {
 		t.Fatalf("native adapter contract needs unoccupied owned names: %v occupied=%v", err, occupied)

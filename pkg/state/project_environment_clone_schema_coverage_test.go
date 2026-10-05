@@ -1,4 +1,4 @@
-// adr: 585
+// adr: 590
 package state
 
 import (
@@ -54,6 +54,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"app_service_address_cursors":      CloneSchemaOperational,
 		"workflow_automation_definitions":  CloneSchemaConfiguration,
 		"workflow_event_receipts":          CloneSchemaOperational,
+		"workflow_operation_effects":       CloneSchemaOperational,
 		"workflow_run_resumes":             CloneSchemaOperational,
 		"workflow_schedule_cursors":        CloneSchemaOperational,
 		"workflow_webhook_bindings":        CloneSchemaConfiguration,

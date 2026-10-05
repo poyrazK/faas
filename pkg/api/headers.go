@@ -60,6 +60,9 @@ const (
 	InvocationSourceHeader             = "X-Faas-Invocation-Source"
 	ExclusiveOperationIDHeader         = "X-Gregale-Operation-Id"
 	ExclusiveOperationGenerationHeader = "X-Gregale-Operation-Generation"
+	// Advertised only for a managed request whose scheduler and gateway both
+	// understand the result protocol. Handlers should require value "1".
+	ManagedOperationResultVersionHeader = "X-Gregale-Operation-Result-Version"
 	// ErrorCodeHeader identifies a platform-owned error independently of the
 	// response body. Edge adapters use it to distinguish a Gregale timeout
 	// from a genuine CDN/origin failure.
@@ -179,7 +182,7 @@ func IsGuestIdentityHeader(name string) bool {
 		"x-faas-tenant-id", "x-faas-platform-tenant-id", "x-faas-instance-id", "x-faas-node-id",
 		"x-faas-region", "x-faas-commit-sha", "x-faas-deployment-tag",
 		"x-faas-deployment-created-at", "x-faas-image-digest", "x-faas-flag-context",
-		"x-gregale-operation-id", "x-gregale-operation-generation":
+		"x-gregale-operation-id", "x-gregale-operation-generation", "x-gregale-operation-result-version":
 		return true
 	default:
 		return false

@@ -9,6 +9,9 @@ import (
 	"math/big"
 	"reflect"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 )
 
 // Workflow run status constants (ADR-081 §1).
@@ -51,6 +54,7 @@ var (
 	ErrWorkflowInvalidInput      = errors.New("state: workflow JSON payload is invalid")
 	ErrWorkflowInvalidRecord     = errors.New("state: workflow record is invalid")
 	ErrWorkflowRunQuotaExceeded  = errors.New("state: workflow active-run quota exceeded")
+	ErrWorkflowRetryNotAllowed   = errors.New("state: workflow step retry is not allowed")
 	ErrWorkflowCallbackClosed    = errors.New("state: workflow callback is closed")
 	ErrWorkflowCallbackExpired   = errors.New("state: workflow callback has expired")
 )
@@ -65,6 +69,111 @@ const WorkflowRunStaleAfter = 2*time.Hour + 5*time.Minute
 // largest timeout supported by any plan.
 type WorkflowRunLeaseStore interface {
 	ExtendWorkflowRunLease(context.Context, string, time.Duration) error
+}
+
+// WorkflowRetryStore requeues a terminal run around one failed HTTP step.
+// It remains optional so existing WorkflowStore implementations and test
+// doubles do not need to support the operator retry surface.
+type WorkflowRetryStore interface {
+	RetryWorkflowStep(context.Context, string, string, int) (*WorkflowRun, int, error)
+}
+
+// workflowRetryPlan validates an in-place retry and returns skipped dependency
+// descendants that must be reopened so the DAG can continue after the retry.
+func workflowRetryPlan(run *WorkflowRun, stepName string, steps []*WorkflowStep) ([]string, error) {
+	if run == nil || (run.Status != WorkflowRunStatusFailed && run.Status != WorkflowRunStatusDead) {
+		return nil, ErrWorkflowRetryNotAllowed
+	}
+	var spec api.WorkflowSpec
+	if err := json.Unmarshal(run.DefinitionSnapshot, &spec); err != nil {
+		return nil, ErrWorkflowRetryNotAllowed
+	}
+	var target *api.WorkflowStepSpec
+	for i := range spec.Steps {
+		step := spec.Steps[i]
+		if step.Name == stepName {
+			target = &spec.Steps[i]
+		}
+	}
+	if target == nil || (target.Run == "" && target.Path == "") {
+		return nil, ErrWorkflowRetryNotAllowed
+	}
+	if len(steps) == 0 {
+		return nil, ErrWorkflowRetryNotAllowed
+	}
+	stepByName := make(map[string]*WorkflowStep, len(steps))
+	for _, step := range steps {
+		if step != nil {
+			stepByName[step.StepName] = step
+		}
+	}
+	failed, exists := stepByName[stepName]
+	if !exists || (failed.Status != WorkflowStepStatusFailed && failed.Status != WorkflowStepStatusDead) {
+		return nil, ErrWorkflowRetryNotAllowed
+	}
+	for name, step := range stepByName {
+		if name == stepName {
+			continue
+		}
+		if step.Status == WorkflowStepStatusFailed || step.Status == WorkflowStepStatusDead ||
+			step.Status == WorkflowStepStatusRunning || step.Status == WorkflowStepStatusAwaitingEvent {
+			return nil, ErrWorkflowRetryNotAllowed
+		}
+		// Cancellation marks skipped steps with the run's last error. Do not
+		// turn an operator-cancelled run back into active work.
+		if run.LastError != nil && step.Status == WorkflowStepStatusSkipped && step.Error != nil && *step.Error == *run.LastError {
+			return nil, ErrWorkflowRetryNotAllowed
+		}
+	}
+	for _, candidate := range spec.Steps {
+		if candidate.OnFailure == stepName || candidate.OnTimeout == stepName {
+			return nil, ErrWorkflowRetryNotAllowed
+		}
+	}
+	for _, handlerName := range []string{target.OnFailure, target.OnTimeout} {
+		if handlerName == "" {
+			continue
+		}
+		handler := stepByName[handlerName]
+		if handler != nil && handler.Status == WorkflowStepStatusSucceeded {
+			return nil, ErrWorkflowRetryNotAllowed
+		}
+	}
+
+	// Descendants reached through depends_on are rerun if they were skipped
+	// because this step failed. A completed descendant means its effects have
+	// already escaped and cannot safely be replayed in place.
+	children := make(map[string][]string, len(spec.Steps))
+	for _, candidate := range spec.Steps {
+		for _, dependency := range candidate.DependsOn {
+			children[dependency] = append(children[dependency], candidate.Name)
+		}
+	}
+	var reopen []string
+	visited := map[string]bool{stepName: true}
+	queue := []string{stepName}
+	for len(queue) > 0 {
+		parent := queue[0]
+		queue = queue[1:]
+		for _, child := range children[parent] {
+			if visited[child] {
+				continue
+			}
+			visited[child] = true
+			queue = append(queue, child)
+			step := stepByName[child]
+			if step == nil {
+				return nil, ErrWorkflowRetryNotAllowed
+			}
+			if step.Status == WorkflowStepStatusSucceeded {
+				return nil, ErrWorkflowRetryNotAllowed
+			}
+			if step.Status == WorkflowStepStatusSkipped {
+				reopen = append(reopen, child)
+			}
+		}
+	}
+	return reopen, nil
 }
 
 func validateWorkflowRunStatus(status string) error {
@@ -245,15 +354,35 @@ type WorkflowStep struct {
 // WorkflowStep, attempts are append-only by (run, step, attempt) so retries
 // remain inspectable after the step summary advances.
 type WorkflowStepAttempt struct {
-	RunID         string     `json:"run_id"`
-	StepName      string     `json:"step_name"`
-	Attempt       int        `json:"attempt"`
-	Status        string     `json:"status"`
-	HTTPStatus    *int       `json:"http_status,omitempty"`
-	StartedAt     time.Time  `json:"started_at"`
-	FinishedAt    *time.Time `json:"finished_at,omitempty"`
-	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
-	Error         *string    `json:"error,omitempty"`
+	RunID         string                      `json:"run_id"`
+	StepName      string                      `json:"step_name"`
+	Attempt       int                         `json:"attempt"`
+	Status        string                      `json:"status"`
+	HTTPStatus    *int                        `json:"http_status,omitempty"`
+	StartedAt     time.Time                   `json:"started_at"`
+	FinishedAt    *time.Time                  `json:"finished_at,omitempty"`
+	NextAttemptAt *time.Time                  `json:"next_attempt_at,omitempty"`
+	Error         *string                     `json:"error,omitempty"`
+	Effects       []api.OperationEffectRecord `json:"effects,omitempty"`
+}
+
+// ManagedWorkflowStepCommit is the accepted result of a managed HTTP step.
+// The result, webhook intent, delivery rows, and step success share one
+// platform transaction after the customer SDK has committed its receipt.
+type ManagedWorkflowStepCommit struct {
+	RunID       string
+	StepName    string
+	OperationID string
+	Attempt     int
+	HTTPStatus  int
+	Output      json.RawMessage
+	Effects     []exclusivework.Effect
+}
+
+// ManagedWorkflowStepCommitter is optional so existing workflow store doubles
+// remain source-compatible. Production stores implement the atomic transition.
+type ManagedWorkflowStepCommitter interface {
+	CommitManagedWorkflowStep(context.Context, ManagedWorkflowStepCommit) error
 }
 
 type workflowStepAttemptKey struct {

@@ -3459,6 +3459,17 @@ func (h *httpGatewaySynth) Invoke(ctx context.Context, appID string, inv state.I
 // executor seam. Unlike the legacy Invoke method it returns the downstream
 // HTTP status, which is required for durable retry classification.
 func (h *httpGatewaySynth) ExecuteStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration) (int, []byte, error) {
+	return h.executeStep(ctx, appID, path, method, headers, body, timeout, "", 0)
+}
+
+func (h *httpGatewaySynth) ExecuteManagedOperationStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, error) {
+	if operationID == "" || generation < 1 {
+		return 0, nil, errors.New("sched: invalid managed workflow operation context")
+	}
+	return h.executeStep(ctx, appID, path, method, headers, body, timeout, operationID, generation)
+}
+
+func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, error) {
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -3469,19 +3480,29 @@ func (h *httpGatewaySynth) ExecuteStep(ctx context.Context, appID, path, method 
 		return 0, nil, fmt.Errorf("sched: workflow headers: %w", err)
 	}
 	inv := state.Invocation{
-		ID:      "workflow-" + middleware.NewRequestID(),
-		AppID:   appID,
-		Source:  state.InvocationSource("workflow"),
-		Method:  method,
-		Path:    path,
-		Headers: headerBytes,
-		Payload: body,
+		ID:                         "workflow-" + middleware.NewRequestID(),
+		AppID:                      appID,
+		Source:                     state.InvocationSource("workflow"),
+		Method:                     method,
+		Path:                       path,
+		Headers:                    headerBytes,
+		Payload:                    body,
+		ManagedOperationID:         operationID,
+		ManagedOperationGeneration: generation,
+		OperationResultVersion:     boolToProtocolVersion(operationID != ""),
 	}
 	out, statusCode, err := h.invokeWithStatus(ctx, appID, inv, nil)
 	if err != nil {
 		return 0, nil, err
 	}
 	return statusCode, out.Result, nil
+}
+
+func boolToProtocolVersion(enabled bool) int {
+	if enabled {
+		return api.ManagedOperationResultVersion
+	}
+	return 0
 }
 
 // InvokeWithWake is the pre-woken variant used by the unified invocation
@@ -3531,6 +3552,11 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 			return inv, 0, errors.New("sched: exclusive operation dispatch has no ownership claim")
 		}
 		dispatch["exclusive_claim"] = inv.ExclusiveClaim
+		dispatch["operation_result_version"] = api.ManagedOperationResultVersion
+	} else if inv.Source == state.InvocationSource("workflow") && inv.ManagedOperationID != "" {
+		dispatch["operation_result_version"] = api.ManagedOperationResultVersion
+		dispatch["managed_workflow_operation_id"] = inv.ManagedOperationID
+		dispatch["managed_workflow_operation_generation"] = inv.ManagedOperationGeneration
 	}
 	if wake != nil {
 		dispatch["instance_id"] = wake.InstanceID
@@ -3609,7 +3635,11 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		StatusCode  int             `json:"status_code"`
 		OutcomeCode string          `json:"outcome_code"`
 	}
-	if err := httpjson.Decode(resp.Body, gatewayInvocationResponseMaxBytes, &out); err != nil {
+	responseLimit := int64(gatewayInvocationResponseMaxBytes)
+	if inv.ExclusiveClaim != nil || inv.ManagedOperationID != "" {
+		responseLimit = api.MaxExclusiveGatewayResponseBytes
+	}
+	if err := httpjson.Decode(resp.Body, responseLimit, &out); err != nil {
 		return inv, 0, fmt.Errorf("sched: invocation response: %w", err)
 	}
 	if out.State != "" {

@@ -1,4 +1,4 @@
-// adr: 585
+// adr: 590
 package connectionfence
 
 import (
@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/connectionfence/sqlc"
 )
@@ -48,6 +49,14 @@ func newFixture(t *testing.T, lockTimeout ...string) fixture {
 	if err := root.Ping(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// Bootstrap and Neon adapter contracts share the fixed maintenance name.
+	// Hold one root session through resource cleanup across both packages.
+	lock, err := root.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(lock.Release)
+	pgtest.LockCluster(t, lock.Conn(), "managed-postgres-checkpoint-fixtures")
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
 	f := fixture{root: root, bootstrap: config, admin: "gf_admin_" + suffix, tenant: "gf_client_" + suffix, password: uuid.NewString(),
 		config: Config{MaintenanceDatabase: "gf_maintenance_" + suffix, MaintenanceRole: "gf_admin_" + suffix}}

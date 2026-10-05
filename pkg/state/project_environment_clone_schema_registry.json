@@ -1305,6 +1305,7 @@
       "operation_id",
       "operation_state",
       "payload",
+      "routing",
       "source_id"
     ],
     "kind": "operational"
@@ -1325,8 +1326,10 @@
     "table": "commit_sources",
     "columns": [
       "account_id",
+      "allow_tenant_selection",
       "app_id",
       "blocked_events",
+      "contract_version",
       "created_at",
       "credential_revision",
       "enabled",
@@ -2561,11 +2564,13 @@
     "table": "exclusive_work_effects",
     "columns": [
       "created_at",
+      "event_type",
       "generation",
       "id",
       "name",
       "operation_id",
-      "payload"
+      "payload",
+      "webhook_id"
     ],
     "kind": "operational"
   },
@@ -7143,6 +7148,24 @@
       "payload",
       "received_at",
       "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_operation_effects",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "event_type",
+      "generation",
+      "id",
+      "name",
+      "operation_id",
+      "payload",
+      "run_id",
+      "step_name",
+      "webhook_id"
     ],
     "kind": "operational"
   },

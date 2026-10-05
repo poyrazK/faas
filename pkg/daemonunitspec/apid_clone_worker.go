@@ -20,7 +20,7 @@ func UnitApidCloneWorker() daemonunit.Unit {
 		}
 	}
 	u.EnvironmentFile = strings.Join(files, " ")
-	u.Description = "Gregale private project-environment clone worker (ADR-585)"
+	u.Description = "Gregale private project-environment clone worker (ADR-590)"
 	u.After = []string{"network.target", "postgresql.service", "faas-cp.slice", "faas-apid.service"}
 	u.Requires = []string{"postgresql.service"}
 	u.ExecStart = `/opt/faas/current/bin/apid --clone-worker --config /etc/faas/apid.toml`

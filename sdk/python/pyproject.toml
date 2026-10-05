@@ -13,7 +13,10 @@ readme = "README.md"
 packages = [
     { include = "faas_sdk" },
 ]
-include = ["faas_sdk/py.typed"]
+include = [
+    "faas_sdk/py.typed",
+    { path = "faas_sdk/operation_schema.sql", format = ["sdist", "wheel"] },
+]
 
 [tool.poetry.urls]
 Homepage = "https://gregale.dev/docs/cli"

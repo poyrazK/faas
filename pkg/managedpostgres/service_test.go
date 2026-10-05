@@ -271,7 +271,7 @@ func TestCreateUsesCustomerReservationLimit(t *testing.T) {
 	}
 }
 
-// adr: 585
+// adr: 590
 func TestRestoreCreatesIndependentDurableTargetAndIsIdempotent(t *testing.T) {
 	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
 	registry, store := testRegistry(t, provider, nil), NewMemoryStore()

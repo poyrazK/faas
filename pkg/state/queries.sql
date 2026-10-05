@@ -10080,12 +10080,174 @@ quota_reserved=sqlc.arg(quota_reserved)::boolean
 WHERE id=sqlc.arg(id)::text::uuid;
 
 -- name: InsertExclusiveWorkEffect :exec
-INSERT INTO exclusive_work_effects(id,operation_id,generation,name,payload)
+INSERT INTO exclusive_work_effects(id,operation_id,generation,name,payload,webhook_id,event_type)
 VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(operation_id)::text::uuid,
-sqlc.arg(generation)::bigint,sqlc.arg(name)::text,sqlc.arg(payload)::jsonb);
+sqlc.arg(generation)::bigint,sqlc.arg(name)::text,sqlc.arg(payload)::jsonb,
+nullif(sqlc.arg(webhook_id)::text,'')::uuid,nullif(sqlc.arg(event_type)::text,''));
+
+-- name: ReadManagedWorkflowRunForUpdate :one
+SELECT app_id::text, status FROM workflow_runs
+WHERE id=sqlc.arg(run_id)::text::uuid FOR UPDATE;
+
+-- name: ReadManagedWorkflowStepForUpdate :one
+SELECT status, attempt FROM workflow_steps
+WHERE run_id=sqlc.arg(run_id)::text::uuid AND step_name=sqlc.arg(step_name)::text
+FOR UPDATE;
+
+-- name: ManagedWorkflowEffectAppScope :one
+SELECT a.account_id::text AS account_id, ac.status AS account_status
+FROM apps a JOIN accounts ac ON ac.id=a.account_id
+WHERE a.id=sqlc.arg(app_id)::text::uuid AND a.status<>'deleted'
+FOR SHARE OF a, ac;
+
+-- name: InsertWorkflowOperationEffect :exec
+INSERT INTO workflow_operation_effects(
+ id,account_id,app_id,run_id,step_name,operation_id,generation,name,payload,webhook_id,event_type
+) VALUES(
+ sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(app_id)::text::uuid,
+ sqlc.arg(run_id)::text::uuid,sqlc.arg(step_name)::text,sqlc.arg(operation_id)::text::uuid,
+ sqlc.arg(generation)::bigint,sqlc.arg(name)::text,sqlc.arg(payload)::jsonb,
+ sqlc.arg(webhook_id)::text::uuid,sqlc.arg(event_type)::text
+);
+
+-- name: ListWorkflowOperationEffects :many
+SELECT e.id::text AS id,e.name,e.generation,e.webhook_id::text AS webhook_id,
+ e.id::text AS delivery_id,e.event_type AS type,
+ coalesce(d.status,'unavailable')::text AS status,coalesce(d.attempt,0)::integer AS attempt,
+ coalesce(d.last_error,'')::text AS last_error
+FROM workflow_operation_effects e
+LEFT JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id
+ AND d.app_id=e.app_id AND d.account_id=e.account_id
+WHERE e.run_id=sqlc.arg(run_id)::text::uuid AND e.step_name=sqlc.arg(step_name)::text
+ORDER BY e.generation,e.name;
+
+-- name: CompleteManagedWorkflowStep :execrows
+UPDATE workflow_steps
+SET status='succeeded',output=sqlc.arg(output)::jsonb,error=NULL,
+ next_retry_at=NULL,finished_at=clock_timestamp()
+WHERE run_id=sqlc.arg(run_id)::text::uuid AND step_name=sqlc.arg(step_name)::text
+ AND status='running' AND attempt=sqlc.arg(attempt)::integer;
+
+-- name: CompleteManagedWorkflowAttempt :execrows
+UPDATE workflow_step_attempts
+SET status='succeeded',http_status=sqlc.arg(http_status)::integer,
+ finished_at=clock_timestamp(),next_attempt_at=NULL,error=NULL
+WHERE run_id=sqlc.arg(run_id)::text::uuid AND step_name=sqlc.arg(step_name)::text
+ AND attempt=sqlc.arg(attempt)::integer AND status='running';
+
+-- name: CompleteManagedWorkflowRun :execrows
+UPDATE workflow_runs
+SET current_step=sqlc.arg(step_name)::text,updated_at=clock_timestamp()
+WHERE id=sqlc.arg(run_id)::text::uuid AND status='running';
+
+-- name: LockWorkflowRetryAdmission :exec
+SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(app_id)::text, 0));
+
+-- name: CountActiveWorkflowRunsForRetry :one
+SELECT count(*)::bigint
+FROM workflow_runs
+WHERE app_id=sqlc.arg(app_id)::text::uuid
+  AND status IN ('pending','running','awaiting_event');
+
+-- name: LockWorkflowRunForManualRetry :one
+SELECT * FROM workflow_runs
+WHERE id=sqlc.arg(run_id)::text::uuid
+FOR UPDATE;
+
+-- name: LockWorkflowStepsForManualRetry :many
+SELECT * FROM workflow_steps
+WHERE run_id=sqlc.arg(run_id)::text::uuid
+ORDER BY created_at,step_name
+FOR UPDATE;
+
+-- name: RequeueFailedWorkflowStepForRetry :execrows
+UPDATE workflow_steps
+SET status='pending',output=NULL,next_check_at=NULL,next_retry_at=NULL,
+    finished_at=NULL,error=NULL
+WHERE run_id=sqlc.arg(run_id)::text::uuid
+  AND step_name=sqlc.arg(step_name)::text
+  AND status IN ('failed','dead');
+
+-- name: ReopenSkippedWorkflowStepsForRetry :execrows
+UPDATE workflow_steps
+SET status='pending',input=NULL,output=NULL,next_check_at=NULL,next_retry_at=NULL,
+    finished_at=NULL,error=NULL
+WHERE run_id=sqlc.arg(run_id)::text::uuid
+  AND step_name=ANY(sqlc.arg(step_names)::text[])
+  AND status='skipped';
+
+-- name: RequeueWorkflowRunForRetry :one
+UPDATE workflow_runs
+SET status='pending',current_step=sqlc.arg(step_name)::text,
+    scheduled_for=clock_timestamp(),output=NULL,finished_at=NULL,last_error=NULL,
+    lease_until=NULL,updated_at=clock_timestamp()
+WHERE id=sqlc.arg(run_id)::text::uuid
+  AND status IN ('failed','dead')
+RETURNING *;
+
+-- name: ResolveExclusiveWebhookEffectTarget :one
+SELECT id::text FROM app_webhooks
+WHERE id=sqlc.arg(webhook_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+ AND enabled AND 'operation.effect'=ANY(event_filter)
+ AND ((sqlc.arg(tenant_id)::text='' AND scope='app' AND app_id=sqlc.arg(app_id)::text::uuid)
+ OR (sqlc.arg(tenant_id)::text<>'' AND scope='platform_tenant'
+ AND platform_tenant_id=nullif(sqlc.arg(tenant_id)::text,'')::uuid))
+FOR SHARE;
+
+-- name: EnqueueExclusiveWebhookEffect :exec
+INSERT INTO app_webhook_deliveries(id,webhook_id,app_id,account_id,event,payload,next_attempt_at)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(webhook_id)::text::uuid,
+sqlc.arg(app_id)::text::uuid,sqlc.arg(account_id)::text::uuid,'operation.effect',sqlc.arg(payload)::jsonb,clock_timestamp());
+
+-- name: ListExclusiveWorkEffects :many
+SELECT e.id::text,e.name,e.generation,coalesce(e.webhook_id::text,'')::text AS webhook_id,
+ coalesce(e.event_type,'')::text AS event_type,
+ CASE WHEN e.webhook_id IS NULL THEN 'recorded' ELSE coalesce(d.status,'unavailable') END::text AS status,
+ coalesce(d.attempt,0)::integer AS attempt,coalesce(d.last_error,'')::text AS last_error
+FROM exclusive_work_effects e JOIN exclusive_work_operations o ON o.id=e.operation_id
+LEFT JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id AND d.account_id=o.account_id
+WHERE o.id=sqlc.arg(operation_id)::text::uuid AND o.account_id=sqlc.arg(account_id)::text::uuid
+ORDER BY e.name;
 
 -- name: ExclusiveWorkClock :one
 SELECT clock_timestamp()::timestamptz AS now;
+
+-- name: OperationEffectDeliveryAllowed :one
+WITH exclusive_effect AS (
+ SELECT EXISTS(SELECT 1 FROM exclusive_work_effects e
+  WHERE e.id=sqlc.arg(delivery_id)::text::uuid AND e.webhook_id IS NOT NULL)::boolean AS managed,
+ EXISTS (
+ SELECT 1 FROM exclusive_work_effects e
+ JOIN exclusive_work_operations o ON o.id=e.operation_id
+ JOIN accounts ac ON ac.id=o.account_id AND ac.status='active'
+ JOIN apps a ON a.id=o.app_id AND a.account_id=o.account_id AND a.status<>'deleted'
+ JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id
+  AND d.app_id=o.app_id AND d.account_id=o.account_id AND d.event='operation.effect'
+ JOIN app_webhooks h ON h.id=e.webhook_id AND h.account_id=o.account_id
+ WHERE e.id=sqlc.arg(delivery_id)::text::uuid AND o.state='completed' AND o.generation=e.generation
+  AND h.enabled AND 'operation.effect'=ANY(h.event_filter)
+  AND ((o.platform_tenant_id IS NULL AND h.scope='app' AND h.app_id=o.app_id)
+   OR (o.platform_tenant_id=h.platform_tenant_id AND h.scope='platform_tenant'
+    AND EXISTS(SELECT 1 FROM platform_tenants t WHERE t.id=o.platform_tenant_id AND t.account_id=o.account_id AND t.status='active')
+    AND EXISTS(SELECT 1 FROM tenant_surfaces s WHERE s.app_id=o.app_id AND s.account_id=o.account_id AND s.platform_tenant_id=o.platform_tenant_id AND s.status='active')))
+)::boolean AS allowed
+), workflow_effect AS (
+ SELECT EXISTS(SELECT 1 FROM workflow_operation_effects e
+  WHERE e.id=sqlc.arg(delivery_id)::text::uuid)::boolean AS managed,
+ EXISTS (
+  SELECT 1 FROM workflow_operation_effects e
+  JOIN accounts ac ON ac.id=e.account_id AND ac.status='active'
+  JOIN apps a ON a.id=e.app_id AND a.account_id=e.account_id AND a.status<>'deleted'
+  JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id
+   AND d.app_id=e.app_id AND d.account_id=e.account_id AND d.event='operation.effect'
+  JOIN app_webhooks h ON h.id=e.webhook_id AND h.account_id=e.account_id
+  WHERE e.id=sqlc.arg(delivery_id)::text::uuid AND h.enabled
+   AND 'operation.effect'=ANY(h.event_filter) AND h.scope='app' AND h.app_id=e.app_id
+ )::boolean AS allowed
+)
+SELECT exclusive_effect.managed OR workflow_effect.managed AS managed,
+ exclusive_effect.allowed OR workflow_effect.allowed AS allowed
+FROM exclusive_effect, workflow_effect;
 
 -- name: BindExclusiveWorkSubmission :exec
 INSERT INTO exclusive_work_submissions(key_id,idempotency_digest,operation_id)
@@ -11475,33 +11637,35 @@ UPDATE deployments d SET status='building',build_id=queued.id FROM queued
 WHERE d.id=queued.deployment_id AND d.environment_workload_runtime IS NOT NULL AND d.status='pending';
 -- name: CommitSourceForManagedAdmission :one
 SELECT c.app_id::text, c.enabled, COALESCE(c.operation_policy,'')::text AS operation_policy,
- a.platform_tenant_required
+ c.contract_version, c.allow_tenant_selection, a.platform_tenant_required
 FROM commit_sources c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id
 WHERE c.account_id=sqlc.arg(account_id)::text::uuid AND c.id=sqlc.arg(source_id)::text::uuid
 FOR UPDATE OF c FOR SHARE OF a;
 
 -- name: CommitManagedSource :one
-INSERT INTO commit_sources(account_id,app_id,name,operation_policy)
-SELECT sqlc.arg(account_id)::text::uuid,id,sqlc.arg(name)::text,sqlc.arg(operation_policy)::text
+INSERT INTO commit_sources(account_id,app_id,name,operation_policy,contract_version,allow_tenant_selection)
+SELECT sqlc.arg(account_id)::text::uuid,id,sqlc.arg(name)::text,sqlc.arg(operation_policy)::text,sqlc.arg(contract_version)::integer,sqlc.arg(allow_tenant_selection)::boolean
 FROM apps WHERE id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
- AND NOT platform_tenant_required AND status<>'deleted'
+ AND (NOT platform_tenant_required OR sqlc.arg(allow_tenant_selection)::boolean) AND status<>'deleted'
 ON CONFLICT(account_id,name) DO UPDATE SET name=commit_sources.name
 WHERE commit_sources.app_id=excluded.app_id AND commit_sources.operation_policy=excluded.operation_policy
+ AND commit_sources.contract_version=excluded.contract_version AND commit_sources.allow_tenant_selection=excluded.allow_tenant_selection
 RETURNING id::text, enabled;
 
 -- name: CommitManagedReceiptReplay :one
 SELECT id::text, source_id::text, event_id::text,
  COALESCE(invocation_id::text,'')::text AS invocation_id,
  COALESCE(operation_id::text,'')::text AS operation_id, accepted_at,
- event_type=sqlc.arg(event_type)::text AND payload=sqlc.arg(payload)::jsonb AS matches
+ event_type=sqlc.arg(event_type)::text AND payload=sqlc.arg(payload)::jsonb
+ AND routing IS NOT DISTINCT FROM sqlc.narg(routing)::jsonb AS matches
 FROM commit_receipts WHERE account_id=sqlc.arg(account_id)::text::uuid
  AND source_id=sqlc.arg(source_id)::text::uuid AND event_id=sqlc.arg(event_id)::text::uuid;
 
 -- name: CommitManagedReceipt :one
-INSERT INTO commit_receipts(id,account_id,source_id,event_id,event_type,payload,operation_id,operation_state,completed_at)
+INSERT INTO commit_receipts(id,account_id,source_id,event_id,event_type,payload,operation_id,operation_state,completed_at,routing)
 VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(source_id)::text::uuid,
  sqlc.arg(event_id)::text::uuid,sqlc.arg(event_type)::text,sqlc.arg(payload)::jsonb,
- sqlc.arg(operation_id)::text::uuid,sqlc.arg(operation_state)::text,sqlc.narg(completed_at)::timestamptz)
+ sqlc.arg(operation_id)::text::uuid,sqlc.arg(operation_state)::text,sqlc.narg(completed_at)::timestamptz,sqlc.narg(routing)::jsonb)
 RETURNING id::text,source_id::text,event_id::text,operation_id::text,accepted_at;
 
 -- name: CommitReceiptIdentity :one
@@ -11519,7 +11683,7 @@ FROM commit_receipts WHERE account_id=sqlc.arg(account_id)::text::uuid
 
 -- name: CommitSourceIdentity :one
 SELECT id::text,app_id::text,name,enabled,COALESCE(operation_policy,'')::text AS operation_policy,
- relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
+ contract_version,allow_tenant_selection,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
 FROM commit_sources WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(source_id)::text::uuid;
 
 -- name: SetCommitSourceEnabled :exec
@@ -11536,7 +11700,8 @@ WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(source_id)::te
 -- name: CommitPolicyWouldInvalidateSource :one
 SELECT EXISTS(SELECT 1 FROM commit_sources c
  WHERE c.account_id=sqlc.arg(account_id)::text::uuid AND c.operation_policy=sqlc.arg(name)::text AND c.enabled
- AND (sqlc.arg(retired)::boolean OR sqlc.arg(configuration)::jsonb->>'scope'<>'account'
+ AND (sqlc.arg(retired)::boolean OR sqlc.arg(configuration)::jsonb->>'scope'<>CASE WHEN c.allow_tenant_selection THEN 'platform_tenant' ELSE 'account' END
+ OR COALESCE(sqlc.arg(configuration)::jsonb->>'environment_id','')<>''
  OR sqlc.arg(configuration)::jsonb->>'contention'<>'queue'
  OR NOT COALESCE(sqlc.arg(configuration)::jsonb->'member_app_ids' ? c.app_id::text,false))) AS incompatible;
 
@@ -11980,6 +12145,13 @@ WHERE d.id = sqlc.arg(deployment_id)::uuid AND p.deployment_id = d.id
          (p.phase = 'layer_published' AND d.status = 'imaging'))) OR
        (sqlc.arg(next_status)::text = 'snapshotting' AND p.phase = 'scan_complete'
         AND d.status IN ('imaging', 'snapshotting')));
+-- name: CommitTenantAppScope :one
+SELECT s.id::text FROM tenant_surfaces s
+WHERE s.account_id=sqlc.arg(account_id)::text::uuid
+ AND s.app_id=sqlc.arg(app_id)::text::uuid
+ AND s.platform_tenant_id=sqlc.arg(tenant_id)::text::uuid AND s.status='active'
+LIMIT 1 FOR SHARE;
+
 
 -- name: RouteCustomerHealthObservation :one
 -- Advisory identity cohorts use the same exact routes, deployment pair and

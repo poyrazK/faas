@@ -380,7 +380,10 @@ from .commit_event_request import CommitEventRequest
 from .commit_operation_response import CommitOperationResponse
 from .commit_operation_response_state import CommitOperationResponseState
 from .commit_receipt_response import CommitReceiptResponse
+from .commit_routing import CommitRouting
+from .commit_routing_version import CommitRoutingVersion
 from .commit_source_response import CommitSourceResponse
+from .commit_source_response_contract_version import CommitSourceResponseContractVersion
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
@@ -423,6 +426,8 @@ from .create_app_webhook_request_delivery_format import CreateAppWebhookRequestD
 from .create_app_webhook_request_event_filter_item import CreateAppWebhookRequestEventFilterItem
 from .create_app_webhook_request_retry_policy import CreateAppWebhookRequestRetryPolicy
 from .create_commit_source_body import CreateCommitSourceBody
+from .create_commit_source_request import CreateCommitSourceRequest
+from .create_commit_source_request_contract_version import CreateCommitSourceRequestContractVersion
 from .create_consumer_key_request import CreateConsumerKeyRequest
 from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestScopesItem
 from .create_cors_preset_request import CreateCorsPresetRequest
@@ -1228,6 +1233,9 @@ from .magic_link_signup_request import MagicLinkSignupRequest
 from .managed_execution_workflow_artifact_input import ManagedExecutionWorkflowArtifactInput
 from .managed_execution_workflow_response import ManagedExecutionWorkflowResponse
 from .managed_execution_workflow_response_status import ManagedExecutionWorkflowResponseStatus
+from .managed_operation_effect import ManagedOperationEffect
+from .managed_operation_result import ManagedOperationResult
+from .managed_operation_result_gregale_operation_result import ManagedOperationResultGregaleOperationResult
 from .managed_postgres_accounting_diagnostic import ManagedPostgresAccountingDiagnostic
 from .managed_postgres_accounting_diagnostic_reasons_item import ManagedPostgresAccountingDiagnosticReasonsItem
 from .managed_postgres_accounting_diagnostic_state import ManagedPostgresAccountingDiagnosticState
@@ -1447,6 +1455,9 @@ from .open_api_contract_break_kind import OpenAPIContractBreakKind
 from .open_api_contract_break_method import OpenAPIContractBreakMethod
 from .open_api_contract_diff_response import OpenAPIContractDiffResponse
 from .open_api_contract_diff_response_source import OpenAPIContractDiffResponseSource
+from .operation_effect_payload import OperationEffectPayload
+from .operation_effect_record import OperationEffectRecord
+from .operation_effect_record_status import OperationEffectRecordStatus
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
@@ -2920,7 +2931,10 @@ __all__ = (
     "CommitOperationResponse",
     "CommitOperationResponseState",
     "CommitReceiptResponse",
+    "CommitRouting",
+    "CommitRoutingVersion",
     "CommitSourceResponse",
+    "CommitSourceResponseContractVersion",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
@@ -2963,6 +2977,8 @@ __all__ = (
     "CreateAppWebhookRequestEventFilterItem",
     "CreateAppWebhookRequestRetryPolicy",
     "CreateCommitSourceBody",
+    "CreateCommitSourceRequest",
+    "CreateCommitSourceRequestContractVersion",
     "CreateConsumerKeyRequest",
     "CreateConsumerKeyRequestScopesItem",
     "CreateCorsPresetRequest",
@@ -3750,6 +3766,9 @@ __all__ = (
     "ManagedExecutionWorkflowArtifactInput",
     "ManagedExecutionWorkflowResponse",
     "ManagedExecutionWorkflowResponseStatus",
+    "ManagedOperationEffect",
+    "ManagedOperationResult",
+    "ManagedOperationResultGregaleOperationResult",
     "ManagedPostgresAccountingDiagnostic",
     "ManagedPostgresAccountingDiagnosticReasonsItem",
     "ManagedPostgresAccountingDiagnosticsResponse",
@@ -3965,6 +3984,9 @@ __all__ = (
     "OpenAPIContractBreakMethod",
     "OpenAPIContractDiffResponse",
     "OpenAPIContractDiffResponseSource",
+    "OperationEffectPayload",
+    "OperationEffectRecord",
+    "OperationEffectRecordStatus",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
     "OperatorIntentAcceptedResponsePreviousState",

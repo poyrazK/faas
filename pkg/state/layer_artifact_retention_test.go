@@ -18,7 +18,7 @@ type layerRetentionTestStore interface {
 	state.ProjectReleaseSetStore
 }
 
-// ADR-585: consumers retain retired deployments and cannot resurrect a deleted
+// ADR-590: consumers retain retired deployments and cannot resurrect a deleted
 // artifact after their final reference is removed.
 func TestMemLayerRetentionConsumerReferences(t *testing.T) {
 	layerRetentionConsumerReferences(t, state.NewMemStore())
@@ -148,7 +148,7 @@ func layerRetentionConsumerReferences(t *testing.T, s layerRetentionTestStore) {
 	}
 }
 
-// ADR-585: source retirement cannot invalidate a captured or prepared stage.
+// ADR-590: source retirement cannot invalidate a captured or prepared stage.
 func TestMemCloneLayerRetentionSurvivesSourceRetirement(t *testing.T) {
 	cloneLayerRetentionSurvivesSourceRetirement(t, state.NewMemStore())
 }
@@ -280,7 +280,7 @@ func cloneLayerRetentionSurvivesSourceRetirement(t *testing.T, s layerRetentionT
 	}
 }
 
-// ADR-585: either publication owns the key or cleanup owns it, never both.
+// ADR-590: either publication owns the key or cleanup owns it, never both.
 func TestMemLayerDeletionFencesConcurrentPublication(t *testing.T) {
 	layerDeletionFencesConcurrentPublication(t, state.NewMemStore())
 }
