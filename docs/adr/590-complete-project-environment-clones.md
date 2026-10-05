@@ -6712,3 +6712,6 @@ Verification uses actual isolated PostgreSQL 16 for the native catalogue and
 connection flags, plus encrypted receipt and lease persistence in the full APID
 test package. Provider placement responses are synthetic HTTP fixtures; live
 paid-provider and native Linux full-clone qualification remain outstanding.
+Read-only rollback retains the caller's deadline. A real SQL rollback message
+blackhole qualifies bounded failure and recovery of the pool's only connection
+slot; restoring the earlier unbounded cleanup fails that regression contract.

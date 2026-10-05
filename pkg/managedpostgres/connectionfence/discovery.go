@@ -21,7 +21,9 @@ func (c *Controller) DiscoverDatabaseSelection(ctx context.Context, identity Ide
 	if err != nil {
 		return Request{}, classifyError(err)
 	}
-	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	// Read-only cleanup shares the caller's deadline; failed rollback causes
+	// pgx to discard the connection rather than retaining an open transaction.
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := c.checkMaintenance(ctx, tx); err != nil {
 		return Request{}, err
 	}
