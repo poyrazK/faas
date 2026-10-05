@@ -11,35 +11,9 @@ import (
 )
 
 func (s *server) prepareProjectApplicationStandard(parent context.Context, app state.App) (state.App, string) {
-	if app.OrgID == "" {
-		return app, ""
-	}
-	reader, ok := s.store.(state.ApplicationStandardEnrollmentStore)
-	if !ok {
-		return app, "Application standards admission is unavailable; retry the deployment."
-	}
-	ctx, cancel := context.WithTimeout(parent, api.ApplicationStandardWorkerPassTimeout)
-	defer cancel()
-	e, err := reader.GetApplicationStandardEnrollment(ctx, app.OrgID, app.ID)
-	if err == nil && (!sameProjectStandardID(app.OrgID, e.OrgID) || !sameProjectStandardID(app.ProjectID, e.ProjectID)) {
-		return app, "Application ownership changed during apply; review the project and reapply."
-	}
-	if err == nil && e.State == "pending" {
-		s.materializeProjectApplicationStandard(ctx, e)
-		e, err = reader.GetApplicationStandardEnrollment(ctx, app.OrgID, app.ID)
-	}
-	if err != nil {
-		return app, "Application standards admission is unavailable; retry the deployment."
-	}
-	if e.State == "blocked" {
-		return app, "Application standards blocked this build; review the application's effective standard and exceptions."
-	}
-	fresh, err := s.store.AppByID(ctx, app.ID)
-	if err == nil && !sameProjectStandardOwner(app, fresh) {
-		return app, "Application ownership changed during apply; review the project and reapply."
-	}
-	if err != nil || !state.ApplicationStandardEnrollmentPermitsRuntime(fresh, e) {
-		return app, "Application standards are still being installed; retry the deployment when installation completes."
+	fresh, failure := prepareApplicationStandardDeployment(parent, s.store, s.log, app, "project-apply")
+	if failure != nil {
+		return fresh, failure.Detail
 	}
 	return fresh, ""
 }
@@ -65,24 +39,4 @@ func (s *server) writeProjectApplyLoadError(w http.ResponseWriter, r *http.Reque
 	writeCustomerInternalProblem(w, r, s.log, "load apps after applying project",
 		"Gregale could not finish loading the project after applying the changes.",
 		"Reload the project before retrying the operation.", err)
-}
-
-func (s *server) materializeProjectApplicationStandard(ctx context.Context, e state.ApplicationStandardEnrollment) {
-	worker, ok := s.store.(state.ApplicationStandardImmediateMaterializationStore)
-	if !ok {
-		return
-	}
-	claim, err := worker.ClaimApplicationStandardEnrollmentForApp(ctx, state.ApplicationStandardEnrollmentClaimRequest{OrgID: e.OrgID, AppID: e.AppID, DesiredRevision: e.DesiredRevision, Owner: "project-apply-" + uuid.NewString()})
-	if err != nil {
-		s.applicationStandardWorkerError(ctx, "project_enrollment_claim", e.AppID, err)
-		return
-	}
-	_, err = worker.MaterializeApplicationStandardEnrollment(ctx, claim)
-	if err == nil || errors.Is(err, state.ErrApplicationStandardOperationInProgress) {
-		return
-	}
-	s.applicationStandardWorkerError(ctx, "project_enrollment", e.AppID, err)
-	release, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ApplicationStandardWorkerReleaseTimeout)
-	defer cancel()
-	_ = worker.ReleaseApplicationStandardEnrollmentWorker(release, claim)
 }

@@ -753,6 +753,29 @@ does not implement production-only standards for named environments. Accepted
 builds leave observed
 revisions at zero and require the existing builder, artifact and runtime gates.
 
+## GitHub first builds install captured standards
+
+The apid build bridge installs a GitHub service's captured standard before it
+consumes deploy rate or creates deployment and build rows. This includes newly
+reserved source-backed PR previews. A first push can therefore enqueue its build
+without waiting for the periodic standards repair pass. Project apply and the
+bridge share the same projection and claim path; the bridge does not change the
+service's admission version or repair unrelated applications.
+
+An existing worker lease or reviewed rollout still takes precedence. Pending or
+interrupted installation returns gRPC `Unavailable`, while blocked standards or
+changed application ownership return `FailedPrecondition`. A refused build
+consumes no deploy rate and creates no deployment or queue notification. Failed
+installation releases only the request's own claim so a later request can retry
+immediately; blocked standards retain their normal background retry policy.
+
+Shared PostgreSQL and memory tests use the generated gRPC client, real receiver,
+source archive and durable stores. They cover push and exact-head preview first
+builds, six installed controls, interrupted installation, an active worker lease,
+blocked entitlement, project detach and account mismatch. A successful build
+leaves observed revision at zero. Builder execution, registry verification,
+provider delivery and native runtime acceptance remain separate release gates.
+
 
 ## Live egress acknowledgment binding
 

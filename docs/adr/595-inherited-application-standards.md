@@ -2535,3 +2535,31 @@ receipts, Manager/RPC/scheduler forwarding, paused promotion and capture after
 promotion remain implementation work. Native root/KVM acceptance remains pending
 because the configured project is suspended and no alternative acceptance host
 is available. Native restore advertisement and public activation stay disabled.
+
+## GitHub first-build admission checkpoint (2026-10-05)
+
+New GitHub applications and source-backed preview sets already capture their
+admission versions during creation. The apid GitHub build bridge now installs
+those captured controls before consuming account deploy rate or publishing the
+first deployment and build. This closes the gap between preview reservation and
+the periodic standards repair pass. apid retains customer-intent ownership;
+githubd only supplies source and invokes its existing bridge RPC.
+
+Project apply and GitHub enqueue share the bounded immediate materialization
+path. Its exact app, organization and desired revision claim preserves worker
+lease fencing and reviewed-target precedence. Installation rechecks current
+entitlements and ownership; it cannot adopt a newer candidate or project scope
+silently. Pending or interrupted installation is retryable (`Unavailable`),
+while blocked intent or a scope change requires intervention
+(`FailedPrecondition`). Refusal leaves deployment rows, build notifications and
+deploy rate untouched. An interrupted request releases only its own claim.
+
+The generated gRPC client and real receiver exercise memory and PostgreSQL
+stores, source archives, exact-head preview reservation, six installed controls
+and durable enqueue. Recovery runs without waiting for lease expiry; a request
+under another worker's lease cannot invalidate that worker's claim. Real project
+detachment reenrolls the service and refuses the old scope's source build.
+Account mismatch is rejected before installation. Accepted builds retain
+observed revision zero: these portable checks do not establish image, log or
+native consumer convergence. The full native, fleet recovery, named-environment
+and operational acceptance gates remain open, with public activation disabled.

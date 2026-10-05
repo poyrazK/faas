@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -118,6 +119,10 @@ func advanceApplicationStandardOperation(ctx context.Context, worker application
 }
 
 func (s *server) applicationStandardWorkerError(ctx context.Context, stage, id string, err error) {
+	logApplicationStandardWorkerError(ctx, s.log, stage, id, err)
+}
+
+func logApplicationStandardWorkerError(ctx context.Context, log *slog.Logger, stage, id string, err error) {
 	if err == nil || errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrApplicationStandardLeaseLost) || errors.Is(err, state.ErrApplicationStandardOperationInProgress) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return
 	}
@@ -127,5 +132,7 @@ func (s *server) applicationStandardWorkerError(ctx context.Context, stage, id s
 	if errors.Is(err, state.ErrApplicationStandardReviewBusy) {
 		code = "inputs_busy"
 	}
-	s.log.WarnContext(ctx, "application standard repair failed", "stage", stage, "id", id, "error_code", code)
+	if log != nil {
+		log.WarnContext(ctx, "application standard repair failed", "stage", stage, "id", id, "error_code", code)
+	}
 }
