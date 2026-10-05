@@ -4,7 +4,7 @@
 -- Ordinary ingress reads settings from the active production graph. Refresh
 -- cached settings after publication, deactivation, or deletion, in the same
 -- transaction as the graph change. The ledger repairs a lost NOTIFY.
-CREATE FUNCTION record_project_release_policy_change(release_uuid uuid, app_uuid uuid)
+CREATE OR REPLACE FUNCTION record_project_release_policy_change(release_uuid uuid, app_uuid uuid)
 RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
     PERFORM pg_advisory_xact_lock(711901248671::bigint);
@@ -14,7 +14,7 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION project_release_member_policy_changed()
+CREATE OR REPLACE FUNCTION project_release_member_policy_changed()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     -- The parent is inserted before its immutable members. Inactive retained
@@ -27,11 +27,12 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS project_release_member_policy_changed_trg ON project_release_members;
 CREATE TRIGGER project_release_member_policy_changed_trg
 AFTER INSERT ON project_release_members
 FOR EACH ROW EXECUTE FUNCTION project_release_member_policy_changed();
 
-CREATE FUNCTION project_release_set_policy_changed()
+CREATE OR REPLACE FUNCTION project_release_set_policy_changed()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE member_app uuid;
 BEGIN
@@ -44,12 +45,14 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS project_release_set_policy_changed_trg ON project_release_sets;
 CREATE TRIGGER project_release_set_policy_changed_trg
 AFTER UPDATE OF active ON project_release_sets
 FOR EACH ROW WHEN (OLD.active IS DISTINCT FROM NEW.active)
 EXECUTE FUNCTION project_release_set_policy_changed();
 
 -- Run before FK cascades remove the members needed to identify affected apps.
+DROP TRIGGER IF EXISTS project_release_set_policy_deleted_trg ON project_release_sets;
 CREATE TRIGGER project_release_set_policy_deleted_trg
 BEFORE DELETE ON project_release_sets
 FOR EACH ROW WHEN (OLD.active)
