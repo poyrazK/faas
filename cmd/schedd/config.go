@@ -13,12 +13,16 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/runtimequota"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // Config is the on-disk representation of schedd's TOML config.
 type Config struct {
+	// Optional stable cell signing material (ADR-632). Empty disables explicit
+	// regional retirement; partial or mismatched configuration aborts startup.
+	RegionalRuntimeSigning runtimequota.KeyConfig `toml:"regional_runtime_signing"`
 	// SocketPath is the unix-domain socket schedd's gRPC server binds when
 	// ListenAddr is empty (ADR-018, mode 0660 group `faas`). Defaults to
 	// /run/faas/schedd.sock.

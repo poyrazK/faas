@@ -85,6 +85,12 @@ type cliFlag struct {
 // boundary — adding a customer command to gregalectl or an operator
 // command to gregale fails CI immediately.
 var cliCommands = []cliCommand{
+	{Name: "runtime-quota-keys", DocSlug: "runtime-quota-keys", Short: "Stable cell and directory quota signing keys",
+		Subcommands: []cliSub{
+			{Name: "init", Short: "Create a new key directory without overwriting", Flags: []cliFlag{{Name: "issuer", Req: true}, {Name: "role", Req: true, ClosedSet: []string{"cell", "directory"}}, {Name: "dir", Req: true}}},
+			{Name: "status", Short: "Verify role, issuer, key modes and trust", Flags: []cliFlag{{Name: "issuer", Req: true}, {Name: "role", Req: true, ClosedSet: []string{"cell", "directory"}}, {Name: "dir", Req: true}}},
+			{Name: "trust", Short: "Create a public trust bundle from repeated inputs", Flags: []cliFlag{{Name: "input", Req: true}, {Name: "out", Req: true}}},
+		}},
 	{Name: "cell", DocSlug: "cell", Short: "Initialize or inspect a regional control-plane database",
 		Subcommands: []cliSub{
 			{Name: "init", Short: "Bind a fresh migrated database to the manifest cell identity", Flags: []cliFlag{{Name: "manifest-file", Short: "regional deployment manifest (required)", Req: true}}},

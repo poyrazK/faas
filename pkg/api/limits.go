@@ -29,6 +29,9 @@ const (
 	RegionalRuntimeQuotaPayloadMaxBytes        = 4096
 	RegionalRuntimeCapacityPageMax             = 1000
 	RegionalRuntimeHostRecordMaxBytes          = 16384
+	RegionalRuntimeSigningKeyMaxBytes          = 4096 // ADR-632: one PKCS#8 Ed25519 key.
+	RegionalRuntimeTrustBundleMaxBytes         = 65536
+	RegionalRuntimeTrustAnchorsMax             = 128
 	RegionalMigrationLeaseTokenBytes           = 32 // ADR-628: existing 128-bit lowercase hex lease.
 	GlobalDirectoryRequestMaxBytes             = 4096
 	GlobalDirectoryProofMaxBytes               = 4096

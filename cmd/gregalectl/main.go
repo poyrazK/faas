@@ -52,6 +52,7 @@ Commands:
   pki          Operator local-dev PKI bootstrap (pki init|status|rotate)
   sign-keys    Provision the cosign sign keypair (sign-keys init|rotate|status; --sign-key / --verify-key)
   node-key     Provision the per-node CapacityReport signing keypair (node-key init|rotate|status)
+  runtime-quota-keys  Provision stable cell/directory quota keys and public rotation trust (init|status|trust)
   backup       Operator rclone / archive credentials (backup init|unseal-archive-creds|unseal-rclone)
   secrets      Post-bootstrap secrets init (secrets init|rotate|status|stamp; PR-X / issue #911 / ADR-110)
   artifact     Publish or verify release-pinned shared artifacts (artifact publish|verify)
@@ -110,6 +111,8 @@ func run(args []string) int {
 		return code
 	}
 	switch args[0] {
+	case "runtime-quota-keys":
+		return cmdRuntimeQuotaKeys(args[1:])
 	case "cell":
 		return cmdCellDispatch(args[1:])
 	case "cells":

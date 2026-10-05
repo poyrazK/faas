@@ -414,12 +414,13 @@ type BrokerLagReader interface {
 // one app's instances is serialised by a per-app lock so a Wake and a reaper
 // Park for the same app never race the ledger or the state machine.
 type Engine struct {
-	store  state.Store
-	ledger *NodeLedger
-	vmm    RoutedVMM
-	notif  Notifier
-	fcVer  string // running Firecracker version — snapshots load only on a match (ADR-005)
-	log    *slog.Logger
+	store              state.Store
+	ledger             *NodeLedger
+	vmm                RoutedVMM
+	regionalRetirement *RegionalRuntimeRetirement // optional operator-provisioned cell owner; protected by mu
+	notif              Notifier
+	fcVer              string // running Firecracker version — snapshots load only on a match (ADR-005)
+	log                *slog.Logger
 	// Protected by mu: RPCs may already be serving when NewLoop attaches it.
 	serviceReconcileSubmit func(context.Context, string)
 	// ops is the per-daemon Prometheus registry (issue #1059 /

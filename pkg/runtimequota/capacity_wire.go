@@ -29,7 +29,11 @@ func DecodeCapacityStop(raw []byte) (CapacityStop, error) {
 }
 
 func decodeCapacityObject(raw []byte, target any) error {
-	if len(raw) > api.RegionalRuntimeHostRecordMaxBytes {
+	return decodeCanonicalObject(raw, target, api.RegionalRuntimeHostRecordMaxBytes)
+}
+
+func decodeCanonicalObject(raw []byte, target any, bound int) error {
+	if len(raw) > bound {
 		return ErrInvalid
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))

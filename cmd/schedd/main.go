@@ -494,6 +494,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if nodeVerifier != nil {
 		vmmRouter.WithRegionalRuntimePeerResolver(nodeVerifier)
 	}
+	regionalRetirement, err := loadRegionalRuntimeRetirement(ctx, *cfg, pool, store, vmmRouter, nodeVerifier != nil && vmmTLS != nil)
+	if err != nil {
+		return err
+	}
 	nodeRegistry := sched.NewNodeRegistry(nodes)
 
 	// Tier A3: subscribe to compute_node_changed and refresh the
@@ -613,6 +617,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: init engine: %w", err)
 	}
 	engine.WithOpsMetrics(ops)
+	engine.WithRegionalRuntimeRetirement(regionalRetirement)
 	engine.WithJobFlexibleMetrics(wire.NewJobFlexibleMetrics(ops.Registry(), ops.MetricPrefix()))
 	// Keep the engine's ownership scope aligned with the gRPC server,
 	// heartbeat, and floor trigger. An empty owner preserves the central
