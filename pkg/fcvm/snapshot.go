@@ -142,8 +142,11 @@ func PlanWake(snap *Snapshot, currentFCVersion string) WakeMethod {
 // the legacy VMStatePath branch untouched. Default-local single-box
 // always sends the empty value so the host-path behaviour is preserved.
 type RestoreSpec struct {
-	VMStatePath string
-	Tap         string
+	// Only RestoreSnapshotVerified can attach protected catalog inputs. This
+	// private carrier is not a wire capability or a measured restore receipt.
+	verifiedSnapshot *verifiedSnapshotRestore
+	VMStatePath      string
+	Tap              string
 	// Issue #96 / ADR-025 axis 2 (PR #116): KernelKey / BaseKey /
 	// LayerKey are the StorageBackend keys that the restore path
 	// materializes via Storage.Get before re-staging as basenames

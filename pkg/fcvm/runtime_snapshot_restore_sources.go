@@ -30,6 +30,7 @@ type SnapshotRestoreInputs struct {
 type VerifiedSnapshotInputs struct {
 	memory, vmstate, privateDrive string
 	drives                        map[string]string
+	owner                         *runtimeDriveHandoff
 }
 
 type snapshotSourceFlight struct {
@@ -43,7 +44,7 @@ type snapshotSourceFlight struct {
 func (v *JailerVMM) PrepareSnapshotRestoreInputs(ctx context.Context, lease Lease, req SnapshotRestoreInputs) (result VerifiedSnapshotInputs, err error) {
 	req.Capture = req.Capture.Clone()
 	req.Sources = slices.Clone(req.Sources)
-	req.Runtime.Workloads = slices.Clone(req.Runtime.Workloads)
+	req.Runtime = cloneSnapshotRestoreRuntime(req.Runtime)
 	if err = checkSnapshotRestoreInputLayout(lease, req); err != nil {
 		return result, err
 	}
@@ -75,6 +76,7 @@ func (v *JailerVMM) PrepareSnapshotRestoreInputs(ctx context.Context, lease Leas
 	}
 	capture := req.Capture.Clone()
 	flight.handoff.restoreCapture, flight.handoff.restoreProducers = &capture, producers
+	result.owner = flight.handoff
 	return result, nil
 }
 

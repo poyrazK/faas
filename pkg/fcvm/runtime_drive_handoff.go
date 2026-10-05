@@ -52,6 +52,8 @@ type runtimeDriveHandoff struct {
 	restoreCapture     *runtimeadmission.SnapshotCapture
 	restoreProducers   map[string]rootfs.ArtifactIdentity
 	restorePreparation *snapshotSourceFlight
+	restoreLoad        *verifiedSnapshotRestore
+	restoreBlobs       []pinnedRuntimeDrive
 }
 
 func (v *JailerVMM) registerRuntimeDriveHandoff(lease Lease, spec ColdBootSpec, sources []runtimeadmission.ArtifactSource) error {
@@ -266,7 +268,11 @@ func (v *JailerVMM) releaseRuntimeDriveHandoff(instance string) error {
 	for _, drive := range handoff.drives {
 		err = errors.Join(err, drive.file.Close())
 	}
+	for _, blob := range handoff.restoreBlobs {
+		err = errors.Join(err, blob.file.Close())
+	}
 	handoff.drives = nil
+	handoff.restoreBlobs, handoff.restoreLoad = nil, nil
 	handoff.observation = RuntimeDriveHandoffObservation{}
 	handoff.restoreCapture, handoff.restoreProducers = nil, nil
 	return err

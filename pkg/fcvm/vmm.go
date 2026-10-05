@@ -1663,6 +1663,9 @@ func (v *JailerVMM) cancelStartupCPUBoostTail(instance string) {
 // HTTP GET <path> against <HostIP>:8080 and accepts 2xx as ready. The
 // Manager threads WakeRequest.HealthcheckPath into this field at bringUp.
 func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err error) {
+	if err := v.beginProtectedNativeRestore(ctx, l, spec); err != nil {
+		return err
+	}
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err
 	}
@@ -1691,7 +1694,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	chrootReady := time.Now()
 	defer func() {
-		if err != nil {
+		if err != nil && spec.verifiedSnapshot == nil {
 			_ = v.Kill(context.WithoutCancel(ctx), l)
 		}
 	}()
@@ -1704,7 +1707,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// /srv/fc/snap and the resolution is essentially a stat; the OCI
 	// driver streams the bytes over HTTP. Tmp cleanup happens via the
 	// deferred Kill (chroot lives on tmpfs and disappears with it).
-	memSrc, memTiming, err := v.resolveRestoreBlob(ctx, l.Instance, "mem", spec.StorageKey, spec.VMStatePath)
+	memSrc, memTiming, err := v.resolveRestoreBlobForInputs(ctx, l, spec, "mem", spec.StorageKey, spec.VMStatePath)
 	if err != nil {
 		return err
 	}
@@ -1732,8 +1735,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// nil-error/empty-result materialization falls back to it too (the
 	// backend surfaced no file for this key). It adds only the source and
 	// byte attribution that mem and vmstate previously lacked.
-	stateSrc, stateTiming, gerr := v.resolveRestoreBlob(
-		ctx, l.Instance, "vmstate", spec.VMStateStorageKey, spec.VMStatePath)
+	stateSrc, stateTiming, gerr := v.resolveRestoreBlobForInputs(
+		ctx, l, spec, "vmstate", spec.VMStateStorageKey, spec.VMStatePath)
 	if gerr != nil {
 		return gerr
 	}
@@ -1801,7 +1804,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 			})
 		}
 	}
-	resolvedArtifacts, err := v.resolveRestoreArtifacts(ctx, l.Instance, artifacts)
+	resolvedArtifacts, err := v.resolveRestoreArtifactsForInputs(ctx, l, spec, artifacts)
 	if err != nil {
 		return err
 	}
@@ -1838,11 +1841,14 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// cannot escape quota accounting by writing past its read-only
 	// boundary).
 	for i := 1; i < len(resolvedWorkloads); i++ {
-		if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, resolvedWorkloads[i], filepath.Base(resolvedWorkloads[i]), l.Instance); err != nil {
+		if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, resolvedWorkloads[i], snapshotRestoreSidecarName(spec, i, resolvedWorkloads[i]), l.Instance); err != nil {
 			return fmt.Errorf("vmm: stage sidecar %d: %w", i-1, err)
 		}
 	}
 	tStageDrives := time.Now()
+	if err := v.pinVerifiedSnapshotDrives(ctx, l, root, spec); err != nil {
+		return fmt.Errorf("vmm: pin protected restore drives: %w", err)
+	}
 	var preBootTimings preBootStageTimings
 	preBootSkipped, err := v.stagePreBootFilesUnlessForOwner(ctx, stagingOwner, l.Instance, spec.StorageKey, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, false, &preBootTimings)
 	if err != nil {
@@ -1860,6 +1866,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	stateName, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, stateSrc, vmstateSnapshotName, l.Instance)
 	if err != nil {
 		return fmt.Errorf("vmm: stage vmstate: %w", err)
+	}
+	if err := v.pinVerifiedSnapshotBlobs(ctx, l, root, spec, memName, stateName); err != nil {
+		return fmt.Errorf("vmm: pin protected snapshot blobs: %w", err)
 	}
 	tMemState := time.Now()
 	// firecracker (as the jailer uid) writes the API socket and, later, snapshot
@@ -1919,7 +1928,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"mem_backend":   map[string]any{"backend_type": "File", "backend_path": memName},
 		"resume_vm":     !spec.KeepPaused,
 	}
-	if err = v.apiPut(ctx, l.Instance, "/snapshot/load", body); err != nil {
+	if err = v.loadRestoredSnapshot(ctx, l, root, spec, body); err != nil {
 		return fmt.Errorf("vmm: load snapshot: %w", err)
 	}
 	tLoad := time.Now()
@@ -1942,6 +1951,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tReady := time.Now()
+	if err := v.observeVerifiedSnapshotDrives(ctx, l, spec); err != nil {
+		return fmt.Errorf("vmm: observe protected restore drives: %w", err)
+	}
 	// Snapshot load, lazy memory faults, and the mandatory guest resume hook
 	// are startup work. Applying a customer's sustained CPU shape before those
 	// phases can exhaust a 250 mCPU cgroup period and hold the resume ACK until
@@ -3341,6 +3353,9 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 // SIGKILL'd instances don't get an artifact export — that's Builderd's path
 // (use DestroyWithExport).
 func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
+	if err := v.cancelSnapshotRestoreLoad(l); err != nil {
+		return err
+	}
 	// Failed retirement retains sealed sources alongside all other ownership.
 	defer func() {
 		if err == nil {

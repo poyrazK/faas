@@ -2438,3 +2438,45 @@ promotion are still implementation work. Additive raw-database enforcement of
 the new restore binding, named environment scopes, remaining onboarding paths,
 native/fleet recovery and the operational release gates remain required before
 public activation. This checkpoint does not certify restored RAM or KVM execution.
+
+### Protected private native snapshot loading
+
+`JailerVMM.RestoreSnapshotVerified` now connects catalog preparation to the actual
+restore staging and `/snapshot/load` code. It requires the fresh binding's exact
+capture token and evidence hash before reading storage. The opaque preparation
+belongs to one exact native lease and one cancellable load flight. Its spec is
+derived from cloned runtime inputs; changing the lease, selected keys, injection
+inputs, readiness settings or pause flag cannot reuse that preparation. A second
+restore/load attempt is refused. Noncanonical custom drive IDs remain unavailable
+until captured backing names can be represented and checked explicitly.
+
+Memory, VM-state, captured private drive, base and sidecars use the retained
+verified files. Only the platform kernel follows the existing resolver and
+kernel/backing qualification remains the caller's responsibility. Protected
+sidecar names reproduce `provisionForOwner`'s cold-boot names, including its
+current indexing. The main drive is copied separately for each lease. Its
+approved producer and captured bytes remain distinct from the freshly injected
+bytes. Every drive is pinned before injection; final drive identity is measured
+before load. Memory and VM-state descriptors retain their measured inodes and
+digests and are checked around the exact load API command. The command hash
+represents that delivered command, not an undelivered cold-boot configuration.
+
+An API acknowledgment records only private loader acceptance. It cannot certify
+consumed RAM. The existing native drive-handle observer runs after protected
+restore readiness (or after a deliberately paused load); it does not invent a
+memory mapping or persistent VM-state descriptor. Kill first cancels and joins
+the protected flight. Failed restore cleanup runs after that flight finishes,
+avoiding self-joining teardown. Protected descriptors and files stay owned until
+retirement. Existing entropy/clock hooks, native journal ownership, cgroups,
+network isolation and kernel checks remain required.
+
+Portable tests exercise actual provisioning, inode sharing/isolation, immutable
+input replacement/corruption, private injection, command hashes, stale authority,
+owner and command changes, replay, API refusal and cancellation during loading.
+Their historical receipt and HTTP acknowledgment are simulated; they have no
+Firecracker process or consumed RAM. Measured snapshot consumption receipts,
+scheduler/Manager/RPC forwarding, advertised restore capability, paused promotion
+and capture after promotion remain implementation work. Dedicated Linux amd64
+root/KVM test-metal/leakcheck, raw-database binding enforcement, named environment
+scopes, all onboarding paths, fleet recovery and complete release gates remain
+required. Public standard activation and restore capability remain disabled.
