@@ -550,7 +550,7 @@ type Querier interface {
 	// instance row is missing.
 	GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.UUID) (int32, error)
 	GetInvoiceSnapshot(ctx context.Context, db DBTX, id pgtype.UUID) (GetInvoiceSnapshotRow, error)
-	// ADR-587: operator reconciliation only repairs an unresolved deleted catalog row.
+	// ADR-591: operator reconciliation only repairs an unresolved deleted catalog row.
 	GetManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg GetManagedPostgresAccountingReconciliationParams) (GetManagedPostgresAccountingReconciliationRow, error)
 	GetManagedPostgresCutover(ctx context.Context, db DBTX, arg GetManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
 	GetManagedPostgresRawUsageCoverage(ctx context.Context, db DBTX, arg GetManagedPostgresRawUsageCoverageParams) (ManagedPostgresUsageCoverage, error)
