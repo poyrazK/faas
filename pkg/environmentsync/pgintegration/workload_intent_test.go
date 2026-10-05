@@ -19,11 +19,19 @@ import (
 )
 
 func workloadIntentFixture(t *testing.T, basic gitOpsTestStore, mode string) (intentTestStore, state.EnvironmentGitSource, environmentsync.DesiredState, state.App, state.Deployment, state.ProjectEnvironment) {
+	return workloadIntentFixtureType(t, basic, mode, state.AppTypeApp)
+}
+
+func workloadIntentFixtureType(t *testing.T, basic gitOpsTestStore, mode string, appType state.AppType) (intentTestStore, state.EnvironmentGitSource, environmentsync.DesiredState, state.App, state.Deployment, state.ProjectEnvironment) {
 	t.Helper()
 	store := basic.(intentTestStore)
 	source, desired := seedMode(t, store, mode)
+	runtime := ""
+	if appType == state.AppTypeFunction {
+		runtime = "node22"
+	}
 	app, err := store.CreateApp(t.Context(), state.App{AccountID: source.AccountID, ProjectID: source.ProjectID,
-		Slug: "shop-api", Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 1, Status: state.AppActive,
+		Slug: "shop-api", Type: appType, Runtime: runtime, RAMMB: 512, MaxConcurrency: 1, Status: state.AppActive,
 		Manifest: state.AppManifest{Entrypoint: []string{"./api"}, Port: 8079, StopGracePeriodS: 10}})
 	if err != nil {
 		t.Fatal(err)

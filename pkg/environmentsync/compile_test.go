@@ -95,6 +95,18 @@ func TestCompileRejectsUnsafeOrUnsupportedIntent(t *testing.T) {
 		{"mutable image", setWorkload(func(w *api.EnvironmentWorkload) {
 			w.Source = &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry/api:latest"}
 		})},
+		{"function missing runner", setWorkload(func(w *api.EnvironmentWorkload) {
+			w.Source = &api.EnvironmentWorkloadSource{Kind: "function"}
+		})},
+		{"function unsupported runner", setWorkload(func(w *api.EnvironmentWorkload) {
+			w.Source = &api.EnvironmentWorkloadSource{Kind: "function", Runtime: "node99"}
+		})},
+		{"function Dockerfile", setWorkload(func(w *api.EnvironmentWorkload) {
+			w.Source = &api.EnvironmentWorkloadSource{Kind: "function", Runtime: "node22", Dockerfile: "Dockerfile"}
+		})},
+		{"source function runner", setWorkload(func(w *api.EnvironmentWorkload) {
+			w.Source = &api.EnvironmentWorkloadSource{Kind: "source", Runtime: "node22"}
+		})},
 		{"image plus directory", setWorkload(func(w *api.EnvironmentWorkload) {
 			w.Source = &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry/api@sha256:" + strings.Repeat("a", 64), Directory: "api"}
 		})},

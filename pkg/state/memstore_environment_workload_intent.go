@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 var _ EnvironmentWorkloadIntentStore = (*MemStore)(nil)
@@ -65,6 +67,39 @@ func (m *MemStore) PutEnvironmentWorkloadIntent(_ context.Context, row Environme
 		return row, err
 	}
 	previous := m.appEnvironmentWorkloadIntents[environmentWorkloadIntentKey{row.AppID, row.EnvironmentID}]
+	if err := m.validateEnvironmentServiceBindingTargetsLocked(row); err != nil {
+		return row, err
+	}
+	count := len(row.ServiceBindings)
+	for key, intent := range m.appEnvironmentWorkloadIntents {
+		if key.AppID == row.AppID && key.EnvironmentID != row.EnvironmentID {
+			count += len(intent.ServiceBindings)
+		}
+	}
+	variables := map[string]bool{}
+	for _, variable := range m.envs {
+		if variable.AppID == row.AppID {
+			count++
+			if variable.Scope == env.Slug {
+				variables[variable.Key] = true
+			}
+		}
+	}
+	refs := m.environmentSecretRefsLocked(row.AppID, env.Slug)
+	for key := range m.appEnvironmentSecretRefs {
+		if key.AppID == row.AppID {
+			count++
+		}
+	}
+	limits, _ := api.LimitsFor(m.accounts[row.AccountID].Plan)
+	for _, binding := range row.ServiceBindings {
+		if variables[binding.EnvKey] || refs[binding.EnvKey] != "" {
+			return row, ErrConflict
+		}
+	}
+	if len(row.ServiceBindings) != 0 && count > limits.EnvVarsMax {
+		return row, ErrConflict
+	}
 	row, err = validateWorkloadIntentWrite(row, previous, app, env.Slug, m.accounts[row.AccountID].Plan)
 	if err != nil {
 		return row, err

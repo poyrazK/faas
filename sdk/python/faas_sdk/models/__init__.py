@@ -850,6 +850,7 @@ from .environment_workload_secret_refs import EnvironmentWorkloadSecretRefs
 from .environment_workload_service_bindings import EnvironmentWorkloadServiceBindings
 from .environment_workload_source import EnvironmentWorkloadSource
 from .environment_workload_source_kind import EnvironmentWorkloadSourceKind
+from .environment_workload_source_runtime import EnvironmentWorkloadSourceRuntime
 from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .event_delivery_list_response import EventDeliveryListResponse
@@ -3340,6 +3341,7 @@ __all__ = (
     "EnvironmentWorkloadServiceBindings",
     "EnvironmentWorkloadSource",
     "EnvironmentWorkloadSourceKind",
+    "EnvironmentWorkloadSourceRuntime",
     "EnvironmentWorkloadVariables",
     "ErrorNewWebhookPayload",
     "EventDeliveryListResponse",

@@ -83,7 +83,7 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) error {
 	managed := false
 	for _, change := range plan.Changes {
-		managed = managed || change.Action != "retain_unmanaged" && (change.Path == "source" || strings.HasPrefix(change.Path, "runtime/"))
+		managed = managed || change.Action != "retain_unmanaged" && (change.Path == "source" || strings.HasPrefix(change.Path, "runtime/") || strings.HasPrefix(change.Path, "service_bindings/"))
 	}
 	if !managed {
 		return nil

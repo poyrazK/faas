@@ -184,6 +184,9 @@ func compileWorkload(resource, name string, w *api.EnvironmentWorkload, workload
 		}
 		w.QueueRecoveries[name] = parsed.String()
 	}
+	if len(w.ServiceBindings) > api.ServiceBindingTargetsMax {
+		return nil, fmt.Errorf("service bindings exceed the target limit")
+	}
 	bindingEnvKeys := make(map[string]bool)
 	for key, binding := range w.ServiceBindings {
 		if !api.ValidAppSlug(key) || api.ValidateEnvKey(binding.EnvKey) != nil || binding.Workload == name {
@@ -212,7 +215,14 @@ func normalizeSource(source *api.EnvironmentWorkloadSource) error {
 		source.Kind = "source"
 	}
 	switch source.Kind {
-	case "source", "dockerfile":
+	case "source", "dockerfile", "function":
+		if source.Kind == "function" {
+			if !api.ValidFunctionRuntime(source.Runtime) || source.Dockerfile != "" {
+				return fmt.Errorf("function source requires a supported runtime and no dockerfile")
+			}
+		} else if source.Runtime != "" {
+			return fmt.Errorf("source runtime is only supported for function sources")
+		}
 		if source.Directory == "" {
 			source.Directory = "."
 		}
@@ -230,7 +240,7 @@ func normalizeSource(source *api.EnvironmentWorkloadSource) error {
 			source.Dockerfile = path.Clean(source.Dockerfile)
 		}
 	case "image":
-		if !immutableImageRE.MatchString(source.Image) || source.Directory != "" || source.Dockerfile != "" {
+		if !immutableImageRE.MatchString(source.Image) || source.Directory != "" || source.Dockerfile != "" || source.Runtime != "" {
 			return fmt.Errorf("image source requires an immutable @sha256 digest and no directory/dockerfile")
 		}
 	default:

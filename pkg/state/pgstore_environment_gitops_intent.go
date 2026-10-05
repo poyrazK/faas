@@ -35,6 +35,7 @@ type gitOpsIntentApp struct {
 	Routes           *api.EnvironmentRouteContract `json:"routes"`
 	Policies         *[]ProjectEnvironmentEdgeRule `json:"policies"`
 	VariableCount    int                           `json:"variable_count"`
+	BindingCount     int                           `json:"binding_count"`
 	Type             AppType                       `json:"type"`
 	WorkloadClass    WorkloadClass                 `json:"workload_class"`
 	QueueBindings    []gitOpsQueueIntent           `json:"queue_bindings"`
@@ -125,7 +126,9 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 			out.State.Unsupported = append(out.State.Unsupported, resource+": mapped app identity differs from the definition")
 		}
 		if out.State.ResourceIDs[resource] == "" {
-			out.State.Unsupported = append(out.State.Unsupported, resource+": workload creation adapter is not available")
+			if _, err := newEnvironmentWorkloadApp(EnvironmentGitSource{EnvironmentID: snapshot.EnvironmentID}, name, workload, snapshot.Plan); err != nil {
+				out.State.Unsupported = append(out.State.Unsupported, resource+": new workload requires an explicit supported source and lifecycle")
+			}
 		} else if _, exists := byID[out.State.ResourceIDs[resource]]; !exists {
 			out.State.Unsupported = append(out.State.Unsupported, resource+": mapped workload is absent; restoration adapter is not available")
 		}
@@ -134,7 +137,7 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 			return out, ErrInvalidArgument
 		}
 		app := byID[out.State.ResourceIDs[resource]]
-		count := app.VariableCount + app.SecretRefCount
+		count := app.VariableCount + app.SecretRefCount + projectedEnvironmentServiceBindingCount(snapshot, resource, app, workload)
 		suppressionCount := app.SuppressionCount
 		for key, value := range workload.Variables {
 			if _, present := app.Variables[key]; !present {
@@ -195,6 +198,14 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 			}
 		}
 		validateGitOpsSecretRefs(&out, desired, resource, app)
+		for name, binding := range workload.ServiceBindings {
+			if _, present := app.Variables[binding.EnvKey]; present {
+				out.State.Unsupported = append(out.State.Unsupported, resource+"#service_bindings/"+name+": binding environment key overlaps an existing variable")
+			}
+			if _, present := app.SecretRefs[binding.EnvKey]; present {
+				out.State.Unsupported = append(out.State.Unsupported, resource+"#service_bindings/"+name+": binding environment key overlaps an existing secret reference")
+			}
+		}
 		if suppressionCount > api.EnvironmentSecretReferenceSuppressionsMaxPerApp {
 			out.State.Unsupported = append(out.State.Unsupported, resource+": retained secret suppression count exceeds the application limit")
 		}
@@ -215,6 +226,7 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 		}
 		add(resource, "presence", true)
 		observeGitOpsWorkloadIntent(&out, snapshot, desired, resource, app)
+		observeEnvironmentServiceBindings(&out, app, resource)
 		observeGitOpsQueues(&out, snapshot, desired, resource, app)
 		relevant := map[string]bool{}
 		for key := range desired.Definition.Workloads[strings.TrimPrefix(resource, "workload/")].SecretRefs {

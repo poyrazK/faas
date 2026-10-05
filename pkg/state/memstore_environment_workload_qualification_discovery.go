@@ -29,7 +29,7 @@ func (m *MemStore) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.
 		for id, request := range memory.qualifications {
 			graph := memory.graphs[preparationGraphKey(request.FrozenInputs.Generation, request.FrozenInputs.PlanHash)]
 			app := m.apps[request.AppID]
-			if qualificationRecoveryCursor(id) <= qualificationRecoveryCursor(afterRequestID) || request.ExecutionMode == "job" ||
+			if qualificationRecoveryCursor(id) <= qualificationRecoveryCursor(afterRequestID) || request.ExecutionMode == "job" || len(request.FrozenInputs.ServiceBindings) != 0 ||
 				graph.ID != request.GraphID || graph.Phase != "prepared" || graph.EnvironmentID != source.EnvironmentID ||
 				graph.Generation != source.Generation || graph.IntentVersion != source.IntentVersion || graph.RevisionID != source.ApprovedRevisionID ||
 				app.ID == "" || app.AccountID != source.AccountID || app.ProjectID != source.ProjectID ||

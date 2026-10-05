@@ -5728,6 +5728,7 @@ SELECT jsonb_build_object(
         'suppression_count', (SELECT count(*) FROM app_environment_secret_ref_suppressions r WHERE r.app_id=a.id AND r.account_id=s.account_id),
         'live_deployments', coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'secret_refs',d.override_env_secrets) ORDER BY d.id)
             FROM deployments d WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
+        'binding_count', (SELECT coalesce(sum((SELECT count(*) FROM jsonb_object_keys(w.service_bindings))),0) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.account_id=s.account_id),
         'secret_ref_count', (SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id AND r.account_id=s.account_id),
         'secret_names', coalesce((SELECT jsonb_agg(v.key) FROM app_secrets v WHERE v.app_id=a.id AND v.account_id=s.account_id AND v.scope=e.slug),'[]'::jsonb),
         'variables', coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
@@ -8103,14 +8104,16 @@ SELECT ((SELECT count(*) FROM app_envs WHERE app_id=sqlc.arg(app_id)::uuid)
 SELECT a.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
  WHERE s.id=sqlc.arg(source_id)::uuid AND a.status<>'deleted' ORDER BY a.id FOR UPDATE OF a;
 
--- References and plaintext variables share the app's environment-key quota.
+-- Bindings, references and plaintext variables share the app's environment-key quota.
 -- name: CountAppEnvironmentIntent :one
 SELECT ((SELECT count(*) FROM app_envs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid)
- + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid))::bigint AS count;
+ + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid)
+ + (SELECT count(*) FROM app_environment_workload_intents w CROSS JOIN LATERAL jsonb_object_keys(w.service_bindings) b WHERE w.account_id=sqlc.arg(account_id)::uuid AND w.app_id=sqlc.arg(app_id)::uuid))::bigint AS count;
 
 -- name: CountAppEnvironmentIntentInScope :one
 SELECT ((SELECT count(*) FROM app_envs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text)
- + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text))::bigint AS count;
+ + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text)
+ + (SELECT count(*) FROM app_environment_workload_intents w JOIN project_environments e ON e.id=w.environment_id CROSS JOIN LATERAL jsonb_object_keys(w.service_bindings) b WHERE w.account_id=sqlc.arg(account_id)::uuid AND w.app_id=sqlc.arg(app_id)::uuid AND e.slug=sqlc.arg(scope)::text))::bigint AS count;
 
 -- Clone locking follows source -> app -> catalog, matching reference writes.
 -- name: LockProjectEnvironmentCloneGitSources :many
@@ -8214,16 +8217,16 @@ JOIN project_environments e ON e.id=w.environment_id AND e.account_id=a.account_
 WHERE w.account_id=sqlc.arg(account_id)::uuid AND w.app_id=sqlc.arg(app_id)::uuid AND w.environment_id=sqlc.arg(environment_id)::uuid;
 
 -- name: PutEnvironmentWorkloadIntent :one
-INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,source,runtime,source_revision)
-VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(environment_id)::uuid,sqlc.narg(source)::jsonb,sqlc.arg(runtime)::jsonb,nullif(sqlc.arg(source_revision)::text,''))
-ON CONFLICT(app_id,environment_id) DO UPDATE SET source=excluded.source,runtime=excluded.runtime,source_revision=excluded.source_revision,updated_at=now()
+INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,source,runtime,source_revision,service_bindings)
+VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(environment_id)::uuid,sqlc.narg(source)::jsonb,sqlc.arg(runtime)::jsonb,nullif(sqlc.arg(source_revision)::text,''),sqlc.arg(service_bindings)::jsonb)
+ON CONFLICT(app_id,environment_id) DO UPDATE SET source=excluded.source,runtime=excluded.runtime,source_revision=excluded.source_revision,service_bindings=excluded.service_bindings,updated_at=now()
 RETURNING *;
 
 -- name: EnvironmentWorkloadIntentLockSource :many
 SELECT id FROM active_environment_git_sources WHERE account_id=sqlc.arg(account_id)::uuid AND environment_id=sqlc.arg(environment_id)::uuid FOR UPDATE;
 
 -- name: EnvironmentWorkloadIntentContext :one
-SELECT jsonb_build_object('manifest',a.manifest,'workload_class',a.workload_class,'environment',e.slug,'plan',c.plan)::jsonb AS context
+SELECT jsonb_build_object('type',a.type,'runtime',coalesce(a.runtime,''),'manifest',a.manifest,'workload_class',a.workload_class,'environment',e.slug,'plan',c.plan)::jsonb AS context
 FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
 JOIN accounts c ON c.id=a.account_id
 WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND e.id=sqlc.arg(environment_id)::uuid AND a.status<>'deleted'
@@ -8232,7 +8235,7 @@ FOR UPDATE OF a,c;
 -- name: EnvironmentGitOpsUnqualifiedWorkloads :many
 SELECT r.app_id,r.logical_name FROM environment_gitops_resources r
 WHERE r.source_id=sqlc.arg(source_id)::uuid AND EXISTS(SELECT 1 FROM environment_managed_fields f
- WHERE f.source_id=r.source_id AND f.resource=r.logical_name AND (f.field_path='source' OR starts_with(f.field_path,'runtime/')));
+ WHERE f.source_id=r.source_id AND f.resource=r.logical_name AND (f.field_path='source' OR starts_with(f.field_path,'runtime/') OR starts_with(f.field_path,'service_bindings/')));
 
 -- name: DeleteAccountEnvironmentGitSources :exec
 DELETE FROM environment_git_sources s USING accounts a
@@ -8304,6 +8307,7 @@ WHERE s.mode='enforce' AND NOT s.suspended AND g.phase='prepared'
  AND (a.node_id IS NULL OR a.node_id=sqlc.arg(node_id)::uuid)
  AND (sqlc.arg(after_request_id)::text='' OR q.id>nullif(sqlc.arg(after_request_id)::text,'')::uuid)
  AND q.execution_mode<>'job' AND (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
+ AND coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)='{}'::jsonb
  AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=q.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
  AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=q.reserved_instance_id AND e.retired_at IS NULL)
 ORDER BY q.id LIMIT sqlc.arg(page_limit)::integer;
@@ -10445,3 +10449,12 @@ WHERE id=sqlc.arg(run_id) AND (sqlc.narg(generation)::integer IS NULL OR resume_
 UPDATE workflow_runs SET lease_until=now()+(sqlc.arg(timeout_ms)::bigint*interval '1 millisecond')+interval '5 minutes'
 WHERE id=sqlc.arg(run_id) AND status='running'
  AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer);
+
+-- name: RecordEnvironmentQualificationSnapshot :exec
+INSERT INTO environment_qualification_snapshot_receipts(instance_id,snapshot,inputs)
+VALUES(sqlc.arg(instance_id)::uuid,sqlc.arg(snapshot)::jsonb,sqlc.arg(inputs)::jsonb)
+ON CONFLICT(instance_id) DO NOTHING;
+
+-- name: EnvironmentQualificationSnapshotReceipt :one
+SELECT e.frame,e.cleanup_token,r.snapshot,r.inputs,r.recorded_at FROM environment_qualification_snapshot_receipts r
+JOIN environment_qualification_executions e ON e.instance_id=r.instance_id WHERE r.instance_id=sqlc.arg(instance_id)::uuid;

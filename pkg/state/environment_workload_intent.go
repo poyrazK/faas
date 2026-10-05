@@ -16,14 +16,15 @@ import (
 // EnvironmentWorkloadIntent is scoped customer intent. Recording it does not
 // qualify a deployment or prove that its serving graph uses these settings.
 type EnvironmentWorkloadIntent struct {
-	AccountID      string                         `json:"account_id"`
-	AppID          string                         `json:"app_id"`
-	EnvironmentID  string                         `json:"environment_id"`
-	Source         *api.EnvironmentWorkloadSource `json:"source"`
-	SourceRevision string                         `json:"source_revision,omitempty"`
-	Runtime        map[string]json.RawMessage     `json:"runtime"`
-	CreatedAt      time.Time                      `json:"created_at"`
-	UpdatedAt      time.Time                      `json:"updated_at"`
+	AccountID       string                                     `json:"account_id"`
+	AppID           string                                     `json:"app_id"`
+	EnvironmentID   string                                     `json:"environment_id"`
+	Source          *api.EnvironmentWorkloadSource             `json:"source"`
+	SourceRevision  string                                     `json:"source_revision,omitempty"`
+	Runtime         map[string]json.RawMessage                 `json:"runtime"`
+	ServiceBindings map[string]EnvironmentScopedServiceBinding `json:"service_bindings"`
+	CreatedAt       time.Time                                  `json:"created_at"`
+	UpdatedAt       time.Time                                  `json:"updated_at"`
 }
 
 type EnvironmentWorkloadIntentStore interface {
@@ -41,6 +42,11 @@ type gitOpsSourceBaseline struct {
 }
 
 func cloneWorkloadIntent(row EnvironmentWorkloadIntent) EnvironmentWorkloadIntent {
+	bindings := map[string]EnvironmentScopedServiceBinding{}
+	for key, value := range row.ServiceBindings {
+		bindings[key] = value
+	}
+	row.ServiceBindings = bindings
 	if row.Source != nil {
 		source := *row.Source
 		row.Source = &source
@@ -55,6 +61,9 @@ func cloneWorkloadIntent(row EnvironmentWorkloadIntent) EnvironmentWorkloadInten
 
 func workloadIntentFields(row EnvironmentWorkloadIntent) map[string]json.RawMessage {
 	fields := map[string]json.RawMessage{}
+	for key, value := range row.ServiceBindings {
+		fields["service_bindings/"+key], _ = json.Marshal(value)
+	}
 	for key, value := range row.Runtime {
 		fields["runtime/"+key] = value
 	}
@@ -108,6 +117,9 @@ func runtimeManifestValues(manifest AppManifest) map[string]json.RawMessage {
 
 func validateWorkloadIntent(row EnvironmentWorkloadIntent, app App, environment string, plan api.Plan) (EnvironmentWorkloadIntent, error) {
 	row = cloneWorkloadIntent(row)
+	if err := validateEnvironmentServiceBindings(row.AppID, row.ServiceBindings); err != nil {
+		return row, err
+	}
 	if row.SourceRevision != "" && (!environmentCommitRE.MatchString(row.SourceRevision) || row.Source == nil || row.Source.Kind == "image") {
 		return row, ErrInvalidArgument
 	}
@@ -117,6 +129,9 @@ func validateWorkloadIntent(row EnvironmentWorkloadIntent, app App, environment 
 		return row, fmt.Errorf("%w: invalid scoped workload intent", ErrInvalidArgument)
 	}
 	w := desired.Definition.Workloads["workload"]
+	if w.Source != nil && w.Source.Kind == "function" && (app.Type != AppTypeFunction || app.Runtime != w.Source.Runtime) {
+		return row, ErrInvalidArgument
+	}
 	row.Source = w.Source
 	_ = json.Unmarshal(w.Runtime, &row.Runtime)
 	values := runtimeManifestValues(app.Manifest)
@@ -161,7 +176,7 @@ func validateWorkloadIntentWrite(row, previous EnvironmentWorkloadIntent, app Ap
 }
 
 func gitOpsWorkloadField(path string) bool {
-	return path == "source" || path == "source_revision" || strings.HasPrefix(path, "runtime/")
+	return path == "source" || path == "source_revision" || strings.HasPrefix(path, "runtime/") || strings.HasPrefix(path, "service_bindings/")
 }
 
 func changedWorkloadIntents(snapshot gitOpsIntentSnapshot, plan environmentsync.Plan, ids map[string]string, preserve bool) map[string]EnvironmentWorkloadIntent {
@@ -183,6 +198,11 @@ func changedWorkloadIntents(snapshot gitOpsIntentSnapshot, plan environmentsync.
 		value := change.After
 		if preserve {
 			value = change.Before
+		}
+		if strings.HasPrefix(change.Path, "service_bindings/") {
+			row = changeEnvironmentServiceBinding(row, change, value, ids)
+			rows[id], changed[id] = row, row
+			continue
 		}
 		switch change.Path {
 		case "source":

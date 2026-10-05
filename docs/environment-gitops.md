@@ -7,9 +7,10 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 | Area | Implemented | Remaining before complete environment enforcement |
 | --- | --- | --- |
 | Git source | Immutable definition review, approval, polling and separate source freshness | Full outage and rollback journey with serving workloads |
-| Ownership and adoption | Reviewed adoption plans, stable resource identities, stale-plan rejection and scoped ownership guards | Remaining workload source and service-binding adapters |
+| Ownership and adoption | Reviewed adoption plans, stable resource identities, stale-plan rejection and scoped ownership guards | Scoped binding execution and inherited non-image provenance |
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery | Production report-mode acceptance for the complete API/worker/queue graph |
-| Workload preparation | Scoped intent, immutable preparation inputs and durable qualification handoffs | Complete smoke, capture/restore and qualification receipts |
+| Workload preparation | Held image, pinned source and function candidates; atomic private workload reservations; frozen scoped binding targets | Qualified private binding transport and inherited non-image provenance |
+| Qualification evidence | Immutable attempt-bound capture receipts and a graph evidence assessment that reports missing proof | Isolated smoke, restored readiness and native capture publication |
 | Native execution | Fenced journals and private snapshot input/output ownership primitives | Native publication integration and dedicated KVM acceptance |
 | Enforcement | Transactional ownership, override and execution fences | Production reconciliation worker, graph activation and serving convergence |
 
@@ -55,16 +56,67 @@ observations, and do not certify changes made after their observed intent versio
 
 ## Next implementation steps
 
-1. Complete held workload preparation for functions, new workload creation and
-   inherited non-image source provenance. Keep candidate creation idempotent and
-   bind it to the original environment UUID, app identity and approved commit.
-2. Add scoped service-binding adapters using qualified target identities and
-   authorization policies, with no fallback to another environment.
-3. Complete qualification receipts, smoke checks and capture/restore evidence,
+1. Complete inherited non-image source provenance and private binding transport.
+   Bind the transport to the original environment UUID, candidate graph, target
+   identity and authorization policy. Binding candidates remain excluded from
+   dispatch until this adapter exists.
+2. Complete qualification receipts, smoke checks and capture/restore evidence,
    including native snapshot publication and dedicated KVM recovery acceptance.
-4. Add graph activation and serving convergence evidence, then qualify the
+3. Add graph activation and serving convergence evidence, then qualify the
    continuous enforcement worker against complete API/worker/queue environments,
    superseded revisions, source outages, override expiry and process restarts.
+
+## Workload preparation contract
+
+An explicit source can reserve a missing workload under the internal enforce
+executor. Reservations are private apps with no deployment or serving VM, use
+the original environment UUID and logical name, and commit the complete cohort
+with its mappings, scoped intent, ownership and progress journal. Quota or name
+collisions roll the cohort back. An existing mapped identity that disappears
+requires reviewed recovery; it is never replaced silently. Report mode creates
+no resources, and the customer enforcement gate remains closed.
+
+Function sources declare a supported runner and a Git directory:
+
+```yaml
+workloads:
+  transform:
+    source:
+      kind: function
+      runtime: node22
+      directory: functions/transform
+    runtime:
+      port: 8080
+```
+
+The directory comes from the exact approved commit archive. Candidate creation
+freezes the runner, source revision, build handoff and original app identity.
+Changing an existing app's type or function runner requires a separate reviewed
+decision; a scoped source cannot change that shared metadata.
+
+Service-binding intent stores each logical target together with its mapped app
+ID in the original environment. That identity is frozen into held candidates.
+Binding keys share the variable/reference quota across the app's environments
+and cannot occupy an existing variable or secret-reference key. Enforced
+bindings reserve those keys against ordinary writes. Shared app bindings and
+cross-environment aliases cannot substitute for scoped targets. Preparation
+does not yet inject a usable private URL or authorize dependency calls.
+
+## Qualification and activation evidence
+
+A capture receipt records the original attempt, instance, node, wake, immutable
+artifact, fresh runtime input acknowledgement and private capture namespace.
+It is immutable and retryable after a lost commit response. Retirement must
+identify the same native generation and kernel boot that produced the capture;
+the receipt remains historical after retirement.
+
+The internal graph assessment reports prepared artifacts and current capture
+counts separately. A partial cohort, changed artifact or stale runtime input
+cannot borrow another member's evidence. Even a complete capture cohort remains
+unqualified until isolated smoke and restored readiness are proven. Activation
+and serving convergence need their own committed receipts. No capture receipt
+releases a held deployment, emits an ordinary deployment-ready event, or
+advances the applied Git revision.
 
 ## Execution gates
 

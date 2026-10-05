@@ -28,7 +28,9 @@ class EnvironmentWorkload:
 
     app: str | Unset = UNSET
     source: EnvironmentWorkloadSource | Unset = UNSET
-    """Build source within the approved Git tree or an immutable OCI digest."""
+    """Build source within the approved Git tree, a function runner, or an immutable OCI digest. Function sources
+    require runtime and exclude dockerfile. The gated internal executor reserves new private workloads when app is
+    omitted. Preparation does not grant serving authority."""
     runtime: AppManifest | Unset = UNSET
     """App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-
     as-source flag (§ux 6.3). The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings)

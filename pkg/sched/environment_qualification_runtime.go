@@ -27,6 +27,11 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if !executionOK || !nativeOK {
 		return fmt.Errorf("qualification requires attempt-aware VM execution and retirement: %w", state.ErrConflict)
 	}
+	if len(claimed.FrozenInputs.ServiceBindings) != 0 {
+		// The current native visitor has no environment-bound private graph
+		// transport. Never boot a binding candidate using shared app aliases.
+		return state.ErrEnvironmentWorkloadPreparationUnavailable
+	}
 	ctx, deadlineCancel := context.WithDeadline(WithScope(ctx, claimed.FrozenInputs.Scope), *claimed.LeaseUntil)
 	defer deadlineCancel()
 	release, err := e.lockQualificationApp(ctx, claimed.AppID)

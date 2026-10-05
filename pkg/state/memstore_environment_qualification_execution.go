@@ -113,6 +113,10 @@ func (m *MemStore) RetireEnvironmentQualificationExecution(ctx context.Context, 
 	if !exists || !qualificationExecutionMatches(status.Execution, execution) || !qualificationRetirementValid(proof, status.DispatchStarted) {
 		return ErrConflict
 	}
+	if capture, exists := m.qualificationSnapshots[execution.InstanceID]; exists &&
+		(proof.Kind != QualificationNativeRetired || proof.NativeGeneration != capture.Snapshot.NativeGeneration || proof.KernelBootID != capture.Snapshot.KernelBootID) {
+		return ErrConflict
+	}
 	if status.RetiredAt != nil {
 		if !qualificationRetirementEqual(status.Retirement, proof) {
 			return ErrConflict

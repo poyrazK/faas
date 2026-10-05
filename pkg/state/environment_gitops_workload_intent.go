@@ -123,7 +123,7 @@ func observeGitOpsWorkloadIntent(out *EnvironmentGitOpsObservation, snapshot git
 		}
 	}
 	if wantedSource || len(keys) > 0 {
-		actual := App{Manifest: app.Manifest, WorkloadClass: app.WorkloadClass}
+		actual := App{Type: app.Type, Runtime: app.RuntimeBase, Manifest: app.Manifest, WorkloadClass: app.WorkloadClass}
 		if _, err := validateWorkloadIntent(row, actual, snapshot.Environment, snapshot.Plan); err != nil {
 			out.State.Unsupported = append(out.State.Unsupported, resource+": source/runtime intent exceeds the workload or plan contract")
 		}

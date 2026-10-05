@@ -28293,7 +28293,7 @@ components:
       additionalProperties: false
     EnvironmentWorkloadSource:
       type: object
-      description: Build source within the approved Git tree or an immutable OCI digest.
+      description: Build source within the approved Git tree, a function runner, or an immutable OCI digest. Function sources require runtime and exclude dockerfile. The gated internal executor reserves new private workloads when app is omitted. Preparation does not grant serving authority.
       properties:
         kind:
           type: string
@@ -28301,6 +28301,11 @@ components:
           - source
           - dockerfile
           - image
+          - function
+        runtime:
+          type: string
+          description: Supported runner; required only when kind is function.
+          enum: [node22, python312, go124, go124-alpine, node24, python313]
         directory:
           type: string
         dockerfile:

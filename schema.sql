@@ -3874,6 +3874,27 @@ END $$;
 
 
 --
+-- Name: guard_environment_qualification_capture_retirement(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_qualification_capture_retirement() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE capture jsonb;
+BEGIN
+ IF NEW.retired_at IS NOT NULL AND OLD.retired_at IS NULL THEN
+  SELECT snapshot INTO capture FROM environment_qualification_snapshot_receipts WHERE instance_id=NEW.instance_id;
+  IF capture IS NOT NULL AND (NEW.retirement->>'kind' IS DISTINCT FROM 'native_retired'
+   OR NEW.retirement->>'native_generation' IS DISTINCT FROM capture->>'native_generation'
+   OR NEW.retirement->>'kernel_boot_id' IS DISTINCT FROM capture->>'kernel_boot_id') THEN
+   RAISE EXCEPTION 'qualification retirement disagrees with original capture producer' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_environment_qualification_execution(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3991,6 +4012,48 @@ BEGIN
   OR NOT environment_workload_qualification_inputs_current(q.id)
   OR NOT environment_runtime_inputs_fresh(i.app_id,NEW.scope,NEW.boundary_at,NEW.variables,NEW.secret_versions,NEW.all_secrets,NEW.secret_refs,NEW.sidecar_secret_versions) THEN
   RAISE EXCEPTION 'environment runtime evidence requires its current qualification attempt and delivered inputs' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_environment_qualification_snapshot_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_qualification_snapshot_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE e environment_qualification_executions%ROWTYPE; q environment_workload_qualification_requests%ROWTYPE;
+ capture uuid; native uuid; kernel uuid; mem text;
+BEGIN
+ IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'qualification capture evidence is immutable' USING ERRCODE='23514'; END IF;
+ SELECT * INTO e FROM environment_qualification_executions WHERE instance_id=NEW.instance_id FOR UPDATE;
+ SELECT * INTO q FROM environment_workload_qualification_requests WHERE id=e.request_id;
+ IF e.instance_id IS NULL OR NOT e.dispatch_started OR e.retired_at IS NOT NULL OR q.phase IS DISTINCT FROM 'claimed'
+  OR q.lease_until<=clock_timestamp() OR q.lease_token IS DISTINCT FROM current_setting('gregale.gitops_qualification',true)
+  OR q.reserved_instance_id IS DISTINCT FROM e.instance_id OR q.attempt IS DISTINCT FROM (e.frame->>'attempt')::bigint
+  OR NOT environment_workload_qualification_inputs_current(q.id) THEN
+  RAISE EXCEPTION 'qualification capture requires current original execution authority' USING ERRCODE='23514';
+ END IF;
+ capture:=(NEW.snapshot->>'capture_id')::uuid; native:=(NEW.snapshot->>'native_generation')::uuid; kernel:=(NEW.snapshot->>'kernel_boot_id')::uuid;
+ mem:='snap/'||(e.frame->>'deployment_id')||'/warm/captures/'||capture::text||'/v2/mem';
+ IF capture IS NULL OR native IS NULL OR kernel IS NULL OR capture=native
+  OR NEW.snapshot->>'capture_id' IS DISTINCT FROM capture::text OR NEW.snapshot->>'native_generation' IS DISTINCT FROM native::text OR NEW.snapshot->>'kernel_boot_id' IS DISTINCT FROM kernel::text
+  OR capture::text='00000000-0000-0000-0000-000000000000' OR native::text='00000000-0000-0000-0000-000000000000' OR kernel::text='00000000-0000-0000-0000-000000000000'
+  OR NEW.snapshot->>'storage_key' IS DISTINCT FROM mem OR NEW.snapshot->>'vmstate_storage_key' IS DISTINCT FROM replace(mem,'/mem','/vmstate')
+  OR NEW.snapshot->>'drive_storage_key' IS DISTINCT FROM replace(mem,'/mem','/drive') OR NEW.snapshot->>'backing_storage_key' IS DISTINCT FROM replace(mem,'/mem','/backing')
+  OR NOT NEW.snapshot ?& ARRAY['mem_bytes','vmstate_bytes','stored_bytes'] OR coalesce((NEW.snapshot->>'mem_bytes')::bigint,0)<=0
+  OR coalesce((NEW.snapshot->>'vmstate_bytes')::bigint,0)<=0 OR coalesce((NEW.snapshot->>'stored_bytes')::bigint,0)<=0 THEN
+  RAISE EXCEPTION 'qualification capture namespace or outputs are invalid' USING ERRCODE='23514';
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM instances i JOIN instance_runtime_config_receipts c ON c.instance_id=i.id AND c.wake_id=i.wake_id
+  WHERE i.id=e.instance_id AND i.state='running' AND i.node_id=(e.frame->>'node_id')::uuid AND i.wake_id=(e.frame->>'wake_id')::uuid
+   AND c.scope=NEW.inputs->>'scope' AND c.boundary_at=(NEW.inputs->>'boundary')::timestamptz
+   AND c.variables=NEW.inputs->'variables' AND c.secret_versions=NEW.inputs->'secret_versions' AND c.secret_refs=NEW.inputs->'secret_refs'
+   AND c.sidecar_secret_versions=coalesce(NEW.inputs->'sidecar_secret_versions','{}') AND c.all_secrets=(NEW.inputs->>'all_secrets')::boolean
+   AND environment_runtime_inputs_fresh(i.app_id,c.scope,c.boundary_at,c.variables,c.secret_versions,c.all_secrets,c.secret_refs,c.sidecar_secret_versions)) THEN
+  RAISE EXCEPTION 'qualification capture requires fresh runtime input evidence' USING ERRCODE='23514';
  END IF;
  RETURN NEW;
 END $$;
@@ -4141,6 +4204,29 @@ $$;
 
 
 --
+-- Name: guard_environment_service_binding_env_key(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_service_binding_env_key() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE row_value jsonb; src environment_git_sources%ROWTYPE;
+BEGIN
+ IF TG_OP='DELETE' THEN row_value:=to_jsonb(OLD); ELSE row_value:=to_jsonb(NEW); END IF;
+ SELECT s.* INTO src FROM active_environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+  JOIN environment_gitops_resources r ON r.source_id=s.id
+ WHERE s.account_id=(row_value->>'account_id')::uuid AND r.app_id=(row_value->>'app_id')::uuid
+  AND (e.id=nullif(row_value->>'environment_id','')::uuid OR e.slug=row_value->>'scope') FOR UPDATE OF s;
+ IF src.id IS NOT NULL AND src.mode='enforce' AND EXISTS(SELECT 1 FROM app_environment_workload_intents w,
+  jsonb_each(w.service_bindings) b WHERE w.app_id=(row_value->>'app_id')::uuid AND w.environment_id=src.environment_id
+   AND b.value->>'env_key'=row_value->>'key') THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_gitops_field_owned',MESSAGE='environment key is reserved by a scoped service binding';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END $$;
+
+
+--
 -- Name: guard_environment_workload_candidate(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4178,7 +4264,7 @@ BEGIN
   IF NOT allowed OR NOT EXISTS(SELECT 1 FROM environment_gitops_resources r JOIN apps a ON a.id=r.app_id
    JOIN project_environments e ON e.id=src.environment_id JOIN app_environment_workload_intents w ON w.app_id=a.id AND w.environment_id=e.id
    JOIN environment_desired_revisions rev ON rev.id=src.approved_revision_id AND rev.source_id=src.id
-   WHERE r.source_id=src.id AND r.logical_name=frozen->>'resource' AND r.app_id=NEW.app_id AND a.status IN ('active','evicted_cold') AND a.type='app'
+   WHERE r.source_id=src.id AND r.logical_name=frozen->>'resource' AND r.app_id=NEW.app_id AND a.status IN ('active','evicted_cold') AND (a.type='app' OR a.type='function' AND coalesce(a.runtime,'') IN ('node22','python312','go124','go124-alpine','node24','python313'))
     AND a.account_id=src.account_id AND a.project_id=src.project_id AND e.account_id=src.account_id AND e.project_id=src.project_id
     AND NEW.app_id=(frozen->>'app_id')::uuid AND NEW.scope=frozen->>'scope' AND NEW.scope=e.slug AND NEW.status='pending' AND (
      (NEW.kind='image' AND (
@@ -4187,7 +4273,8 @@ BEGIN
         AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'
          AND (d.kind<>'image' OR d.image_digest IS DISTINCT FROM NEW.image_digest))))
       AND NEW.image_digest ~ '^[^[:space:]]+@sha256:[a-f0-9]{64}$') OR
-     (NEW.kind='github' AND w.source->>'kind' IN ('source','dockerfile') AND w.source_revision=rev.commit_sha
+     (NEW.kind='github' AND w.source->>'kind' IN ('source','dockerfile','function') AND
+      (w.source->>'kind'<>'function' OR a.type='function' AND a.runtime=w.source->>'runtime') AND w.source_revision=rev.commit_sha
       AND EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.source_id=src.id AND f.resource=r.logical_name AND f.field_path='source') AND frozen->'source'=w.source AND
       jsonb_typeof(frozen->'source_archive')='object' AND frozen->'source_archive' ?& ARRAY['build_id','path','sha256','bytes','log_path','revision_id','commit_sha','definition_digest'] AND
       frozen->'source_archive'->>'revision_id'=rev.id::text AND frozen->'source_archive'->>'commit_sha'=rev.commit_sha AND
@@ -4199,12 +4286,12 @@ BEGIN
       NEW.log_path=frozen->'source_archive'->>'log_path' AND NEW.log_path LIKE '/%' AND
       NEW.source_url='github://'||src.repository||'@'||rev.commit_sha AND NEW.build_id IS NULL AND NEW.inferred_profile IS NULL AND
       coalesce(NEW.github_source_ref,'')='' AND coalesce(NEW.image_digest,'')=''))
-    AND NEW.commit_sha=rev.commit_sha AND frozen->'runtime'=w.runtime
+    AND NEW.commit_sha=rev.commit_sha AND frozen->'runtime'=w.runtime AND coalesce(frozen->'service_bindings','{}')=w.service_bindings
     AND jsonb_strip_nulls(frozen->'baseline')=jsonb_strip_nulls(a.manifest)
     AND frozen->>'start_command'=coalesce(a.start_command,'')
     AND frozen->>'app_type'=a.type AND frozen->>'runtime_base'=coalesce(a.runtime,'') AND frozen->>'workload_class'=a.workload_class
     AND coalesce(a.manifest->'env','{}'::jsonb) IN ('{}'::jsonb,'null'::jsonb) AND coalesce(a.manifest->'service_bindings','[]'::jsonb) IN ('[]'::jsonb,'null'::jsonb)
-    AND EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.source_id=src.id AND f.resource=r.logical_name AND (f.field_path='source' OR starts_with(f.field_path,'runtime/')))) THEN
+    AND EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.source_id=src.id AND f.resource=r.logical_name AND (f.field_path='source' OR starts_with(f.field_path,'runtime/') OR starts_with(f.field_path,'service_bindings/')))) THEN
    RAISE EXCEPTION 'environment workload preparation lost its reviewed authority' USING ERRCODE='23514';
   END IF;
   IF frozen ? 'deployment_inputs' AND (
@@ -4383,7 +4470,7 @@ END $$;
 
 CREATE FUNCTION public.guard_environment_workload_intent() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
+    AS $_$
 DECLARE
  row_value jsonb; prior jsonb; src environment_git_sources%ROWTYPE;
  resource_name text; paths text[]; controller boolean;
@@ -4412,12 +4499,37 @@ BEGIN
    WHERE w.app_id=NEW.app_id AND w.environment_id=NEW.environment_id FOR UPDATE OF w;
   prior:=coalesce(prior,'{}');
  ELSE prior:=to_jsonb(OLD); END IF;
- IF TG_OP='DELETE' THEN row_value:=row_value||jsonb_build_object('source',NULL,'source_revision',NULL,'runtime','{}'::jsonb); END IF;
+ IF TG_OP='DELETE' THEN row_value:=row_value||jsonb_build_object('source',NULL,'source_revision',NULL,'runtime','{}'::jsonb,'service_bindings','{}'::jsonb); END IF;
  SELECT array_agg('runtime/'||k) INTO paths FROM (
   SELECT key k FROM jsonb_each(coalesce(prior->'runtime','{}')) UNION SELECT key FROM jsonb_each(row_value->'runtime')
  ) keys WHERE (prior->'runtime'->k) IS DISTINCT FROM (row_value->'runtime'->k);
  IF coalesce(prior->'source','null'::jsonb) IS DISTINCT FROM coalesce(row_value->'source','null'::jsonb) THEN paths:=coalesce(paths,'{}')||ARRAY['source']; END IF;
  IF coalesce(prior->'source_revision','null'::jsonb) IS DISTINCT FROM coalesce(row_value->'source_revision','null'::jsonb) THEN paths:=coalesce(paths,'{}')||ARRAY['source_revision','source']; END IF;
+ SELECT coalesce(paths,'{}')||coalesce(array_agg('service_bindings/'||k),'{}') INTO paths FROM (
+  SELECT key k FROM jsonb_each(coalesce(prior->'service_bindings','{}')) UNION SELECT key FROM jsonb_each(row_value->'service_bindings')
+ ) keys WHERE (prior->'service_bindings'->k) IS DISTINCT FROM (row_value->'service_bindings'->k);
+ IF TG_OP<>'DELETE' AND EXISTS(SELECT 1 FROM jsonb_each(NEW.service_bindings) b WHERE
+  b.key !~ '^[a-z0-9][a-z0-9-]*$' OR jsonb_typeof(b.value)<>'object' OR
+  NOT b.value ?& ARRAY['workload','env_key','target_app_id'] OR b.value->>'env_key' !~ '^[A-Za-z_][A-Za-z0-9_]*$' OR
+  NOT EXISTS(SELECT 1 FROM environment_gitops_resources r JOIN apps a ON a.id=r.app_id
+   WHERE r.source_id=src.id AND r.logical_name='workload/'||(b.value->>'workload') AND a.id=(b.value->>'target_app_id')::uuid
+   AND a.id<>NEW.app_id AND a.account_id=NEW.account_id AND a.project_id=src.project_id AND a.status<>'deleted')) THEN
+  RAISE EXCEPTION 'scoped service binding requires its original environment target' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP<>'DELETE' AND ((SELECT count(*) FROM jsonb_object_keys(NEW.service_bindings))>100 OR EXISTS(
+  SELECT 1 FROM jsonb_each(NEW.service_bindings) GROUP BY value->>'env_key' HAVING count(*)>1)) THEN
+  RAISE EXCEPTION 'scoped service binding count or environment keys are invalid' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP<>'DELETE' AND NEW.source->>'kind'='function' AND NOT EXISTS(SELECT 1 FROM apps a
+  WHERE a.id=NEW.app_id AND a.type='function' AND a.runtime=NEW.source->>'runtime') THEN
+  RAISE EXCEPTION 'function source requires its original supported runner' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP<>'DELETE' AND EXISTS(SELECT 1 FROM jsonb_each(NEW.service_bindings) b
+  JOIN project_environments e ON e.id=NEW.environment_id WHERE
+   EXISTS(SELECT 1 FROM app_envs v WHERE v.app_id=NEW.app_id AND v.scope=e.slug AND v.key=b.value->>'env_key') OR
+   EXISTS(SELECT 1 FROM app_environment_secret_refs r WHERE r.app_id=NEW.app_id AND r.environment_id=e.id AND r.key=b.value->>'env_key')) THEN
+  RAISE EXCEPTION 'scoped service binding environment key is already occupied' USING ERRCODE='23514';
+ END IF;
  IF coalesce(cardinality(paths),0)=0 THEN IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;
  IF src.id IS NOT NULL THEN
   SELECT logical_name INTO resource_name FROM environment_gitops_resources WHERE source_id=src.id AND app_id=(row_value->>'app_id')::uuid;
@@ -4436,7 +4548,7 @@ BEGIN
  END IF;
  IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END;
-$$;
+$_$;
 
 
 --
@@ -8812,9 +8924,11 @@ CREATE TABLE public.app_environment_workload_intents (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     source_revision text,
+    service_bindings jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT app_environment_workload_intents_runtime_check CHECK ((jsonb_typeof(runtime) = 'object'::text)),
+    CONSTRAINT app_environment_workload_intents_service_bindings_check CHECK ((jsonb_typeof(service_bindings) = 'object'::text)),
     CONSTRAINT app_environment_workload_intents_source_check CHECK (((source IS NULL) OR (jsonb_typeof(source) = 'object'::text))),
-    CONSTRAINT environment_workload_source_revision_shape CHECK (((source_revision IS NULL) OR ((source_revision ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text) AND (source IS NOT NULL) AND ((source ->> 'kind'::text) = ANY (ARRAY['source'::text, 'dockerfile'::text])))))
+    CONSTRAINT environment_workload_source_revision_shape CHECK (((source_revision IS NULL) OR ((source_revision ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text) AND (source IS NOT NULL) AND ((source ->> 'kind'::text) = ANY (ARRAY['source'::text, 'dockerfile'::text, 'function'::text])))))
 );
 
 
@@ -11923,6 +12037,20 @@ CREATE TABLE public.environment_qualification_executions (
     CONSTRAINT environment_qualification_executions_request_id_check CHECK ((request_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT environment_qualification_executions_retirement_check CHECK (((retirement IS NULL) OR (jsonb_typeof(retirement) = 'object'::text))),
     CONSTRAINT environment_qualification_native_receipt_canonical CHECK (((retirement IS NULL) OR ((retirement ->> 'kind'::text) <> 'native_retired'::text) OR (((retirement ->> 'receipt_id'::text) = (((retirement ->> 'receipt_id'::text))::uuid)::text) AND ((retirement ->> 'kernel_boot_id'::text) = (((retirement ->> 'kernel_boot_id'::text))::uuid)::text) AND ((retirement ->> 'native_generation'::text) = (((retirement ->> 'native_generation'::text))::uuid)::text))))
+);
+
+
+--
+-- Name: environment_qualification_snapshot_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_qualification_snapshot_receipts (
+    instance_id uuid NOT NULL,
+    snapshot jsonb NOT NULL,
+    inputs jsonb NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_qualification_snapshot_receipts_inputs_check CHECK ((jsonb_typeof(inputs) = 'object'::text)),
+    CONSTRAINT environment_qualification_snapshot_receipts_snapshot_check CHECK ((jsonb_typeof(snapshot) = 'object'::text))
 );
 
 
@@ -19543,6 +19671,14 @@ ALTER TABLE ONLY public.environment_qualification_executions
 
 ALTER TABLE ONLY public.environment_qualification_executions
     ADD CONSTRAINT environment_qualification_executions_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: environment_qualification_snapshot_receipts environment_qualification_snapshot_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_snapshot_receipts
+    ADD CONSTRAINT environment_qualification_snapshot_receipts_pkey PRIMARY KEY (instance_id);
 
 
 --
@@ -28463,6 +28599,20 @@ CREATE TRIGGER environment_protected_revision_guard BEFORE DELETE OR UPDATE ON p
 
 
 --
+-- Name: environment_qualification_executions environment_qualification_capture_retirement_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_qualification_capture_retirement_guard BEFORE UPDATE ON public.environment_qualification_executions FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_capture_retirement();
+
+
+--
+-- Name: environment_qualification_snapshot_receipts environment_qualification_snapshot_receipt_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_qualification_snapshot_receipt_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_qualification_snapshot_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_snapshot_receipt();
+
+
+--
 -- Name: app_environment_secret_ref_suppressions environment_secret_ref_intent; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -28481,6 +28631,20 @@ CREATE TRIGGER environment_secret_ref_intent BEFORE INSERT OR DELETE OR UPDATE O
 --
 
 CREATE TRIGGER environment_secret_reference_baseline BEFORE INSERT OR DELETE OR UPDATE OF status, scope, app_id, kind, image_digest, override_entrypoint, override_cmd, override_env, override_env_secrets, override_port, override_healthcheck, override_liveness_probe, override_readiness_probe, override_main_depends_on, sidecars, workflows, full_rootfs_allow_auto, full_rootfs_override, min_instances, release_command, release_command_shell, disable_startup_cpu_boost, rollback_on_5xx ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_environment_secret_reference_baseline();
+
+
+--
+-- Name: app_environment_secret_refs environment_service_binding_secret_key; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_service_binding_secret_key BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_refs FOR EACH ROW EXECUTE FUNCTION public.guard_environment_service_binding_env_key();
+
+
+--
+-- Name: app_envs environment_service_binding_variable_key; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_service_binding_variable_key BEFORE INSERT OR DELETE OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.guard_environment_service_binding_env_key();
 
 
 --
@@ -31913,6 +32077,14 @@ ALTER TABLE ONLY public.environment_managed_fields
 
 ALTER TABLE ONLY public.environment_management_overrides
     ADD CONSTRAINT environment_management_overri_environment_id_resource_fiel_fkey FOREIGN KEY (environment_id, resource, field_path) REFERENCES public.environment_managed_fields(environment_id, resource, field_path) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_qualification_snapshot_receipts environment_qualification_snapshot_receipts_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_snapshot_receipts
+    ADD CONSTRAINT environment_qualification_snapshot_receipts_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.environment_qualification_executions(instance_id);
 
 
 --

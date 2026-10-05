@@ -36,7 +36,9 @@ type EnvironmentWorkload struct {
 }
 
 type EnvironmentWorkloadSource struct {
-	Kind       string `json:"kind"`
+	Kind string `json:"kind"`
+	// Runtime is required for kind function and selects its supported runner.
+	Runtime    string `json:"runtime,omitempty"`
 	Directory  string `json:"directory,omitempty"`
 	Dockerfile string `json:"dockerfile,omitempty"`
 	Image      string `json:"image,omitempty"`

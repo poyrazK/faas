@@ -26,6 +26,14 @@ func (m *MemStore) gitOpsGuardScopedWriteLocked(accountID, appID, scope string, 
 				continue
 			}
 			if memory.source.Spec.Mode == "enforce" {
+				row := m.appEnvironmentWorkloadIntents[environmentWorkloadIntentKey{appID, memory.source.EnvironmentID}]
+				for _, path := range paths {
+					for _, binding := range row.ServiceBindings {
+						if path == "variables/"+binding.EnvKey || path == "secret_refs/"+binding.EnvKey {
+							return nil, ErrEnvironmentGitManaged
+						}
+					}
+				}
 				for _, path := range paths {
 					key := (environmentsync.Field{Resource: resource, Path: path}).Key()
 					if _, owned := memory.owners[key]; owned && !memory.overrides[key].ExpiresAt.After(time.Now()) {
@@ -130,6 +138,11 @@ func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsI
 		row.Manifest = app.Manifest
 		row.StartCommand = app.StartCommand
 		row.RuntimeBase = app.Runtime
+		for key, intent := range m.appEnvironmentWorkloadIntents {
+			if key.AppID == app.ID {
+				row.BindingCount += len(intent.ServiceBindings)
+			}
+		}
 		if intent, exists := m.appEnvironmentWorkloadIntents[environmentWorkloadIntentKey{app.ID, source.EnvironmentID}]; exists {
 			clone := cloneWorkloadIntent(intent)
 			row.WorkloadIntent = &clone

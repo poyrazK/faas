@@ -3,7 +3,6 @@ package qualificationwire
 import (
 	"fmt"
 
-	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -12,20 +11,7 @@ func validateSnapshot(frame state.EnvironmentQualificationExecution, proof state
 	if err := validateExecution(frame); err != nil {
 		return err
 	}
-	for _, value := range []string{proof.CaptureID, proof.NativeGeneration, proof.KernelBootID} {
-		id, err := uuid.Parse(value)
-		if err != nil || id == uuid.Nil || id.String() != value {
-			return fmt.Errorf("qualification capture identity is incomplete: %w", state.ErrConflict)
-		}
-	}
-	mem := state.SnapshotCaptureMemKey(frame.DeploymentID, state.SnapshotTierWarm, proof.CaptureID)
-	snapshot := state.Snapshot{StorageKey: mem}
-	if proof.CaptureID == proof.NativeGeneration || proof.StorageKey != mem || proof.VMStateStorageKey != state.SnapshotVMStateKey(snapshot) ||
-		proof.DriveStorageKey != state.SnapshotDriveKey(snapshot) || proof.BackingStorageKey != state.SnapshotBackingKey(snapshot) ||
-		proof.MemBytes <= 0 || proof.VMStateBytes <= 0 || proof.StoredBytes <= 0 {
-		return fmt.Errorf("qualification capture namespace or completion is unconfirmed: %w", state.ErrConflict)
-	}
-	return nil
+	return state.ValidateEnvironmentQualificationSnapshot(frame, proof)
 }
 
 func SnapshotToProto(frame state.EnvironmentQualificationExecution, proof state.EnvironmentQualificationSnapshot) (*vmmdpb.EnvironmentQualificationSnapshot, error) {

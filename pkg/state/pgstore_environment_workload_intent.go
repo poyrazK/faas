@@ -17,6 +17,7 @@ func workloadIntentFromSQL(row sqlc.AppEnvironmentWorkloadIntent) EnvironmentWor
 	out := EnvironmentWorkloadIntent{AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID), EnvironmentID: pgUUIDString(row.EnvironmentID), SourceRevision: row.SourceRevision.String, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time}
 	_ = json.Unmarshal(row.Source, &out.Source)
 	_ = json.Unmarshal(row.Runtime, &out.Runtime)
+	_ = json.Unmarshal(row.ServiceBindings, &out.ServiceBindings)
 	return cloneWorkloadIntent(out)
 }
 
@@ -26,7 +27,8 @@ func putWorkloadIntentTx(ctx context.Context, tx sqlc.DBTX, row EnvironmentWorkl
 		source, _ = json.Marshal(row.Source)
 	}
 	runtime, _ := json.Marshal(cloneWorkloadIntent(row).Runtime)
-	stored, err := sqlc.New().PutEnvironmentWorkloadIntent(ctx, tx, sqlc.PutEnvironmentWorkloadIntentParams{AccountID: mustPgUUID(row.AccountID), AppID: mustPgUUID(row.AppID), EnvironmentID: mustPgUUID(row.EnvironmentID), Source: source, Runtime: runtime, SourceRevision: row.SourceRevision})
+	bindings, _ := json.Marshal(cloneWorkloadIntent(row).ServiceBindings)
+	stored, err := sqlc.New().PutEnvironmentWorkloadIntent(ctx, tx, sqlc.PutEnvironmentWorkloadIntentParams{AccountID: mustPgUUID(row.AccountID), AppID: mustPgUUID(row.AppID), EnvironmentID: mustPgUUID(row.EnvironmentID), Source: source, Runtime: runtime, SourceRevision: row.SourceRevision, ServiceBindings: bindings})
 	if err != nil {
 		return row, mapErr(err)
 	}
@@ -56,6 +58,8 @@ func (s *PgStore) PutEnvironmentWorkloadIntent(ctx context.Context, row Environm
 		return row, mapErr(err)
 	}
 	var scope struct {
+		Type          AppType       `json:"type"`
+		Runtime       string        `json:"runtime"`
 		Manifest      AppManifest   `json:"manifest"`
 		WorkloadClass WorkloadClass `json:"workload_class"`
 		Environment   string        `json:"environment"`
@@ -69,9 +73,19 @@ func (s *PgStore) PutEnvironmentWorkloadIntent(ctx context.Context, row Environm
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return row, mapErr(err)
 	}
-	row, err = validateWorkloadIntentWrite(row, workloadIntentFromSQL(prior), App{Manifest: scope.Manifest, WorkloadClass: scope.WorkloadClass}, scope.Environment, scope.Plan)
+	row, err = validateWorkloadIntentWrite(row, workloadIntentFromSQL(prior), App{Type: scope.Type, Runtime: scope.Runtime, Manifest: scope.Manifest, WorkloadClass: scope.WorkloadClass}, scope.Environment, scope.Plan)
 	if err != nil {
 		return row, err
+	}
+	if len(row.ServiceBindings) != 0 {
+		count, err := q.CountAppEnvironmentIntent(ctx, tx, sqlc.CountAppEnvironmentIntentParams{AccountID: mustPgUUID(row.AccountID), AppID: mustPgUUID(row.AppID)})
+		if err != nil {
+			return row, mapErr(err)
+		}
+		limits, _ := api.LimitsFor(scope.Plan)
+		if int(count)-len(workloadIntentFromSQL(prior).ServiceBindings)+len(row.ServiceBindings) > limits.EnvVarsMax {
+			return row, ErrConflict
+		}
 	}
 	row, err = putWorkloadIntentTx(ctx, tx, row)
 	if err != nil {

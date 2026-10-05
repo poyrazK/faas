@@ -77,8 +77,9 @@
    Immutable image candidates now capture scoped inputs and commit a durable
    imaging handoff, including runtime-only ownership that inherits a reviewed
    immutable live image. Pinned Git source and Dockerfile candidates now publish
-   held build rows from verified archives. Functions, new workload creation and
-   inherited non-image source provenance still need preparation adapters.
+   held build rows from verified archives. Functions now use the same pinned archive handoff with an explicit supported
+   runner. Missing workloads have atomic private reservations; inherited non-image
+   source provenance still needs a reviewed import adapter.
 2. Prepare the dependency graph using immutable source artifacts and durable
    deployment/effect identities. Qualify API and worker candidates before release
    activation. The preparation journal now captures every reviewed workload,
@@ -89,9 +90,9 @@
    scheduler instance admission now binds the current attempt and preserves
    reservation limits. Attempt-bound runtime publication and a bounded scheduler
    VM execution primitive and bounded node-owned page consumer are now available.
-   Production polling, durable qualification/smoke/restore completion receipts,
-   release commands and activation
-   remain to be implemented. Retry and crash recovery resume the journaled operation;
+   Durable attempt-bound capture receipts now preserve original native producer
+   identity and fresh runtime inputs. Production polling, isolated smoke/restore
+   completion receipts, release commands and activation remain to be implemented. Retry and crash recovery resume the journaled operation;
    an older generation cannot activate a replacement approved graph. Release coordination
    must expose partial execution across database, edge and runtime boundaries.
    Host lifecycle consumers must use the same frozen contract as the guest.
@@ -2295,3 +2296,59 @@ expiry during the attempt leaves the next check immediately due. Expired records
 that a fresh plan no longer uses do not create an unbounded retry loop. Both
 memory and PostgreSQL stores use the same scheduling rules, while retaining the
 existing lease, generation, approved-revision and historical-report fences.
+
+## Function reservations, scoped bindings and capture evidence — 2026-10-05
+
+The internal apid executor can reserve a cohort of missing HTTP/function/worker
+apps only under the current approved enforce lease and reviewed plan. It assigns
+private stable identities, respects account quotas, and journals mappings, scoped
+source/runtime/binding intent and ownership atomically. It launches no deployment
+or VM. A subsequent attempt observes the new identities before applying other
+intent. Collision or quota failure rolls back the entire reservation; an absent
+previously mapped app remains blocked. Customer enforcement stays unavailable.
+
+The definition adds `source.kind: function` with an explicit supported runner.
+Function candidates freeze that runner and the original app type, and use the
+exact approved Git archive plus the durable builder handoff. Existing function
+apps may also retain the established `source` form. Source changes cannot silently
+change shared app type or runner metadata. Job reservations remain blocked until
+the separate job execution adapter is available.
+
+Scoped service bindings pin logical workload names to original mapped app IDs
+and freeze those identities in candidate runtime inputs. Observation and storage
+reject self, foreign, missing or rebound targets, duplicate environment keys,
+variable/reference collisions and excess binding counts. Generated keys consume
+the existing app-wide variable quota across environments. Ordinary enforced
+writes cannot overwrite those keys. Qualification discovery and runtime reject
+binding candidates until a private graph transport with scoped authorization
+is implemented; shared manifests and public environment URLs grant no substitute
+authority. Target qualification, scoped policy enforcement and private transport
+remain implementation requirements.
+
+The scheduler can retain a vmmd capture result in an immutable receipt for the
+original execution frame. Receipt publication rechecks the current request lease,
+complete graph inputs, dispatched running incarnation and actual fresh runtime
+acknowledgement. Storage keys must name the original deployment and private
+capture UUID. Exact retry preserves the first receipt; changed evidence, a
+foreign frame or retired execution is rejected. Physical retirement must match
+the captured native generation and original kernel boot. Capture history survives
+retirement and remains separate from reusable serving snapshots.
+
+An internal graph assessment reports current prepared artifacts and capture
+counts while naming missing smoke, restore, activation and serving receipts.
+Capture counts cannot mark a graph qualified, activate a deployment or advance
+the applied revision. Changed artifacts invalidate the complete cohort's capture
+assessment. This is diagnostic evidence, not activation capability.
+
+Native snapshot publication, isolated smoke/restore proof, whole-graph private
+binding execution, activation, serving convergence and dedicated native KVM
+`test-metal`/`leakcheck` acceptance remain outstanding. No production qualification
+polling, recovery opt-in or continuous enforcement gate is opened by these changes.
+
+Checkpoint validation passed the environment compiler/controller, real PostgreSQL
+integration suite, builder, scheduler, qualification wire and focused apid tests,
+plus capture-evidence race checks and Go/Node/Python SDK tests. Linux lint reported
+zero issues, SQLC regeneration matched the checked-in output, and both new
+migrations completed a down/up round trip against an empty validation database.
+These portable and database checks do not replace the dedicated native acceptance
+listed above.

@@ -141,6 +141,7 @@ type MemStore struct {
 	operationData               *operationMemory
 	operationCodePins           map[string]time.Time
 	qualificationExecutions     map[string]EnvironmentQualificationExecutionStatus
+	qualificationSnapshots      map[string]EnvironmentQualificationSnapshotReceipt
 	environmentExternalOwners   map[string]environmentExternalFieldOwner
 	environmentGitOps           map[string]*environmentGitOpsMemory
 	financialEvidence           []FinancialUsageRecord
@@ -20862,6 +20863,11 @@ func (m *MemStore) CountAppEnv(_ context.Context, accountID, appID string) (int,
 			}
 		}
 	}
+	for key, intent := range m.appEnvironmentWorkloadIntents {
+		if key.AppID == appID && intent.AccountID == accountID {
+			n += len(intent.ServiceBindings)
+		}
+	}
 	return n, nil
 }
 
@@ -20947,6 +20953,15 @@ func (m *MemStore) CountAppEnvInScope(_ context.Context, accountID, appID, scope
 	}
 	if m.apps[appID].AccountID == accountID {
 		n += len(m.environmentSecretRefsLocked(appID, scope))
+	}
+	for key, intent := range m.appEnvironmentWorkloadIntents {
+		if key.AppID == appID && intent.AccountID == accountID {
+			for _, env := range m.projectEnvironments {
+				if env.ID == key.EnvironmentID && env.Slug == scope {
+					n += len(intent.ServiceBindings)
+				}
+			}
+		}
 	}
 	return n, nil
 }

@@ -153,6 +153,19 @@ func (s *PgStore) RetireEnvironmentQualificationExecution(ctx context.Context, e
 	if !qualificationExecutionMatches(status.Execution, execution) || !qualificationRetirementValid(proof, status.DispatchStarted) {
 		return ErrConflict
 	}
+	capture, captureErr := q.EnvironmentQualificationSnapshotReceipt(ctx, tx, row.InstanceID)
+	if captureErr != nil && !errors.Is(captureErr, pgx.ErrNoRows) {
+		return mapErr(captureErr)
+	}
+	if captureErr == nil {
+		receipt, err := qualificationSnapshotReceiptFromSQL(capture)
+		if err != nil {
+			return err
+		}
+		if proof.Kind != QualificationNativeRetired || proof.NativeGeneration != receipt.Snapshot.NativeGeneration || proof.KernelBootID != receipt.Snapshot.KernelBootID {
+			return ErrConflict
+		}
+	}
 	if status.RetiredAt != nil {
 		if !qualificationRetirementEqual(status.Retirement, proof) {
 			return ErrConflict

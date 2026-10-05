@@ -508,14 +508,15 @@ type AppEnvironmentSecretRefSuppression struct {
 }
 
 type AppEnvironmentWorkloadIntent struct {
-	AccountID      pgtype.UUID
-	AppID          pgtype.UUID
-	EnvironmentID  pgtype.UUID
-	Source         []byte
-	Runtime        []byte
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-	SourceRevision pgtype.Text
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	Source          []byte
+	Runtime         []byte
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	SourceRevision  pgtype.Text
+	ServiceBindings []byte
 }
 
 type AppError struct {
@@ -2124,6 +2125,13 @@ type EnvironmentQualificationExecution struct {
 	Retirement      []byte
 	CreatedAt       pgtype.Timestamptz
 	RetiredAt       pgtype.Timestamptz
+}
+
+type EnvironmentQualificationSnapshotReceipt struct {
+	InstanceID pgtype.UUID
+	Snapshot   []byte
+	Inputs     []byte
+	RecordedAt pgtype.Timestamptz
 }
 
 type EnvironmentWorkloadGraph struct {

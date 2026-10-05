@@ -20,26 +20,27 @@ var ErrEnvironmentWorkloadPreparationUnavailable = errors.New("environment workl
 // carrying it remains held until a graph qualification/activation adapter is
 // implemented; creating the row or building its image never implies readiness.
 type EnvironmentWorkloadRuntime struct {
-	Source            *api.EnvironmentWorkloadSource       `json:"source,omitempty"`
-	SourceArchive     *EnvironmentWorkloadSourceArtifact   `json:"source_archive,omitempty"`
-	SourceDeployments []string                             `json:"source_deployments,omitempty"`
-	DeploymentInputs  *EnvironmentWorkloadDeploymentInputs `json:"deployment_inputs,omitempty"`
-	SourceID          string                               `json:"source_id"`
-	EnvironmentID     string                               `json:"environment_id"`
-	RevisionID        string                               `json:"revision_id"`
-	DefinitionDigest  string                               `json:"definition_digest,omitempty"`
-	Generation        int64                                `json:"generation"`
-	IntentVersion     int64                                `json:"intent_version"`
-	Resource          string                               `json:"resource"`
-	PlanHash          string                               `json:"plan_hash"`
-	AppID             string                               `json:"app_id"`
-	Scope             string                               `json:"scope"`
-	AppType           AppType                              `json:"app_type"`
-	RuntimeBase       string                               `json:"runtime_base"`
-	WorkloadClass     WorkloadClass                        `json:"workload_class"`
-	Baseline          AppManifest                          `json:"baseline"`
-	StartCommand      string                               `json:"start_command"`
-	Runtime           map[string]json.RawMessage           `json:"runtime"`
+	ServiceBindings   map[string]EnvironmentScopedServiceBinding `json:"service_bindings,omitempty"`
+	Source            *api.EnvironmentWorkloadSource             `json:"source,omitempty"`
+	SourceArchive     *EnvironmentWorkloadSourceArtifact         `json:"source_archive,omitempty"`
+	SourceDeployments []string                                   `json:"source_deployments,omitempty"`
+	DeploymentInputs  *EnvironmentWorkloadDeploymentInputs       `json:"deployment_inputs,omitempty"`
+	SourceID          string                                     `json:"source_id"`
+	EnvironmentID     string                                     `json:"environment_id"`
+	RevisionID        string                                     `json:"revision_id"`
+	DefinitionDigest  string                                     `json:"definition_digest,omitempty"`
+	Generation        int64                                      `json:"generation"`
+	IntentVersion     int64                                      `json:"intent_version"`
+	Resource          string                                     `json:"resource"`
+	PlanHash          string                                     `json:"plan_hash"`
+	AppID             string                                     `json:"app_id"`
+	Scope             string                                     `json:"scope"`
+	AppType           AppType                                    `json:"app_type"`
+	RuntimeBase       string                                     `json:"runtime_base"`
+	WorkloadClass     WorkloadClass                              `json:"workload_class"`
+	Baseline          AppManifest                                `json:"baseline"`
+	StartCommand      string                                     `json:"start_command"`
+	Runtime           map[string]json.RawMessage                 `json:"runtime"`
 }
 
 // Preparation is an apid-owned operation. Other daemons may consume the
@@ -89,7 +90,7 @@ func (d Deployment) ScopedWorkloadRuntime() (*EnvironmentWorkloadRuntime, error)
 		return nil, nil
 	}
 	var frozen EnvironmentWorkloadRuntime
-	if err := json.Unmarshal([]byte(d.EnvironmentWorkloadRuntime), &frozen); err != nil || frozen.AppID != d.AppID || frozen.AppType != AppTypeApp || frozen.Scope != normalizedDeploymentScope(d.Scope) || frozen.SourceID == "" || frozen.EnvironmentID == "" || frozen.RevisionID == "" || frozen.Generation < 1 || len(frozen.PlanHash) != 64 || frozen.Runtime == nil {
+	if err := json.Unmarshal([]byte(d.EnvironmentWorkloadRuntime), &frozen); err != nil || frozen.AppID != d.AppID || !workloadPreparationTypeSupported(frozen.AppType, frozen.RuntimeBase) || frozen.Scope != normalizedDeploymentScope(d.Scope) || frozen.SourceID == "" || frozen.EnvironmentID == "" || frozen.RevisionID == "" || frozen.Generation < 1 || len(frozen.PlanHash) != 64 || frozen.Runtime == nil {
 		return nil, fmt.Errorf("%w: invalid frozen workload inputs", ErrInvalidArgument)
 	}
 	known := runtimeManifestValues(frozen.Baseline)
@@ -107,9 +108,15 @@ func (d Deployment) ScopedWorkloadRuntime() (*EnvironmentWorkloadRuntime, error)
 			return nil, fmt.Errorf("%w: inherited workload inputs disagree with candidate", ErrInvalidArgument)
 		}
 	}
+	if err := validateEnvironmentServiceBindings(d.AppID, frozen.ServiceBindings); err != nil {
+		return nil, fmt.Errorf("%w: invalid frozen scoped service bindings", err)
+	}
+	if frozen.Source != nil && frozen.Source.Kind == "function" && (frozen.AppType != AppTypeFunction || frozen.RuntimeBase != frozen.Source.Runtime) {
+		return nil, fmt.Errorf("%w: frozen function runner differs from source", ErrInvalidArgument)
+	}
 	if frozen.SourceArchive != nil {
 		if err := validateEnvironmentSourceArtifact(*frozen.SourceArchive); err != nil || frozen.Source == nil ||
-			(frozen.Source.Kind != "source" && frozen.Source.Kind != "dockerfile") || d.Kind != DeploymentKindGitHub ||
+			(frozen.Source.Kind != "source" && frozen.Source.Kind != "dockerfile" && frozen.Source.Kind != "function") || d.Kind != DeploymentKindGitHub ||
 			d.SourcePath != frozen.SourceArchive.Path || d.SourceSHA256 != frozen.SourceArchive.SHA256 || d.SourceBytes != frozen.SourceArchive.Bytes ||
 			d.BuildID != frozen.SourceArchive.BuildID || d.LogPath != frozen.SourceArchive.LogPath || d.SourceRoot != frozen.Source.Directory ||
 			frozen.RevisionID != frozen.SourceArchive.RevisionID || d.CommitSHA != frozen.SourceArchive.CommitSHA || frozen.DefinitionDigest != frozen.SourceArchive.DefinitionDigest {
@@ -119,6 +126,10 @@ func (d Deployment) ScopedWorkloadRuntime() (*EnvironmentWorkloadRuntime, error)
 		return nil, fmt.Errorf("%w: frozen Git source has no archive", ErrInvalidArgument)
 	}
 	return &frozen, nil
+}
+
+func workloadPreparationTypeSupported(appType AppType, runtime string) bool {
+	return appType == AppTypeApp || appType == AppTypeFunction && api.ValidFunctionRuntime(runtime)
 }
 
 // AppForDeploymentRuntime returns a detached app using the candidate's frozen
@@ -214,11 +225,14 @@ func workloadCandidateInputs(source EnvironmentGitSource, revision EnvironmentDe
 		app := byID[ids[resource]]
 		intent := app.WorkloadIntent
 		workloadSource, reason := observedWorkloadSource(app)
-		if app.ID == "" || app.Type != AppTypeApp || intent == nil || workloadSource == nil || reason != "" {
-			return nil, fmt.Errorf("%w: candidate requires a mapped container app and consistent source", ErrEnvironmentWorkloadPreparationUnavailable)
+		if app.ID == "" || !workloadPreparationTypeSupported(app.Type, app.RuntimeBase) || intent == nil || workloadSource == nil || reason != "" {
+			return nil, fmt.Errorf("%w: candidate requires a mapped workload with a supported runtime and consistent source", ErrEnvironmentWorkloadPreparationUnavailable)
 		}
 		if workloadSource.Kind != "image" && (!sourceOwned || intent.SourceRevision != revision.CommitSHA) {
 			return nil, fmt.Errorf("%w: source builds require owned source intent at the reviewed commit", ErrEnvironmentWorkloadPreparationUnavailable)
+		}
+		if workloadSource.Kind == "function" && (app.Type != AppTypeFunction || app.RuntimeBase != workloadSource.Runtime) {
+			return nil, fmt.Errorf("%w: function source runtime differs from the mapped function", ErrEnvironmentWorkloadPreparationUnavailable)
 		}
 		// Runtime-only ownership inherits a reviewed immutable image without
 		// importing it into scoped intent or transferring source ownership.
@@ -235,6 +249,7 @@ func workloadCandidateInputs(source EnvironmentGitSource, revision EnvironmentDe
 			Generation: source.Generation, IntentVersion: snapshot.Version, Resource: resource, PlanHash: plan.Hash,
 			AppID: app.ID, Scope: snapshot.Environment, AppType: app.Type, RuntimeBase: app.RuntimeBase, WorkloadClass: app.WorkloadClass,
 			Baseline: app.Manifest, StartCommand: app.StartCommand, Runtime: cloneWorkloadIntent(*intent).Runtime}
+		frozen.ServiceBindings = cloneWorkloadIntent(*intent).ServiceBindings
 		sourceCopy := *workloadSource
 		frozen.Source = &sourceCopy
 		slices.SortFunc(app.Sources, func(a, b gitOpsSourceBaseline) int { return strings.Compare(a.ID, b.ID) })

@@ -3196,7 +3196,8 @@ func (q *Queries) CountActiveWorkflowRunsForAdmission(ctx context.Context, db DB
 
 const countAppEnvironmentIntent = `-- name: CountAppEnvironmentIntent :one
 SELECT ((SELECT count(*) FROM app_envs WHERE account_id=$1::uuid AND app_id=$2::uuid)
- + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=$1::uuid AND app_id=$2::uuid))::bigint AS count
+ + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=$1::uuid AND app_id=$2::uuid)
+ + (SELECT count(*) FROM app_environment_workload_intents w CROSS JOIN LATERAL jsonb_object_keys(w.service_bindings) b WHERE w.account_id=$1::uuid AND w.app_id=$2::uuid))::bigint AS count
 `
 
 type CountAppEnvironmentIntentParams struct {
@@ -3204,7 +3205,7 @@ type CountAppEnvironmentIntentParams struct {
 	AppID     pgtype.UUID
 }
 
-// References and plaintext variables share the app's environment-key quota.
+// Bindings, references and plaintext variables share the app's environment-key quota.
 func (q *Queries) CountAppEnvironmentIntent(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentParams) (int64, error) {
 	row := db.QueryRow(ctx, countAppEnvironmentIntent, arg.AccountID, arg.AppID)
 	var count int64
@@ -3214,7 +3215,8 @@ func (q *Queries) CountAppEnvironmentIntent(ctx context.Context, db DBTX, arg Co
 
 const countAppEnvironmentIntentInScope = `-- name: CountAppEnvironmentIntentInScope :one
 SELECT ((SELECT count(*) FROM app_envs WHERE account_id=$1::uuid AND app_id=$2::uuid AND scope=$3::text)
- + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=$1::uuid AND app_id=$2::uuid AND scope=$3::text))::bigint AS count
+ + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=$1::uuid AND app_id=$2::uuid AND scope=$3::text)
+ + (SELECT count(*) FROM app_environment_workload_intents w JOIN project_environments e ON e.id=w.environment_id CROSS JOIN LATERAL jsonb_object_keys(w.service_bindings) b WHERE w.account_id=$1::uuid AND w.app_id=$2::uuid AND e.slug=$3::text))::bigint AS count
 `
 
 type CountAppEnvironmentIntentInScopeParams struct {
@@ -6349,7 +6351,7 @@ func (q *Queries) EnvironmentGitOpsQueueForUpdate(ctx context.Context, db DBTX, 
 const environmentGitOpsUnqualifiedWorkloads = `-- name: EnvironmentGitOpsUnqualifiedWorkloads :many
 SELECT r.app_id,r.logical_name FROM environment_gitops_resources r
 WHERE r.source_id=$1::uuid AND EXISTS(SELECT 1 FROM environment_managed_fields f
- WHERE f.source_id=r.source_id AND f.resource=r.logical_name AND (f.field_path='source' OR starts_with(f.field_path,'runtime/')))
+ WHERE f.source_id=r.source_id AND f.resource=r.logical_name AND (f.field_path='source' OR starts_with(f.field_path,'runtime/') OR starts_with(f.field_path,'service_bindings/')))
 `
 
 type EnvironmentGitOpsUnqualifiedWorkloadsRow struct {
@@ -6549,6 +6551,32 @@ func (q *Queries) EnvironmentQualificationNodeUsedMB(ctx context.Context, db DBT
 	return column_1, err
 }
 
+const environmentQualificationSnapshotReceipt = `-- name: EnvironmentQualificationSnapshotReceipt :one
+SELECT e.frame,e.cleanup_token,r.snapshot,r.inputs,r.recorded_at FROM environment_qualification_snapshot_receipts r
+JOIN environment_qualification_executions e ON e.instance_id=r.instance_id WHERE r.instance_id=$1::uuid
+`
+
+type EnvironmentQualificationSnapshotReceiptRow struct {
+	Frame        []byte
+	CleanupToken pgtype.UUID
+	Snapshot     []byte
+	Inputs       []byte
+	RecordedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) EnvironmentQualificationSnapshotReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationSnapshotReceiptRow, error) {
+	row := db.QueryRow(ctx, environmentQualificationSnapshotReceipt, instanceID)
+	var i EnvironmentQualificationSnapshotReceiptRow
+	err := row.Scan(
+		&i.Frame,
+		&i.CleanupToken,
+		&i.Snapshot,
+		&i.Inputs,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
 const environmentSecretReferenceQuota = `-- name: EnvironmentSecretReferenceQuota :one
 SELECT ((SELECT count(*) FROM app_envs WHERE app_id=$1::uuid)
  +(SELECT count(*) FROM app_environment_secret_refs WHERE app_id=$1::uuid))::bigint AS total,
@@ -6695,7 +6723,7 @@ func (q *Queries) EnvironmentWorkloadGraphForPreparation(ctx context.Context, db
 }
 
 const environmentWorkloadIntent = `-- name: EnvironmentWorkloadIntent :one
-SELECT w.account_id, w.app_id, w.environment_id, w.source, w.runtime, w.created_at, w.updated_at, w.source_revision FROM app_environment_workload_intents w
+SELECT w.account_id, w.app_id, w.environment_id, w.source, w.runtime, w.created_at, w.updated_at, w.source_revision, w.service_bindings FROM app_environment_workload_intents w
 JOIN apps a ON a.id=w.app_id AND a.account_id=w.account_id AND a.status<>'deleted'
 JOIN project_environments e ON e.id=w.environment_id AND e.account_id=a.account_id AND e.project_id=a.project_id
 WHERE w.account_id=$1::uuid AND w.app_id=$2::uuid AND w.environment_id=$3::uuid
@@ -6719,12 +6747,13 @@ func (q *Queries) EnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg En
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SourceRevision,
+		&i.ServiceBindings,
 	)
 	return i, err
 }
 
 const environmentWorkloadIntentContext = `-- name: EnvironmentWorkloadIntentContext :one
-SELECT jsonb_build_object('manifest',a.manifest,'workload_class',a.workload_class,'environment',e.slug,'plan',c.plan)::jsonb AS context
+SELECT jsonb_build_object('type',a.type,'runtime',coalesce(a.runtime,''),'manifest',a.manifest,'workload_class',a.workload_class,'environment',e.slug,'plan',c.plan)::jsonb AS context
 FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
 JOIN accounts c ON c.id=a.account_id
 WHERE a.id=$1::uuid AND a.account_id=$2::uuid AND e.id=$3::uuid AND a.status<>'deleted'
@@ -17273,6 +17302,7 @@ WHERE s.mode='enforce' AND NOT s.suspended AND g.phase='prepared'
  AND (a.node_id IS NULL OR a.node_id=$1::uuid)
  AND ($2::text='' OR q.id>nullif($2::text,'')::uuid)
  AND q.execution_mode<>'job' AND (q.phase='queued' OR q.phase='claimed' AND q.lease_until<=clock_timestamp())
+ AND coalesce(q.frozen_inputs->'service_bindings','{}'::jsonb)='{}'::jsonb
  AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=q.reserved_instance_id AND i.state NOT IN ('parked','stopped','failed'))
  AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=q.reserved_instance_id AND e.retired_at IS NULL)
 ORDER BY q.id LIMIT $3::integer
@@ -29813,6 +29843,7 @@ SELECT jsonb_build_object(
         'suppression_count', (SELECT count(*) FROM app_environment_secret_ref_suppressions r WHERE r.app_id=a.id AND r.account_id=s.account_id),
         'live_deployments', coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'secret_refs',d.override_env_secrets) ORDER BY d.id)
             FROM deployments d WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
+        'binding_count', (SELECT coalesce(sum((SELECT count(*) FROM jsonb_object_keys(w.service_bindings))),0) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.account_id=s.account_id),
         'secret_ref_count', (SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id AND r.account_id=s.account_id),
         'secret_names', coalesce((SELECT jsonb_agg(v.key) FROM app_secrets v WHERE v.app_id=a.id AND v.account_id=s.account_id AND v.scope=e.slug),'[]'::jsonb),
         'variables', coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
@@ -31192,19 +31223,20 @@ func (q *Queries) PutEnvironmentSecretReferenceSuppression(ctx context.Context, 
 }
 
 const putEnvironmentWorkloadIntent = `-- name: PutEnvironmentWorkloadIntent :one
-INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,source,runtime,source_revision)
-VALUES($1::uuid,$2::uuid,$3::uuid,$4::jsonb,$5::jsonb,nullif($6::text,''))
-ON CONFLICT(app_id,environment_id) DO UPDATE SET source=excluded.source,runtime=excluded.runtime,source_revision=excluded.source_revision,updated_at=now()
-RETURNING account_id, app_id, environment_id, source, runtime, created_at, updated_at, source_revision
+INSERT INTO app_environment_workload_intents(account_id,app_id,environment_id,source,runtime,source_revision,service_bindings)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::jsonb,$5::jsonb,nullif($6::text,''),$7::jsonb)
+ON CONFLICT(app_id,environment_id) DO UPDATE SET source=excluded.source,runtime=excluded.runtime,source_revision=excluded.source_revision,service_bindings=excluded.service_bindings,updated_at=now()
+RETURNING account_id, app_id, environment_id, source, runtime, created_at, updated_at, source_revision, service_bindings
 `
 
 type PutEnvironmentWorkloadIntentParams struct {
-	AccountID      pgtype.UUID
-	AppID          pgtype.UUID
-	EnvironmentID  pgtype.UUID
-	Source         []byte
-	Runtime        []byte
-	SourceRevision string
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	Source          []byte
+	Runtime         []byte
+	SourceRevision  string
+	ServiceBindings []byte
 }
 
 func (q *Queries) PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg PutEnvironmentWorkloadIntentParams) (AppEnvironmentWorkloadIntent, error) {
@@ -31215,6 +31247,7 @@ func (q *Queries) PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg
 		arg.Source,
 		arg.Runtime,
 		arg.SourceRevision,
+		arg.ServiceBindings,
 	)
 	var i AppEnvironmentWorkloadIntent
 	err := row.Scan(
@@ -31226,6 +31259,7 @@ func (q *Queries) PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SourceRevision,
+		&i.ServiceBindings,
 	)
 	return i, err
 }
@@ -33693,6 +33727,23 @@ func (q *Queries) RecordEnvironmentGitSourcePoll(ctx context.Context, db DBTX, a
 		arg.DefinitionDigest,
 		arg.SourceID,
 	)
+	return err
+}
+
+const recordEnvironmentQualificationSnapshot = `-- name: RecordEnvironmentQualificationSnapshot :exec
+INSERT INTO environment_qualification_snapshot_receipts(instance_id,snapshot,inputs)
+VALUES($1::uuid,$2::jsonb,$3::jsonb)
+ON CONFLICT(instance_id) DO NOTHING
+`
+
+type RecordEnvironmentQualificationSnapshotParams struct {
+	InstanceID pgtype.UUID
+	Snapshot   []byte
+	Inputs     []byte
+}
+
+func (q *Queries) RecordEnvironmentQualificationSnapshot(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationSnapshotParams) error {
+	_, err := db.Exec(ctx, recordEnvironmentQualificationSnapshot, arg.InstanceID, arg.Snapshot, arg.Inputs)
 	return err
 }
 
