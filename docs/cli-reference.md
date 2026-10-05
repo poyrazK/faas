@@ -201,9 +201,9 @@ gregale mcp tools --app my-mcp
 
 ### mcp call
 
-Execute one discovered tool without automatic retries
+Execute one discovered tool; resume input requests only when explicitly enabled
 
-`gregale mcp call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--interactive] [--input-responses-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -217,12 +217,15 @@ Execute one discovered tool without automatic retries
 | `--arguments <JSON>` | tool arguments as a JSON object |  |
 | `--arguments-file <PATH>` | JSON file containing tool arguments |  |
 | `--name <NAME>` | connection name (config) |  |
-| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+| `--timeout <DURATION>` | total request timeout (default 30s; interactive 5m) |  |
+| `--interactive` | answer modern MCP input forms in the terminal |  |
+| `--input-responses-file <PATH>` | JSON file with elicitation responses keyed by request ID |  |
 
 Examples:
 
 ```sh
 gregale mcp call --app my-mcp --tool add --arguments '{"a":7,"b":5}'
+gregale mcp call --app my-mcp --tool report_preview --interactive
 ```
 
 ### mcp config
