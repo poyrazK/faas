@@ -4348,6 +4348,8 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 	}
 	created := make([]App, 0, len(apps))
 	insertedIDs := make([]string, 0, len(apps))
+	addressIndexBefore := maps.Clone(m.serviceAddressIndex)
+	addressCursorsBefore := maps.Clone(m.serviceAddressCursors)
 	rollback := func(err error) ([]App, error) {
 		for _, id := range insertedIDs {
 			delete(m.apps, id)
@@ -4355,6 +4357,7 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 			m.eraseStandardAppExceptionsLocked(id)
 			m.deleteStandardMaterializationControlsLocked(id)
 		}
+		m.serviceAddressIndex, m.serviceAddressCursors = addressIndexBefore, addressCursorsBefore
 		return nil, err
 	}
 	for _, app := range apps {
