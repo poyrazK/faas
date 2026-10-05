@@ -55,3 +55,46 @@ func TestResizeQualificationRequiresCompleteProof(t *testing.T) {
 		})
 	}
 }
+
+func TestResizeQualificationBindsCapabilityAndVersion(t *testing.T) {
+	caps := testCapabilities()
+	caps.ClassResize = true
+	provider := &resizeQualificationProvider{qualificationProvider: &qualificationProvider{capabilities: caps}, evidence: ResizeEvidence{IdentityPreserved: true, DataPreserved: true, CredentialsPreserved: true, ReplayStable: true, OriginalClassRestored: true}}
+	registry := testRegistry(t, provider, nil)
+	backend, err := registry.Default(registry.DefaultRegion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := QualifyProvider(t.Context(), provider, QualificationOptions{ProviderName: backend.Driver, ResourceID: "resize-approval", Spec: testSpec(), Mutating: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := report.CompletedAt.Add(time.Minute)
+	lifecycle := passingLifecycleQualificationReport()
+	approval, err := BuildQualificationApproval(report, &lifecycle, backend.ID, backend.Fingerprint, nil, now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := QualificationArtifact{Version: QualificationArtifactVersion, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Spec: testSpec(), Report: report, Lifecycle: &lifecycle, Approval: &approval}
+	if ready := registry.VerifyQualificationArtifact(artifact, nil, now); !ready.Ready {
+		t.Fatal("complete resize approval rejected", ready)
+	}
+	backend.Capabilities.ClassResize = false
+	registry.backends[backend.ID] = backend
+	ready := registry.VerifyQualificationArtifact(artifact, nil, now)
+	found := false
+	for _, reason := range ready.Reasons {
+		if reason == "resize_capabilities_mismatch" {
+			found = true
+		}
+	}
+	if ready.Ready || !found {
+		t.Fatal("different provider declaration accepted", ready)
+	}
+	backend.Capabilities.ClassResize = true
+	registry.backends[backend.ID] = backend
+	artifact.Version = 4
+	if ready := registry.VerifyQualificationArtifact(artifact, nil, now); ready.Ready {
+		t.Fatal("prior approval contract accepted")
+	}
+}
