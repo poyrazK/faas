@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -111,6 +112,100 @@ func TestMCPArgumentsAndPreflight(t *testing.T) {
 	}
 }
 
+func TestMCPCallUsesExplicitInputResponsesFile(t *testing.T) {
+	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
+	var output, stderr bytes.Buffer
+	osStdout, osStderr, jsonOutput = &output, &stderr, true
+	t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
+	responses := filepath.Join(t.TempDir(), "responses.json")
+	if err := os.WriteFile(responses, []byte(`{"dates":{"action":"accept","content":{"from":"2026-06-01","to":"2026-06-30"}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			ID     int            `json:"id"`
+			Method string         `json:"method"`
+			Params map[string]any `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch request.Method {
+		case "tools/list":
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"report_preview","inputSchema":{"type":"object"}}]}}`, request.ID)
+		case "tools/call":
+			count := calls.Add(1)
+			meta, _ := request.Params["_meta"].(map[string]any)
+			caps, _ := meta["io.modelcontextprotocol/clientCapabilities"].(map[string]any)
+			if form, ok := caps["elicitation"].(map[string]any); !ok || form["form"] == nil {
+				t.Errorf("interactive capability missing: %v", caps)
+			}
+			if count == 1 {
+				_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"input_required","requestState":"opaque","inputRequests":{"dates":{"method":"elicitation/create","params":{"mode":"form","message":"Choose dates","requestedSchema":{"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}}}}}}}}`, request.ID)
+				return
+			}
+			inputResponses, _ := request.Params["inputResponses"].(map[string]any)
+			if inputResponses == nil || request.Params["requestState"] != "opaque" {
+				t.Errorf("missing response or opaque state: %v", request.Params)
+			}
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"complete","content":[{"type":"text","text":"preview ready"}]}}`, request.ID)
+		default:
+			t.Errorf("unexpected MCP method %q", request.Method)
+		}
+	}))
+	defer server.Close()
+	if code := cmdMCP([]string{"call", "--url", server.URL + "/mcp", "--tool", "report_preview", "--input-responses-file", responses}); code != 0 {
+		t.Fatalf("call exit=%d, stdout=%s stderr=%s", code, output.String(), stderr.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil || calls.Load() != 2 || !strings.Contains(output.String(), "preview ready") || strings.Contains(output.String(), "2026-06") || strings.Contains(output.String(), "opaque") {
+		t.Fatalf("output=%s err=%v calls=%d", output.String(), err, calls.Load())
+	}
+}
+
+func TestMCPInteractivePromptAndTTYGate(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, action string
+		wantContent         bool
+	}{
+		{name: "accept", input: `{"from":"2026-06-01"}`, action: "accept", wantContent: true},
+		{name: "decline", input: "decline", action: "decline"},
+		{name: "cancel", input: "cancel", action: "cancel"},
+		{name: "eof", input: "", action: "cancel"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scanner := bufio.NewScanner(strings.NewReader(tc.input))
+			var prompt bytes.Buffer
+			response, err := promptMCPInput(scanner, &prompt, mcphosting.InputRequest{Tool: "preview", ID: "dates", Message: "Choose a \x1b[31mrange\x1b[0m", Schema: map[string]any{"type": "object"}})
+			if err != nil || response.Action != tc.action || (response.Content != nil) != tc.wantContent || !strings.Contains(prompt.String(), "untrusted") || strings.Contains(prompt.String(), "\x1b") || !strings.Contains(prompt.String(), "Choose a range") {
+				t.Fatalf("response=%+v err=%v prompt=%s", response, err, prompt.String())
+			}
+		})
+	}
+	if mcpInputIsTerminal(strings.NewReader("response\n")) {
+		t.Fatal("a pipe or test reader must not count as interactive terminal input")
+	}
+}
+
+func TestMCPInteractiveFlagRejectsNonTerminalBeforeCallingServer(t *testing.T) {
+	oldOut, oldErr, oldIn, oldJSON := osStdout, osStderr, osStdin, jsonOutput
+	var output, stderr bytes.Buffer
+	osStdout, osStderr, osStdin, jsonOutput = &output, &stderr, strings.NewReader("{}\n"), false
+	t.Cleanup(func() { osStdout, osStderr, osStdin, jsonOutput = oldOut, oldErr, oldIn, oldJSON })
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	if code := cmdMCP([]string{"call", "--url", server.URL + "/mcp", "--tool", "preview", "--interactive"}); code == 0 || requests.Load() != 0 || !strings.Contains(stderr.String(), "requires terminal stdin") {
+		t.Fatalf("exit=%d requests=%d stdout=%s stderr=%s", code, requests.Load(), output.String(), stderr.String())
+	}
+}
+
 func TestMCPHelpAndCompletion(t *testing.T) {
 	command, ok := lookupCliCommand("mcp")
 	if !ok {
@@ -118,7 +213,7 @@ func TestMCPHelpAndCompletion(t *testing.T) {
 	}
 	var reference bytes.Buffer
 	renderMarkdownReference(&reference, []cliCommand{command})
-	for _, required := range []string{"mcp doctor", "mcp deploy", "mcp lock", "mcp diff", "--before", "--after", "--check", "--strict-catalog", "--force", "--token-env", "--stream-tool", "--arguments-file"} {
+	for _, required := range []string{"mcp doctor", "mcp deploy", "mcp lock", "mcp diff", "--before", "--after", "--check", "--strict-catalog", "--force", "--token-env", "--stream-tool", "--arguments-file", "--interactive", "--input-responses-file"} {
 		if !strings.Contains(reference.String(), required) {
 			t.Errorf("MCP help omitted %q", required)
 		}

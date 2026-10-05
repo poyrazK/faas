@@ -14,12 +14,21 @@ func mcpCLICommand() cliCommand {
 		{Name: "name", Short: "connection name (config)", Value: "NAME"},
 		{Name: "timeout", Short: "total diagnostic timeout (default 30s)", Value: "DURATION"},
 	}
+	callFlags := append(append([]cliFlag{}, remote...),
+		cliFlag{Name: "interactive", Short: "answer modern MCP input forms in the terminal"},
+		cliFlag{Name: "input-responses-file", Short: "JSON file with elicitation responses keyed by request ID", Value: "PATH"},
+	)
+	for i := range callFlags {
+		if callFlags[i].Name == "timeout" {
+			callFlags[i].Short = "total request timeout (default 30s; interactive 5m)"
+		}
+	}
 	return cliCommand{Name: "mcp", DocSlug: "mcp", Short: "Scaffold, deploy and verify stateless MCP servers", Subcommands: []cliSub{
 		{Name: "init", Short: "Create the Node MCP starter", Flags: []cliFlag{{Name: "path", Short: "empty destination directory", Value: "DIR", Req: true}}, Examples: []string{"gregale mcp init --path ./my-mcp"}},
 		{Name: "deploy", Short: "Deploy the worktree, enable streaming and verify MCP discovery", Flags: []cliFlag{{Name: "path", Short: "source directory (default .)", Value: "DIR"}, {Name: "name", Short: "app slug", Value: "SLUG", Req: true}, {Name: "profile", Short: "app resource profile", Value: "NAME", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}}, {Name: "token-env", Short: "client token for external OAuth verification", Value: "ENV"}, {Name: "secrets-file", Short: "sealed app secrets", Value: "PATH"}, {Name: "timeout", Short: "deployment wait timeout in seconds (default 1200)", Value: "SECONDS"}}, Examples: []string{"gregale mcp deploy --path ./my-mcp --name my-mcp --profile small"}},
 		{Name: "doctor", Short: "Check discovery, Origin rejection, compatibility and optional streaming", Flags: remote, Examples: []string{"gregale mcp doctor --app my-mcp --legacy --stream-tool stream_demo"}},
 		{Name: "tools", Short: "Discover tool schemas without invoking tools", Flags: remote, Examples: []string{"gregale mcp tools --app my-mcp"}},
-		{Name: "call", Short: "Execute one discovered tool without automatic retries", Flags: remote, Examples: []string{`gregale mcp call --app my-mcp --tool add --arguments '{"a":7,"b":5}'`}},
+		{Name: "call", Short: "Execute one discovered tool; resume input requests only when explicitly enabled", Flags: callFlags, Examples: []string{`gregale mcp call --app my-mcp --tool add --arguments '{"a":7,"b":5}'`, `gregale mcp call --app my-mcp --tool report_preview --interactive`}},
 		{Name: "config", Short: "Emit remote MCP connection JSON without credentials", Flags: remote, Examples: []string{"gregale mcp config --app my-mcp --name my-mcp"}},
 		{Name: "lock", Short: "Capture a complete tool contract without invoking tools", Flags: []cliFlag{
 			{Name: "url", Short: "full MCP endpoint URL", Value: "URL"},
