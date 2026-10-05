@@ -911,6 +911,29 @@ jobs:
       - name: coverage floor (ship-blocking packages)
         run: make coverage-floor COVERDIR=coverage
 
+  # Branch protection matches this historical name exactly. Keep it stable
+  # while its original state/PostgreSQL inventory runs in parallel above.
+  unit-tests-pg-2a-gate:
+    name: unit tests (pg shard 2a — state/reconcile/reposcan)
+    if: always()
+    needs: [unit-tests-state, unit-tests-pg-2, state-coverage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: require every state and PostgreSQL shard
+        env:
+          STATE_RESULT: ${{ needs.unit-tests-state.result }}
+          POSTGRES_RESULT: ${{ needs.unit-tests-pg-2.result }}
+          COVERAGE_RESULT: ${{ needs.state-coverage.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$STATE_RESULT" != success || "$POSTGRES_RESULT" != success || "$COVERAGE_RESULT" != success ]]; then
+            echo "::error::Required state/PostgreSQL tests or coverage did not pass: state=$STATE_RESULT postgres=$POSTGRES_RESULT coverage=$COVERAGE_RESULT"
+            exit 1
+          fi
+
   # Shard 3 (pure Go heavy): pkg/sched, pkg/fcvm, pkg/gateway, pkg/imaged, etc. No Postgres needed.
   unit-tests-pure-1:
     name: unit tests (pure Go shard 1 — sched/fcvm/gateway)
