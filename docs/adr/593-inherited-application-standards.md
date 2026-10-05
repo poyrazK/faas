@@ -2485,6 +2485,49 @@ Their historical receipt and HTTP acknowledgment are simulated; they have no
 Firecracker process or consumed RAM. Measured snapshot consumption receipts,
 scheduler/Manager/RPC forwarding, advertised restore capability, paused promotion
 and capture after promotion remain implementation work. Dedicated Linux amd64
-root/KVM test-metal/leakcheck, raw-database binding enforcement, named environment
+root/KVM test-metal/leakcheck, named environment
 scopes, all onboarding paths, fleet recovery and complete release gates remain
 required. Public standard activation and restore capability remain disabled.
+
+### Raw database restore authority
+
+Additive database guards now require the same immutable catalog authority as the
+Go stores at boot grant issuance, receipt acknowledgment and first runtime
+publication. The capture token and evidence hash must be a coupled protocol-2
+pair. PostgreSQL selects an acknowledged capture in the exact account,
+application and deployment scope and a usable, nonstale cache that is not queued
+for collection. Both rows are held with shared NOWAIT locks through publication;
+competing writers receive the existing bounded busy refusal.
+
+The evidence hash retains its existing deterministic protobuf contract and
+domain prefix. A private fixed-message encoder in PostgreSQL reconstructs that
+wire representation from immutable catalog JSON; it does not introduce a new
+JSON hash or trust the caller's reconstructed capture. Generated protobuf
+descriptors and actual Go encoding are test oracles for field numbers, types,
+default omission, UTF-8, varint lengths, nested restore fields and drive order.
+Drive count and captured RAM boundaries remain tied to the central limits.
+
+Catalog admission checks the historical parent, distinct target instance and
+token, exact revisions, effective hash, approved source identity, stable current
+inputs, RAM, artifact keys, Firecracker version and current grant expiry. It does
+not renew the historical parent's authority. First publication includes a
+network tuple written while an instance is still waking, as well as readiness.
+A receipt acknowledged before cache invalidation cannot later publish either.
+Resident bookkeeping and terminal cleanup do not require the old cache to stay
+available, and catalog history survives source and target instance cleanup.
+
+The original additive migration was applied locally before a catalog lookup
+ambiguity was discovered. Its bytes remain frozen; a generated follow-up fixes
+the lookup and extends the publication fence to waking network tuples. Both
+migrations use replay-safe replacement and retain fail-closed guards on binary
+rollback. No previously issued migration or hash protocol changes.
+
+Portable PostgreSQL tests use real storage transactions, raw SQL writes and
+catalog contention, with simulated captured bytes and verified cold-fallback
+receipts. They verify valid current admission, refusal at grant, acknowledgment
+and publication, delayed readiness after cache invalidation, retry after lock
+release and resident cleanup. They do not certify loaded RAM. Measured restore
+receipts, Manager/RPC/scheduler forwarding, paused promotion and capture after
+promotion remain implementation work. Native root/KVM acceptance remains pending
+because the configured project is suspended and no alternative acceptance host
+is available. Native restore advertisement and public activation stay disabled.

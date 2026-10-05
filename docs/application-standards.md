@@ -840,6 +840,15 @@ measured restore receipts, Manager/RPC integration, paused promotion and capture
 after promotion remain incomplete. The native restore capability stays disabled
 and governed wakes retain verified cold fallback.
 
+PostgreSQL also enforces restore-bound catalog authority for raw grant writes,
+receipt acknowledgments and the first publication of runtime or network details.
+The database checks the immutable capture's existing protobuf evidence hash,
+current inputs, scope, RAM and an eligible cache under fail-fast shared locks.
+An acknowledgment saved before cache invalidation cannot later publish readiness.
+Cache collection does not revoke an already admitted resident's history or block
+its bookkeeping and cleanup. These guards do not certify restored memory or
+enable the pending restore and promotion lifecycle.
+
 Dedicated Linux amd64 root/KVM enforcement, `test-metal`, `leakcheck`, fleet
 crash/recovery, remaining onboarding adapters, named production scope and complete
 operational release acceptance remain required. Public standard activation stays
