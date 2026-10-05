@@ -3289,6 +3289,13 @@ database. Its installer rejects public/other-role connection grants, login-role
 membership that exposes maintenance authority, foreign maintenance sessions,
 and schema/function grants. PostgreSQL infrastructure superusers remain trusted
 operators; their active maintenance sessions still invalidate isolation checks.
+Amendment (2026-10-05): a session is a `pg_stat_activity` row with a user.
+Rows without one are server processes: autovacuum workers, user-less
+background workers and backends still authenticating. They do not invalidate
+isolation. Autovacuum visits every database, and counting its workers made
+every fence operation return unsupported whenever one was in the maintenance
+database. The maintenance role cannot read `backend_type`, so the check uses
+`usename IS NOT NULL`.
 The maintenance schema is not a control-plane migration or a cloned application
 configuration input. SQLC owns the installer, catalogue reads and transactional
 functions, and `make sqlc-check` verifies both generated packages.
