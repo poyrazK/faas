@@ -261,6 +261,7 @@ func writeProtectionControlE2E(t *testing.T, s *server, st state.Store, acct sta
 		t.Fatal(err)
 	}
 	s.WithObjectStorage(objectLockTestRegistry(t, upstream.URL, policy, objectstorage.ObjectLockConfig{}))
+	s.objectStorage.PublicEndpoint = public.URL
 	gatewayConfig.Registry = s.objectStorage
 	h, err = s3gateway.New(gatewayConfig)
 	if err != nil {
