@@ -1265,6 +1265,10 @@ from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeS
 from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
 from .managed_postgres_health_provider_status import ManagedPostgresHealthProviderStatus
 from .managed_postgres_health_status import ManagedPostgresHealthStatus
+from .managed_postgres_resize import ManagedPostgresResize
+from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
+from .managed_postgres_resize_state import ManagedPostgresResizeState
+from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetClass
 from .managed_postgres_usage_import_reading import ManagedPostgresUsageImportReading
 from .managed_postgres_usage_import_reading_meter import ManagedPostgresUsageImportReadingMeter
 from .managed_postgres_usage_import_request import ManagedPostgresUsageImportRequest
@@ -1972,6 +1976,8 @@ from .request_analytics_timeseries_series import RequestAnalyticsTimeseriesSerie
 from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseriesSeriesMethod
 from .request_audit_list_response import RequestAuditListResponse
 from .request_audit_record import RequestAuditRecord
+from .resize_managed_postgres_database_request import ResizeManagedPostgresDatabaseRequest
+from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
 from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
@@ -3804,6 +3810,10 @@ __all__ = (
     "ManagedPostgresHealthLastErrorCode",
     "ManagedPostgresHealthProviderStatus",
     "ManagedPostgresHealthStatus",
+    "ManagedPostgresResize",
+    "ManagedPostgresResizeFromClass",
+    "ManagedPostgresResizeState",
+    "ManagedPostgresResizeTargetClass",
     "ManagedPostgresUsageImportReading",
     "ManagedPostgresUsageImportReadingMeter",
     "ManagedPostgresUsageImportRequest",
@@ -4463,6 +4473,8 @@ __all__ = (
     "RequestAnalyticsTimeseriesSeriesMethod",
     "RequestAuditListResponse",
     "RequestAuditRecord",
+    "ResizeManagedPostgresDatabaseRequest",
+    "ResizeManagedPostgresDatabaseRequestServiceClass",
     "ResolvedExecutionLimits",
     "ResourceProfile",
     "RestoreManagedPostgresDatabaseRequest",

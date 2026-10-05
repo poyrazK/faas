@@ -106,7 +106,11 @@ type ProvisionRequest struct {
 }
 
 type UpdateRequest struct {
+	// ResourceID is the persisted provider lifecycle identity. DataResourceID
+	// pins its exact dataset; an adapter must never substitute a current default.
 	ResourceID     string
+	DataResourceID string
+	PreviousSpec   Spec
 	Spec           Spec
 	Generation     int64
 	IdempotencyKey string
@@ -564,6 +568,7 @@ type Capabilities struct {
 	ScaleToZero        bool
 	PooledConnections  bool
 	PointInTimeRestore bool
+	ClassResize        bool
 	// RestoreUsageIsolated means a provider can meter a restored target
 	// independently of its source. It must not also be counted in the source
 	// resource's Usage response.
@@ -582,6 +587,9 @@ func (c Capabilities) Validate() error {
 		return ErrInvalid
 	}
 	if c.MaxRestoreWindowSeconds < 0 || c.MaxStorageBytes < 0 {
+		return ErrInvalid
+	}
+	if c.ClassResize && len(c.ServiceClasses) < 2 {
 		return ErrInvalid
 	}
 	hasRestoreUsageAccounting := c.RestoreUsageIsolated || c.RestoreUsageIncludedInSource

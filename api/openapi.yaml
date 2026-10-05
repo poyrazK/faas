@@ -1295,6 +1295,58 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/postgres/databases/{id}/resize:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: resizeManagedPostgresDatabase
+      summary: Resize managed PostgreSQL compute
+      description: Durably reserves a service-class change on the pinned dataset. Clients may disconnect during resizing. The request_id UUID is the durable idempotency key; repeat the same UUID and target to recover progress. Another resize, deletion, binding change, restore or cutover conflicts while updating. Existing accepted requests remain replayable after admission closes. Only compute class changes; ready confirms provider observation, not uninterrupted connections. Published environment-clone targets and databases without a pinned data identity are currently unsupported.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResizeManagedPostgresDatabaseRequest' }
+      responses:
+        '202':
+          description: Accepted resize or current progress for an existing request
+          headers:
+            Location:
+              description: Progress URL
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresResize' }
+        default:
+          description: Invalid request, conflict, plan limit or backend unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/postgres/databases/{id}/resizes/{resize_id}:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+      - name: resize_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getManagedPostgresResize
+      summary: Get managed PostgreSQL resize progress
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Account and database scoped resize progress
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresResize' }
+        default:
+          description: Authentication or resize lookup error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/postgres/databases/{id}/restore:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -31577,7 +31629,7 @@ components:
     ManagedPostgresCapabilities:
       description: Versioned PostgreSQL support for the default backend in a region, intersected with customer plan limits. Provider identities, costs, endpoints and credentials are excluded. Capabilities remain visible while the rollout gate is closed.
       type: object
-      required: [contract_version, region, provisioning_enabled, database_limit, postgres_majors, service_classes, availability, credential_access, scale_to_zero, always_on, pooled_connections, point_in_time_restore, storage_limit_bytes, restore_window_seconds]
+      required: [contract_version, region, provisioning_enabled, database_limit, postgres_majors, service_classes, availability, credential_access, scale_to_zero, always_on, pooled_connections, point_in_time_restore, class_resize, storage_limit_bytes, restore_window_seconds]
       properties:
         contract_version: { type: integer, minimum: 1 }
         region: { type: string }
@@ -31591,8 +31643,30 @@ components:
         always_on: { type: boolean }
         pooled_connections: { type: boolean }
         point_in_time_restore: { type: boolean }
+        class_resize: { type: boolean, description: "Compute-class resizing supported by the configured regional backend. Reservations still require admission and the database pinned backend." }
         storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         restore_window_seconds: { type: integer, format: int64, minimum: 0 }
+    ResizeManagedPostgresDatabaseRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, service_class]
+      properties:
+        request_id: { type: string, format: uuid, description: "Canonical nonzero UUID; reuse with the same database and target after uncertain responses." }
+        service_class: { type: string, enum: [development, burstable, production] }
+    ManagedPostgresResize:
+      type: object
+      required: [id, database_id, from_class, target_class, generation, state, connection_interruption_expected, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        database_id: { type: string }
+        from_class: { type: string, enum: [development, burstable, production] }
+        target_class: { type: string, enum: [development, burstable, production] }
+        generation: { type: integer, format: int64, minimum: 2 }
+        state: { type: string, enum: [pending, succeeded] }
+        connection_interruption_expected: { type: boolean }
+        last_error_code: { type: string, description: "Safe diagnostic code; pending intent remains recoverable after uncertain provider outcomes." }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
     ManagedPostgresDatabase:
       description: Managed PostgreSQL metadata. Provider IDs and credentials are never returned.
       type: object

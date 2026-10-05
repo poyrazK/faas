@@ -664,6 +664,7 @@ export type { ManagedPostgresDatabase } from './ManagedPostgresDatabase.js';
 export type { ManagedPostgresDatabaseList } from './ManagedPostgresDatabaseList.js';
 export type { ManagedPostgresHealth } from './ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './ManagedPostgresID.js';
+export type { ManagedPostgresResize } from './ManagedPostgresResize.js';
 export type { ManagedPostgresUsageImportReading } from './ManagedPostgresUsageImportReading.js';
 export type { ManagedPostgresUsageImportRequest } from './ManagedPostgresUsageImportRequest.js';
 export type { ManagedPostgresUsageImportResult } from './ManagedPostgresUsageImportResult.js';
@@ -1038,6 +1039,7 @@ export type { RequestAnalyticsTimeseriesResponse } from './RequestAnalyticsTimes
 export type { RequestAnalyticsTimeseriesSeries } from './RequestAnalyticsTimeseriesSeries.js';
 export type { RequestAuditListResponse } from './RequestAuditListResponse.js';
 export type { RequestAuditRecord } from './RequestAuditRecord.js';
+export type { ResizeManagedPostgresDatabaseRequest } from './ResizeManagedPostgresDatabaseRequest.js';
 export type { ResolvedExecutionLimits } from './ResolvedExecutionLimits.js';
 export type { ResourceProfile } from './ResourceProfile.js';
 export type { RestoreManagedPostgresDatabaseRequest } from './RestoreManagedPostgresDatabaseRequest.js';
