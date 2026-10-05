@@ -5868,10 +5868,10 @@ END $_$;
 
 
 --
--- Name: valid_object_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
+-- Name: valid_object_protected_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.valid_object_url_request(r jsonb) RETURNS boolean
+CREATE FUNCTION public.valid_object_protected_url_request(r jsonb) RETURNS boolean
     LANGUAGE plpgsql IMMUTABLE STRICT
     AS $$
 DECLARE method text;
@@ -6049,7 +6049,7 @@ CREATE TABLE public.object_storage_s3_credentials (
     CONSTRAINT object_storage_s3_credentials_secret_sealed_check CHECK ((length(secret_sealed) > 0)),
     CONSTRAINT object_storage_s3_credentials_status_check CHECK ((status = ANY (ARRAY['active'::text, 'revoked'::text]))),
     CONSTRAINT object_storage_s3_credentials_url_api_key_id_check CHECK (((url_api_key_id IS NULL) OR (url_api_key_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
-    CONSTRAINT object_storage_s3_credentials_url_request_check CHECK (((url_request IS NULL) OR public.valid_object_url_request(url_request))),
+    CONSTRAINT object_storage_s3_credentials_url_request_check CHECK (((url_request IS NULL) OR public.valid_object_protected_url_request(url_request))),
     CONSTRAINT object_url_credential_shape CHECK ((((url_request IS NULL) AND (url_api_key_id IS NULL) AND (url_expires_at IS NULL) AND (url_receipt_id IS NULL)) OR ((url_request IS NOT NULL) AND (url_expires_at IS NOT NULL) AND (url_expires_at > created_at) AND (url_expires_at <= (created_at + '00:15:00'::interval)) AND (managed_app_id IS NULL) AND (rotation_parent_id IS NULL) AND ((((url_request ->> 'method'::text) = 'PUT'::text) AND (permission = 'write'::text) AND (((NOT (url_request ? 'multipart'::text)) AND (url_receipt_id IS NOT NULL)) OR ((url_request ? 'multipart'::text) AND (url_receipt_id IS NULL)))) OR (((url_request ->> 'method'::text) = ANY (ARRAY['GET'::text, 'HEAD'::text])) AND (permission = 'read'::text) AND (url_receipt_id IS NULL))))))
 );
 
@@ -8269,6 +8269,40 @@ BEGIN
  n:=(p->>k)::numeric;
  RETURN n>0 AND n<=CASE WHEN k='days' THEN 36500 ELSE 100 END;
 END $_$;
+
+
+--
+-- Name: valid_object_url_request(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_object_url_request(r jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+DECLARE method text;
+BEGIN
+ IF jsonb_typeof(r)<>'object' OR octet_length(r::text)>32768 OR
+  r - ARRAY['method','key','expires_in','size_bytes','content_type','cache_control','content_disposition','content_encoding','content_language','metadata','tags','encryption','multipart'] <> '{}'::jsonb OR
+  jsonb_typeof(r->'method') IS DISTINCT FROM 'string' OR jsonb_typeof(r->'key') IS DISTINCT FROM 'string' OR
+  octet_length(r->>'key') NOT BETWEEN 1 AND 1024 OR (r->>'key') ~ '[\x01-\x1f\x7f]' OR
+  jsonb_typeof(r->'expires_in') IS DISTINCT FROM 'number' OR (r->>'expires_in')::bigint NOT BETWEEN 1 AND 900 THEN RETURN false; END IF;
+ method:=r->>'method';
+ IF method IN ('GET','HEAD') THEN RETURN r - ARRAY['method','key','expires_in'] = '{}'::jsonb; END IF;
+ IF method<>'PUT' OR jsonb_typeof(r->'size_bytes') IS DISTINCT FROM 'number' OR (r->>'size_bytes')::bigint NOT BETWEEN 0 AND 5368709120 THEN RETURN false; END IF;
+ IF r ? 'multipart' THEN
+  IF jsonb_typeof(r->'multipart') IS DISTINCT FROM 'object' OR
+   (r->'multipart') - ARRAY['upload_id','part_number'] <> '{}'::jsonb OR
+   jsonb_typeof(r->'multipart'->'upload_id') IS DISTINCT FROM 'string' OR
+   (r->'multipart'->>'upload_id')::uuid='00000000-0000-0000-0000-000000000000'::uuid OR
+   jsonb_typeof(r->'multipart'->'part_number') IS DISTINCT FROM 'number' OR
+   (r->'multipart'->>'part_number')::int NOT BETWEEN 1 AND 10000 OR
+   (r->>'size_bytes')::bigint<1 OR r->>'content_type' IS DISTINCT FROM 'application/octet-stream' THEN RETURN false; END IF;
+  RETURN r - ARRAY['method','key','expires_in','size_bytes','content_type','multipart'] = '{}'::jsonb;
+ END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('content_type','cache_control','content_disposition','content_encoding','content_language') AND (jsonb_typeof(value)<>'string' OR value::text ~ '\\r|\\n|\\u0000')) THEN RETURN false; END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('metadata','tags','encryption') AND jsonb_typeof(value)<>'object') THEN RETURN false; END IF;
+ RETURN true;
+EXCEPTION WHEN OTHERS THEN RETURN false;
+END $$;
 
 
 --

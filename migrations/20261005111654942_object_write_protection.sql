@@ -110,7 +110,10 @@ CREATE TRIGGER object_lock_legacy_key_fence BEFORE INSERT ON object_storage_key_
 CREATE TRIGGER object_lock_legacy_write_fence BEFORE INSERT ON object_storage_write_admissions FOR EACH ROW EXECUTE FUNCTION fence_untracked_object_lock_write();
 -- +goose StatementEnd
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION valid_object_url_request(r jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+-- Keep the historical URL validator intact: older S3 migrations replace it
+-- during an allowed out-of-order replay. This validator and its constraint
+-- must retain protection checks independently of those historical definitions.
+CREATE FUNCTION valid_object_protected_url_request(r jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE STRICT AS $$
 DECLARE method text;
 BEGIN
  IF jsonb_typeof(r)<>'object' OR octet_length(r::text)>32768 OR
@@ -138,6 +141,8 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN RETURN false;
 END $$;
 -- +goose StatementEnd
+ALTER TABLE object_storage_s3_credentials DROP CONSTRAINT object_storage_s3_credentials_url_request_check;
+ALTER TABLE object_storage_s3_credentials ADD CONSTRAINT object_storage_s3_credentials_url_request_check CHECK(url_request IS NULL OR valid_object_protected_url_request(url_request));
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN
@@ -153,32 +158,9 @@ ALTER TABLE object_storage_multipart_uploads DROP CONSTRAINT object_multipart_pr
 DROP TRIGGER object_lock_legacy_key_fence ON object_storage_key_grants;
 DROP TRIGGER object_lock_legacy_write_fence ON object_storage_write_admissions;
 DROP FUNCTION fence_untracked_object_lock_write();
-CREATE OR REPLACE FUNCTION valid_object_url_request(r jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE STRICT AS $$
-DECLARE method text;
-BEGIN
- IF jsonb_typeof(r)<>'object' OR octet_length(r::text)>32768 OR
-  r - ARRAY['method','key','expires_in','size_bytes','content_type','cache_control','content_disposition','content_encoding','content_language','metadata','tags','encryption','multipart'] <> '{}'::jsonb OR
-  jsonb_typeof(r->'method') IS DISTINCT FROM 'string' OR jsonb_typeof(r->'key') IS DISTINCT FROM 'string' OR
-  octet_length(r->>'key') NOT BETWEEN 1 AND 1024 OR (r->>'key') ~ '[\x01-\x1f\x7f]' OR
-  jsonb_typeof(r->'expires_in') IS DISTINCT FROM 'number' OR (r->>'expires_in')::bigint NOT BETWEEN 1 AND 900 THEN RETURN false; END IF;
- method:=r->>'method';
- IF method IN ('GET','HEAD') THEN RETURN r - ARRAY['method','key','expires_in'] = '{}'::jsonb; END IF;
- IF method<>'PUT' OR jsonb_typeof(r->'size_bytes') IS DISTINCT FROM 'number' OR (r->>'size_bytes')::bigint NOT BETWEEN 0 AND 5368709120 THEN RETURN false; END IF;
- IF r ? 'multipart' THEN
-  IF jsonb_typeof(r->'multipart') IS DISTINCT FROM 'object' OR
-   (r->'multipart') - ARRAY['upload_id','part_number'] <> '{}'::jsonb OR
-   jsonb_typeof(r->'multipart'->'upload_id') IS DISTINCT FROM 'string' OR
-   (r->'multipart'->>'upload_id')::uuid='00000000-0000-0000-0000-000000000000'::uuid OR
-   jsonb_typeof(r->'multipart'->'part_number') IS DISTINCT FROM 'number' OR
-   (r->'multipart'->>'part_number')::int NOT BETWEEN 1 AND 10000 OR
-   (r->>'size_bytes')::bigint<1 OR r->>'content_type' IS DISTINCT FROM 'application/octet-stream' THEN RETURN false; END IF;
-  RETURN r - ARRAY['method','key','expires_in','size_bytes','content_type','multipart'] = '{}'::jsonb;
- END IF;
- IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('content_type','cache_control','content_disposition','content_encoding','content_language') AND (jsonb_typeof(value)<>'string' OR value::text ~ '\\r|\\n|\\u0000')) THEN RETURN false; END IF;
- IF EXISTS(SELECT 1 FROM jsonb_each(r) WHERE key IN ('metadata','tags','encryption') AND jsonb_typeof(value)<>'object') THEN RETURN false; END IF;
- RETURN true;
-EXCEPTION WHEN OTHERS THEN RETURN false;
-END $$;
+ALTER TABLE object_storage_s3_credentials DROP CONSTRAINT object_storage_s3_credentials_url_request_check;
+ALTER TABLE object_storage_s3_credentials ADD CONSTRAINT object_storage_s3_credentials_url_request_check CHECK(url_request IS NULL OR valid_object_url_request(url_request));
+DROP FUNCTION valid_object_protected_url_request(jsonb);
 
 DROP FUNCTION valid_object_write_protection(jsonb);
 -- +goose StatementEnd

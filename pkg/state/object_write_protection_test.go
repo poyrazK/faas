@@ -196,15 +196,25 @@ func TestObjectWriteProtectionMigrationRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	part := `{"method":"PUT","key":"part","expires_in":60,"size_bytes":3,"content_type":"application/octet-stream","multipart":{"upload_id":"00000000-0000-4000-8000-000000000001","part_number":1}}`
+	protected := `{"method":"PUT","key":"protected","expires_in":60,"size_bytes":3,"protection":{"legal_hold":{"status":"ON"}}}`
+	invalid := strings.Replace(protected, `"ON"`, `"invalid"`, 1)
 	for _, step := range []string{"down", "up"} {
+		validator := "valid_object_url_request"
 		if step == "up" {
 			if _, err := pool.Exec(ctx, up); err != nil {
 				t.Fatal(err)
 			}
+			validator = "valid_object_protected_url_request"
 		}
 		var valid bool
-		if err := pool.QueryRow(ctx, `SELECT valid_object_url_request($1::jsonb)`, part).Scan(&valid); err != nil || !valid {
+		if err := pool.QueryRow(ctx, `SELECT `+validator+`($1::jsonb)`, part).Scan(&valid); err != nil || !valid {
 			t.Fatal("multipart URL lost during migration", step, valid, err)
+		}
+		if err := pool.QueryRow(ctx, `SELECT `+validator+`($1::jsonb)`, protected).Scan(&valid); err != nil || valid != (step == "up") {
+			t.Fatal("protected URL validation during migration", step, valid, err)
+		}
+		if err := pool.QueryRow(ctx, `SELECT `+validator+`($1::jsonb)`, invalid).Scan(&valid); err != nil || valid {
+			t.Fatal("malformed protection accepted during migration", step, valid, err)
 		}
 	}
 }

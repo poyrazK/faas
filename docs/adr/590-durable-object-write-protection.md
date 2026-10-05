@@ -53,6 +53,8 @@ constraints/triggers reject legacy untracked writes, snapshot replacement,
 unaware dispatch or multipart claim, settlement without a recorded proof, and
 rollback while protection history exists. Branded URL authority also binds the
 explicit protection selection to its durable receipt.
+The protected URL constraint uses a separate validator so replaying historical
+S3 migrations cannot replace the new protection checks.
 
 Expose standard signed Object Lock headers for S3 PUT, copy and multipart
 initiation, and an optional `protection` selection on owned signed-upload and
