@@ -280,8 +280,8 @@ func (l *Loop) WithWatchdog(w *Watchdog) *Loop {
 // iteration. MainLoopBudget is its stall budget.
 //
 // ADR-191 moved Prime and the four reconcile arms onto the bounded work
-// pool, so the longest thing that still runs on this goroutine is
-// handleAppWake. That one stays inline deliberately: its error decides
+// pool, and its amendment moved the reaper tick, so the longest thing that
+// still runs on this goroutine is handleAppWake. That one stays inline deliberately: its error decides
 // whether the durable notification is acknowledged, and moving it off
 // the loop means re-plumbing outbox ack through the worker. EnsureWake
 // can legitimately cold-boot at ColdBootTimeout (35 s) plus admission,
@@ -1176,7 +1176,7 @@ func (l *Loop) Run(ctx context.Context) error {
 				}
 			}
 		case <-reaperT.C:
-			l.runReaper(ctx)
+			l.dispatchReaper(ctx)
 		case <-cronT.C:
 			l.runCronTick(ctx)
 		case <-watchdogTick(watchdogT):
@@ -2771,6 +2771,19 @@ func (l *Loop) runReaper(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// dispatchReaper runs the reaper tick off the loop's select goroutine
+// (ADR-191 amendment). runReaper parks, stops, evicts, reconciles lifecycle
+// and warm pools sequentially. A park that captures a snapshot took up to 35 s
+// on production-us (p90 22.75 s over 405 parks in 24 h), so one tick held the
+// loop, and with it every wake notification, watchdog sweep and heartbeat on
+// the node, for as long as its parks took. The tick stays one sequential task
+// with the same park order and timing. A tick that fires while the previous
+// one is still running coalesces into it. Everything the reaper keeps on Loop
+// (lastFloorByApp, runningReasonStates) is touched only by this task.
+func (l *Loop) dispatchReaper(ctx context.Context) {
+	l.submitWork(workReaper, "tick", func() { l.runReaper(ctx) })
 }
 
 // parkFromReaper keeps a slow or wedged snapshot from monopolising Loop.Run.
