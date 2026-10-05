@@ -49,7 +49,7 @@ func newRegionalWarmFixture(t *testing.T) regionalWarmFixture {
 	s, acct, app, dep := regionalQuotaSchedulerFixture(t)
 	app.WarmPoolSize = 1
 	region := "eu-fsn"
-	node, err := s.CreateComputeNode(t.Context(), state.ComputeNode{ID: uuid.NewString(), Name: "regional-warm", TargetURL: "unix:///run/faas/warm-test.sock", Active: true, Region: &region})
+	node, err := s.CreateComputeNode(t.Context(), state.ComputeNode{ID: uuid.NewString(), Name: "regional-warm", TargetURL: "unix:///run/faas/warm-test.sock", Active: true, Region: &region, AdmissionCeilingMB: api.RAMAdmissionCeilingMB, VCPUBudget: api.VCPUSlots, VPCPUs: api.VCPUSlots})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func newRegionalWarmFixture(t *testing.T) regionalWarmFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	issued, err := e.issueRegionalRuntimeLaunch(t.Context(), node.ID, warm.ID, warm.WakeID, runtimequota.CapacityWarm, AppSpec{AppID: app.ID, AccountID: acct.ID, DeploymentID: dep.ID, Plan: acct.Plan}, head.Grant)
+	issued, err := e.issueRegionalRuntimeLaunch(t.Context(), node.ID, warm.ID, warm.WakeID, runtimequota.CapacityWarm, AppSpec{AppID: app.ID, AccountID: acct.ID, DeploymentID: dep.ID, Plan: acct.Plan, MemSizeMiB: int32(app.RAMMB), VCPUCount: int32(api.MustLimitsFor(acct.Plan).VCPU), CPUMillicores: int32(effectiveAppCPUMillicores(app))}, head.Grant)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestRegionalWarmResumeRetainsAttemptAcrossSchedulers(t *testing.T) {
 		t.Fatal("retry minted a new authorization")
 	}
 	fresh := newEngine(t, f.store, f.vmm, &fakeNotifier{}, "1.10.0")
-	if err := fresh.SeedLedger(t.Context()); err != nil || fresh.ledger.Concurrency(f.app.ID) != 1 || !fresh.ledger.regionalWarmResumePending(f.warm.ID) {
+	if err := fresh.SeedLedger(t.Context()); err != nil || fresh.ledger.Concurrency(f.app.ID) != 2 || !fresh.ledger.regionalWarmResumePending(f.warm.ID) {
 		t.Fatal("restart forgot escaped warm resume", err)
 	}
 	f.engine = fresh
@@ -285,11 +285,14 @@ func TestRegionalWarmResumeRecoveryRetainsFencesAndStopsOnAmbiguity(t *testing.T
 			if blocked && !errors.Is(err, ErrRegionalRuntimeRecoveryUnresolved) {
 				t.Fatal("incomplete accounting did not block production startup", err)
 			}
-			want := 1
+			want := 2
 			if variant == "released" {
 				want = 0
 			}
-			if restarted.ledger.Concurrency(f.app.ID) != want || restarted.ledger.ResidentRAM() != f.warm.RAMMB+api.PerVMOverheadMB || f.vmm.destroys != 0 {
+			if variant == "ambiguous" {
+				want = 3
+			}
+			if restarted.ledger.Concurrency(f.app.ID) != want || restarted.ledger.ResidentRAM() != 2*(f.warm.RAMMB+api.PerVMOverheadMB) || f.vmm.destroys != 0 {
 				t.Fatal("restart undercounted resident or escaped serving hold")
 			}
 		})

@@ -7001,7 +7001,19 @@ func (e *Engine) ReportActivity(ctx context.Context, touches []state.InstanceTou
 // rebuilt correctly. A row whose node_id is empty (pre-#97 fixture)
 // falls back to the default-local node id so legacy tests still
 // rebuild.
-func (e *Engine) SeedLedger(ctx context.Context) error {
+func (e *Engine) SeedLedger(ctx context.Context) (result error) {
+	if err := e.ledger.beginRegionalRecovery(); err != nil {
+		return err
+	}
+	defer func() {
+		if result != nil {
+			result = errors.Join(ErrRegionalRuntimeRecoveryUnresolved, result)
+		}
+		e.ledger.finishRegionalRecovery(result)
+	}()
+	// Full-store inventory precedes mutable app/instance reads. Partial charges
+	// survive every subsequent failure; an unknown hold blocks new admission.
+	recoveryErr := e.seedRegionalRuntimeInventory(ctx)
 	apps, err := e.store.ListAllApps(ctx)
 	if err != nil {
 		return fmt.Errorf("sched: seed ledger: list apps: %w", err)
@@ -7062,21 +7074,23 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 		cpuBudgets[nodeID] = budget
 		return budget
 	}
-	var recoveryErr error
 	for _, app := range apps {
 		if !e.ownsApp(app) {
 			continue
 		}
 		acct, err := e.store.AccountByID(ctx, app.AccountID)
 		if err != nil {
+			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("sched: seed account %s: %w", app.AccountID, err))
 			continue
 		}
 		limits, ok := api.LimitsFor(acct.Plan)
 		if !ok {
+			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("sched: seed account %s: unknown plan", app.AccountID))
 			continue
 		}
 		instances, err := e.store.ListInstancesForApp(ctx, app.ID)
 		if err != nil {
+			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("sched: seed app %s: %w", app.ID, err))
 			continue
 		}
 		for _, ins := range instances {
@@ -7131,20 +7145,18 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				request.CPUStartupBoostMillicores = startupCPUBoostQuota(acct.Plan, request.CPUMillicores)
 				request.CPUStartupBoostUntil = until
 			}
-			if err := e.ledger.Admit(request); err != nil {
+			if err := e.ledger.recoverResident(request); err != nil {
 				e.log.Warn("seed ledger: admit", "instance", ins.ID, "err", err)
-				if warmHeld {
-					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("sched: seed held regional warm resident %s: %w", ins.ID, err))
-				}
+				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("sched: seed resident %s: %w", ins.ID, err))
 				continue
 			}
 			if warmHeld {
 				if warmPermit.ID == "" {
 					// Unknown/ambiguous identity blocks startup and charges the
 					// resident conservatively until inventory reconciliation.
-					e.ledger.PromoteWarm(ins.ID)
+					e.ledger.promoteWarm(ins.ID, true)
 				} else if err := e.ledger.reserveRegionalWarmResume(ins.ID, warmPermit, 0, true); err != nil {
-					e.ledger.PromoteWarm(ins.ID)
+					e.ledger.promoteWarm(ins.ID, true)
 					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("sched: seed regional warm concurrency %s: %w", ins.ID, err))
 				}
 			}
@@ -7154,6 +7166,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			}
 		}
 	}
+	recoveryErr = errors.Join(recoveryErr, ctx.Err())
 	if recoveryErr != nil {
 		return errors.Join(ErrRegionalRuntimeRecoveryUnresolved, recoveryErr)
 	}

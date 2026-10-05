@@ -36,6 +36,7 @@ type RegionalRuntimeLaunchStore interface {
 	// Read original fenced sources, including accepted stops awaiting row cleanup.
 	ListRegionalRuntimeRetirements(context.Context, string, RegionalRuntimeRetirementCursor, int) ([]RegionalRuntimeRetirementCandidate, error)
 	// Inventory includes every issued hold, across historical allocations and collected apps.
+	// An empty cell reads the whole store, including historical cell identities.
 	ListRegionalRuntimeInventory(context.Context, string, RegionalRuntimeRetirementCursor, int) ([]RegionalRuntimeInventoryEntry, error)
 }
 
@@ -59,4 +60,10 @@ func checkRegionalLaunchSource(source runtimequota.LaunchSource, old RegionalRun
 		return ErrRegionalRuntimePlacementUnavailable
 	}
 	return nil
+}
+
+// Startup cannot narrow physical inventory to the currently configured signer.
+func validRegionalInventoryPage(cell string, after RegionalRuntimeRetirementCursor, limit int) bool {
+	return (cell == "" || validRegionalReleaseIDs(cell, cell, cell)) && limit >= 1 && limit <= api.RegionalRuntimeCapacityPageMax &&
+		((after.AppID == "" && after.PermitID == "") || validRegionalReleaseIDs(after.AppID, after.PermitID, after.PermitID))
 }

@@ -17,8 +17,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimequota"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // NodeLedger is schedd's per-node live RAM/vCPU/concurrency accounting.
@@ -41,6 +43,9 @@ type NodeLedger struct {
 	perApp           map[string]int              // app_id -> instances counting toward concurrency (global, §6.2-1)
 	perAppDeployment map[string]int              // app_id|"\x00"|deployment_id -> per-deployment concurrency (ADR-072, issue #557 closure)
 	entries          map[string]*reservation     // instance_id -> reservation (cross-node lookup for Release)
+	regionalHolds    map[regionalRuntimeHoldKey]state.RegionalRuntimeInventoryEntry
+	recoveryBarrier  error // incomplete startup inventory refuses every new admission
+	seedInProgress   bool
 }
 
 type nodeReservation struct {
@@ -69,8 +74,9 @@ type reservation struct {
 	// It remains reserved until cpuBoostUntil (readiness + bounded tail).
 	cpuBoostMillicores     int
 	cpuBoostUntil          time.Time
-	countsConc             bool   // still in {WAKING,COLD_BOOTING,RUNNING}
-	regionalResumePermitID string // retained while a regional warm resume may be serving
+	countsConc             bool                       // still in {WAKING,COLD_BOOTING,RUNNING}
+	regionalResumePermitID string                     // retained while a regional warm resume may be serving
+	regionalSource         *runtimequota.LaunchSource // exact physical permit, including host epoch
 }
 
 // NewNodeLedger returns an empty per-node ledger. Backwards-compat
@@ -82,6 +88,7 @@ func NewNodeLedger() *NodeLedger {
 		perApp:           map[string]int{},
 		perAppDeployment: map[string]int{},
 		entries:          map[string]*reservation{},
+		regionalHolds:    map[regionalRuntimeHoldKey]state.RegionalRuntimeInventoryEntry{},
 	}
 }
 
@@ -158,6 +165,8 @@ type Request struct {
 	// RuntimeRunID pins the physical attempt for conditional retirement release.
 	// Empty legacy reservations cannot be released by a regional stop.
 	RuntimeRunID string
+	// RegionalRuntime binds a dispatch reservation to its complete original permit.
+	RegionalRuntime *runtimequota.LaunchSource
 	// DeploymentID is the target deployment for the wake (ADR-072 /
 	// issue #557 closure). The Engine resolves it from the wake
 	// target before calling Admit — the gateway passes the latest
@@ -312,6 +321,22 @@ func (r Request) admissionMB() int {
 // "ledger.resident" field of pre-#97 code is gone — per-node
 // counters carry the same invariant, just keyed.
 func (l *NodeLedger) Admit(r Request) error {
+	return l.admit(r, false)
+}
+
+// recoverResident records existing rows even above a lowered capacity limit.
+// It is private: this exception cannot admit new work.
+func (l *NodeLedger) recoverResident(r Request) error {
+	return l.admit(r, true)
+}
+
+func (l *NodeLedger) admit(r Request, recovered bool) error {
+	r.AppID = ledgerIdentity(r.AppID)
+	r.DeploymentID = ledgerIdentity(r.DeploymentID)
+	r.NodeID = ledgerIdentity(r.NodeID)
+	if r.RegionalRuntime != nil && !regionalReservationMatches(*r.RegionalRuntime, r) {
+		return runtimequota.ErrBinding
+	}
 	// Tier A5 / ADR-066: KindMigration skips LimitsFor. The
 	// migration target's plan limits are already enforced on the
 	// source node's Wake-time Admit; on the destination we only
@@ -332,6 +357,11 @@ func (l *NodeLedger) Admit(r Request) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.expireCPUBoosts_locked(time.Now())
+	if !recovered {
+		if err := l.regionalAdmissionBarrierLocked(); err != nil {
+			return err
+		}
+	}
 
 	if _, dup := l.entries[r.Instance]; dup {
 		return fmt.Errorf("sched: admit: instance %q already admitted", r.Instance)
@@ -364,7 +394,7 @@ func (l *NodeLedger) Admit(r Request) error {
 		if maxConc <= 0 || maxConc > limits.MaxConcurrency {
 			maxConc = limits.MaxConcurrency
 		}
-		if have := l.perApp[r.AppID]; have >= maxConc && (!r.AllowConcurrencyOverlap || have >= maxConc+1) {
+		if have := l.perApp[r.AppID]; !recovered && have >= maxConc && (!r.AllowConcurrencyOverlap || have >= maxConc+1) {
 			return api.ErrPlanLimitConcurrencyAt(limits, maxConc, have)
 		}
 	}
@@ -395,7 +425,7 @@ func (l *NodeLedger) Admit(r Request) error {
 	if r.Kind == KindJob && r.Flexible {
 		ramCeiling -= flexibleAppReserveRAMMB
 	}
-	if node.residentRAM+r.admissionMB() > ramCeiling {
+	if !recovered && node.residentRAM+r.admissionMB() > ramCeiling {
 		return api.ErrCapacity(fmt.Sprintf(
 			"RAM headroom: node %q resident %d MB + %d MB requested exceeds the %d MB per-node admission ceiling",
 			r.NodeID, node.residentRAM, r.admissionMB(), ramCeiling))
@@ -418,7 +448,7 @@ func (l *NodeLedger) Admit(r Request) error {
 	if r.Kind == KindJob && r.Flexible {
 		vcpuCeiling -= flexibleAppReserveVCPU
 	}
-	if node.usedVCPU+r.VCPU > vcpuCeiling {
+	if !recovered && node.usedVCPU+r.VCPU > vcpuCeiling {
 		return api.ErrCapacity(fmt.Sprintf(
 			"vCPU headroom: node %q busy %d + %d requested exceeds the %d per-node vCPU budget",
 			r.NodeID, node.usedVCPU, r.VCPU, vcpuCeiling))
@@ -440,7 +470,7 @@ func (l *NodeLedger) Admit(r Request) error {
 	}
 	if reservedCPU > 0 && r.CPUBudgetMillicores > 0 &&
 		node.usedCPUMillicores+reservedCPU > cpuCeiling &&
-		!r.AllowCPUOvercommitRecovery {
+		!r.AllowCPUOvercommitRecovery && !recovered {
 		return api.ErrCapacity(fmt.Sprintf(
 			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget",
 			r.NodeID, node.usedCPUMillicores, reservedCPU, cpuCeiling))
@@ -453,6 +483,10 @@ func (l *NodeLedger) Admit(r Request) error {
 		admissionMB:     r.admissionMB(), vcpu: r.VCPU, cpuMillicores: r.CPUMillicores,
 		cpuBoostMillicores: boostCPU, cpuBoostUntil: r.CPUStartupBoostUntil,
 		countsConc: kindCountsConcurrency(r.Kind),
+	}
+	if r.RegionalRuntime != nil {
+		source := *r.RegionalRuntime
+		l.entries[r.Instance].regionalSource = &source
 	}
 	node.residentRAM += r.admissionMB()
 	node.usedVCPU += r.VCPU
@@ -550,7 +584,7 @@ func (l *NodeLedger) BeginSnapshot(instance string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := l.entries[instance]
-	if e != nil && e.countsConc && e.regionalResumePermitID == "" {
+	if e != nil && e.countsConc && e.regionalResumePermitID == "" && e.regionalSource == nil {
 		e.countsConc = false
 		l.perApp[e.appID]--
 		l.cleanupApp(e.appID)
@@ -570,11 +604,18 @@ func (l *NodeLedger) BeginSnapshot(instance string) {
 // max-concurrency gate while holding the app lock before resuming the VM.
 // Unknown or already-serving entries are harmless and return false.
 func (l *NodeLedger) PromoteWarm(instance string) bool {
+	return l.promoteWarm(instance, false)
+}
+
+func (l *NodeLedger) promoteWarm(instance string, recovered bool) bool {
 	if l == nil {
 		return false
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if !recovered && l.regionalAdmissionBarrierLocked() != nil {
+		return false
+	}
 	e := l.entries[instance]
 	if e == nil || e.countsConc {
 		return false
@@ -618,7 +659,9 @@ func (l *NodeLedger) Release(instance string) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.releaseLocked(instance)
+	if r := l.entries[instance]; r == nil || r.regionalSource == nil {
+		l.releaseLocked(instance)
+	}
 }
 
 // releaseOriginalRegionalRuntime never drops a replacement reservation sharing
@@ -630,14 +673,13 @@ func (l *NodeLedger) releaseOriginalRegionalRuntime(source runtimequota.LaunchSo
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	released := l.releaseRegionalInventoryLocked(source)
 	r := l.entries[source.InstanceKey]
-	p := source.Permit
-	if r == nil || !runtimequota.MatchesID(p.RunID, r.runtimeRunID) || !runtimequota.MatchesID(p.Grant.Binding.RegionalAppID, r.appID) ||
-		!runtimequota.MatchesID(p.DeploymentID, r.deploymentID) || !runtimequota.MatchesID(p.NodeID, r.nodeID) {
-		return false
+	if r != nil && r.regionalSource != nil && *r.regionalSource == source {
+		l.releaseLocked(source.InstanceKey)
+		released = true
 	}
-	l.releaseLocked(source.InstanceKey)
-	return true
+	return released
 }
 
 func (l *NodeLedger) releaseLocked(instance string) {
@@ -700,6 +742,7 @@ func (l *NodeLedger) ResidentRAM() int {
 // per-node ceiling check inside Admit uses an internal lookup;
 // this is the public read used by tests / future telemetry.
 func (l *NodeLedger) ResidentRAMForNode(nodeID string) int {
+	nodeID = ledgerIdentity(nodeID)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if r, ok := l.resident[nodeID]; ok {
@@ -714,6 +757,7 @@ func (l *NodeLedger) ResidentRAMForNode(nodeID string) int {
 // (Engine.choosePlacementLocked) to thread the per-node vCPU
 // used state into the request. Tier A2.
 func (l *NodeLedger) UsedVCPUForNode(nodeID string) int {
+	nodeID = ledgerIdentity(nodeID)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if r, ok := l.resident[nodeID]; ok {
@@ -726,6 +770,7 @@ func (l *NodeLedger) UsedVCPUForNode(nodeID string) int {
 // single node. Placement uses this physical-capacity view independently from
 // UsedVCPUForNode, which remains the guest-topology budget.
 func (l *NodeLedger) UsedCPUMillicoresForNode(nodeID string) int {
+	nodeID = ledgerIdentity(nodeID)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.expireCPUBoosts_locked(time.Now())
@@ -765,7 +810,7 @@ func (l *NodeLedger) HeadroomMB() int {
 func (l *NodeLedger) Concurrency(appID string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.perApp[appID]
+	return l.perApp[ledgerIdentity(appID)]
 }
 
 // ConcurrencyForDeployment returns the per-(app, deployment) live
@@ -784,12 +829,13 @@ func (l *NodeLedger) ConcurrencyForDeployment(appID, deploymentID string) int {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.perAppDeployment[appID+"\x00"+deploymentID]
+	return l.perAppDeployment[ledgerIdentity(appID)+"\x00"+ledgerIdentity(deploymentID)]
 }
 
 // HasOtherRevisionInScope checks only counted reservations, so snapshot primes,
 // parked rows, and migration destination memory cannot authorize an overlap.
 func (l *NodeLedger) HasOtherRevisionInScope(appID, deploymentID, scope string) bool {
+	appID, deploymentID = ledgerIdentity(appID), ledgerIdentity(deploymentID)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	scope = normalizedDeploymentScope(scope)
@@ -817,4 +863,12 @@ func (l *NodeLedger) NodeCount() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return len(l.resident)
+}
+
+// UUID aliases share accounting keys; legacy named test nodes remain unchanged.
+func ledgerIdentity(id string) string {
+	if parsed, err := uuid.Parse(id); err == nil {
+		return parsed.String()
+	}
+	return id
 }

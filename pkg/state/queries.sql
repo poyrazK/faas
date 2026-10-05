@@ -11205,6 +11205,6 @@ SELECT c.*, s.instance_key AS source_instance_key, s.permit_claims AS source_per
 FROM regional_runtime_capacity_receipts c
 LEFT JOIN regional_runtime_launch_sources s USING (app_id,permit_id)
 WHERE c.issued_at IS NOT NULL AND c.released_at IS NULL
-  AND c.permit_claims->'Grant'->'Binding'->>'CellID'=sqlc.arg(cell_id)::text
+  AND (sqlc.arg(cell_id)::text='' OR c.permit_claims->'Grant'->'Binding'->>'CellID'=sqlc.arg(cell_id)::text)
   AND (sqlc.arg(first_page)::boolean OR (c.app_id,c.permit_id)>(sqlc.arg(after_app)::uuid,sqlc.arg(after_permit)::uuid))
 ORDER BY c.app_id,c.permit_id LIMIT sqlc.arg(batch_limit)::int;

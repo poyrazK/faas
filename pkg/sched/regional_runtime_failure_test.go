@@ -49,7 +49,7 @@ func TestRegionalRuntimeFailureRetainsUncertainNativeAndRecoversRow(t *testing.T
 				t.Fatal(err)
 			}
 			ledger := sched.NewNodeLedger()
-			if err := ledger.Admit(sched.Request{Instance: ins.ID, AppID: ins.AppID, DeploymentID: ins.DeploymentID, NodeID: ins.NodeID, RuntimeRunID: ins.WakeID, Plan: api.PlanPro, RAMMB: 128, VCPU: 1, MaxConcurrency: 1}); err != nil {
+			if err := ledger.Admit(sched.Request{Instance: ins.ID, AppID: ins.AppID, DeploymentID: ins.DeploymentID, NodeID: ins.NodeID, RuntimeRunID: ins.WakeID, RegionalRuntime: &source, Plan: api.PlanPro, RAMMB: 128, VCPU: 1, MaxConcurrency: 1}); err != nil {
 				t.Fatal(err)
 			}
 			v := &retirementWireVMM{fakeVMM: &fakeVMM{}, store: f.store, wantInstance: ins.ID}

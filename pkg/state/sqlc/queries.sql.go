@@ -21025,7 +21025,7 @@ SELECT c.app_id, c.allocation_id, c.permit_id, c.generation, c.instance_id, c.ru
 FROM regional_runtime_capacity_receipts c
 LEFT JOIN regional_runtime_launch_sources s USING (app_id,permit_id)
 WHERE c.issued_at IS NOT NULL AND c.released_at IS NULL
-  AND c.permit_claims->'Grant'->'Binding'->>'CellID'=$1::text
+  AND ($1::text='' OR c.permit_claims->'Grant'->'Binding'->>'CellID'=$1::text)
   AND ($2::boolean OR (c.app_id,c.permit_id)>($3::uuid,$4::uuid))
 ORDER BY c.app_id,c.permit_id LIMIT $5::int
 `

@@ -10,7 +10,7 @@ import (
 )
 
 func (s *PgStore) ListRegionalRuntimeInventory(ctx context.Context, cell string, after RegionalRuntimeRetirementCursor, limit int) ([]RegionalRuntimeInventoryEntry, error) {
-	if !validRegionalRetirementPage(cell, after, limit) {
+	if !validRegionalInventoryPage(cell, after, limit) {
 		return nil, ErrInvalidArgument
 	}
 	rows, err := (&sqlc.Queries{}).ListRegionalRuntimeInventory(ctx, s.pool, sqlc.ListRegionalRuntimeInventoryParams{CellID: cell, FirstPage: after.AppID == "", AfterApp: uuidToPgtype(after.AppID), AfterPermit: uuidToPgtype(after.PermitID), BatchLimit: int32(limit)})
@@ -39,7 +39,7 @@ func regionalInventoryRow(row sqlc.ListRegionalRuntimeInventoryRow, cell string)
 	if err != nil {
 		return RegionalRuntimeInventoryEntry{}, err
 	}
-	if receipt.Permit.Grant.Binding.CellID != cell || receipt.IssuedAt == nil || receipt.ReleasedAt != nil || row.ServingSeatsHeld < 0 {
+	if (cell != "" && receipt.Permit.Grant.Binding.CellID != cell) || receipt.IssuedAt == nil || receipt.ReleasedAt != nil || row.ServingSeatsHeld < 0 {
 		return RegionalRuntimeInventoryEntry{}, ErrConflict
 	}
 	entry := RegionalRuntimeInventoryEntry{Receipt: receipt, ServingSeatsHeld: row.ServingSeatsHeld}

@@ -11,7 +11,7 @@ import (
 )
 
 func TestRegionalRuntimeFailureLocalReservationOrigin(t *testing.T) {
-	for _, change := range []string{"exact", "run", "unbound", "node", "deployment", "app"} {
+	for _, change := range []string{"exact", "run", "unbound", "node", "deployment", "app", "host-epoch", "permit"} {
 		t.Run(change, func(t *testing.T) {
 			store, account, app, dep := regionalQuotaSchedulerFixture(t)
 			freezeRegionalSchedulerApp(t, store, account, app)
@@ -33,6 +33,16 @@ func TestRegionalRuntimeFailureLocalReservationOrigin(t *testing.T) {
 				request.DeploymentID = uuid.NewString()
 			case "app":
 				request.AppID = uuid.NewString()
+			}
+			if change == "exact" || change == "host-epoch" || change == "permit" {
+				bound := source
+				if change == "host-epoch" {
+					bound.Permit.HostEpochID = uuid.NewString()
+				}
+				if change == "permit" {
+					bound.Permit.ID = uuid.NewString()
+				}
+				request.RegionalRuntime = &bound
 			}
 			ledger := NewNodeLedger()
 			if err := ledger.Admit(request); err != nil {

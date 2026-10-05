@@ -96,6 +96,9 @@ func (e *Engine) issueRegionalRuntimeLaunch(ctx context.Context, node, instance,
 		return spec, runtimequota.ErrBinding // A retry must retain any already escaped original placement.
 	}
 	spec.RegionalRuntime = &placement
+	if err := e.ledger.bindOriginalRegionalRuntime(source); err != nil {
+		return spec, err
+	}
 	if err := e.store.IssueRegionalRuntimeLaunchResources(ctx, placement, source, resources); err != nil {
 		return spec, fmt.Errorf("sched: issue regional launch: %w", err)
 	}

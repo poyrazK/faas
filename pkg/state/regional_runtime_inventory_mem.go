@@ -7,7 +7,7 @@ import (
 )
 
 func (s *MemStore) ListRegionalRuntimeInventory(ctx context.Context, cell string, after RegionalRuntimeRetirementCursor, limit int) ([]RegionalRuntimeInventoryEntry, error) {
-	if !validRegionalRetirementPage(cell, after, limit) {
+	if !validRegionalInventoryPage(cell, after, limit) {
 		return nil, ErrInvalidArgument
 	}
 	s.mu.Lock()
@@ -19,7 +19,7 @@ func (s *MemStore) ListRegionalRuntimeInventory(ctx context.Context, cell string
 	for key, receipt := range s.regionalRuntimeCapacity {
 		p := receipt.Permit
 		app := p.Grant.Binding.RegionalAppID
-		if p.Grant.Binding.CellID != cell || receipt.IssuedAt == nil || receipt.ReleasedAt != nil ||
+		if (cell != "" && p.Grant.Binding.CellID != cell) || receipt.IssuedAt == nil || receipt.ReleasedAt != nil ||
 			(after.AppID != "" && (app < after.AppID || (app == after.AppID && p.ID <= after.PermitID))) {
 			continue
 		}

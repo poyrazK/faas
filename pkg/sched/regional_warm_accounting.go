@@ -14,6 +14,11 @@ func (l *NodeLedger) reserveRegionalWarmResume(instance string, p runtimequota.C
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if !recovered {
+		if err := l.regionalAdmissionBarrierLocked(); err != nil {
+			return err
+		}
+	}
 	r := l.entries[instance]
 	if r == nil || !runtimequota.MatchesID(p.Grant.Binding.RegionalAppID, r.appID) || !runtimequota.MatchesID(p.DeploymentID, r.deploymentID) || !runtimequota.MatchesID(p.NodeID, r.nodeID) || (r.regionalResumePermitID != "" && r.regionalResumePermitID != p.ID) {
 		return runtimequota.ErrBinding

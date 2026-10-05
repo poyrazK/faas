@@ -62,6 +62,18 @@ func runRegionalInventoryContract(t *testing.T, s Store, account Account, cell s
 	if err != nil || len(rows) != 3 {
 		t.Fatal("inventory missed issued, unfenced or collected holds", rows, err)
 	}
+	all, err := ledger.ListRegionalRuntimeInventory(t.Context(), "", RegionalRuntimeRetirementCursor{}, 10)
+	if err != nil || len(all) != 4 {
+		t.Fatal("full-store inventory missed a historical cell", all, err)
+	}
+	var allCursor RegionalRuntimeRetirementCursor
+	for _, want := range all {
+		page, err := ledger.ListRegionalRuntimeInventory(t.Context(), "", allCursor, 1)
+		if err != nil || len(page) != 1 || page[0].Receipt.Permit != want.Receipt.Permit {
+			t.Fatal("full-store composite pagination", page, err)
+		}
+		allCursor = RegionalRuntimeRetirementCursor{AppID: want.Receipt.Permit.Grant.Binding.RegionalAppID, PermitID: want.Receipt.Permit.ID}
+	}
 	seen := map[string]bool{}
 	for _, row := range rows {
 		p := row.Receipt.Permit
