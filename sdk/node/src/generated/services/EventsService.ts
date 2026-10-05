@@ -2,9 +2,14 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EventBacklogResponse } from '../models/EventBacklogResponse.js';
 import type { EventDeliveryListResponse } from '../models/EventDeliveryListResponse.js';
 import type { EventFanoutAttemptHistoryResponse } from '../models/EventFanoutAttemptHistoryResponse.js';
+import type { EventReceiptAttemptHistoryResponse } from '../models/EventReceiptAttemptHistoryResponse.js';
+import type { EventReceiptReplayHistoryResponse } from '../models/EventReceiptReplayHistoryResponse.js';
+import type { EventReceiptResponse } from '../models/EventReceiptResponse.js';
 import type { EventSchema } from '../models/EventSchema.js';
+import type { EventStorageUsageResponse } from '../models/EventStorageUsageResponse.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
 import type { PreviewEventRequest } from '../models/PreviewEventRequest.js';
 import type { PreviewEventResponse } from '../models/PreviewEventResponse.js';
@@ -63,7 +68,15 @@ export class EventsService {
    * different type, schema version, or data returns 409. Older snake_case input attribute
    * names remain accepted during migration. API keys require
    * `events:publish`, `deploy:write`, or `admin`.
-   * Matching and delivery are asynchronous follow-up work.
+   * Matching and delivery are asynchronous follow-up work. The Location header
+   * and receipt_url point to GET /v1/events/receipt for delivery evidence.
+   * Identical identity retries return the original accepted_at timestamp,
+   * including when retained customer event storage is full. New identities
+   * exceeding the account count or byte budget return 429 with code
+   * event_storage_capacity_exhausted, limit/observed and Retry-After. No ledger
+   * or receipt is committed on rejection. Storage is released by receipt
+   * retention pruning, not by delivery completion. GET /v1/events/storage
+   * reports current usage and plan limits.
    *
    * @returns PublishEventResponse Event accepted for durable processing.
    * @throws ApiError
@@ -99,6 +112,325 @@ export class EventsService {
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Discover waiting application event recipients and consumer counts.
+   * Requires apps:read or admin. Reads only the authenticated account's
+   * captured application recipients in pending or processing routing state,
+   * in both whole-event and independent-recipient routing modes. Includes
+   * capacity waits before an invocation exists; excludes settled routing and
+   * handler execution queues. Returns metadata and receipt/history links,
+   * never envelope data. Consumers count all matching recipients, independently
+   * of either bounded page. Age is measured from durable event acceptance.
+   * Recipient pages are oldest accepted first, then receipt and subscription
+   * identity; consumer pages use app and subscription identity. Pass each
+   * continuation cursor with the same filters; page sizes may change. Cursors
+   * anchor window_at and its age cutoff, while membership and counts remain
+   * live on every request. Recovered rows disappear, including cursor rows.
+   * Replay behind a cursor requires restarting discovery. This inspection
+   * ordering does not guarantee delivery FIFO. A repeatable read keeps each
+   * response consistent. Aggregation has a five-second deadline; narrow
+   * filters if event_backlog_read_timeout is returned. Responses use
+   * Cache-Control no-store. unattributed_receipts counts pending legacy
+   * receipts without captured recipients across the account; only the
+   * acceptance/age window applies to that count, including with other filters.
+   *
+   * @returns EventBacklogResponse Matching live backlog metadata and independently paginated consumer counts.
+   * @throws ApiError
+   */
+  public static getEventBacklog({
+    app,
+    subscriptionId,
+    state,
+    capacityScope,
+    minAgeSeconds,
+    after,
+    consumersAfter,
+    limit = 100,
+    consumerLimit = 100,
+  }: {
+    /**
+     * Owned app slug; an unknown or foreign app returns 404.
+     */
+    app?: string,
+    /**
+     * Captured application recipient identifier.
+     */
+    subscriptionId?: string,
+    /**
+     * Restrict current routing state.
+     */
+    state?: 'pending' | 'processing',
+    /**
+     * Restrict currently pending waits by the last recorded capacity scope.
+     */
+    capacityScope?: 'consumer' | 'app' | 'account',
+    /**
+     * Minimum whole seconds since acceptance, relative to window_at.
+     */
+    minAgeSeconds?: number,
+    /**
+     * Opaque next_after recipient cursor, bound to account and filters.
+     */
+    after?: string,
+    /**
+     * Opaque next_consumers_after cursor, bound to account and filters. Both cursors must share window_at.
+     */
+    consumersAfter?: string,
+    /**
+     * Maximum waiting recipients in this page.
+     */
+    limit?: number,
+    /**
+     * Maximum consumer summaries in this page.
+     */
+    consumerLimit?: number,
+  }): CancelablePromise<EventBacklogResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/events/backlog',
+      query: {
+        'app': app,
+        'subscription_id': subscriptionId,
+        'state': state,
+        'capacity_scope': capacityScope,
+        'min_age_seconds': minAgeSeconds,
+        'after': after,
+        'consumers_after': consumersAfter,
+        'limit': limit,
+        'consumer_limit': consumerLimit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect retained customer event storage and account limits.
+   * Requires apps:read or admin. Returns usage only for the authenticated
+   * account. Logical UTF-8 JSON bytes include envelope, duplicated event data,
+   * and immutable recipient snapshots. Pending and settled receipts remain
+   * charged until retention pruning. Reserved gregale.* platform events are
+   * exempt. Indexes, TOAST compression, ledger and attempt history are outside
+   * this budget. A null oldest_pending_at means no customer routing is pending.
+   * Responses use Cache-Control no-store.
+   *
+   * @returns EventStorageUsageResponse Current retained storage and plan limits.
+   * @throws ApiError
+   */
+  public static getEventStorageUsage(): CancelablePromise<EventStorageUsageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/events/storage',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect acceptance, routing, and execution for one event.
+   * Requires apps:read or admin. Reads the retained account/source/id receipt
+   * and a bounded page of immutable acceptance-time recipients. Routing
+   * counts cover the entire snapshot, including recipients without invocations.
+   * Enqueued routing does not imply handler success: keyed cancellation can
+   * produce a cancellation receipt instead. The original deterministic
+   * invocation is shown when retained; trusted generic replay lineage adds
+   * the latest replay and a paginated history URL without replacing the
+   * original failure. Recovery actions target the latest retained replay
+   * when present. Recovery actions require their existing
+   * write scopes and are revalidated when called. Legacy receipts without
+   * snapshots report snapshot_captured=false and cannot reconstruct recipients.
+   * Pages follow acceptance order while outcomes may change between requests.
+   *
+   * @returns EventReceiptResponse Current receipt evidence and recipient page.
+   * @throws ApiError
+   */
+  public static getEventReceipt({
+    source,
+    id,
+    after,
+    limit = 100,
+  }: {
+    /**
+     * Published event source paired with the required ID for this receipt lookup.
+     */
+    source: string,
+    /**
+     * Published event ID paired with the required source for this receipt lookup.
+     */
+    id: string,
+    /**
+     * Opaque next_after cursor bound to account, source, ID, and retained receipt. Mismatched or stale cursors return 400.
+     */
+    after?: string,
+    /**
+     * Maximum recipients in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<EventReceiptResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/events/receipt',
+      query: {
+        'source': source,
+        'id': id,
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        500: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect retained handler replay history for one captured recipient.
+   * Requires apps:read or admin. Returns generic invocation replays linked by
+   * ledger-owned parent/root identity, newest first by created_at and ID.
+   * Original and intermediate execution records may expire independently;
+   * surviving descendants remain visible. Legacy replays without trusted
+   * lineage cannot be reconstructed from guest headers. Unknown or foreign
+   * receipts, recipients and current app owners return 404. Cursors bind the
+   * account, source, event ID, subscription and retained receipt identity;
+   * mismatched or stale cursors return 400. Cursor anchors remain usable after
+   * their execution record expires. Outcomes may change between requests.
+   *
+   * @returns EventReceiptReplayHistoryResponse Retained replay execution evidence and pagination cursor.
+   * @throws ApiError
+   */
+  public static getEventReceiptReplays({
+    source,
+    id,
+    subscriptionId,
+    after,
+    limit = 100,
+  }: {
+    /**
+     * Published event source.
+     */
+    source: string,
+    /**
+     * Published event ID.
+     */
+    id: string,
+    /**
+     * Captured consumer identifier whose retained handler replay history is requested.
+     */
+    subscriptionId: string,
+    /**
+     * Opaque next_after cursor for this replay history.
+     */
+    after?: string,
+    /**
+     * Maximum retained replays in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<EventReceiptReplayHistoryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/events/receipt/replays',
+      query: {
+        'source': source,
+        'id': id,
+        'subscription_id': subscriptionId,
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        500: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect retained handler delivery attempts for one captured recipient.
+   * Requires apps:read or admin. Includes the original async invocation and
+   * trusted child replays, ordered by descending attempt history ID. Each
+   * claim records its attempt and replay generation atomically with dispatch.
+   * A claim does not prove handler execution. Recovered expired leases have
+   * outcome unknown; external side effects still require idempotency.
+   * Only attempts recorded after rollout and still retained are available.
+   * Closed attempts expire after at most 30 days, earlier when result retention
+   * expires or their invocation is deleted. Running attempts are not pruned.
+   * Missing history does not establish that no delivery occurred. Unknown or
+   * foreign receipts, captured recipients and current app owners return 404.
+   * Cursors bind account, source, event ID, recipient and retained receipt;
+   * stale or mismatched cursors return 400. New claims do not reorder older
+   * pages; a running outcome may settle between reads.
+   *
+   * @returns EventReceiptAttemptHistoryResponse Retained dispatch evidence and pagination cursor.
+   * @throws ApiError
+   */
+  public static getEventReceiptAttempts({
+    source,
+    id,
+    subscriptionId,
+    after,
+    limit = 100,
+  }: {
+    /**
+     * Published event source.
+     */
+    source: string,
+    /**
+     * Published event ID.
+     */
+    id: string,
+    /**
+     * Captured consumer identifier.
+     */
+    subscriptionId: string,
+    /**
+     * Opaque next_after cursor for this attempt history.
+     */
+    after?: string,
+    /**
+     * Maximum retained attempts per page.
+     */
+    limit?: number,
+  }): CancelablePromise<EventReceiptAttemptHistoryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/events/receipt/attempts',
+      query: {
+        'source': source,
+        'id': id,
+        'subscription_id': subscriptionId,
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        500: `code: capacity — server-side error; retry with backoff.`,
       },
     });
   }
@@ -345,8 +677,9 @@ export class EventsService {
    * Retry one terminal event recipient routing failure.
    * Requeues only the named failed recipient from the immutable recipient
    * snapshot captured when the event was accepted. Other recipients and
-   * their outcomes are left untouched. The event must have settled before
-   * a failed recipient can be replayed.
+   * their outcomes are left untouched. With independent recipient routing,
+   * a terminal recipient can be replayed while siblings are active and gets
+   * a fresh routing retry budget. Legacy receipts must settle first.
    *
    * @returns ReplayEventFanoutFailureResponse One recipient accepted for replay.
    * @throws ApiError
@@ -396,10 +729,10 @@ export class EventsService {
    * Requeues up to 100 terminal recipients for the app whose stable failure
    * classification marks them retryable. Optional event_source and event_id
    * narrow the action to one published event and must be supplied together.
-   * Non-retryable recipients are left alone, and an event being processed
-   * by the fanout worker is not modified. A replayed event can accept more
-   * recipients while pending; if has_more remains true while the worker is
-   * processing it, repeat the request after that event settles.
+   * Non-retryable recipients are left alone. Independent recipient routing
+   * permits replay while siblings are active and renews each selected
+   * recipient's routing retry budget. Legacy receipts with active whole-event
+   * claims are skipped; repeat after they settle if has_more remains true.
    *
    * @returns ReplayRetryableEventFanoutFailuresResponse Bounded replay accepted.
    * @throws ApiError

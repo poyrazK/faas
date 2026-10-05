@@ -41844,7 +41844,7 @@ components:
         capacity_deferrals: { type: integer, minimum: 0 }
         next_attempt_at: { type: string, format: date-time }
         lease_until: { type: string, format: date-time, description: Recipient lease or shared whole-receipt lease. }
-        pending_age_seconds: { type: number, format: double, minimum: 0, description: Age from acceptance at observed_at, not time spent at the latest capacity scope. }
+        pending_age_seconds: { type: number, format: double, minimum: 0, description: "Age from acceptance at observed_at, not time spent at the latest capacity scope." }
         waiting_reason: { type: string, enum: [capacity_consumer, capacity_app, capacity_account, routing_in_progress, receipt_processing, retry_backoff, ready], description: Recorded capacity takes precedence for pending recipients; receipt_processing refers only to a shared receipt lease. }
         receipt_url: { type: string, format: uri-reference }
         fanout_history_url: { type: string, format: uri-reference, description: Present when the captured target still belongs to the account. History coverage is independently bounded. }
@@ -42095,11 +42095,11 @@ components:
         capacity_deferrals: { type: integer, format: int64, minimum: 0, description: Highest durable cumulative recipient deferral checkpoint. }
         coalesced_outcomes: { type: integer, format: int64, minimum: 0, description: Repeated waits represented by counters instead of detail rows. }
         compacted_outcomes: { type: integer, format: int64, minimum: 0, description: Detail rows removed by retention or budgets. }
-        compacted_through_id: { type: integer, format: int64, minimum: 1, description: Highest removed detail ID; protected older rows can remain, so this is not a contiguous missing prefix. }
+        compacted_through_id: { type: integer, format: int64, minimum: 1, description: "Highest removed detail ID; protected older rows can remain, so this is not a contiguous missing prefix." }
         compacted_through_at: { type: string, format: date-time, description: Latest occurrence time among removed detail rows. }
         first_capacity_wait_at: { type: string, format: date-time, description: First recorded capacity wait after summary rollout. }
         last_capacity_wait_at: { type: string, format: date-time }
-        last_capacity_scope: { type: string, enum: [consumer, app, account], description: Most recent recorded capacity scope, also retained after recovery. }
+        last_capacity_scope: { type: string, enum: [consumer, app, account], description: "Most recent recorded capacity scope, also retained after recovery." }
         retained_records: { type: integer, format: int64, minimum: 0 }
         retained_bytes: { type: integer, format: int64, minimum: 0, description: Logical detail bytes including a fixed per-row allowance; excludes physical storage and indexes. }
 
@@ -42113,10 +42113,10 @@ components:
         event_source: { type: string }
         event_type: { type: string }
         schema_version: { type: string }
-        accepted_at: { type: string, format: date-time, description: First durable acceptance time, preserved on identical retries. }
-        routing_settled_at: { type: string, format: date-time, description: All routing candidates settled, including filtered and failed outcomes; absent while routing is active. }
+        accepted_at: { type: string, format: date-time, description: "First durable acceptance time, preserved on identical retries." }
+        routing_settled_at: { type: string, format: date-time, description: "All routing candidates settled, including filtered and failed outcomes; absent while routing is active." }
         retain_until: { type: string, format: date-time, description: 'Settled receipt retention boundary, 30 days after routing settled. Absent for active routing.' }
-        snapshot_captured: { type: boolean, description: False means legacy recipient membership is unknown, rather than an empty matching set. }
+        snapshot_captured: { type: boolean, description: "False means legacy recipient membership is unknown, rather than an empty matching set." }
         routing_mode: { type: string, enum: [event, recipient], description: Whole-event legacy routing or independent recipient leases. }
         recipient_count: { type: integer, minimum: 0, description: Total captured candidates across all pages; unknown when snapshot_captured=false. }
         routing_summary:
@@ -42160,14 +42160,14 @@ components:
       required: [state, attempts, retryable, replay_count]
       properties:
         state: { type: string, enum: [pending, processing, filtered, enqueued, failed] }
-        attempts: { type: integer, minimum: 0, description: Lifetime routing attempts, including replay generations. }
+        attempts: { type: integer, minimum: 0, description: "Lifetime routing attempts, including replay generations." }
         generation_capacity_deferrals: { type: integer, minimum: 0, description: Capacity waits in this independent routing generation; subtract from generation_attempts for failure-budget use. }
         capacity_deferrals: { type: integer, minimum: 0, description: Lifetime capacity waits; excluded from the routing failure budget. }
         capacity_scope: { type: string, enum: [consumer, app, account], description: Active capacity wait reason; absent after admission. }
         pending_age_seconds: { type: number, minimum: 0, description: Age since event acceptance while routing is pending or processing. }
         generation: { type: integer, format: int64, minimum: 1, description: Independent routing generation; absent on legacy whole-event receipts. }
-        generation_attempts: { type: integer, minimum: 0, description: Claims in the current independent generation, including capacity waits; subtract generation_capacity_deferrals for failure-budget use. }
-        next_attempt_at: { type: string, format: date-time, description: Scheduled pending routing retry, not a dispatch guarantee. }
+        generation_attempts: { type: integer, minimum: 0, description: "Claims in the current independent generation, including capacity waits; subtract generation_capacity_deferrals for failure-budget use." }
+        next_attempt_at: { type: string, format: date-time, description: "Scheduled pending routing retry, not a dispatch guarantee." }
         lease_until: { type: string, format: date-time, description: Independent routing claim expiry; no claim token is exposed. }
         updated_at: { type: string, format: date-time }
         last_error: { type: string }
@@ -42186,7 +42186,7 @@ components:
         replayed_from_invocation_id: { type: string, format: uuid, description: Trusted immediate parent for a generic replay; its execution record may have expired. }
         state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, superseded, expired, dead_letter] }
         attempts: { type: integer, minimum: 0 }
-        replay_generation: { type: integer, format: int64, minimum: 0, description: This invocation's budget generation, updated by in-place dead-letter replay. }
+        replay_generation: { type: integer, format: int64, minimum: 0, description: "This invocation's budget generation, updated by in-place dead-letter replay." }
         next_attempt_at: { type: string, format: date-time, description: Next pending invocation due time; dispatch may be delayed by admission. }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }

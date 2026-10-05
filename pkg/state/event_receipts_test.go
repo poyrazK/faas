@@ -119,7 +119,7 @@ func TestEventReceiptDeadLetterRecoveryIdentity(t *testing.T) {
 				if _, err := store.ClaimInvocation(ctx, inv.ID, "receipt-dead-letter", 30); err != nil {
 					t.Fatal(err)
 				}
-				if err := store.FailInvocation(ctx, inv.ID, "handler exhausted", 0, 1); err != nil {
+				if err := store.FailInvocation(ctx, inv.ID, "handler exhausted", time.Millisecond, 1); err != nil {
 					t.Fatal(err)
 				}
 				deadLetters, err := store.ListDeadLetterEvents(ctx, app, 10, "")
