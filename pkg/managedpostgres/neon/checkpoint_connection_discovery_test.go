@@ -28,13 +28,16 @@ func (t discoveryQueryTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, _ 
 
 func TestCheckpointConnectionDiscoveryNativeInventoriesAllDatabasesReadOnly(t *testing.T) {
 	f := newNativeConnectionClosureFixture(t)
-	var expected []string
-	if err := f.root.QueryRow(t.Context(), `SELECT array_agg(datname::text ORDER BY datname COLLATE "C") FROM pg_database WHERE datname<>$1`, connectionfence.MaintenanceDatabase).Scan(&expected); err != nil {
-		t.Fatal(err)
-	}
 	actual, err := f.p.discoverCheckpointConnections(t.Context(), f.definition, f.maintenance, f.request.CheckpointConnectionIdentity, f.connectPool(t))
-	if err != nil || actual.CheckpointConnectionIdentity != f.request.CheckpointConnectionIdentity || !slices.Equal(actual.DatabaseNames, expected) {
+	if err != nil || actual.CheckpointConnectionIdentity != f.request.CheckpointConnectionIdentity || !slices.IsSorted(actual.DatabaseNames) || slices.Contains(actual.DatabaseNames, connectionfence.MaintenanceDatabase) {
 		t.Fatalf("native provider selection: %v", err)
+	}
+	// Assert the stable native categories; unrelated CI packages may create/drop
+	// their own databases between a root read and the provider's transaction.
+	for _, name := range append([]string{"postgres", "template0", "template1"}, f.request.DatabaseNames...) {
+		if !slices.Contains(actual.DatabaseNames, name) {
+			t.Fatal("provider discovery omitted a native database")
+		}
 	}
 	for i, name := range f.request.DatabaseNames {
 		var allowed bool

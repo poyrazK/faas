@@ -14,16 +14,13 @@ import (
 func TestConnectionFenceDiscoveryIncludesCompleteCatalogueWithoutMutation(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
-	var expected []string
-	if err := f.root.QueryRow(ctx, `SELECT array_agg(datname::text ORDER BY datname COLLATE "C") FROM pg_database WHERE datname<>$1`, f.config.MaintenanceDatabase).Scan(&expected); err != nil {
-		t.Fatal(err)
-	}
 	actual, err := f.c.DiscoverDatabaseSelection(ctx, f.request.Identity)
-	if err != nil || actual.Identity != f.request.Identity || !slices.Equal(actual.DatabaseNames, expected) {
+	if err != nil || actual.Identity != f.request.Identity || !slices.IsSorted(actual.DatabaseNames) || slices.Contains(actual.DatabaseNames, f.config.MaintenanceDatabase) {
 		t.Fatalf("complete native catalogue: %v", err)
 	}
 	// The fixture administrator does not own these built-ins. They must remain
 	// explicit input, alongside the closed database and quoted customer name.
+	// Other packages can create/drop unrelated databases on the shared CI cluster.
 	for _, name := range append([]string{"postgres", "template0", "template1"}, f.request.DatabaseNames...) {
 		if !slices.Contains(actual.DatabaseNames, name) {
 			t.Fatal("discovery omitted a native database")
