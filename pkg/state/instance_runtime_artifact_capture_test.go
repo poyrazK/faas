@@ -28,6 +28,11 @@ func createRuntimeArtifactCapture(t *testing.T, s runtimeArtifactCaptureTestStor
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Migrated database templates retain their seed node clock. A simulated
+	// boot needs its own current heartbeat rather than the template's age.
+	if err := s.HeartbeatComputeNode(t.Context(), node.ID); err != nil {
+		t.Fatal(err)
+	}
 	ins, err := s.CreateInstance(t.Context(), app.ID, dep.ID, string(StateColdBooting), 128, node.ID, uuid.NewString())
 	if err != nil {
 		t.Fatal(err)

@@ -47,6 +47,13 @@ func TestApplicationStandardRuntimeAdmissionEnvelope(t *testing.T) {
 			e.State = "unmanaged"
 			e.MaterializedFields = []appstandards.Field{appstandards.EgressCIDRs}
 		}, false},
+		{"unmanaged with retained installation", func(e *ApplicationStandardEnrollment) {
+			e.State = "unmanaged"
+		}, false},
+		{"unmanaged with invalid negative installation", func(e *ApplicationStandardEnrollment) {
+			e.State = "unmanaged"
+			e.PersistedRevision = -1
+		}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := cloneApplicationStandardEnrollment(ready)

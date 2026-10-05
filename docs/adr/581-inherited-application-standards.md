@@ -2145,3 +2145,35 @@ process retirement keeps its sealed artifact sources and measured descriptors.
 Native snapshot publication remains unavailable until its original producer and
 publication session can be attested. These integration checks do not substitute
 for dedicated native hardware and crash/recovery acceptance.
+
+### Native admission after the last adopted standard is removed
+
+An explicitly installed standard projection retains native admission after a
+reviewed removal restores the application's baseline settings. A positive
+persisted revision is durable installation history; empty adoption and managed
+field sets do not turn this application into a never-enrolled legacy workload.
+The scheduler still needs a fresh current input capture, current artifact
+approval, measured native consumption and matching runtime publication. An old
+grant cannot publish the replacement settings, and plan compatibility cannot
+reinterpret a retained native runtime as legacy residency.
+
+Scope changes retain the last persisted revision and projection while queuing
+repair. The pending state prevents either the retained projection or a stale
+runtime from admitting a boot. PostgreSQL forbids decreasing the persisted
+revision, including a raw update that would erase installation history. Existing
+captures, hashes and frozen migration bytes remain unchanged. A new additive
+migration applies equivalent predicates to boot, publication, residency and
+runtime comparison guards; its down path retains those fail-closed protections.
+The retained-removal path additionally requires protocol 2 at grant issuance,
+receipt publication and promotion through the shared native artifact guard.
+The older registry-image protocol cannot certify restored settings. This
+requirement is a second additive migration because the installation-history
+migration had already been applied to a private database during verification.
+Rollback must use a binary that understands retained native admission or keep
+affected services pending until that capability is restored.
+
+Portable store fixtures exercise reviewed removal, stale and unmeasured receipt
+refusal, fresh measured publication, current native qualification and scope
+repair. These simulated receipts establish storage behavior only. They do not
+advance application observation, release a wave, prove physical recovery or
+satisfy native KVM acceptance. Public mutation activation remains disabled.

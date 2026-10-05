@@ -103,6 +103,7 @@ func TestApplicationStandardRuntimeInputsMatchIsNarrow(t *testing.T) {
 		{"integer precision", `{"adoptions":[],"materialized_fields":[],"account_plan":"pro","bytes":9007199254740992}`, false},
 		{"new adoption", `{"adoptions":[{"version":1}],"materialized_fields":[],"account_plan":"pro","bytes":9007199254740993}`, false},
 		{"retained managed field", `{"adoptions":[],"materialized_fields":["require_signed"],"account_plan":"pro","bytes":9007199254740993}`, false},
+		{"retained installation", `{"adoptions":[],"materialized_fields":[],"persisted_revision":3,"account_plan":"pro","bytes":9007199254740993}`, false},
 		{"missing plan", `{"adoptions":[],"materialized_fields":[],"bytes":9007199254740993}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -111,5 +112,13 @@ func TestApplicationStandardRuntimeInputsMatchIsNarrow(t *testing.T) {
 				t.Fatalf("match=%v want=%v err=%v", got, tc.want, err)
 			}
 		})
+	}
+}
+
+func TestApplicationStandardRetainedInputsKeepPlanStrict(t *testing.T) {
+	before := []byte(`{"adoptions":[],"materialized_fields":[],"persisted_revision":3,"account_plan":"scale"}`)
+	after := []byte(`{"adoptions":[],"materialized_fields":[],"persisted_revision":3,"account_plan":"pro"}`)
+	if matches, err := standardRuntimeInputsMatch(before, after); err != nil || matches {
+		t.Fatalf("retained installation regained legacy plan compatibility: %v %v", matches, err)
 	}
 }

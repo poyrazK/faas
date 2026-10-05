@@ -841,9 +841,8 @@ BEGIN
         'egress_cidrs', to_jsonb(NEW.egress_allowlist::text[]), 'egress_extra_ports', to_jsonb(NEW.egress_ports)),
       pins, CASE WHEN pins = '[]'::jsonb THEN 'unmanaged' ELSE 'pending' END)
     ON CONFLICT (app_id) DO UPDATE SET org_id = EXCLUDED.org_id, project_id = EXCLUDED.project_id, adoptions = EXCLUDED.adoptions,
-      state = CASE WHEN EXCLUDED.adoptions <> '[]'::jsonb OR cardinality(app_application_standards.materialized_fields)>0 THEN 'pending' ELSE 'unmanaged' END,
-      desired_revision = app_application_standards.desired_revision + 1, effective = '{}'::jsonb, effective_hash = '',
-      persisted_revision = 0, observed_revision = 0, error_code = '', updated_at = now();
+      state = CASE WHEN EXCLUDED.adoptions <> '[]'::jsonb OR cardinality(app_application_standards.materialized_fields)>0 OR app_application_standards.persisted_revision>0 THEN 'pending' ELSE 'unmanaged' END,
+      desired_revision = app_application_standards.desired_revision + 1, error_code = '', updated_at = now();
     RETURN NEW;
 END;
 $$;
@@ -857,6 +856,10 @@ CREATE FUNCTION public.application_standard_enrollment_generation_guard() RETURN
     LANGUAGE plpgsql
     AS $$
 BEGIN
+    IF NEW.persisted_revision < OLD.persisted_revision THEN
+        RAISE EXCEPTION 'application standard installation history regressed'
+          USING ERRCODE='23514',CONSTRAINT='application_standard_enrollment_generation';
+    END IF;
     IF NEW.lease_generation < OLD.lease_generation THEN
         RAISE EXCEPTION 'application standard enrollment generation regressed'
           USING ERRCODE='23514',CONSTRAINT='application_standard_enrollment_generation';
@@ -1007,7 +1010,7 @@ BEGIN
    jsonb_build_object('instance_ram_mb',NEW.ram_mb,'instance_mode',NEW.mode);
  IF TG_OP='INSERT' THEN
   IF NEW.state IN ('running','warm','migrating') AND
-    (current_input->'adoptions' <> '[]'::jsonb OR current_input->'materialized_fields' <> '[]'::jsonb) THEN
+    application_standard_runtime_requires_native(current_input) THEN
    RAISE EXCEPTION 'managed runtime requires a captured boot attempt'
     USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
   END IF;
@@ -1016,14 +1019,14 @@ BEGIN
   IF captured_input IS NULL THEN
    -- A legacy instance can continue only while it is still unmanaged. A new
    -- standard requires a fresh instance, never a fabricated historical capture.
-   IF current_input->'adoptions' <> '[]'::jsonb OR current_input->'materialized_fields' <> '[]'::jsonb THEN
+   IF application_standard_runtime_requires_native(current_input) THEN
     RAISE EXCEPTION 'managed runtime has no admission capture'
      USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
    END IF;
   ELSE
    -- Legacy unmanaged captures have no native revision; they gain no native
    -- grant authority from this compatibility comparison.
-   IF NOT (captured_input ? 'egress_revision') AND current_input->'adoptions'='[]'::jsonb AND current_input->'materialized_fields'='[]'::jsonb THEN
+   IF NOT (captured_input ? 'egress_revision') AND NOT application_standard_runtime_requires_native(current_input) THEN
     current_input:=current_input-'egress_revision';
    END IF;
    IF NOT application_standard_runtime_inputs_match(captured_input,current_input) OR
@@ -1032,7 +1035,7 @@ BEGIN
     USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
    END IF;
   END IF;
-  IF (current_input->'adoptions'<>'[]'::jsonb OR current_input->'materialized_fields'<>'[]'::jsonb) AND current_input ? 'runtime_artifacts' THEN
+  IF application_standard_runtime_requires_native(current_input) AND current_input ? 'runtime_artifacts' THEN
    artifact_deadline:=application_standard_native_artifact_deadline(current_input,clock_timestamp());
    IF artifact_deadline IS NULL OR artifact_deadline<=clock_timestamp() THEN
     RAISE EXCEPTION 'managed runtime artifact approval expired' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
@@ -1077,7 +1080,7 @@ BEGIN
  IF c.instance_id IS NULL OR c.node_id IS DISTINCT FROM i.node_id OR NOT application_standard_native_inputs_match(c.input_snapshot,input)
    OR (input->>'desired_revision')::bigint<=0 OR input->>'effective_hash'=''
    OR input->'desired_revision' IS DISTINCT FROM input->'persisted_revision'
-   OR (input->'adoptions'='[]'::jsonb AND input->'materialized_fields'='[]'::jsonb) THEN
+   OR NOT application_standard_runtime_requires_native(input) THEN
   RAISE EXCEPTION 'runtime admission inputs changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
  END IF;
  SELECT vmmd_incarnation,vmmd_admission_protocol INTO incarnation,protocol FROM compute_nodes WHERE id=i.node_id FOR SHARE NOWAIT;
@@ -1597,6 +1600,10 @@ BEGIN
   WHERE a->>'kind' IN ('source-app-layer','function-layer')) THEN
   RAISE EXCEPTION 'source native byte capability required' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
  END IF;
+ IF coalesce((input->>'persisted_revision')::bigint,0)>0 AND input->'adoptions'='[]'::jsonb
+  AND input->'materialized_fields'='[]'::jsonb AND version<>2 THEN
+  RAISE EXCEPTION 'retained native byte capability required' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
  IF version=1 THEN
   IF coalesce(b->>'artifact_sources_hash','')<>'' OR (r IS NOT NULL AND r ? 'artifact_consumption') THEN
    RAISE EXCEPTION 'legacy authority cannot acknowledge consumed artifacts' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
@@ -2108,7 +2115,7 @@ DECLARE c instance_application_standard_admissions%ROWTYPE; g instance_applicati
 BEGIN
  IF NEW.app_id IS NULL OR NEW.kind<>'wake' OR NEW.state NOT IN ('waking','cold_booting','running','warm','migrating') THEN RETURN NEW; END IF;
  SELECT * INTO c FROM instance_application_standard_admissions WHERE instance_id=NEW.id;
- managed:=coalesce(c.input_snapshot->'adoptions'<>'[]'::jsonb OR c.input_snapshot->'materialized_fields'<>'[]'::jsonb,false);
+ managed:=application_standard_runtime_requires_native(c.input_snapshot);
  IF NOT managed THEN RETURN NEW; END IF;
  publishing:=NEW.state IN ('running','warm','migrating') OR coalesce(NEW.netns,'')<>'' OR NEW.host_ip IS NOT NULL OR coalesce(NEW.guest_uid,0)>0;
  IF NOT publishing THEN RETURN NEW; END IF;
@@ -2161,7 +2168,7 @@ CREATE FUNCTION public.application_standard_native_residency_guard() RETURNS tri
 DECLARE managed boolean;
 BEGIN
  IF OLD.app_id IS NULL OR OLD.kind<>'wake' THEN RETURN NEW; END IF;
- SELECT coalesce(input_snapshot->'adoptions'<>'[]'::jsonb OR input_snapshot->'materialized_fields'<>'[]'::jsonb,false)
+ SELECT application_standard_runtime_requires_native(input_snapshot)
   INTO managed FROM instance_application_standard_admissions WHERE instance_id=OLD.id;
  IF NOT coalesce(managed,false) THEN RETURN NEW; END IF;
  IF (OLD.application_standard_boot_token IS NOT NULL AND NEW.application_standard_boot_token IS DISTINCT FROM OLD.application_standard_boot_token)
@@ -2561,8 +2568,8 @@ CREATE FUNCTION public.application_standard_runtime_inputs_match(captured jsonb,
 BEGIN
  IF jsonb_typeof(captured) IS DISTINCT FROM 'object' OR jsonb_typeof(current_input) IS DISTINCT FROM 'object' THEN RETURN false; END IF;
  captured:=application_standard_stable_runtime_input(captured); current_input:=application_standard_stable_runtime_input(current_input);
- IF captured->'adoptions'='[]'::jsonb AND captured->'materialized_fields'='[]'::jsonb
-  AND current_input->'adoptions'='[]'::jsonb AND current_input->'materialized_fields'='[]'::jsonb
+ IF NOT application_standard_runtime_requires_native(captured)
+  AND NOT application_standard_runtime_requires_native(current_input)
   AND captured ? 'account_plan' AND current_input ? 'account_plan' THEN
   captured:=captured-'account_plan'; current_input:=current_input-'account_plan';
  END IF;
@@ -2773,6 +2780,18 @@ $_$;
 
 
 --
+-- Name: application_standard_runtime_requires_native(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_requires_native(input jsonb) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT coalesce((input->>'persisted_revision')::bigint,0)>0
+   OR coalesce(input->'adoptions'<>'[]'::jsonb OR input->'materialized_fields'<>'[]'::jsonb,false);
+$$;
+
+
+--
 -- Name: application_standard_runtime_root_producer(public.apps, public.deployments, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2846,7 +2865,7 @@ BEGIN
  IF NOT FOUND OR a.status='deleted' OR acct.status NOT IN ('active','past_due') OR acct.abuse_hold_at IS NOT NULL OR o.status NOT IN ('active','past_due') OR o.deleted_pending
    OR e.org_id IS DISTINCT FROM a.org_id OR e.project_id IS DISTINCT FROM a.project_id
    OR (e.exception_expires_at IS NOT NULL AND e.exception_expires_at<=clock_timestamp())
-   OR NOT ((e.state='unmanaged' AND e.adoptions='[]'::jsonb AND cardinality(e.materialized_fields)=0)
+   OR NOT ((e.state='unmanaged' AND e.persisted_revision=0 AND e.adoptions='[]'::jsonb AND cardinality(e.materialized_fields)=0)
      OR (e.state IN ('persisted','observed') AND e.persisted_revision=e.desired_revision AND e.effective_hash <> '')) THEN
   RAISE EXCEPTION 'runtime application standards are incomplete' USING ERRCODE='23514',CONSTRAINT='application_standards_pending';
  END IF;

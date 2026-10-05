@@ -30,10 +30,11 @@ type InstanceApplicationStandardAdmission struct {
 	NodeID             string
 	AccountID          string
 	EgressRevision     int64
-	Managed            bool
+	Managed            bool // Includes a retained installed projection after its last adoption is removed.
 	ExceptionExpiresAt time.Time
 	CapturedAt         time.Time
 	inputs             json.RawMessage
+	retainedNative     bool
 }
 
 type InstanceApplicationStandardAdmissionStore interface {
@@ -99,7 +100,7 @@ func CheckInstanceApplicationStandardAdmission(ctx context.Context, store Instan
 			return fmt.Errorf("%w: %s", ErrApplicationStandardRuntimeStale, field)
 		}
 		if !reflect.DeepEqual(want, got) {
-			if field == "account_plan" && !capture.Managed && len(enrollment.Adoptions) == 0 && len(enrollment.MaterializedFields) == 0 {
+			if field == "account_plan" && !capture.Managed && !standardEnrollmentRequiresNative(enrollment) {
 				allowed, err := unmanagedStandardResidentPlanChange(ctx, store, id)
 				if err != nil {
 					return fmt.Errorf("read unmanaged residency: %w", err)
@@ -136,6 +137,9 @@ func standardRuntimeInputsMatch(captured, current []byte) (bool, error) {
 }
 
 func unmanagedStandardRuntimeInputs(input map[string]any) bool {
+	if revision, exists := input["persisted_revision"]; exists && revision != json.Number("0") {
+		return false
+	}
 	adoptions, ok := input["adoptions"].([]any)
 	fields, fieldsOK := input["materialized_fields"].([]any)
 	_, planOK := input["account_plan"]
@@ -205,9 +209,10 @@ func decodeInstanceStandardAdmission(id string, raw []byte, capturedAt time.Time
 		return InstanceApplicationStandardAdmission{}, err
 	}
 	capture := InstanceApplicationStandardAdmission{InstanceID: id, AppID: input.AppID, DeploymentID: input.Artifact.ID,
-		AccountID: input.AccountID, EgressRevision: input.EgressRevision, Managed: len(input.Adoptions) > 0 || len(input.MaterializedFields) > 0,
+		AccountID: input.AccountID, EgressRevision: input.EgressRevision, Managed: input.PersistedRevision > 0 || len(input.Adoptions) > 0 || len(input.MaterializedFields) > 0,
 		DesiredRevision: input.DesiredRevision, PersistedRevision: input.PersistedRevision, EffectiveHash: input.EffectiveHash,
 		InputHash: hash, CapturedAt: capturedAt, inputs: append(json.RawMessage(nil), raw...)}
+	capture.retainedNative = input.PersistedRevision > 0 && len(input.Adoptions) == 0 && len(input.MaterializedFields) == 0
 	if len(input.ExceptionExpiresAt) != 0 {
 		var nano int64
 		if json.Unmarshal(input.ExceptionExpiresAt, &nano) != nil || nano <= 0 {

@@ -116,7 +116,7 @@ func (m *MemStore) guardInstanceStandardRuntimeLocked(ctx context.Context, ins I
 		return err
 	}
 	e := m.applicationStandardEnrollments[app.ID]
-	managed := len(e.Adoptions) > 0 || len(e.MaterializedFields) > 0
+	managed := standardEnrollmentRequiresNative(e)
 	if creating {
 		if managed && ins.State != string(StateWaking) && ins.State != string(StateColdBooting) {
 			return ErrApplicationStandardRuntimeStale

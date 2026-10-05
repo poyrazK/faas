@@ -87,8 +87,10 @@ func (m *MemStore) initializeApplicationStandardEnrollmentLocked(app App) error 
 	}
 	if exists {
 		value.BaseSettings, value.LocalSettings, value.AdditionalLogDestinations = before.BaseSettings, before.LocalSettings, before.AdditionalLogDestinations
+		value.PersistedRevision, value.ObservedRevision = before.PersistedRevision, before.ObservedRevision
+		value.Effective, value.EffectiveHash, value.ExceptionExpiresAt = before.Effective, before.EffectiveHash, before.ExceptionExpiresAt
 		value.MaterializedFields = append([]appstandards.Field{}, before.MaterializedFields...)
-		if len(value.MaterializedFields) > 0 {
+		if before.PersistedRevision > 0 || len(value.MaterializedFields) > 0 {
 			value.State = "pending"
 		}
 		value.DesiredRevision = before.DesiredRevision + 1
