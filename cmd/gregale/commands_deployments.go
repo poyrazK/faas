@@ -406,6 +406,7 @@ func cmdDeploymentWait(args []string) int {
 		waitTarget = "live and rollout-complete"
 	}
 	var progressState *deploymentProgressSnapshot
+	var held rolloutHeldNotice
 
 	for {
 		d, getErr := client.GetDeployment(ctx, pos[0])
@@ -417,6 +418,9 @@ func cmdDeploymentWait(args []string) int {
 		}
 		if *progress && !jsonOutput {
 			progressState = renderDeploymentProgress(osStdout, d, progressState)
+		}
+		if *rollout && !jsonOutput {
+			held.maybeWarn(osStderr, d, time.Now())
 		}
 		if isCompletedDeployment(d) {
 			if d.Status != statusLive {
