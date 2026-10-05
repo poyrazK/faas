@@ -2991,6 +2991,81 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
+  /v1/events/backlog:
+    get:
+      tags: [events]
+      operationId: getEventBacklog
+      summary: Discover waiting application event recipients and consumer counts.
+      description: |
+        Requires apps:read or admin. Reads only the authenticated account's
+        captured application recipients in pending or processing routing state,
+        in both whole-event and independent-recipient routing modes. Includes
+        capacity waits before an invocation exists; excludes settled routing and
+        handler execution queues. Returns metadata and receipt/history links,
+        never envelope data. Consumers count all matching recipients, independently
+        of either bounded page. Age is measured from durable event acceptance.
+        Recipient pages are oldest accepted first, then receipt and subscription
+        identity; consumer pages use app and subscription identity. Pass each
+        continuation cursor with the same filters; page sizes may change. Cursors
+        anchor window_at and its age cutoff, while membership and counts remain
+        live on every request. Recovered rows disappear, including cursor rows.
+        Replay behind a cursor requires restarting discovery. This inspection
+        ordering does not guarantee delivery FIFO. A repeatable read keeps each
+        response consistent. Aggregation has a five-second deadline; narrow
+        filters if event_backlog_read_timeout is returned. Responses use
+        Cache-Control no-store. unattributed_receipts counts pending legacy
+        receipts without captured recipients across the account; only the
+        acceptance/age window applies to that count, including with other filters.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: app
+          description: Owned app slug; an unknown or foreign app returns 404.
+          schema: { type: string, maxLength: 256 }
+        - in: query
+          name: subscription_id
+          description: Captured application recipient identifier.
+          schema: { type: string, maxLength: 256 }
+        - in: query
+          name: state
+          description: Restrict current routing state.
+          schema: { type: string, enum: [pending, processing] }
+        - in: query
+          name: capacity_scope
+          description: Restrict currently pending waits by the last recorded capacity scope.
+          schema: { type: string, enum: [consumer, app, account] }
+        - in: query
+          name: min_age_seconds
+          description: Minimum whole seconds since acceptance, relative to window_at.
+          schema: { type: integer, format: int64, minimum: 0, maximum: 31536000, default: 0 }
+        - in: query
+          name: after
+          description: Opaque next_after recipient cursor, bound to account and filters.
+          schema: { type: string, maxLength: 8192 }
+        - in: query
+          name: consumers_after
+          description: Opaque next_consumers_after cursor, bound to account and filters. Both cursors must share window_at.
+          schema: { type: string, maxLength: 8192 }
+        - in: query
+          name: limit
+          description: Maximum waiting recipients in this page.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - in: query
+          name: consumer_limit
+          description: Maximum consumer summaries in this page.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        '200':
+          description: Matching live backlog metadata and independently paginated consumer counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventBacklogResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
   /v1/events/storage:
     get:
       tags: [events]
@@ -37761,6 +37836,71 @@ components:
         accepted_at: { type: string, format: date-time }
         account_id: { type: string, format: uuid }
         receipt_url: { type: string, format: uri-reference, description: Account-authenticated relative URL for this event receipt. }
+
+    EventBacklogResponse:
+      example: { observed_at: "2026-10-05T12:00:00Z", window_at: "2026-10-05T12:00:00Z", coverage: captured_application_recipients, recipients: [], consumers: [], unattributed_receipts: 0 }
+      type: object
+      additionalProperties: false
+      description: Live waiting recipients and exact matching counts, with an anchored acceptance window.
+      required: [observed_at, window_at, coverage, recipients, consumers, unattributed_receipts]
+      properties:
+        observed_at: { type: string, format: date-time, description: Time of this live observation. }
+        window_at: { type: string, format: date-time, description: First-page time anchoring acceptance and minimum-age cutoff across pages. }
+        coverage: { type: string, const: captured_application_recipients }
+        recipients:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/EventBacklogRecipient' }
+        consumers:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/EventBacklogConsumer' }
+        unattributed_receipts: { type: integer, format: int64, minimum: 0, description: Account-wide unresolved receipts without a captured snapshot; only the age/acceptance window applies. }
+        next_after: { type: string, description: Opaque continuation for the recipient page. }
+        next_consumers_after: { type: string, description: Opaque continuation for the consumer page. }
+
+    EventBacklogRecipient:
+      type: object
+      additionalProperties: false
+      description: One captured application recipient awaiting routing, without envelope data.
+      required: [event_source, event_id, event_type, accepted_at, app_id, app_slug, target_available, subscription_id, routing_mode, state, attempts, capacity_deferrals, pending_age_seconds, waiting_reason, receipt_url]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        event_type: { type: string }
+        accepted_at: { type: string, format: date-time }
+        app_id: { type: string, format: uuid }
+        app_slug: { type: string, description: Empty when the captured app is no longer owned by this account. }
+        target_available: { type: boolean }
+        subscription_id: { type: string }
+        routing_mode: { type: string, enum: [event, recipient] }
+        state: { type: string, enum: [pending, processing] }
+        capacity_scope: { type: string, enum: [consumer, app, account], description: Last recorded capacity scope for a currently pending recipient. }
+        attempts: { type: integer, minimum: 0 }
+        capacity_deferrals: { type: integer, minimum: 0 }
+        next_attempt_at: { type: string, format: date-time }
+        lease_until: { type: string, format: date-time, description: Recipient lease or shared whole-receipt lease. }
+        pending_age_seconds: { type: number, format: double, minimum: 0, description: Age from acceptance at observed_at, not time spent at the latest capacity scope. }
+        waiting_reason: { type: string, enum: [capacity_consumer, capacity_app, capacity_account, routing_in_progress, receipt_processing, retry_backoff, ready], description: Recorded capacity takes precedence for pending recipients; receipt_processing refers only to a shared receipt lease. }
+        receipt_url: { type: string, format: uri-reference }
+        fanout_history_url: { type: string, format: uri-reference, description: Present when the captured target still belongs to the account. History coverage is independently bounded. }
+
+    EventBacklogConsumer:
+      type: object
+      additionalProperties: false
+      description: Exact counts over all matching waiting recipients for one captured app/subscription, independent of recipient pagination.
+      required: [app_id, app_slug, target_available, subscription_id, waiting_recipients, pending_recipients, processing_recipients, capacity_waiting_recipients, oldest_accepted_at, oldest_age_seconds]
+      properties:
+        app_id: { type: string, format: uuid }
+        app_slug: { type: string }
+        target_available: { type: boolean }
+        subscription_id: { type: string }
+        waiting_recipients: { type: integer, format: int64, minimum: 0 }
+        pending_recipients: { type: integer, format: int64, minimum: 0 }
+        processing_recipients: { type: integer, format: int64, minimum: 0 }
+        capacity_waiting_recipients: { type: integer, format: int64, minimum: 0 }
+        oldest_accepted_at: { type: string, format: date-time }
+        oldest_age_seconds: { type: number, format: double, minimum: 0 }
 
     EventStorageUsageResponse:
       description: Retained customer event counts, logical JSON bytes, pending age and current account budgets.

@@ -2197,6 +2197,7 @@ func (s *server) handler() http.Handler {
 	// the durable events row remains the recovery source.
 	mux.HandleFunc("POST /v1/events:preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewEvent))))
 	mux.HandleFunc("GET /v1/events/storage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventStorageUsage))))
+	mux.HandleFunc("GET /v1/events/backlog", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventBacklog))))
 	mux.HandleFunc("GET /v1/events/receipt", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventReceipt))))
 	mux.HandleFunc("GET /v1/events/receipt/replays", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventReceiptReplays))))
 	mux.HandleFunc("GET /v1/events/receipt/attempts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEventReceiptAttempts))))

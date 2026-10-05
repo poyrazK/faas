@@ -20,6 +20,16 @@ import (
 	"time"
 )
 
+// Backlog discovery bounds metadata responses and aggregation (ADR-592).
+const (
+	EventBacklogPageDefault      = 100
+	EventBacklogPageMax          = 200
+	EventBacklogCursorMaxBytes   = 8192
+	EventBacklogFilterMaxBytes   = 256
+	EventBacklogMinAgeMaxSeconds = 365 * 24 * 60 * 60
+	EventBacklogReadTimeout      = 5 * time.Second
+)
+
 // Routing detail is bounded independently of pending receipt retention (ADR-591).
 const (
 	EventRoutingHistoryRowOverheadBytes = 128

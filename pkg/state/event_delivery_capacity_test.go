@@ -186,6 +186,11 @@ func TestEventDeliveryCapacityIsolationAndRecovery(t *testing.T) {
 		if adopted && (routing.GenerationCapacityDeferrals == nil || *routing.GenerationCapacityDeferrals != 20) {
 			t.Fatalf("generation deferrals=%+v", routing)
 		}
+		backlogStore := store.(state.EventBacklogStore)
+		backlog, err := backlogStore.EventBacklog(ctx, f.account, state.EventBacklogQuery{AppID: f.app, Filters: api.EventBacklogFilters{CapacityScope: "consumer"}})
+		if err != nil || len(backlog.Recipients) != 1 || len(backlog.Consumers) != 1 || backlog.Recipients[0].EventID != envelope.ID || backlog.Recipients[0].CapacityDeferrals != 20 || backlog.Recipients[0].WaitingReason != "capacity_consumer" || backlog.Consumers[0].WaitingRecipients != 1 || backlog.Consumers[0].CapacityWaitingRecipients != 1 || backlog.Consumers[0].OldestAgeSeconds <= 0 {
+			t.Fatalf("discover saturated consumer = %+v, %v", backlog, err)
+		}
 		h, err := store.(state.EventRoutingHealthStore).EventRoutingHealth(ctx)
 		if err != nil || h.CapacityWaiting != 1 || h.OldestPendingSeconds <= 0 {
 			t.Fatalf("health=%+v,%v", h, err)
@@ -213,6 +218,10 @@ func TestEventDeliveryCapacityIsolationAndRecovery(t *testing.T) {
 		h, err = store.(state.EventRoutingHealthStore).EventRoutingHealth(ctx)
 		if err != nil || h.CapacityWaiting != 0 || h.OldestPendingSeconds != 0 {
 			t.Fatalf("settled health=%+v,%v", h, err)
+		}
+		backlog, err = backlogStore.EventBacklog(ctx, f.account, state.EventBacklogQuery{})
+		if err != nil || len(backlog.Recipients) != 0 || len(backlog.Consumers) != 0 {
+			t.Fatalf("recovered backlog = %+v, %v", backlog, err)
 		}
 	})
 }

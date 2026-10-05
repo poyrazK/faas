@@ -563,6 +563,17 @@ var cliCommands = []cliCommand{
 				{Name: "data", Short: "JSON event data (inline | @file | -)", Req: true, Value: "J|@file|-"},
 				{Name: "time", Short: "event time (RFC3339; defaults to server time)", Value: "RFC3339"},
 			}},
+			{Name: "backlog", Short: "Discover waiting event recipients and consumer counts", Flags: []cliFlag{
+				{Name: "app", Short: "filter by owned app slug", Value: "APP"},
+				{Name: "subscription-id", Short: "filter by captured recipient identifier", Value: "ID"},
+				{Name: "state", Short: "pending or processing", Value: "STATE"},
+				{Name: "capacity-scope", Short: "consumer, app or account", Value: "SCOPE"},
+				{Name: "min-age", Short: "minimum acceptance age in whole seconds (e.g. 10m)", Value: "DURATION"},
+				{Name: "after", Short: "opaque recipient continuation cursor", Value: "CURSOR"},
+				{Name: "consumers-after", Short: "opaque consumer continuation cursor", Value: "CURSOR"},
+				{Name: "limit", Short: "recipients per page (1..200, default 100)", Value: "N"},
+				{Name: "consumer-limit", Short: "consumers per page (1..200, default 100)", Value: "N"},
+			}},
 			{Name: "inspect", Short: "Inspect event routing, execution and replay recovery", Flags: []cliFlag{
 				{Name: "source", Short: "published event source", Req: true, Value: "SOURCE"},
 				{Name: "id", Short: "published event id", Req: true, Value: "ID"},

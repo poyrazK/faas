@@ -2202,6 +2202,36 @@ type EventFanoutRecipient struct {
 	GenerationCapacityDeferrals int32
 }
 
+type EventRoutingBacklog struct {
+	OutboxID          int64
+	SubscriptionID    string
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	AcceptedAt        pgtype.Timestamptz
+	RoutingMode       string
+	RoutingState      string
+	CapacityScope     string
+	Attempts          int32
+	CapacityDeferrals int32
+	NextAttemptAt     pgtype.Timestamptz
+	LeaseUntil        pgtype.Timestamptz
+}
+
+type EventRoutingBacklogSource struct {
+	OutboxID          int64
+	SubscriptionID    interface{}
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	AcceptedAt        pgtype.Timestamptz
+	RoutingMode       string
+	RoutingState      interface{}
+	CapacityScope     string
+	Attempts          interface{}
+	CapacityDeferrals interface{}
+	NextAttemptAt     pgtype.Timestamptz
+	LeaseUntil        interface{}
+}
+
 type EventRoutingFairness struct {
 	AccountID      pgtype.UUID
 	SubscriptionID string

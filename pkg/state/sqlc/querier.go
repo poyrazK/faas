@@ -384,6 +384,9 @@ type Querier interface {
 	EnvironmentWorkloadQualificationInputsCurrent(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	EnvironmentWorkloadQualificationSourceForUpdate(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentGitSource, error)
 	EnvironmentWorkloadQualificationsByGraph(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]EnvironmentWorkloadQualificationRequest, error)
+	EventBacklogConsumers(ctx context.Context, db DBTX, arg EventBacklogConsumersParams) ([]EventBacklogConsumersRow, error)
+	EventBacklogRecipients(ctx context.Context, db DBTX, arg EventBacklogRecipientsParams) ([]EventBacklogRecipientsRow, error)
+	EventBacklogUnattributed(ctx context.Context, db DBTX, arg EventBacklogUnattributedParams) (int64, error)
 	EventDeliveryCounts(ctx context.Context, db DBTX, arg EventDeliveryCountsParams) (EventDeliveryCountsRow, error)
 	EventDeliveryInsertSlot(ctx context.Context, db DBTX, arg EventDeliveryInsertSlotParams) error
 	EventDeliveryLockCapacity(ctx context.Context, db DBTX, arg EventDeliveryLockCapacityParams) error

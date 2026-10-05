@@ -124,3 +124,40 @@ VALUES(sqlc.arg(actor)::text,'event.published',sqlc.arg(account_id)::uuid,sqlc.a
 -- name: EventStorageAcceptedCharge :one
 SELECT customer_storage_bytes FROM event_fanout_outbox
 WHERE account_id=sqlc.arg(account_id)::uuid AND source=sqlc.arg(source)::text AND event_id=sqlc.arg(event_id)::text;
+
+-- name: EventBacklogRecipients :many
+SELECT b.*, o.source, o.event_id, o.event_type, coalesce(a.slug,'')::text AS app_slug,
+       (a.id IS NOT NULL AND a.status <> 'deleted')::boolean AS target_available
+FROM event_routing_backlog b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id
+LEFT JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
+WHERE b.account_id=sqlc.arg(account_id)::uuid AND b.accepted_at<=sqlc.arg(cutoff)::timestamptz
+  AND (sqlc.narg(app_id)::uuid IS NULL OR b.app_id=sqlc.narg(app_id)::uuid)
+  AND (sqlc.arg(subscription_id)::text='' OR b.subscription_id=sqlc.arg(subscription_id)::text)
+  AND (sqlc.arg(routing_state)::text='' OR b.routing_state=sqlc.arg(routing_state)::text)
+  AND (sqlc.arg(capacity_scope)::text='' OR b.capacity_scope=sqlc.arg(capacity_scope)::text)
+  AND (sqlc.narg(after_accepted_at)::timestamptz IS NULL OR
+       (b.accepted_at,b.outbox_id,b.subscription_id)>(sqlc.narg(after_accepted_at)::timestamptz,sqlc.arg(after_outbox_id)::bigint,sqlc.arg(after_subscription_id)::text))
+ORDER BY b.accepted_at,b.outbox_id,b.subscription_id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EventBacklogConsumers :many
+SELECT b.app_id,b.subscription_id,coalesce(a.slug,'')::text AS app_slug,
+       (a.id IS NOT NULL AND a.status<>'deleted')::boolean AS target_available,
+       count(*)::bigint AS waiting_recipients,
+       count(*) FILTER (WHERE b.routing_state='pending')::bigint AS pending_recipients,
+       count(*) FILTER (WHERE b.routing_state='processing')::bigint AS processing_recipients,
+       count(*) FILTER (WHERE b.capacity_scope<>'')::bigint AS capacity_waiting_recipients,
+       min(b.accepted_at)::timestamptz AS oldest_accepted_at
+FROM event_routing_backlog b LEFT JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
+WHERE b.account_id=sqlc.arg(account_id)::uuid AND b.accepted_at<=sqlc.arg(cutoff)::timestamptz
+  AND (sqlc.narg(app_id)::uuid IS NULL OR b.app_id=sqlc.narg(app_id)::uuid)
+  AND (sqlc.arg(subscription_id)::text='' OR b.subscription_id=sqlc.arg(subscription_id)::text)
+  AND (sqlc.arg(routing_state)::text='' OR b.routing_state=sqlc.arg(routing_state)::text)
+  AND (sqlc.arg(capacity_scope)::text='' OR b.capacity_scope=sqlc.arg(capacity_scope)::text)
+  AND (sqlc.narg(after_app_id)::uuid IS NULL OR (b.app_id,b.subscription_id)>(sqlc.narg(after_app_id)::uuid,sqlc.arg(after_subscription_id)::text))
+GROUP BY b.app_id,b.subscription_id,a.id,a.slug,a.status
+ORDER BY b.app_id,b.subscription_id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EventBacklogUnattributed :one
+SELECT count(*)::bigint FROM event_fanout_outbox
+WHERE account_id=sqlc.arg(account_id)::uuid AND created_at<=sqlc.arg(cutoff)::timestamptz
+  AND recipient_snapshot IS NULL AND state IN ('pending','processing');

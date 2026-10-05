@@ -11,6 +11,204 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const eventBacklogConsumers = `-- name: EventBacklogConsumers :many
+SELECT b.app_id,b.subscription_id,coalesce(a.slug,'')::text AS app_slug,
+       (a.id IS NOT NULL AND a.status<>'deleted')::boolean AS target_available,
+       count(*)::bigint AS waiting_recipients,
+       count(*) FILTER (WHERE b.routing_state='pending')::bigint AS pending_recipients,
+       count(*) FILTER (WHERE b.routing_state='processing')::bigint AS processing_recipients,
+       count(*) FILTER (WHERE b.capacity_scope<>'')::bigint AS capacity_waiting_recipients,
+       min(b.accepted_at)::timestamptz AS oldest_accepted_at
+FROM event_routing_backlog b LEFT JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
+WHERE b.account_id=$1::uuid AND b.accepted_at<=$2::timestamptz
+  AND ($3::uuid IS NULL OR b.app_id=$3::uuid)
+  AND ($4::text='' OR b.subscription_id=$4::text)
+  AND ($5::text='' OR b.routing_state=$5::text)
+  AND ($6::text='' OR b.capacity_scope=$6::text)
+  AND ($7::uuid IS NULL OR (b.app_id,b.subscription_id)>($7::uuid,$8::text))
+GROUP BY b.app_id,b.subscription_id,a.id,a.slug,a.status
+ORDER BY b.app_id,b.subscription_id LIMIT $9::integer
+`
+
+type EventBacklogConsumersParams struct {
+	AccountID           pgtype.UUID
+	Cutoff              pgtype.Timestamptz
+	AppID               pgtype.UUID
+	SubscriptionID      string
+	RoutingState        string
+	CapacityScope       string
+	AfterAppID          pgtype.UUID
+	AfterSubscriptionID string
+	PageLimit           int32
+}
+
+type EventBacklogConsumersRow struct {
+	AppID                     pgtype.UUID
+	SubscriptionID            string
+	AppSlug                   string
+	TargetAvailable           bool
+	WaitingRecipients         int64
+	PendingRecipients         int64
+	ProcessingRecipients      int64
+	CapacityWaitingRecipients int64
+	OldestAcceptedAt          pgtype.Timestamptz
+}
+
+func (q *Queries) EventBacklogConsumers(ctx context.Context, db DBTX, arg EventBacklogConsumersParams) ([]EventBacklogConsumersRow, error) {
+	rows, err := db.Query(ctx, eventBacklogConsumers,
+		arg.AccountID,
+		arg.Cutoff,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.RoutingState,
+		arg.CapacityScope,
+		arg.AfterAppID,
+		arg.AfterSubscriptionID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventBacklogConsumersRow{}
+	for rows.Next() {
+		var i EventBacklogConsumersRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.SubscriptionID,
+			&i.AppSlug,
+			&i.TargetAvailable,
+			&i.WaitingRecipients,
+			&i.PendingRecipients,
+			&i.ProcessingRecipients,
+			&i.CapacityWaitingRecipients,
+			&i.OldestAcceptedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventBacklogRecipients = `-- name: EventBacklogRecipients :many
+SELECT b.outbox_id, b.subscription_id, b.account_id, b.app_id, b.accepted_at, b.routing_mode, b.routing_state, b.capacity_scope, b.attempts, b.capacity_deferrals, b.next_attempt_at, b.lease_until, o.source, o.event_id, o.event_type, coalesce(a.slug,'')::text AS app_slug,
+       (a.id IS NOT NULL AND a.status <> 'deleted')::boolean AS target_available
+FROM event_routing_backlog b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id
+LEFT JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
+WHERE b.account_id=$1::uuid AND b.accepted_at<=$2::timestamptz
+  AND ($3::uuid IS NULL OR b.app_id=$3::uuid)
+  AND ($4::text='' OR b.subscription_id=$4::text)
+  AND ($5::text='' OR b.routing_state=$5::text)
+  AND ($6::text='' OR b.capacity_scope=$6::text)
+  AND ($7::timestamptz IS NULL OR
+       (b.accepted_at,b.outbox_id,b.subscription_id)>($7::timestamptz,$8::bigint,$9::text))
+ORDER BY b.accepted_at,b.outbox_id,b.subscription_id LIMIT $10::integer
+`
+
+type EventBacklogRecipientsParams struct {
+	AccountID           pgtype.UUID
+	Cutoff              pgtype.Timestamptz
+	AppID               pgtype.UUID
+	SubscriptionID      string
+	RoutingState        string
+	CapacityScope       string
+	AfterAcceptedAt     pgtype.Timestamptz
+	AfterOutboxID       int64
+	AfterSubscriptionID string
+	PageLimit           int32
+}
+
+type EventBacklogRecipientsRow struct {
+	OutboxID          int64
+	SubscriptionID    string
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	AcceptedAt        pgtype.Timestamptz
+	RoutingMode       string
+	RoutingState      string
+	CapacityScope     string
+	Attempts          int32
+	CapacityDeferrals int32
+	NextAttemptAt     pgtype.Timestamptz
+	LeaseUntil        pgtype.Timestamptz
+	Source            string
+	EventID           string
+	EventType         string
+	AppSlug           string
+	TargetAvailable   bool
+}
+
+func (q *Queries) EventBacklogRecipients(ctx context.Context, db DBTX, arg EventBacklogRecipientsParams) ([]EventBacklogRecipientsRow, error) {
+	rows, err := db.Query(ctx, eventBacklogRecipients,
+		arg.AccountID,
+		arg.Cutoff,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.RoutingState,
+		arg.CapacityScope,
+		arg.AfterAcceptedAt,
+		arg.AfterOutboxID,
+		arg.AfterSubscriptionID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventBacklogRecipientsRow{}
+	for rows.Next() {
+		var i EventBacklogRecipientsRow
+		if err := rows.Scan(
+			&i.OutboxID,
+			&i.SubscriptionID,
+			&i.AccountID,
+			&i.AppID,
+			&i.AcceptedAt,
+			&i.RoutingMode,
+			&i.RoutingState,
+			&i.CapacityScope,
+			&i.Attempts,
+			&i.CapacityDeferrals,
+			&i.NextAttemptAt,
+			&i.LeaseUntil,
+			&i.Source,
+			&i.EventID,
+			&i.EventType,
+			&i.AppSlug,
+			&i.TargetAvailable,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventBacklogUnattributed = `-- name: EventBacklogUnattributed :one
+SELECT count(*)::bigint FROM event_fanout_outbox
+WHERE account_id=$1::uuid AND created_at<=$2::timestamptz
+  AND recipient_snapshot IS NULL AND state IN ('pending','processing')
+`
+
+type EventBacklogUnattributedParams struct {
+	AccountID pgtype.UUID
+	Cutoff    pgtype.Timestamptz
+}
+
+func (q *Queries) EventBacklogUnattributed(ctx context.Context, db DBTX, arg EventBacklogUnattributedParams) (int64, error) {
+	row := db.QueryRow(ctx, eventBacklogUnattributed, arg.AccountID, arg.Cutoff)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const eventReceiptAcceptedAt = `-- name: EventReceiptAcceptedAt :one
 SELECT created_at FROM event_fanout_outbox
 WHERE account_id=$1::uuid AND source=$2::text AND event_id=$3::text

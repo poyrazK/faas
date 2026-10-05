@@ -624,6 +624,42 @@ FIFO ordering across events or subscriptions. Retry backoff, recovery, and
 replay can change enqueue and completion order; work policies constrain
 dispatch within a key without guaranteeing publication order.
 
+Find recipients waiting to be routed without knowing their event IDs:
+
+```bash
+gregale events backlog
+gregale events backlog --app analytics --capacity-scope consumer --min-age 10m
+gregale events backlog --subscription-id SUB --state pending --json
+```
+
+The API is `GET /v1/events/backlog` with `app`, `subscription_id`, `state`,
+`capacity_scope` and `min_age_seconds` filters. It lists captured application
+recipients waiting in either routing mode, including capacity waits before
+an invocation exists. Rows show event identity, recorded wait reason, age
+since acceptance, cumulative deferrals, retry/lease metadata and links to
+receipt and routing history. Consumer counts cover all matching waiting rows,
+independently of the recipient page. This view excludes settled routing and
+handler execution queues, which remain available through delivery inspection.
+
+Use `--after` for the recipient continuation and `--consumers-after` for the
+independent consumer continuation; the API names the latter `consumers_after`.
+Both pages default to 100 and cap at 200; `--consumer-limit` controls consumer
+summaries. Keep filters unchanged and use cursors from the same `window_at`
+when passing both together. The window anchors acceptance/age filtering, while
+membership and counts remain live: recovered recipients disappear, even if
+their row supplied the cursor. Replay can restore older work behind a cursor;
+restart discovery to include it. Listing oldest first does not promise delivery
+FIFO. A whole-event lease appears as `receipt_processing` because it does not
+identify which recipient is currently being routed.
+
+The response declares `coverage=captured_application_recipients` and reports
+unresolved older receipts without snapshots as `unattributed_receipts`. That
+count is account-wide and uses only the acceptance/age window, even with other
+filters. The API requires a read key, returns metadata with no-store caching,
+and bounds reads to five seconds. Narrow filters and retry on
+`event_backlog_read_timeout`. Apply the [backlog migration](adr/592-event-consumer-backlog-inspection.md)
+before upgrading the API; routing behavior and recipient adoption are unchanged.
+
 Published and inbox envelopes use CloudEvents `datacontenttype` and the
 `accountid` extension. The API accepts the older `data_content_type` and
 `account_id` request spellings for existing clients.

@@ -5881,6 +5881,50 @@ $$;
 
 
 --
+-- Name: project_event_routing_backlog_recipient(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_event_routing_backlog_recipient() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP='DELETE' THEN
+        PERFORM refresh_event_routing_backlog(OLD.outbox_id,OLD.subscription_id);
+        RETURN OLD;
+    END IF;
+    PERFORM refresh_event_routing_backlog(NEW.outbox_id,NEW.subscription_id);
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: project_event_routing_backlog_root(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_event_routing_backlog_root() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE sub text;
+BEGIN
+    IF TG_OP='INSERT' THEN
+        PERFORM refresh_event_routing_backlog(NEW.id);
+    ELSIF (NEW.recipient_snapshot,NEW.state,NEW.available_at,NEW.lease_until,NEW.recipient_claims,NEW.created_at,NEW.account_id)
+       IS DISTINCT FROM (OLD.recipient_snapshot,OLD.state,OLD.available_at,OLD.lease_until,OLD.recipient_claims,OLD.created_at,OLD.account_id) THEN
+        PERFORM refresh_event_routing_backlog(NEW.id);
+    ELSE
+        FOR sub IN SELECT k FROM (
+            SELECT jsonb_object_keys(NEW.recipient_progress) AS k
+            UNION SELECT jsonb_object_keys(OLD.recipient_progress) AS k
+        ) keys WHERE NEW.recipient_progress->k IS DISTINCT FROM OLD.recipient_progress->k ORDER BY k
+        LOOP PERFORM refresh_event_routing_backlog(NEW.id,sub); END LOOP;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: protect_financial_budget_revision(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6843,6 +6887,36 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+
+
+--
+-- Name: refresh_event_routing_backlog(bigint, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refresh_event_routing_backlog(p_outbox_id bigint, p_subscription_id text DEFAULT NULL::text) RETURNS void
+    LANGUAGE sql
+    AS $$
+WITH candidates AS MATERIALIZED (
+    SELECT * FROM event_routing_backlog_source
+    WHERE outbox_id=p_outbox_id AND (p_subscription_id IS NULL OR subscription_id=p_subscription_id)
+      AND routing_state IN ('pending','processing')
+), inserted AS (
+    INSERT INTO event_routing_backlog SELECT * FROM candidates ORDER BY subscription_id
+    ON CONFLICT (outbox_id,subscription_id) DO UPDATE SET
+        account_id=excluded.account_id,app_id=excluded.app_id,accepted_at=excluded.accepted_at,
+        routing_mode=excluded.routing_mode,routing_state=excluded.routing_state,capacity_scope=excluded.capacity_scope,
+        attempts=excluded.attempts,capacity_deferrals=excluded.capacity_deferrals,
+        next_attempt_at=excluded.next_attempt_at,lease_until=excluded.lease_until
+    WHERE (event_routing_backlog.account_id,event_routing_backlog.app_id,event_routing_backlog.accepted_at,
+           event_routing_backlog.routing_mode,event_routing_backlog.routing_state,event_routing_backlog.capacity_scope,
+           event_routing_backlog.attempts,event_routing_backlog.capacity_deferrals,event_routing_backlog.next_attempt_at,event_routing_backlog.lease_until)
+       IS DISTINCT FROM (excluded.account_id,excluded.app_id,excluded.accepted_at,excluded.routing_mode,excluded.routing_state,
+                         excluded.capacity_scope,excluded.attempts,excluded.capacity_deferrals,excluded.next_attempt_at,excluded.lease_until)
+)
+DELETE FROM event_routing_backlog b WHERE b.outbox_id=p_outbox_id
+    AND (p_subscription_id IS NULL OR b.subscription_id=p_subscription_id)
+    AND NOT EXISTS (SELECT 1 FROM candidates c WHERE c.subscription_id=b.subscription_id);
+$$;
 
 
 --
@@ -11712,6 +11786,87 @@ CREATE TABLE public.event_fanout_recipients (
     CONSTRAINT event_fanout_recipients_recipient_check CHECK ((jsonb_typeof(recipient) = 'object'::text)),
     CONSTRAINT event_fanout_recipients_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'processing'::text, 'filtered'::text, 'enqueued'::text, 'failed'::text])))
 );
+
+
+--
+-- Name: event_routing_backlog; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_routing_backlog (
+    outbox_id bigint NOT NULL,
+    subscription_id text NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    accepted_at timestamp with time zone NOT NULL,
+    routing_mode text NOT NULL,
+    routing_state text NOT NULL,
+    capacity_scope text NOT NULL,
+    attempts integer NOT NULL,
+    capacity_deferrals integer NOT NULL,
+    next_attempt_at timestamp with time zone,
+    lease_until timestamp with time zone,
+    CONSTRAINT event_routing_backlog_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT event_routing_backlog_capacity_deferrals_check CHECK ((capacity_deferrals >= 0)),
+    CONSTRAINT event_routing_backlog_capacity_scope_check CHECK ((capacity_scope = ANY (ARRAY[''::text, 'consumer'::text, 'app'::text, 'account'::text]))),
+    CONSTRAINT event_routing_backlog_routing_mode_check CHECK ((routing_mode = ANY (ARRAY['event'::text, 'recipient'::text]))),
+    CONSTRAINT event_routing_backlog_routing_state_check CHECK ((routing_state = ANY (ARRAY['pending'::text, 'processing'::text])))
+);
+
+
+--
+-- Name: event_routing_backlog_source; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.event_routing_backlog_source AS
+ SELECT o.id AS outbox_id,
+    (s.recipient ->> 'id'::text) AS subscription_id,
+    o.account_id,
+    ((s.recipient ->> 'app_id'::text))::uuid AS app_id,
+    o.created_at AS accepted_at,
+        CASE
+            WHEN o.recipient_claims THEN 'recipient'::text
+            ELSE 'event'::text
+        END AS routing_mode,
+    effective.routing_state,
+        CASE
+            WHEN (effective.routing_state = 'pending'::text) THEN COALESCE((p.progress ->> 'capacity_scope'::text), ''::text)
+            ELSE ''::text
+        END AS capacity_scope,
+        CASE
+            WHEN o.recipient_claims THEN COALESCE(r.total_attempts, ((p.progress ->> 'attempts'::text))::integer, 0)
+            ELSE COALESCE(((p.progress ->> 'attempts'::text))::integer, 0)
+        END AS attempts,
+    GREATEST(COALESCE(((p.progress ->> 'capacity_deferrals'::text))::integer, 0),
+        CASE
+            WHEN o.recipient_claims THEN COALESCE(r.capacity_deferrals, 0)
+            ELSE 0
+        END) AS capacity_deferrals,
+        CASE
+            WHEN (effective.routing_state = 'pending'::text) THEN
+            CASE
+                WHEN o.recipient_claims THEN COALESCE(r.available_at, ((p.progress ->> 'next_attempt_at'::text))::timestamp with time zone, o.available_at)
+                ELSE COALESCE(((p.progress ->> 'next_attempt_at'::text))::timestamp with time zone,
+                CASE
+                    WHEN (o.state = 'pending'::text) THEN o.available_at
+                    ELSE NULL::timestamp with time zone
+                END)
+            END
+            ELSE NULL::timestamp with time zone
+        END AS next_attempt_at,
+        CASE
+            WHEN o.recipient_claims THEN r.lease_until
+            ELSE o.lease_until
+        END AS lease_until
+   FROM ((((public.event_fanout_outbox o
+     CROSS JOIN LATERAL jsonb_array_elements(o.recipient_snapshot) s(recipient))
+     CROSS JOIN LATERAL ( SELECT COALESCE((o.recipient_progress -> (s.recipient ->> 'id'::text)), '{}'::jsonb) AS progress) p)
+     LEFT JOIN public.event_fanout_recipients r ON (((r.outbox_id = o.id) AND (r.subscription_id = (s.recipient ->> 'id'::text)))))
+     CROSS JOIN LATERAL ( SELECT
+                CASE
+                    WHEN o.recipient_claims THEN COALESCE(r.state, (p.progress ->> 'state'::text), 'pending'::text)
+                    ELSE COALESCE((p.progress ->> 'state'::text), 'pending'::text)
+                END AS routing_state) effective)
+  WHERE ((o.state = ANY (ARRAY['pending'::text, 'processing'::text])) AND (NULLIF((s.recipient ->> 'app_id'::text), ''::text) IS NOT NULL));
 
 
 --
@@ -19272,6 +19427,14 @@ ALTER TABLE ONLY public.event_fanout_recipients
 
 
 --
+-- Name: event_routing_backlog event_routing_backlog_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_routing_backlog
+    ADD CONSTRAINT event_routing_backlog_pkey PRIMARY KEY (outbox_id, subscription_id);
+
+
+--
 -- Name: event_routing_fairness event_routing_fairness_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -23778,6 +23941,27 @@ CREATE INDEX event_fanout_recipients_lease_idx ON public.event_fanout_recipients
 
 
 --
+-- Name: event_outbox_unattributed_age; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_outbox_unattributed_age ON public.event_fanout_outbox USING btree (account_id, created_at, id) WHERE ((recipient_snapshot IS NULL) AND (state = ANY (ARRAY['pending'::text, 'processing'::text])));
+
+
+--
+-- Name: event_routing_backlog_account_age; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_routing_backlog_account_age ON public.event_routing_backlog USING btree (account_id, accepted_at, outbox_id, subscription_id);
+
+
+--
+-- Name: event_routing_backlog_consumer_age; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_routing_backlog_consumer_age ON public.event_routing_backlog USING btree (account_id, app_id, subscription_id, accepted_at, outbox_id);
+
+
+--
 -- Name: event_schemas_source_type_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -28104,6 +28288,20 @@ CREATE TRIGGER event_delivery_replay_capacity AFTER INSERT OR UPDATE OF state ON
 
 
 --
+-- Name: event_fanout_recipients event_routing_backlog_recipient; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_routing_backlog_recipient AFTER INSERT OR DELETE OR UPDATE ON public.event_fanout_recipients FOR EACH ROW EXECUTE FUNCTION public.project_event_routing_backlog_recipient();
+
+
+--
+-- Name: event_fanout_outbox event_routing_backlog_root; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_routing_backlog_root AFTER INSERT OR UPDATE OF recipient_snapshot, recipient_progress, state, available_at, lease_until, recipient_claims, created_at, account_id ON public.event_fanout_outbox FOR EACH ROW EXECUTE FUNCTION public.project_event_routing_backlog_root();
+
+
+--
 -- Name: events events_enqueue_fanout; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -31542,6 +31740,14 @@ ALTER TABLE ONLY public.event_fanout_outbox
 
 ALTER TABLE ONLY public.event_fanout_recipients
     ADD CONSTRAINT event_fanout_recipients_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_routing_backlog event_routing_backlog_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_routing_backlog
+    ADD CONSTRAINT event_routing_backlog_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
 
 
 --
