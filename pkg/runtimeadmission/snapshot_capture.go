@@ -45,7 +45,7 @@ func (c SnapshotCapture) Equal(other SnapshotCapture) bool {
 }
 
 func (c SnapshotCapture) Check(now time.Time) error {
-	if c.Version != SnapshotCaptureVersion || c.Parent.Binding.ProtocolVersion != ArtifactProtocolVersion || c.Parent.CompletedAtUnixNano <= 0 || c.Parent.Check(c.Parent.Binding, time.Unix(0, c.Parent.CompletedAtUnixNano)) != nil {
+	if c.Version != SnapshotCaptureVersion || c.Parent.Binding.ProtocolVersion != ArtifactProtocolVersion || !c.Parent.SnapshotConsumption.IsZero() || c.Parent.CompletedAtUnixNano <= 0 || c.Parent.Check(c.Parent.Binding, time.Unix(0, c.Parent.CompletedAtUnixNano)) != nil {
 		return ErrInvalid
 	}
 	if c.CapturedAtUnixNano < c.Parent.CompletedAtUnixNano || time.Unix(0, c.CapturedAtUnixNano).After(now.Add(api.ApplicationStandardRuntimeAdmissionClockSkew)) {

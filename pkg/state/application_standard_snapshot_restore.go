@@ -47,7 +47,7 @@ func standardSnapshotRestoreMemoryBytes(raw []byte) (int64, error) {
 	return input.RAMMB << 20, nil
 }
 
-func (m *MemStore) checkStandardSnapshotRestoreLocked(binding runtimeadmission.Binding, capture InstanceApplicationStandardAdmission, now time.Time) error {
+func (m *MemStore) checkStandardSnapshotRestoreLocked(binding runtimeadmission.Binding, capture InstanceApplicationStandardAdmission, now time.Time, receipt *runtimeadmission.Receipt) error {
 	if binding.SnapshotCaptureToken == "" {
 		return nil
 	}
@@ -57,8 +57,22 @@ func (m *MemStore) checkStandardSnapshotRestoreLocked(binding runtimeadmission.B
 	}
 	for _, snap := range m.snapshots {
 		if snap.ApplicationStandardCaptureToken == binding.SnapshotCaptureToken && !snap.Stale && !snap.DeletePending {
-			return checkStandardSnapshotRestoreBinding(binding, capture, r, snap, now)
+			if err := checkStandardSnapshotRestoreBinding(binding, capture, r, snap, now); err != nil {
+				return err
+			}
+			return checkStandardSnapshotReceipt(receipt, r, now)
 		}
 	}
 	return ErrApplicationStandardRuntimeStale
+}
+
+func checkStandardSnapshotReceipt(receipt *runtimeadmission.Receipt, record ApplicationStandardSnapshotCaptureRecord, now time.Time) error {
+	if receipt == nil || receipt.SnapshotConsumption.IsZero() {
+		return nil
+	}
+	evidence, err := StandardSnapshotRestoreEvidence(record)
+	if err != nil || receipt.SnapshotConsumption.CheckEvidence(receipt.Binding, receipt.ArtifactConsumption, receipt.Paused, evidence, now) != nil {
+		return ErrApplicationStandardRuntimeStale
+	}
+	return nil
 }

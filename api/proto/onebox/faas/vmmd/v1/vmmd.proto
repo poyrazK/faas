@@ -2611,6 +2611,18 @@ message RuntimeBootReceipt {
   int64 completed_at_unix_nano = 8;
   // Protocol 1 never gains artifact authority from this field.
   RuntimeArtifactConsumption artifact_consumption = 9;
+  // Shares artifact_consumption's process and exact snapshot load command.
+  RuntimeSnapshotConsumption snapshot_consumption = 10;
+}
+
+message RuntimeSnapshotConsumption {
+  uint32 version = 1;
+  string capture_token = 2;
+  string evidence_hash = 3;
+  RuntimeCapturedArtifact memory = 4;
+  RuntimeCapturedArtifact vmstate = 5;
+  RuntimeCapturedArtifact private_drive = 6;
+  int64 mapped_memory_bytes = 7;
 }
 
 message RuntimeArtifactConsumption {

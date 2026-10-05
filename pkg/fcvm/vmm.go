@@ -28,6 +28,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/jailsetup"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -4052,8 +4053,8 @@ const layerImageName = "layer.ext4"
 const (
 	kernelImageName     = "vmlinux"
 	baseImageName       = "base.ext4"
-	memSnapshotName     = "snap-in-mem"
-	vmstateSnapshotName = "snap-in-vmstate"
+	memSnapshotName     = runtimeadmission.SnapshotMemoryName
+	vmstateSnapshotName = runtimeadmission.SnapshotVMStateName
 )
 
 func stableReadOnlyName(src, fallback string) string {

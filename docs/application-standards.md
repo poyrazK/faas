@@ -792,6 +792,27 @@ The observation is not a durable restore receipt. Native/Manager restore-bound
 admission remains disabled while receipt forwarding, paused promotion, physical
 KVM acceptance and the remaining release gates are incomplete.
 
+## Durable serving restore receipts
+
+The internal boot receipt has a versioned snapshot-consumption proof alongside
+its drive-consumption facts. Both refer to the same live process and exact load
+command. The proof retains the capture token/evidence hash, verified memory,
+VM-state and captured private-drive identities, and the complete mapped memory
+byte count. Cold fallback omits this proof and remains a cold-boot receipt.
+
+Memory and PostgreSQL publication compare every captured blob with the selected
+immutable catalog. Raw PostgreSQL receipt writers have the same backing and
+load-command checks. Partial mappings, substituted blobs, missing proof and
+claiming snapshot use with a cold command or method are refused. Historical
+cold receipts omit the new field, preserving their protobuf hashes.
+
+This contract accepts serving restore receipts. Paused restore receipts and
+capture from restored parents remain unavailable until promotion and serving
+lineage are implemented. The native observer can construct the coupled private
+witness; Manager/RPC/scheduler forwarding and advertised restore capability
+remain gated. Portable durable-store tests use simulated native facts and do
+not establish Firecracker execution or KVM acceptance.
+
 
 ## Live egress acknowledgment binding
 

@@ -27,14 +27,15 @@ func TestMigrations_StandardRestoreWireContract(t *testing.T) {
 	// Derive field numbers and kinds from generated descriptors, rather than
 	// repeating the SQL field list in the test. Protocol drift fails loudly.
 	for kind, message := range map[string]proto.Message{
-		"evidence":    &vmmdpb.RuntimeSnapshotRestoreEvidence{},
-		"capture":     &vmmdpb.RuntimeSnapshotCapture{},
-		"artifact":    &vmmdpb.RuntimeCapturedArtifact{},
-		"source":      &vmmdpb.RuntimeArtifactSource{},
-		"drive":       &vmmdpb.RuntimeConsumedDrive{},
-		"consumption": &vmmdpb.RuntimeArtifactConsumption{},
-		"receipt":     &vmmdpb.RuntimeBootReceipt{},
-		"binding":     &vmmdpb.RuntimeBootBinding{},
+		"evidence":             &vmmdpb.RuntimeSnapshotRestoreEvidence{},
+		"capture":              &vmmdpb.RuntimeSnapshotCapture{},
+		"artifact":             &vmmdpb.RuntimeCapturedArtifact{},
+		"source":               &vmmdpb.RuntimeArtifactSource{},
+		"drive":                &vmmdpb.RuntimeConsumedDrive{},
+		"consumption":          &vmmdpb.RuntimeArtifactConsumption{},
+		"snapshot-consumption": &vmmdpb.RuntimeSnapshotConsumption{},
+		"receipt":              &vmmdpb.RuntimeBootReceipt{},
+		"binding":              &vmmdpb.RuntimeBootBinding{},
 	} {
 		t.Run(kind, func(t *testing.T) {
 			var raw []byte
@@ -70,7 +71,7 @@ func TestMigrations_StandardRestoreWireContract(t *testing.T) {
 				}
 				want := map[protoreflect.Kind]string{protoreflect.StringKind: "string", protoreflect.Uint32Kind: "u32", protoreflect.Int32Kind: "i32", protoreflect.Int64Kind: "i64", protoreflect.BoolKind: "bool", protoreflect.EnumKind: "i32"}[d.Kind()]
 				if d.Kind() == protoreflect.MessageKind {
-					want = map[protoreflect.Name]string{"RuntimeBootBinding": "binding", "RuntimeBootReceipt": "receipt", "RuntimeSnapshotCapture": "capture", "RuntimeCapturedArtifact": "artifact", "RuntimeArtifactSource": "source", "RuntimeArtifactConsumption": "consumption"}[d.Message().Name()]
+					want = map[protoreflect.Name]string{"RuntimeBootBinding": "binding", "RuntimeBootReceipt": "receipt", "RuntimeSnapshotCapture": "capture", "RuntimeCapturedArtifact": "artifact", "RuntimeArtifactSource": "source", "RuntimeArtifactConsumption": "consumption", "RuntimeSnapshotConsumption": "snapshot-consumption"}[d.Message().Name()]
 					if d.IsList() && d.Message().Name() == "RuntimeConsumedDrive" {
 						want = "drives"
 					}

@@ -91,7 +91,7 @@ func (m *MemStore) IssueInstanceApplicationStandardBoot(ctx context.Context, exp
 	if err := validateStandardBootBinding(binding, capture, m.computeNodeRuntimeIncarnations[capture.NodeID], m.computeNodeRuntimeProtocols[capture.NodeID], now); err != nil {
 		return runtimeadmission.Binding{}, err
 	}
-	if err := m.checkStandardSnapshotRestoreLocked(binding, capture, now); err != nil {
+	if err := m.checkStandardSnapshotRestoreLocked(binding, capture, now, nil); err != nil {
 		return runtimeadmission.Binding{}, err
 	}
 	if old, ok := m.instanceApplicationStandardBoots[binding.Token]; ok {
@@ -167,7 +167,7 @@ func (m *MemStore) prepareStandardRuntimeLocked(ctx context.Context, expectedSta
 	if err := validateStandardBootBinding(boot.Binding, capture, m.computeNodeRuntimeIncarnations[capture.NodeID], m.computeNodeRuntimeProtocols[capture.NodeID], now); err != nil {
 		return Instance{}, instanceStandardBoot{}, err
 	}
-	if err := m.checkStandardSnapshotRestoreLocked(boot.Binding, capture, now); err != nil {
+	if err := m.checkStandardSnapshotRestoreLocked(boot.Binding, capture, now, &receipt); err != nil {
 		return Instance{}, instanceStandardBoot{}, err
 	}
 	if receipt.Check(boot.Binding, now) != nil {

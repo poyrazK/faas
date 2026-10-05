@@ -125,7 +125,9 @@ func (v *JailerVMM) checkVerifiedSnapshotLoad(ctx context.Context, lease Lease, 
 	}
 	handoff.mu.Lock()
 	defer handoff.mu.Unlock()
-	if handoff.closed || handoff.restoreLoad != plan || handoff.restorePreparation == nil {
+	// The preparation flight ends on return from RestoreSnapshotVerified;
+	// accepted backing stays owned for later receipt observation and retirement.
+	if handoff.closed || handoff.restoreLoad != plan || handoff.restorePreparation == nil && !plan.accepted {
 		return runtimeadmission.ErrStale
 	}
 	expected := snapshotRestoreSpec(lease, plan.request, plan.keepPaused)

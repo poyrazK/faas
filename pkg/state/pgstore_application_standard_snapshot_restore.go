@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func checkStandardSnapshotRestoreTx(ctx context.Context, tx sqlc.DBTX, binding runtimeadmission.Binding, capture InstanceApplicationStandardAdmission, now time.Time) error {
+func checkStandardSnapshotRestoreTx(ctx context.Context, tx sqlc.DBTX, binding runtimeadmission.Binding, capture InstanceApplicationStandardAdmission, now time.Time, receipt *runtimeadmission.Receipt) error {
 	if binding.SnapshotCaptureToken == "" {
 		return nil
 	}
@@ -30,5 +30,8 @@ func checkStandardSnapshotRestoreTx(ctx context.Context, tx sqlc.DBTX, binding r
 	}
 	r.inputs = append([]byte(nil), row.InputSnapshot...)
 	snap := Snapshot{DeploymentID: row.DeploymentID, FCVersion: row.FcVersion, StorageKey: row.StorageKey, MemBytes: row.MemBytes, DiskBytes: row.DiskBytes, Tier: row.Tier, ApplicationStandardCaptureToken: binding.SnapshotCaptureToken}
-	return checkStandardSnapshotRestoreBinding(binding, capture, r, snap, now)
+	if err := checkStandardSnapshotRestoreBinding(binding, capture, r, snap, now); err != nil {
+		return err
+	}
+	return checkStandardSnapshotReceipt(receipt, r, now)
 }

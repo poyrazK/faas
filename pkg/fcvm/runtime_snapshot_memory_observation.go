@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
@@ -14,7 +15,7 @@ import (
 type RuntimeSnapshotHandoffObservation struct {
 	CaptureToken, EvidenceHash, ConfigHash, ProcessStart string
 	ProcessPID                                           int
-	Memory, VMState                                      runtimeadmission.CapturedArtifact
+	Memory, VMState, PrivateDrive                        runtimeadmission.CapturedArtifact
 	Ranges                                               []RuntimeSnapshotMemoryRange
 }
 
@@ -61,8 +62,39 @@ func (v *JailerVMM) observeVerifiedSnapshotMemory(ctx context.Context, lease Lea
 	plan.observation = &RuntimeSnapshotHandoffObservation{CaptureToken: plan.request.Binding.SnapshotCaptureToken,
 		EvidenceHash: plan.request.Binding.SnapshotEvidenceHash, ConfigHash: handoff.observation.ConfigHash,
 		ProcessPID: cmd.Process.Pid, ProcessStart: start, Memory: plan.request.Capture.Memory,
-		VMState: plan.request.Capture.VMState, Ranges: ranges}
+		VMState: plan.request.Capture.VMState, PrivateDrive: plan.request.Capture.PrivateDrive, Ranges: ranges}
 	return nil
+}
+
+// ObservedRuntimeSnapshotConsumption returns a coupled drive/memory witness.
+// Manager admission and advertised restore capability remain independently gated.
+func (v *JailerVMM) ObservedRuntimeSnapshotConsumption(ctx context.Context, lease Lease) (runtimeadmission.ArtifactConsumption, runtimeadmission.SnapshotConsumption, error) {
+	observed, err := v.ObservedRuntimeSnapshot(ctx, lease)
+	if err != nil {
+		return runtimeadmission.ArtifactConsumption{}, runtimeadmission.SnapshotConsumption{}, err
+	}
+	handoff, err := v.runtimeDriveHandoff(lease)
+	if err != nil || handoff == nil {
+		return runtimeadmission.ArtifactConsumption{}, runtimeadmission.SnapshotConsumption{}, errors.Join(runtimeadmission.ErrStale, err)
+	}
+	handoff.mu.Lock()
+	defer handoff.mu.Unlock()
+	plan := handoff.restoreLoad
+	if handoff.closed || plan == nil || plan.observation == nil || handoff.observation.ProcessPID != observed.ProcessPID || handoff.observation.ProcessStart != observed.ProcessStart || handoff.observation.ConfigHash != observed.ConfigHash {
+		return runtimeadmission.ArtifactConsumption{}, runtimeadmission.SnapshotConsumption{}, runtimeadmission.ErrStale
+	}
+	cmd, err := v.currentRuntimeDriveProcess(lease)
+	if err != nil || cmd.Process.Pid != observed.ProcessPID {
+		return runtimeadmission.ArtifactConsumption{}, runtimeadmission.SnapshotConsumption{}, errors.Join(runtimeadmission.ErrStale, err)
+	}
+	drives := runtimeConsumptionFromObservation(handoff.observation)
+	proof := runtimeadmission.SnapshotConsumption{Version: runtimeadmission.SnapshotRestoreVersion, CaptureToken: observed.CaptureToken,
+		EvidenceHash: observed.EvidenceHash, Memory: observed.Memory, VMState: observed.VMState, PrivateDrive: observed.PrivateDrive, MappedMemoryBytes: observed.Memory.Bytes}
+	evidence := runtimeadmission.SnapshotRestoreEvidence{Version: runtimeadmission.SnapshotRestoreVersion, CaptureToken: plan.request.Binding.SnapshotCaptureToken, FCVersion: plan.request.Snapshot.FCVersion, Capture: plan.request.Capture}
+	if err := proof.CheckEvidence(plan.request.Binding, drives, plan.keepPaused, evidence, time.Now()); err != nil || ctx.Err() != nil {
+		return runtimeadmission.ArtifactConsumption{}, runtimeadmission.SnapshotConsumption{}, errors.Join(err, ctx.Err())
+	}
+	return drives, proof, nil
 }
 
 // ObservedRuntimeSnapshot refreshes actual drive and memory-file consumption.

@@ -2599,3 +2599,40 @@ mmap, close the mapping descriptor while retaining an observer pin, verify
 copy-on-write backing preservation, and refuse wrong UID, cancellation, unmap
 and a shared mapping. These process tests require no KVM and do not certify an
 actual Firecracker guest.
+
+## Durable serving restore receipt contract (2026-10-05)
+
+The internal `RuntimeBootReceipt` now carries optional versioned snapshot
+consumption. Its memory/VM-state/captured private-drive identities, capture
+token, evidence hash and complete mapped-memory byte count are attached to the
+process identity and command hash in the receipt's drive-consumption facts.
+Native witness construction couples both observations to the same still-owned
+process. The hash must represent the exact protected file-backend load command;
+an undelivered cold configuration or paused command cannot stand in for a
+serving restore. The witness still does not attest physical page residency,
+guest CPU state or guest readiness.
+
+Serving restore receipts require this proof. Verified cold fallback omits it,
+retains its cold method and preserves existing admission checks. The Go receipt
+model and protobuf adapter retain the complete proof, reject unknown nested
+wire fields, and preserve old cold JSON/protobuf encodings when the proof is
+absent. Additive SQL migrations extend deterministic wire descriptors without
+changing issued migrations or historical evidence hashes.
+
+Both stores compare the proof with the immutable selected capture before
+publication. PostgreSQL also checks exact backing, mapped bytes and command
+identity for raw receipt writes. It retains the existing current-source hash,
+catalog/scope/RAM/expiry locks, acknowledgment and first-publication fences.
+Receipt history remains immutable. Existing resident bookkeeping does not
+acquire fresh cache authority merely by retaining this historical proof.
+The follow-up retains the current source and retained-artifact capability
+guards and requires canonical integer method scalars for raw receipts.
+
+Paused restore and capture from restored parents remain explicitly unavailable;
+their promotion/serving lineage is separate pending implementation. Manager,
+RPC and scheduler forwarding, restore capability advertisement, named production
+scope, all onboarding adapters, real scanner/provider/native multi-service
+updates and rollback, native/fleet recovery, dedicated KVM test-metal/leakcheck
+and the full release checklist remain open. Public activation stays disabled.
+Durable-store fixtures simulate native consumption; they do not certify a
+Firecracker restore.

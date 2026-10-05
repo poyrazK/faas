@@ -226,6 +226,9 @@ func TestProtectedSnapshotLoadUsesPinnedBytesAndActualCommandHash(t *testing.T) 
 			if _, err := f.vmm.ObservedRuntimeSnapshot(f.ctx, f.lease); err == nil || plan.observation != nil {
 				t.Fatal("an HTTP acknowledgment fabricated a snapshot memory mapping")
 			}
+			if drives, proof, err := f.vmm.ObservedRuntimeSnapshotConsumption(f.ctx, f.lease); err == nil || !drives.IsZero() || !proof.IsZero() {
+				t.Fatal("an HTTP acknowledgment fabricated a coupled restore witness")
+			}
 			if err := f.vmm.loadRestoredSnapshot(f.ctx, f.lease, f.root, f.spec, body); !errors.Is(err, runtimeadmission.ErrReplay) || transport.calls.Load() != 1 {
 				t.Fatal("accepted load replay reached the API", err)
 			}
@@ -469,5 +472,34 @@ func TestProtectedSnapshotRuntimeCloneFreezesInjectionAndProbeInputs(t *testing.
 	original.Workloads[0].SealedEnv[0].Ciphertext[0], original.Workloads[0].preparedEnvJSON[0] = 'X', 'X'
 	if string(copy.SecretsEnvJSON) != "secrets" || string(copy.APIEnvJSON) != "env" || copy.Workloads[0].Cmd[0] != "run" || copy.Workloads[0].StartupProbe.Test[0] != "probe" || copy.Workloads[0].StartupProbe.ImageTiming.IntervalNS != int64(5*time.Second) || string(copy.Workloads[0].SealedEnv[0].Ciphertext) != "sealed" || string(copy.Workloads[0].preparedEnvJSON) != "private" {
 		t.Fatal("caller mutation reached retained restore inputs")
+	}
+}
+
+func TestProtectedSnapshotObservationRetainsCompletedLoadOwner(t *testing.T) {
+	for _, accepted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "refused", true: "accepted"}[accepted], func(t *testing.T) {
+			f := newProtectedRestoreFixture(t, false, false)
+			status := http.StatusBadRequest
+			if accepted {
+				status = http.StatusNoContent
+			}
+			installProtectedRestoreTransport(f, func(*http.Request) (*http.Response, error) { return protectedRestoreResponse(status), nil })
+			if err := f.vmm.loadRestoredSnapshot(f.ctx, f.lease, f.root, f.spec, protectedRestoreBody(false)); (err == nil) != accepted {
+				t.Fatal("load fixture failed", err)
+			}
+			f.flight.finish()
+			if err := f.vmm.checkVerifiedSnapshotLoad(t.Context(), f.lease, f.spec); (err == nil) != accepted {
+				t.Fatal("completed flight lost accepted backing or retained refusal", err)
+			}
+			if drives, proof, err := f.vmm.ObservedRuntimeSnapshotConsumption(t.Context(), f.lease); err == nil || !drives.IsZero() || !proof.IsZero() {
+				t.Fatal("a completed simulated API response fabricated a witness")
+			}
+			if err := f.vmm.releaseRuntimeSources(f.lease.Instance); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.vmm.checkVerifiedSnapshotLoad(t.Context(), f.lease, f.spec); err == nil {
+				t.Fatal("retired owner retained observation authority")
+			}
+		})
 	}
 }
