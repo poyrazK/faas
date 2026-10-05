@@ -7,11 +7,20 @@ from faas_sdk.models.managed_postgres_capabilities import ManagedPostgresCapabil
 
 def test_capabilities_keep_reader_support_separate_from_rollout() -> None:
     capabilities = {
-        "contract_version": 1, "region": "eu-central-1", "provisioning_enabled": False,
-        "database_limit": 1, "postgres_majors": [16, 17], "service_classes": ["development"],
-        "availability": ["single_zone"], "credential_access": ["read_only", "read_write", "migration"],
-        "scale_to_zero": True, "always_on": False, "pooled_connections": True,
-        "point_in_time_restore": True, "storage_limit_bytes": 10737418240, "restore_window_seconds": 604800,
+        "contract_version": 1,
+        "region": "eu-central-1",
+        "provisioning_enabled": False,
+        "database_limit": 1,
+        "postgres_majors": [16, 17],
+        "service_classes": ["development"],
+        "availability": ["single_zone"],
+        "credential_access": ["read_only", "read_write", "migration"],
+        "scale_to_zero": True,
+        "always_on": False,
+        "pooled_connections": True,
+        "point_in_time_restore": True,
+        "storage_limit_bytes": 10737418240,
+        "restore_window_seconds": 604800,
     }
     requests = []
 
@@ -23,8 +32,11 @@ def test_capabilities_keep_reader_support_separate_from_rollout() -> None:
         assert request.headers["authorization"] == "Bearer fixture-token"
         return httpx.Response(200, json=capabilities)
 
-    client = AuthenticatedClient(base_url="https://api.example.test", token="fixture-token",
-                                 httpx_args={"transport": httpx.MockTransport(respond)})
+    client = AuthenticatedClient(
+        base_url="https://api.example.test",
+        token="fixture-token",
+        httpx_args={"transport": httpx.MockTransport(respond)},
+    )
     with client:
         result = get_managed_postgres_capabilities.sync(client=client, region="eu-central-1")
     assert isinstance(result, ManagedPostgresCapabilities)
