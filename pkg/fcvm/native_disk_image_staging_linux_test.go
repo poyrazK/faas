@@ -90,6 +90,54 @@ func TestNativeDiskStagingRequiresDurableClaimBeforeLink(t *testing.T) {
 	}
 }
 
+func TestNativeDiskStagingLiveHandoffKeepsOnlyOriginalLinkAfterInputClosure(t *testing.T) {
+	for _, change := range []string{"original", "alias", "changed_claim"} {
+		t.Run(change, func(t *testing.T) {
+			p, b, record, point := nativeDiskStagingFixture(t)
+			if err := p.OwnAnonymousSource(record, point); err != nil {
+				t.Fatal(err)
+			}
+			if err := p.linkAnonymousSource(point); err != nil {
+				t.Fatal(err)
+			}
+			p.retainDiskClaim = true
+			switch change {
+			case "alias":
+				if err := os.Link(p.staging, filepath.Join(b.diskStagingRoot, "foreign-alias")); err != nil {
+					t.Fatal(err)
+				}
+			case "changed_claim":
+				claim := *p.diskClaim
+				claim.Source.References = append([]nativeImageReference(nil), claim.Source.References...)
+				claim.Source.References[0].Owner.Generation = uuid.NewString()
+				if err := writeNativeJournalValue(nativeDiskImageClaimPath(b.diskStagingRoot, record.Epoch), claim); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := p.Close()
+			if (change == "original") != (err == nil) {
+				t.Fatal("changed authority promoted or original handoff lost its connected dentry", err)
+			}
+			for _, file := range []*os.File{p.source, p.root} {
+				if _, err := file.Stat(); !errors.Is(err, os.ErrClosed) {
+					t.Fatal("handoff retained a producer input descriptor", err)
+				}
+			}
+			if _, err := os.Lstat(p.staging); err != nil {
+				t.Fatal("input closure removed the handoff's original temporary link", err)
+			}
+			if change == "original" {
+				if err := retireNativeDiskImageClaim(b.diskStagingRoot, *p.diskClaim); err != nil {
+					t.Fatal(err)
+				}
+				if entries, err := os.ReadDir(b.diskStagingRoot); err != nil || len(entries) != 0 {
+					t.Fatal("joined handoff retained its original disk name or claim", entries, err)
+				}
+			}
+		})
+	}
+}
+
 func TestNativeDiskStagingClaimDoesNotBorrowMutableBindingReferences(t *testing.T) {
 	p, b, record, point := nativeDiskStagingFixture(t)
 	if err := p.OwnAnonymousSource(record, point); err != nil {

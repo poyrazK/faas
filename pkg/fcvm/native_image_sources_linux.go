@@ -29,6 +29,9 @@ type linuxNativeImagePreparation struct {
 	staging   string // original epoch owns this temporary link before creation
 	diskRoot  string
 	diskClaim *nativeDiskImageClaim
+	// Live capture attaches these original disk outputs to a namespace that
+	// already exists. Keep their owned link until that joined handoff finishes.
+	retainDiskClaim bool
 }
 
 func (p *linuxNativeImagePreparation) Identity() nativeLoopIdentity { return p.identity }
@@ -44,7 +47,11 @@ func (p *linuxNativeImagePreparation) PreferLink() bool              { return p.
 func (p *linuxNativeImagePreparation) Close() error {
 	var err error
 	if p.diskClaim != nil {
-		err = retireNativeDiskImageClaim(p.diskRoot, *p.diskClaim)
+		if p.retainDiskClaim {
+			err = checkRetainedNativeDiskImageClaim(p.diskRoot, *p.diskClaim)
+		} else {
+			err = retireNativeDiskImageClaim(p.diskRoot, *p.diskClaim)
+		}
 	} else if p.staging != "" {
 		err = removeNativeImageStagingSource(p.staging, p.identity)
 	}
@@ -460,17 +467,28 @@ func (b linuxNativeImageSources) RetireAnchor(record nativeImageSourceRecord, po
 }
 
 func (b linuxNativeImageSources) CheckAnchor(record nativeImageSourceRecord, point string) (err error) {
+	return b.checkAnchor(record, point, false)
+}
+
+// Only the original capture handoff may inspect an anchor whose temporary
+// connected dentry is still required by move_mount. Ordinary IO requires its
+// retirement. Both modes retain all inode, metadata and namespace checks.
+func (b linuxNativeImageSources) checkAnchor(record nativeImageSourceRecord, point string, handoff bool) (err error) {
 	claim, err := b.diskStagingClaim(record, point)
 	if err != nil {
 		return err
 	}
 	if claim != nil {
-		if _, err := os.Lstat(nativeDiskImageSourcePath(b.diskStagingRoot, record.Epoch)); !errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Lstat(nativeDiskImageSourcePath(b.diskStagingRoot, record.Epoch)); !handoff && !errors.Is(err, os.ErrNotExist) {
 			return errors.Join(err, errors.New("native image source: disk staging producer has not retired its temporary link"))
+		} else if handoff && err != nil {
+			return err
 		}
 		if record.Removed {
 			return errors.New("native image source: retired anchor retains a disk claim")
 		}
+	} else if handoff {
+		return errors.New("native snapshot handoff: original output link claim is unavailable")
 	}
 	if _, err := os.Lstat(point + nativeImageStagingSuffix); !errors.Is(err, os.ErrNotExist) {
 		return errors.Join(err, errors.New("native image source: staging producer has not retired its temporary link"))

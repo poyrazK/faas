@@ -14,6 +14,10 @@ import (
 )
 
 func (b linuxNativeImageSources) OpenSnapshotOutput(record nativeImageSourceRecord, ref nativeImageReference, point string) (output *os.File, err error) {
+	return b.openSnapshotOutput(record, ref, point, false)
+}
+
+func (b linuxNativeImageSources) openSnapshotOutput(record nativeImageSourceRecord, ref nativeImageReference, point string, handoff bool) (output *os.File, err error) {
 	if err := record.validate(ref.Owner.KernelBootID); err != nil {
 		return nil, err
 	}
@@ -35,7 +39,7 @@ func (b linuxNativeImageSources) OpenSnapshotOutput(record nativeImageSourceReco
 	}
 	defer func() { err = errors.Join(err, file.Close()) }()
 	_, metadata, err := nativeImageFileMetadata(file)
-	if err := errors.Join(err, b.CheckAnchor(record, point)); err != nil || metadata != record.Applied {
+	if err := errors.Join(err, b.checkAnchor(record, point, handoff)); err != nil || metadata != record.Applied {
 		return nil, errors.Join(err, errors.New("native snapshot output input: original output metadata changed"))
 	}
 	fd, err := unix.FcntlInt(file.Fd(), unix.F_DUPFD_CLOEXEC, 0)

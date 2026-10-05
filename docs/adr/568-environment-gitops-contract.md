@@ -2703,3 +2703,148 @@ These results establish the internal protocol and kernel ownership boundary.
 They do not establish real VM capture/restore, backend generation/cleanup
 receipts, graph activation or serving convergence. Production support remains
 closed and the combined PR is still deferred.
+
+### Original VM namespace capture handoff (2026-10-06)
+
+The opt-in real Firecracker fixture exposed two boundaries that the earlier
+trusted-process fixtures did not model. First, the jailer pivots away from the
+host root and detaches the old mounts, including procfs. Device setup now pins
+the locked helper thread's proc directory before namespace entry, confines its
+root to the original pinned jail and attaches device mounts through detached
+mount descriptors. It never mounts host procfs into the jail or falls back to
+host pathnames. Root, namespace, pidfd, TUN and mount identities remain checked.
+
+Second, a writable output bind created in the host namespace after cold boot is
+absent from the VM's private namespace. Firecracker sees its empty root-owned
+placeholder rather than the original disk output. Capture now requires a
+separate one-shot output handoff before pause. The original physical lock and
+both output epoch locks span source descriptor ownership, gated helper launch,
+namespace effects, joined retirement and receipt acknowledgement. The helper
+receives only pinned root, namespace, pidfd and read-only output descriptors;
+the two target names derive from the original capture UUID.
+
+Linux also requires a connected source dentry when attaching the detached copy.
+Live outputs retain their original immutable disk claims and single temporary
+links through handoff, while closing the staging producer's input descriptors.
+Only the two exact output epochs may pass handoff inspection with those links;
+ordinary image admission and publication still require their removal. The joined
+handoff removes only the original names and claims before pause, under both
+epoch locks. Failure retains incomplete capture and original retirement
+authority; it never creates another link or adopts another source.
+
+Before any effect, the original generation persists the exact capture, process,
+namespace, source epoch/inode and placeholder identities, parent input copies
+and exclusive helper cgroup. Parent copies close before gate authorization.
+The helper verifies the original private mounted root and both empty private
+output inodes, clones the host output mounts into detached descriptors before
+namespace entry, enters only the original VM namespace, validates both
+placeholders and attaches writable nosuid/nodev/noexec mounts through those
+descriptors. Detached copies close on every failure and after attachment; no
+host path or procfs mount is supplied to the VM. It confirms
+the new output identities and distinct mount IDs. Only a matching complete
+receipt after helper and cgroup retirement acknowledges handoff. An existing or
+uncertain handoff frame refuses replay; exit status or recovered ownership
+alone cannot supply readiness. Original namespace removal remains required
+before output anchors and physical VM ownership can retire.
+
+The real VM test uses the internal producer and restores the resulting artifacts
+through the existing ordinary restore path in a separate private jail root. It
+does not exercise native qualification restore or create graph activation,
+backend generation, artifact cleanup or serving receipts. Its locally assembled
+two-drive guest has a modeled admission scan sidecar, which supplies no Grype
+evidence. The UUID marker is owned by the app UID in the layer's overlay upper;
+the guest fixture does not need write access to root-owned configuration.
+Production native capture and qualification polling remain gated. Validation
+results must be recorded separately before this checkpoint is considered tested.
+
+
+### Original snapshot cgroup allowance (2026-10-06)
+
+Actual Firecracker 1.7 capture on the approved internal nested test node reached
+snapshot creation after the namespace handoff. Its buffered 128 MiB memory
+write charged disk page cache to the original 136 MiB VM cgroup and triggered a
+memcg OOM kill. Disk placement alone therefore cannot preserve the ordinary VM
+fence throughout full snapshot creation. This supersedes the earlier capture
+checkpoint's decision to retain that fence without a temporary allowance.
+
+Use the existing `api.SnapshotMemoryMaxMB` policy, with admission and billing
+unchanged and the existing tenant aggregate fence retained. The internal native
+producer pins the original process, cgroup directory and `memory.max` file. It
+verifies PID/start time, credentials, exact cgroup membership, cgroup v2 and
+original inode before effects. It refuses missing controllers, unexpected
+initial limits, symlinks and replacement cgroups; it never invokes the legacy
+pathname-based controller repair or widening helper.
+
+The joined original snapshot-output frame receives a strict optional memory
+scope. The producer writes planned ownership before pause, raises the allowance
+only after confirmed pause, and restores the ordinary limit after capture and
+private-drive freezing. Durable restoration plus exact readback precede resume
+and publication. Lost limit or journal acknowledgements cannot replay capture
+or supply readiness. A bounded live cleanup capability can restore the original
+fence after the effect deadline, but cannot resume or publish; changed physical,
+incoming, capture, intent, daemon or kernel ownership refuses all writes.
+
+Restart inventory never reconstructs this live capability. Revocation and
+confirmed original-process exit permit disposal only of the recorded original
+empty cgroup. Cgroup disposal is journaled before physical resource acknowledgement
+or generation replacement. A missing pathname requires a bounded, descriptor-based
+unified-hierarchy inventory proving the original cgroup inode is absent. A
+retained inode, changed filesystem, crossed mount, concurrent inventory failure or
+parser limit retains ownership; inventory never deletes any discovered scope.
+The diagnostic bounds live in `pkg/api/limits.go`, not the tenant quota table.
+An unfinished allowance cannot disappear behind a
+completed owner, and a replacement inode never authorizes cgroup deletion.
+
+The real-VM test checks the ordinary limit and OOM counter before and after
+capture, its restored receipt, and disposal after original VM retirement. The
+trusted protocol peer models the allowance explicitly because it has no VM
+cgroup; it supplies namespace/control protocol evidence only. Production native
+qualification/capture, restore and graph activation gates remain closed.
+Validation results must be recorded separately before this checkpoint is
+considered tested.
+
+
+### Actual native capture and retirement validation (2026-10-06)
+
+The final changed Go source matched byte-for-byte between this checkout and the
+user-authorized `gregale-internal-test-1` nested x86_64 KVM node (33 SHA-256
+fingerprints). Go 1.25.13 native/qualification and ordinary snapshot race checks
+passed (`pkg/jailsetup` 1.026 s, `pkg/fcvm` 33.836 s). Portable macOS regressions
+also passed (`pkg/fcvm` 21.048 s); the final focused memory suite passed separately
+(1.366 s), including strict frames, effect/journal ordering, original-policy
+restoration and the lost restoration-journal acknowledgement case.
+
+Under `/var/lock/faas-builder-acceptance.lock`, `make test-metal` passed the
+native ownership/recovery, publication intent, trusted capture protocol, actual
+VM and empty-cgroup retirement fixtures (`pkg/fcvm` 33.702 s). The actual
+Firecracker 1.7.0 VM captured 134,217,728 memory bytes, 13,696 device-state bytes
+and a frozen 64 MiB private drive. The original guest resumed with its original
+readiness UUID, the normal 136 MiB cgroup limit and no OOM-kill counter increase;
+its physical owner and original cgroup then retired. The four published objects
+restored through the ordinary two-drive path into a new guest with a fresh
+readiness/entropy UUID and no cold fallback. This does not establish native
+qualification restore or complete graph evidence.
+
+The empty-cgroup cases proved retained-inode detection, refusal to remove a
+replacement inode, removal acknowledgement after original-inode absence, and
+repair of a lost disposal journal acknowledgement. An initial rename fixture
+was invalid because the test kernel forbids cgroup-v2 renaming; it was replaced
+with deletion/recreation and retained-inode cases rather than counted as passed.
+All final cases ran, and `make leakcheck` reported zero leaked netns, TAPs, jails,
+cgroups, processes, mounts or native loop devices.
+
+Normal fcvm/jailsetup lint and metal lint filtered to every changed line,
+including new files, both reported zero issues. Full-package metal lint still
+reports thirteen baseline findings in untouched files; their contents match
+HEAD and this checkpoint does not change that baseline. Final logs, source
+fingerprints and the source patch are retained in the task's
+`outputs/gitops-hardening-20261005` artifacts directory, with earlier failure
+logs preserved separately on the node.
+
+This is supported evidence for the explicitly approved nested-node experiment,
+not bare-metal/reboot/power-loss qualification. Backend object-generation and
+allocated-size receipts, artifact cleanup, native qualification restore/smoke,
+complete graph binding delivery and serving transition evidence remain pending.
+Production qualification polling, native capture, enforcement and graph
+activation gates remain closed. The combined PR remains deferred until those
+requested parts are ready.

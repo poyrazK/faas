@@ -226,6 +226,17 @@ func inspectNativeDiskImageSourceRecord(root string, claim nativeDiskImageClaim,
 	return nil
 }
 
+func checkRetainedNativeDiskImageClaim(root string, expected nativeDiskImageClaim) error {
+	claim, err := readNativeDiskImageClaim(root, expected.Source.Epoch)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(claim, expected) {
+		return errors.New("native disk staging: persistent claim changed before handoff")
+	}
+	return inspectNativeDiskImageSource(root, claim)
+}
+
 func retireNativeDiskImageClaim(root string, expected nativeDiskImageClaim) error {
 	claim, err := readNativeDiskImageClaim(root, expected.Source.Epoch)
 	if errors.Is(err, os.ErrNotExist) {

@@ -44,8 +44,14 @@ func TestMetalNativeCaptureSequence(t *testing.T) {
 		t.Logf("%s", out)
 		return
 	}
+	ctx, stop := context.WithTimeout(ctx, 60*time.Second)
+	defer stop()
+	withCgroupRootAt(t, "/sys/fs/cgroup")
 	for _, outcome := range []string{"complete", "lost_create", "lost_resume"} {
 		t.Run(outcome, func(t *testing.T) { nativeMetalCaptureSequence(t, ctx, peer, outcome) })
+		if ctx.Err() != nil {
+			t.Fatal("native capture fixture effect budget exhausted:", ctx.Err())
+		}
 	}
 }
 
@@ -77,6 +83,8 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 	v := (&JailerVMM{chrootBase: jail, fcName: "firecracker", storage: canonical}).
 		WithNativeImageStagingRoot(imagesRoot).WithNativeSnapshotPublicationRoot(intentRoot).WithNativeProcessRecovery()
 	r := v.nativeRecovery
+	r.snapshotMemory = nativeModeledSnapshotMemoryBackend{} // This protocol peer has no real VM cgroup.
+	v.mountHelperPath = os.Getenv("FAAS_TEST_VMMD_BINARY")
 	if err := r.acquireDaemonOwnership(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +114,7 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 	var cmd *exec.Cmd
 	var readyRead, readyWrite *os.File
 	joined := false
+	rootMounted := false
 	join := func() {
 		if cmd != nil && cmd.Process != nil && !joined {
 			_ = cmd.Process.Kill()
@@ -131,6 +140,13 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 		if err == nil {
 			retired, err = q.owner.read(lease.Instance)
 		}
+		helpers := nativeHostHelperJournal{owner: q.owner, groups: r.helperGroups}
+		if err == nil {
+			err = helpers.retireAll(cleanup, retired)
+		}
+		if err == nil {
+			err = helpers.requireDeviceNamespacesRemoved(cleanup, retired)
+		}
 		if err == nil {
 			err = images.retireAll(cleanup, retired)
 		}
@@ -147,6 +163,12 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 			t.Error(err)
 			return
 		}
+		if rootMounted {
+			if err := unix.Unmount(root, 0); err != nil {
+				t.Error(err)
+				return
+			}
+		}
 		if err := unix.Unmount(jail, 0); err != nil {
 			t.Error(err)
 			return
@@ -155,6 +177,10 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 			t.Error(err)
 		}
 	})
+	if err := unix.Mount(root, root, "", unix.MS_BIND, ""); err != nil {
+		t.Fatal(err)
+	}
+	rootMounted = true
 	if _, err := images.stageWritable(ctx, owner, root, source, layerImageName); err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +209,7 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 	lost := strings.TrimPrefix(outcome, "lost_")
 	cmd = exec.CommandContext(ctx, "/capture-peer", "-capture", incoming.Generation, "-drive", layerImageName, "-lost", lost)
 	cmd.Dir = "/"
-	cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: root, Credential: &syscall.Credential{Uid: uint32(lease.UID), Gid: uint32(lease.GID)}}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWNS, Chroot: root, Credential: &syscall.Credential{Uid: uint32(lease.UID), Gid: uint32(lease.GID)}}
 	cmd.ExtraFiles = []*os.File{readyWrite}
 	var log bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &log, &log

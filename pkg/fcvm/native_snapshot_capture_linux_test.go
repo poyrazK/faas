@@ -49,6 +49,14 @@ type nativeCaptureSequenceImages struct {
 	f *nativeCaptureSequenceFixture
 }
 
+func (b *nativeCaptureSequenceImages) HandoffSnapshotOutputs(context.Context, *JailerVMM, nativeLaunchRecord) error {
+	return b.f.step("handoff") // Modeled ordering only; no namespace acceptance.
+}
+
+func (*nativeCaptureSequenceImages) CheckSnapshotOutputHandoff(context.Context, *JailerVMM) error {
+	return nil
+}
+
 func (b *nativeCaptureSequenceImages) CheckSnapshotCaptureDirectory(directory string) error {
 	if directory != b.f.directory || b.f.fail == "directory" {
 		return errors.New("modeled original disk directory changed")
@@ -230,6 +238,7 @@ func nativeCaptureSequence(t *testing.T) *nativeCaptureSequenceFixture {
 	f.v.nativeImageStagingRoot = f.directory
 	f.v.nativeRecovery.imageSources, f.q.owner.imageSources, f.j.backend = b, b, b
 	f.v.nativeRecovery.snapshotControl = nativeCaptureSequenceControl{f: f}
+	f.v.nativeRecovery.snapshotMemory = nativeModeledSnapshotMemoryBackend{effect: f.step}
 	f.v.nativeRecovery.publications = &nativeCaptureSequenceIntent{nativePublicationIntentFixture: &nativePublicationIntentFixture{}, f: f}
 	f.store = &nativeCaptureSequenceStore{memStorage: &memStorage{blobs: make(map[string][]byte)}, f: f}
 	f.v.storage = f.store
@@ -261,7 +270,7 @@ func nativeCaptureSequence(t *testing.T) *nativeCaptureSequenceFixture {
 func TestNativeCaptureSequencePublishesOnlyAfterFreezeAndResume(t *testing.T) {
 	f := nativeCaptureSequence(t)
 	info, err := f.v.captureEnvironmentQualificationSnapshot(f.ctx, f.owner.Lease, f.backing)
-	want := []string{"begin", "stage:mem", "stage:vmstate", "pause", "create", "freeze", "resume", "put:mem", "put:vmstate", "put:drive", "put:backing"}
+	want := []string{"begin", "stage:mem", "stage:vmstate", "handoff", "memory:prepare", "pause", "memory:raise", "create", "freeze", "memory:restore", "resume", "put:mem", "put:vmstate", "put:drive", "put:backing"}
 	if err != nil || !reflect.DeepEqual(f.events, want) || info != (SnapshotInfo{MemBytes: 12, VMStateBytes: 16, StoredBytes: 50}) {
 		t.Fatalf("capture order/info: %v %+v %v", f.events, info, err)
 	}
@@ -292,12 +301,12 @@ func assertNativeCaptureSequenceClosed(t *testing.T, f *nativeCaptureSequenceFix
 }
 
 func TestNativeCaptureSequenceUncertainStepNeverReplaysOrPromotes(t *testing.T) {
-	for _, step := range []string{"begin", "stage:mem", "stage:vmstate", "pause", "create", "freeze", "resume", "put:mem", "put:vmstate", "put:drive", "put:backing"} {
+	for _, step := range []string{"begin", "stage:mem", "stage:vmstate", "handoff", "memory:prepare", "pause", "memory:raise", "create", "freeze", "memory:restore", "resume", "put:mem", "put:vmstate", "put:drive", "put:backing"} {
 		t.Run(step, func(t *testing.T) {
 			f := nativeCaptureSequence(t)
 			f.fail = step
 			info, err := f.v.captureEnvironmentQualificationSnapshot(f.ctx, f.owner.Lease, f.backing)
-			if err == nil || info != (SnapshotInfo{}) || f.events[len(f.events)-1] != step {
+			if err == nil || info != (SnapshotInfo{}) || !nativeCaptureStoppedAt(f.events, step) {
 				t.Fatal("uncertain step continued effects or returned capture evidence", f.events, info, err)
 			}
 			assertNativeCaptureSequenceClosed(t, f)
@@ -311,7 +320,7 @@ func TestNativeCaptureSequenceUncertainStepNeverReplaysOrPromotes(t *testing.T) 
 }
 
 func TestNativeCaptureSequenceRejectsIncompletePreflightBeforeIntentOrEffects(t *testing.T) {
-	for _, change := range []string{"backing", "control", "images", "directory", "memory_backend", "drive_backend", "backing_backend", "capture", "generation", "revoked", "cancelled"} {
+	for _, change := range []string{"backing", "control", "images", "directory", "memory_allowance", "memory_backend", "drive_backend", "backing_backend", "capture", "generation", "revoked", "cancelled"} {
 		t.Run(change, func(t *testing.T) {
 			f := nativeCaptureSequence(t)
 			ctx, cancel := context.WithCancel(f.ctx)
@@ -325,6 +334,8 @@ func TestNativeCaptureSequenceRejectsIncompletePreflightBeforeIntentOrEffects(t 
 				f.v.nativeRecovery.imageSources = f.b
 			case "directory":
 				f.fail = "directory"
+			case "memory_allowance":
+				f.v.nativeRecovery.snapshotMemory = nil
 			case "memory_backend":
 				f.store.unsupported = "mem"
 			case "drive_backend":
@@ -384,7 +395,7 @@ func TestNativeCaptureSequenceRetainsPhysicalAndDriveLocksThroughPublication(t *
 }
 
 func TestNativeCaptureSequenceCancellationAndAuthorityLossPreventCompletion(t *testing.T) {
-	for _, step := range []string{"stage:mem", "stage:vmstate", "pause", "create", "freeze", "resume", "put:mem", "put:backing"} {
+	for _, step := range []string{"stage:mem", "stage:vmstate", "handoff", "memory:prepare", "pause", "memory:raise", "create", "freeze", "memory:restore", "resume", "put:mem", "put:backing"} {
 		for _, change := range []string{"cancelled", "intent", "physical", "generation"} {
 			t.Run(step+"/"+change, func(t *testing.T) {
 				f := nativeCaptureSequence(t)
@@ -409,7 +420,7 @@ func TestNativeCaptureSequenceCancellationAndAuthorityLossPreventCompletion(t *t
 					return nil
 				}
 				info, err := f.v.captureEnvironmentQualificationSnapshot(ctx, f.owner.Lease, f.backing)
-				if err == nil || info != (SnapshotInfo{}) || f.events[len(f.events)-1] != step {
+				if err == nil || info != (SnapshotInfo{}) || !nativeCaptureStoppedAt(f.events, step) {
 					t.Fatal("authority loss continued effects or supplied evidence", f.events, info, err)
 				}
 				assertNativeCaptureSequenceClosed(t, f)
@@ -453,4 +464,16 @@ func TestNativeCaptureSequenceDescriptorCloseFailureRetainsIncompleteCohort(t *t
 			assertNativeCaptureSequenceClosed(t, f)
 		})
 	}
+}
+
+func nativeCaptureStoppedAt(events []string, step string) bool {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i] == step {
+			return true
+		}
+		if events[i] != "memory:restore" {
+			return false
+		}
+	}
+	return false
 }

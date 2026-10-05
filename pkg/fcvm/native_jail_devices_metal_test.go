@@ -18,6 +18,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/jailsetup"
+	"golang.org/x/sys/unix"
 )
 
 func TestMetalNativeJailDeviceHandoff(t *testing.T) {
@@ -80,6 +81,7 @@ func nativeMetalJailDeviceFixture(t *testing.T, crash bool) {
 	groups := newNativeHostHelperGroups()
 	tun := &nativeTunBindJournal{owner: j, backend: tunBackend, helperGroups: groups}
 	var target *exec.Cmd
+	rootMounted := false
 	helpers := &nativeHostHelperJournal{owner: j, groups: groups, purpose: nativeHostHelperJailDevices, deviceRoot: jailRoot}
 	targetJoined := false
 	t.Cleanup(func() {
@@ -109,6 +111,13 @@ func nativeMetalJailDeviceFixture(t *testing.T, crash bool) {
 			t.Error("native device fixture cleanup:", err)
 			return
 		}
+		if rootMounted {
+			if err := unix.Unmount(jailRoot, 0); err != nil {
+				t.Error(err)
+				return
+			}
+			rootMounted = false
+		}
 		mounts, err := nativeJailMounts(root)
 		if err != nil || len(mounts) != 0 {
 			t.Errorf("fixture still retains mounts: %v %v", mounts, err)
@@ -121,6 +130,13 @@ func nativeMetalJailDeviceFixture(t *testing.T, crash bool) {
 	if err := os.MkdirAll(filepath.Join(jailRoot, "dev"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Match the real jailer's mounted root, rather than a chroot below the
+	// host root mount. This bind is owned only by this isolated fixture;
+	// the target inherits it into its own namespace before device handoff.
+	if err := unix.Mount(jailRoot, jailRoot, "", unix.MS_BIND, ""); err != nil {
+		t.Fatal(err)
+	}
+	rootMounted = true
 	busybox, err := exec.LookPath("busybox")
 	if err != nil {
 		t.Fatal(err)
@@ -177,7 +193,7 @@ func nativeMetalJailDeviceFixture(t *testing.T, crash bool) {
 		t.Fatal("live original namespace was reported absent")
 	}
 	// Private /dev effects must not appear in the parent's jail mount table.
-	if mounts, err := nativeJailMounts(jailRoot); err != nil || len(mounts) != 1 || mounts[0] != filepath.Join(jailRoot, nativeTunTargetName) {
+	if mounts, err := nativeJailMounts(jailRoot); err != nil || len(mounts) != 2 || mounts[0] != jailRoot || mounts[1] != filepath.Join(jailRoot, nativeTunTargetName) {
 		t.Fatalf("private setup escaped original namespace: %v %v", mounts, err)
 	}
 	if err := target.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
@@ -202,6 +218,10 @@ func nativeMetalJailDeviceFixture(t *testing.T, crash bool) {
 	if err := tun.retire(ctx, owner); err != nil {
 		t.Fatal(err)
 	}
+	if err := unix.Unmount(jailRoot, 0); err != nil {
+		t.Fatal(err)
+	}
+	rootMounted = false
 	if err := j.confirmResourcesRemoved(ctx, owner); err != nil {
 		t.Fatal(err)
 	}

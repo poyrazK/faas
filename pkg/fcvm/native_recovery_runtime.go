@@ -25,6 +25,7 @@ type nativeProcessRecoveryRuntime struct {
 	loopMounts      nativeLoopMountBackend
 	imageSources    nativeImageSourceBackend
 	publications    nativeSnapshotPublicationJournal
+	snapshotMemory  nativeSnapshotMemoryBackend
 	snapshotControl nativeSnapshotControlBackend // startup/test wiring; never selected by an RPC
 	tunBinds        nativeTunBindBackend
 	// Startup/test wiring only; ordinary release selection uses the staged
@@ -58,6 +59,7 @@ func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 		imageSources:    images,
 		publications:    newNativeSnapshotPublicationJournal(v.nativeSnapshotPublicationRoot, v.chrootBase, v.nativeImageStagingRoot),
 		snapshotControl: newNativeSnapshotControlBackend(),
+		snapshotMemory:  newNativeSnapshotMemoryBackend(),
 		tunBinds:        tun,
 		support: func() error {
 			handle, err := openNativeProcess(os.Getpid())

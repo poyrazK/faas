@@ -40,6 +40,15 @@ func (b linuxNativeImageSources) PrepareSnapshotOutput(ctx context.Context, owne
 			err = errors.Join(err, rootFile.Close())
 		}
 	}()
+	var rootStat unix.Stat_t
+	if err := unix.Fstat(int(rootFile.Fd()), &rootStat); err != nil {
+		return nil, err
+	}
+	liveCapture := rootStat.Uid != uint32(os.Geteuid())
+	permit, hasPermit := ctx.Value(nativeSnapshotCaptureContextKey{}).(nativeSnapshotCapturePermit)
+	if liveCapture && (!hasPermit || !liveNativeSnapshotOwner(permit.Physical) || permit.Capture.CaptureID != capture || b.diskStagingRoot == "") {
+		return nil, errors.New("native snapshot output: original live handoff requires persistent disk ownership")
+	}
 	namespace, err := nativeLoopNamespaceIdentity()
 	if err != nil {
 		return nil, err
@@ -52,7 +61,7 @@ func (b linuxNativeImageSources) PrepareSnapshotOutput(ctx context.Context, owne
 	if statErr != nil {
 		return nil, errors.Join(statErr, output.Close())
 	}
-	return &linuxNativeImagePreparation{source: output, root: rootFile, identity: identity, namespace: namespace, owner: owner, diskRoot: b.diskStagingRoot}, nil
+	return &linuxNativeImagePreparation{source: output, root: rootFile, identity: identity, namespace: namespace, owner: owner, diskRoot: b.diskStagingRoot, retainDiskClaim: liveCapture}, nil
 }
 
 // Boot gives the jail root to the Firecracker UID so it can create its API

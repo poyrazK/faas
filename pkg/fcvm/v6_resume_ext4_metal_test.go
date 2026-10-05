@@ -303,6 +303,19 @@ func buildV6LayerExt4Size(dst string, sizeMB int) error {
 			return err
 		}
 	}
+	// The fixture entrypoint runs as app UID 1000. Give it an existing owned
+	// marker instead of allowing it to create files in root-owned /etc/faas.
+	// Guest-init can still overwrite this same marker after restore as root.
+	marker := filepath.Join(work, "upper/etc/faas/uuid.txt")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		return err
+	}
+	if err := os.Chown(marker, 1000, 1000); err != nil {
+		return err
+	}
 	if f, err := os.Create(dst); err != nil {
 		return fmt.Errorf("create ext4 file: %w", err)
 	} else if err := f.Truncate(int64(sizeMB) << 20); err != nil {

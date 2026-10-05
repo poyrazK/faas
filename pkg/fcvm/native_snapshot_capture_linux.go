@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"os"
 
@@ -94,22 +95,60 @@ func (v *JailerVMM) captureEnvironmentQualificationSnapshot(ctx context.Context,
 		return info, err
 	}
 	images := &nativeImageSourceJournal{owner: r.journal, backend: r.imageSources}
+	if err := r.imageSources.(nativeSnapshotOutputHandoffBackend).HandoffSnapshotOutputs(ctx, v, owner); err != nil {
+		return info, err
+	}
+	owner, err = v.checkNativeSnapshotPublicationOwner(ctx, lease)
+	if err != nil {
+		return info, err
+	}
 	// All bindings must be complete before even the first pause request.
 	if err := images.requireSnapshotControlBindings(owner, v.chrootRoot(lease.Instance), permit.Capture.CaptureID, nativeSnapshotCreate); err != nil {
 		return info, err
 	}
-	for _, action := range []nativeSnapshotControlAction{nativeSnapshotPause, nativeSnapshotCreate} {
-		if err := v.controlNativeQualificationSnapshotLocked(ctx, lease, permit, owner, action); err != nil {
-			return info, err
-		}
-		if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
-			return info, err
-		}
+	allowance, err := r.snapshotMemory.Prepare(ctx, v, owner)
+	if err != nil {
+		return info, fmt.Errorf("native snapshot capture: prepare memory fence: %w", err)
+	}
+	defer func() {
+		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), v.nativeCleanupBudget())
+		defer stop()
+		result = errors.Join(result, allowance.Restore(cleanup), allowance.Close())
+	}()
+	if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
+		return info, err
+	}
+	if err := v.controlNativeQualificationSnapshotLocked(ctx, lease, permit, owner, nativeSnapshotPause); err != nil {
+		return info, fmt.Errorf("native snapshot capture: pause original VM: %w", err)
+	}
+	if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
+		return info, err
+	}
+	if err := allowance.Raise(ctx); err != nil {
+		return info, fmt.Errorf("native snapshot capture: raise memory fence: %w", err)
+	}
+	if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
+		return info, err
+	}
+	if err := v.controlNativeQualificationSnapshotLocked(ctx, lease, permit, owner, nativeSnapshotCreate); err != nil {
+		return info, fmt.Errorf("native snapshot capture: create original snapshot: %w", err)
+	}
+	if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
+		return info, err
 	}
 	frozen := r.imageSources.(nativeSnapshotFrozenDriveBackend) // preflight required this exact runtime adapter
 	err = images.withSnapshotDriveLocked(ctx, owner, v.chrootRoot(lease.Instance), func(input *os.File) error {
 		return withNativeFrozenDrive(ctx, frozen, input, v.nativeImageStagingRoot, func(drive *os.File) error {
 			if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
+				return err
+			}
+			if err := allowance.Restore(ctx); err != nil {
+				return fmt.Errorf("native snapshot capture: restore memory fence: %w", err)
+			}
+			if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
+				return err
+			}
+			if err := allowance.RequireRestored(ctx); err != nil {
 				return err
 			}
 			// Freeze has completed while paused. Resume is one-shot and must be
@@ -121,6 +160,9 @@ func (v *JailerVMM) captureEnvironmentQualificationSnapshot(ctx context.Context,
 				return err
 			}
 			var err error
+			if err := allowance.RequireRestored(ctx); err != nil {
+				return err
+			}
 			info, err = v.publishNativeSnapshotCohort(ctx, lease, permit, images, drive, backing)
 			return err
 		})
@@ -145,16 +187,20 @@ func (v *JailerVMM) preflightNativeSnapshotCapture(ctx context.Context, lease Le
 	ctx, cancel := context.WithDeadline(ctx, permit.Incoming.Deadline)
 	defer cancel()
 	r := v.nativeRecovery
-	if r == nil || r.journal == nil || r.publications == nil || r.snapshotControl == nil || r.generation(lease.Instance) != permit.Incoming.NativeGeneration {
+	if r == nil || r.journal == nil || r.publications == nil || r.snapshotControl == nil || r.snapshotMemory == nil || r.generation(lease.Instance) != permit.Incoming.NativeGeneration {
 		return permit, errors.New("native snapshot capture: original native producer is unavailable")
 	}
 	_, input := r.imageSources.(nativeSnapshotInputBackend)
 	_, output := r.imageSources.(nativeSnapshotOutputBackend)
 	_, reader := r.imageSources.(nativeSnapshotOutputInputBackend)
 	_, frozen := r.imageSources.(nativeSnapshotFrozenDriveBackend)
+	_, handoff := r.imageSources.(nativeSnapshotOutputHandoffBackend)
 	disk, preflight := r.imageSources.(nativeSnapshotCapturePreflightBackend)
-	if !input || !output || !reader || !frozen || !preflight {
+	if !input || !output || !reader || !frozen || !preflight || !handoff {
 		return permit, errors.New("native snapshot capture: complete native source adapters are required")
+	}
+	if err := r.imageSources.(nativeSnapshotOutputHandoffBackend).CheckSnapshotOutputHandoff(ctx, v); err != nil {
+		return permit, err
 	}
 	if err := disk.CheckSnapshotCaptureDirectory(v.nativeImageStagingRoot); err != nil {
 		return permit, err
@@ -176,6 +222,9 @@ func (v *JailerVMM) preflightNativeSnapshotCapture(ctx context.Context, lease Le
 		return permit, err
 	}
 	if err := disk.CheckSnapshotCaptureRoot(ctx, owner, v.chrootRoot(lease.Instance)); err != nil {
+		return permit, err
+	}
+	if err := r.snapshotMemory.Check(ctx, v, owner); err != nil {
 		return permit, err
 	}
 	return permit, images.requireSnapshotControlBindings(owner, v.chrootRoot(lease.Instance), permit.Capture.CaptureID, nativeSnapshotPause)

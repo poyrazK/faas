@@ -89,6 +89,14 @@ const EnvironmentGitOpsQualificationDispatchBatchMax = 100
 // NativeHostHelperCgroupEventsMaxBytes bounds the kernel control-file parser.
 const NativeHostHelperCgroupEventsMaxBytes = 4096
 
+// Native snapshot retirement can scan the unified hierarchy to distinguish a
+// removed original inode from a retained cgroup. Exceeding these parser bounds
+// retains ownership; these are diagnostic limits, not tenant quotas.
+const (
+	NativeSnapshotCgroupInventoryMaxDirectories = 65_536
+	NativeSnapshotCgroupInventoryReadBatch      = 128
+)
+
 // Candidate discovery is separate from approval and approved-intent sweeps.
 // One bounded remote read completes inside a fenced durable poll lease.
 const (

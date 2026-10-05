@@ -11,7 +11,7 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery | Production report-mode acceptance for the complete API/worker/queue graph |
 | Workload preparation | Held image, pinned source and function candidates; atomic private workload reservations; private HTTP graph execution primitive | Qualified binding delivery and inherited non-image provenance |
 | Qualification evidence | Immutable attempt-bound capture receipts and a graph evidence assessment that reports missing proof | Isolated smoke, restored readiness and native capture publication |
-| Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, internal pause/create/freeze/resume and exclusive four-object publication | Production adapter wiring, artifact-generation/cleanup receipts and real capture/restore acceptance |
+| Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, internal pause/create/freeze/resume and exclusive four-object publication | Production adapter wiring, artifact-generation/cleanup receipts, native qualification restore and bare-metal acceptance |
 | Enforcement | Transactional ownership, override and execution fences | Production reconciliation worker, graph activation and serving convergence |
 
 Approved Git content, observed intent, qualification and serving state are separate facts. A reviewed or adopted definition does not mean that a deployment is ready or that the environment is serving that revision. Unqualified owned source/runtime fields prevent the applied revision from advancing.
@@ -141,7 +141,12 @@ advances the applied Git revision.
 
 Production qualification polling, graph activation and continuous enforcement are not enabled by this preview. Native process recovery remains an explicit vmmd opt-in (`native_process_recovery`, default `false`). The native capture backend rejects unsupported snapshot publication before pause or capture effects.
 
-The native primitives have portable tests and Linux compile checks, but those do not establish Firecracker capture/restore acceptance. The user authorized the internal nested KVM node for this hardening work; its privileged test results are recorded separately from bare-metal evidence. Keep these gates closed until native publication, complete graph qualification, recovery and serving evidence pass.
+The user-authorized internal nested KVM node now passes actual Firecracker
+capture, original-VM resume and retirement, and ordinary restoration of the
+published artifacts into a fresh guest. Ownership/recovery fixtures and
+leakcheck also pass. This is scoped nested-node evidence; native qualification
+restore, backend object receipts, complete graph smoke/readiness and serving
+convergence remain outstanding. Production gates stay closed.
 
 Private writable drives and capture outputs default to requiring their data and
 native journal on the same filesystem. An explicit startup-only disk adapter,
@@ -150,7 +155,12 @@ instead own their temporary names in a pre-existing private `0700` disk director
 on the original ext4/XFS/Btrfs filesystem, outside the jail. It persists an
 exclusive original inode/epoch claim before creating a link and holds a separate
 daemon ownership lock. Ordinary preparation removes the link and claim before
-returning; producer death retains them for original-owner retirement.
+returning; producer death retains them for original-owner retirement. Live
+snapshot outputs keep only their original links through the joined one-shot
+handoff into the original VM mount namespace, then retire them before pause.
+That helper receives pinned descriptors, exact original root/namespace/process
+and output-epoch identities, and a strict capture-derived scope. No recovered
+frame or caller-supplied pathname grants a second handoff.
 
 Same-boot recovery requires the original image journal. A missing journal,
 substitution, symlink, additional alias, changed directory or unknown entry
@@ -176,8 +186,8 @@ selected canonical backend; the cache wrapper skips its named spool path.
 Unsupported delegates refuse the capability without falling back to ordinary
 writes. An internal adapter connects original memory/device-state readers to
 these writers and retains their ownership locks through publication. The native
-capture entry point remains gated pending artifact receipts and real VM
-capture/restore acceptance. Publication errors may follow an
+capture entry point remains gated pending artifact receipts, native
+qualification restore and complete graph evidence. Publication errors may follow an
 uncertain commit, so they supply no overwrite or deletion authority.
 
 `WithNativeSnapshotPublicationRoot`, configured before native recovery, adds a
@@ -189,8 +199,15 @@ Startup validates old intents without replaying or deleting them. Losing the
 jail journal or rebooting cannot create publication or cleanup authority from
 an intent. Backend-specific object receipts and artifact retirement remain
 outstanding, along with restore/smoke evidence. The internal producer begins
-intent before output preparation, retains the original VM memory fence and
-publishes memory, device state, the frozen private drive and backing identity.
+intent before output preparation and publishes memory, device state, the frozen
+private drive and backing identity. Actual buffered snapshot writes require the
+existing temporary snapshot headroom policy. The producer pins and journals the
+original cgroup, raises its limit only after confirmed pause, and requires durable
+restoration plus exact normal-limit readback before resume or publication.
+A bounded original-owner cleanup capability can restore after the effect
+deadline; it grants no resume or publication. Unfinished scopes block resource
+acknowledgement and generation replacement until their original cgroup is
+retired. Controller repair and the legacy pathname widening helper are refused.
 Live output preparation validates the original process's jail inode and VM
 UID/GID through a retained pidfd. Uncertain controls are never replayed; partial
 objects remain retained without granting cleanup authority.
