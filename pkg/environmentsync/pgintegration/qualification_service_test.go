@@ -1,0 +1,189 @@
+// adr: 568 — dependency calls stay in the original reviewed private graph.
+package pgintegration_test
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/environmentsync"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+func privateQualificationServiceFixture(t *testing.T, basic gitOpsTestStore) (state.EnvironmentGitSource, []state.EnvironmentWorkloadQualificationRequest, []state.Instance) {
+	t.Helper()
+	store, source, desired, _, _, _ := workloadIntentFixture(t, basic, "enforce")
+	allowed := []string{"api"}
+	scopes := api.ServiceCallerScopes{"api": {Methods: []string{"GET"}, PathPrefixes: []string{"/health"}}}
+	backend, err := store.CreateApp(t.Context(), state.App{AccountID: source.AccountID, ProjectID: source.ProjectID, Slug: "shop-backend", WorkloadName: "backend", Type: state.AppTypeApp,
+		Status: state.AppActive, RAMMB: 512, CPUMillicores: 250, MaxConcurrency: 1, Manifest: state.AppManifest{Port: 8079, ExecutionMode: api.ExecutionModeService, AllowedServiceCallers: &allowed, AllowedServiceCallScopes: &scopes}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: backend.ID, Scope: "production", Kind: state.DeploymentKindImage, Status: state.DeployLive, ImageDigest: "registry.example/backend@sha256:" + strings.Repeat("c", 64)}); err != nil {
+		t.Fatal(err)
+	}
+	caller := desired.Definition.Workloads["api"]
+	caller.ServiceBindings = map[string]api.EnvironmentServiceBinding{"backend": {Workload: "backend", EnvKey: "BACKEND_URL"}}
+	desired.Definition.Workloads["api"] = caller
+	desired.Definition.Workloads["backend"] = api.EnvironmentWorkload{App: backend.Slug, Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/backend@sha256:" + strings.Repeat("d", 64)}, Runtime: json.RawMessage(`{"port":8082,"execution_mode":"service"}`)}
+	desired, err = environmentsync.Compile(desired.Definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, _, err = store.ApproveEnvironmentDesiredRevision(t.Context(), approval(source, desired, strings.Repeat("b", 40)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adoptWorkloadIntent(t, store, source)
+	lease, err := store.ClaimEnvironmentGitOps(t.Context(), "preparer", time.Now(), 3*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyEnvironmentGitOps(t.Context(), lease, claimedIntentPlan(t, store, lease, desired)); err != nil {
+		t.Fatal(err)
+	}
+	plan := claimedIntentPlan(t, store, lease, desired)
+	candidates, err := basic.(state.EnvironmentGitOpsPreparationStore).PrepareEnvironmentGitOpsImageCandidates(t.Context(), lease, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range candidates {
+		if err := basic.SetDeploymentRootfs(t.Context(), candidate.DeploymentID, "/reviewed.ext4", "reviewed-"+candidate.Resource, 4096); err != nil {
+			t.Fatal(err)
+		}
+		if err := basic.UpdateDeploymentStatus(t.Context(), candidate.DeploymentID, state.DeploySnapshotting, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if graph, err := basic.(state.EnvironmentGitOpsGraphPreparationStore).ReconcileEnvironmentGitOpsPreparation(t.Context(), lease, plan); err != nil || graph.Phase != "prepared" {
+		t.Fatal("graph preparation", err)
+	}
+	requests, err := basic.(state.EnvironmentGitOpsQualificationStore).QueueEnvironmentGitOpsQualification(t.Context(), lease, plan)
+	if err != nil || len(requests) != 2 {
+		t.Fatal("cohort", err)
+	}
+	placement := qualificationPlacement(t, basic, 4096)
+	instances := make([]state.Instance, 0, len(requests))
+	for i, request := range requests {
+		claimed, err := basic.(state.EnvironmentGitOpsQualificationStore).ClaimEnvironmentWorkloadQualification(t.Context(), request.ID, "scheduler", time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requests[i] = claimed
+		placement.WakeID = uuid.NewString()
+		admission, err := basic.(state.EnvironmentGitOpsQualificationInstanceStore).CreateEnvironmentWorkloadQualificationInstance(t.Context(), claimed, placement)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := basic.(state.EnvironmentQualificationExecutionStore).MarkEnvironmentQualificationDispatched(t.Context(), claimed, admission.Execution); err != nil {
+			t.Fatal(err)
+		}
+		ins, err := basic.(state.EnvironmentGitOpsQualificationRuntimeStore).PublishEnvironmentWorkloadQualificationRuntime(t.Context(), claimed, state.EnvironmentWorkloadQualificationRuntime{
+			NodeID: placement.NodeID, WakeID: placement.WakeID, Netns: "private-" + claimed.ReservedInstanceID, HostIP: fmt.Sprintf("10.100.0.%d", i+2), GuestUID: 20001 + i,
+			Inputs: state.RuntimeConfigInputs{Scope: "production", Boundary: time.Unix(0, 0), Variables: map[string]string{}, SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		instances = append(instances, ins)
+	}
+	return source, requests, instances
+}
+
+func TestEnvironmentQualificationPrivateServiceBindsBothOriginalAttempts(t *testing.T) {
+	stores(t, func(t *testing.T, basic gitOpsTestStore) {
+		_, requests, instances := privateQualificationServiceFixture(t, basic)
+		services := basic.(state.EnvironmentQualificationServiceStore)
+		request := state.EnvironmentQualificationServiceRequest{NodeID: instances[0].NodeID, HostIP: instances[0].HostIP, GraphID: requests[0].GraphID, Binding: "backend"}
+		held, err := services.EnvironmentQualificationNetworkCaller(t.Context(), request.NodeID, request.HostIP)
+		if err != nil || !held {
+			t.Fatal("original network identity", held, err)
+		}
+		route, err := services.ResolveEnvironmentQualificationService(t.Context(), request)
+		if err != nil || route.Caller.InstanceID != instances[0].ID || route.Target.InstanceID != instances[1].ID || route.Port != 8082 || route.Caller.CleanupToken != "" || route.Target.CleanupToken != "" || route.Deadline.After(*requests[0].LeaseUntil) || route.Deadline.After(*requests[1].LeaseUntil) {
+			t.Fatal("private graph resolution", route, err)
+		}
+		if route.CallScope == nil || !route.CallScope.Allows("GET", "/health") || route.CallScope.Allows("POST", "/health") || route.CallScope.Allows("GET", "/admin") {
+			t.Fatal("private route lost frozen target authorization")
+		}
+		cohort, err := basic.(state.EnvironmentQualificationGraphStore).EnvironmentQualificationGraphRequests(t.Context(), requests[0])
+		if err != nil || len(cohort) != 2 {
+			t.Fatal("persisted graph cohort", err)
+		}
+		cohort[0].FrozenInputs.Runtime["port"] = json.RawMessage(`1`)
+		again, err := basic.(state.EnvironmentQualificationGraphStore).EnvironmentQualificationGraphRequests(t.Context(), requests[0])
+		if err != nil || string(again[0].FrozenInputs.Runtime["port"]) != "8080" {
+			t.Fatal("cohort inputs were mutable", err)
+		}
+		for _, change := range []string{"graph", "binding", "node", "address", "ambiguous_address"} {
+			forged := request
+			switch change {
+			case "graph":
+				forged.GraphID = uuid.NewString()
+			case "binding":
+				forged.Binding = "unknown"
+			case "node":
+				forged.NodeID = uuid.NewString()
+			case "address":
+				forged.HostIP = instances[1].HostIP
+			case "ambiguous_address":
+				forged.HostIP = "010.100.0.2"
+			}
+			if _, err := services.ResolveEnvironmentQualificationService(t.Context(), forged); err == nil {
+				t.Fatal("substituted selector routed", change)
+			}
+		}
+	})
+}
+
+func TestEnvironmentQualificationPrivateServiceRejectsRevokedEndpoints(t *testing.T) {
+	for _, change := range []string{"source", "node", "account", "protocol", "caller_retired", "target_retired"} {
+		t.Run(change, func(t *testing.T) {
+			stores(t, func(t *testing.T, basic gitOpsTestStore) {
+				source, requests, instances := privateQualificationServiceFixture(t, basic)
+				switch change {
+				case "source":
+					_, err := basic.(state.EnvironmentGitOpsControlStore).UpdateEnvironmentGitSource(t.Context(), source.AccountID, source.ID, state.EnvironmentGitSourceUpdate{ExpectedGeneration: source.Generation, Mode: "report"})
+					if err != nil {
+						t.Fatal(err)
+					}
+				case "node":
+					if err := basic.NodeSetLifecycle(t.Context(), instances[1].NodeID, state.NodeLifecycleActive, state.NodeLifecycleDraining); err != nil {
+						t.Fatal(err)
+					}
+				case "account":
+					if err := basic.MarkAccountDeletionPending(t.Context(), source.AccountID); err != nil {
+						t.Fatal(err)
+					}
+				case "protocol":
+					protocol := api.AppProtocolGRPC
+					if _, err := basic.UpdateApp(t.Context(), requests[1].AppID, state.UpdateAppParams{SetAppProtocol: true, AppProtocol: &protocol}); err != nil {
+						t.Fatal(err)
+					}
+				case "caller_retired", "target_retired":
+					i := 0
+					if change == "target_retired" {
+						i = 1
+					}
+					executor := basic.(state.EnvironmentQualificationExecutionStore)
+					execution, err := executor.EnvironmentQualificationExecution(t.Context(), instances[i].ID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := executor.RetireEnvironmentQualificationExecution(t.Context(), execution.Execution, qualificationNativeProof()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				_, err := basic.(state.EnvironmentQualificationServiceStore).ResolveEnvironmentQualificationService(t.Context(), state.EnvironmentQualificationServiceRequest{NodeID: instances[0].NodeID, HostIP: instances[0].HostIP, GraphID: requests[0].GraphID, Binding: "backend"})
+				if !errors.Is(err, state.ErrConflict) && !errors.Is(err, state.ErrNotFound) && !(change == "protocol" && errors.Is(err, state.ErrEnvironmentWorkloadPreparationUnavailable)) {
+					t.Fatal("revoked graph endpoint routed", change, err)
+				}
+			})
+		})
+	}
+}

@@ -30,6 +30,10 @@ func qualificationExecutionFixture(t *testing.T, mode string, duration time.Dura
 }
 
 func queuedQualificationExecutionFixture(t *testing.T, modes ...string) (*state.MemStore, state.EnvironmentGitSource, []state.EnvironmentWorkloadQualificationRequest) {
+	return queuedQualificationExecutionFixtureWithBindings(t, nil, modes...)
+}
+
+func queuedQualificationExecutionFixtureWithBindings(t *testing.T, bindings map[string]api.EnvironmentServiceBinding, modes ...string) (*state.MemStore, state.EnvironmentGitSource, []state.EnvironmentWorkloadQualificationRequest) {
 	t.Helper()
 	ctx, store := t.Context(), state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "qualification@example.test", api.PlanPro)
@@ -70,6 +74,11 @@ func queuedQualificationExecutionFixture(t *testing.T, modes ...string) (*state.
 			Source:    &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/shop@sha256:" + strings.Repeat("d", 64)},
 			Runtime:   json.RawMessage(fmt.Sprintf(`{"port":8087,"healthz":"/reviewed-ready","startup_deadline_s":25,"execution_mode":%q}`, mode)),
 			Variables: map[string]string{"MODE": "production"}}
+	}
+	if bindings != nil {
+		caller := workloads["api"]
+		caller.ServiceBindings = bindings
+		workloads["api"] = caller
 	}
 	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: "shop", Environment: "production", Workloads: workloads})
 	if err != nil {

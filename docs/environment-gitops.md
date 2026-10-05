@@ -9,9 +9,9 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 | Git source | Immutable definition review, approval, polling and separate source freshness | Full outage and rollback journey with serving workloads |
 | Ownership and adoption | Reviewed adoption plans, stable resource identities, stale-plan rejection and scoped ownership guards | Scoped binding execution and inherited non-image provenance |
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery | Production report-mode acceptance for the complete API/worker/queue graph |
-| Workload preparation | Held image, pinned source and function candidates; atomic private workload reservations; frozen scoped binding targets | Qualified private binding transport and inherited non-image provenance |
+| Workload preparation | Held image, pinned source and function candidates; atomic private workload reservations; private HTTP graph execution primitive | Qualified binding delivery and inherited non-image provenance |
 | Qualification evidence | Immutable attempt-bound capture receipts and a graph evidence assessment that reports missing proof | Isolated smoke, restored readiness and native capture publication |
-| Native execution | Fenced journals and private snapshot input/output ownership primitives | Native publication integration and dedicated KVM acceptance |
+| Native execution | Fenced journals, private snapshot input/output readers and owned staging on a common disk filesystem | Production tmpfs/disk ownership adapter, native publication integration and capture/restore acceptance |
 | Enforcement | Transactional ownership, override and execution fences | Production reconciliation worker, graph activation and serving convergence |
 
 Approved Git content, observed intent, qualification and serving state are separate facts. A reviewed or adopted definition does not mean that a deployment is ready or that the environment is serving that revision. Unqualified owned source/runtime fields prevent the applied revision from advancing.
@@ -99,8 +99,27 @@ ID in the original environment. That identity is frozen into held candidates.
 Binding keys share the variable/reference quota across the app's environments
 and cannot occupy an existing variable or secret-reference key. Enforced
 bindings reserve those keys against ordinary writes. Shared app bindings and
-cross-environment aliases cannot substitute for scoped targets. Preparation
-does not yet inject a usable private URL or authorize dependency calls.
+cross-environment aliases cannot substitute for scoped targets.
+
+An internal scheduler graph window now keeps the complete claimed qualification
+cohort alive in dependency order. An explicitly configured node-local bridge
+injects private HTTP binding URLs into guest boot inputs. The guest listener
+derives the original caller from a fresh network-slot lookup and checks both
+original execution frames, current leases, the reviewed graph, fresh runtime
+acknowledgements and frozen target caller policies on every call. Revocation
+cancels active requests. It forwards to the exact qualified target and supplies
+no ordinary service wake, replica retry or serving fallback. Ordinary HTTP,
+service TCP and service discovery reject qualification callers. Every admitted
+VM is retired when the graph callback returns, including failure paths.
+
+This primitive is not wired into production qualification dispatch. It supports
+HTTP/1 binding calls after runtime publication, explicit reviewed target ports and
+acyclic prepared dependency cohorts. Private HTTPS DNS/certificate delivery,
+dependency calls during pre-readiness startup, binding delivery receipts,
+capture/restore and the transition to serving binding URLs remain outstanding.
+The existing verified `.internal` HTTPS contract is preserved; an HTTPS policy
+blocks this HTTP-only adapter before graph VM effects.
+HTTP/2 and gRPC targets are also rejected before graph boot and private routing.
 
 ## Qualification and activation evidence
 
@@ -122,7 +141,13 @@ advances the applied Git revision.
 
 Production qualification polling, graph activation and continuous enforcement are not enabled by this preview. Native process recovery remains an explicit vmmd opt-in (`native_process_recovery`, default `false`). The native capture backend rejects unsupported snapshot publication before pause or capture effects.
 
-The native primitives have portable tests and Linux compile checks, but those do not establish Firecracker capture/restore acceptance. VM lifecycle completion requires `make test-metal` and `make leakcheck` on a dedicated native x86_64 Linux KVM host, as required by [the repository guide](../CLAUDE.md). Keep these gates closed until native publication, complete graph qualification, recovery and serving evidence pass.
+The native primitives have portable tests and Linux compile checks, but those do not establish Firecracker capture/restore acceptance. The user authorized the internal nested KVM node for this hardening work; its privileged test results are recorded separately from bare-metal evidence. Keep these gates closed until native publication, complete graph qualification, recovery and serving evidence pass.
+
+Private writable drives and capture outputs currently require their data and
+native journal on the same filesystem. Production's tmpfs jail journal and disk
+images require a separate durable disk ownership adapter. The current adapter
+rejects that layout before producing files or jail markers. Passing disk staging
+and output-read fixtures does not enable production native capture.
 
 ## Ownership and source maintenance
 

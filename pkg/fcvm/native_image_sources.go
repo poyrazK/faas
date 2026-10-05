@@ -15,6 +15,7 @@ import (
 )
 
 const nativeImageRootMarker = ".gregale-image-owner.json"
+const nativeImageStagingSuffix = ".source"
 
 type nativeImageMetadata struct {
 	Mode uint32 `json:"mode"`
@@ -255,7 +256,7 @@ func (j *nativeImageSourceJournal) records() ([]nativeImageSourceRecord, error) 
 		return nil, err
 	}
 	for _, entry := range entries {
-		if !epochs[entry.Name()] {
+		if !epochs[strings.TrimSuffix(entry.Name(), nativeImageStagingSuffix)] {
 			return nil, errors.New("native image source: anchor has no ownership epoch")
 		}
 	}

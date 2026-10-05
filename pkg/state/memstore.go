@@ -5847,6 +5847,9 @@ func (m *MemStore) UpdateAppWithActivity(ctx context.Context, id string, p Updat
 }
 
 func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateAppParams, entry *OrgActivity, build OrgActivityAppConfigBuilder, outboxID *int64) (App, error) {
+	if p.SetAppProtocol && (p.AppProtocol == nil || !api.IsValidAppProtocol(*p.AppProtocol)) {
+		return App{}, ErrInvalidArgument
+	}
 	if (p.SetRequestRateLimitRPS && p.RequestRateLimitRPS != nil && *p.RequestRateLimitRPS < 0) ||
 		(p.SetRequestRateLimitBurst && p.RequestRateLimitBurst != nil && *p.RequestRateLimitBurst < 0) {
 		return App{}, ErrInvalidArgument
@@ -5925,6 +5928,9 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	}
 	if p.Manifest != nil {
 		a.Manifest = *p.Manifest
+	}
+	if p.SetAppProtocol {
+		a.AppProtocol = *p.AppProtocol
 	}
 	if p.SetMinInstances {
 		a.MinInstances = intOrZero(p.MinInstances)

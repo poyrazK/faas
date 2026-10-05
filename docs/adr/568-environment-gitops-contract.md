@@ -2352,3 +2352,103 @@ zero issues, SQLC regeneration matched the checked-in output, and both new
 migrations completed a down/up round trip against an empty validation database.
 These portable and database checks do not replace the dedicated native acceptance
 listed above.
+
+## Private graph execution checkpoint
+
+The scheduler can now read the complete persisted qualification cohort under the
+original source fence and open one dependency-ordered runtime window. It validates
+every claimed member before VM effects, rejects omitted or substituted members,
+cycles and unsupported dependency targets, and keeps dependency VMs alive until
+all callers retire. The existing admission, lease, native dispatch and retirement
+fences own every member. Success returns from the visitor; it grants no completed
+qualification, activation or serving authority.
+
+An explicit internal node-local HTTP bridge resolver injects graph binding URLs
+into the boot payload without adding generated values to customer variable
+intent. No production startup path wires this opt-in. The guest listener checks
+its observed network slot and both original VM frames, the current source/graph
+inputs, current leases, node/account eligibility and fresh scoped runtime receipts.
+Frozen logical caller allowlists and method/path scopes constrain target calls.
+It strips guest identity claims and stamps the exact target for the real vmmd
+forwarding bridge. It never resolves a serving alias, wakes a production target,
+retries a sibling or grants the gateway a cleanup token. Active streams retain
+the original deadline and are cancelled when either execution loses authority.
+Ordinary service HTTP, raw service TCP and service discovery reject these private
+callers. An unnamed legacy listener cannot authorize private graph execution.
+
+The adapter supports post-publication HTTP calls to explicit reviewed ports.
+Private HTTPS requires scoped DNS delivery through the existing verified
+`*.internal` contract; HTTPS policies block this adapter before graph VM effects.
+Pre-readiness dependency calls need a separately fenced native network publication
+step. Neither runtime readiness nor a callback's success proves generated binding
+delivery, isolated smoke or restored readiness. Captured private URLs also need an
+explicit transition before serving activation; they cannot be reused as approved
+serving bindings. Native publication, restore/completion receipts, graph activation
+and serving convergence remain implementation gates.
+
+The internal test node is `gregale-prod / us-east1-b / gregale-internal-test-1`
+under the supplied Google account. It is fleet-excluded, has KVM and nested
+virtualization enabled. The user explicitly authorized this node for lifecycle
+testing on 2026-10-05. Portable Linux, isolated PostgreSQL and privileged lifecycle
+tests use the task's own scratch directory; privileged tests hold the shared
+acceptance lock and run mount fixtures in private namespaces. Results from this
+node are identified as nested KVM, without claiming bare-metal capture/restore
+evidence. No enforcement, production qualification polling or native recovery
+gate is opened.
+
+## Owned snapshot output readers and Linux staging — 2026-10-05
+
+Native memory and device-state publication can now consume a read-only,
+close-on-exec descriptor for the original completed output binding. The boundary
+rechecks the original incoming capture start, native process generation,
+PID/start time, physical lease, kernel boot and exact output epoch. It holds the
+physical and source locks until the synchronous consumer returns and closes the
+descriptor. Unknown kinds, changed producer authority, substituted or empty
+inodes and incomplete or retired bindings are refused. Reading supplies no pause,
+capture completion, restore or graph qualification evidence.
+
+Privileged tests on the authorized internal node exposed a staging failure:
+directly binding an unlinked anonymous disk inode returned `ENOENT`, including
+when tried through detached descriptor mounts. Staging now starts anonymously,
+persists the original inode/epoch/reference intent, then creates an exclusive
+temporary link at `points/<epoch>.source`. A connected descriptor for that same
+inode supplies the original anchor and jail binds. Preparation closes and removes
+the link before returning; completed writable bindings retain zero hardlinks.
+Producer death may leave the temporary link, already owned by that durable epoch.
+Inventory verifies its original inode, exclusive reference, link count and
+published metadata transition; recovery cannot promote it into a ready producer.
+Original-owner retirement removes it only after revocation and confirmed process
+exit. Substituted files, symlinks, additional aliases and unowned names block
+cleanup. Frozen publication copies retain `O_EXCL` and never acquire a name.
+
+This staging profile requires the anonymous data and the native journal on the
+same filesystem. Production places the native journal on the jail's host-lifetime
+tmpfs and images on disk. That layout needs a durable disk ownership adapter
+before it can use temporary links; it is not covered by disk-only fixtures.
+Preparation rejects the mismatch before cloning, creating an output or writing
+a jail marker. A privileged tmpfs regression verifies that refusal leaves both
+the jail and the data directory untouched. No disk name is created under
+tmpfs-only ownership, and the production capture gate remains closed.
+
+The graph HTTP bridge refuses HTTP/2 and gRPC targets at preflight, boot dispatch
+and route resolution. Memory-store app edits now apply the protocol selector,
+allowing revocation tests to exercise the same guard as PostgreSQL. Production
+qualification polling, native capture publication, isolated restored smoke,
+binding delivery receipts, graph activation and serving convergence remain gated.
+
+Checkpoint validation on the authorized nested KVM node passed all nine
+`TestMetalNative*` ownership fixtures (20.644 s) under the shared acceptance lock,
+followed by a clean `make leakcheck`. The jail-device fixture now supplies the
+same helper-group backend to TUN retirement; the network fixture uses Pro for
+its declared extra-port update, preserving Hobby's 80/443 policy. These tests
+exercise real kernel file, mount, namespace, helper and cleanup ownership; they
+do not boot, capture or restore a qualification microVM.
+
+Linux graph/gateway/scheduler/native reader and staging race checks passed, as
+did the focused memory/PostgreSQL private-route and protocol-revocation tests.
+Normal Linux lint across the six changed production packages reported zero
+issues. SQLC regeneration, the memory-store stub gate, formatting and diff checks
+passed. Supplemental full-package lint with the `metal` tag reported 13 existing
+issues in untouched files; those are not represented as a clean full-package
+metal lint result. Production capture/restore and the tmpfs/disk ownership
+adapter still require separate implementation and evidence.

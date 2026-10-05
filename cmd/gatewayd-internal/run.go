@@ -944,6 +944,8 @@ type runDeps struct {
 	// both; the synth socket stays HTTP). nil in tests; production
 	// wires it after the Handler + EgressSink are constructed.
 	egressGRPC *egressGRPCListener
+	// Tests use a private ledger; an empty value retains the production path.
+	egressPendingPath string
 	// lastSeen flushes per-instance last_request_at to schedd (spec §4.1). nil in
 	// tests (the wake/routing path doesn't need it); production wires the
 	// schedFlushSink.
@@ -2752,7 +2754,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if !isUnixSocketPath(egressGRPCSocket) && deps.egressTLS == nil {
 		return fmt.Errorf("gatewayd: egress target %q is non-unix but egress_tls_* is empty (set egress_tls_cert_path / key_path / ca_path or point the target at a unix socket for single-box mode)", egressGRPCSocket)
 	}
-	egressGRPCSrv, err := egressgrpc.NewPersistentServer(egressSink, log, egressgrpc.DefaultPendingPath)
+	egressPendingPath := deps.egressPendingPath
+	if egressPendingPath == "" {
+		egressPendingPath = egressgrpc.DefaultPendingPath
+	}
+	egressGRPCSrv, err := egressgrpc.NewPersistentServer(egressSink, log, egressPendingPath)
 	if err != nil {
 		return fmt.Errorf("gatewayd: open durable egress replay ledger: %w", err)
 	}
@@ -3598,16 +3604,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
-			guestServiceCallerResolver = newServiceProxyCallerResolver(pgStore.ListAllInstances, cfg.NodeName)
-			serviceProxyConfig.ResolveCaller = guestServiceCallerResolver
 			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
 			identityResolver.lookup = pgStore.LiveInstancesByHostIP
-			serviceProxyConfig.ResolveCallerIdentity = identityResolver.ResolveIdentity
+			serviceProxyConfig.ResolveCallerIdentity = func(ctx context.Context, remote string) (string, string, error) {
+				if err := ordinaryQualificationCallerGuard(ctx, pgStore, cfg.NodeName, remote); err != nil {
+					return "", "", err
+				}
+				return identityResolver.ResolveIdentity(ctx, remote)
+			}
+			guestServiceCallerResolver = func(ctx context.Context, remote string) (string, error) {
+				appID, _, err := serviceProxyConfig.ResolveCallerIdentity(ctx, remote)
+				return appID, err
+			}
+			serviceProxyConfig.ResolveCaller = guestServiceCallerResolver
 			if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" {
 				serviceProxyConfig.DevBridge = developmentBridgeServiceForwarder(pgStore, handler)
 			}
 			guestServices = gateway.NewServiceProxy(serviceProxyConfig)
-			guestServiceProxy = guestServices
+			guestServiceProxy = newEnvironmentQualificationServiceProxy(pgStore, cfg.NodeName, deps.nodeCache.Forwarding(), guestServices)
 		}
 	}
 

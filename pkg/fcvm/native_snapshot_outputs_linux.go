@@ -27,6 +27,9 @@ func (b linuxNativeImageSources) PrepareSnapshotOutput(ctx context.Context, owne
 	if nameErr != nil || expected != name || owner.Authorized || owner.Revoked || owner.ExitConfirmed || owner.ResourcesRemoved || owner.Lease.IsBuilder || !filepath.IsAbs(directory) || filepath.Clean(directory) != directory || directory == "/" {
 		return nil, errors.New("native snapshot output: original output preparation and disk placement are required")
 	}
+	if err := b.requireAnonymousStagingFilesystem(directory); err != nil {
+		return nil, err
+	}
 	rootFile, _, err := b.prepareRoot(owner, root, name)
 	if err != nil {
 		return nil, err
@@ -73,7 +76,7 @@ func createNativeSnapshotOutput(ctx context.Context, directory string) (output *
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	fd, err := unix.Openat(int(parent.Fd()), ".", unix.O_TMPFILE|unix.O_EXCL|unix.O_RDWR|unix.O_CLOEXEC, 0o600)
+	fd, err := unix.Openat(int(parent.Fd()), ".", unix.O_TMPFILE|unix.O_RDWR|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		return nil, err
 	}

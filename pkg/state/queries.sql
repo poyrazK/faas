@@ -8358,6 +8358,9 @@ CROSS JOIN compute_nodes n WHERE a.id=sqlc.arg(app_id)::uuid AND n.id=sqlc.arg(n
 -- name: EnvironmentQualificationInstance :one
 SELECT * FROM instances WHERE id=sqlc.arg(instance_id)::uuid;
 
+-- name: EnvironmentQualificationAppProtocol :one
+SELECT app_protocol FROM apps WHERE id=sqlc.arg(app_id)::uuid;
+
 -- name: LockEnvironmentQualificationRuntimeInstance :one
 SELECT * FROM instances WHERE id=sqlc.arg(id)::uuid FOR UPDATE;
 
@@ -10458,3 +10461,14 @@ ON CONFLICT(instance_id) DO NOTHING;
 -- name: EnvironmentQualificationSnapshotReceipt :one
 SELECT e.frame,e.cleanup_token,r.snapshot,r.inputs,r.recorded_at FROM environment_qualification_snapshot_receipts r
 JOIN environment_qualification_executions e ON e.instance_id=r.instance_id WHERE r.instance_id=sqlc.arg(instance_id)::uuid;
+
+-- An observed source address may name exactly one current network incarnation.
+-- Holding a deployment is independent of whether its execution lease expired.
+-- name: EnvironmentQualificationNetworkInstances :many
+SELECT i.id, i.node_id, (d.environment_workload_runtime IS NOT NULL)::boolean AS held
+FROM instances i JOIN deployments d ON d.id=i.deployment_id
+WHERE (i.node_id=coalesce(nullif(sqlc.arg(node_id)::text,'')::uuid,
+ (SELECT n.id FROM compute_nodes n WHERE n.name=sqlc.arg(node_name)::text))
+ OR (sqlc.arg(node_id)::text='' AND sqlc.arg(node_name)::text=''))
+ AND i.host_ip=sqlc.arg(host_ip)::text::inet
+ AND i.state IN ('running','draining') ORDER BY i.id;

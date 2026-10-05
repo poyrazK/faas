@@ -384,11 +384,15 @@ type Querier interface {
 	EnvironmentGitOpsUnqualifiedWorkloads(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitOpsUnqualifiedWorkloadsRow, error)
 	EnvironmentGitSourceHealth(ctx context.Context, db DBTX, arg EnvironmentGitSourceHealthParams) (EnvironmentGitSourceHealthRow, error)
 	EnvironmentQualificationAdmissionInputs(ctx context.Context, db DBTX, arg EnvironmentQualificationAdmissionInputsParams) (EnvironmentQualificationAdmissionInputsRow, error)
+	EnvironmentQualificationAppProtocol(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error)
 	EnvironmentQualificationExecution(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationExecution, error)
 	// Caller already holds the request (when present) and then the frame lock.
 	// Use the database clock so host clock skew cannot expire a current lease.
 	EnvironmentQualificationExecutionRecoverable(ctx context.Context, db DBTX, instanceID pgtype.UUID) (pgtype.Bool, error)
 	EnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error)
+	// An observed source address may name exactly one current network incarnation.
+	// Holding a deployment is independent of whether its execution lease expired.
+	EnvironmentQualificationNetworkInstances(ctx context.Context, db DBTX, arg EnvironmentQualificationNetworkInstancesParams) ([]EnvironmentQualificationNetworkInstancesRow, error)
 	EnvironmentQualificationNodeUsedMB(ctx context.Context, db DBTX, arg EnvironmentQualificationNodeUsedMBParams) (int64, error)
 	EnvironmentQualificationSnapshotReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationSnapshotReceiptRow, error)
 	EnvironmentSecretReferenceQuota(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceQuotaParams) (EnvironmentSecretReferenceQuotaRow, error)

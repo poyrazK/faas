@@ -27,9 +27,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if !executionOK || !nativeOK {
 		return fmt.Errorf("qualification requires attempt-aware VM execution and retirement: %w", state.ErrConflict)
 	}
-	if len(claimed.FrozenInputs.ServiceBindings) != 0 {
-		// The current native visitor has no environment-bound private graph
-		// transport. Never boot a binding candidate using shared app aliases.
+	if len(claimed.FrozenInputs.ServiceBindings) != 0 && (e.environmentQualificationServiceURL == nil || ctx.Value(qualificationGraphContextKey{}) != claimed.GraphID) {
 		return state.ErrEnvironmentWorkloadPreparationUnavailable
 	}
 	ctx, deadlineCancel := context.WithDeadline(WithScope(ctx, claimed.FrozenInputs.Scope), *claimed.LeaseUntil)
@@ -146,6 +144,12 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	}
 	prepared, err := e.prepareDeploymentPrimeBoot(ctx, app, acct, limits, dep, placement, ins)
 	if err != nil {
+		return err
+	}
+	if ctx.Value(qualificationGraphContextKey{}) == claimed.GraphID && claimed.ExecutionMode != api.ExecutionModeWorker && prepared.Spec.AppProtocol != "" && prepared.Spec.AppProtocol != api.AppProtocolHTTP1 {
+		return state.ErrEnvironmentWorkloadPreparationUnavailable
+	}
+	if err := e.prepareQualificationServiceBindings(ctx, claimed, placement.NodeID, &prepared.Spec); err != nil {
 		return err
 	}
 	delivery := bootInput{insID: ins.ID, appID: app.ID, accountID: acct.ID, wakeID: ins.WakeID, secretDeliveries: prepared.SecretDeliveries}

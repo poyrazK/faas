@@ -419,7 +419,8 @@ type Engine struct {
 	fcVer  string // running Firecracker version — snapshots load only on a match (ADR-005)
 	log    *slog.Logger
 	// Protected by mu: RPCs may already be serving when NewLoop attaches it.
-	serviceReconcileSubmit func(context.Context, string)
+	serviceReconcileSubmit             func(context.Context, string)
+	environmentQualificationServiceURL func(context.Context, string) (string, error)
 	// ops is the per-daemon Prometheus registry (issue #1059 /
 	// ADR-127). e.ops.WakeFailure is the schedd-side emitter for
 	// the wake-failure observability surface (cluster A commit 3

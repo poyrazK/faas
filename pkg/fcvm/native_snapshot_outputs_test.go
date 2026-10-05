@@ -17,6 +17,23 @@ import (
 
 type nativeSnapshotOutputFixture struct {
 	*nativeWritableImageFixture
+	openOutput func(nativeImageSourceRecord, nativeImageReference, string) (*os.File, error)
+	output     *os.File
+	opens      int
+}
+
+func (b *nativeSnapshotOutputFixture) OpenSnapshotOutput(record nativeImageSourceRecord, ref nativeImageReference, point string) (*os.File, error) {
+	b.opens++
+	if err := errors.Join(b.CheckReference(record, ref), b.CheckAnchor(record, point)); err != nil {
+		return nil, err
+	}
+	var err error
+	if b.openOutput != nil {
+		b.output, err = b.openOutput(record, ref, point)
+	} else {
+		b.output, err = os.OpenFile(point, os.O_RDONLY, 0)
+	}
+	return b.output, err
 }
 
 func (b *nativeSnapshotOutputFixture) PrepareSnapshotOutput(ctx context.Context, owner nativeLaunchRecord, root, directory, name string) (nativeImagePreparation, error) {

@@ -77,9 +77,10 @@ func nativeMetalJailDeviceFixture(t *testing.T, crash bool) {
 		t.Fatal(err)
 	}
 	jailRoot := filepath.Join(root, "firecracker", lease.Instance, "root")
-	tun := &nativeTunBindJournal{owner: j, backend: tunBackend}
+	groups := newNativeHostHelperGroups()
+	tun := &nativeTunBindJournal{owner: j, backend: tunBackend, helperGroups: groups}
 	var target *exec.Cmd
-	helpers := &nativeHostHelperJournal{owner: j, groups: newNativeHostHelperGroups(), purpose: nativeHostHelperJailDevices, deviceRoot: jailRoot}
+	helpers := &nativeHostHelperJournal{owner: j, groups: groups, purpose: nativeHostHelperJailDevices, deviceRoot: jailRoot}
 	targetJoined := false
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 10*time.Second)

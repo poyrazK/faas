@@ -6456,6 +6456,17 @@ func (q *Queries) EnvironmentQualificationAdmissionInputs(ctx context.Context, d
 	return i, err
 }
 
+const environmentQualificationAppProtocol = `-- name: EnvironmentQualificationAppProtocol :one
+SELECT app_protocol FROM apps WHERE id=$1::uuid
+`
+
+func (q *Queries) EnvironmentQualificationAppProtocol(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, environmentQualificationAppProtocol, appID)
+	var app_protocol string
+	err := row.Scan(&app_protocol)
+	return app_protocol, err
+}
+
 const environmentQualificationExecution = `-- name: EnvironmentQualificationExecution :one
 SELECT instance_id, request_id, frame, cleanup_token, dispatch_started, retirement, created_at, retired_at FROM environment_qualification_executions WHERE instance_id=$1::uuid
 `
@@ -6532,6 +6543,50 @@ func (q *Queries) EnvironmentQualificationInstance(ctx context.Context, db DBTX,
 		&i.CapacityVcpu,
 	)
 	return i, err
+}
+
+const environmentQualificationNetworkInstances = `-- name: EnvironmentQualificationNetworkInstances :many
+SELECT i.id, i.node_id, (d.environment_workload_runtime IS NOT NULL)::boolean AS held
+FROM instances i JOIN deployments d ON d.id=i.deployment_id
+WHERE (i.node_id=coalesce(nullif($1::text,'')::uuid,
+ (SELECT n.id FROM compute_nodes n WHERE n.name=$2::text))
+ OR ($1::text='' AND $2::text=''))
+ AND i.host_ip=$3::text::inet
+ AND i.state IN ('running','draining') ORDER BY i.id
+`
+
+type EnvironmentQualificationNetworkInstancesParams struct {
+	NodeID   string
+	NodeName string
+	HostIp   string
+}
+
+type EnvironmentQualificationNetworkInstancesRow struct {
+	ID     pgtype.UUID
+	NodeID pgtype.UUID
+	Held   bool
+}
+
+// An observed source address may name exactly one current network incarnation.
+// Holding a deployment is independent of whether its execution lease expired.
+func (q *Queries) EnvironmentQualificationNetworkInstances(ctx context.Context, db DBTX, arg EnvironmentQualificationNetworkInstancesParams) ([]EnvironmentQualificationNetworkInstancesRow, error) {
+	rows, err := db.Query(ctx, environmentQualificationNetworkInstances, arg.NodeID, arg.NodeName, arg.HostIp)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EnvironmentQualificationNetworkInstancesRow{}
+	for rows.Next() {
+		var i EnvironmentQualificationNetworkInstancesRow
+		if err := rows.Scan(&i.ID, &i.NodeID, &i.Held); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const environmentQualificationNodeUsedMB = `-- name: EnvironmentQualificationNodeUsedMB :one
