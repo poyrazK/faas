@@ -22,7 +22,7 @@ func (m *MemStore) putDeploymentLocked(id string, d Deployment) {
 	switch {
 	case deploymentServing(d):
 		delete(m.deploymentServingEndedAt, id)
-	case existed && deploymentServing(prev):
+	case existed && deploymentServing(prev) && d.Status != DeploySnapshotting:
 		if m.deploymentServingEndedAt == nil {
 			m.deploymentServingEndedAt = map[string]time.Time{}
 		}

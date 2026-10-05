@@ -15,6 +15,21 @@
 -- fails normally.
 
 -- +goose Up
+-- Entering snapshotting is not "stopped serving": only a rollback re-prime
+-- moves an existing release there, and it starts from an already stamped
+-- superseded or 0% row. Without this, a serving row moved straight into
+-- snapshotting would be stamped by that same update and then kept on failure.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION stamp_deployment_serving_ended_at() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF NEW.status = 'live' AND NEW.traffic_percent > 0 THEN
+  NEW.serving_ended_at := NULL;
+ ELSIF OLD.status = 'live' AND OLD.traffic_percent > 0 AND NEW.status <> 'snapshotting' THEN
+  NEW.serving_ended_at := now();
+ END IF;
+ RETURN NEW;
+END $$;
+-- +goose StatementEnd
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION keep_failed_rollback_target() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -31,3 +46,14 @@ CREATE TRIGGER deployment_failed_rollback_keeps_target BEFORE UPDATE OF status O
 -- +goose Down
 DROP TRIGGER IF EXISTS deployment_failed_rollback_keeps_target ON deployments;
 DROP FUNCTION IF EXISTS keep_failed_rollback_target();
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION stamp_deployment_serving_ended_at() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF NEW.status = 'live' AND NEW.traffic_percent > 0 THEN
+  NEW.serving_ended_at := NULL;
+ ELSIF OLD.status = 'live' AND OLD.traffic_percent > 0 THEN
+  NEW.serving_ended_at := now();
+ END IF;
+ RETURN NEW;
+END $$;
+-- +goose StatementEnd
