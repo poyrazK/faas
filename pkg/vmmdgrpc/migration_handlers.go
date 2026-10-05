@@ -267,6 +267,14 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
+	source, sourceErr := regionalRuntimeFromProto(req.GetRegionalRuntime())
+	if sourceErr == nil && source != nil {
+		sourceErr = s.validateRegionalMigrationPrepare(req.GetInstanceId(), *source)
+	}
+	if sourceErr != nil {
+		s.ops.Observe(op, time.Since(start), sourceErr)
+		return nil, grpcerr.ToStatus(toProblem(sourceErr))
+	}
 
 	memKey := req.GetSnapshotStorageKey()
 	// vmstateKey is the canonical sibling under the same
@@ -335,12 +343,18 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 	}
 
 	_, err = snapshotter.SnapshotKeepAlive(ctx, req.GetInstanceId(), fcvm.SnapshotSpec{
-		StageMemPath:      "",
-		VMStatePath:       "",
-		StorageKey:        memKey,
-		VMStateStorageKey: vmstateKey,
+		MigrationLeaseToken:     m.leaseToken,
+		RegionalMigrationSource: source,
+		StageMemPath:            "",
+		VMStatePath:             "",
+		StorageKey:              memKey,
+		VMStateStorageKey:       vmstateKey,
 	})
 	if err != nil {
+		if source != nil {
+			s.ops.Observe(op, time.Since(start), err)
+			return nil, grpcerr.ToStatus(toProblem(err))
+		}
 		s.migrations.deleteByLeaseToken(m.leaseToken)
 		if s.migrationLeases != nil {
 			_ = s.migrationLeases.DeleteMigrationLease(ctx, m.leaseToken)
@@ -349,6 +363,10 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	if err := s.migrations.complete(m.leaseToken, memKey, vmstateKey); err != nil {
+		if source != nil {
+			s.ops.Observe(op, time.Since(start), err)
+			return nil, grpcerr.ToStatus(toProblem(err))
+		}
 		// A tracker race here means the snapshot succeeded but its lease
 		// cannot be returned. Resume the source so it is never left paused.
 		if resumer, ok := s.vmm.(migrationResumer); ok {
@@ -368,6 +386,10 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 	}
 	if s.migrationLeases != nil {
 		if err := s.migrationLeases.CompleteMigrationLease(ctx, m.leaseToken, memKey, vmstateKey); err != nil {
+			if source != nil {
+				s.ops.Observe(op, time.Since(start), err)
+				return nil, grpcerr.ToStatus(toProblem(err))
+			}
 			// The source VM is paused and the in-memory tracker still has the
 			// handles, so retain the lease for the expiry loop when durable
 			// completion is temporarily unavailable.
@@ -383,6 +405,7 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 		VmstateStorageKey: vmstateKey,
 		LeaseToken:        m.leaseToken,
 		FcVersion:         s.fcVer,
+		RegionalRuntime:   append([]byte(nil), req.GetRegionalRuntime()...),
 	}, nil
 }
 
@@ -599,6 +622,10 @@ func (s *Server) AcknowledgeMigration(ctx context.Context, req *vmmdpb.Acknowled
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
+	if err := s.requireIndependentMigration(ctx, req.GetInstanceId(), req.GetLeaseToken()); err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
 	m, getErr := s.migrationLeaseForPhase(ctx, req.GetInstanceId(), req.GetLeaseToken())
 	if getErr != nil {
 		// Stale ack — lease already cleared. Idempotent
@@ -655,6 +682,18 @@ func (s *Server) CancelLiveMigration(ctx context.Context, req *vmmdpb.CancelLive
 			"instance_id and lease_token are required").WithDocs(wire.DocsBaseURL + "/vmmd#cancel")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
+	}
+	if len(req.GetRegionalRuntime()) != 0 {
+		resp, err := s.cancelRegionalMigration(ctx, req)
+		s.ops.Observe(op, time.Since(start), err)
+		if err != nil {
+			return nil, grpcerr.ToStatus(toProblem(err))
+		}
+		return resp, nil
+	}
+	if err := s.requireIndependentMigration(ctx, req.GetInstanceId(), req.GetLeaseToken()); err != nil {
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	m, getErr := s.migrationLeaseForPhase(ctx, req.GetInstanceId(), req.GetLeaseToken())
 	if getErr != nil {
@@ -719,6 +758,9 @@ func (s *Server) deleteMigrationSnapshot(ctx context.Context, m *activeMigration
 // source-side action. A committed row means the paused source must be
 // destroyed; a still-migrating/rolled-back row means it must be resumed.
 func (s *Server) cleanupExpiredMigration(ctx context.Context, m *activeMigration) error {
+	if handled, err := s.cleanupCompletedRegionalMigration(ctx, m); handled {
+		return err
+	}
 	if s.migrationStore != nil {
 		reader, ok := s.migrationStore.(migrationInstanceReader)
 		if !ok {

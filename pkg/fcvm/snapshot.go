@@ -1,6 +1,10 @@
 package fcvm
 
-import "context"
+import (
+	"context"
+
+	"github.com/onebox-faas/faas/pkg/runtimequota"
+)
 
 // FAAS_BASE_IMAGE_VERSION is the per-image-version stamp the
 // h2c-capable base rootfs image is published under. Mirrors
@@ -244,8 +248,12 @@ type WakePrepareTimings struct {
 // is left unused (logged as metadata only). When empty, the VMM keeps
 // the legacy moveOut(VMStatePath) behaviour bit-for-bit.
 type SnapshotSpec struct {
-	StageMemPath string // vmmd-allocated; never caller-supplied post-#96 slice 3
-	VMStatePath  string // host location vmmd hands to the FC socket during pause
+	// ADR-628: regional migration capture must retain this lease/source binding
+	// before native work. These are internal protocol metadata, not snapshot data.
+	MigrationLeaseToken     string                  `json:"-"`
+	RegionalMigrationSource *runtimequota.Placement `json:"-"`
+	StageMemPath            string                  // vmmd-allocated; never caller-supplied post-#96 slice 3
+	VMStatePath             string                  // host location vmmd hands to the FC socket during pause
 	// StorageKey (mem only) is the storage key the mem blob is published
 	// under post-snapshot.
 	StorageKey string

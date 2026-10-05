@@ -36,6 +36,8 @@ func Open(dir, nodeID, bootID string) (_ *Journal, err error) {
 		return nil, err
 	}
 	j := &Journal{root: root, epochs: make(map[string]Identity), permits: make(map[string]PermitRecord), seats: make(map[string]SeatRecord), attempts: make(map[string]string), parentPins: make(map[string]runtimequota.CapacityPermit), permitSeats: make(map[string]map[string]bool), active: make(map[string]int), seatOps: make(map[string]int), resuming: make(map[string]bool), changed: make(chan struct{})}
+	j.migrations = make(map[string]MigrationRecord)
+	j.migrationPending = make(map[string]string)
 	defer func() {
 		if err != nil {
 			if j.lock != nil {
@@ -177,6 +179,12 @@ func (j *Journal) load(nodeID, bootID string) error {
 				return errors.Join(ErrBinding, err)
 			}
 			j.seats[r.Seat.ID] = r
+		case strings.HasPrefix(name, "migration-"):
+			var r MigrationRecord
+			if err = j.read(name, &r); err != nil || !validMigrationRecord(r) || name != migrationFile(r.LeaseToken) {
+				return errors.Join(ErrBinding, err)
+			}
+			j.migrations[r.LeaseToken] = r
 		default:
 			return fmt.Errorf("host journal unexpected file %q: %w", name, ErrStorage)
 		}
@@ -242,7 +250,7 @@ func (j *Journal) load(nodeID, bootID string) error {
 		}
 		j.indexSeat(r)
 	}
-	return nil
+	return j.loadMigrations()
 }
 
 func validIdentity(i Identity) bool {

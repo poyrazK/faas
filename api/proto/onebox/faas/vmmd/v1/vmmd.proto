@@ -1908,11 +1908,13 @@ message PrepareLiveMigrationRequest {
   // can pull the snapshot via the same Storage.Get call a wake
   // would use.
   string snapshot_storage_key = 2;
+  // ADR-628: exact serving source, retained with the minted lease before capture.
+  bytes regional_runtime = 3;
 }
 
 // PrepareLiveMigrationResponse carries the snapshot metadata +
 // the per-migration lease_token the new owner carries through
-// Phase 3. The lease_token is a UUIDv4 minted by the dying vmmd
+// Phase 3. The lease_token is a random 128-bit hex token minted by the dying vmmd
 // at PrepareLiveMigration time (the dying vmmd is the lease
 // authority — it owns the pause/resume decision). The new owner's
 // schedd presents the same token at Phase 3 (MigrateInstanceOwner
@@ -1926,7 +1928,7 @@ message PrepareLiveMigrationResponse {
   // The vmstate blob key (canonical storage backend key the
   // dying vmmd wrote under).
   string vmstate_storage_key = 2;
-  // The lease_token UUIDv4 the new owner carries through to
+  // The random lease_token the new owner carries through to
   // Phase 3 + Phase 4. Distinct from the snapshot_storage_key so
   // the new owner can mint its own UUIDv4 deterministically; the
   // dying vmmd mints it so the lease's window is tied to the
@@ -1936,6 +1938,8 @@ message PrepareLiveMigrationResponse {
   // passes this through the normal restore compatibility gate and falls
   // back to a cold boot when the versions differ.
   string fc_version = 4;
+  // Echo of the retained source. Capture is not authenticated native pause proof.
+  bytes regional_runtime = 5;
 }
 
 // AdoptMigratedInstanceRequest (Tier A5 / ADR-065) is the input
@@ -2021,11 +2025,15 @@ message AcknowledgeMigrationResponse {
 message CancelLiveMigrationRequest {
   string instance_id = 1;
   string lease_token = 2;
+  // Fresh issued serving seat on the retained original physical source.
+  bytes regional_runtime = 3;
 }
 
 message CancelLiveMigrationResponse {
-  // Empty struct reserved for future fields. Same shape as
-  // AcknowledgeMigrationResponse.
+  // Populated only after lease-bound regional resume durably completed.
+  string instance_id = 1;
+  string lease_token = 2;
+  bytes regional_runtime = 3;
 }
 
 // ForwardRawRequestInit (issue #676 / ADR-080) is the first frame

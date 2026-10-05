@@ -5416,6 +5416,9 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if m.vmm == nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil vmm", instance)
 	}
+	if admissionForInstance(inst).RegionalRuntime != nil || spec.RegionalMigrationSource != nil {
+		return m.snapshotRegionalMigration(ctx, inst, spec)
+	}
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
 	m.cancelReadinessLoop(instance)

@@ -16,10 +16,11 @@ import (
 )
 
 var (
-	ErrFenced  = errors.New("regional host runtime is fenced")
-	ErrBinding = errors.New("regional host identity conflicts")
-	ErrStorage = errors.New("regional host journal is unavailable")
-	ErrBusy    = errors.New("regional host operations are in flight")
+	ErrFenced            = errors.New("regional host runtime is fenced")
+	ErrBinding           = errors.New("regional host identity conflicts")
+	ErrStorage           = errors.New("regional host journal is unavailable")
+	ErrBusy              = errors.New("regional host operations are in flight")
+	ErrMigrationNotFound = errors.New("regional migration source is not recorded")
 )
 
 type Identity struct {
@@ -44,22 +45,24 @@ type SeatRecord struct {
 // Journal has one daemon owner. Failed durable writes poison this owner until
 // restart so an uncertain rename/fsync cannot accidentally permit execution.
 type Journal struct {
-	mu          sync.Mutex
-	root        *os.Root
-	lock        *os.File
-	identity    Identity
-	epochs      map[string]Identity
-	permits     map[string]PermitRecord
-	seats       map[string]SeatRecord
-	attempts    map[string]string
-	parentPins  map[string]runtimequota.CapacityPermit
-	permitSeats map[string]map[string]bool
-	active      map[string]int
-	seatOps     map[string]int
-	resuming    map[string]bool
-	changed     chan struct{}
-	poison      error
-	closed      bool
+	mu               sync.Mutex
+	root             *os.Root
+	lock             *os.File
+	identity         Identity
+	epochs           map[string]Identity
+	permits          map[string]PermitRecord
+	seats            map[string]SeatRecord
+	attempts         map[string]string
+	parentPins       map[string]runtimequota.CapacityPermit
+	permitSeats      map[string]map[string]bool
+	active           map[string]int
+	seatOps          map[string]int
+	resuming         map[string]bool
+	migrations       map[string]MigrationRecord
+	migrationPending map[string]string
+	changed          chan struct{}
+	poison           error
+	closed           bool
 	// Private fault seam exercises uncertain persistence boundaries.
 	beforeSync func() error
 }
@@ -160,6 +163,9 @@ func (j *Journal) checkPlacement(p runtimequota.Placement, existing bool) error 
 func (j *Journal) Check(p runtimequota.Placement) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if j.migrationPending[p.Permit.ID] != "" {
+		return ErrBinding
+	}
 	return j.checkPlacement(p, true)
 }
 
@@ -168,14 +174,14 @@ func (j *Journal) Check(p runtimequota.Placement) error {
 // grants it. A new seat is registered only after the old seat has been fenced
 // and its operations have returned; native pause must be proved separately.
 func (j *Journal) Begin(ctx context.Context, p runtimequota.Placement) (func(), error) {
-	return j.begin(ctx, p, false, false)
+	return j.begin(ctx, p, false, false, "")
 }
 
 // BeginLaunch durably registers a fresh physical attempt before any host work.
 // Replaying a registered launch is refused even after restart: a failed RPC or
 // empty live map cannot establish that the previous guest has been stopped.
 func (j *Journal) BeginLaunch(ctx context.Context, p runtimequota.Placement) (func(), error) {
-	return j.begin(ctx, p, true, false)
+	return j.begin(ctx, p, true, false, "")
 }
 
 // BeginResume excludes concurrent host operations while a serving seat is
@@ -185,14 +191,23 @@ func (j *Journal) BeginResume(ctx context.Context, p runtimequota.Placement) (fu
 	if p.Seat == nil {
 		return nil, runtimequota.ErrInvalid
 	}
-	return j.begin(ctx, p, false, true)
+	return j.begin(ctx, p, false, true, "")
 }
 
-func (j *Journal) begin(ctx context.Context, p runtimequota.Placement, launch, resume bool) (func(), error) {
+func (j *Journal) begin(ctx context.Context, p runtimequota.Placement, launch, resume bool, migrationToken string) (func(), error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if token := j.migrationPending[p.Permit.ID]; token != "" && token != migrationToken {
+		return nil, ErrBinding
+	}
+	if migrationToken != "" {
+		r, ok := j.migrations[migrationToken]
+		if !ok || r.Completed || r.Resume == nil || !samePlacement(*r.Resume, p) {
+			return nil, ErrBinding
+		}
 	}
 	if err := j.checkPlacement(p, false); err != nil {
 		return nil, err

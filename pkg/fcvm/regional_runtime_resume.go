@@ -13,6 +13,10 @@ import (
 // Once registered, the new seat stays pinned even after an uncertain native
 // error. Retrying cannot restore the old seat or release either physical hold.
 func (m *Manager) ResumeRegionalRuntime(ctx context.Context, instance string, p runtimequota.Placement) error {
+	return m.resumeRegionalRuntime(ctx, instance, p, "")
+}
+
+func (m *Manager) resumeRegionalRuntime(ctx context.Context, instance string, p runtimequota.Placement, migrationToken string) error {
 	if m == nil || m.vmm == nil || m.runtimeHostJournal == nil {
 		return runtimequotahost.ErrStorage
 	}
@@ -38,7 +42,12 @@ func (m *Manager) ResumeRegionalRuntime(ctx context.Context, instance string, p 
 	if err := m.authorizeRuntimeOwner(ctx, admission); err != nil {
 		return err
 	}
-	finish, err := m.runtimeHostJournal.BeginResume(ctx, p)
+	var finish func()
+	if migrationToken == "" {
+		finish, err = m.runtimeHostJournal.BeginResume(ctx, p)
+	} else {
+		finish, err = m.runtimeHostJournal.BeginMigrationResume(ctx, instance, migrationToken, p)
+	}
 	if err != nil {
 		return err
 	}
@@ -64,7 +73,14 @@ func (m *Manager) ResumeRegionalRuntime(ctx context.Context, instance string, p 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := m.authorizeRuntime(ctx, admission); err != nil {
+	if err := m.authorizeRuntimeOwner(ctx, admission); err != nil {
+		return err
+	}
+	if migrationToken == "" {
+		if err := m.runtimeHostJournal.Check(p); err != nil {
+			return err
+		}
+	} else if err := m.runtimeHostJournal.CompleteMigrationResume(ctx, instance, migrationToken, p); err != nil {
 		return err
 	}
 	m.mu.Lock()

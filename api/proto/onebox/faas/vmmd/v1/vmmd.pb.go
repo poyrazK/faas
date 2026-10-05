@@ -6051,8 +6051,10 @@ type PrepareLiveMigrationRequest struct {
 	// can pull the snapshot via the same Storage.Get call a wake
 	// would use.
 	SnapshotStorageKey string `protobuf:"bytes,2,opt,name=snapshot_storage_key,json=snapshotStorageKey,proto3" json:"snapshot_storage_key,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// ADR-628: exact serving source, retained with the minted lease before capture.
+	RegionalRuntime []byte `protobuf:"bytes,3,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *PrepareLiveMigrationRequest) Reset() {
@@ -6099,9 +6101,16 @@ func (x *PrepareLiveMigrationRequest) GetSnapshotStorageKey() string {
 	return ""
 }
 
+func (x *PrepareLiveMigrationRequest) GetRegionalRuntime() []byte {
+	if x != nil {
+		return x.RegionalRuntime
+	}
+	return nil
+}
+
 // PrepareLiveMigrationResponse carries the snapshot metadata +
 // the per-migration lease_token the new owner carries through
-// Phase 3. The lease_token is a UUIDv4 minted by the dying vmmd
+// Phase 3. The lease_token is a random 128-bit hex token minted by the dying vmmd
 // at PrepareLiveMigration time (the dying vmmd is the lease
 // authority — it owns the pause/resume decision). The new owner's
 // schedd presents the same token at Phase 3 (MigrateInstanceOwner
@@ -6116,7 +6125,7 @@ type PrepareLiveMigrationResponse struct {
 	// The vmstate blob key (canonical storage backend key the
 	// dying vmmd wrote under).
 	VmstateStorageKey string `protobuf:"bytes,2,opt,name=vmstate_storage_key,json=vmstateStorageKey,proto3" json:"vmstate_storage_key,omitempty"`
-	// The lease_token UUIDv4 the new owner carries through to
+	// The random lease_token the new owner carries through to
 	// Phase 3 + Phase 4. Distinct from the snapshot_storage_key so
 	// the new owner can mint its own UUIDv4 deterministically; the
 	// dying vmmd mints it so the lease's window is tied to the
@@ -6125,9 +6134,11 @@ type PrepareLiveMigrationResponse struct {
 	// Firecracker version used to create the snapshot. The destination
 	// passes this through the normal restore compatibility gate and falls
 	// back to a cold boot when the versions differ.
-	FcVersion     string `protobuf:"bytes,4,opt,name=fc_version,json=fcVersion,proto3" json:"fc_version,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	FcVersion string `protobuf:"bytes,4,opt,name=fc_version,json=fcVersion,proto3" json:"fc_version,omitempty"`
+	// Echo of the retained source. Capture is not authenticated native pause proof.
+	RegionalRuntime []byte `protobuf:"bytes,5,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *PrepareLiveMigrationResponse) Reset() {
@@ -6186,6 +6197,13 @@ func (x *PrepareLiveMigrationResponse) GetFcVersion() string {
 		return x.FcVersion
 	}
 	return ""
+}
+
+func (x *PrepareLiveMigrationResponse) GetRegionalRuntime() []byte {
+	if x != nil {
+		return x.RegionalRuntime
+	}
+	return nil
 }
 
 // AdoptMigratedInstanceRequest (Tier A5 / ADR-065) is the input
@@ -6530,11 +6548,13 @@ func (*AcknowledgeMigrationResponse) Descriptor() ([]byte, []int) {
 // resume the paused VM". The dying vmmd resumes the VM and
 // returns it to RUNNING; the snapshot stays where it was.
 type CancelLiveMigrationRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	InstanceId    string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
-	LeaseToken    string                 `protobuf:"bytes,2,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	InstanceId string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	LeaseToken string                 `protobuf:"bytes,2,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`
+	// Fresh issued serving seat on the retained original physical source.
+	RegionalRuntime []byte `protobuf:"bytes,3,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CancelLiveMigrationRequest) Reset() {
@@ -6581,10 +6601,21 @@ func (x *CancelLiveMigrationRequest) GetLeaseToken() string {
 	return ""
 }
 
+func (x *CancelLiveMigrationRequest) GetRegionalRuntime() []byte {
+	if x != nil {
+		return x.RegionalRuntime
+	}
+	return nil
+}
+
 type CancelLiveMigrationResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Populated only after lease-bound regional resume durably completed.
+	InstanceId      string `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	LeaseToken      string `protobuf:"bytes,2,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`
+	RegionalRuntime []byte `protobuf:"bytes,3,opt,name=regional_runtime,json=regionalRuntime,proto3" json:"regional_runtime,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CancelLiveMigrationResponse) Reset() {
@@ -6615,6 +6646,27 @@ func (x *CancelLiveMigrationResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use CancelLiveMigrationResponse.ProtoReflect.Descriptor instead.
 func (*CancelLiveMigrationResponse) Descriptor() ([]byte, []int) {
 	return file_onebox_faas_vmmd_v1_vmmd_proto_rawDescGZIP(), []int{78}
+}
+
+func (x *CancelLiveMigrationResponse) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *CancelLiveMigrationResponse) GetLeaseToken() string {
+	if x != nil {
+		return x.LeaseToken
+	}
+	return ""
+}
+
+func (x *CancelLiveMigrationResponse) GetRegionalRuntime() []byte {
+	if x != nil {
+		return x.RegionalRuntime
+	}
+	return nil
 }
 
 // ForwardRawRequestInit (issue #676 / ADR-080) is the first frame
@@ -10476,18 +10528,20 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\x125\n" +
 	"\aheaders\x18\x02 \x03(\v2\x1b.onebox.faas.vmmd.v1.HeaderR\aheaders\x12\x14\n" +
 	"\x05error\x18\x03 \x01(\tR\x05error\x127\n" +
-	"\btrailers\x18\a \x03(\v2\x1b.onebox.faas.vmmd.v1.HeaderR\btrailers\"p\n" +
+	"\btrailers\x18\a \x03(\v2\x1b.onebox.faas.vmmd.v1.HeaderR\btrailers\"\x9b\x01\n" +
 	"\x1bPrepareLiveMigrationRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x120\n" +
-	"\x14snapshot_storage_key\x18\x02 \x01(\tR\x12snapshotStorageKey\"\xb6\x01\n" +
+	"\x14snapshot_storage_key\x18\x02 \x01(\tR\x12snapshotStorageKey\x12)\n" +
+	"\x10regional_runtime\x18\x03 \x01(\fR\x0fregionalRuntime\"\xe1\x01\n" +
 	"\x1cPrepareLiveMigrationResponse\x12&\n" +
 	"\x0fmem_storage_key\x18\x01 \x01(\tR\rmemStorageKey\x12.\n" +
 	"\x13vmstate_storage_key\x18\x02 \x01(\tR\x11vmstateStorageKey\x12\x1f\n" +
 	"\vlease_token\x18\x03 \x01(\tR\n" +
 	"leaseToken\x12\x1d\n" +
 	"\n" +
-	"fc_version\x18\x04 \x01(\tR\tfcVersion\"\xac\x03\n" +
+	"fc_version\x18\x04 \x01(\tR\tfcVersion\x12)\n" +
+	"\x10regional_runtime\x18\x05 \x01(\fR\x0fregionalRuntime\"\xac\x03\n" +
 	"\x1cAdoptMigratedInstanceRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x127\n" +
@@ -10517,13 +10571,19 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"instanceId\x12\x1f\n" +
 	"\vlease_token\x18\x02 \x01(\tR\n" +
 	"leaseToken\"\x1e\n" +
-	"\x1cAcknowledgeMigrationResponse\"^\n" +
+	"\x1cAcknowledgeMigrationResponse\"\x89\x01\n" +
 	"\x1aCancelLiveMigrationRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x1f\n" +
 	"\vlease_token\x18\x02 \x01(\tR\n" +
-	"leaseToken\"\x1d\n" +
-	"\x1bCancelLiveMigrationResponse\"s\n" +
+	"leaseToken\x12)\n" +
+	"\x10regional_runtime\x18\x03 \x01(\fR\x0fregionalRuntime\"\x8a\x01\n" +
+	"\x1bCancelLiveMigrationResponse\x12\x1f\n" +
+	"\vinstance_id\x18\x01 \x01(\tR\n" +
+	"instanceId\x12\x1f\n" +
+	"\vlease_token\x18\x02 \x01(\tR\n" +
+	"leaseToken\x12)\n" +
+	"\x10regional_runtime\x18\x03 \x01(\fR\x0fregionalRuntime\"s\n" +
 	"\x15ForwardRawRequestInit\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\x12*\n" +

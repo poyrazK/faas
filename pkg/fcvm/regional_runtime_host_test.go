@@ -153,7 +153,7 @@ func TestRegionalHostResidentResumeAndWarmCaptureRespectSeatFence(t *testing.T) 
 				_, err = m.WarmSnapshot(t.Context(), req.Instance, SnapshotSpec{})
 			default:
 				v.snapErr = errors.New("capture failed")
-				_, err = m.SnapshotKeepAlive(t.Context(), req.Instance, SnapshotSpec{})
+				_, err = m.SnapshotKeepAlive(t.Context(), req.Instance, SnapshotSpec{MigrationLeaseToken: regionalMigrationToken, RegionalMigrationSource: &original, StorageKey: "snap/source/mem", VMStateStorageKey: "snap/source/vmstate"})
 			}
 			want := runtimequotahost.ErrFenced
 			if operation == "resume" {
@@ -197,15 +197,18 @@ func TestRegionalHostMigrationCaptureCannotEmbedAnUnguardedResume(t *testing.T) 
 	if _, err := m.Wake(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := j.FenceSeat(*req.RegionalRuntime.Seat, uuid.NewString()); err != nil {
-		t.Fatal(err)
+	if _, err := m.SnapshotKeepAlive(t.Context(), req.Instance, SnapshotSpec{}); !errors.Is(err, runtimequotahost.ErrBinding) {
+		t.Fatal("regional capture accepted an unbound lease", err)
 	}
-	_, err := m.SnapshotKeepAlive(t.Context(), req.Instance, SnapshotSpec{ResumeBeforePublish: true, BeforeResume: func(context.Context) error { return nil }})
+	_, err := m.SnapshotKeepAlive(t.Context(), req.Instance, SnapshotSpec{MigrationLeaseToken: "0123456789abcdef0123456789abcdef", RegionalMigrationSource: req.RegionalRuntime, StorageKey: "snap/source/mem", VMStateStorageKey: "snap/source/vmstate", ResumeBeforePublish: true, BeforeResume: func(context.Context) error { return nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if v.earlyChecks != 0 || len(v.resumed) != 0 {
 		t.Fatal("migration snapshot embedded a resume outside the host barrier")
+	}
+	if err := j.Check(*req.RegionalRuntime); !errors.Is(err, runtimequotahost.ErrBinding) {
+		t.Fatal("migration capture did not fence its source", err)
 	}
 	if err := m.Destroy(t.Context(), req.Instance); err != nil {
 		t.Fatal(err)
