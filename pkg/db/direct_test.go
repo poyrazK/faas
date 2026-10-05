@@ -187,10 +187,11 @@ var sessionScopedAcquire = map[string]string{
 // pool. Acquiring a connection is not by itself session-scoped; what matters
 // is whether anything session-scoped happens on it before release.
 var pooledAcquireOK = map[string]string{
-	"pkg/db/warmup.go":               "pool warm-up: acquires and releases N connections to prove capacity; must exercise the POOLED path",
-	"pkg/db/pgtest/pgtest.go":        "test harness; never runs against a pooler",
-	"pkg/db/pgtest/template.go":      "test harness; never runs against a pooler",
-	"pkg/state/pgstore_ratelimit.go": "atomic shared-rate statements, released on every path; no LISTEN, session lock, or other session state",
+	"pkg/db/warmup.go":                                   "pool warm-up: acquires and releases N connections to prove capacity; must exercise the POOLED path",
+	"pkg/db/pgtest/pgtest.go":                            "test harness; never runs against a pooler",
+	"pkg/db/pgtest/template.go":                          "test harness; never runs against a pooler",
+	"pkg/state/pgstore_ratelimit.go":                     "atomic shared-rate statements, released on every path; no LISTEN, session lock, or other session state",
+	"pkg/managedpostgres/neon/checkpoint_connections.go": "private customer maintenance pool: authenticated direct provider endpoint, never the control-plane transaction pooler",
 }
 
 // TestSessionScopedAcquiresRouteThroughDirectPool is the gate.

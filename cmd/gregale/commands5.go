@@ -221,12 +221,14 @@ func cmdStatus(args []string) int {
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale env <create|pull|push|diff>", "env")
+		PrintUsage(os.Stderr, "usage: gregale env <create|clone-status|pull|push|diff>", "env")
 		return 1
 	}
 	switch args[0] {
 	case "create":
 		return envCreate(args[1:])
+	case "clone-status":
+		return envCloneStatus(args[1:])
 	case "pull":
 		return envPull(args[1:])
 	case "push":
@@ -692,7 +694,7 @@ func openCustomerFile(path string) (*os.File, error) {
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------
 
-const appScaleUsage = "usage: gregale app <slug> scale [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
+const appScaleUsage = "usage: gregale app <slug> scale [--environment SLUG] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
 
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
 // Mirrors cmdApp (commands2.go:53-126) but with no --plan — plan
@@ -704,6 +706,8 @@ func cmdAppScale(slug string, args []string) int {
 		return 0
 	}
 	fs := newFlagSet("app scale", flag.ContinueOnError)
+	environment := fs.String("environment", "", "edit this project environment's workload settings")
+	workloadRevision := int64(-1)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
 	profile := fs.String("profile", "", "update named resource profile: micro|small|medium|large|xlarge")
@@ -792,7 +796,7 @@ func cmdAppScale(slug string, args []string) int {
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		policy, err := cliScalingPolicyPatchWithQueues(context.Background(), client, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
+		policy, err := cliScalingPolicyPatchWithQueues(context.Background(), environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
 		if err != nil {
 			return printErr("Invalid concurrency policy", err)
 		}
@@ -903,7 +907,7 @@ func cmdAppScale(slug string, args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	updated, err := client.UpdateApp(context.Background(), slug, req)
+	updated, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).UpdateApp(context.Background(), slug, req)
 	if err != nil {
 		return printErr("Scale failed", err)
 	}

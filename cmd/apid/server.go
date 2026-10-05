@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/copycontents"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
@@ -60,6 +61,8 @@ type server struct {
 	totp                             *totpGuard
 	objectStorage                    *objectstorage.Registry
 	managedPostgres                  *managedpostgres.Service
+	clonePostgresContentsReadPool    *copycontents.ReadPool
+	cloneWorkerAdmission             func(context.Context) error
 	managedPostgresReconciler        *managedpostgres.Reconciler
 	managedPostgresBindings          *managedpostgres.BindingService
 	managedPostgresCutovers          *managedpostgres.CutoverService
@@ -1301,12 +1304,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.whoami))))
 	// Issue #1278: account-wide unified failed-events ledger. This includes
 	// app-owned failures plus account-owned job/workflow runs.
-	mux.HandleFunc("GET /v1/account/dlq", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAccountDeadLetterEvents))))
-	mux.HandleFunc("POST /v1/account/dlq:replay_all", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayAllAccountDeadLetterEvents)))))
-	mux.HandleFunc("DELETE /v1/account/dlq", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.purgeAccountDeadLetterEvents)))))
-	mux.HandleFunc("GET /v1/account/dlq/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAccountDeadLetterEvent))))
-	mux.HandleFunc("DELETE /v1/account/dlq/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.deleteAccountDeadLetterEvent)))))
-	mux.HandleFunc("POST /v1/account/dlq/{id}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayAccountDeadLetterEvent)))))
+	mux.HandleFunc("GET /v1/account/dlq", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(productionDeadLetterHandler(s.listAccountDeadLetterEvents)))))
+	mux.HandleFunc("POST /v1/account/dlq:replay_all", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionDeadLetterHandler(s.idempotent(s.replayAllAccountDeadLetterEvents))))))
+	mux.HandleFunc("DELETE /v1/account/dlq", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionDeadLetterHandler(s.idempotent(s.purgeAccountDeadLetterEvents))))))
+	mux.HandleFunc("GET /v1/account/dlq/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(productionDeadLetterHandler(s.getAccountDeadLetterEvent)))))
+	mux.HandleFunc("DELETE /v1/account/dlq/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionDeadLetterHandler(s.idempotent(s.deleteAccountDeadLetterEvent))))))
+	mux.HandleFunc("POST /v1/account/dlq/{id}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionDeadLetterHandler(s.idempotent(s.replayAccountDeadLetterEvent))))))
 	mux.HandleFunc("GET /v1/account/rate-limits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAccountRateLimits))))
 	// Account-scoped trace lookup joins retained request evidence with durable
 	// queue lifecycle rows; the handler enforces the debugger plan gate.
@@ -2222,7 +2225,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/platform-tenant-self/operations/{id}/cancel", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsManage)(s.cancelPlatformTenantSelfExclusiveOperation)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/work-policies/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.upsertWorkPolicy))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/work-policies/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteWorkPolicy))))
-	mux.HandleFunc("POST /v1/apps/{slug}/work-policies/{name}/cancel-pending", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelPendingWork)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/work-policies/{name}/cancel-pending", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelPendingWork))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventDeliveries))))
 	mux.HandleFunc("GET /v1/apps/{slug}/event-deliveries/attempts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listEventFanoutAttemptHistory))))
 	mux.HandleFunc("POST /v1/apps/{slug}/event-deliveries:replay-fanout-failure", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayEventFanoutFailure)))))
@@ -2283,6 +2286,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/projects/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateProject))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectEnvironments))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createProjectEnvironment))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environment-clones", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createFullProjectEnvironmentClone))))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environment-clones/{clone}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentCloneOperation))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/releases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentReleases))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/qualifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentQualifySurface...)(s.idempotent(s.createProjectEnvironmentQualification)))))
@@ -2307,6 +2312,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/gitops/overrides", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.removeEnvironmentGitOpsOverride))))))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentRoutes)))))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/policies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentPolicies)))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.getProjectEnvironmentQueueBindings))))
+	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.replaceProjectEnvironmentQueueBindings))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/diff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.diffProjectEnvironment))))
 	mux.HandleFunc("PATCH /v1/projects/{slug}/environments/{environment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateProjectEnvironment))))
 	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.deleteProjectEnvironment)))))
@@ -2482,7 +2489,7 @@ func (s *server) handler() http.Handler {
 	// /queues/*; these routes manage only binding configuration.
 	mux.HandleFunc("PUT /v1/apps/{slug}/queue-workload", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.configureQueueWorkload))))
 	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listQueueBindings))))
-	mux.HandleFunc("POST /v1/apps/{slug}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createQueueBinding)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionQueueBindingHandler(s.idempotent(s.createQueueBinding))))))
 	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getQueueBinding))))
 	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings/{id}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getQueueBindingStatus))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateQueueBinding))))
@@ -2564,7 +2571,8 @@ func (s *server) handler() http.Handler {
 	// adminAllows email gate still narrows /v1/compute-nodes separately.
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.invokeApp))))
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke/async", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.invokeAppAsync)))))
-	mux.HandleFunc("POST /v1/apps/{slug}/queues/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(s.idempotent(s.queueSend)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/queues/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotent(s.queueSend))))))
+	mux.HandleFunc("POST /v1/apps/{slug}/inbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesEventsPublishSurface...)(productionQueueBindingHandler(s.idempotent(s.sendAppMessage))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/commit-sources", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createCommitSource))))
 	mux.HandleFunc("PUT /v1/commit-sources/{source}/connection", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putCommitSourceConnection))))
 	mux.HandleFunc("GET /v1/commit-sources/{source}/blocked-events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCommitBlockedEvents))))
@@ -2573,9 +2581,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/commit-sources/{source}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setCommitSourceEnabled))))
 	mux.HandleFunc("POST /v1/commit-sources/{source}/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesEventsPublishSurface...)(s.acceptCommitEvent))))
 	mux.HandleFunc("GET /v1/commit-sources/{source}/events/{event}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCommitReceipt))))
-	mux.HandleFunc("POST /v1/apps/{slug}/inbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesEventsPublishSurface...)(s.idempotent(s.sendAppMessage)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/queues/receive", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.queueReceive))))
-	mux.HandleFunc("POST /v1/apps/{slug}/queues/{id}/ack", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.queueAck)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/queues/{id}/ack", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionQueueBindingHandler(s.idempotent(s.queueAck))))))
 	// Issue #394 — queue introspection. Read-only endpoints under
 	// the same mount family. No lease is acquired; no row is mutated.
 	mux.HandleFunc("GET /v1/apps/{slug}/queues/state", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.queueState))))
@@ -2583,17 +2590,17 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/queues/dead_letter", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.queueDeadLetter))))
 	// Issue #1278: unified app-scoped DLQ ledger. Queue and trigger-specific
 	// endpoints remain available for backwards compatibility.
-	mux.HandleFunc("GET /v1/apps/{slug}/dlq", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeadLetterEvents))))
-	mux.HandleFunc("POST /v1/apps/{slug}/dlq:replay_all", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayAllDeadLetterEvents)))))
-	mux.HandleFunc("DELETE /v1/apps/{slug}/dlq", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.purgeDeadLetterEvents)))))
-	mux.HandleFunc("GET /v1/apps/{slug}/dlq/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeadLetterEvent))))
-	mux.HandleFunc("DELETE /v1/apps/{slug}/dlq/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.deleteDeadLetterEvent)))))
-	mux.HandleFunc("POST /v1/apps/{slug}/dlq/{id}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayDeadLetterEvent)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/dlq", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(productionDeadLetterHandler(s.listDeadLetterEvents)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/dlq:replay_all", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionDeadLetterHandler(s.idempotent(s.replayAllDeadLetterEvents))))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/dlq", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionDeadLetterHandler(s.idempotent(s.purgeDeadLetterEvents))))))
+	mux.HandleFunc("GET /v1/apps/{slug}/dlq/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(productionDeadLetterHandler(s.getDeadLetterEvent)))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/dlq/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionDeadLetterHandler(s.idempotent(s.deleteDeadLetterEvent))))))
+	mux.HandleFunc("POST /v1/apps/{slug}/dlq/{id}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionDeadLetterHandler(s.idempotent(s.replayDeadLetterEvent))))))
 	// ADR-134 PR-C: replay a dead_letter queue row back to
 	// pending. Idempotent-wrapped because a retried POST after a
 	// network blip must not double-enqueue; the SDK mints
 	// Idempotency-Key automatically on POST.
-	mux.HandleFunc("POST /v1/apps/{slug}/queues/dead_letter/{id}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.queueDeadLetterReplay)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/queues/dead_letter/{id}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionQueueBindingHandler(s.idempotent(s.queueDeadLetterReplay))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/delayed-tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDelayedTasksWriteSurface...)(s.idempotent(s.delayedTaskCreate)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/delayed-tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDelayedTasksReadSurface...)(s.delayedTaskList))))
 	mux.HandleFunc("GET /v1/invocations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listInvocations))))
@@ -2754,6 +2761,10 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.previewManagedPostgresUsageImport)))))
 	mux.HandleFunc("POST /v1/admin/managed-postgres/accounting/{account_id}/usage-imports",
 		s.authLimited(s.requireAdminMutation(s.applyManagedPostgresUsageImport)))
+	mux.HandleFunc("POST /v1/admin/managed-postgres/accounting/{account_id}/reconciliations/preview",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.previewManagedPostgresAccountingReconciliation)))))
+	mux.HandleFunc("POST /v1/admin/managed-postgres/accounting/{account_id}/reconciliations",
+		s.authLimited(s.requireAdminMutation(s.applyManagedPostgresAccountingReconciliation)))
 	mux.HandleFunc("GET /v1/admin/obs/tenants",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsListTenants))))
 	mux.HandleFunc("GET /v1/admin/obs/capacity",
@@ -4138,6 +4149,12 @@ func (s *server) idempotent(next accountHandler) accountHandler {
 	return s.idempotentWith(next, nil)
 }
 
+// The legacy method/path identity is preserved for production. An owned
+// environment ID separates stage receipts, including after slug recreation.
+func (s *server) idempotentInEnvironment(environmentID string, next accountHandler) accountHandler {
+	return s.idempotentWithInEnvironment(environmentID, next, nil)
+}
+
 // idempotentDeploy is idempotent for routes that create a deployment. A
 // stored response naming a deployment that has since failed, been
 // cancelled, or been superseded is not replayed; the request runs again.
@@ -4151,6 +4168,10 @@ func (s *server) idempotentDeploy(next accountHandler) accountHandler {
 type replayStaleFunc func(ctx context.Context, acct state.Account, status int, body []byte) bool
 
 func (s *server) idempotentWith(next accountHandler, stale replayStaleFunc) accountHandler {
+	return s.idempotentWithInEnvironment("", next, stale)
+}
+
+func (s *server) idempotentWithInEnvironment(environmentID string, next accountHandler, stale replayStaleFunc) accountHandler {
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		key := r.Header.Get("Idempotency-Key")
 		if key == "" {
@@ -4171,6 +4192,9 @@ func (s *server) idempotentWith(next accountHandler, stale replayStaleFunc) acco
 		// reusing a key on another endpoint runs that request instead of
 		// replaying an unrelated cached response.
 		key = r.Method + " " + r.URL.Path + "\n" + key
+		if environmentID != "" {
+			key = "environment " + environmentID + "\n" + key
+		}
 		if reserver, ok := s.store.(idempotencyReserver); ok {
 			s.idempotentReserved(w, r, acct, reserver, key, next, stale)
 			return

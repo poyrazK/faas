@@ -166,6 +166,10 @@ func Run(t *testing.T, open Open) {
 		{"public_status_lifecycle_is_idempotent", testPublicStatusLifecycle},
 		{"account_deploy_rate_window_is_fixed_and_durable", testAccountDeployRateWindow},
 		{"instance_runtime_publication_is_atomic", testPublishInstanceRuntime},
+		{"owned_runtime_publication_is_fenced", testOwnedRuntimePublication},
+		{"deployment_scaling_clocks_are_owned", testDeploymentScalingClocks},
+		{"layer_deletion_claims_are_durable", testLayerDeletionClaims},
+		{"production_queue_reader_rejects_other_sources", testProductionQueueReader},
 		{"startup_cpu_boost_reservation_is_durable_and_expires", testStartupCPUBoostReservation},
 		{"parked_instance_retention_is_lifecycle_gated", testParkedInstanceRetention},
 		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
@@ -2999,9 +3003,22 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 		t.Fatalf("initial secret metadata = revision %d delivery %d status %q, want 1/1/pending", first.SecretVersion, first.DeliveryVersion, first.DeliveryStatus)
 	}
 
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID, string(state.StateRunning), 256, fx.Node.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := fx.Store.RuntimeAppValuesForDeployment(fx.Ctx, fx.Account.ID, fx.App.ID, fx.Deployment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence, err := state.NewRuntimeAppSecretFence(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	result := state.AppSecretDeliveryResult{
-		AccountID: fx.Account.ID, AppID: fx.App.ID, WakeID: "wake-conformance",
-		InstanceID: "instance-conformance", Status: state.SecretDeliveryDelivered,
+		Fence:     fence,
+		AccountID: fx.Account.ID, AppID: fx.App.ID, WakeID: instance.WakeID,
+		InstanceID: instance.ID, Status: state.SecretDeliveryDelivered,
 		Candidates: []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: first.DeliveryVersion}},
 	}
 	updated, err := fx.Store.RecordAppSecretDelivery(fx.Ctx, result)
@@ -3021,8 +3038,8 @@ func testAppSecretDeliveryVersionFence(t *testing.T, fx *Fixture) {
 	}
 
 	updated, err = fx.Store.RecordAppSecretDelivery(fx.Ctx, result)
-	if err != nil || updated != 0 {
-		t.Fatalf("stale RecordAppSecretDelivery(v1): updated=%d err=%v, want 0/nil", updated, err)
+	if !errors.Is(err, state.ErrConflict) || updated != 0 {
+		t.Fatalf("stale RecordAppSecretDelivery(v1): updated=%d err=%v, want conflict", updated, err)
 	}
 	current, err := fx.Store.GetAppSecretInScope(fx.Ctx, fx.Account.ID, fx.App.ID, scope, key)
 	if err != nil {

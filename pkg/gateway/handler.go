@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"io"
 	"log/slog"
 	"net"
@@ -33,6 +32,7 @@ import (
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -104,6 +104,9 @@ type App struct {
 	// security_scan_regressed parking reason. The edge rejects requests before
 	// auth, wake, or proxy work so a stale target cannot serve after quarantine.
 	SecurityQuarantined bool
+	// A known stage under preparation has no stable serving graph. Reject
+	// before authentication, edge answers, admission or any production fallback.
+	EnvironmentNotReady bool
 	// Visibility controls public edge routing. Internal apps are deliberately
 	// omitted by the public hostname resolver; service-proxy resolution uses
 	// the app store directly and remains available to authenticated callers.
@@ -1895,7 +1898,7 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 	allowed, err := h.declaredRoutes.MatchDeclaredRoute(r.Context(), app, requestPath, requestMethod)
 	if err != nil {
 		if h.log != nil {
-			h.log.Warn("gateway: declared route policy unavailable", "app_id", app.ID, "path", logsanitize.Field(requestPath), "method", requestMethod, "err", err)
+			h.log.Warn("gateway: declared route policy unavailable", "app_id", app.ID, "path", logsanitize.Field(requestPath), "method", logsanitize.Field(requestMethod), "err", logsanitize.FieldAny(err))
 		}
 		w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
@@ -5748,17 +5751,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Issue #561 / ADR-089 PR 3 — consult the per-host
-	// edge-rule matcher BEFORE Backend.Lookup. On a
-	// `kind=route` hit the matcher overwrites `app` with
-	// the target App and we skip the Lookup entirely
-	// (the substituted App is authoritative; re-running
-	// Lookup on the inbound hostname would waste a cache
-	// miss). Downstream RequireAuthn / PublicAuth / wake
-	// gate / proxy all see the *target* app's context,
-	// not the inbound host's. nil-safe: h.edgeRules nil
-	// (default) returns false and we fall through to the
-	// legacy host→app lookup.
+	// ADR-590: resolve source-host readiness before route substitution. Once
+	// ready, the ADR-089 route matcher may select another app whose auth,
+	// admission and proxy settings apply to the rest of the request.
 	var (
 		app       App
 		lookedApp App
@@ -5769,9 +5764,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.observe(r, rec.status, "", "", false, Target{})
 		return
 	}
-	if h.matchAndSubstituteRoute(r, appHost, &app) {
-		goto haveApp
-	}
 	//nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
 	lookedApp, ok, lookupErr = h.lookupAppPolicy(r, appHost)
 	if lookupErr != nil {
@@ -5780,6 +5772,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.observe(r, rec.status, "", "", false, Target{})
 		return
+	}
+	// A source host under preparation cannot escape its readiness gate through
+	// a route rewrite to another workload or through an edge answer.
+	if ok && lookedApp.EnvironmentNotReady {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Environment is not ready", "the stage clone has not published all of its workloads and resources"))
+		h.observe(r, rec.status, lookedApp.ID, string(lookedApp.Plan), false, Target{})
+		return
+	}
+	if h.matchAndSubstituteRoute(r, appHost, &app) {
+		goto haveApp
 	}
 	if !ok {
 		markTrafficPhase(r.Context(), trafficOwnership)
@@ -5790,6 +5793,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	if app.EnvironmentNotReady {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Environment is not ready", "the stage clone has not published all of its workloads and resources"))
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
 	if h.pinAppTrafficPolicy(w, r, &app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -6890,7 +6899,7 @@ haveApp:
 			// fallback path. Failure here means the cold
 			// bucket won't wake this request — the next
 			// notify will refresh weights.
-			h.log.Warn("apid: wake-fan-out admit failed", "err", bucketErr, "deployment_id", logsanitize.Field(pick.ColdBucket))
+			h.log.Warn("apid: wake-fan-out admit failed", "err", logsanitize.FieldAny(bucketErr), "deployment_id", logsanitize.Field(pick.ColdBucket))
 		} else if bucketWakeID != "" {
 			cold, wakeID, wakeMethod = true, bucketWakeID, bucketMethod
 		}

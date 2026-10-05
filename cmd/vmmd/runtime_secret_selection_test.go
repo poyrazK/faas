@@ -22,6 +22,10 @@ func (s migrationDeliveryStore) ListAppSecretsInScope(context.Context, string, s
 	return s.rows, nil
 }
 
+func (s migrationDeliveryStore) RuntimeAppValuesForDeployment(ctx context.Context, accountID, appID, deploymentID string) (state.RuntimeAppValuesSnapshot, error) {
+	return (&runtimeSecretsStoreStub{deployment: s.deployment, secretRows: s.rows}).RuntimeAppValuesForDeployment(ctx, accountID, appID, deploymentID)
+}
+
 func TestRuntimeSecretRefreshExcludesMigrationBindings(t *testing.T) {
 	s := migrationDeliveryStore{deployment: state.Deployment{ID: "dep", AppID: "app", Scope: "default"}, rows: []state.AppSecret{
 		{AccountID: "acct", AppID: "app", Scope: "default", Key: "DATABASE_URL", Ciphertext: []byte("runtime"), DeliveryVersion: 1},

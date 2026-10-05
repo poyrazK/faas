@@ -38,6 +38,8 @@ type pgRouter struct {
 	tenantSurfacesEnabled func() bool
 }
 
+var errProjectEnvironmentCloneNotReady = errors.New("project environment clone is not ready")
+
 var errPlatformTenantSuspended = errors.New("platform tenant suspended")
 
 var _ gateway.Router = pgRouter{}
@@ -196,8 +198,7 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 	if err != nil {
 		return gateway.App{}, false, err
 	}
-	if app.ProjectID == "" || app.ProjectID != environment.ProjectID || app.AccountID != environment.AccountID ||
-		(api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal && !gateway.DevBridgeAllowsPrivateEnvironment(ctx, app.AccountID, environment.ID, app.ID)) {
+	if app.ProjectID == "" || app.ProjectID != environment.ProjectID || app.AccountID != environment.AccountID {
 		return gateway.App{}, false, nil
 	}
 	// Headers policies may carry security headers. A failed authoritative
@@ -206,12 +207,29 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 		return gateway.App{}, false, err
 	}
 	deployment, found, err := r.environmentDeployment(ctx, app, environment)
+	if errors.Is(err, errProjectEnvironmentCloneNotReady) {
+		acct, acctErr := r.store.AccountByID(ctx, app.AccountID)
+		if acctErr != nil {
+			return gateway.App{}, false, acctErr
+		}
+		if app.Status == state.AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+			return gateway.App{}, false, nil
+		}
+		return gateway.App{ID: app.ID, AccountID: acct.ID, Plan: acct.Plan, AccountStatus: string(acct.Status),
+			AccountAbuseHeld: acct.AbuseHeld(), EnvironmentNotReady: true, DynamicRoute: true}, true, nil
+	}
 	if err != nil || !found {
 		return gateway.App{}, found, err
 	}
 	resolved, found, err := r.toAppWithDeployment(ctx, app, &deployment)
 	if err != nil || !found {
 		return resolved, found, err
+	}
+	// The selected deployment owns visibility; a production edit cannot
+	// hide or expose a stage. Private stages still require a verified bridge.
+	if api.NormalizeAppVisibility(resolved.Visibility) == api.AppVisibilityInternal &&
+		!gateway.DevBridgeAllowsPrivateEnvironment(ctx, app.AccountID, environment.ID, app.ID) {
+		return gateway.App{}, false, nil
 	}
 	resolved.PinnedDeploymentID = deployment.ID
 	resolved.PinnedDeploymentScope = environment.Slug
@@ -220,6 +238,17 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 }
 
 func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, environment state.ProjectEnvironment) (state.Deployment, bool, error) {
+	if clones, ok := r.store.(interface {
+		ProjectEnvironmentCloneTargetOperation(context.Context, string, string, string) (state.ProjectEnvironmentCloneOperation, error)
+	}); ok {
+		op, err := clones.ProjectEnvironmentCloneTargetOperation(ctx, environment.AccountID, environment.ProjectID, environment.Slug)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return state.Deployment{}, false, err
+		}
+		if err == nil && op.Status != state.CloneOperationReady {
+			return state.Deployment{}, false, errProjectEnvironmentCloneNotReady
+		}
+	}
 	if reader, ok := r.store.(interface {
 		ActiveProjectReleaseSet(context.Context, string, string, string) (state.ProjectReleaseSet, error)
 	}); ok {
@@ -280,9 +309,6 @@ func (r pgRouter) deploymentAliasByHostLabel(ctx context.Context, hostLabel stri
 	if err != nil {
 		return gateway.App{}, false, err
 	}
-	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
-		return gateway.App{}, false, nil
-	}
 	deployment, err := r.store.DeploymentByID(ctx, alias.DeploymentID)
 	if errors.Is(err, state.ErrNotFound) {
 		return gateway.App{}, false, nil
@@ -296,6 +322,9 @@ func (r pgRouter) deploymentAliasByHostLabel(ctx context.Context, hostLabel stri
 	resolved, found, err := r.toAppWithDeployment(ctx, app, &deployment)
 	if err != nil || !found {
 		return resolved, found, err
+	}
+	if api.NormalizeAppVisibility(resolved.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
 	}
 	resolved.PinnedDeploymentID = deployment.ID
 	if deployment.Scope != "default" {
@@ -316,9 +345,6 @@ func (r pgRouter) deploymentPreview(ctx context.Context, slug string, revision i
 	if err != nil {
 		return gateway.App{}, false, err
 	}
-	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
-		return gateway.App{}, false, nil
-	}
 	deployment, err := r.store.DeploymentByRevision(ctx, app.ID, revision)
 	if errors.Is(err, state.ErrNotFound) {
 		return gateway.App{}, false, nil
@@ -332,6 +358,9 @@ func (r pgRouter) deploymentPreview(ctx context.Context, slug string, revision i
 	resolved, ok, err := r.toAppWithDeployment(ctx, app, &deployment)
 	if err != nil || !ok {
 		return gateway.App{}, ok, err
+	}
+	if api.NormalizeAppVisibility(resolved.Visibility) == api.AppVisibilityInternal {
+		return gateway.App{}, false, nil
 	}
 	resolved.PinnedDeploymentID = deployment.ID
 	resolved.PinnedDeploymentScope = deployment.Scope
@@ -535,6 +564,13 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 }
 
 func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact *state.Deployment) (gateway.App, bool, error) {
+	if exact != nil {
+		resolved, err := state.ResolveAppForDeployment(ctx, r.store, app, *exact)
+		if err != nil {
+			return gateway.App{}, false, err
+		}
+		app = resolved
+	}
 	if app.Status == state.AppDeleted {
 		return gateway.App{}, false, nil
 	}
@@ -561,12 +597,23 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		liveDeployments = deps
 	}
 	for _, dep := range liveDeployments {
+		if exact == nil && dep.TrafficPercent <= 0 {
+			continue
+		}
 		if dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
 			securityQuarantined = true
 			break
 		}
 	}
-	companionRoutes, primaryIngressPort, err := gatewayCompanionRoutes(liveDeployments)
+	companionDeployments := liveDeployments
+	if exact != nil {
+		// Preview and retained-release routes explicitly select a deployment,
+		// including dark candidates. Its sidecars do not depend on weights.
+		selected := *exact
+		selected.TrafficPercent = 100
+		companionDeployments = []state.Deployment{selected}
+	}
+	companionRoutes, primaryIngressPort, err := gatewayCompanionRoutes(companionDeployments)
 	if err != nil {
 		return gateway.App{}, false, err
 	}

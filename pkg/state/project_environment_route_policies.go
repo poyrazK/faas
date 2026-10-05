@@ -46,7 +46,8 @@ func (m *MemStore) PutProjectEnvironmentRoutePolicy(_ context.Context, policy Pr
 	if !ok || app.AccountID != policy.AccountID || app.ProjectID != policy.ProjectID || app.Status == AppDeleted {
 		return ProjectEnvironmentRoutePolicy{}, ErrNotFound
 	}
-	if _, err := m.projectEnvironmentBySlugLocked(policy.ProjectID, policy.EnvironmentSlug); err != nil {
+	environment, err := m.projectEnvironmentBySlugLocked(policy.ProjectID, policy.EnvironmentSlug)
+	if err != nil {
 		return ProjectEnvironmentRoutePolicy{}, err
 	}
 	if err := validateMemTrafficProjection("environment_route_policy", environmentRouteTrafficProjection(policy)); err != nil {
@@ -55,6 +56,28 @@ func (m *MemStore) PutProjectEnvironmentRoutePolicy(_ context.Context, policy Pr
 	memory, err := m.gitOpsGuardScopedWriteLocked(policy.AccountID, policy.AppID, policy.EnvironmentSlug, []string{"routes"})
 	if err != nil {
 		return ProjectEnvironmentRoutePolicy{}, err
+	}
+	current := m.projectEnvironmentWorkloadSpecs[m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(environment.ID, app.ID)]]
+	settings := current.Settings
+	if current.ID == "" {
+		settings, err = WorkloadSettingsFromApp(app)
+		if err != nil {
+			return ProjectEnvironmentRoutePolicy{}, err
+		}
+	}
+	settings.OnlyAllowDeclaredRoutes, settings.DeclaredRoutes = policy.OnlyAllowDeclaredRoutes, cloneDeclaredRoutes(policy.DeclaredRoutes)
+	settings, err = cloneWorkloadSettings(settings)
+	if err != nil {
+		return ProjectEnvironmentRoutePolicy{}, err
+	}
+	hash, err := WorkloadSettingsHash(settings)
+	if err != nil {
+		return ProjectEnvironmentRoutePolicy{}, err
+	}
+	if environment.Slug != "production" || current.ID != "" {
+		if _, err := m.putWorkloadSpecLocked(environment, app.ID, current.Revision, settings, hash); err != nil {
+			return ProjectEnvironmentRoutePolicy{}, err
+		}
 	}
 	key := projectEnvironmentRoutePolicyKey(policy.AppID, policy.EnvironmentSlug)
 	now := time.Now().UTC()
@@ -109,7 +132,40 @@ func (s *PgStore) PutProjectEnvironmentRoutePolicy(ctx context.Context, policy P
 	if err != nil {
 		return ProjectEnvironmentRoutePolicy{}, err
 	}
-	row := s.pool.QueryRow(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ProjectEnvironmentRoutePolicy{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	var environmentID string
+	if err := tx.QueryRow(ctx, `select id::text from project_environments
+		where account_id = $1 and project_id = $2 and slug = $3 for update`,
+		policy.AccountID, policy.ProjectID, policy.EnvironmentSlug).Scan(&environmentID); err != nil {
+		return ProjectEnvironmentRoutePolicy{}, mapErr(err)
+	}
+	app, err := scanApp(tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps
+		where id = $1 and account_id = $2 and project_id = $3 and status <> 'deleted' for update`,
+		policy.AppID, policy.AccountID, policy.ProjectID))
+	if err != nil {
+		return ProjectEnvironmentRoutePolicy{}, err
+	}
+	current, err := scanWorkloadSpec(tx.QueryRow(ctx, workloadSpecSelect+`
+		join project_environment_workload_heads h on h.spec_id = s.id
+		where s.environment_id = $1 and s.app_id = $2`, environmentID, app.ID))
+	settings := current.Settings
+	if errors.Is(err, ErrNotFound) {
+		settings, err = WorkloadSettingsFromApp(app)
+	}
+	if err != nil {
+		return ProjectEnvironmentRoutePolicy{}, err
+	}
+	settings.OnlyAllowDeclaredRoutes, settings.DeclaredRoutes = policy.OnlyAllowDeclaredRoutes, routeList
+	if policy.EnvironmentSlug != "production" || current.ID != "" {
+		if _, err := putWorkloadSpecTx(ctx, tx, environmentID, app.ID, current.Revision, settings); err != nil {
+			return ProjectEnvironmentRoutePolicy{}, err
+		}
+	}
+	row := tx.QueryRow(ctx, `
 		insert into project_environment_route_policies
 		    (account_id, project_id, app_id, environment_slug, only_allow_declared_routes, declared_routes)
 		select $1, $2, $3, $4, $5, $6::jsonb
@@ -134,6 +190,9 @@ func (s *PgStore) PutProjectEnvironmentRoutePolicy(ctx context.Context, policy P
 	}
 	if err := json.Unmarshal(storedRoutes, &stored.DeclaredRoutes); err != nil {
 		return ProjectEnvironmentRoutePolicy{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectEnvironmentRoutePolicy{}, mapErr(err)
 	}
 	return stored, nil
 }

@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -28,19 +30,33 @@ type invocationAppReader interface {
 	AppByID(context.Context, string) (App, error)
 }
 
+type invocationPinScopeStore interface {
+	ResolveInvocationPinScope(context.Context, string, string, string) (string, error)
+}
+
+type invocationEnvironmentStore interface {
+	ProjectEnvironmentBySlug(context.Context, string, string, string) (ProjectEnvironment, error)
+	DeploymentByID(context.Context, string) (Deployment, error)
+}
+
+// A stage requires owned work admission. Queue consumers and completion
+// destinations remain unavailable until their environment ownership exists.
+var ErrInvocationEnvironmentWorkIsolation = fmt.Errorf("%w: invocation environment work isolation is unavailable", ErrConflict)
+
 // ResolveInvocationVersion validates untrusted pin headers at delivery time.
-// It also selects the active release for project invocations without a pin.
+// It recovers the environment from a pin's owned identity, and selects the
+// active production release for project invocations without a pin.
 // The returned invocation carries the canonical release header; persisting an
 // explicit pin at enqueue and checking it again here prevents a delayed task
 // from silently moving to a newer graph after the old one expires.
 func ResolveInvocationVersion(ctx context.Context, store invocationAppReader, inv Invocation) (Invocation, InvocationVersion, error) {
 	if snapshot, ok := store.(InvocationVersionSnapshotStore); ok {
-		prepared, version, _, err := resolveInvocationDispatch(ctx, snapshot, inv, nil)
+		prepared, version, _, err := resolveInvocationDispatch(ctx, snapshot, inv, nil, "", false)
 		return prepared, version, err
 	}
 	// Compatibility for minimal unpinned adapters. Hide optional pool resolvers:
 	// a pin requires a committed snapshot and cannot use independent reads.
-	return resolveInvocationVersion(ctx, struct{ invocationAppReader }{store}, inv)
+	return resolveInvocationVersion(ctx, struct{ invocationAppReader }{store}, inv, "", false)
 }
 
 // ResolveInvocationDispatch reads owner, version and optional delivery target in
@@ -51,10 +67,10 @@ func ResolveInvocationDispatch(ctx context.Context, store invocationAppReader, i
 	if !ok {
 		return inv, InvocationVersion{}, "", ErrConflict
 	}
-	return resolveInvocationDispatch(ctx, snapshot, inv, target)
+	return resolveInvocationDispatch(ctx, snapshot, inv, target, "", false)
 }
 
-func resolveInvocationDispatch(ctx context.Context, snapshot InvocationVersionSnapshotStore, inv Invocation, target *InvocationTarget) (Invocation, InvocationVersion, string, error) {
+func resolveInvocationDispatch(ctx context.Context, snapshot InvocationVersionSnapshotStore, inv Invocation, target *InvocationTarget, environment string, ingress bool) (Invocation, InvocationVersion, string, error) {
 	var prepared Invocation
 	var version InvocationVersion
 	var owner string
@@ -63,7 +79,7 @@ func resolveInvocationDispatch(ctx context.Context, snapshot InvocationVersionSn
 		if err != nil {
 			return err
 		}
-		prepared, version, err = resolveInvocationVersionForApp(ctx, reader, inv, app)
+		prepared, version, err = resolveInvocationVersionForApp(ctx, reader, inv, app, environment, ingress)
 		if err != nil {
 			return err
 		}
@@ -88,20 +104,27 @@ func resolveInvocationDispatch(ctx context.Context, snapshot InvocationVersionSn
 	return prepared, version, owner, nil
 }
 
-func resolveInvocationVersion(ctx context.Context, store invocationAppReader, inv Invocation) (Invocation, InvocationVersion, error) {
+// ResolveInvocationVersionForEnvironment authenticates a trusted ingress scope
+// in the same committed view as owner, release and private work admission.
+func ResolveInvocationVersionForEnvironment(ctx context.Context, store invocationAppReader, inv Invocation, environment string) (Invocation, InvocationVersion, error) {
+	if snapshot, ok := store.(InvocationVersionSnapshotStore); ok {
+		prepared, version, _, err := resolveInvocationDispatch(ctx, snapshot, inv, nil, environment, true)
+		return prepared, version, err
+	}
+	return resolveInvocationVersion(ctx, struct{ invocationAppReader }{store}, inv, environment, true)
+}
+
+func resolveInvocationVersion(ctx context.Context, store invocationAppReader, inv Invocation, environment string, ingress bool) (Invocation, InvocationVersion, error) {
 	app, err := store.AppByID(ctx, inv.AppID)
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
-	return resolveInvocationVersionForApp(ctx, store, inv, app)
+	return resolveInvocationVersionForApp(ctx, store, inv, app, environment, ingress)
 }
 
-func resolveInvocationVersionForApp(ctx context.Context, store invocationAppReader, inv Invocation, app App) (Invocation, InvocationVersion, error) {
+func resolveInvocationVersionForApp(ctx context.Context, store invocationAppReader, inv Invocation, app App, environment string, ingress bool) (Invocation, InvocationVersion, error) {
 	if app.Status == AppDeleted || app.DeletedAt != nil || inv.AccountID != "" && inv.AccountID != app.AccountID {
 		return inv, InvocationVersion{}, ErrNotFound
-	}
-	if InvocationHasOperation(inv) {
-		return resolveOperationInvocationVersion(ctx, store, app, inv)
 	}
 	headers := map[string]string{}
 	if len(inv.Headers) > 0 {
@@ -118,6 +141,24 @@ func resolveInvocationVersionForApp(ctx context.Context, store invocationAppRead
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
+	// Durable private work must retain its original marker and explicit pin.
+	// Never repair a damaged envelope by resolving today's active release.
+	if reader, ok := store.(InvocationEnvironmentOwnerReader); ok && inv.ID != "" && !syntheticTriggerInvocation(inv) {
+		stored, readErr := reader.InvocationEnvironmentID(ctx, inv.ID)
+		if readErr != nil && !errors.Is(readErr, ErrNotFound) {
+			return inv, InvocationVersion{}, readErr
+		}
+		if readErr == nil && stored != inv.EnvironmentID {
+			return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
+		}
+	}
+	if inv.EnvironmentID != "" && revision == "" && release == "" {
+		return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
+	}
+	if InvocationHasOperation(inv) {
+		return resolveOperationInvocationVersion(ctx, store, app, inv)
+	}
+	capturedScope := inv.DeploymentScope != ""
 	projectApp := app.ProjectID != "" && app.PreviewOfSlug == ""
 	scope, err := invocationDeploymentScope(app, inv.DeploymentScope)
 	if err != nil {
@@ -127,8 +168,65 @@ func resolveInvocationVersionForApp(ctx context.Context, store invocationAppRead
 	if !projectApp && release != "" {
 		return inv, InvocationVersion{}, ErrNotFound
 	}
+	if ingress {
+		if environment != "" && api.ValidateScope(environment) != nil {
+			return inv, InvocationVersion{}, ErrInvalidArgument
+		}
+		scope = normalizedDeploymentScope(environment)
+		if projectApp {
+			scope = workloadEnvironmentSlug(scope)
+		}
+	}
+	if revision != "" || release != "" {
+		if reader, ok := store.(invocationPinScopeStore); ok {
+			pinScope, scopeErr := reader.ResolveInvocationPinScope(ctx, app.ID, revision, release)
+			if scopeErr != nil {
+				return inv, InvocationVersion{}, scopeErr
+			}
+			if (ingress || capturedScope) && !invocationScopesMatch(projectApp, scope, pinScope) {
+				if inv.EnvironmentID != "" {
+					return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
+				}
+				return inv, InvocationVersion{}, ErrNotFound
+			}
+			scope = pinScope
+		} else if invocationStageScope(scope) {
+			return inv, InvocationVersion{}, ErrConflict
+		}
+	}
+	if api.ValidateScope(scope) != nil {
+		return inv, InvocationVersion{}, ErrConflict
+	}
+	if ingress && !projectApp && scope != DefaultEnvScope {
+		return inv, InvocationVersion{}, ErrNotFound
+	}
+	boundQueue, err := validateBoundQueueEnvironment(ctx, store, inv, scope)
+	if err != nil {
+		return inv, InvocationVersion{}, err
+	}
+	if projectApp && invocationStageScope(scope) {
+		reader, ok := store.(invocationEnvironmentStore)
+		if !ok {
+			return inv, InvocationVersion{}, ErrConflict
+		}
+		env, lookupErr := reader.ProjectEnvironmentBySlug(ctx, app.AccountID, app.ProjectID, scope)
+		if lookupErr != nil {
+			return inv, InvocationVersion{}, lookupErr
+		}
+		if env.AccountID != app.AccountID || env.ProjectID != app.ProjectID || env.Slug != scope {
+			return inv, InvocationVersion{}, ErrConflict
+		}
+		if (!boundQueue && invocationHasSharedWorkProducer(inv) && (inv.ID == "" || inv.EnvironmentID == "" || !stageQueueInvocationShape(inv))) ||
+			inv.OnSuccessDestinationID != "" || inv.OnFailureDestinationID != "" {
+			return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
+		}
+	}
+	inv.DeploymentScope = scope
 	version := InvocationVersion{Scope: scope}
 	if revision == "" && !projectApp {
+		if err := validateInvocationWorkEnvironmentAdmission(ctx, store, inv, version); err != nil {
+			return inv, InvocationVersion{}, err
+		}
 		return inv, version, nil
 	}
 	resolver, ok := store.(InvocationVersionReader)
@@ -148,8 +246,23 @@ func resolveInvocationVersionForApp(ctx context.Context, store invocationAppRead
 			return inv, InvocationVersion{}, err
 		}
 	}
+	if err := validateInvocationWorkEnvironmentAdmission(ctx, store, inv, version); err != nil {
+		return inv, InvocationVersion{}, err
+	}
 	if version.DeploymentID == "" {
+		if invocationStageScope(scope) && !boundQueue {
+			return inv, InvocationVersion{}, ErrNotFound
+		}
 		return inv, version, nil
+	}
+	if invocationStageScope(scope) {
+		dep, lookupErr := store.(invocationEnvironmentStore).DeploymentByID(ctx, version.DeploymentID)
+		if lookupErr != nil {
+			return inv, InvocationVersion{}, lookupErr
+		}
+		if dep.AppID != app.ID || normalizedDeploymentScope(dep.Scope) != scope || dep.Status != DeployLive {
+			return inv, InvocationVersion{}, ErrConflict
+		}
 	}
 	for key := range headers {
 		if strings.EqualFold(key, api.RevisionHeader) || strings.EqualFold(key, api.ReleaseHeader) {
@@ -167,6 +280,17 @@ func resolveInvocationVersionForApp(ctx context.Context, store invocationAppRead
 	}
 	inv.Headers = encoded
 	return inv, version, nil
+}
+
+func invocationStageScope(scope string) bool {
+	return scope != "production" && scope != DefaultEnvScope
+}
+
+func invocationScopesMatch(projectApp bool, expected, actual string) bool {
+	if projectApp {
+		return workloadEnvironmentSlug(expected) == workloadEnvironmentSlug(actual)
+	}
+	return normalizedDeploymentScope(expected) == normalizedDeploymentScope(actual)
 }
 
 // DefaultInvocationDeploymentScope is the admission scope for producers that

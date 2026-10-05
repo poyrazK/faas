@@ -38,12 +38,17 @@ gh api repos/poyrazK/faas/rulesets/19061133 \
 | `sdk-node (gen-check + smoke + unit)` | sdk/node drift | `ci.yml:sdk-node` |
 | `sdk-python (gen-check + smoke + unit)` | sdk/python drift | `ci.yml:sdk-python` |
 | `unit tests (pg shard 1 — apid/meter/migrations)` | apid + meter + migrations + db + alerts | `ci.yml:unit-tests-pg-1` |
-| `unit tests (pg shard 2a — state/reconcile/reposcan)` | pkg/state + reconcile + reposcan | `ci.yml:unit-tests-pg-2` |
+| `unit tests (pg shard 2a — state/reconcile/reposcan)` | Both state shards, PostgreSQL parity/reconcile/reposcan and the aggregate state coverage gate | `ci.yml:unit-tests-pg-2a-gate` |
 | `unit tests (pg shard 2b — gregale/gregalectl/daemons)` | gregale + gregalectl + meterd + schedd | `ci.yml:unit-tests-pg-2` |
 | `unit tests (pure Go shard 1 — sched/fcvm/gateway)` | sched + fcvm + gateway (-race) | `ci.yml:unit-tests-pure-1` |
 | `unit tests (pure Go shard 2 — light packages)` | the rest of the race-enabled tree | `ci.yml:unit-tests-pure-2` |
 
 ## Not required (deliberately or not yet)
+
+The state shard jobs, PostgreSQL parity shard and aggregate state coverage job
+report separately. The required `unit tests (pg shard 2a — state/reconcile/reposcan)`
+gate depends on all of them and fails if any dependency fails, is cancelled or
+is skipped. Its historical name stays unchanged in the ruleset.
 
 `spec-check (OpenAPI lint + AST parity)`, `CodeQL`, `supply-chain-scan
 (govulncheck high+)`, `proto-check`, `daemonunit-check`, `sqlc-check`, `sdk-go

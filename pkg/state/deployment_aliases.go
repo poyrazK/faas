@@ -82,6 +82,9 @@ func (m *MemStore) SetDeploymentAlias(ctx context.Context, appID, name, deployme
 	if !ok || deployment.AppID != appID || deployment.DeletedAt != nil || !deployment.DeploymentPreviewActive() {
 		return DeploymentAlias{}, ErrNotFound
 	}
+	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(deployment)); err != nil {
+		return DeploymentAlias{}, err
+	}
 	now := time.Now().UTC()
 	key := deploymentAliasKey(appID, name)
 	alias, exists := m.deploymentAliases[key]

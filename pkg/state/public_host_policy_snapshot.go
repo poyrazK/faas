@@ -26,6 +26,9 @@ type PublicHostPolicyReader interface {
 	DeploymentByRevision(context.Context, string, int) (Deployment, error)
 	LiveDeploymentForScope(context.Context, string, string) (Deployment, error)
 	LiveDeploymentsForScope(context.Context, string, string) ([]Deployment, error)
+	ProductionLiveDeployments(context.Context, string) ([]Deployment, error)
+	ProjectEnvironmentCloneTargetOperation(context.Context, string, string, string) (ProjectEnvironmentCloneOperation, error)
+	ProjectEnvironmentWorkloadSpecForDeployment(context.Context, string, string, string) (ProjectEnvironmentWorkloadSpec, error)
 	ProjectEnvironmentByID(context.Context, string) (ProjectEnvironment, error)
 	GetProjectEnvironmentEdgePolicy(context.Context, string, string, string) (ProjectEnvironmentEdgePolicy, error)
 	ActiveProjectReleaseSet(context.Context, string, string, string) (ProjectReleaseSet, error)
@@ -288,4 +291,40 @@ func (s *publicHostPolicyReader) DeploymentAliasReserved(ctx context.Context, la
 	encoded, _ := json.Marshal(reserved)
 	s.record("alias-reserved:"+label, encoded, err)
 	return reserved, mapErr(err)
+}
+
+// Clone readiness and pinned settings participate in the host policy revision.
+func (s *publicHostPolicyReader) ProjectEnvironmentCloneTargetOperation(ctx context.Context, account, project, environment string) (ProjectEnvironmentCloneOperation, error) {
+	data, err := sqlc.New().ReadPublicHostCloneReadiness(ctx, s.tx, sqlc.ReadPublicHostCloneReadinessParams{
+		AccountID: uuidToPgtype(account), ProjectID: uuidToPgtype(project), Environment: environment})
+	s.record("clone-readiness:"+account+":"+project+":"+environment, data, err)
+	return decodePublicHostJSON[ProjectEnvironmentCloneOperation](data, err)
+}
+
+func (s *publicHostPolicyReader) ProjectEnvironmentWorkloadSpecForDeployment(ctx context.Context, account, project, deployment string) (ProjectEnvironmentWorkloadSpec, error) {
+	spec, data, err := readSnapshotWorkloadSpec(ctx, s.tx, account, project, deployment)
+	s.record("workload-spec:"+account+":"+project+":"+deployment, data, err)
+	return spec, err
+}
+
+func (s *publicHostPolicyReader) ProductionLiveDeployments(ctx context.Context, app string) ([]Deployment, error) {
+	rows, err := sqlc.New().ReadPublicHostProductionDeployment(ctx, s.tx, sqlc.ReadPublicHostProductionDeploymentParams{
+		AppID: uuidToPgtype(app), RowLimit: int32(api.TrafficPolicyMaxDeployments + 1)})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	if len(rows) > api.TrafficPolicyMaxDeployments {
+		return nil, errors.New("public host deployment limit exceeded")
+	}
+	encoded, _ := json.Marshal(rows)
+	s.record("production-deployments:"+app, encoded, nil)
+	result := make([]Deployment, 0, len(rows))
+	for _, row := range rows {
+		dep, err := decodePublicHostJSON[Deployment](row, nil)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, dep)
+	}
+	return ProductionRoutingDeployments(result), nil
 }

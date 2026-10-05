@@ -31,8 +31,8 @@ func Field(s string) string {
 	if s == "" {
 		return ""
 	}
-	// Make line-break removal explicit for the log-injection analyzer.
-	// The rune pass below retains the same treatment of all other controls.
+	// Keep CR/LF stripping explicit: CodeQL recognizes ReplaceAll as a
+	// log-injection barrier, while the rune loop below handles other controls.
 	s = strings.ReplaceAll(s, "\r", "·")
 	s = strings.ReplaceAll(s, "\n", "·")
 	// Use a strings.Builder for clean rune-aware iteration; the previous
@@ -112,7 +112,7 @@ func FieldAny(v any) string {
 		// Empty error message → just "<N>-byte-error:" so the
 		// reader sees the (zero) length. Real-world empty-error
 		// is rare but Go permits it.
-		return fmt.Sprintf("%d-byte-error:%s", len(x.Error()), Field(x.Error()))
+		return Field(fmt.Sprintf("%d-byte-error:%s", len(x.Error()), x.Error()))
 	}
 	return Field(fmt.Sprint(v))
 }

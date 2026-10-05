@@ -520,6 +520,9 @@ from .create_project_environment_qualification_request import CreateProjectEnvir
 from .create_project_environment_qualification_request_secret_revision_hashes import (
     CreateProjectEnvironmentQualificationRequestSecretRevisionHashes,
 )
+from .create_project_environment_qualification_request_workload_config_hashes import (
+    CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes,
+)
 from .create_project_environment_request import CreateProjectEnvironmentRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
 from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
@@ -1237,6 +1240,8 @@ from .managed_postgres_accounting_diagnostic import ManagedPostgresAccountingDia
 from .managed_postgres_accounting_diagnostic_reasons_item import ManagedPostgresAccountingDiagnosticReasonsItem
 from .managed_postgres_accounting_diagnostic_state import ManagedPostgresAccountingDiagnosticState
 from .managed_postgres_accounting_diagnostics_response import ManagedPostgresAccountingDiagnosticsResponse
+from .managed_postgres_accounting_reconciliation_request import ManagedPostgresAccountingReconciliationRequest
+from .managed_postgres_accounting_reconciliation_result import ManagedPostgresAccountingReconciliationResult
 from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
@@ -1721,6 +1726,10 @@ from .project_environment_binding_change_response_change import ProjectEnvironme
 from .project_environment_binding_change_response_kind import ProjectEnvironmentBindingChangeResponseKind
 from .project_environment_binding_response import ProjectEnvironmentBindingResponse
 from .project_environment_binding_response_kind import ProjectEnvironmentBindingResponseKind
+from .project_environment_clone_operation_response import ProjectEnvironmentCloneOperationResponse
+from .project_environment_clone_operation_response_status import ProjectEnvironmentCloneOperationResponseStatus
+from .project_environment_clone_resource_response import ProjectEnvironmentCloneResourceResponse
+from .project_environment_clone_resource_response_status import ProjectEnvironmentCloneResourceResponseStatus
 from .project_environment_clone_response import ProjectEnvironmentCloneResponse
 from .project_environment_clone_response_shared_resources_item import ProjectEnvironmentCloneResponseSharedResourcesItem
 from .project_environment_config_change import ProjectEnvironmentConfigChange
@@ -1788,9 +1797,19 @@ from .project_environment_qualification_response_secret_revision_hashes import (
     ProjectEnvironmentQualificationResponseSecretRevisionHashes,
 )
 from .project_environment_qualification_response_status import ProjectEnvironmentQualificationResponseStatus
+from .project_environment_qualification_response_workload_config_hashes import (
+    ProjectEnvironmentQualificationResponseWorkloadConfigHashes,
+)
 from .project_environment_qualification_result import ProjectEnvironmentQualificationResult
 from .project_environment_qualification_result_error_code import ProjectEnvironmentQualificationResultErrorCode
 from .project_environment_qualification_result_status import ProjectEnvironmentQualificationResultStatus
+from .project_environment_queue_binding import ProjectEnvironmentQueueBinding
+from .project_environment_queue_binding_mode import ProjectEnvironmentQueueBindingMode
+from .project_environment_queue_binding_workload_class import ProjectEnvironmentQueueBindingWorkloadClass
+from .project_environment_queue_bindings_response import ProjectEnvironmentQueueBindingsResponse
+from .project_environment_queue_bindings_response_activation_state import (
+    ProjectEnvironmentQueueBindingsResponseActivationState,
+)
 from .project_environment_release_diff_response import ProjectEnvironmentReleaseDiffResponse
 from .project_environment_release_diff_response_kind import ProjectEnvironmentReleaseDiffResponseKind
 from .project_environment_release_list_response import ProjectEnvironmentReleaseListResponse
@@ -1917,6 +1936,7 @@ from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOps
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
+from .replace_project_environment_queue_bindings_request import ReplaceProjectEnvironmentQueueBindingsRequest
 from .replay_dev_bridge_webhook_request import ReplayDevBridgeWebhookRequest
 from .replay_event_fanout_failure_request import ReplayEventFanoutFailureRequest
 from .replay_event_fanout_failure_response import ReplayEventFanoutFailureResponse
@@ -3052,6 +3072,7 @@ __all__ = (
     "CreateProjectEnvironmentApprovalRequest",
     "CreateProjectEnvironmentQualificationRequest",
     "CreateProjectEnvironmentQualificationRequestSecretRevisionHashes",
+    "CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes",
     "CreateProjectEnvironmentRequest",
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
@@ -3761,6 +3782,8 @@ __all__ = (
     "ManagedPostgresAccountingDiagnosticReasonsItem",
     "ManagedPostgresAccountingDiagnosticsResponse",
     "ManagedPostgresAccountingDiagnosticState",
+    "ManagedPostgresAccountingReconciliationRequest",
+    "ManagedPostgresAccountingReconciliationResult",
     "ManagedPostgresBinding",
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",
@@ -4221,6 +4244,10 @@ __all__ = (
     "ProjectEnvironmentBindingChangeResponseKind",
     "ProjectEnvironmentBindingResponse",
     "ProjectEnvironmentBindingResponseKind",
+    "ProjectEnvironmentCloneOperationResponse",
+    "ProjectEnvironmentCloneOperationResponseStatus",
+    "ProjectEnvironmentCloneResourceResponse",
+    "ProjectEnvironmentCloneResourceResponseStatus",
     "ProjectEnvironmentCloneResponse",
     "ProjectEnvironmentCloneResponseSharedResourcesItem",
     "ProjectEnvironmentConfigChange",
@@ -4268,9 +4295,15 @@ __all__ = (
     "ProjectEnvironmentQualificationResponse",
     "ProjectEnvironmentQualificationResponseSecretRevisionHashes",
     "ProjectEnvironmentQualificationResponseStatus",
+    "ProjectEnvironmentQualificationResponseWorkloadConfigHashes",
     "ProjectEnvironmentQualificationResult",
     "ProjectEnvironmentQualificationResultErrorCode",
     "ProjectEnvironmentQualificationResultStatus",
+    "ProjectEnvironmentQueueBinding",
+    "ProjectEnvironmentQueueBindingMode",
+    "ProjectEnvironmentQueueBindingsResponse",
+    "ProjectEnvironmentQueueBindingsResponseActivationState",
+    "ProjectEnvironmentQueueBindingWorkloadClass",
     "ProjectEnvironmentReleaseDiffResponse",
     "ProjectEnvironmentReleaseDiffResponseKind",
     "ProjectEnvironmentReleaseListResponse",
@@ -4397,6 +4430,7 @@ __all__ = (
     "RenameAppRequest",
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
+    "ReplaceProjectEnvironmentQueueBindingsRequest",
     "ReplayDevBridgeWebhookRequest",
     "ReplayEventFanoutFailureRequest",
     "ReplayEventFanoutFailureResponse",

@@ -10,29 +10,33 @@ import (
 // MemoryStore is useful for unit tests and local wiring. Production adapters
 // should enforce the same transitions transactionally in PostgreSQL.
 type MemoryStore struct {
-	cutovers      map[string]Cutover
-	health        map[string]memoryHealthEntry
-	mu            sync.Mutex
-	databases     map[string]Database
-	names         map[string]string
-	bindings      map[string]Binding
-	targets       map[string]string
-	usage         map[usageKey]UsageRecord
-	usageProgress map[usageProgressKey]UsageProgress
-	usageImports  map[string]usageImportReceipt
+	cutovers                  map[string]Cutover
+	health                    map[string]memoryHealthEntry
+	mu                        sync.Mutex
+	databases                 map[string]Database
+	names                     map[string]string
+	bindings                  map[string]Binding
+	targets                   map[string]string
+	usage                     map[usageKey]UsageRecord
+	restoreProofs             map[string]RestoreProof
+	usageProgress             map[usageProgressKey]UsageProgress
+	usageImports              map[string]usageImportReceipt
+	accountingReconciliations map[string]accountingReconciliationReceipt
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		cutovers:      map[string]Cutover{},
-		health:        map[string]memoryHealthEntry{},
-		databases:     map[string]Database{},
-		names:         map[string]string{},
-		bindings:      map[string]Binding{},
-		targets:       map[string]string{},
-		usage:         map[usageKey]UsageRecord{},
-		usageProgress: map[usageProgressKey]UsageProgress{},
-		usageImports:  map[string]usageImportReceipt{},
+		cutovers:                  map[string]Cutover{},
+		health:                    map[string]memoryHealthEntry{},
+		databases:                 map[string]Database{},
+		names:                     map[string]string{},
+		bindings:                  map[string]Binding{},
+		targets:                   map[string]string{},
+		usage:                     map[usageKey]UsageRecord{},
+		restoreProofs:             map[string]RestoreProof{},
+		usageProgress:             map[usageProgressKey]UsageProgress{},
+		usageImports:              map[string]usageImportReceipt{},
+		accountingReconciliations: map[string]accountingReconciliationReceipt{},
 	}
 }
 
@@ -42,8 +46,14 @@ func (s *MemoryStore) Reserve(_ context.Context, database Database, limit int) (
 	if limit < 1 || limit > 100 {
 		return Database{}, false, ErrInvalid
 	}
+	if database.EnvironmentCloneOperationID != "" || database.DataResourceID != "" {
+		return Database{}, false, ErrInvalid
+	}
 	key := database.AccountID + "\x00" + database.Name
 	if id, ok := s.names[key]; ok {
+		if s.databases[id].EnvironmentCloneOperationID != "" {
+			return Database{}, false, ErrConflict
+		}
 		return cloneDatabase(s.databases[id]), false, nil
 	}
 	if database.ID == "" || database.AccountID == "" || !ValidName(database.Name) || database.State != StateProvisioning || database.BackendID == "" || database.BackendFingerprint == "" {
@@ -57,11 +67,11 @@ func (s *MemoryStore) Reserve(_ context.Context, database Database, limit int) (
 	}
 	if database.RestoreSourceDatabaseID != "" {
 		source, exists := s.databases[database.RestoreSourceDatabaseID]
-		if !exists || source.AccountID != database.AccountID {
+		if !exists || source.AccountID != database.AccountID || source.EnvironmentCloneOperationID != "" {
 			return Database{}, false, ErrNotFound
 		}
 		if source.State != StateReady || source.ProviderResourceID == "" ||
-			source.ProviderResourceID != database.RestoreSourceResourceID {
+			databaseDataResource(source) != database.RestoreSourceResourceID {
 			return Database{}, false, ErrConflict
 		}
 	}

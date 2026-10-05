@@ -271,18 +271,20 @@ func TestCreateUsesCustomerReservationLimit(t *testing.T) {
 	}
 }
 
+// adr: 590
 func TestRestoreCreatesIndependentDurableTargetAndIsIdempotent(t *testing.T) {
 	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
-	service := testService(t, testRegistry(t, provider, nil), NewMemoryStore())
+	registry, store := testRegistry(t, provider, nil), NewMemoryStore()
+	service := testService(t, registry, store)
 	source, err := service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "orders", Spec: testSpec()})
 	if err != nil {
 		t.Fatalf("source Create: %v", err)
 	}
 	pointInTime := time.Date(2026, 9, 5, 11, 0, 0, 0, time.UTC)
 	request := RestoreDatabaseRequest{AccountID: "account-a", SourceDatabaseID: source.ID, Name: "orders-restore", PointInTime: pointInTime}
-	restored, err := service.Restore(context.Background(), request)
-	if err != nil {
-		t.Fatalf("Restore: %v", err)
+	restored, created, err := service.RestoreWithResult(context.Background(), request)
+	if err != nil || !created {
+		t.Fatalf("Restore: created=%v err=%v", created, err)
 	}
 	if restored.State != StateReady || restored.ID == source.ID || restored.ProviderResourceID == source.ProviderResourceID || restored.RestoreSourceDatabaseID != source.ID || restored.RestoreSourceResourceID != source.ProviderResourceID || !restored.RestorePointInTime.Equal(pointInTime) {
 		t.Fatalf("restore target = %+v, source = %+v", restored, source)
@@ -290,12 +292,19 @@ func TestRestoreCreatesIndependentDurableTargetAndIsIdempotent(t *testing.T) {
 	if provider.restoreCalls != 1 || provider.lastRestore.SourceResourceID != source.ProviderResourceID || !provider.lastRestore.PointInTime.Equal(pointInTime) {
 		t.Fatalf("restore provider request = %+v, calls = %d", provider.lastRestore, provider.restoreCalls)
 	}
-	repeated, err := service.Restore(context.Background(), request)
-	if err != nil {
-		t.Fatalf("idempotent Restore: %v", err)
+	repeated, created, err := service.RestoreWithResult(context.Background(), request)
+	if err != nil || created {
+		t.Fatalf("idempotent Restore: created=%v err=%v", created, err)
 	}
 	if repeated.ID != restored.ID || provider.restoreCalls != 1 {
 		t.Fatalf("restore idempotency = %+v/%+v, calls = %d", restored, repeated, provider.restoreCalls)
+	}
+	// Another caller wins between FindByName and Reserve. The adopted row
+	// must not grant compensation ownership to the losing caller.
+	racing := testService(t, registry, &restoreReservationRaceStore{Store: store, name: request.Name})
+	adopted, created, err := racing.RestoreWithResult(context.Background(), request)
+	if err != nil || created || adopted.ID != restored.ID || provider.restoreCalls != 1 {
+		t.Fatalf("concurrent restore adoption: id=%s created=%v err=%v calls=%d", adopted.ID, created, err, provider.restoreCalls)
 	}
 	unchanged, err := service.Get(context.Background(), "account-a", source.ID)
 	if err != nil || unchanged.State != StateReady || unchanged.ProviderResourceID != source.ProviderResourceID {
@@ -314,6 +323,18 @@ func TestRestoreCreatesIndependentDurableTargetAndIsIdempotent(t *testing.T) {
 	if _, err := service.Delete(context.Background(), "account-a", source.ID); err != nil {
 		t.Fatalf("source delete after target cleanup: %v", err)
 	}
+}
+
+type restoreReservationRaceStore struct {
+	Store
+	name string
+}
+
+func (s *restoreReservationRaceStore) FindByName(ctx context.Context, accountID, name string) (Database, error) {
+	if name == s.name {
+		return Database{}, ErrNotFound
+	}
+	return s.Store.FindByName(ctx, accountID, name)
 }
 
 func TestRestoreCompletedRetrySurvivesRetentionExpiry(t *testing.T) {

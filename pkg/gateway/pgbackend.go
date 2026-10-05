@@ -600,6 +600,9 @@ func (b *PGBackend) ReconcileLiveTargets(ctx context.Context, appID string) erro
 	if b == nil || appID == "" || b.liveTargetLoader == nil {
 		return nil
 	}
+	if err := b.ensureDeploymentWeights(ctx, appID); err != nil {
+		return err
+	}
 	if b.CapacityCount(appID) > 0 {
 		return nil
 	}
@@ -1089,6 +1092,9 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 				app.PinnedDeploymentScope = target.PinnedDeploymentScope
 				app.RoutedSurfaceID = target.RoutedSurfaceID
 				app.CustomDomainRoute = target.CustomDomain
+				if !b.prepareProductionWeights(ctx, app) {
+					return App{}, false
+				}
 				return app, true
 			}
 			// Route ownership changed. A later lookup error must not revive the
@@ -1106,8 +1112,13 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 		b.stale.Delete(host)
 		return App{}, false
 	}
-	if app.DynamicRoute {
+	if app.DynamicRoute || app.PinnedDeploymentID != "" || app.EnvironmentNotReady {
+		// Exact routes carry deployment-specific settings. Caching that App
+		// by app ID would replace production's settings with a stage's.
 		return app, true
+	}
+	if !b.prepareProductionWeights(ctx, app) {
+		return App{}, false
 	}
 	b.routes.PutTarget(host, RouteTarget{
 		AppID:                 app.ID,
@@ -1125,6 +1136,42 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	b.putApp(baseApp)
 	b.stale.Put(host, app)
 	return app, true
+}
+
+// prepareProductionWeights hydrates weights once before an ordinary route can
+// use targets learned from any scope. Exact deployment routes use their own
+// target sets and do not require production to exist.
+func (b *PGBackend) prepareProductionWeights(ctx context.Context, app App) bool {
+	if app.PinnedDeploymentID != "" {
+		return true
+	}
+	if err := b.ensureDeploymentWeights(ctx, app.ID); err != nil {
+		b.log.Warn("gateway: production deployment weights unavailable", "app_id", app.ID, "err", err)
+		return false
+	}
+	return true
+}
+
+func (b *PGBackend) ensureDeploymentWeights(ctx context.Context, appID string) error {
+	if b.store == nil {
+		return nil
+	}
+	known := func() bool {
+		b.tgtMu.RLock()
+		defer b.tgtMu.RUnlock()
+		picker := b.appsPicker[appID]
+		return picker != nil && picker.weightsAuthoritative
+	}
+	if known() {
+		return nil
+	}
+	_, err, _ := b.liveTargetHydration.Do("weights\x00"+appID, func() (any, error) {
+		if known() {
+			return nil, nil
+		}
+		return nil, b.RefreshDeploymentWeights(ctx, appID)
+	})
+	return err
 }
 
 func (b *PGBackend) cachedCustomDomainRouteActive(ctx context.Context, host, appID string) (bool, error) {
@@ -1588,7 +1635,7 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 		set = &targetSet{subCursors: map[string]*atomic.Uint64{}}
 		picker.sets[bucket] = set
 	}
-	if len(picker.weights) == 0 {
+	if b.store == nil && !picker.weightsAuthoritative && len(picker.weights) == 0 {
 		setPickerWeights(picker, []deploymentWeight{{DeploymentID: bucket, Percent: 100}})
 	}
 	if b.placementLoader != nil && target.PlacementVerifiedUntil.IsZero() {
@@ -2163,8 +2210,9 @@ func (b *PGBackend) EvictTarget(appID string) {
 //
 // Behaviour:
 //
-//   - Reads LiveDeployments(appID). Empty slice → drop the picker
-//     entirely (no live deployments, 503).
+//   - Reads LiveDeployments(appID). An empty result retains an authoritative
+//     empty weight table, so later target hydration cannot create default
+//     traffic for an explicitly routed stage or retained deployment.
 //   - Builds a new weights slice filtered to Percent > 0, sorted
 //     (Percent DESC, DeploymentID ASC) for stable tie-break on the
 //     cumulative-weight binary search.
@@ -2195,10 +2243,6 @@ func (b *PGBackend) RefreshDeploymentWeights(ctx context.Context, appID string) 
 	b.tgtMu.Lock()
 	defer b.tgtMu.Unlock()
 	b.markPlacementHydrationChangedLocked(appID)
-	if len(next) == 0 {
-		delete(b.appsPicker, appID)
-		return nil
-	}
 	picker, ok := b.appsPicker[appID]
 	if !ok {
 		picker = &appPicker{sets: map[string]*targetSet{}}

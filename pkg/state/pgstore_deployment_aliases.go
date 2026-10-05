@@ -55,6 +55,12 @@ func (s *PgStore) SetDeploymentAlias(ctx context.Context, appID, name, deploymen
 	if conflict {
 		return DeploymentAlias{}, ErrConflict
 	}
+	if _, err := sqlc.New().LockLayerArtifactDeployment(ctx, tx, mustPgUUID(deploymentID)); err != nil {
+		return DeploymentAlias{}, mapErr(err)
+	}
+	if err := requireDeploymentLayerArtifactsTx(ctx, tx, deploymentID); err != nil {
+		return DeploymentAlias{}, err
+	}
 	row, err := sqlc.New().UpsertDeploymentAlias(ctx, tx, sqlc.UpsertDeploymentAliasParams{
 		AppID: mustPgUUID(appID), Name: name, DeploymentID: mustPgUUID(deploymentID),
 	})

@@ -166,13 +166,19 @@ mutations. The API/CLI identify accountable rows, unknown legacy identities,
 missing coverage, stale observations, shared accounting roots, and final
 correction deadlines from local evidence. ADR-583 adds previewed, audited import
 of normalized retained usage windows, with atomic ledger/coverage/evidence commits.
-Source artifact authentication, legacy identity/shutdown reconciliation and final
-invoice settlement remain open; imports preserve real observation times.
+ADR-591 adds previewed operator repair of deleted legacy rows missing provider
+identity. Apply commits attested identity and actual shutdown with immutable
+before/after evidence, preserves the ledger, and resets derived coverage.
+Concurrency, audit failure, shared-root recovery, populated migration replay,
+and account erasure have regression coverage in both store implementations where
+applicable. Usage recovery and final correction observations remain required
+after repair. Source artifact authentication and final invoice settlement remain
+open; operator attestation does not qualify provider history or ownership.
 
 | Priority | Gap and evidence | Required next work |
 | --- | --- | --- |
 | P1 | Live credential/provider qualification remains pending. `sqlCredentialRoles.Ensure` creates SQL passwords; `credentialMaterial` recovers them through the Neon API. Local role tests install a fixture password, so they do not establish this provider contract. | Run version 3 qualification on disposable resources, including stable password recovery on retry, real restricted runtime/migration login, rotation, inherited-login isolation, and revocation. This is an unverified contract, not a reproduced password bug. |
-| P1 | New uncertain creations retain accounting and recover identity before deletion. Legacy unknown tombstones remain stale; post-deletion history is unqualified. | Add explicit operator reconciliation for legacy unknown resources and qualify retained provider history. Provide retained-export reconciliation when automatic recovery cannot complete; never infer zero from a missing resource or response. |
+| P1 | New uncertain creations retain accounting and recover identity before deletion. ADR-591 now repairs legacy unknown tombstones using verified identity/shutdown attestation, followed by usage recovery. Post-deletion history remains unqualified. | Qualify retained provider history and source ownership/shutdown verification. Automate provider-specific evidence normalization only after that contract is established; never infer zero from a missing resource or response. |
 | P1 | Usage recovery is hourly and bounded by provider retention. `usageGranularity` selects granularity from window size; an hourly backlog beyond available provider retention cannot be replayed by `UsageCollector`. ADR-583 now accepts operator-verified normalized retained windows. | Qualify retained source exports and automate provider-specific normalization/resource mapping. Preserve nonoverlapping ledger windows and fail-closed admission; daily totals cannot replace overlapping hourly windows. Invoice allocation remains separate. |
 | P1 | Automatic correction replay covers the last three completed policy windows. ADR-583 supports audited retained-window corrections outside that horizon, but final provider settlement remains unqualified. | Qualify export corrections and a provider-lag/final-settlement policy before treating fresh coverage as final spend. |
 | P1 | Reactive provider-instance cooldowns now suppress requests after a 429. Fleet recovery now precedes corrections in rounds with durable successful-observation ordering. There is still no provider-account request budget, and repeatedly failing requests do not advance their position. | Add explicit provider-account identity, shared pacing across backends/processes, and durable attempt scheduling. Preserve existing coverage when requests are deferred. |

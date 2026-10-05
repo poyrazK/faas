@@ -203,25 +203,28 @@ func publicAppDeploymentScope(app state.App) string {
 }
 
 func (r pgRouter) livePublicRoutingDeployments(ctx context.Context, app state.App) ([]state.Deployment, error) {
-	scope := publicAppDeploymentScope(app)
-	if scoped, ok := r.store.(interface {
+	if production, ok := r.store.(interface {
+		ProductionLiveDeployments(context.Context, string) ([]state.Deployment, error)
+	}); ok {
+		return production.ProductionLiveDeployments(ctx, app.ID)
+	}
+	var rows []state.Deployment
+	var err error
+	if legacy, ok := r.store.(liveDeploymentStore); ok {
+		rows, err = productionLiveDeployments(ctx, legacy, app.ID)
+	} else if scoped, ok := r.store.(interface {
 		LiveDeploymentsForScope(context.Context, string, string) ([]state.Deployment, error)
 	}); ok {
-		return scoped.LiveDeploymentsForScope(ctx, app.ID, scope)
-	}
-	legacy, ok := r.store.(interface {
-		LiveDeployments(context.Context, string) ([]state.Deployment, error)
-	})
-	if !ok {
+		rows, err = scoped.LiveDeploymentsForScope(ctx, app.ID, publicAppDeploymentScope(app))
+	} else {
 		return nil, errors.New("public deployment ingress reader is unavailable")
 	}
-	rows, err := legacy.LiveDeployments(ctx, app.ID)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]state.Deployment, 0, len(rows))
 	for _, row := range rows {
-		if (row.Scope == scope || row.Scope == "" && scope == state.DefaultEnvScope) && row.DeletedAt == nil && row.TrafficPercent > 0 {
+		if row.DeletedAt == nil && row.TrafficPercent > 0 {
 			result = append(result, row)
 		}
 	}

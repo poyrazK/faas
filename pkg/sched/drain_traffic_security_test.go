@@ -133,7 +133,7 @@ func TestDrainSecurityRefusesBeforeWarmOrColdWake(t *testing.T) {
 func TestDrainSecurityCancelsWaiterWhileSharedWakeRemainsOwned(t *testing.T) {
 	for _, kind := range []string{"account", "app", "missed release", "outage"} {
 		t.Run(kind, func(t *testing.T) {
-			d, store, vmm, security, registry, inv, _ := newSecurityDrain(t)
+			d, store, vmm, security, registry, inv, dep := newSecurityDrain(t)
 			vmm.bootStarted, vmm.bootRelease = make(chan struct{}, 1), make(chan struct{})
 			var release sync.Once
 			t.Cleanup(func() { release.Do(func() { close(vmm.bootRelease) }) })
@@ -144,13 +144,14 @@ func TestDrainSecurityCancelsWaiterWhileSharedWakeRemainsOwned(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("wake did not start")
 			}
-			// Dispatch resolves a blank legacy scope to default. Join that
-			// actual leader so its independent lifetime is observed.
-			call, leader, err := d.engine.wakeCoord.EnterScoped(inv.AppID, state.DefaultEnvScope, WakeFanout{})
+			// Environment isolation keys coordinated wakes by exact deployment.
+			// Join that owner to observe its independent boot lifetime.
+			coordinatorKey := (wakeEnvironment{app: state.App{ID: inv.AppID}, deployment: state.Deployment{ID: dep}}).coordinatorKey()
+			call, leader, err := d.engine.wakeCoord.Enter(coordinatorKey, WakeFanout{})
 			if err != nil || leader {
 				t.Fatalf("missing shared wake owner: %v leader=%v", err, leader)
 			}
-			defer d.engine.wakeCoord.Release(inv.AppID, call)
+			defer d.engine.wakeCoord.Release(coordinatorKey, call)
 			scope := trafficrevocation.Scope{Kind: "account", ID: inv.AccountID}
 			if kind == "app" {
 				scope = trafficrevocation.Scope{Kind: "app", ID: inv.AppID}
