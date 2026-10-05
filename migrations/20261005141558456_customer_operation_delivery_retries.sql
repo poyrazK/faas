@@ -1,6 +1,6 @@
 -- +goose Up
 -- ADR-521: immutable completion retry decisions; parent retention bounds them.
-CREATE TABLE customer_operation_delivery_retries (
+CREATE TABLE IF NOT EXISTS customer_operation_delivery_retries (
  operation_id uuid NOT NULL REFERENCES customer_operations(id) ON DELETE CASCADE,
  retry_id text NOT NULL CHECK (octet_length(retry_id) BETWEEN 1 AND 128),
  delivery_id uuid NOT NULL,

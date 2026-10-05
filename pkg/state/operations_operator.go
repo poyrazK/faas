@@ -49,18 +49,18 @@ func operationExecutionPage(rows []api.OperationExecution, limit int) api.Operat
 	return page
 }
 
-func operationExecutionLimit(after, limit int) (int, error) {
+func operationExecutionBounds(after, limit int) (int32, int, error) {
 	if limit == 0 {
 		limit = api.OperationHistoryPageDefault
 	}
 	if after < 0 || after > math.MaxInt32 || limit < 1 || limit > api.OperationHistoryPageMax {
-		return 0, ErrInvalidArgument
+		return 0, 0, ErrInvalidArgument
 	}
-	return limit, nil
+	return int32(after), limit, nil
 }
 
 func (m *MemStore) OperationExecutions(_ context.Context, account, id string, after, limit int) (api.OperationExecutionsResponse, error) {
-	limit, err := operationExecutionLimit(after, limit)
+	afterGeneration, limit, err := operationExecutionBounds(after, limit)
 	if err != nil {
 		return api.OperationExecutionsResponse{}, err
 	}
@@ -78,7 +78,7 @@ func (m *MemStore) OperationExecutions(_ context.Context, account, id string, af
 	for invocation, operation := range data.executions {
 		generation := data.generations[invocation]
 		inv, exists := m.invocations[invocation]
-		if operation != id || !exists || generation <= after {
+		if operation != id || !exists || generation <= int(afterGeneration) {
 			continue
 		}
 		var completed *time.Time
@@ -96,7 +96,7 @@ func (m *MemStore) OperationExecutions(_ context.Context, account, id string, af
 }
 
 func (s *PgStore) OperationExecutions(ctx context.Context, account, id string, after, limit int) (api.OperationExecutionsResponse, error) {
-	limit, err := operationExecutionLimit(after, limit)
+	afterGeneration, limit, err := operationExecutionBounds(after, limit)
 	if err != nil {
 		return api.OperationExecutionsResponse{}, err
 	}
@@ -105,7 +105,7 @@ func (s *PgStore) OperationExecutions(ctx context.Context, account, id string, a
 	}
 	a, _ := operationUUID(account)
 	i, _ := operationUUID(id)
-	raw, err := sqlc.New().ListAccountCustomerOperationExecutions(ctx, s.pool, sqlc.ListAccountCustomerOperationExecutionsParams{AccountID: a, OperationID: i, AfterGeneration: int32(after), PageLimit: int32(limit + 1)})
+	raw, err := sqlc.New().ListAccountCustomerOperationExecutions(ctx, s.pool, sqlc.ListAccountCustomerOperationExecutionsParams{AccountID: a, OperationID: i, AfterGeneration: afterGeneration, PageLimit: int32(limit + 1)})
 	if err != nil {
 		return api.OperationExecutionsResponse{}, fmt.Errorf("state: list operation executions: %w", mapErr(err))
 	}

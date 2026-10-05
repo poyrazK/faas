@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -97,8 +98,31 @@ func TestMemOperationExecutionProjectionAndCleanup(t *testing.T) {
 			t.Fatalf("invalid bounds %v: %v", query, err)
 		}
 	}
+	page, err = store.OperationExecutions(context.Background(), account, id, math.MaxInt32, 100)
+	if err != nil || len(page.Executions) != 0 {
+		t.Fatalf("maximum generation watermark wrapped: %+v %v", page, err)
+	}
 	store.forgetOperationLocked(id)
 	if len(data.generations) != 0 || len(data.executions) != 0 {
 		t.Fatal("execution metadata leaked after owner cleanup")
+	}
+}
+
+// A malformed public watermark must fail before owner lookup or SQL execution.
+func TestOperationExecutionBoundsBeforeLookup(t *testing.T) {
+	for _, fixture := range []struct {
+		name  string
+		store OperationStore
+	}{
+		{"memory", NewMemStore()},
+		{"postgres without connection", &PgStore{}},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			for _, query := range [][2]int{{-1, 1}, {int(math.MaxInt32) + 1, 1}, {1 << 32, 1}, {0, -1}, {0, api.OperationHistoryPageMax + 1}} {
+				if _, err := fixture.store.OperationExecutions(context.Background(), uuid.NewString(), uuid.NewString(), query[0], query[1]); !errors.Is(err, ErrInvalidArgument) {
+					t.Fatalf("invalid bounds %v reached lookup: %v", query, err)
+				}
+			}
+		})
 	}
 }

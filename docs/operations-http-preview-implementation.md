@@ -569,3 +569,13 @@ builds and their disk-guard receipts remain preserved as stopped attempts.
 A further clean merge retained main `85b50d0c3d630258ac96ec608d559e0d5dff92c2`,
 including its deployed ingress/worker settings and release-policy invalidation
 migration. No Operations source was replaced by that incoming change.
+
+Release CI identified four bounded integration gaps: delivery retry receipts
+needed an operational clone-schema policy, execution history needed its checked
+integer conversion inside the bounds helper, the OpenAPI response test assumed
+an obsolete byte offset, and the new retry migration needed replay-safe creation.
+The fixes preserve receipt isolation, reject invalid watermarks before lookup,
+check the complete embedded specification, and tolerate a missing migration
+ledger entry after the same DDL has already applied. No merged migration was
+edited. Focused race tests and migrated PostgreSQL validation qualify these
+changes separately; final current-head repository CI remains the release gate.
