@@ -176,6 +176,7 @@ type Querier interface {
 	CountAppEnvironmentIntent(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentParams) (int64, error)
 	CountAppEnvironmentIntentInScope(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentInScopeParams) (int64, error)
 	CountCustomerOperationDefinitionNames(ctx context.Context, db DBTX, arg CountCustomerOperationDefinitionNamesParams) (int64, error)
+	CountCustomerOperationDeliveryRetries(ctx context.Context, db DBTX, operationID pgtype.UUID) (int64, error)
 	CountCustomerOperationStreams(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountDeployedApps(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountExclusiveWorkPending(ctx context.Context, db DBTX, accountID string) (int64, error)
@@ -514,6 +515,9 @@ type Querier interface {
 	GetCustomerOperationDefinition(ctx context.Context, db DBTX, arg GetCustomerOperationDefinitionParams) (GetCustomerOperationDefinitionRow, error)
 	GetCustomerOperationDefinitionForDeployment(ctx context.Context, db DBTX, arg GetCustomerOperationDefinitionForDeploymentParams) (GetCustomerOperationDefinitionForDeploymentRow, error)
 	GetCustomerOperationDefinitionForRoute(ctx context.Context, db DBTX, arg GetCustomerOperationDefinitionForRouteParams) (GetCustomerOperationDefinitionForRouteRow, error)
+	GetCustomerOperationDeliveryPlan(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
+	GetCustomerOperationDeliveryRetry(ctx context.Context, db DBTX, arg GetCustomerOperationDeliveryRetryParams) (GetCustomerOperationDeliveryRetryRow, error)
+	GetCustomerOperationDeliveryRow(ctx context.Context, db DBTX, arg GetCustomerOperationDeliveryRowParams) (GetCustomerOperationDeliveryRowRow, error)
 	GetCustomerOperationIdempotency(ctx context.Context, db DBTX, arg GetCustomerOperationIdempotencyParams) (GetCustomerOperationIdempotencyRow, error)
 	GetCustomerOperationRecovery(ctx context.Context, db DBTX, arg GetCustomerOperationRecoveryParams) (string, error)
 	GetCustomerOperationReport(ctx context.Context, db DBTX, arg GetCustomerOperationReportParams) (string, error)
@@ -648,6 +652,7 @@ type Querier interface {
 	InsertCustomerOperationBlob(ctx context.Context, db DBTX, arg InsertCustomerOperationBlobParams) error
 	InsertCustomerOperationCompletionDelivery(ctx context.Context, db DBTX, arg InsertCustomerOperationCompletionDeliveryParams) error
 	InsertCustomerOperationDefinition(ctx context.Context, db DBTX, arg InsertCustomerOperationDefinitionParams) (InsertCustomerOperationDefinitionRow, error)
+	InsertCustomerOperationDeliveryRetry(ctx context.Context, db DBTX, arg InsertCustomerOperationDeliveryRetryParams) error
 	InsertCustomerOperationEvent(ctx context.Context, db DBTX, arg InsertCustomerOperationEventParams) error
 	InsertCustomerOperationExecution(ctx context.Context, db DBTX, arg InsertCustomerOperationExecutionParams) error
 	InsertCustomerOperationRecovery(ctx context.Context, db DBTX, arg InsertCustomerOperationRecoveryParams) error
@@ -866,6 +871,10 @@ type Querier interface {
 	// scopes is the auth permission set surfaced to the dashboard and the
 	// /v1/keys listing. See ADR-034 rev2.
 	ListAPIKeys(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListAPIKeysRow, error)
+	ListAccountCustomerOperationExecutions(ctx context.Context, db DBTX, arg ListAccountCustomerOperationExecutionsParams) ([]ListAccountCustomerOperationExecutionsRow, error)
+	// The account/app creation index supports descending keyset paging across
+	// tenants. Only explicit public summary fields cross this operator boundary.
+	ListAccountCustomerOperations(ctx context.Context, db DBTX, arg ListAccountCustomerOperationsParams) ([][]byte, error)
 	// Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
 	// `since` is an interval (e.g. '1 hour') clamped handler-side to the
 	// plan's DebugTelemetryRetentionDays cap. ORDER BY regression_factor
@@ -1117,6 +1126,9 @@ type Querier interface {
 	// ADR-421: keyset paging advances even when a candidate cannot fit.
 	ListOrphanedAppsPage(ctx context.Context, db DBTX, arg ListOrphanedAppsPageParams) ([]ListOrphanedAppsPageRow, error)
 	ListOutboundBindingProbeSnapshots(ctx context.Context, db DBTX, arg ListOutboundBindingProbeSnapshotsParams) ([]ListOutboundBindingProbeSnapshotsRow, error)
+	// The tenant creation index supports descending keyset paging. Only public
+	// summary fields cross this boundary; source input/results/capabilities do not.
+	ListPlatformTenantCustomerOperations(ctx context.Context, db DBTX, arg ListPlatformTenantCustomerOperationsParams) ([][]byte, error)
 	// Retired and expired graphs remain visible for diagnosis. UUID breaks ties.
 	ListProjectReleaseSetsBefore(ctx context.Context, db DBTX, arg ListProjectReleaseSetsBeforeParams) ([][]byte, error)
 	ListQueueBindingHistoryForApp(ctx context.Context, db DBTX, arg ListQueueBindingHistoryForAppParams) ([]QueueBinding, error)
@@ -1190,6 +1202,8 @@ type Querier interface {
 	LockCustomerOperationBlob(ctx context.Context, db DBTX, id pgtype.UUID) (CustomerOperationResultBlob, error)
 	LockCustomerOperationClaim(ctx context.Context, db DBTX, id pgtype.UUID) (LockCustomerOperationClaimRow, error)
 	LockCustomerOperationCodeApp(ctx context.Context, db DBTX, arg LockCustomerOperationCodeAppParams) (pgtype.UUID, error)
+	LockCustomerOperationDeliveryOwner(ctx context.Context, db DBTX, arg LockCustomerOperationDeliveryOwnerParams) ([]byte, error)
+	LockCustomerOperationDeliveryRow(ctx context.Context, db DBTX, arg LockCustomerOperationDeliveryRowParams) (LockCustomerOperationDeliveryRowRow, error)
 	LockCustomerOperationDeployment(ctx context.Context, db DBTX, arg LockCustomerOperationDeploymentParams) (string, error)
 	LockCustomerOperationExecution(ctx context.Context, db DBTX, invocationID pgtype.UUID) ([]byte, error)
 	LockCustomerOperationInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error)
@@ -1886,6 +1900,7 @@ type Querier interface {
 	RequeueFireNowRequest(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	ReserveAccountCreditConsumption(ctx context.Context, db DBTX, arg ReserveAccountCreditConsumptionParams) (pgtype.UUID, error)
 	ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accountID string) (int32, error)
+	ResetCustomerOperationDelivery(ctx context.Context, db DBTX, arg ResetCustomerOperationDeliveryParams) (int64, error)
 	ResetManagedPostgresCutoverVerification(ctx context.Context, db DBTX, id string) error
 	ResetWorkflowResumeStep(ctx context.Context, db DBTX, arg ResetWorkflowResumeStepParams) error
 	ResetWorkflowRunningSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error

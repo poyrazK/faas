@@ -317,11 +317,6 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
-	// ADR-521: runtime reports, artifact writes and reconciliation have no
-	// public routes in the staged HTTP API slice.
-	"OperationReportRequest":   true,
-	"OperationArtifactRequest": true,
-	"OperationRecoveryRequest": true,
 	// ADR-563 native adapter primitives. Customer per-version lock management
 	// is not part of the ADR-564 bucket API capability.
 	"ObjectVersionRetention": true,
@@ -373,6 +368,7 @@ var dtoExclude = map[string]bool{
 	"ListPlatformTenantReconciliationReceiptsOptions": true, // client-only pagination query parameters, not a wire DTO
 	"ListPlatformTenantOffboardingReceiptsOptions":    true, // client-only pagination query parameters, not a wire DTO
 	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
+	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
 	"InboundWebhookEndpointRow":                       true,
 	"AppLogDrainRow":                                  true,
 	"QueueBindingRow":                                 true,
@@ -1102,6 +1098,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "preflight.go"),
 		filepath.Join(root, "pkg", "api", "exclusive_operations.go"),
 		filepath.Join(root, "pkg", "api", "operations.go"),
+		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
+		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
 		filepath.Join(root, "pkg", "api", "route_check_history.go"),
 		filepath.Join(root, "pkg", "api", "route_gate.go"),

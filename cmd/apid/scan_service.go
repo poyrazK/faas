@@ -1000,7 +1000,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// payload's kind field aligned with the deployment's kind.
 		enqRes, enqErr := apidsource.Enqueue(ctx, s.store, s.notif, apidsource.EnqueueParams{
 			OperationDefinitions:      operationDefinitions,
-			OperationAdmissionEnabled: s.operationsAdmissionEnabled,
+			OperationAdmissionEnabled: s.operationDefinitionAdmission(app.AccountID, app.ID, environment),
 			AppID:                     app.ID,
 			Kind:                      kind,
 			SourcePath:                staged,

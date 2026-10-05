@@ -160,3 +160,6 @@ export {
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
 export { insertCommitEvent, type CommitEvent, type CommitTransaction } from "./commit.js";
+
+export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport } from './operations.js';
+export { GregaleOperations, type GregaleOperationsOptions, type OperationExecutionContext } from './operations-runtime.js';

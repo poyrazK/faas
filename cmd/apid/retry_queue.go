@@ -46,7 +46,7 @@ func (s *server) enqueueRetry(ctx context.Context, app state.App, dep state.Depl
 		return state.Deployment{}, err
 	}
 	result, err := apidsource.Enqueue(ctx, s.store, s.notif, apidsource.EnqueueParams{
-		OperationDefinitions: specs, OperationAdmissionEnabled: s.operationsAdmissionEnabled,
+		OperationDefinitions: specs, OperationAdmissionEnabled: s.operationDefinitionAdmission(app.AccountID, app.ID, dep.Scope),
 		RetryOf: dep.ID, RetryFrom: from, AppID: app.ID, Kind: dep.Kind,
 		SourcePath: dep.SourcePath, SourceBytes: dep.SourceBytes,
 		SourceBuildID: build.ID,

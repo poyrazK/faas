@@ -1167,6 +1167,7 @@ from .kafka_trigger_config import KafkaTriggerConfig
 from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
 from .link_platform_tenant_consumer_request import LinkPlatformTenantConsumerRequest
 from .link_platform_tenant_surface_request import LinkPlatformTenantSurfaceRequest
+from .list_account_operations_state import ListAccountOperationsState
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
@@ -1195,6 +1196,7 @@ from .list_operator_runtime_config_revisions_response_200 import ListOperatorRun
 from .list_org_activity_actor_type import ListOrgActivityActorType
 from .list_org_activity_response import ListOrgActivityResponse
 from .list_org_api_keys_response import ListOrgAPIKeysResponse
+from .list_platform_tenant_self_operations_state import ListPlatformTenantSelfOperationsState
 from .list_project_environment_promotions_status import ListProjectEnvironmentPromotionsStatus
 from .list_schedule_occurrences_response import ListScheduleOccurrencesResponse
 from .list_secrets_for_account_response import ListSecretsForAccountResponse
@@ -1418,22 +1420,54 @@ from .open_api_contract_break_method import OpenAPIContractBreakMethod
 from .open_api_contract_diff_response import OpenAPIContractDiffResponse
 from .open_api_contract_diff_response_source import OpenAPIContractDiffResponseSource
 from .operation_accepted_response import OperationAcceptedResponse
+from .operation_artifact_request import OperationArtifactRequest
 from .operation_cancellation_request import OperationCancellationRequest
 from .operation_definition_response import OperationDefinitionResponse
 from .operation_definition_spec import OperationDefinitionSpec
 from .operation_definition_spec_method import OperationDefinitionSpecMethod
 from .operation_definition_spec_owner import OperationDefinitionSpecOwner
 from .operation_definition_spec_recovery import OperationDefinitionSpecRecovery
+from .operation_definition_summary import OperationDefinitionSummary
+from .operation_definition_summary_method import OperationDefinitionSummaryMethod
+from .operation_definition_summary_owner import OperationDefinitionSummaryOwner
+from .operation_definition_summary_recovery import OperationDefinitionSummaryRecovery
+from .operation_definitions_response import OperationDefinitionsResponse
+from .operation_delivery_attempt import OperationDeliveryAttempt
+from .operation_delivery_attempt_outcome import OperationDeliveryAttemptOutcome
+from .operation_delivery_attempts_response import OperationDeliveryAttemptsResponse
+from .operation_delivery_inspection import OperationDeliveryInspection
+from .operation_delivery_inspection_business_state import OperationDeliveryInspectionBusinessState
 from .operation_delivery_response import OperationDeliveryResponse
 from .operation_delivery_response_state import OperationDeliveryResponseState
+from .operation_delivery_retry_request import OperationDeliveryRetryRequest
+from .operation_delivery_retry_response import OperationDeliveryRetryResponse
+from .operation_delivery_retry_response_state import OperationDeliveryRetryResponseState
+from .operation_delivery_summary import OperationDeliverySummary
+from .operation_delivery_summary_state import OperationDeliverySummaryState
+from .operation_doctor_check import OperationDoctorCheck
+from .operation_doctor_check_impact import OperationDoctorCheckImpact
+from .operation_doctor_check_status import OperationDoctorCheckStatus
+from .operation_doctor_response import OperationDoctorResponse
+from .operation_doctor_response_observation_scope import OperationDoctorResponseObservationScope
+from .operation_doctor_response_plan import OperationDoctorResponsePlan
+from .operation_doctor_response_submission_state import OperationDoctorResponseSubmissionState
 from .operation_event import OperationEvent
 from .operation_event_type import OperationEventType
 from .operation_events_response import OperationEventsResponse
+from .operation_execution import OperationExecution
+from .operation_executions_response import OperationExecutionsResponse
+from .operation_list_response import OperationListResponse
 from .operation_progress import OperationProgress
+from .operation_recovery_request import OperationRecoveryRequest
+from .operation_recovery_request_resolution import OperationRecoveryRequestResolution
+from .operation_report_request import OperationReportRequest
 from .operation_response import OperationResponse
 from .operation_response_state import OperationResponseState
 from .operation_result_artifact import OperationResultArtifact
 from .operation_start_request import OperationStartRequest
+from .operation_summary import OperationSummary
+from .operation_summary_state import OperationSummaryState
+from .operation_tenant_identity import OperationTenantIdentity
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
@@ -3661,6 +3695,7 @@ __all__ = (
     "LatestDeploymentsByAppResponse",
     "LinkPlatformTenantConsumerRequest",
     "LinkPlatformTenantSurfaceRequest",
+    "ListAccountOperationsState",
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
@@ -3689,6 +3724,7 @@ __all__ = (
     "ListOrgActivityActorType",
     "ListOrgActivityResponse",
     "ListOrgAPIKeysResponse",
+    "ListPlatformTenantSelfOperationsState",
     "ListProjectEnvironmentPromotionsStatus",
     "ListScheduleOccurrencesResponse",
     "ListSecretsForAccountResponse",
@@ -3908,22 +3944,54 @@ __all__ = (
     "OpenAPIContractDiffResponse",
     "OpenAPIContractDiffResponseSource",
     "OperationAcceptedResponse",
+    "OperationArtifactRequest",
     "OperationCancellationRequest",
     "OperationDefinitionResponse",
     "OperationDefinitionSpec",
     "OperationDefinitionSpecMethod",
     "OperationDefinitionSpecOwner",
     "OperationDefinitionSpecRecovery",
+    "OperationDefinitionsResponse",
+    "OperationDefinitionSummary",
+    "OperationDefinitionSummaryMethod",
+    "OperationDefinitionSummaryOwner",
+    "OperationDefinitionSummaryRecovery",
+    "OperationDeliveryAttempt",
+    "OperationDeliveryAttemptOutcome",
+    "OperationDeliveryAttemptsResponse",
+    "OperationDeliveryInspection",
+    "OperationDeliveryInspectionBusinessState",
     "OperationDeliveryResponse",
     "OperationDeliveryResponseState",
+    "OperationDeliveryRetryRequest",
+    "OperationDeliveryRetryResponse",
+    "OperationDeliveryRetryResponseState",
+    "OperationDeliverySummary",
+    "OperationDeliverySummaryState",
+    "OperationDoctorCheck",
+    "OperationDoctorCheckImpact",
+    "OperationDoctorCheckStatus",
+    "OperationDoctorResponse",
+    "OperationDoctorResponseObservationScope",
+    "OperationDoctorResponsePlan",
+    "OperationDoctorResponseSubmissionState",
     "OperationEvent",
     "OperationEventsResponse",
     "OperationEventType",
+    "OperationExecution",
+    "OperationExecutionsResponse",
+    "OperationListResponse",
     "OperationProgress",
+    "OperationRecoveryRequest",
+    "OperationRecoveryRequestResolution",
+    "OperationReportRequest",
     "OperationResponse",
     "OperationResponseState",
     "OperationResultArtifact",
     "OperationStartRequest",
+    "OperationSummary",
+    "OperationSummaryState",
+    "OperationTenantIdentity",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
     "OperatorIntentAcceptedResponsePreviousState",

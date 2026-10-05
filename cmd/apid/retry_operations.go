@@ -16,7 +16,7 @@ func (s *server) retryOperationDefinitions(ctx context.Context, app state.App, d
 	if err != nil {
 		return nil, err
 	}
-	if len(defs) > 0 && !s.operationsAdmissionEnabled {
+	if len(defs) > 0 && !s.operationDefinitionAdmission(app.AccountID, app.ID, dep.Scope) {
 		return nil, api.ErrCapacity("new operation admission is disabled")
 	}
 	specs := make([]api.OperationDefinitionSpec, 0, len(defs))

@@ -331,3 +331,29 @@ If you want to install this client into another project without publishing it (e
 1. If that project is not using Poetry:
     1. Build a wheel with `poetry build -f wheel`
     1. Install that wheel from the other project `pip install <path-to-wheel>`
+## Internal HTTP Operations preview
+
+Production Operations submission remains disabled. Generated
+`faas_sdk.api.operations` modules expose typed submission, status, event,
+cancellation, runtime reporting, artifact download and account recovery routes.
+
+HTTP handlers can import `GregaleOperations` from
+`faas_sdk.operations_runtime` and use its `run_request(headers)` async context
+manager around a trusted Gregale guest request. Call `progress(report)` or
+`artifact(report)` with the generated request models and a stable `report_id`.
+The helper fetches fresh workload identity for each report, rejects native
+execution context and isolates authority between concurrent requests. Its public
+`context()` omits the ephemeral capability. The caller owns the injected
+`httpx.AsyncClient` and closes it during shutdown.
+
+See [Operations](../../docs/operations.md) for the separate business and webhook
+outcomes, retained result bytes, scoped credentials and rollout status.
+
+Completion delivery inspection, attempt history, and immutable retry decisions
+are exposed through the Operations APIs (`getOperationDelivery`,
+`getOperationDeliveryAttempts`, `retryOperationDeliveryWithReceipt`; PascalCase
+in Go and snake_case Python modules). New retries carry `retry_id`, `delivery_id`
+and an explicit `expected_replay_generation`, including zero. Reuse the same
+request after an uncertain reply; the returned `queued` receipt describes the
+original decision. Read delivery status separately. Business results and
+execution generations are unaffected. The legacy retry method remains available.

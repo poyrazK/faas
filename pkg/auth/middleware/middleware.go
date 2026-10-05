@@ -766,7 +766,7 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 		return false
 	}
 	if suffix == "customer-operations" {
-		return method == http.MethodPost
+		return method == http.MethodPost || method == http.MethodGet
 	}
 	if strings.HasPrefix(suffix, "customer-operations/") {
 		parts := strings.Split(suffix, "/")
@@ -775,6 +775,9 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 		}
 		if len(parts) == 3 && parts[1] != "" {
 			return (parts[2] == "events" && method == http.MethodGet) || (parts[2] == "cancel" && method == http.MethodPost)
+		}
+		if len(parts) == 4 && parts[1] != "" && parts[2] == "artifacts" && parts[3] != "" {
+			return method == http.MethodGet
 		}
 		return false
 	}

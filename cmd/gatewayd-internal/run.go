@@ -833,6 +833,15 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	}
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
 	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
+	if state.InvocationHasOperation(inv) {
+		var proof map[string]string
+		if err := json.Unmarshal(inv.Headers, &proof); err != nil {
+			return inv, 0, nil, err
+		}
+		for _, name := range []string{api.OperationIDHeader, api.OperationAttemptHeader, api.OperationCapabilityHeader} {
+			req.Header.Set(name, proof[name])
+		}
+	}
 	if inv.ExclusiveClaim != nil {
 		req.Header.Set(api.ExclusiveOperationIDHeader, inv.ExclusiveClaim.OperationID)
 		req.Header.Set(api.ExclusiveOperationGenerationHeader, strconv.FormatInt(inv.ExclusiveClaim.Generation, 10))
@@ -2483,6 +2492,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	retryBudget.WithObserver(deps.metrics)
 	defer func() { _ = retryBudget.Close() }()
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
+	if err := configureOperationRoutes(handler, deps); err != nil {
+		return fmt.Errorf("gatewayd-internal: %w", err)
+	}
 	if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" && deps.pgStore != nil {
 		bridgeTarget := deps.apidLoopback
 		if bridgeTarget == "" {

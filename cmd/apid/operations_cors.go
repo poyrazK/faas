@@ -18,10 +18,15 @@ func operationCustomerCORS(next http.Handler) http.Handler {
 			return
 		}
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Expose-Headers", "Retry-After")
+		w.Header().Set("Access-Control-Expose-Headers", "Retry-After, X-Gregale-Artifact-Sha256, Content-Disposition")
 		if r.Method == http.MethodOptions {
 			w.Header().Add("Vary", "Access-Control-Request-Method")
-			if r.Header.Get("Access-Control-Request-Method") != method {
+			requested := r.Header.Get("Access-Control-Request-Method")
+			allowed := requested == method
+			if method == "GET, POST" {
+				allowed = requested == http.MethodGet || requested == http.MethodPost
+			}
+			if !allowed {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
@@ -37,7 +42,7 @@ func operationCustomerCORS(next http.Handler) http.Handler {
 func operationCustomerMethod(path string) string {
 	const root = "/v1/platform-tenant-self/customer-operations"
 	if path == root {
-		return http.MethodPost
+		return "GET, POST"
 	}
 	if !strings.HasPrefix(path, root+"/") {
 		return ""
@@ -56,6 +61,9 @@ func operationCustomerMethod(path string) string {
 		case "cancel":
 			return http.MethodPost
 		}
+	}
+	if len(parts) == 3 && parts[1] == "artifacts" && uuid.Validate(parts[2]) == nil {
+		return http.MethodGet
 	}
 	return ""
 }

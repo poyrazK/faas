@@ -6280,6 +6280,84 @@ VALUES(sqlc.arg(operation_id)::uuid,sqlc.arg(sequence)::bigint,sqlc.arg(event_ty
 SELECT record FROM customer_operations WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid
 AND (sqlc.arg(tenant_id)::text='' OR platform_tenant_id::text=sqlc.arg(tenant_id)::text);
 
+-- name: ListPlatformTenantCustomerOperations :many
+-- The tenant creation index supports descending keyset paging. Only public
+-- summary fields cross this boundary; source input/results/capabilities do not.
+SELECT jsonb_build_object(
+ 'id', o.record->'id',
+ 'name', o.record->'name',
+ 'generation', o.record->'generation',
+ 'state', o.record->'state',
+ 'progress', o.record->'progress',
+ 'cancellation_requested', o.record->'cancellation_requested',
+ 'latest_sequence', o.record->'latest_sequence',
+ 'updated_at', o.record->'updated_at',
+ 'expires_at', o.record->'expires_at',
+ 'created_at', o.created_at,
+ 'completion_delivery', jsonb_strip_nulls(jsonb_build_object(
+   'state', CASE WHEN coalesce(o.record->'completion_delivery'->>'delivery_id','') = ''
+     THEN o.record->'completion_delivery'->>'state'
+     WHEN delivery.id IS NULL THEN 'delivery_expired' ELSE delivery.status END,
+   'attempts', coalesce(delivery.attempt,(o.record->'completion_delivery'->>'attempts')::integer,0),
+   'next_attempt_at', CASE WHEN delivery.status IN ('pending','failed') THEN delivery.next_attempt_at END
+ ))) AS summary
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+LEFT JOIN app_webhook_deliveries delivery ON delivery.id=nullif(o.record->'completion_delivery'->>'delivery_id','')::uuid
+ AND delivery.account_id=o.account_id AND delivery.app_id=o.app_id
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.platform_tenant_id=sqlc.arg(tenant_id)::uuid
+ AND o.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+ AND (sqlc.arg(operation_name)::text='' OR d.name=sqlc.arg(operation_name)::text)
+ AND (sqlc.arg(operation_state)::text='' OR o.state=sqlc.arg(operation_state)::text)
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+ AND (sqlc.narg(before_created_at)::timestamptz IS NULL OR
+      (o.created_at,o.id)<(sqlc.narg(before_created_at)::timestamptz,sqlc.narg(before_id)::uuid))
+ORDER BY o.created_at DESC,o.id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ListAccountCustomerOperations :many
+-- The account/app creation index supports descending keyset paging across
+-- tenants. Only explicit public summary fields cross this operator boundary.
+SELECT jsonb_build_object(
+ 'platform_tenant_id', o.platform_tenant_id,
+ 'id', o.record->'id',
+ 'name', o.record->'name',
+ 'generation', o.record->'generation',
+ 'state', o.record->'state',
+ 'progress', o.record->'progress',
+ 'cancellation_requested', o.record->'cancellation_requested',
+ 'latest_sequence', o.record->'latest_sequence',
+ 'updated_at', o.record->'updated_at',
+ 'expires_at', o.record->'expires_at',
+ 'created_at', o.created_at,
+ 'completion_delivery', jsonb_strip_nulls(jsonb_build_object(
+   'state', CASE WHEN coalesce(o.record->'completion_delivery'->>'delivery_id','') = ''
+     THEN o.record->'completion_delivery'->>'state'
+     WHEN delivery.id IS NULL THEN 'delivery_expired' ELSE delivery.status END,
+   'attempts', coalesce(delivery.attempt,(o.record->'completion_delivery'->>'attempts')::integer,0),
+   'next_attempt_at', CASE WHEN delivery.status IN ('pending','failed') THEN delivery.next_attempt_at END
+ ))) AS summary
+FROM customer_operations o
+JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o.account_id AND d.app_id=o.app_id
+LEFT JOIN app_webhook_deliveries delivery ON delivery.id=nullif(o.record->'completion_delivery'->>'delivery_id','')::uuid
+ AND delivery.account_id=o.account_id AND delivery.app_id=o.app_id
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND (sqlc.arg(tenant_id)::text='' OR o.platform_tenant_id::text=sqlc.arg(tenant_id)::text)
+ AND o.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+ AND (sqlc.arg(operation_name)::text='' OR d.name=sqlc.arg(operation_name)::text)
+ AND (sqlc.arg(operation_state)::text='' OR o.state=sqlc.arg(operation_state)::text)
+ AND (o.state IN ('accepted','running') OR o.expires_at>sqlc.arg(now)::timestamptz)
+ AND (sqlc.narg(before_created_at)::timestamptz IS NULL OR
+      (o.created_at,o.id)<(sqlc.narg(before_created_at)::timestamptz,sqlc.narg(before_id)::uuid))
+ORDER BY o.created_at DESC,o.id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ListAccountCustomerOperationExecutions :many
+SELECT e.generation,i.id::text AS invocation_id,i.state,i.attempts,i.created_at,i.completed_at
+FROM customer_operation_executions e
+JOIN customer_operations o ON o.id=e.operation_id
+JOIN invocations i ON i.id=e.invocation_id AND i.account_id=o.account_id AND i.app_id=o.app_id
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.account_id=sqlc.arg(account_id)::uuid
+ AND e.generation>sqlc.arg(after_generation)::integer
+ORDER BY e.generation LIMIT sqlc.arg(page_limit)::integer;
+
 -- name: ReadCustomerOperationEvents :many
 SELECT operation_id::text,sequence,event_type,coalesce(execution_id::text,''::text)::text AS execution_id,attempt,data,created_at
 FROM customer_operation_events WHERE operation_id=sqlc.arg(operation_id)::uuid AND sequence>sqlc.arg(after_sequence)::bigint
@@ -10335,3 +10413,36 @@ WHERE id=sqlc.arg(run_id) AND (sqlc.narg(generation)::integer IS NULL OR resume_
 UPDATE workflow_runs SET lease_until=now()+(sqlc.arg(timeout_ms)::bigint*interval '1 millisecond')+interval '5 minutes'
 WHERE id=sqlc.arg(run_id) AND status='running'
  AND (sqlc.narg(generation)::integer IS NULL OR resume_count=sqlc.narg(generation)::integer);
+
+-- name: LockCustomerOperationDeliveryOwner :one
+SELECT record FROM customer_operations WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid FOR UPDATE;
+
+-- name: GetCustomerOperationDeliveryRetry :one
+SELECT delivery_id::text, expected_replay_generation, replay_generation, queued_at, expires_at
+FROM customer_operation_delivery_retries WHERE operation_id=sqlc.arg(operation_id)::uuid AND retry_id=sqlc.arg(retry_id)::text;
+
+-- name: CountCustomerOperationDeliveryRetries :one
+SELECT count(*) FROM customer_operation_delivery_retries WHERE operation_id=sqlc.arg(operation_id)::uuid;
+
+-- name: InsertCustomerOperationDeliveryRetry :exec
+INSERT INTO customer_operation_delivery_retries(operation_id,retry_id,delivery_id,expected_replay_generation,replay_generation,queued_at,expires_at)
+VALUES(sqlc.arg(operation_id)::uuid,sqlc.arg(retry_id)::text,sqlc.arg(delivery_id)::uuid,sqlc.arg(expected_replay_generation)::integer,sqlc.arg(replay_generation)::integer,sqlc.arg(queued_at)::timestamptz,sqlc.arg(expires_at)::timestamptz);
+
+-- name: GetCustomerOperationDeliveryPlan :one
+SELECT plan FROM accounts WHERE id=sqlc.arg(account_id)::uuid;
+
+-- name: GetCustomerOperationDeliveryRow :one
+SELECT id::text, webhook_id::text, app_id::text, account_id::text, event, payload,
+ attempt,status,last_error,last_response_code,next_attempt_at,delivered_at,replay_generation
+FROM app_webhook_deliveries WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: LockCustomerOperationDeliveryRow :one
+SELECT id::text, webhook_id::text, app_id::text, account_id::text, event, payload,
+ attempt,status,last_error,last_response_code,next_attempt_at,delivered_at,replay_generation
+FROM app_webhook_deliveries WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid FOR UPDATE;
+
+-- name: ResetCustomerOperationDelivery :execrows
+UPDATE app_webhook_deliveries SET status='pending',attempt=0,replay_generation=replay_generation+1,
+ last_error='',last_response_code=0,next_attempt_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)::timestamptz
+WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND status='dead'
+ AND replay_generation=sqlc.arg(expected_replay_generation)::integer;

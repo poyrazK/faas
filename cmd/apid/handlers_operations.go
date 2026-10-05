@@ -74,15 +74,6 @@ func decodeOperationBody(w http.ResponseWriter, r *http.Request, dst any, limit 
 	return true
 }
 
-func (s *server) operationAdmissionOpen(w http.ResponseWriter) bool {
-	w.Header().Set("Cache-Control", "no-store")
-	if !s.operationsAdmissionEnabled {
-		api.WriteProblem(w, api.ErrCapacity("new operation admission is disabled"))
-		return false
-	}
-	return true
-}
-
 func (s *server) operationDefinitionDeployment(w http.ResponseWriter, r *http.Request, acct state.Account) (state.Deployment, bool) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
@@ -97,15 +88,15 @@ func (s *server) operationDefinitionDeployment(w http.ResponseWriter, r *http.Re
 }
 
 func (s *server) putOperationDefinition(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.operationAdmissionOpen(w) {
-		return
-	}
 	store, ok := s.operationStore(w)
 	if !ok {
 		return
 	}
 	dep, ok := s.operationDefinitionDeployment(w, r, acct)
 	if !ok {
+		return
+	}
+	if !s.operationAdmissionOpen(w, acct.ID, dep.AppID, dep.Scope, "") {
 		return
 	}
 	limits := api.MustLimitsFor(acct.Plan)
@@ -225,9 +216,6 @@ func (s *server) getPlatformTenantSelfOperationEvents(w http.ResponseWriter, r *
 }
 
 func (s *server) startPlatformTenantSelfOperation(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.operationAdmissionOpen(w) {
-		return
-	}
 	store, ok := s.operationStore(w)
 	if !ok {
 		return
@@ -238,6 +226,14 @@ func (s *server) startPlatformTenantSelfOperation(w http.ResponseWriter, r *http
 	}
 	var req api.OperationStartRequest
 	if !decodeOperationBody(w, r, &req, api.OperationSubmissionMaxBytes+api.OperationStartBodyOverheadBytes) {
+		return
+	}
+	def, err := store.OperationDefinitionByID(r.Context(), acct.ID, req.DefinitionID)
+	if err != nil {
+		writeOperationError(w, err)
+		return
+	}
+	if !s.operationAdmissionOpen(w, acct.ID, def.AppID, def.Scope, tenant) {
 		return
 	}
 	op, _, err := store.AdmitOperation(r.Context(), state.OperationAdmission{AccountID: acct.ID, PlatformTenantID: tenant, DefinitionID: req.DefinitionID, IdempotencyKey: r.Header.Get("Idempotency-Key"), Input: req.Input})

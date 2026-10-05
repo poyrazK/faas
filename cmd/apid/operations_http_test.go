@@ -5,17 +5,22 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
 func TestOperationsHTTPBoundary(t *testing.T) {
@@ -136,14 +141,162 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 	check(do("POST", "/v1/platform-tenant-self/customer-operations", aliceKey, json.RawMessage(`{"definition_id":"`+def.ID+`","input":{"count":1},"tenant_id":"forged"}`), headers), http.StatusBadRequest)
 	check(do("POST", "/v1/platform-tenant-self/customer-operations", aliceKey, json.RawMessage(`{"definition_id":"`+def.ID+`","input":{"count":1},"input":{"count":2}}`), headers), http.StatusBadRequest)
 	check(do("POST", receipt.StatusURL+"/cancel", aliceKey, api.OperationCancellationRequest{ExpectedGeneration: 9}, nil), http.StatusConflict)
-	// Produce a durable state event directly; runtime reporting is qualified separately.
+	srv.operationsAdmissionEnabled = false // reports and downloads survive admission rollback
+	op, err := store.OperationByID(ctx, acct.ID, alice.ID, receipt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, uuid.NewString(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := store.ClaimInvocationWithCap(ctx, op.CurrentInvocationID, instance.ID, 60, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal(inv.Headers, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	private, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := workloadidentity.NewSigner(private, workloadidentity.DefaultIssuer, "operations-http", workloadidentity.DefaultTokenTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.operationsWorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion, err := signer.Mint(time.Now(), acct.ID, app.ID, instance.ID, workloadidentity.OperationsAudience)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof := map[string]string{api.InvocationIDHeader: inv.ID, api.OperationAttemptHeader: strconv.Itoa(inv.Attempts), api.OperationCapabilityHeader: metadata[api.OperationCapabilityHeader]}
+	report := api.OperationReportRequest{ReportID: "chunk-1", Stage: "generating", Completed: 1, Total: 3}
+	progressURL := "/v1/runtime/operations/" + op.ID + "/progress"
+	check(do("POST", progressURL, aliceKey, report, proof), http.StatusUnauthorized)
+	wrongAudience, _ := signer.Mint(time.Now(), acct.ID, app.ID, instance.ID, workloadidentity.FlagsAudience)
+	check(do("POST", progressURL, wrongAudience.AccessToken, report, proof), http.StatusUnauthorized)
+	check(do("POST", progressURL, assertion.AccessToken, report, proof), http.StatusOK)
+	check(do("POST", progressURL, assertion.AccessToken, report, proof), http.StatusOK)
+	provider, artifact := operationArtifactFixture(t, srv, store, acct, app, def.Scope)
+	artifactURL := "/v1/runtime/operations/" + op.ID + "/artifacts"
+	badArtifact := artifact
+	badArtifact.SizeBytes++
+	check(do("POST", artifactURL, assertion.AccessToken, badArtifact, proof), http.StatusConflict)
+	check(do("POST", artifactURL, aliceKey, artifact, proof), http.StatusUnauthorized)
+	backend := srv.operationArtifactStorage
+	interrupted := &operationArtifactInterruptedStorage{StorageBackend: backend}
+	srv.operationArtifactStorage = interrupted
+	check(do("POST", artifactURL, assertion.AccessToken, artifact, proof), http.StatusServiceUnavailable)
+	if interrupted.key == "" {
+		t.Fatal("interrupted copy did not reach storage")
+	}
+	srv.operationArtifactStorage = backend
+	attached := do("POST", artifactURL, assertion.AccessToken, artifact, proof)
+	check(attached, http.StatusOK)
+	var artifactStatus api.OperationResponse
+	if err := json.Unmarshal(attached.Body.Bytes(), &artifactStatus); err != nil || len(artifactStatus.Artifacts) != 1 {
+		t.Fatalf("artifact response: %s %v", attached.Body.String(), err)
+	}
+	provider.replace("changed after first attachment")
+	provider.mu.Lock()
+	priorReads := provider.reads
+	provider.mu.Unlock()
+	check(do("POST", artifactURL, assertion.AccessToken, artifact, proof), http.StatusOK)
+	provider.mu.Lock()
+	if provider.reads != priorReads {
+		t.Error("verified receipt replay repeated object I/O")
+	}
+	provider.mu.Unlock()
+	provider.replace("id,count\nalice,1\n")
+	fileURL := receipt.StatusURL + "/artifacts/" + artifactStatus.Artifacts[0].ID
+	check(do("GET", fileURL, aliceKey, nil, nil), http.StatusConflict)
+	check(do("POST", receipt.StatusURL+"/cancel", aliceKey, api.OperationCancellationRequest{ExpectedGeneration: 2}, nil), http.StatusConflict)
 	check(do("POST", receipt.StatusURL+"/cancel", aliceKey, api.OperationCancellationRequest{ExpectedGeneration: 1}, nil), http.StatusOK)
+	if err := store.CompleteKeyedInvocation(ctx, inv.ID, inv.Attempts, json.RawMessage(`{"file":"exports/alice.csv"}`)); err != nil {
+		t.Fatal(err)
+	}
+	result := do("GET", receipt.StatusURL, aliceKey, nil, nil)
+	check(result, http.StatusOK)
+	var out api.OperationResponse
+	if err := json.Unmarshal(result.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.State != api.OperationSucceeded || !out.CancellationRequested || out.Progress == nil {
+		t.Fatalf("operation outcome: %+v", out)
+	}
+	if result.Header().Get("Cache-Control") != "no-store" || bytes.Contains(result.Body.Bytes(), []byte(metadata[api.OperationCapabilityHeader])) {
+		t.Fatal("customer response leaked or cached execution authority")
+	}
+	download := do("GET", fileURL, aliceKey, nil, nil)
+	check(download, http.StatusOK)
+	if download.Body.String() != "id,count\nalice,1\n" || download.Header().Get("X-Gregale-Artifact-Sha256") != artifact.SHA256 {
+		t.Fatal("unverified bytes served")
+	}
+	check(do("GET", fileURL, bobKey, nil, nil), http.StatusNotFound)
+	provider.replace("changed export")
+	provider.mu.Lock()
+	provider.missing = true
+	provider.mu.Unlock()
+	retainedDownload := do("GET", fileURL, aliceKey, nil, nil)
+	check(retainedDownload, http.StatusOK)
+	if retainedDownload.Body.String() != "id,count\nalice,1\n" {
+		t.Fatal("source mutation changed retained bytes")
+	}
+	retainedOp, err := store.OperationByID(ctx, acct.ID, alice.ID, op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactKey := retainedOp.ArtifactStorageKeys[artifactStatus.Artifacts[0].ID]
+	if artifactKey == "" {
+		t.Fatal("artifact has no retained storage receipt")
+	}
+	if artifactKey == interrupted.key {
+		t.Fatal("retry replaced an uncertain upload in place")
+	}
+	cleanupAt := time.Now().Add(api.OperationArtifactStagingLifetime + time.Second)
+	interrupted.deleteUnavailable = true
+	srv.operationArtifactStorage = interrupted
+	if err := srv.cleanupOperationArtifacts(ctx, cleanupAt); err == nil {
+		t.Fatal("storage outage lost cleanup retry")
+	}
+	srv.operationArtifactStorage = backend
+	if err := srv.cleanupOperationArtifacts(ctx, cleanupAt.Add(api.OperationArtifactCleanupRetry)); err != nil {
+		t.Fatal(err)
+	}
+	if stream, err := backend.Get(ctx, interrupted.key); !storage.IsNotFound(err) {
+		if stream != nil {
+			_ = stream.Close()
+		}
+		t.Fatalf("abandoned copy survived cleanup: %v", err)
+	}
+	check(do("GET", fileURL, aliceKey, nil, nil), http.StatusOK)
+	if err := srv.operationArtifactStorage.Put(ctx, artifactKey, bytes.NewBufferString("corrupt retained copy")); err != nil {
+		t.Fatal(err)
+	}
+	changed := do("GET", fileURL, aliceKey, nil, nil)
+	check(changed, http.StatusConflict)
+	if !bytes.Contains(changed.Body.Bytes(), []byte("operation_artifact_changed")) {
+		t.Fatal("changed artifact has no independent error")
+	}
+	if err := srv.cleanupOperationArtifacts(ctx, retainedOp.ExpiresAt.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	check(do("GET", fileURL, aliceKey, nil, nil), http.StatusGone)
+	check(do("GET", receipt.StatusURL, aliceKey, nil, nil), http.StatusOK)
+	provider.replace("id,count\nalice,1\n")
+	check(do("POST", progressURL, assertion.AccessToken, report, proof), http.StatusConflict)
+
 	streamServer := httptest.NewServer(handler)
 	defer streamServer.Close()
 	streamReq, _ := http.NewRequest("GET", streamServer.URL+receipt.EventsURL, nil)
 	streamReq.Header.Set("Authorization", "Bearer "+aliceKey)
 	streamReq.Header.Set("Accept", "text/event-stream")
-	streamReq.Header.Set("Last-Event-ID", "1")
+	streamReq.Header.Set("Last-Event-ID", "3")
 	streamClient := &http.Client{Timeout: 5 * time.Second}
 	response, err := streamClient.Do(streamReq)
 	if err != nil {
@@ -162,8 +315,8 @@ func TestOperationsHTTPBoundary(t *testing.T) {
 			if err := json.Unmarshal([]byte(line[6:]), &event); err != nil {
 				t.Fatal(err)
 			}
-			if event.Sequence != 2 {
-				t.Fatalf("durable stream resumed at %d, want 2", event.Sequence)
+			if event.Sequence != 4 {
+				t.Fatalf("durable stream resumed at %d, want 4", event.Sequence)
 			}
 			replayed = event.Sequence
 			break
