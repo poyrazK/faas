@@ -13,6 +13,7 @@ ALTER TABLE app_webhook_event_outbox
         'workflow.finished'
     ));
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION faas_capture_workflow_finished_webhook_event()
 RETURNS trigger AS $$
 DECLARE
@@ -68,6 +69,7 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 DROP TRIGGER IF EXISTS workflow_runs_capture_finished_webhook_event ON workflow_runs;
 CREATE TRIGGER workflow_runs_capture_finished_webhook_event
