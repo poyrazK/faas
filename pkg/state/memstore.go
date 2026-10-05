@@ -574,6 +574,7 @@ type MemStore struct {
 	// lease_expires_at is in-memory instead of SQL NOW().
 	invocations         map[string]Invocation
 	keyedReplayChildren map[string]string
+	plainReplayChildren map[string]plainReplayIdentity
 	workPolicies        map[string]AppWorkPolicy
 	eventWorkBindings   map[string]EventWorkBinding
 	triggerWorkBindings map[string]TriggerWorkBinding
@@ -6515,6 +6516,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.invocations, key)
 			m.deleteInvocationAttemptsLocked(key)
 			delete(m.keyedReplayChildren, key)
+			delete(m.plainReplayChildren, key)
 		}
 	}
 	for key, task := range m.appTasks {
@@ -25470,6 +25472,7 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 			delete(m.invocations, id)
 			m.deleteInvocationAttemptsLocked(id)
 			delete(m.keyedReplayChildren, id)
+			delete(m.plainReplayChildren, id)
 			n++
 		}
 	}

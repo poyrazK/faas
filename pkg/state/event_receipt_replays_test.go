@@ -207,3 +207,53 @@ func TestEventReceiptReplaySurvivesExecutionRetentionPostgres(t *testing.T) {
 		t.Fatalf("old recovery attached to new acceptance: %+v %v", receipt, err)
 	}
 }
+
+// adr: 587
+func TestEventReceiptPlainReplayDeduplicationAndRetention(t *testing.T) {
+	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
+		ctx, account, app, work := seedRecipientClaims(t, store)
+		rootID := state.PublishedEventInvocationID(account, "orders", "evt-three-consumers", work.RecipientSnapshot[0].ID)
+		if _, err := store.EnqueueInvocation(ctx, state.Invocation{ID: rootID, AccountID: account, AppID: app,
+			Source: state.InvocationAsyncInvoke, DueAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		failReceiptInvocation(t, store, rootID)
+		replayer := store.(state.PlainInvocationReplayStore)
+		read := func() state.EventReceiptRecipient {
+			t.Helper()
+			receipt, err := store.EventReceipt(ctx, account, "orders", "evt-three-consumers", state.EventReceiptCursor{}, 200)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return receipt.Recipients[0]
+		}
+		if read().HandlerReplayMode != "handler_replay" {
+			t.Fatal("failed plain consumer has no recovery action")
+		}
+		child, err := replayer.ReplayPlainInvocation(ctx, account, rootID, state.PlainInvocationReplayOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		failReceiptInvocation(t, store, child.ID)
+		failed := read()
+		if failed.Execution.State != "failed" || failed.Recovery == nil || failed.HandlerReplayMode != "handler_replay" || failed.HandlerReplayInvocationID != child.ID {
+			t.Fatalf("latest failed child not recoverable: %+v", failed)
+		}
+		next, err := replayer.ReplayPlainInvocation(ctx, account, child.ID, state.PlainInvocationReplayOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.DeleteInvocationsByIDs(ctx, []string{next.ID}); err != nil {
+			t.Fatal(err)
+		}
+		if pruned := read(); pruned.Recovery.LatestReplay.InvocationID != child.ID || pruned.HandlerReplayMode != "" {
+			t.Fatalf("latest retained parent offered redundant replay: %+v", pruned)
+		}
+		if _, err := store.DeleteInvocationsByIDs(ctx, []string{child.ID}); err != nil {
+			t.Fatal(err)
+		}
+		if pruned := read(); pruned.Recovery != nil || pruned.Execution.State != "failed" || pruned.HandlerReplayMode != "" {
+			t.Fatalf("retained original offered redundant replay: %+v", pruned)
+		}
+	})
+}

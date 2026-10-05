@@ -92,10 +92,10 @@ func (m *MemStore) ExistingKeyedInvocationReplay(_ context.Context, accountID, p
 	if !ok {
 		return Invocation{}, ErrConflict
 	}
-	if !keyedReplayChildMatches(parent, child) {
+	if !invocationReplayChildMatches(parent, child) {
 		return Invocation{}, ErrConflict
 	}
-	return cloneKeyedReplay(child), nil
+	return cloneInvocationReplay(child), nil
 }
 
 func keyedReplayAllowed(parent Invocation) bool {
@@ -222,10 +222,10 @@ func (m *MemStore) ReplayKeyedInvocation(_ context.Context, accountID, parentID 
 		if !ok {
 			return Invocation{}, ErrConflict
 		}
-		if !keyedReplayChildMatches(parent, child) {
+		if !invocationReplayChildMatches(parent, child) {
 			return Invocation{}, ErrConflict
 		}
-		return cloneKeyedReplay(child), nil
+		return cloneInvocationReplay(child), nil
 	}
 	now := time.Now().UTC()
 	if parent.WorkExpiresAt != nil && !parent.WorkExpiresAt.After(now) || parent.StartDeadlineAt != nil && !parent.StartDeadlineAt.After(now) {
@@ -250,10 +250,10 @@ func (m *MemStore) ReplayKeyedInvocation(_ context.Context, accountID, parentID 
 	}
 	m.keyedReplayChildren[parentID] = inv.ID
 	m.setInvocationLocked(inv.ID, inv)
-	return cloneKeyedReplay(inv), nil
+	return cloneInvocationReplay(inv), nil
 }
 
-func keyedReplayChildMatches(parent, child Invocation) bool {
+func invocationReplayChildMatches(parent, child Invocation) bool {
 	return sameMemUUID(parent.AccountID, child.AccountID) && sameMemUUID(parent.AppID, child.AppID) &&
 		child.Source == InvocationReplay && sameMemUUID(parent.ID, child.ReplayedFromInvocationID)
 }
@@ -263,13 +263,13 @@ func ownedKeyedReplayChild(parent Invocation, row sqlc.Invocation) (Invocation, 
 	if err != nil {
 		return Invocation{}, err
 	}
-	if !keyedReplayChildMatches(parent, child) {
+	if !invocationReplayChildMatches(parent, child) {
 		return Invocation{}, ErrConflict
 	}
 	return child, nil
 }
 
-func cloneKeyedReplay(inv Invocation) Invocation {
+func cloneInvocationReplay(inv Invocation) Invocation {
 	inv.Payload, inv.Headers = bytes.Clone(inv.Payload), bytes.Clone(inv.Headers)
 	inv.WorkKeyDigest, inv.WorkFairnessDigest = bytes.Clone(inv.WorkKeyDigest), bytes.Clone(inv.WorkFairnessDigest)
 	inv.WorkExpiresAt, inv.StartDeadlineAt = cloneEventReceiptTime(inv.WorkExpiresAt), cloneEventReceiptTime(inv.StartDeadlineAt)

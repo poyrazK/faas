@@ -36,7 +36,8 @@ ORDER BY s.position LIMIT sqlc.arg(page_limit)::integer;
 SELECT i.id, i.app_id, i.state, i.attempts, i.replay_generation, coalesce(i.last_error, '')::text AS last_error,
        i.due_at, i.created_at, i.completed_at, coalesce(i.work_policy_name, '')::text AS work_policy_name,
        i.queue_binding_id, i.work_expires_at, i.start_deadline_at,
-       EXISTS (SELECT 1 FROM invocation_keyed_replays r WHERE r.parent_invocation_id=i.id) AS keyed_replay_created
+       EXISTS (SELECT 1 FROM invocation_keyed_replays r WHERE r.parent_invocation_id=i.id) AS keyed_replay_created,
+       EXISTS (SELECT 1 FROM invocation_plain_replays r WHERE r.parent_invocation_id=i.id) AS plain_replay_created
 FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
 WHERE i.account_id=sqlc.arg(account_id)::uuid AND i.id=ANY(sqlc.arg(invocation_ids)::uuid[])
   AND i.created_at >= sqlc.arg(accepted_at)::timestamptz;
@@ -58,6 +59,7 @@ CROSS JOIN LATERAL (
          coalesce(i.last_error, '')::text AS last_error, i.due_at, i.created_at, i.completed_at,
          coalesce(i.work_policy_name, '')::text AS work_policy_name, i.queue_binding_id, i.work_expires_at, i.start_deadline_at,
          EXISTS (SELECT 1 FROM invocation_keyed_replays r WHERE r.parent_invocation_id=i.id) AS keyed_replay_created,
+         EXISTS (SELECT 1 FROM invocation_plain_replays r WHERE r.parent_invocation_id=i.id) AS plain_replay_created,
          count(*) OVER ()::bigint AS retained_replay_count
   FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
   WHERE i.account_id=sqlc.arg(account_id)::uuid AND i.replay_root_invocation_id=roots.id

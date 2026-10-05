@@ -47,8 +47,8 @@ func TestEventReceiptReplayRecoveryAndIdempotency(t *testing.T) {
 	}
 	action := initial.Recipients[1].RecoveryActions[0]
 	var first api.AsyncInvokeResponse
-	for range 2 {
-		rec := e.do(t, "POST", action.URL, nil, map[string]string{"Idempotency-Key": "receipt-replay-one"})
+	for _, key := range []string{"receipt-replay-one", "receipt-replay-other", ""} {
+		rec := e.do(t, "POST", action.URL, nil, map[string]string{"Idempotency-Key": key})
 		var replay api.AsyncInvokeResponse
 		if rec.Code != 202 || json.Unmarshal(rec.Body.Bytes(), &replay) != nil {
 			t.Fatalf("replay: %d %s", rec.Code, rec.Body)
@@ -92,6 +92,18 @@ func TestEventReceiptReplayRecoveryAndIdempotency(t *testing.T) {
 	var older api.EventReceiptReplayHistoryResponse
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &older) != nil || len(older.Replays) != 1 || older.Replays[0].InvocationID != first.ID || older.NextAfter != "" {
 		t.Fatalf("older history: %s", rec.Body)
+	}
+	// Pruning both descendants leaves the original failure visible, without
+	// suggesting another child from a parent whose replay was already accepted.
+	if _, err := e.store.DeleteInvocationsByIDs(ctx, []string{first.ID, second.ID}); err != nil {
+		t.Fatal(err)
+	}
+	pruned := readReceipt().Recipients[1]
+	if pruned.Execution.State != "failed" || pruned.Recovery != nil || len(pruned.RecoveryActions) != 0 {
+		t.Fatalf("pruning offered redundant recovery: %+v", pruned)
+	}
+	if rec := e.do(t, "POST", action.URL, nil, nil); rec.Code != 409 {
+		t.Fatalf("pruned recovery executed again: %d %s", rec.Code, rec.Body)
 	}
 	for _, path := range []string{eventReceiptReplayURL("orders", "receipt-1", work.RecipientSnapshot[0].ID) + "&after=" + url.QueryEscape(page.NextAfter), historyPath + "&after=err1.garbage", historyPath + "&limit=201", historyPath + "&after=" + url.QueryEscape(strings.Repeat("x", 8193))} {
 		if rec := e.do(t, "GET", path, nil, nil); rec.Code != 400 {

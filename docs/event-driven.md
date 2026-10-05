@@ -717,6 +717,18 @@ replay means that replay succeeded; text inspection labels it `recovered`.
 Recovery requests target the latest retained replay, and are absent while that
 replay is active or completed. Independent consumer outcomes remain separate.
 
+Plain handler replay uses `POST /v1/invocations/{id}/replay` (or
+`gregale invocations get --replay INVOCATION_ID`). Each failed parent creates
+one durable child. Repeated and concurrent requests return that child even
+with different request keys or after success; further recovery targets the
+failed child. Customer self-service and account-operator replay share this
+identity and preserve the captured customer and environment. If the child has
+been pruned, its retained parent returns `invocation_replay_unavailable` and
+receipts suppress its handler replay action. Existing accepted replay IDs
+remain readable when an old deployment pin expires. Delivery remains at least
+once; applications still deduplicate external side effects. See
+[ADR-587](adr/587-durable-plain-invocation-replay.md).
+
 Failed keyed handlers use `keyed_handler_replay`, which calls
 `POST /v1/invocations/{id}/replay-keyed`. It preserves the captured policy
 revision, key, fairness controls and environment, and joins the end of that

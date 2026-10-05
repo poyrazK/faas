@@ -53,7 +53,7 @@ func enrichPgEventReceiptReplays(ctx context.Context, q *sqlc.Queries, tx pgx.Tx
 		entry.HandlerReplayInvocationID = latest.InvocationID
 		if entry.TargetAvailable {
 			entry.HandlerReplayMode = receiptHandlerReplay(row.State, row.WorkPolicyName, row.QueueBindingID.Valid, entry.AppSlug, timestamptzToTimePtr(row.WorkExpiresAt), timestamptzToTimePtr(row.StartDeadlineAt))
-			if row.KeyedReplayCreated {
+			if row.KeyedReplayCreated || entry.HandlerReplayMode == "handler_replay" && row.PlainReplayCreated {
 				entry.HandlerReplayMode = ""
 			}
 		}
@@ -97,7 +97,7 @@ func (m *MemStore) enrichMemEventReceiptReplays(entry *EventReceiptRecipient, ac
 	entry.HandlerReplayInvocationID = latest.ID
 	if entry.TargetAvailable {
 		entry.HandlerReplayMode = receiptHandlerReplay(string(latest.State), latest.WorkPolicyName, latest.QueueBindingID != "", entry.AppSlug, latest.WorkExpiresAt, latest.StartDeadlineAt)
-		if m.keyedReplayChildren[latest.ID] != "" {
+		if m.keyedReplayChildren[latest.ID] != "" || entry.HandlerReplayMode == "handler_replay" && m.plainReplayChildren[latest.ID].ChildID != "" {
 			entry.HandlerReplayMode = ""
 		}
 	}

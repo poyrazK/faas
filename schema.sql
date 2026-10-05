@@ -12565,6 +12565,18 @@ CREATE TABLE public.invocation_keyed_replays (
 
 
 --
+-- Name: invocation_plain_replays; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_plain_replays (
+    parent_invocation_id uuid NOT NULL,
+    replay_invocation_id uuid NOT NULL,
+    replay_created_at timestamp with time zone NOT NULL,
+    CONSTRAINT invocation_plain_replays_check CHECK ((parent_invocation_id <> replay_invocation_id))
+);
+
+
+--
 -- Name: invocation_work_cancellations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19580,6 +19592,22 @@ ALTER TABLE ONLY public.invocation_keyed_replays
 
 ALTER TABLE ONLY public.invocation_keyed_replays
     ADD CONSTRAINT invocation_keyed_replays_replay_invocation_id_key UNIQUE (replay_invocation_id);
+
+
+--
+-- Name: invocation_plain_replays invocation_plain_replays_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_plain_replays
+    ADD CONSTRAINT invocation_plain_replays_pkey PRIMARY KEY (parent_invocation_id);
+
+
+--
+-- Name: invocation_plain_replays invocation_plain_replays_replay_invocation_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_plain_replays
+    ADD CONSTRAINT invocation_plain_replays_replay_invocation_id_key UNIQUE (replay_invocation_id);
 
 
 --
@@ -31777,6 +31805,14 @@ ALTER TABLE ONLY public.invocation_attempt_history
 
 ALTER TABLE ONLY public.invocation_keyed_replays
     ADD CONSTRAINT invocation_keyed_replays_parent_invocation_id_fkey FOREIGN KEY (parent_invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocation_plain_replays invocation_plain_replays_parent_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_plain_replays
+    ADD CONSTRAINT invocation_plain_replays_parent_invocation_id_fkey FOREIGN KEY (parent_invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
 
 
 --

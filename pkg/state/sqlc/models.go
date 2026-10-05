@@ -2733,6 +2733,12 @@ type InvocationKeyedReplay struct {
 	ReplayInvocationID pgtype.UUID
 }
 
+type InvocationPlainReplay struct {
+	ParentInvocationID pgtype.UUID
+	ReplayInvocationID pgtype.UUID
+	ReplayCreatedAt    pgtype.Timestamptz
+}
+
 type InvocationWorkCancellation struct {
 	ID             pgtype.UUID
 	AppID          pgtype.UUID

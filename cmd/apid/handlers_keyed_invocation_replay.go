@@ -10,7 +10,7 @@ import (
 )
 
 func genericReplayPolicyProblem(orig state.Invocation) *api.Problem {
-	if orig.QueueBindingID != "" || orig.Source == state.InvocationQueue && orig.QueueName != "" {
+	if orig.QueueBindingID != "" || orig.QueueName != "" {
 		return api.NewProblem(http.StatusConflict, "queue_replay_requires_binding", "Queue replay requires its binding",
 			"use the app queue dead-letter replay endpoint to retain the original binding and work policy")
 	}
@@ -37,7 +37,7 @@ func (s *server) replayKeyedInvocation(w http.ResponseWriter, r *http.Request, a
 		writeKeyedReplay(w, inv, err, orig.ID)
 		return
 	}
-	opts, problem := s.keyedReplayOptions(r, acct, orig)
+	opts, problem := s.invocationReplayOptions(r, acct, orig)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -55,7 +55,7 @@ func writeKeyedReplay(w http.ResponseWriter, inv state.Invocation, err error, pa
 	writeJSON(w, http.StatusAccepted, api.AsyncInvokeResponse{ID: inv.ID, StatusURL: "/v1/invocations/" + inv.ID})
 }
 
-func (s *server) keyedReplayOptions(r *http.Request, acct state.Account, orig state.Invocation) (state.KeyedInvocationReplayOptions, *api.Problem) {
+func (s *server) invocationReplayOptions(r *http.Request, acct state.Account, orig state.Invocation) (state.KeyedInvocationReplayOptions, *api.Problem) {
 	headers, err := pkgtrace.MergeHeaders(r.Context(), orig.Headers)
 	if err != nil {
 		return state.KeyedInvocationReplayOptions{}, api.ErrValidation("original invocation headers must be a JSON object of string values")

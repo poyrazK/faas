@@ -205,7 +205,7 @@ func enrichPgEventReceipt(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, recei
 			entry.Execution = receiptExecution(id, invocation.State, int(invocation.Attempts), invocation.ReplayGeneration, timeFromPgtype(invocation.DueAt), timeFromPgtype(invocation.CreatedAt), timestamptzToTimePtr(invocation.CompletedAt), invocation.LastError)
 			if entry.TargetAvailable {
 				entry.HandlerReplayMode = receiptHandlerReplay(invocation.State, invocation.WorkPolicyName, invocation.QueueBindingID.Valid, entry.AppSlug, timestamptzToTimePtr(invocation.WorkExpiresAt), timestamptzToTimePtr(invocation.StartDeadlineAt))
-				if invocation.KeyedReplayCreated {
+				if invocation.KeyedReplayCreated || entry.HandlerReplayMode == "handler_replay" && invocation.PlainReplayCreated {
 					entry.HandlerReplayMode = ""
 				}
 			}
@@ -312,10 +312,7 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 			continue
 		}
 		entry := EventReceiptRecipient{Position: position, SubscriptionID: recipient.ID, AppID: recipient.AppID, Routing: receiptRouting(progress, status, attempts)}
-		app, exists := m.apps[recipient.AppID]
-		if !exists {
-			app, exists = m.apps[canonicalMemUUID(recipient.AppID)]
-		}
+		app, exists := m.eventSubscriptionAppLocked(recipient.AppID)
 		owned := exists && sameMemUUID(app.AccountID, accountID)
 		if owned {
 			entry.AppSlug = app.Slug
@@ -351,7 +348,7 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 			entry.Execution = receiptExecution(id, string(invocation.State), invocation.Attempts, invocation.ReplayGeneration, invocation.DueAt, invocation.CreatedAt, cloneEventReceiptTime(invocation.CompletedAt), invocation.LastError)
 			if entry.TargetAvailable {
 				entry.HandlerReplayMode = receiptHandlerReplay(string(invocation.State), invocation.WorkPolicyName, invocation.QueueBindingID != "", entry.AppSlug, invocation.WorkExpiresAt, invocation.StartDeadlineAt)
-				if m.keyedReplayChildren[invocation.ID] != "" {
+				if m.keyedReplayChildren[invocation.ID] != "" || entry.HandlerReplayMode == "handler_replay" && m.plainReplayChildren[invocation.ID].ChildID != "" {
 					entry.HandlerReplayMode = ""
 				}
 			}

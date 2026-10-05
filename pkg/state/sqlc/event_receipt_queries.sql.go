@@ -78,7 +78,8 @@ const eventReceiptInvocations = `-- name: EventReceiptInvocations :many
 SELECT i.id, i.app_id, i.state, i.attempts, i.replay_generation, coalesce(i.last_error, '')::text AS last_error,
        i.due_at, i.created_at, i.completed_at, coalesce(i.work_policy_name, '')::text AS work_policy_name,
        i.queue_binding_id, i.work_expires_at, i.start_deadline_at,
-       EXISTS (SELECT 1 FROM invocation_keyed_replays r WHERE r.parent_invocation_id=i.id) AS keyed_replay_created
+       EXISTS (SELECT 1 FROM invocation_keyed_replays r WHERE r.parent_invocation_id=i.id) AS keyed_replay_created,
+       EXISTS (SELECT 1 FROM invocation_plain_replays r WHERE r.parent_invocation_id=i.id) AS plain_replay_created
 FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
 WHERE i.account_id=$1::uuid AND i.id=ANY($2::uuid[])
   AND i.created_at >= $3::timestamptz
@@ -105,6 +106,7 @@ type EventReceiptInvocationsRow struct {
 	WorkExpiresAt      pgtype.Timestamptz
 	StartDeadlineAt    pgtype.Timestamptz
 	KeyedReplayCreated bool
+	PlainReplayCreated bool
 }
 
 func (q *Queries) EventReceiptInvocations(ctx context.Context, db DBTX, arg EventReceiptInvocationsParams) ([]EventReceiptInvocationsRow, error) {
@@ -131,6 +133,7 @@ func (q *Queries) EventReceiptInvocations(ctx context.Context, db DBTX, arg Even
 			&i.WorkExpiresAt,
 			&i.StartDeadlineAt,
 			&i.KeyedReplayCreated,
+			&i.PlainReplayCreated,
 		); err != nil {
 			return nil, err
 		}
@@ -358,12 +361,13 @@ func (q *Queries) EventReceiptReplayHistory(ctx context.Context, db DBTX, arg Ev
 }
 
 const eventReceiptReplaySummaries = `-- name: EventReceiptReplaySummaries :many
-SELECT roots.id::uuid AS root_id, latest.id, latest.app_id, latest.state, latest.attempts, latest.replay_generation, latest.replayed_from_invocation_id, latest.last_error, latest.due_at, latest.created_at, latest.completed_at, latest.work_policy_name, latest.queue_binding_id, latest.work_expires_at, latest.start_deadline_at, latest.keyed_replay_created, latest.retained_replay_count FROM unnest($1::uuid[]) roots(id)
+SELECT roots.id::uuid AS root_id, latest.id, latest.app_id, latest.state, latest.attempts, latest.replay_generation, latest.replayed_from_invocation_id, latest.last_error, latest.due_at, latest.created_at, latest.completed_at, latest.work_policy_name, latest.queue_binding_id, latest.work_expires_at, latest.start_deadline_at, latest.keyed_replay_created, latest.plain_replay_created, latest.retained_replay_count FROM unnest($1::uuid[]) roots(id)
 CROSS JOIN LATERAL (
   SELECT i.id, i.app_id, i.state, i.attempts, i.replay_generation, i.replayed_from_invocation_id,
          coalesce(i.last_error, '')::text AS last_error, i.due_at, i.created_at, i.completed_at,
          coalesce(i.work_policy_name, '')::text AS work_policy_name, i.queue_binding_id, i.work_expires_at, i.start_deadline_at,
          EXISTS (SELECT 1 FROM invocation_keyed_replays r WHERE r.parent_invocation_id=i.id) AS keyed_replay_created,
+         EXISTS (SELECT 1 FROM invocation_plain_replays r WHERE r.parent_invocation_id=i.id) AS plain_replay_created,
          count(*) OVER ()::bigint AS retained_replay_count
   FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
   WHERE i.account_id=$2::uuid AND i.replay_root_invocation_id=roots.id
@@ -395,6 +399,7 @@ type EventReceiptReplaySummariesRow struct {
 	WorkExpiresAt            pgtype.Timestamptz
 	StartDeadlineAt          pgtype.Timestamptz
 	KeyedReplayCreated       bool
+	PlainReplayCreated       bool
 	RetainedReplayCount      int64
 }
 
@@ -424,6 +429,7 @@ func (q *Queries) EventReceiptReplaySummaries(ctx context.Context, db DBTX, arg 
 			&i.WorkExpiresAt,
 			&i.StartDeadlineAt,
 			&i.KeyedReplayCreated,
+			&i.PlainReplayCreated,
 			&i.RetainedReplayCount,
 		); err != nil {
 			return nil, err

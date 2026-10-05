@@ -3057,6 +3057,45 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '500': { $ref: '#/components/responses/ServerError' }
 
+  /v1/events/receipt/attempts:
+    get:
+      tags: [events]
+      operationId: getEventReceiptAttempts
+      summary: Inspect retained handler delivery attempts for one captured recipient.
+      description: |
+        Requires apps:read or admin. Includes the original async invocation and
+        trusted child replays, ordered by descending attempt history ID. Each
+        claim records its attempt and replay generation atomically with dispatch.
+        A claim does not prove handler execution. Recovered expired leases have
+        outcome unknown; external side effects still require idempotency.
+        Only attempts recorded after rollout and still retained are available.
+        Closed attempts expire after at most 30 days, earlier when result retention
+        expires or their invocation is deleted. Running attempts are not pruned.
+        Missing history does not establish that no delivery occurred. Unknown or
+        foreign receipts, captured recipients and current app owners return 404.
+        Cursors bind account, source, event ID, recipient and retained receipt;
+        stale or mismatched cursors return 400. New claims do not reorder older
+        pages; a running outcome may settle between reads.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: source, in: query, required: true, description: Published event source., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: id, in: query, required: true, description: Published event ID., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: subscription_id, in: query, required: true, description: Captured consumer identifier., schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: after, in: query, description: Opaque next_after cursor for this attempt history., schema: { type: string, maxLength: 8192 } }
+        - { name: limit, in: query, description: Maximum retained attempts per page., schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+      responses:
+        '200':
+          description: Retained dispatch evidence and pagination cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReceiptAttemptHistoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
   /v1/event-schemas:
     post:
       tags: [events]
@@ -6631,7 +6670,16 @@ paths:
       tags: [platform-tenants]
       operationId: replayPlatformTenantSelfInvocation
       summary: Replay this tenant's failed or dead-lettered invocation.
-      description: Requires a tenant-bound token with platform_tenant:invocations:manage. Replays only this customer's failed or dead-lettered work into a fresh invocation preserving the original tenant and request. Idempotency-Key is scoped to this tenant and original invocation. Foreign, unbound and missing invocations return the same 404.
+      description: |
+        Requires a tenant-bound token with platform_tenant:invocations:manage.
+        Only this customer's failed or dead-lettered unbound unkeyed work is
+        eligible. Preserves the original customer, request, deployment scope,
+        retry policy and trusted parent/root lineage. Each parent has one durable
+        child shared with account-operator replay. Repeated and concurrent
+        requests return it regardless of Idempotency-Key, including after
+        completion; further recovery targets the failed child. A pruned child
+        returns 409 invocation_replay_unavailable. Foreign, unbound and missing
+        invocations return the same 404. Current app ownership is always checked.
       parameters:
         - name: id
           in: path
@@ -6640,7 +6688,7 @@ paths:
           schema: { type: string, format: uuid }
         - name: Idempotency-Key
           in: header
-          description: Optional key scoped to this tenant and original invocation.
+          description: Optional transport key; parent identity deduplicates across keys and account-operator requests.
           schema: { type: string }
       responses:
         '202':
@@ -22580,24 +22628,31 @@ paths:
       operationId: replayInvocation
       summary: Re-issue a failed or dead_letter invocation.
       description: |
-        Accepts no request body. The replayed row carries the original's
-        payload + headers + method + path verbatim and is enqueued against
-        the same app. The new row's Source is `replay` (issue #315).
+        Accepts no request body. Requires deployment write scope and configured
+        MFA. Only failed or dead-lettered unbound unkeyed work is eligible.
+        The parent and its current app must belong to the caller. The child
+        preserves the original request, deployment scope, customer identity
+        and trusted replay lineage. Trace/version headers and execution/result
+        lifetimes are refreshed; retry policy uses the current app and plan.
 
-        Only invocations whose current state is `failed` or `dead_letter`
-        can be replayed — re-running a successful or in-flight invocation
-        would be a customer bug, not a flow we want to enable by accident.
-        A replay attempt on any other state returns 409
-        `invocation_not_replayable`.
-        Keyed work returns `keyed_replay_requires_policy`; use the dedicated
-        `/v1/invocations/{id}/replay-keyed` endpoint for failed keyed work.
-        Queue-bound work returns `queue_replay_requires_binding` and requires
-        its app queue dead-letter replay endpoint.
+        Each parent creates at most one durable recovery child. Concurrent and
+        repeated requests return that child regardless of Idempotency-Key,
+        including after completion. A subsequent recovery targets the failed
+        child. If its child has been pruned, the retained parent returns 409
+        `invocation_replay_unavailable` instead of creating another execution.
+        Existing acceptance is returned before checking expired deployment pins.
+        Application delivery and external side effects remain at least once.
+
+        Other parent states return `invocation_not_replayable`. Keyed work
+        returns `keyed_replay_requires_policy`; use `/replay-keyed` for failed
+        keyed work. Queue-bound or named-queue work returns
+        `queue_replay_requires_binding` and requires its app queue dead-letter
+        replay endpoint.
       parameters:
         - $ref: '#/components/parameters/Id32'
       responses:
         '202':
-          description: The new invocation row was enqueued.
+          description: The recovery child was enqueued or already exists.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AsyncInvokeResponse' }
@@ -22605,10 +22660,9 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: |
-            The invocation is not in a replayable state. Returns the
-            `invocation_not_replayable` problem code with the current
-            state in the detail field; only `failed` and `dead_letter`
-            invocations can be replayed.
+            The parent is not replayable, requires its policy/binding recovery
+            path, or its durable child is no longer retained
+            (`invocation_replay_unavailable`).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -37912,6 +37966,7 @@ components:
           items: { $ref: '#/components/schemas/EventReceiptRecoveryAction' }
           description: Applicable selective recovery requests; empty when no action is currently eligible. Authorization and state are checked again on POST.
         fanout_history_url: { type: string, format: uri-reference, description: Account-authenticated routing and replay history for this recipient. }
+        attempt_history_url: { type: string, format: uri-reference, description: Account-authenticated handler attempt history including trusted replays. }
 
     EventReceiptRoutingResponse:
       description: Recipient routing checkpoint and lifetime attempts; execution attempts are separate.
@@ -37972,6 +38027,37 @@ components:
           type: array
           items: { $ref: '#/components/schemas/EventReceiptExecutionResponse' }
         next_after: { type: string, description: Opaque cursor for the next older page; omit after when starting a fresh history read. }
+
+    InvocationAttemptResponse:
+      type: object
+      additionalProperties: false
+      required: [id, invocation_id, replay_generation, attempt, started_at, outcome, retain_until]
+      properties:
+        id: { type: integer, format: int64, minimum: 1 }
+        invocation_id: { type: string, format: uuid }
+        replay_generation: { type: integer, format: int64, minimum: 0 }
+        attempt: { type: integer, minimum: 1 }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        outcome: { type: string, enum: [running, succeeded, retry, failed, dead_letter, cancelled, unknown], description: Dispatch evidence; unknown does not prove whether the handler ran. }
+        error_detail: { type: string, maxLength: 1024 }
+        next_attempt_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time, description: Closed attempts can expire earlier if their invocation is deleted; running attempts are not pruned. }
+
+    EventReceiptAttemptHistoryResponse:
+      type: object
+      additionalProperties: false
+      required: [event_source, event_id, subscription_id, original_invocation_id, coverage, attempts]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        subscription_id: { type: string }
+        original_invocation_id: { type: string, format: uuid }
+        coverage: { type: string, enum: [recorded_attempts_only], description: History is not backfilled and may be pruned; absence is not proof of no delivery. }
+        attempts:
+          type: array
+          items: { $ref: '#/components/schemas/InvocationAttemptResponse' }
+        next_after: { type: string, description: Opaque cursor for the next older page. }
 
     EventReceiptCancellationResponse:
       description: Durable work-policy cancel_pending operation receipt, which creates no handler invocation.

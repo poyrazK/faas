@@ -3673,17 +3673,12 @@ func (c *Client) CancelPlatformTenantExclusiveOperation(ctx context.Context, id 
 	return c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/operations/"+url.PathEscape(id)+"/cancel", nil, nil)
 }
 
-// ReplayInvocation re-issues a failed invocation. The server
-// enqueues a fresh async invocation carrying the original payload,
-// headers, method, and path; returns 202 + AsyncInvokeResponse on
-// success and 409 if the original is not in a replayable state (the
-// handler's allow-list is {failed, dead_letter} — see
-// cmd/apid/handlers_invocations.go::replayInvocation for the source
-// of truth, issue #315 tier-2 DX).
-//
-// Account-scoped: a customer can't replay another tenant's
-// invocation; the server surfaces ErrInvocationNotFound in that
-// case (same IDOR-safe path as GetInvocation).
+// ReplayInvocation recovers failed or dead-lettered unbound unkeyed work.
+// Each parent creates one durable child, preserving its request, customer,
+// environment and trusted lineage. Repeated calls return that child regardless
+// of request keys, including after completion. Further recovery targets the
+// failed child. A pruned child returns 409 invocation_replay_unavailable.
+// The parent and its current app must still belong to the caller.
 func (c *Client) ReplayInvocation(ctx context.Context, id string) (AsyncInvokeResponse, error) {
 	var out AsyncInvokeResponse
 	return out, c.do(ctx, "POST", "/v1/invocations/"+id+"/replay", nil, &out)
